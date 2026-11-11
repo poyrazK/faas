@@ -25,8 +25,14 @@ import (
 
 // Host is what dashboards need from apid.
 type Host interface {
-	// AppForAccount returns the account's app by slug, or false.
+	// AppForAccount returns an app by slug that the request's principal
+	// may read, or false: the account's own, or an app of one of its
+	// organizations a teammate created (ADR-20261109153000).
 	AppForAccount(ctx context.Context, acct state.Account, slug string) (state.App, bool)
+	// AppOwner is the account a widget on app reads as: the app's resource
+	// owner (state.AppResourceAccount), whose plan gates the widget and
+	// whose namespace holds the app's rows.
+	AppOwner(ctx context.Context, app state.App) (state.Account, bool)
 	// ShowsDashboard reports whether the request's credential may see a
 	// dashboard with these widgets: a key bound to one app or company sees
 	// only dashboards whose widgets all name apps it may see.
@@ -34,6 +40,9 @@ type Host interface {
 	Dashboards() state.DashboardStore
 	Sources() Sources
 	Logger() *slog.Logger
+	// Audit records a dashboard change in the account's audit log
+	// (ADR-20261031144636).
+	Audit(ctx context.Context, kind string, accountID string, data map[string]any)
 }
 
 // Service serves the dashboards API. Enabled is the
@@ -43,6 +52,8 @@ type Service struct {
 	Enabled bool
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
+	// Reads bounds each account's data reads in flight; nil does not.
+	Reads *ReadSlots
 }
 
 const widgetTitleMax = 80
@@ -92,6 +103,7 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if s.writeErr(w, r, "create dashboard", err) {
 		return
 	}
+	s.audit(r.Context(), "dashboard.created", acct, created)
 	httpkit.WriteJSON(w, http.StatusCreated, dto(created))
 }
 
@@ -124,6 +136,7 @@ func (s *Service) Replace(w http.ResponseWriter, r *http.Request, acct state.Acc
 	if s.writeErr(w, r, "replace dashboard", err) {
 		return
 	}
+	s.audit(r.Context(), "dashboard.replaced", acct, replaced)
 	httpkit.WriteJSON(w, http.StatusOK, dto(replaced))
 }
 
@@ -132,13 +145,21 @@ func (s *Service) Delete(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if !s.gate(w) {
 		return
 	}
-	if _, err := s.dashboard(r.Context(), acct, r.PathValue("id")); s.writeErr(w, r, "read dashboard", err) {
+	existing, err := s.dashboard(r.Context(), acct, r.PathValue("id"))
+	if s.writeErr(w, r, "read dashboard", err) {
 		return
 	}
-	if s.writeErr(w, r, "delete dashboard", s.Host.Dashboards().DeleteDashboard(r.Context(), acct.ID, r.PathValue("id"))) {
+	if s.writeErr(w, r, "delete dashboard", s.Host.Dashboards().DeleteDashboard(r.Context(), acct.ID, existing.ID)) {
 		return
 	}
+	s.audit(r.Context(), "dashboard.deleted", acct, existing)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// audit records one dashboard change; the widgets themselves stay out of the
+// log, only how many there are.
+func (s *Service) audit(ctx context.Context, kind string, acct state.Account, row state.Dashboard) {
+	s.Host.Audit(ctx, kind, acct.ID, map[string]any{"dashboard_id": row.ID, "name": row.Name, "widgets": len(dto(row).Widgets)})
 }
 
 // dashboard reads one of the account's dashboards that the request's
@@ -262,6 +283,8 @@ func (s *Service) writeErr(w http.ResponseWriter, r *http.Request, op string, er
 			"the account already has a dashboard with that name"))
 	case errors.As(err, &quota):
 		api.WriteProblem(w, api.ErrDashboardQuota(quota.Limit, quota.Observed))
+	case errors.Is(err, ErrDataBusy):
+		api.WriteProblem(w, api.ErrDashboardDataBusy(api.DashboardDataReadsPerAccount))
 	default:
 		s.fail(w, r, op, err)
 	}

@@ -41,6 +41,135 @@
 
     {{if .Data}}
       {{$d := .Data}}
+      {{if $d.VerifyResendConfirmToken}}
+      <form method="POST" action="/dashboard/account/verify-email/resend">
+        <input type="hidden" name="csrf_token" value="{{$d.VerifyResendConfirmToken}}">
+        <button type="submit">Send a new verification link</button>
+      </form>
+      {{end}}
+      <h2>Profile</h2>
+      <form method="POST" action="/dashboard/account/display-name">
+        <input type="hidden" name="csrf_token" value="{{$d.DisplayNameConfirmToken}}">
+        <label>Display name <input type="text" name="display_name" value="{{$d.DisplayName}}" maxlength="80" autocomplete="name"></label>
+        <button type="submit">Save</button>
+      </form>
+      <form method="POST" action="/dashboard/account/email">
+        <input type="hidden" name="csrf_token" value="{{$d.EmailChangeConfirmToken}}">
+        <label>New sign-in email <input type="email" name="email" required autocomplete="email"></label>
+        {{if $d.EmailChangeNeedsPassword}}
+        <label>Current password <input type="password" name="current_password" required autocomplete="current-password"></label>
+        {{end}}
+        <button type="submit">Change email</button>
+      </form>
+      <p class="muted">We email a confirmation link to the new address. Accounts with two-factor authentication confirm with a code first.</p>
+
+      <h2>Sign-in methods</h2>
+      <p>Password: {{if $d.HasPassword}}set{{else}}not set{{end}} · Two-factor authentication: {{if $d.MFAEnabled}}on{{else}}off{{end}}</p>
+      {{if $d.Providers}}
+        <table>
+          <thead><tr><th>Provider</th><th>Email</th><th>Linked</th><th></th></tr></thead>
+          <tbody>
+            {{range $d.Providers}}
+              <tr>
+                <td>{{.Provider}}</td>
+                <td><code>{{.Email}}</code></td>
+                <td>{{.LinkedAt}}</td>
+                <td>
+                  <form class="inline" method="POST" action="/dashboard/account/providers/{{.Provider}}/unlink">
+                    <input type="hidden" name="csrf_token" value="{{$d.ProviderUnlinkConfirmToken}}">
+                    <button type="submit">Remove</button>
+                  </form>
+                </td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{else}}
+        <p class="muted">No Google or GitHub sign-in is linked.</p>
+      {{end}}
+      {{if $d.LinkProviders}}
+        <p>
+          {{range $d.LinkProviders}}
+            <form class="inline" method="POST" action="/dashboard/account/providers/{{.Provider}}/link">
+              <input type="hidden" name="csrf_token" value="{{$d.ProviderLinkConfirmToken}}">
+              <button type="submit">Link {{.Name}}</button>
+            </form>
+          {{end}}
+        </p>
+        <p class="muted">You will sign in to the provider; whichever account you choose there is linked to this Gregale account, even if its email differs. A provider you removed can only be linked again from here.</p>
+      {{end}}
+
+      <h2>Sessions</h2>
+      {{if $d.Sessions}}
+        <table>
+          <thead><tr><th>Signed in</th><th>Address</th><th>Browser</th><th>Last seen</th><th></th></tr></thead>
+          <tbody>
+            {{range $d.Sessions}}
+              <tr>
+                <td>{{.IssuedAt}}</td>
+                <td><code>{{.IssuedIP}}</code></td>
+                <td>{{.IssuedUA}}</td>
+                <td>{{.LastSeen}}</td>
+                <td>
+                  <form class="inline" method="POST" action="/dashboard/account/sessions/{{.ID}}/revoke">
+                    <input type="hidden" name="csrf_token" value="{{$d.SessionRevokeConfirmToken}}">
+                    <button type="submit">{{if .IsCurrent}}Sign out (this browser){{else}}Sign out{{end}}</button>
+                  </form>
+                </td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{end}}
+
+      {{if $d.TrustedBrowsers}}
+        <h2>Remembered browsers</h2>
+        <p class="muted">These browsers skip the authenticator code at sign-in until the date shown. Changing your password or email, or signing out everywhere, forgets them all.</p>
+        <table>
+          <thead><tr><th>Browser</th><th>Address</th><th>Remembered</th><th>Last used</th><th>Expires</th><th></th></tr></thead>
+          <tbody>
+            {{range $d.TrustedBrowsers}}
+              <tr>
+                <td>{{.Browser}}</td>
+                <td>{{if .IP}}<code>{{.IP}}</code>{{end}}</td>
+                <td>{{.Remembered}}</td>
+                <td>{{.LastUsed}}</td>
+                <td>{{.Expires}}</td>
+                <td>
+                  <form class="inline" method="POST" action="/dashboard/account/trusted-browsers/{{.ID}}/forget">
+                    <input type="hidden" name="csrf_token" value="{{$d.TrustedBrowserForgetToken}}">
+                    <button type="submit">Forget</button>
+                  </form>
+                </td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+        <form method="POST" action="/dashboard/account/trusted-browsers/forget-all">
+          <input type="hidden" name="csrf_token" value="{{$d.TrustedBrowserForgetToken}}">
+          <button type="submit">Forget all browsers</button>
+        </form>
+      {{end}}
+
+      <h2>Security activity</h2>
+      {{if $d.Activity}}
+        <table>
+          <thead><tr><th>When</th><th>What</th><th>Address</th><th>Detail</th></tr></thead>
+          <tbody>
+            {{range $d.Activity}}
+              <tr>
+                <td>{{.At}}</td>
+                <td>{{.Summary}}</td>
+                <td>{{if .IP}}<code>{{.IP}}</code>{{end}}</td>
+                <td>{{.Detail}}</td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+        {{if $d.MoreActivity}}<p class="muted">Showing the 20 newest events of the last 90 days. <code>gregale account activity list</code> shows up to 100.</p>{{end}}
+      {{else}}
+        <p class="muted">No sign-ins or security changes in the last 90 days.</p>
+      {{end}}
       <h2>API keys</h2>
       <p>Create a key with the CLI: <code>gregale keys add &lt;label&gt;</code>. Plaintext shows ONCE; store it now.</p>
       {{if $d.Keys}}

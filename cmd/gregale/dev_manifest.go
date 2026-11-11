@@ -10,12 +10,23 @@ import (
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 )
 
-// applyDevDebugManifestDefault applies `dev.debug` unless --debug was given.
-func applyDevDebugManifestDefault(manifest *gregalemanifest.Manifest, explicit map[string]bool, debug *bool) {
-	if manifest == nil || manifest.Dev == nil || manifest.Dev.Debug == nil || explicit["debug"] {
-		return
+// applyDevDebugManifestDefault applies `dev.debug` unless --debug was given
+// and `dev.debug_port` unless --debug-port was. It reports whether debug now
+// comes from the manifest, which is a team default rather than a request: a
+// run that cannot debug (--once, a runtime without a debugger) skips it with
+// a note instead of failing.
+func applyDevDebugManifestDefault(manifest *gregalemanifest.Manifest, explicit map[string]bool, debug *bool, port *int) bool {
+	if manifest == nil || manifest.Dev == nil {
+		return false
+	}
+	if manifest.Dev.DebugPort != nil && !explicit["debug-port"] {
+		*port = *manifest.Dev.DebugPort
+	}
+	if manifest.Dev.Debug == nil || explicit["debug"] {
+		return false
 	}
 	*debug = *manifest.Dev.Debug
+	return *debug
 }
 
 func loadDevManifest(sourceDir string) (*gregalemanifest.Manifest, error) {

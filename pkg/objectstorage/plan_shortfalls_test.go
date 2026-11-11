@@ -17,9 +17,16 @@ func TestPlanShortfallsCloseProductionProvisioning(t *testing.T) {
 	most := api.ObjectStoragePlanLimitsMax()
 	planSized := api.ObjectStoragePolicy{AccountingMode: api.ObjectStorageGatewaySafetyV1, GatewayMeteringSince: &since,
 		MaxAccountBytes: most.MaxAccountBytes, MaxBucketBytes: most.MaxAccountBytes, MaxAccountKeys: api.MaxObjectStorageAccountKeys,
-		MaxMonthlyRequests: 10_000_000, MaxMonthlyEgressBytes: most.MaxMonthlyEgressBytes, MaxMonthlyAuthorizations: 1_000_000, MaxReportAgeSeconds: 900}
+		MaxMonthlyRequests: most.MaxMonthlyRequests, MaxMonthlyEgressBytes: most.MaxMonthlyEgressBytes, MaxMonthlyAuthorizations: most.MaxMonthlyRequests, MaxReportAgeSeconds: 900}
 	pilot := planSized
 	pilot.MaxAccountBytes, pilot.MaxBucketBytes, pilot.MaxAccountKeys, pilot.MaxMonthlyEgressBytes = 16<<20, 8<<20, 100, 64<<20
+	// production-us ran 1,000,000 authorizations, under Scale's 10,000,000
+	// requests: every admitted read and write spends one, so Pro and Scale
+	// stopped at 1,000,000 operations a month (object storage audit OS-1).
+	authorizations := planSized
+	authorizations.MaxMonthlyAuthorizations = 1_000_000
+	requests := planSized
+	requests.MaxMonthlyRequests = 2_500_000
 	for _, tc := range []struct {
 		name          string
 		policy        api.ObjectStoragePolicy
@@ -28,6 +35,10 @@ func TestPlanShortfallsCloseProductionProvisioning(t *testing.T) {
 		wantProvision bool
 	}{
 		{name: "plan-sized policy in production", policy: planSized, environment: "production", wantProvision: true},
+		{name: "authorizations below the most requests in production", policy: authorizations, environment: "production",
+			wantShortfall: []string{"max_monthly_authorizations_below_plan"}},
+		{name: "requests below the most requests in production", policy: requests, environment: "production",
+			wantShortfall: []string{"max_monthly_requests_below_plan"}},
 		{name: "pilot policy in production", policy: pilot, environment: "production",
 			wantShortfall: []string{"max_account_bytes_below_plan", "max_bucket_bytes_below_plan", "max_monthly_egress_bytes_below_plan", "max_account_keys_below_plan"}},
 		{name: "pilot policy elsewhere", policy: pilot, environment: "staging",

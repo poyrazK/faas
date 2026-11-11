@@ -7,14 +7,22 @@ import (
 )
 
 // RestoreSlots implements RestoreSlotStore (ADR-20261031123259).
-func (s *MemoryStore) RestoreSlots(_ context.Context, limit int) ([]RestoreSlotHolder, error) {
-	if limit < 1 || limit > 500 {
+func (s *MemoryStore) RestoreSlots(ctx context.Context, limit int) ([]RestoreSlotHolder, error) {
+	return s.RestoreSlotsPage(ctx, RestoreSlotCursor{}, limit)
+}
+
+func (s *MemoryStore) RestoreSlotsPage(_ context.Context, after RestoreSlotCursor, limit int) ([]RestoreSlotHolder, error) {
+	if limit < 1 || limit > 500 || after.Until.IsZero() != (after.ID == "") {
 		return nil, ErrInvalid
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var holders []RestoreSlotHolder
 	for _, database := range s.databases {
+		if !after.Until.IsZero() && (database.RestoreSlotUntil.Before(after.Until) ||
+			database.RestoreSlotUntil.Equal(after.Until) && database.ID <= after.ID) {
+			continue
+		}
 		if !database.RestoreSlotUntil.IsZero() && database.State != StateDeleted {
 			holders = append(holders, RestoreSlotHolder{Database: cloneDatabase(database), SubjectID: s.billingSubject(database)})
 		}
@@ -38,7 +46,7 @@ func (s *MemoryStore) CountSubjectDatabases(_ context.Context, subjectID string)
 	defer s.mu.Unlock()
 	var count int64
 	for _, database := range s.databases {
-		if database.CountsTowardLimit() && s.billingSubject(database) == subjectID {
+		if database.CountsTowardLimit() && database.Preview.IsZero() && s.billingSubject(database) == subjectID {
 			count++
 		}
 	}

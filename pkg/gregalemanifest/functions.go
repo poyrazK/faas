@@ -55,13 +55,25 @@ type FunctionSpec struct {
 	// triggers are added and updated, never removed, as on any deploy.
 	QueueBindings []QueueBinding `yaml:"queue_bindings,omitempty"`
 	EventTriggers []EventTrigger `yaml:"event_triggers,omitempty"`
+
+	// BeforeSnapshotTimeoutMS and AfterRestoreTimeoutMS bound the snapshot
+	// hooks the handler declares, within the lifecycle hook limit; zero
+	// keeps the default (ADR-20261110190000 §7).
+	BeforeSnapshotTimeoutMS int `yaml:"before_snapshot_timeout_ms,omitempty"`
+	AfterRestoreTimeoutMS   int `yaml:"after_restore_timeout_ms,omitempty"`
+
+	// Hooks are the snapshot hooks the handler declares in code (init,
+	// before_snapshot, after_restore), read by the plan without running it
+	// (ADR-20261110190000). Never set from yaml.
+	Hooks []string `yaml:"-"`
 }
 
 // HasPreDeploySettings reports whether the function sets anything that must
 // be on its app before the deployment is built: RAM and concurrency shape
 // the build, and env and secrets reach the first wake.
 func (fn FunctionSpec) HasPreDeploySettings() bool {
-	return fn.RAMMB != 0 || fn.RequestTimeoutS != 0 || fn.Concurrency != 0 || len(fn.Env) > 0 || fn.PruneEnv || len(fn.SecretsFromEnv) > 0
+	return fn.RAMMB != 0 || fn.RequestTimeoutS != 0 || fn.Concurrency != 0 || len(fn.Env) > 0 || fn.PruneEnv || len(fn.SecretsFromEnv) > 0 ||
+		len(fn.Hooks) > 0
 }
 
 // FunctionBucketEvent routes object-storage notifications for one bucket to
@@ -283,6 +295,11 @@ func validateFunctionSettings(field string, fn FunctionSpec, limits api.Limits) 
 		seen[name] = true
 		if _, plain := fn.Env[name]; plain {
 			return fmt.Errorf("%s: %q is both a plain env value and a secret; keep one", field, name)
+		}
+	}
+	for key, ms := range map[string]int{"before_snapshot_timeout_ms": fn.BeforeSnapshotTimeoutMS, "after_restore_timeout_ms": fn.AfterRestoreTimeoutMS} {
+		if ms < 0 || ms > api.AfterRestoreHookMaxTimeoutMS {
+			return fmt.Errorf("%s.%s %d must be between 1 and %d", field, key, ms, api.AfterRestoreHookMaxTimeoutMS)
 		}
 	}
 	if fn.Entry && len(fn.Routes) > 0 {

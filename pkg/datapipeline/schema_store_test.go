@@ -21,9 +21,6 @@ func TestSchemaRefreshIsAtomicReplayableAndFenced(t *testing.T) {
 	if _, err = store.pool.Exec(ctx, string(schema)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.pool.Exec(ctx, `CREATE TABLE notification_outbox(id bigserial PRIMARY KEY,channel text NOT NULL,payload text NOT NULL,available_at timestamptz NOT NULL,state text NOT NULL DEFAULT 'pending',attempts int NOT NULL DEFAULT 0,last_error text,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),delivered_at timestamptz)`); err != nil {
-		t.Fatal(err)
-	}
 	app, dep, snap := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	if _, err = store.pool.Exec(ctx, `INSERT INTO apps VALUES($1,$2,'orders-api','active')`, app, p.AccountID); err != nil {
 		t.Fatal(err)

@@ -3,6 +3,7 @@ package conformance
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"testing"
 	"time"
 
@@ -300,6 +301,22 @@ func testAPIKeyRotationGrace(t *testing.T, fx *Fixture) {
 	}
 	if next.ExpiresAt == nil || !next.ExpiresAt.Equal(deadline) {
 		t.Fatalf("successor expires_at = %v, want the predecessor's %v", next.ExpiresAt, deadline)
+	}
+
+	// Expiry is lazy: a key nobody presented after its deadline still reads
+	// active. Rotation gives the old key a fresh grace deadline, so it must
+	// refuse an expired key instead of bringing it back to life.
+	pastHash := randomTokenHash(t)
+	past := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	expired, err := fx.Store.CreateAPIKeyWithExpiry(fx.Ctx, fx.Account.ID, pastHash, "expired", api.ScopesAdminOnly, &past)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := fx.Store.RotateAPIKey(fx.Ctx, fx.Account.ID, expired.ID, randomTokenHash(t), "", time.Hour); !errors.Is(err, state.ErrAPIKeyExpired) {
+		t.Fatalf("RotateAPIKey(expired) err = %v, want ErrAPIKeyExpired", err)
+	}
+	if _, _, err := fx.Store.AuthenticateKey(fx.Ctx, pastHash); err == nil {
+		t.Fatal("expired key authenticates after a refused rotation")
 	}
 }
 

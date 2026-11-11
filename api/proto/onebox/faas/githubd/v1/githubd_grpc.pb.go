@@ -43,6 +43,7 @@ const (
 	Githubd_EnqueueBuild_FullMethodName               = "/onebox.faas.githubd.v1.Githubd/EnqueueBuild"
 	Githubd_WriteCheck_FullMethodName                 = "/onebox.faas.githubd.v1.Githubd/WriteCheck"
 	Githubd_VerifyInstallation_FullMethodName         = "/onebox.faas.githubd.v1.Githubd/VerifyInstallation"
+	Githubd_GetInstallationAccess_FullMethodName      = "/onebox.faas.githubd.v1.Githubd/GetInstallationAccess"
 	Githubd_MintInstallationToken_FullMethodName      = "/onebox.faas.githubd.v1.Githubd/MintInstallationToken"
 	Githubd_StreamSourceRef_FullMethodName            = "/onebox.faas.githubd.v1.Githubd/StreamSourceRef"
 	Githubd_GetBranchHead_FullMethodName              = "/onebox.faas.githubd.v1.Githubd/GetBranchHead"
@@ -147,6 +148,7 @@ type GithubdClient interface {
 	// install-belongs-to-the-app half; the install-belongs-to-the-user
 	// half lands here).
 	VerifyInstallation(ctx context.Context, in *VerifyInstallationRequest, opts ...grpc.CallOption) (*VerifyInstallationResponse, error)
+	GetInstallationAccess(ctx context.Context, in *GetInstallationAccessRequest, opts ...grpc.CallOption) (*GetInstallationAccessResponse, error)
 	// MintInstallationToken returns a fresh installation token for
 	// the given (account, installation_id). The token is the canonical
 	// shape githubd's TokenCache hands out (pkg/githubd/tokencache.go)
@@ -367,6 +369,16 @@ func (c *githubdClient) VerifyInstallation(ctx context.Context, in *VerifyInstal
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VerifyInstallationResponse)
 	err := c.cc.Invoke(ctx, Githubd_VerifyInstallation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *githubdClient) GetInstallationAccess(ctx context.Context, in *GetInstallationAccessRequest, opts ...grpc.CallOption) (*GetInstallationAccessResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetInstallationAccessResponse)
+	err := c.cc.Invoke(ctx, Githubd_GetInstallationAccess_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -610,6 +622,7 @@ type GithubdServer interface {
 	// install-belongs-to-the-app half; the install-belongs-to-the-user
 	// half lands here).
 	VerifyInstallation(context.Context, *VerifyInstallationRequest) (*VerifyInstallationResponse, error)
+	GetInstallationAccess(context.Context, *GetInstallationAccessRequest) (*GetInstallationAccessResponse, error)
 	// MintInstallationToken returns a fresh installation token for
 	// the given (account, installation_id). The token is the canonical
 	// shape githubd's TokenCache hands out (pkg/githubd/tokencache.go)
@@ -758,6 +771,9 @@ func (UnimplementedGithubdServer) WriteCheck(context.Context, *WriteCheckRequest
 }
 func (UnimplementedGithubdServer) VerifyInstallation(context.Context, *VerifyInstallationRequest) (*VerifyInstallationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method VerifyInstallation not implemented")
+}
+func (UnimplementedGithubdServer) GetInstallationAccess(context.Context, *GetInstallationAccessRequest) (*GetInstallationAccessResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetInstallationAccess not implemented")
 }
 func (UnimplementedGithubdServer) MintInstallationToken(context.Context, *MintInstallationTokenRequest) (*MintInstallationTokenResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MintInstallationToken not implemented")
@@ -1016,6 +1032,24 @@ func _Githubd_VerifyInstallation_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(GithubdServer).VerifyInstallation(ctx, req.(*VerifyInstallationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Githubd_GetInstallationAccess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetInstallationAccessRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).GetInstallationAccess(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_GetInstallationAccess_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).GetInstallationAccess(ctx, req.(*GetInstallationAccessRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1315,6 +1349,10 @@ var Githubd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "VerifyInstallation",
 			Handler:    _Githubd_VerifyInstallation_Handler,
+		},
+		{
+			MethodName: "GetInstallationAccess",
+			Handler:    _Githubd_GetInstallationAccess_Handler,
 		},
 		{
 			MethodName: "MintInstallationToken",

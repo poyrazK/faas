@@ -145,7 +145,7 @@ func (s *PgStore) ActivateEnvironmentGitOpsWorkloadGraph(ctx context.Context, le
 					deployment.EnvironmentWorkloadRuntime == "" || normalizedDeploymentScope(deployment.Scope) != normalizedDeploymentScope(lease.Source.EnvironmentSlug) {
 					return ErrConflict
 				}
-				if err := s.checkDeploymentAutomations(ctx, tx, deployment); err != nil {
+				if err := s.checkDeploymentStoredWorkflows(ctx, tx, deployment); err != nil {
 					return err
 				}
 				if _, err := tx.Exec(ctx, `update deployments set status='live', environment_workload_held=false,

@@ -132,12 +132,20 @@ func resolveInvocationVersionForApp(ctx context.Context, store invocationAppRead
 	// read already required for durable dispatch. Never trust inv.Source or a
 	// payload/header marker as a negative membership assertion.
 	ownerRead := false
+	if !ingress {
+		// The caller identity an edge jwt rule verified comes only from the
+		// stored row below, never from whatever named the invocation.
+		inv.EdgeJWTIssuer, inv.EdgeJWTSubject = "", ""
+	}
 	if reader, ok := store.(invocationDispatchAuthorityReader); ok && canonicalStateUUID(inv.ID) {
 		authority, readErr := reader.invocationDispatchAuthority(ctx, inv.ID)
 		if readErr != nil && !errors.Is(readErr, ErrNotFound) {
 			return inv, InvocationVersion{}, readErr
 		}
 		ownerRead = true
+		if readErr == nil && !ingress && authority.AppID == app.ID && authority.AccountID == app.AccountID {
+			inv.EdgeJWTIssuer, inv.EdgeJWTSubject = authority.EdgeJWTIssuer, authority.EdgeJWTSubject
+		}
 		if readErr == nil {
 			if authority.EnvironmentID != inv.EnvironmentID {
 				return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation

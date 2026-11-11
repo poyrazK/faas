@@ -78,6 +78,18 @@ own transaction, on one pinned connection: a session-level lock_timeout
 set_config(..., true) covers only the goose statement (a DO block, or a
 StatementBegin/StatementEnd block) that sets it.
 
+The migrator's sessions run with statement_timeout 30 s (pkg/db). A
+concurrent index build on an existing table does not block writes but can
+run longer, and a build cancelled part way leaves an INVALID index that
+CREATE INDEX CONCURRENTLY IF NOT EXISTS would then keep forever (bug hunt
+H73). So a NO TRANSACTION migration that builds one:
+  - index-build-timeout: sets a session-level statement_timeout first
+    (`SET statement_timeout = 0;` or a measured bound). SET LOCAL there
+    changes nothing (statement-timeout-local).
+  - index-invalid-guard: drops an invalid leftover of the same index before
+    an IF NOT EXISTS build (the indisvalid DO block in
+    20261027225845842_events_at_brin_idx.sql).
+
 Tables, views and indexes that do not exist on the base (schema.sql there)
 are exempt: nothing old reads them and nothing queues on them.
 
@@ -96,6 +108,12 @@ the file (docs/adr/20261018084150-unit-lane-expand-migrations.md):
                                     against the new schema; a per-unit
                                     release may apply it ahead of restarts
     -- migration-compat: contract   only a full release applies it
+
+  dynamic-ddl
+      EXECUTE assembles a RENAME or DROP at run time (format() or string
+      concatenation), so the previous release's references to its objects
+      are not checked. A contract change. Write the statements literally, or
+      waive naming why the previous release does not read the objects.
 
   compat-marker
       The marker is missing, repeated or neither value; or a migration
@@ -164,7 +182,7 @@ COMPAT_VALUES = ("expand", "contract")
 # whether or not code references the object and whether or not they are
 # waived: a waiver is a reviewer's judgment, which a full release carries.
 CONTRACT_RULES = frozenset({
-    "drop-table", "drop-column", "rename-table", "rename-column", "column-type", "not-null", "contract-statement",
+    "drop-table", "drop-column", "rename-table", "rename-column", "column-type", "not-null", "contract-statement", "dynamic-ddl",
 })
 # Rules the unit lane relies on to apply a migration with nobody watching:
 # fail fast instead of queueing traffic, and run at all.
@@ -478,6 +496,11 @@ class Context:
     # false)) holds for every later statement: goose runs a migration on one
     # pinned connection.
     session_lock_timeout: bool = False
+    # A session-level statement_timeout set before a concurrent index build.
+    session_statement_timeout: bool = False
+    # The Up section's lines (1-based file line -> text), for guards that
+    # must come before a statement.
+    up_lines: dict[int, str] = field(default_factory=dict)
     created: set[str] = field(default_factory=set)
     created_indexes: set[str] = field(default_factory=set)
     defaults_set: set[tuple[str, str]] = field(default_factory=set)
@@ -541,6 +564,7 @@ def lint_context(path: str, text: str, catalogue: Catalogue, referenced) -> Cont
         no_transaction=bool(re.search(r"^--\s*\+goose\s+NO\s+TRANSACTION\b", text, re.MULTILINE | re.IGNORECASE)),
         referenced=referenced,
     )
+    ctx.up_lines = {first_line + n: text for n, text in enumerate(up.split("\n"))}
     tops = top_statements(tokenize(up, first_line))
     statements = [stmt for top in tops for stmt in expand(top)]
     # Views dropped and created again in the same migration are redefined,
@@ -565,8 +589,41 @@ def lint_context(path: str, text: str, catalogue: Catalogue, referenced) -> Cont
         ctx.do_block = None if body is None else do_block(body)
         for stmt in expand(top):
             lint_statement(ctx, stmt)
+    lint_dynamic_ddl(ctx, up, first_line)
     lint_migration_locks(ctx)
     return ctx
+
+
+# A RENAME or DROP assembled at run time (EXECUTE format(...) or a string
+# concatenation inside a function or DO block) names its objects in values
+# the linter cannot resolve. A literal EXECUTE 'DROP INDEX x' (the invalid-
+# index guard) still names its object and is not matched.
+DYNAMIC_DDL = re.compile(r"\bEXECUTE\b(?P<stmt>[^;]*)", re.IGNORECASE)
+DYNAMIC_DDL_VERB = re.compile(r"\b(?P<verb>RENAME|DROP)\b", re.IGNORECASE)
+DYNAMIC_DDL_BUILT = re.compile(r"\bformat\s*\(|\|\|", re.IGNORECASE)
+
+
+def lint_dynamic_ddl(ctx: Context, up: str, first_line: int) -> None:
+    """dynamic-ddl: a RENAME or DROP the migration builds with EXECUTE.
+    The previous-release reference check cannot see its objects, so the
+    previous release kept reading eleven renamed tables until restarted and
+    deployments failed for five minutes (20261107145315064, prod 2026-11-09).
+    Write the statements literally, or waive naming what the previous release
+    reads instead."""
+    seen: set[int] = set()
+    for m in DYNAMIC_DDL.finditer(up):
+        stmt = m.group("stmt")
+        verb = DYNAMIC_DDL_VERB.search(stmt)
+        if verb is None or DYNAMIC_DDL_BUILT.search(stmt) is None:
+            continue
+        line = first_line + up.count("\n", 0, m.start())
+        if line in seen:
+            continue
+        seen.add(line)
+        ctx.add(line, "dynamic-ddl", "*",
+                f"EXECUTE builds a {verb.group('verb').upper()} at run time, so the previous release's references to the "
+                "objects it changes are not checked. Write each RENAME/DROP as a literal statement, or waive with "
+                "`-- migration-lint: allow dynamic-ddl: <why the previous release does not read them>`.")
 
 
 def churn_line(changes: list[tuple[int, str, int]]) -> int | None:
@@ -641,6 +698,17 @@ def lint_statement(ctx: Context, stmt: list[Token]) -> None:
             ctx.lock_timeout_group = ctx.group
             local = w[:2] == ["set", "local"] if w[:1] == ["set"] else set_config_is_local(stmt)
             ctx.session_lock_timeout = ctx.session_lock_timeout or not local
+        return
+
+    if w[:1] == ["set"] and "statement_timeout" in w[:3]:
+        if w[:2] == ["set", "local"]:
+            if ctx.no_transaction and ctx.do_block is None:
+                ctx.add(line, "statement-timeout-local", "*",
+                        "in a `-- +goose NO TRANSACTION` migration every goose statement is its own transaction, so "
+                        "SET LOCAL statement_timeout ends with it and bounds nothing. Use a session-level "
+                        "`SET statement_timeout = ...;`.")
+        else:
+            ctx.session_statement_timeout = True
         return
 
     if w[0] == "commit":
@@ -734,6 +802,8 @@ def lint_create(ctx: Context, stmt: list[Token], w: list[str], line: int) -> Non
         if concurrently and not ctx.no_transaction:
             ctx.add(line, "concurrently-in-transaction", index_name or relation,
                     "CREATE INDEX CONCURRENTLY needs `-- +goose NO TRANSACTION` in this migration.")
+        if ctx.exists(relation) and concurrently and ctx.no_transaction:
+            lint_concurrent_build(ctx, stmt, line, relation, index_name)
         if ctx.exists(relation) and not concurrently:
             ctx.need_lock_timeout(line, "CREATE INDEX", relation)
             ctx.add(line, "index-build", relation,
@@ -751,6 +821,24 @@ def lint_create(ctx: Context, stmt: list[Token], w: list[str], line: int) -> Non
         relation, _ = name_at(stmt, 4)
         if ctx.exists(relation):
             ctx.need_lock_timeout(line, "CREATE OR REPLACE VIEW", relation)
+
+
+def lint_concurrent_build(ctx: Context, stmt: list[Token], line: int, relation: str, index_name: str) -> None:
+    """A concurrent build on an existing table needs a session
+    statement_timeout, and an IF NOT EXISTS build needs the invalid-index
+    guard before it (bug hunt H73)."""
+    if not ctx.session_statement_timeout:
+        ctx.add(line, "index-build-timeout", relation,
+                f"CREATE INDEX CONCURRENTLY on existing {relation} runs under the migrator's 30 s statement_timeout, and a "
+                "cancelled build leaves an INVALID index. Start the Up section with a session-level "
+                "`SET statement_timeout = 0;` (or a measured bound), or waive with the measured build time.")
+    if index_name and "exists" in words(stmt)[:8]:
+        before = "\n".join(text for n, text in sorted(ctx.up_lines.items()) if n < line).lower()
+        if "indisvalid" not in before or index_name.lower() not in before:
+            ctx.add(line, "index-invalid-guard", index_name,
+                    f"CREATE INDEX CONCURRENTLY IF NOT EXISTS keeps an INVALID {index_name} left by a failed build. Drop it "
+                    "first: a DO block that runs DROP INDEX when pg_index.indisvalid is false for it "
+                    "(see 20261027225845842_events_at_brin_idx.sql).")
 
 
 def lint_drop(ctx: Context, stmt: list[Token], w: list[str], line: int) -> None:

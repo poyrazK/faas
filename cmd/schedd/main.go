@@ -522,7 +522,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	nodeInfos := make([]sched.ComputeNodeInfo, 0, len(nodes))
 	for _, n := range nodes {
-		nodeInfos = append(nodeInfos, sched.ComputeNodeInfo{ID: n.ID, TargetURL: n.TargetURL})
+		nodeInfos = append(nodeInfos, sched.ComputeNodeInfo{ID: n.ID, Name: n.Name, TargetURL: n.TargetURL})
 	}
 	// The clone ownership recorders serve only full environment clones
 	// (ADR-590). They run while full_environment_clones_enabled is on, which
@@ -615,7 +615,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		row, err := store.ComputeNodeByID(rctx, nodeID)
 		switch {
 		case err == nil:
-			vmmRouter.Refresh(nodeID, row.TargetURL)
+			vmmRouter.RefreshNode(nodeID, row.TargetURL, row.Name)
 			nodeRegistry.Refresh(row)
 			warnCPUIdentities()
 			return nil
@@ -755,6 +755,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// scheduler's fleet-wide placement; a configured owner pins this
 	// schedd to its registered compute node.
 	engine.WithOwnerNodeID(ownerNodeID)
+	// Workloads reach this installation's API through GREGALE_API_URL; unset
+	// leaves the SDK default, https://api.gregale.dev.
+	engine.WithPublicAPIURL(os.Getenv("FAAS_PUBLIC_API_URL"))
 	if leaseGuard != nil {
 		engine.WithTakeoverGuard(leaseGuard)
 	}
@@ -809,8 +812,27 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-1155: on-demand profile capture outcomes, queue waits and the
 	// automatic captures schedd skips, for the capture alerts.
 	engine.WithProfileCaptureMetrics(wire.NewProfileCaptureMetrics(ops.Registry()))
-	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones},
+	requestConcurrency := &runtimeconfig.RequestConcurrency{}
+	// ADR-20261106214916: after a node takes a release, find the recently
+	// active apps whose snapshots there the release made stale.
+	snapshotRefresher := sched.NewSnapshotRefresher(engine, ops.Registry(), log)
+	// ADR-20261109172421: memory is the only capacity limit; count what the
+	// vCPU and CPU budgets would have refused.
+	engine.WithCPUAdmissionMetrics(ops.Registry())
+	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, runtimeconfig.RequestConcurrencyKeys...), snapshotRefreshKeys...),
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
+			if handled, err := requestConcurrency.Apply(key, value); handled {
+				if err == nil {
+					log.Info("schedd: applied request limit setting (ADR-20261101215228)", "key", key, "value", string(value))
+				}
+				return err
+			}
+			if handled, err := applySnapshotRefreshConfig(snapshotRefresher, key, value); handled {
+				if err == nil {
+					log.Info("schedd: applied snapshot refresh setting (ADR-20261106214916)", "key", key, "value", string(value))
+				}
+				return err
+			}
 			enabled, err := runtimeconfig.Bool(value)
 			if err != nil {
 				return err
@@ -836,6 +858,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go func() {
 		if err := watcher.Run(runtimeCtx); err != nil && !runtimeconfig.IsContextDone(err) {
 			log.Error("schedd: runtime config watcher exited", "err", err)
+		}
+	}()
+	go func() {
+		if err := snapshotRefresher.Run(runtimeCtx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("schedd: snapshot refresher exited", "err", err)
 		}
 	}()
 
@@ -1824,6 +1851,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("quiet pause ledger enabled (ADR-20261023171905)",
 			"flush_seconds", api.QuietPauseLedgerFlushSeconds)
 	}
+	switch {
+	case cfg.IdleLadderIdleOut && !cfg.QuietPauseLedger:
+		log.Warn("idle_ladder_idle_out ignored: it needs quiet_pause_ledger (ADR-20261107122928)")
+	case cfg.IdleLadderIdleOut:
+		// The reaper holds an account's paused instances only where meterd
+		// leaves their paused seconds unbilled: the same flag decision.
+		engine.WithIdleLadderIdleOut(func(subject platformflags.Subject) bool {
+			return capabilityFlags.Enabled(platformflags.QuietPauseUnbilled, subject)
+		})
+		log.Info("idle ladder idle-out enabled (ADR-20261107122928)",
+			"snapshot_after_seconds", api.IdleLadderSnapshotAfterSeconds)
+	}
 	if cfg.FrozenTier {
 		engine.EnableFrozenTier()
 		if cfg.FrozenTierApps {
@@ -1856,6 +1895,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return err
 		}
 		log.Info("owner cache enabled (ADR-1741)")
+	}
+	if cfg.AsyncWakeFinalize {
+		engine.WithAsyncWakeFinalize()
+		log.Info("async wake finalize enabled (ADR-20261105090246)")
 	}
 	// The local Reader above deliberately contains only instances physically
 	// resident on this node: scheddgrpc.ListInstanceStats and meterd rely on
@@ -1896,6 +1939,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("quiet pause admission enabled (ADR-1151)",
 			"max_overcommit_percent", api.QuietPauseMaxVCPUOvercommitPercent,
 			"peer_nodes", ownerNodeID != "")
+		// ADR-20261107122928: instances vmmd holds at the idle ladder's
+		// freeze level leave measured admission's cap on reservations, and
+		// the durable guard applies the same discount. Only a vmmd with
+		// idle_ladder on reports the level.
+		ladderFrozen := instancestats.IdleLadderFrozenAcross(reader, autoscaleReader, ownerNodeID)
+		engine.Ledger().EnableIdleLadderAdmission(func(nodeID string) (map[string]struct{}, time.Time, bool) {
+			return ladderFrozen(nodeID, time.Now())
+		})
 	}
 	// ADR 20261029151111 measured CPU admission reads instances' measured
 	// CPU the same way: own node locally, peer nodes from the fleet reader.
@@ -2065,6 +2116,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithHeartbeat(hb).
 		WithInstanceStats(statsPoller).
 		WithInstanceActivity(autoscaleReader).
+		WithIdleLadderIdleOutMetrics(sched.NewIdleLadderIdleOutMetrics(ops.Registry())).
 		// Issue #171: shared Prometheus registry (same instance the
 		// engine got) — needed by the aggressive-reaper scale-down
 		// counter (ObserveScaleDown) and the audit-row emission.
@@ -2122,6 +2174,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// accountor and the broker egress was effectively unbounded
 	// in prod. A parse error fails boot loudly so a typo can't
 	// silently disable the shaper.
+	// ADR 20261104143005: the stats tick runs on the loop; its recycles and
+	// capture requests run on the loop's work pool instead.
+	statsPoller.WithEnforcementDispatch(loop.EnforcementDispatch)
 	if beCfg, ok, err := brokerEgressConfigFromEnv(); err != nil {
 		log.Error("broker egress config: invalid env", "err", err)
 		os.Exit(1)
@@ -2543,7 +2598,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		backend := sched.NewRoutedVmmdAppTaskBackend(vmmRouter, engine.ResolveAppTaskRuntime)
 		appTaskCoordinator = sched.NewAppTaskCoordinator(store, backend, sched.AppTaskCoordinatorConfig{
-			Enabled: true, Owner: owner, MaxConcurrent: appTaskDispatchConcurrency, Metrics: appTaskMetrics,
+			Enabled: true, Owner: owner, NodeID: strings.TrimSpace(ownerNodeID), MaxConcurrent: appTaskDispatchConcurrency, Metrics: appTaskMetrics,
 		}, log)
 		log.Info("schedd: app task dispatch enabled", "owner", owner, "max_concurrent", appTaskDispatchConcurrency)
 	}
@@ -2822,6 +2877,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	streamDrain.Begin()
 	//nolint:contextcheck // shutdown must outlive the canceled daemon context.
 	stopGRPCServer(stopCtx, gsrv)
+	// ADR-20261105090246: keep the records of wakes that already answered.
+	//nolint:contextcheck // shutdown must outlive the canceled daemon context.
+	if err := engine.WaitWakeFinalize(stopCtx); err != nil {
+		log.Warn("schedd: wake bookkeeping still running at shutdown", "err", err)
+	}
 	if httpSrv != nil {
 		//nolint:contextcheck // shutdown context is intentionally detached from the already-cancelled caller ctx.
 		_ = httpSrv.Shutdown(stopCtx)

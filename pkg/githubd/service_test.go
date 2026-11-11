@@ -533,6 +533,7 @@ type enqueueCall struct {
 	tag                string
 	githubSourceRef    string
 	githubInstallation int64
+	addresses          map[string]string
 }
 
 func (r *recordingEnqueuer) Enqueue(_ context.Context, spec BuildSpec) (state.Build, error) {
@@ -546,6 +547,7 @@ func (r *recordingEnqueuer) Enqueue(_ context.Context, spec BuildSpec) (state.Bu
 		tag:                spec.Tag,
 		githubSourceRef:    spec.GitHubSourceRef,
 		githubInstallation: spec.GitHubInstallationID,
+		addresses:          spec.ComposeServiceAddresses,
 	})
 	if r.err != nil {
 		return state.Build{}, r.err
@@ -1262,6 +1264,16 @@ func TestFilterByPath_Unit(t *testing.T) {
 			mode:      "paths",
 			wantIDs:   []string{"root"},
 			wantSkips: []string{"auth", "billing"},
+		},
+		{
+			// The root gregale.yaml declares every function of a
+			// functions project (ADR-20261108160000 §3): it rebuilds
+			// every member, a root-dir workload included.
+			name:    "paths mode + root gregale.yaml rebuilds every member",
+			apps:    appsWithRoot,
+			files:   []string{"gregale.yaml"},
+			mode:    "paths",
+			wantIDs: []string{"auth", "billing", "root"},
 		},
 		{
 			// Lockfile fallback (no member touched, no root-dir

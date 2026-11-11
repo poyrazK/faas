@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -364,6 +365,9 @@ func (c *CompiledSchema) Validate(body []byte) (*FieldError, error) {
 		// schema_digest + sample first-byte for forensics.
 		return &FieldError{Field: "", Expected: "json", Got: "non-json"}, nil //nolint:nilerr
 	}
+	if fe := duplicateKeyProblem(body); fe != nil {
+		return fe, nil
+	}
 	if err := c.Schema.Validate(v); err != nil {
 		// jsonschema/v6 returns a *ValidationError. errors.As
 		// walks the wrap chain (the library nests via
@@ -403,6 +407,12 @@ func translateValidationError(ve *jsonschema.ValidationError) *FieldError {
 		ve = ve.Causes[0]
 	}
 	field := jsonschemautil.JoinInstanceLocation(ve.InstanceLocation)
+	// A required failure is located at the object that lacks the property,
+	// so a missing root field printed an empty field (Hunt 32 H32-60). The
+	// field names the missing property instead.
+	if required, ok := ve.ErrorKind.(*kind.Required); ok && len(required.Missing) > 0 {
+		field = jsonschemautil.JoinInstanceLocation(append(slices.Clone(ve.InstanceLocation), required.Missing[0]))
+	}
 	// unevaluatedProperties (reject_on_unknown_fields) reports each
 	// undeclared field as a false-schema leaf; only its schema location
 	// names the keyword.

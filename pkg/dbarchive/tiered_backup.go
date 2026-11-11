@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -20,17 +21,19 @@ const maxManifestBytes = 64 << 10
 // ListAllBackups returns the database's base backups on this node and in
 // the bucket, oldest first. A bucket manifest counts only next to its data
 // (uploads put data first, so this holds unless the data was deleted).
-// When the bucket cannot be listed, the off-site mirror's backups stand
-// in for it.
+// When the bucket cannot be listed or has no backups, the off-site
+// mirror's backups stand in for it.
 func (s *TieredStore) ListAllBackups(ctx context.Context, databaseID string) ([]BackupManifest, error) {
 	local, err := s.ListBackups(databaseID)
 	if err != nil || s.Remote == nil {
 		return local, err
 	}
 	out, err := listRemoteBackups(ctx, s.Remote, BaseKey(s.Prefix, databaseID, ""), local)
-	if err != nil && s.Offsite != nil {
+	if s.Offsite != nil && (err != nil || len(out) == 0) {
 		if mirrored, oerr := listRemoteBackups(ctx, s.Offsite, BaseKey(s.OffsitePrefix, databaseID, ""), local); oerr == nil {
 			return mirrored, nil
+		} else if err == nil {
+			return nil, oerr
 		}
 	}
 	return out, err
@@ -73,6 +76,17 @@ func listRemoteBackups(ctx context.Context, remote Remote, prefix string, local 
 // SelectBackup picks from both tiers.
 func (s *TieredStore) SelectBackup(ctx context.Context, wal Store, databaseID string, target time.Time) (BackupManifest, error) {
 	backups, err := s.ListAllBackups(ctx, databaseID)
+	if err != nil {
+		return BackupManifest{}, err
+	}
+	backup, err := selectBackup(ctx, wal, databaseID, target, backups)
+	if !errors.Is(err, ErrNotFound) || s.Offsite == nil {
+		return backup, err
+	}
+	// A successful bucket listing can still be incomplete, or contain only
+	// backups newer than target. Consult the mirror before declaring the
+	// point unavailable, without making healthy primary restores wait on it.
+	backups, err = listRemoteBackups(ctx, s.Offsite, BaseKey(s.OffsitePrefix, databaseID, ""), backups)
 	if err != nil {
 		return BackupManifest{}, err
 	}
@@ -119,14 +133,20 @@ type remoteBackup struct {
 	dec    *zstd.Decoder
 	pipe   *io.PipeReader
 	cancel context.CancelFunc
+	close  sync.Once
 }
 
 func (r *remoteBackup) Read(p []byte) (int, error) { return r.dec.Read(p) }
 
 func (r *remoteBackup) Close() error {
-	r.dec.Close()
-	r.cancel()
-	return r.pipe.Close()
+	r.close.Do(func() {
+		// Decoder shutdown waits for pending reads. Cancel the request and
+		// unblock the pipe first, including remotes blocked inside Write.
+		r.cancel()
+		_ = r.pipe.Close()
+		r.dec.Close()
+	})
+	return nil
 }
 
 // limitedBuffer refuses writes past its limit.

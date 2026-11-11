@@ -51,6 +51,32 @@ func exerciseKeyProjectLimits(t *testing.T, store contractTestStore) {
 		t.Fatalf("changing a limit = %v, want ErrConflict", err)
 	}
 
+	// Rotation never widens a limit: the successor keeps it, on the account
+	// path and on the organization path the API rotates through.
+	_, rotatedHash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotated, _, err := store.RotateAPIKey(ctx, acct.ID, key.ID, rotatedHash, "", time.Hour)
+	if err != nil {
+		t.Fatalf("RotateAPIKey: %v", err)
+	}
+	if ids, limited, err := store.APIKeyProjectLimit(ctx, rotated.ID); err != nil || !limited || !slices.Equal(ids, projects) {
+		t.Fatalf("limit of the rotated key = %v, %v, %v; want %v", ids, limited, err, projects)
+	}
+	_, orgHash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := rotated.ID
+	orgRotated, _, err := store.RotateOrgAPIKeyWithProvenance(ctx, rotated.OrgID, rotated.ID, orgHash, "", 0, "", "", &parent)
+	if err != nil {
+		t.Fatalf("RotateOrgAPIKeyWithProvenance: %v", err)
+	}
+	if ids, limited, err := store.APIKeyProjectLimit(ctx, orgRotated.ID); err != nil || !limited || !slices.Equal(ids, projects) {
+		t.Fatalf("limit of the org-rotated key = %v, %v, %v; want %v", ids, limited, err, projects)
+	}
+
 	sum := sha256.Sum256([]byte("key-projects-code-" + suffix))
 	if err := store.IssueCliAuthCode(ctx, sum[:], time.Now().Add(time.Minute)); err != nil {
 		t.Fatalf("IssueCliAuthCode: %v", err)
@@ -82,4 +108,36 @@ func TestPgStoreKeyProjectLimits(t *testing.T) {
 		t.Fatalf("db.MigrateUp: %v", err)
 	}
 	exerciseKeyProjectLimits(t, state.NewPgStore(pool))
+}
+
+// adr: 20261104085712 — the upload edge reads the same restriction apid
+// writes, even though an older credential RPC returns only the raw key.
+func TestPgEdgeStoreKeyProjectLimit(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	store, edge := state.NewPgStore(pool), state.NewEdgeStore(pool)
+	account, err := store.CreateAccount(t.Context(), "edge-project-limit@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sum, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := store.CreateAPIKey(t.Context(), account.ID, sum, "agent", []string{api.ScopeAgent, api.ScopeStorageWrite})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids, limited, err := edge.APIKeyProjectLimit(t.Context(), key.ID); err != nil || limited || len(ids) != 0 {
+		t.Fatalf("unlimited key at edge = %v, %v, %v", ids, limited, err)
+	}
+	projects := []string{uuid.NewString()}
+	if err = store.SetAPIKeyProjectLimit(t.Context(), key.ID, projects); err != nil {
+		t.Fatal(err)
+	}
+	if ids, limited, err := edge.APIKeyProjectLimit(t.Context(), key.ID); err != nil || !limited || !slices.Equal(ids, projects) {
+		t.Fatalf("restricted key at edge = %v, %v, %v", ids, limited, err)
+	}
 }

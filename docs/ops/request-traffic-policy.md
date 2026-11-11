@@ -170,7 +170,14 @@ estimate includes Go defaults added during decoding, the mirrored preset ID,
 HTML/Unicode escapes and timestamp spelling allowance. It can refuse a policy
 close to the byte ceiling before the exact compiler size reaches that ceiling.
 
-Each before/after analysis phase has a two-second allowance. Its SQL read uses
+Each before/after analysis phase has a two-second allowance. The allowance
+times reads only. Waiting for a pool connection, the session advisory locks, the
+capacity and account row locks and the request's access fence (a `FOR SHARE`
+that waits for a membership or credential change in flight) happen outside it,
+so a starved pool or a slow lock holder cannot refuse a write as out of time
+while the analysis itself was small (Hunt 31 H31-11; the rc.322 node canary).
+A binding write takes one connection per attempt for its discovery reads, its
+session locks and its transaction. Its SQL read uses
 a local 1,750 ms server timeout so cancellation does not depend on client
 connection cleanup; the previous statement timeout is restored on success.
 Analysis also limits inputs to 100,000 groups/assets/environment/primary/alias/revision/domain/reservation identities, metadata to 64 MiB,
@@ -538,6 +545,7 @@ state is `observed`, `mixed`, or `unverified`. Modes show:
 | `security_revocation` | Emergency revocation registry attached to the handler |
 | `managed_http` | Tenant managed HTTP listener constructed and bound |
 | `managed_circuit` | Adaptive endpoint breaker attached to that managed HTTP listener |
+| `edge_header_secrets` | Gateway opens sealed edge-rule request header values; until every serving gateway does, apid stores new credential values as written (omitted by older releases) |
 
 Shared retry endpoint identities contain no URL or credentials and are used
 only for aggregation; the customer response contains no node names or process

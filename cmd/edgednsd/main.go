@@ -5,9 +5,17 @@
 // It runs on the control plane. It holds the zone's DNS: Edit token, which
 // never reaches a compute node or an internet-facing process, and listens
 // only for metrics. Every tick it reads the node registry, probes each
-// node's edge on the private network, and lets pkg/edgedns move the records.
+// node's edge on the private network, shakes hands with each node's public
+// address for every DNS-only name, and lets pkg/edgedns move the records.
 // It starts in dry run: it logs and counts what it would change until
 // FAAS_EDGEDNS_DRY_RUN=0.
+//
+// With FAAS_EDGEDNS_CERT_NAMES set it also keeps the apps domains'
+// publicly trusted certificate (ADR-20261103163954 §3): it orders it from
+// Let's Encrypt with the DNS-01 challenge, through the same token, and
+// stores it with its key sealed to the compute edges. With
+// FAAS_EDGEDNS_CT_DOMAIN set it watches Certificate Transparency for
+// certificates under that domain it did not issue.
 package main
 
 import (
@@ -21,6 +29,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/edgecert"
 	"github.com/onebox-faas/faas/pkg/edgedns"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -65,7 +74,29 @@ func run(ctx context.Context, log *slog.Logger) error {
 		registry: state.NewPgStore(pool),
 		probe:    edgedns.HTTPProbe{Client: &http.Client{Timeout: edgedns.ProbeTimeout}},
 		public:   cfg.public,
+		private:  cfg.private,
 		edgePort: cfg.edgePort,
+		// A staging certificate chains to a root no client trusts; the probe
+		// then checks the names alone.
+		direct:      edgedns.TLSProbe{NameOnly: cfg.cert.enabled() && cfg.cert.ca == edgecert.CALetsEncryptStaging},
+		directHosts: dnsOnlyHosts(cfg.names),
+	}
+	certStore := edgecert.NewPgStore(pool)
+	if cfg.cert.enabled() {
+		certs, err := newCertManager(cfg.cert, dns, certStore, edgecert.NewMetrics(ops.Registry()), log)
+		if err != nil {
+			return err
+		}
+		go certs.Run(ctx)
+		log.Info("edgednsd: certificate on", "names", strings.Join(cfg.cert.names, ","), "ca", cfg.cert.ca)
+	}
+	if cfg.watch.enabled() {
+		watch, err := newTransparency(cfg.watch, certStore, edgecert.NewTransparencyMetrics(ops.Registry()), log)
+		if err != nil {
+			return err
+		}
+		go watch.Run(ctx)
+		log.Info("edgednsd: certificate transparency watch on", "domain", cfg.watch.domain, "allow", strings.Join(cfg.watch.allow, ","), "api_key", cfg.watch.apiKeyFile != "")
 	}
 	log.Info("edgednsd: running", "names", len(cfg.names), "nodes", len(cfg.public), "dry_run", cfg.dryRun, "interval", cfg.interval)
 
@@ -79,6 +110,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+// dnsOnlyHosts lists the DNS-only names, whose clients connect to the nodes'
+// public addresses themselves.
+func dnsOnlyHosts(names []edgedns.Name) []string {
+	var hosts []string
+	for _, name := range names {
+		if name.DNSOnly {
+			hosts = append(hosts, name.Host)
+		}
+	}
+	return hosts
 }
 
 // tick is one reconcile. A failed registry read or record write is logged and

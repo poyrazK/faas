@@ -58,16 +58,23 @@ func (e *blocked) Error() string { return e.code }
 func (e *Engine) Reconcile(ctx context.Context, p Pipeline, raw string, current func(context.Context) error) Observation {
 	ob := pipelineObservation(p)
 	err := e.withTarget(ctx, p, current, func(target *pgx.Conn, owner string) error {
+		if p.DesiredState == "paused" && p.ReaderChange != nil && p.ReaderChange.State == "approved" {
+			if err := pausePipelineSubscriptions(ctx, p, target, current); err != nil {
+				return err
+			}
+		}
 		applied, err := applyReaders(ctx, p, target, current)
 		if err != nil {
-			return err
+			if p.DesiredState != "paused" {
+				return err
+			}
+			// Pause is already committed. Keep the reader change approved for
+			// retry and continue observing the paused stream, under its fence.
+			if err = current(ctx); err != nil {
+				return err
+			}
 		}
 		if applied != nil {
-			if p.DesiredState == "paused" {
-				if err := pausePipelineSubscriptions(ctx, p, target, current); err != nil {
-					return err
-				}
-			}
 			ob.ReaderChange, ob.ReaderOnly = applied, true
 			// Acknowledge the policy receipt before ordinary reconciliation can
 			// retire this generation and delete it. A lost acknowledgement must
@@ -192,7 +199,12 @@ func (e *Engine) reconcileUnavailable(ctx context.Context, p Pipeline, current f
 		}
 		applied, err := applyReaders(ctx, p, target, current)
 		if err != nil {
-			return err
+			if p.DesiredState != "paused" {
+				return err
+			}
+			if err = current(ctx); err != nil {
+				return err
+			}
 		}
 		if applied != nil {
 			ob.ReaderChange, ob.ReaderOnly = applied, true
@@ -227,7 +239,7 @@ func (e *Engine) reconcile(ctx context.Context, p Pipeline, raw string, source *
 			_ = allowMirrorReads(ctx, p, target, false)
 			retained := p
 			retained.DesiredState = "deleted"
-			_ = e.cleanupGeneration(ctx, retained, raw, source, target)
+			_ = e.cleanupGeneration(ctx, retained, raw, source, target, current)
 		}
 	}()
 	if p.DesiredState == "paused" || p.DesiredState == "deleted" {
@@ -260,7 +272,7 @@ func (e *Engine) reconcile(ctx context.Context, p Pipeline, raw string, source *
 		}
 	}
 	if p.DesiredState == "deleted" {
-		if err := e.cleanupGeneration(ctx, p, raw, source, target); err != nil {
+		if err := e.cleanupGeneration(ctx, p, raw, source, target, current); err != nil {
 			ob.State = "deleting"
 			return err
 		}
@@ -274,6 +286,12 @@ func (e *Engine) reconcile(ctx context.Context, p Pipeline, raw string, source *
 		return &blocked{p.Reason, true}
 	}
 	if p.DesiredState == "paused" {
+		// Source metadata is optional for pause. Bound this bookkeeping so a
+		// failing observation cannot prevent disabling the owned subscription.
+		_ = rememberSourceSlotBeforePause(ctx, p, source, target, current)
+		if err := current(ctx); err != nil {
+			return err
+		}
 		if err := setSubscriptionEnabled(ctx, p, target, false); err != nil {
 			return err
 		}
@@ -322,27 +340,46 @@ func (e *Engine) reconcile(ctx context.Context, p Pipeline, raw string, source *
 			return nil
 		}
 	}
+	previousGeneration, err := mirrorGeneration(ctx, p, target)
+	if err != nil {
+		return err
+	}
 	if err := prepareMirror(ctx, p, target, owner, relations, hash); err != nil {
 		return err
+	}
+	if previousGeneration == 0 {
+		if err = initializeSourceStorage(ctx, p, source, target, relations, current); err != nil {
+			return err
+		}
 	}
 	if err := ensurePublication(ctx, p, source); err != nil {
 		return err
 	}
-	if err := ensureSubscription(ctx, p, source, target, pinned); err != nil {
+	if err := ensureSubscription(ctx, p, source, target, pinned, current); err != nil {
 		return err
 	}
 	ob.Initialized = true
 	if err := checkRetention(ctx, p, source, target, ob); err != nil {
 		return err
 	}
-	var ready int
-	err = target.QueryRow(ctx, `SELECT count(*) FROM pg_subscription_rel r JOIN pg_subscription s ON s.oid=r.srsubid WHERE s.subname=$1 AND r.srsubstate='r'`, pipelineName(p)).Scan(&ready)
+	ready, initialReady, err := observeInitialCopy(ctx, p, source, target, current)
 	if err != nil {
 		return err
+	}
+	storageRecheck := false
+	if !activeSchema {
+		storageRecheck, err = gateSourceStorage(ctx, p, source, target, relations, current)
+		if err != nil {
+			return err
+		}
 	}
 	ob.TablesReady = ready
 	if ready != len(p.Tables) {
 		ob.State, ob.Reason = "copying", ""
+		return nil
+	}
+	if !initialReady {
+		ob.State, ob.Reason = "catching_up", "waiting_for_replication"
 		return nil
 	}
 	if err := observeAppliedProgress(ctx, p, source, target, ob); err != nil {
@@ -371,6 +408,9 @@ func (e *Engine) reconcile(ctx context.Context, p Pipeline, raw string, source *
 			return err
 		}
 	}
+	if storageRecheck {
+		return recheckSourceStorage(ctx, p, source, target, relations, ob, current)
+	}
 	// Retry quarantine before reopening reads if its first transaction failed
 	// or its reply was lost. Catalog mismatch metadata must never become live
 	// merely because the ordinary verification request has already finished.
@@ -383,6 +423,11 @@ func (e *Engine) reconcile(ctx context.Context, p Pipeline, raw string, source *
 		}
 	}
 	ob.State, ob.Reason = "live", ""
+	if !activeSchema && !p.VerifyRequested {
+		if err := observePassedVerification(ctx, p, target, relations, ob); err != nil {
+			return err
+		}
+	}
 	if p.VerifyRequested {
 		ready, err := verifyResumable(ctx, p, source, target, relations, ob, current)
 		if err != nil && !verificationTransient(err) {
@@ -438,6 +483,7 @@ func inspectSource(ctx context.Context, p Pipeline, source *pgxpool.Pool) ([]rel
 		}
 		result = append(result, r)
 	}
+	result = recordedSourceMetadata(p, result)
 	return result, relationHash(result), nil
 }
 func supportedType(typ string) bool {
@@ -458,24 +504,52 @@ func (e *Engine) sourceConninfo(ctx context.Context, raw string) (string, error)
 	if err != nil {
 		return "", ErrUnavailable
 	}
-	slices.SortFunc(addresses, func(a, b netip.Addr) int { return a.Compare(b) })
+	return nativeSourceConninfo(u, qualifiedSourceAddresses(addresses, e.Policy.Prefixes))
+}
+
+func qualifiedSourceAddresses(addresses []netip.Addr, prefixes []netip.Prefix) []string {
+	qualified := []string{}
 	for _, address := range addresses {
 		ip := address.Unmap()
-		if ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		if !ip.IsValid() || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 			continue
 		}
-		for _, prefix := range e.Policy.Prefixes {
+		for _, prefix := range prefixes {
 			if prefix.Contains(ip) {
-				q := u.Query()
-				q.Set("hostaddr", netip.Addr(ip).String())
-				q.Set("application_name", "gregale-data-pipeline")
-				q.Set("sslrootcert", "system")
-				u.RawQuery = q.Encode()
-				return u.String(), nil
+				qualified = append(qualified, ip.String())
+				break
 			}
 		}
 	}
-	return "", ErrUnavailable
+	slices.Sort(qualified)
+	return slices.Compact(qualified)
+}
+
+func nativeSourceConninfo(u *url.URL, addresses []string) (string, error) {
+	if len(addresses) == 0 {
+		return "", ErrUnavailable
+	}
+	q := u.Query()
+	seconds := int64(api.DataPipelineNativeConnectTimeout / time.Second)
+	if requested, err := strconv.ParseInt(q.Get("connect_timeout"), 10, 64); err == nil && requested > 0 && requested < seconds {
+		seconds = requested
+	}
+	q.Set("connect_timeout", strconv.FormatInt(seconds, 10))
+	q.Set("hostaddr", strings.Join(addresses, ","))
+	if len(addresses) > 1 {
+		// libpq requires matching host/hostaddr lists. Retain the original
+		// verified TLS hostname for every reviewed address in the fallback set.
+		hosts := make([]string, len(addresses))
+		for i := range hosts {
+			hosts[i] = u.Hostname()
+		}
+		q.Set("host", strings.Join(hosts, ","))
+	}
+	q.Set("application_name", "gregale-data-pipeline")
+	q.Set("sslrootcert", "system")
+	copy := *u
+	copy.RawQuery = q.Encode()
+	return copy.String(), nil
 }
 
 func prepareMirror(ctx context.Context, p Pipeline, target *pgx.Conn, owner string, relations []relation, hash string) error {
@@ -610,7 +684,7 @@ func ensurePublication(ctx context.Context, p Pipeline, source *pgxpool.Pool) er
 	return nil
 }
 
-func ensureSubscription(ctx context.Context, p Pipeline, source *pgxpool.Pool, target *pgx.Conn, conninfo string) error {
+func ensureSubscription(ctx context.Context, p Pipeline, source *pgxpool.Pool, target *pgx.Conn, conninfo string, current func(context.Context) error) error {
 	name := pipelineName(p)
 	var initialized bool
 	if err := target.QueryRow(ctx, `SELECT initialized FROM gregale_pipeline.mirrors WHERE pipeline_id=$1 AND generation=$2`, p.ID, p.Generation).Scan(&initialized); err != nil {
@@ -627,10 +701,24 @@ func ensureSubscription(ctx context.Context, p Pipeline, source *pgxpool.Pool, t
 	if (initialized && !exists) || (exists && !slot) {
 		return &blocked{"replication_state_lost", true}
 	}
+	if !exists {
+		// Capture the first main sender before selected writes can occur after
+		// initial copy. This preserves ordinary initial-copy admission without
+		// trusting an unknown first sender after a lost creation reply.
+		startup, lockErr := lockVerificationSource(ctx, source, p.Tables)
+		if lockErr != nil {
+			return lockErr
+		}
+		defer func() { _ = startup.Rollback(ctx) }()
+		current = liveRemovalFence(startup, current)
+	}
 	if !slot {
 		if _, err := source.Exec(ctx, `SELECT pg_create_logical_replication_slot($1,'pgoutput')`, name); err != nil {
 			return err
 		}
+	}
+	if err := recordSourceSlot(ctx, p, source, target, !exists && !initialized, current); err != nil {
+		return err
 	}
 	if !exists {
 		var barrier string
@@ -655,6 +743,11 @@ func ensureSubscription(ctx context.Context, p Pipeline, source *pgxpool.Pool, t
 	}
 	if err := setSubscriptionEnabled(ctx, p, target, true); err != nil {
 		return err
+	}
+	if !exists {
+		if err := captureInitialSourceSlot(ctx, p, source, target, current); err != nil {
+			return err
+		}
 	}
 	_, err = target.Exec(ctx, `UPDATE gregale_pipeline.mirrors SET initialized=true WHERE pipeline_id=$1 AND generation=$2`, p.ID, p.Generation)
 	return err
@@ -790,7 +883,7 @@ func checkRetention(ctx context.Context, p Pipeline, source *pgxpool.Pool, targe
 	return nil
 }
 
-func (e *Engine) cleanupGeneration(ctx context.Context, p Pipeline, raw string, source *pgxpool.Pool, target *pgx.Conn) error {
+func (e *Engine) cleanupGeneration(ctx context.Context, p Pipeline, raw string, source *pgxpool.Pool, target *pgx.Conn, current func(context.Context) error) error {
 	var comment string
 	publicationErr := source.QueryRow(ctx, `SELECT coalesce(obj_description(oid,'pg_publication'),'') FROM pg_publication WHERE pubname=$1`, pipelineName(p)).Scan(&comment)
 	if publicationErr != nil && !errors.Is(publicationErr, pgx.ErrNoRows) {
@@ -835,15 +928,16 @@ func (e *Engine) cleanupGeneration(ctx context.Context, p Pipeline, raw string, 
 			return err
 		}
 		if !slot {
-			// Native DROP SUBSCRIPTION cleans table-sync slots as well as its main
-			// slot. Restore a missing main slot only for this disabled, durably
-			// retiring generation, then let Postgres perform the complete cleanup.
-			if _, err := source.Exec(ctx, `SELECT pg_create_logical_replication_slot($1,'pgoutput')`, pipelineName(p)); err != nil {
+			if err = dropSubscriptionWithoutMainSlot(ctx, p, source, target, backed, current); err != nil {
 				return err
 			}
-		}
-		if _, err := target.Exec(ctx, "DROP SUBSCRIPTION "+ident(pipelineName(p))); err != nil {
-			return err
+		} else {
+			if err = current(ctx); err != nil {
+				return err
+			}
+			if _, err = target.Exec(ctx, "DROP SUBSCRIPTION "+ident(pipelineName(p))); err != nil {
+				return err
+			}
 		}
 	}
 	var slot bool

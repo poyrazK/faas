@@ -71,9 +71,10 @@ func TestPlanOverageMillicentsPerGBHour(t *testing.T) {
 	t.Parallel()
 
 	got := billing.PlanOverageMillicentsPerGBHour()
-	// CLAUDE.md hard limit: "Overage €0.01/GB-h" = 1_000 millicents.
-	if got != 1_000 {
-		t.Errorf("PlanOverageMillicentsPerGBHour() = %d, want 1000", got)
+	// CLAUDE.md hard limit: "Overage $0.05/GB-h" = 5_000 millicents
+	// (ADR-20261107192333).
+	if got != 5_000 {
+		t.Errorf("PlanOverageMillicentsPerGBHour() = %d, want 5000", got)
 	}
 
 	// Wrapper must agree with the pkg/api constant. Catches a future
@@ -101,10 +102,11 @@ func TestPlanOverageMillicentsPerGBHour(t *testing.T) {
 //     not the customer's working set)
 //   - Window: 24 h = 86_400 s
 //   - mbSeconds = 264 * 86_400 = 22_809_600
-//   - qty = 22_809_600 * 1000 / (1024 * 3600) = 22_809_600_000 / 3_686_400
-//     = 6186.666… → truncates to 6187 wire units
+//   - qty = 22_809_600 * 5000 / (1024 * 3600) = 114_048_000_000 / 3_686_400
+//     = 30937.5 → truncates to 30937 wire units ($0.05/GB-h,
+//     ADR-20261107192333)
 //
-// The trailing remainder (6186.666…) is the sub-milliunit gap; it is
+// The trailing remainder (the .5) is the sub-milliunit gap; it is
 // dropped on purpose — see WireQuantityForMBSeconds's docstring and
 // CLAUDE.md's "Floats near money fail review". The accumulation of
 // this remainder across millions of windows is the entire reason the
@@ -118,7 +120,7 @@ func TestWireQuantityForMBSeconds(t *testing.T) {
 		hoursInDay   = 24
 		secsInHour   = 3600
 		secsInDay    = hoursInDay * secsInHour
-		canonicalQty = 6187
+		canonicalQty = 30_937
 	)
 
 	cases := []struct {
@@ -127,8 +129,8 @@ func TestWireQuantityForMBSeconds(t *testing.T) {
 		want      int64
 	}{
 		// The acceptance case — a Hobby app resident for exactly one
-		// full day. qty MUST be 6187, not 6186, not 6188, not a
-		// float-rounded "6186.67". If this ever fails, the customer's
+		// full day. qty MUST be 30937, not 30936, not 30938, not a
+		// float-rounded "30937.5". If this ever fails, the customer's
 		// daily bill changes for both providers.
 		{
 			name:      "hobby_24h_canonical",
@@ -145,51 +147,49 @@ func TestWireQuantityForMBSeconds(t *testing.T) {
 		// customer should NOT be charged for a single second of
 		// runtime, only full minutes (meterd rounds upstream), but the
 		// helper itself must return the integer answer for whatever
-		// sum lands on it. 60 mb-s → 60 * 1000 / 3_686_400 = 0
+		// sum lands on it. 60 mb-s → 60 * 5000 / 3_686_400 = 0
 		// (truncated). Documents the sub-milliunit floor.
 		{name: "one_minute_one_mb", mbSeconds: 60, want: 0},
 
-		// One hour of one MB. 3_600 mb-s → 3_600_000 / 3_686_400 = 0
-		// (truncated, just barely). Pinned so any future change to
-		// the constant floors would surface here.
-		{name: "one_hour_one_mb", mbSeconds: 3_600, want: 0},
+		// One hour of one MB. 3_600 mb-s → 18_000_000 / 3_686_400 = 4
+		// (truncated from 4.88…). Pinned so any future change to the
+		// constant floors would surface here.
+		{name: "one_hour_one_mb", mbSeconds: 3_600, want: 4},
 
-		// Exactly one MB-second * 1000 — the breakpoint where 1 wire
-		// unit (one milli-cent of a GB-h) is reached. 3_687 mb-s →
-		// 3_687_000 / 3_686_400 = 1 (truncated from 1.000162…).
-		// The 3_686 vs 3_687 split is the rounding boundary the
+		// The breakpoint where 1 wire unit (one millicent) is reached:
+		// 738 mb-s → 3_690_000 / 3_686_400 = 1 (truncated from
+		// 1.000976…). The 737 vs 738 split is the rounding boundary the
 		// helper must respect exactly.
-		{name: "first_wire_unit", mbSeconds: 3_687, want: 1},
+		{name: "first_wire_unit", mbSeconds: 738, want: 1},
 
-		// One MB-resident-second below the breakpoint. 3_686 mb-s →
-		// 3_686_000 / 3_686_400 = 0 (truncated from 0.999892…).
+		// One MB-resident-second below the breakpoint. 737 mb-s →
+		// 3_685_000 / 3_686_400 = 0 (truncated from 0.99962…).
 		// Companion to the previous case — together they pin the
 		// exact floor.
-		{name: "below_first_wire_unit", mbSeconds: 3_686, want: 0},
+		{name: "below_first_wire_unit", mbSeconds: 737, want: 0},
 
 		// Pro plan (512 MB) for one hour. 520 * 3_600 = 1_872_000
-		// mb-s → 1_872_000_000 / 3_686_400 = 507 (truncated from
-		// 507.815…). Pin the higher-volume case to make sure the
+		// mb-s → 9_360_000_000 / 3_686_400 = 2539 (truncated from
+		// 2539.06…). Pin the higher-volume case to make sure the
 		// integer math doesn't overflow at the megabyte scale.
-		{name: "pro_one_hour", mbSeconds: 520 * 3_600, want: 507},
+		{name: "pro_one_hour", mbSeconds: 520 * 3_600, want: 2539},
 
 		// Free plan (128 MB) for one hour. 136 * 3_600 = 489_600
-		// mb-s → 489_600_000 / 3_686_400 = 132 (truncated from
-		// 132.810…). Cheapest plan, smallest integer.
-		{name: "free_one_hour", mbSeconds: 136 * 3_600, want: 132},
+		// mb-s → 2_448_000_000 / 3_686_400 = 664 (truncated from
+		// 664.06…). Cheapest plan, smallest integer.
+		{name: "free_one_hour", mbSeconds: 136 * 3_600, want: 664},
 
 		// Scale plan (1024 MB) for one hour. 1032 * 3_600 = 3_715_200
-		// mb-s → 3_715_200_000 / 3_686_400 = 1007 (truncated from
-		// 1007.717…). Top-of-fleet case for the per-hour helper.
-		{name: "scale_one_hour", mbSeconds: 1032 * 3_600, want: 1007},
+		// mb-s → 18_576_000_000 / 3_686_400 = 5039 (truncated from
+		// 5039.06…). Top-of-fleet case for the per-hour helper.
+		{name: "scale_one_hour", mbSeconds: 1032 * 3_600, want: 5039},
 
-		// Hobby resident for exactly one GB-second. 1_024 * 60 * 60 =
-		// 3_686_400 mb-s (1 GB resident for 1 hour) → 3_686_400_000
-		// / 3_686_400 = 1000 wire units. Pinned because 1000 is the
-		// cleanest round answer the formula produces, and is what a
-		// naive `gbHours * 1000` formula returns too — verifying the
-		// two paths agree at the exactly-aligned point.
-		{name: "one_gb_hour", mbSeconds: 1024 * 3600, want: 1000},
+		// One GB resident for one hour: 1_024 * 60 * 60 = 3_686_400
+		// mb-s → 5000 wire units, 5 cents at $0.05/GB-h. Pinned because
+		// it is the cleanest round answer the formula produces, and is
+		// what a naive `gbHours * 5000` formula returns too — verifying
+		// the two paths agree at the exactly-aligned point.
+		{name: "one_gb_hour", mbSeconds: 1024 * 3600, want: 5000},
 	}
 
 	for _, tc := range cases {
@@ -219,8 +219,8 @@ func TestWireQuantityForMBSeconds(t *testing.T) {
 func TestWireQuantityConstants(t *testing.T) {
 	t.Parallel()
 
-	if billing.WireQuantityMillicentsPerGBHour != 1000 {
-		t.Fatalf("WireQuantityMillicentsPerGBHour = %d, want 1000 (spec §4.7)",
+	if billing.WireQuantityMillicentsPerGBHour != 5000 {
+		t.Fatalf("WireQuantityMillicentsPerGBHour = %d, want 5000 (spec §4.7, ADR-20261107192333)",
 			billing.WireQuantityMillicentsPerGBHour)
 	}
 	if billing.SecondsPerGBHour != 1024*3600 {

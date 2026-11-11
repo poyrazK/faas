@@ -202,8 +202,16 @@ func TestPgStoreOverageCapCents_NullZeroPositive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get a: %v", err)
 	}
-	if okA || centsA != 0 {
-		t.Fatalf("a: (cents=%d, ok=%v), want (0, false)", centsA, okA)
+	// ADR-20261105120000: a paid NULL is held to the plan's ceiling.
+	if want, _ := api.PlanHobby.MaxSelfServiceOverageCapCents(); !okA || centsA != want {
+		t.Fatalf("a: (cents=%d, ok=%v), want (%d, true)", centsA, okA, want)
+	}
+	free, err := store.CreateAccount(ctx, "free@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatalf("create free: %v", err)
+	}
+	if cents, ok, err := store.GetAccountOverageCapCents(ctx, free.ID); err != nil || ok || cents != 0 {
+		t.Fatalf("free NULL: (%d, %v, %v), want (0, false, nil)", cents, ok, err)
 	}
 	centsB, okB, err := store.GetAccountOverageCapCents(ctx, b.ID)
 	if err != nil {
@@ -250,17 +258,27 @@ func TestPgStoreLoadAllOverageCapCents_BulkShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load all: %v", err)
 	}
-	if len(caps) != 2 {
-		t.Fatalf("len = %d, want 2", len(caps))
-	}
 	if caps[b.ID] != 0 {
 		t.Fatalf("b cents = %d, want 0", caps[b.ID])
 	}
 	if caps[c.ID] != 5000 {
 		t.Fatalf("c cents = %d, want 5000", caps[c.ID])
 	}
-	if _, leaked := caps[a.ID]; leaked {
-		t.Fatalf("a (NULL) leaked into the bulk read")
+	// ADR-20261105120000: a paid NULL is held to the plan's ceiling; a Free
+	// NULL has no cap and is not read.
+	if want, _ := api.PlanHobby.MaxSelfServiceOverageCapCents(); caps[a.ID] != want {
+		t.Fatalf("a (paid NULL) cents = %d, want %d", caps[a.ID], want)
+	}
+	free, err := store.CreateAccount(ctx, "free@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatalf("create free: %v", err)
+	}
+	caps, err = store.LoadAllOverageCapCents(ctx)
+	if err != nil {
+		t.Fatalf("load all: %v", err)
+	}
+	if _, leaked := caps[free.ID]; leaked {
+		t.Fatalf("free (NULL) leaked into the bulk read")
 	}
 }
 
@@ -272,10 +290,11 @@ func TestPgStoreCurrentMonthOverageCents_Formula(t *testing.T) {
 	}
 	appID := uuid.NewString()
 	instID := uuid.NewString()
-	// Hobby includes 50 GB-hours. Twelve additional GB-hours should be
-	// billed at one cent per GB-hour.
-	const wantCents = int64(12)
-	mbSeconds := int64(api.PlanHobby.PlanIncludedGBHours()+int(wantCents)) * api.SecondsPerGBHour
+	// Twelve GB-hours beyond the Hobby allowance are billed at the overage
+	// rate in the limits table ($0.05/GB-h since ADR-20261107192333).
+	const extraGBHours = int64(12)
+	wantCents := extraGBHours * api.OverageMillicentsPerGBHour / api.MillicentsPerCent
+	mbSeconds := (int64(api.PlanHobby.PlanIncludedGBHours()) + extraGBHours) * api.SecondsPerGBHour
 	now := time.Now().UTC()
 	if err := store.AppendUsage(ctx, acct.ID, appID, instID, now, mbSeconds, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("append: %v", err)
@@ -664,12 +683,12 @@ func TestPgStoreCurrentMonthOverageCents_NonUTC(t *testing.T) {
 	}
 
 	// Both in-month rows must be summed, the previous-month row excluded,
-	// and the Hobby GB-hour allowance applied once. The result is 2 cents.
+	// and the Hobby GB-hour allowance applied once: 2 GB-h of overage.
 	got, err := store.CurrentMonthOverageCents(ctx, acct.ID)
 	if err != nil {
 		t.Fatalf("CurrentMonthOverageCents: %v", err)
 	}
-	const wantCents = int64(2)
+	wantCents := 2 * api.OverageMillicentsPerGBHour / api.MillicentsPerCent
 	if got != wantCents {
 		t.Fatalf("got %d cents, want %d (boundary + previous-month exclusion under Istanbul TZ)", got, wantCents)
 	}

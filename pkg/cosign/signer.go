@@ -38,6 +38,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -132,6 +133,17 @@ type LocalSigner struct {
 	priv *ecdsa.PrivateKey
 	stor storage.StorageBackend
 	log  Logger
+	// v2 writes signatures bound to the artifact's key
+	// (ADR-20261109170000) instead of raw v1 signatures.
+	v2 bool
+}
+
+// WithSignatureV2 makes the signer write v2 signatures, which bind the
+// storage key. Turn it on only once every verifier reads v2: a verifier of
+// a release before ADR-20261109170000 rejects them.
+func (s *LocalSigner) WithSignatureV2(on bool) *LocalSigner {
+	s.v2 = on
+	return s
 }
 
 // Logger is a minimal interface for the signer to log non-fatal
@@ -159,6 +171,29 @@ func NewLocalSigner(path string, stor storage.StorageBackend, log Logger) (*Loca
 
 // Sign reads layerKey, computes ECDSA-P-256 over SHA-256(bytes),
 // writes the raw 64-byte signature to sigKey.
+// DigestObject streams the object at key and returns its lowercase hex
+// SHA-256 and size. Layers can be 1-2 GB, so it never holds the object in
+// memory, and it stops when ctx does. log may be nil.
+func DigestObject(ctx context.Context, stor storage.StorageBackend, key string, log Logger) (string, int64, error) {
+	rc, err := stor.Get(ctx, key)
+	if err != nil {
+		return "", 0, fmt.Errorf("cosign: read layer %q: %w", key, err)
+	}
+	h := sha256.New()
+	// io.Copy does not check ctx; a 1-2 GB hash on a piped stream would
+	// otherwise finish after the caller cancelled.
+	n, err := newCtxCopy(h, rc, ctx).Do()
+	if err != nil {
+		_ = rc.Close()
+		return "", 0, fmt.Errorf("cosign: hash layer %q: %w", key, err)
+	}
+	// A mid-read truncation on a remote backend surfaces only here.
+	if closeErr := rc.Close(); closeErr != nil && log != nil {
+		log.Warn("cosign: close layer reader after hash", "layer", key, "err", closeErr)
+	}
+	return hex.EncodeToString(h.Sum(nil)), n, nil
+}
+
 func (s *LocalSigner) Sign(ctx context.Context, layerKey, sigKey string) error {
 	if layerKey == "" || sigKey == "" {
 		return errors.New("cosign: Sign: empty layerKey or sigKey")
@@ -166,52 +201,33 @@ func (s *LocalSigner) Sign(ctx context.Context, layerKey, sigKey string) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("cosign: pre-sign ctx: %w", err)
 	}
-	rc, err := s.stor.Get(ctx, layerKey)
+	digestHex, _, err := DigestObject(ctx, s.stor, layerKey, s.log)
 	if err != nil {
-		return fmt.Errorf("cosign: read layer %q: %w", layerKey, err)
+		return err
 	}
-	// Hash the artifact without slurping it into memory: ext4s can
-	// be 1-2 GB (Pro/Scale apps with large layers); the SHA-256 +
-	// ECDSA sign both operate on the digest. We stream the hash
-	// and then sign the digest.
-	h := sha256.New()
-	// Wrap the Reader in a ctx-aware copy loop: io.Copy
-	// doesn't natively check ctx, but the storage backend's
-	// Read typically honors the context passed to Get — and a
-	// 1-2 GB hash on a piped stream would happily finish
-	// after the caller cancelled.
-	cc := newCtxCopy(h, rc, ctx)
-	n, err := cc.Do()
+	digest, err := hex.DecodeString(digestHex)
 	if err != nil {
-		_ = rc.Close()
-		return fmt.Errorf("cosign: hash layer %q: %w", layerKey, err)
+		return fmt.Errorf("cosign: digest of %q: %w", layerKey, err)
 	}
-	_ = n // suppress unused warning; cc reports bytes copied
-	// Observe the close error: a mid-read truncation silently
-	// corrupts the digest (possible on remote / OBS backends).
-	// Log via the daemon's slog; LocalSigner is constructed once
-	// at startup so the optional logger is non-nil in production
-	// and nil in unit tests (test signer passes nil; the call
-	// is no-op).
-	if closeErr := rc.Close(); closeErr != nil {
-		if s.log != nil {
-			s.log.Warn("cosign: close layer reader after hash",
-				"layer", layerKey, "err", closeErr)
+	var out []byte
+	if s.v2 {
+		if out, err = encodeSignatureV2(s.priv, layerKey, digest); err != nil {
+			return fmt.Errorf("cosign: sign %q: %w", layerKey, err)
 		}
+	} else {
+		r, sBig, err := ecdsa.Sign(rand.Reader, s.priv, digest)
+		if err != nil {
+			return fmt.Errorf("cosign: ecdsa sign: %w", err)
+		}
+		out = make([]byte, 64)
+		rb := r.Bytes()
+		sb := sBig.Bytes()
+		if len(rb) > 32 || len(sb) > 32 {
+			return fmt.Errorf("cosign: oversized r/s (%d/%d)", len(rb), len(sb))
+		}
+		copy(out[32-len(rb):32], rb)
+		copy(out[64-len(sb):64], sb)
 	}
-	digest := h.Sum(nil)
-	r, sBig, err := ecdsa.Sign(rand.Reader, s.priv, digest)
-	if err != nil {
-		return fmt.Errorf("cosign: ecdsa sign: %w", err)
-	}
-	out := make([]byte, 64)
-	rb := r.Bytes()
-	sb := sBig.Bytes()
-	if len(rb) > 32 || len(sb) > 32 {
-		return fmt.Errorf("cosign: oversized r/s (%d/%d)", len(rb), len(sb))
-	}
-	copy(out[32-len(rb):32], rb)
-	copy(out[64-len(sb):64], sb)
 
 	// Write the raw sig blob via bytes.NewReader. One heap alloc
 	// per Sign — well under the build-pipeline cost budget (one

@@ -7,6 +7,10 @@ on:
     # pull request; ci.yml runs this suite nightly and on dispatch.
     paths:
       - "pkg/apid/apidserver/managed_postgres_credentials*"
+      # The runtime, its starter and the CLI commands this suite drives.
+      - "cmd/gregale/templates/data-api/**"
+      - "cmd/gregale/templates/data-api-*/**"
+      - "cmd/gregale/commands_data_api*.go"
       - "pkg/managedpostgres/**"
       - "pkg/state/app_secret_delivery_policy*"
       - "pkg/gregalemanifest/**"

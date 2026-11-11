@@ -144,3 +144,31 @@ func (m *MemStore) validMultipartPartPutSizeLocked(u ObjectMultipartUpload, part
 	}
 	return size <= m.objectMultipartPartGrants[u.ID][part]
 }
+
+func (m *MemStore) SettleAbandonedObjectMultipartPartWriters(ctx context.Context, id, token string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return 0, err
+	}
+	u := m.objectMultipartUploads[id]
+	if token == "" || u.LeaseToken != token || u.State != ObjectMultipartAborting {
+		return 0, ErrConflict
+	}
+	settled := 0
+	for key, d := range m.objectMultipartPartWriters {
+		if key.upload != id || !d.dispatched || d.settled {
+			continue
+		}
+		t := m.objectMultipartTransfers[id][key.part]
+		if t.token != key.token || t.unsafeUntil.IsZero() || t.unsafeUntil.After(m.clock()) {
+			continue
+		}
+		d.settled = true
+		m.objectMultipartPartWriters[key] = d
+		m.settleMultipartPartLocked(id, key.part)
+		delete(m.objectMutations, d.receipt.ID)
+		settled++
+	}
+	return settled, nil
+}

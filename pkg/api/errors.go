@@ -51,10 +51,18 @@ const CodeApplicationStandardVersionStale = "application_standard_version_stale"
 
 const CodeApplicationStandardsPending = "application_standards_pending"
 
-// PreviewNotEnabledHint is the remediation for a dark-launched preview's 503.
+// PreviewNotEnabledHint is the remediation for a dark-launched preview.
 // Without it the CLI's generic 5xx hint told customers to check Gregale's
 // service status and inspect deployments before retrying (Hunt 14 H14-37).
-const PreviewNotEnabledHint = "This preview is not enabled for this account; retrying will not help. Ask Gregale support for access."
+const PreviewNotEnabledHint = "This preview is not enabled for this account or installation; retrying will not help. Ask Gregale support for access."
+
+// ErrPreviewNotEnabled answers a request for a dark-launched preview. It is a
+// 403: the gate is permanent until an operator enables it, and a 503 made the
+// CLI exit 3 (temporary_failure) and harnesses retry it (ChronoLake finding
+// 33). The code stays the feature's own *_unavailable code.
+func ErrPreviewNotEnabled(code, title, detail string) *Problem {
+	return NewProblem(http.StatusForbidden, code, title, detail).WithHint(PreviewNotEnabledHint)
+}
 
 // dashboardBillingURL is duplicated from pkg/wire because pkg/api cannot
 // import pkg/wire without creating an import cycle.
@@ -95,6 +103,9 @@ type Problem struct {
 	// (ADR-1448).
 	CrossedReleases []RollbackCrossedRelease `json:"crossed_releases,omitempty"`
 	RestorePoints   []ReleaseRestorePoint    `json:"restore_points,omitempty"`
+	// AgentApproval is the request behind approval_required: the link a
+	// person opens to approve it (ADR-20261104140058).
+	AgentApproval *AgentApprovalPendingInfo `json:"agent_approval,omitempty"`
 	// Freezes lists the active freezes behind release_frozen
 	// (ADR-20261019071733).
 	Freezes []ReleaseFreeze `json:"freezes,omitempty"`
@@ -465,6 +476,9 @@ const (
 	// on a cancelled subscription until the cancellation is undone
 	// (ADR-20261103131742 amendment 1).
 	CodeBillingSubscriptionEnding = "billing_subscription_ending"
+	// CodeBillingAlreadyCancelled refuses a cancellation when the account has
+	// no active subscription, or its subscription is already cancelled.
+	CodeBillingAlreadyCancelled = "billing_already_cancelled"
 	// CodePaymentAuthenticationRequired answers an upgrade whose charge the
 	// customer's bank asked to confirm (3-D Secure). Nothing was charged and
 	// the plan is unchanged (ADR-20261103131742 amendment 1).
@@ -536,6 +550,11 @@ const (
 	// mirrors CodeCapacity / CodeBuildXXX — the failure is transient
 	// and the customer's CLI/CI will retry on the backoff.
 	CodeSourceRefUnavailable = "source_ref_unavailable"
+	// CodePreviewDatabaseProvisioning is the 503 a deployment into a PR
+	// preview answers while the preview's managed PostgreSQL databases are
+	// still provisioning (ADR-20261102123523): its release command needs
+	// their URLs. Retry-After says when to send it again; the CLI waits.
+	CodePreviewDatabaseProvisioning = "preview_database_provisioning"
 	// ADR-570: connection-circuit enforcement availability and revision errors.
 	CodeEgressCircuitUnavailable = "egress_circuit_unavailable"
 	CodeEgressCircuitDisabled    = "egress_circuit_disabled"
@@ -686,6 +705,9 @@ const (
 	// CodeDeployRateLimited marks an account that exhausted its plan's
 	// deployment admissions in the current one-hour window.
 	CodeDeployRateLimited = "deploy_rate_limited"
+	// CodePlanLimitBuildMinutes marks a build refused because the paying
+	// account used its plan's monthly build minutes (ADR-20261104132753).
+	CodePlanLimitBuildMinutes = "plan_limit_build_minutes"
 	// CodeNotificationChannelTestRateLimited marks an account that sent its
 	// notification channels more test messages than a minute allows
 	// (ADR-20261028101615).
@@ -704,6 +726,11 @@ const (
 	// (ADR-20261027125625). Nothing was accepted; retry after Retry-After.
 	CodeEventsPaused = "events_paused"
 	CodeUnauthorized = "unauthorized"
+	// CodeWorkloadNotProduction refuses a private runtime report (Data API
+	// usage, change events, change hook status) from a valid workload that
+	// does not serve a production deployment: a stage, preview or cloned
+	// environment. The refusal is final; the runtime stops reporting.
+	CodeWorkloadNotProduction = "workload_not_production"
 	// CodeAuthRateLimited marks a rejected credential after the caller's
 	// source IP exhausted the failed-auth budget. Valid credentials from the
 	// same IP are still admitted, so one broken client behind a shared NAT
@@ -743,17 +770,21 @@ const (
 	CodeUndeclaredRoute = "undeclared_route"
 	// CodeDeclaredRoutePolicyUnavailable is a fail-closed 503 used when the
 	// gateway cannot load or compile the contract required by an enabled app.
-	CodeDeclaredRoutePolicyUnavailable = "declared_route_policy_unavailable"
-	CodeValidation                     = "validation_failed"
-	CodeAppAdmissionUnavailable        = "app_admission_unavailable"
-	CodeDatabaseCutoverFenced          = "database_cutover_fenced"
-	CodeAutomationVersionConflict      = "automation_version_conflict"
-	CodeAutomationOwnershipConflict    = "automation_ownership_conflict"
-	CodeAutomationInvalid              = "automation_invalid"
-	CodeRealtimeConditionConflict      = "realtime_condition_conflict"
-	CodeRealtimeEntityVersionConflict  = "realtime_entity_version_conflict"
-	CodeRealtimeSequenceConflict       = "realtime_sequence_conflict"
-	CodeConflict                       = "conflict"
+	CodeDeclaredRoutePolicyUnavailable  = "declared_route_policy_unavailable"
+	CodeValidation                      = "validation_failed"
+	CodeAppAdmissionUnavailable         = "app_admission_unavailable"
+	CodeDatabaseCutoverFenced           = "database_cutover_fenced"
+	CodeStoredWorkflowVersionConflict   = "stored_workflow_version_conflict"
+	CodeStoredWorkflowOwnershipConflict = "stored_workflow_ownership_conflict"
+	CodeStoredWorkflowInvalid           = "stored_workflow_invalid"
+	CodeRealtimeConditionConflict       = "realtime_condition_conflict"
+	CodeRealtimeEntityVersionConflict   = "realtime_entity_version_conflict"
+	CodeRealtimeSequenceConflict        = "realtime_sequence_conflict"
+	CodeConflict                        = "conflict"
+	// CodeProjectServicesCallEachOther (409, ADR-20261104221217): deleting the
+	// project would detach services that still call each other by service
+	// name. Pass detach_services=true once they no longer do.
+	CodeProjectServicesCallEachOther = "project_services_call_each_other"
 	// CodeIdempotencyKeyReused (422, ADR-20261022204036): the request's
 	// Idempotency-Key was used within its 24 h replay window for a different
 	// request. Nothing ran, and the first request's result is kept.
@@ -819,6 +850,8 @@ const (
 	// the dashboard can pivot the message from "your key is wrong"
 	// to "complete enrollment or step-up to continue".
 	CodeMFARequired = "mfa_required"
+	// The remaining code can reset the factor, preserving a way back in.
+	CodeMFALastRecoveryCode = "mfa_last_recovery_code"
 	// CodeStepUpRequired is returned by RequireStepUp (ADR-077 +
 	// PR-8 acceptance) when a session-cookie principal's
 	// Envelope.StepUpAt stamp is missing or older than the route's
@@ -829,6 +862,10 @@ const (
 	// (with reason: "missing"|"expired", ttl_sec) is the load-
 	// bearing security signal; the wire code is the UX affordance.
 	CodeStepUpRequired = "step_up_required"
+	// CodeRecentSignInRequired is returned when an account change whose
+	// only proof is the browser session comes from a session older than
+	// RecentSignInWindow (ADR 20261110100000): sign in again, then retry.
+	CodeRecentSignInRequired = "recent_sign_in_required"
 	// CodeMFAInvalidCode is returned when /confirm, /verify, or
 	// /recover validate a presented TOTP code / recovery code and
 	// the comparison fails. The audit Emit fires regardless.
@@ -933,6 +970,10 @@ const (
 	// the row is already terminal and the cancel is meaningless.
 	// ADR-124; mirrors the state.CancelReason invalid path.
 	CodeDeploymentCancelNotCancellable = "deployment_cancel_not_cancellable"
+	// CodeDeploymentHideInFlight is returned by DELETE /v1/deployments/{id}
+	// when the row is still pending, building, imaging or snapshotting:
+	// hiding does not stop it, so it must be cancelled first.
+	CodeDeploymentHideInFlight = "deployment_hide_in_flight"
 	// CodeDeploymentReorderNotPending is returned by reorder
 	// when the row's status is not 'pending'. ADR-124.
 	CodeDeploymentReorderNotPending = "deployment_reorder_not_pending"
@@ -978,6 +1019,9 @@ const (
 	// so the caller must acknowledge them; the problem lists them with
 	// restore points for managed PostgreSQL databases.
 	CodeRollbackCrossesRelease = "rollback_crosses_release"
+	// CodeProjectReleaseRollbackRequired means a graph still selects another
+	// deployment, so changing app weights cannot recover the environment.
+	CodeProjectReleaseRollbackRequired = "project_release_rollback_required"
 	// CodeRollbackTargetDatabaseRestored means a database switch restored
 	// the app's database to before the target's own release command
 	// (ADR-20261023181931). The target cannot run on that database; deploy
@@ -1231,6 +1275,9 @@ const (
 	// as its own row and so SDK callers don't accidentally decode a
 	// trusted-signer quota error as an env-var quota error.
 	CodePlanLimitTrustedSigners = "plan_limit_trusted_signers"
+	// CodePlanLimitDeploymentAliases: a new deployment alias would exceed the
+	// plan's DeploymentAliasesMax for the app.
+	CodePlanLimitDeploymentAliases = "plan_limit_deployment_aliases"
 
 	// IAM-5 API-key lifecycle (issue #189). Distinct from the
 	// secret/env surface because the lifecycle diverges: secrets
@@ -1287,6 +1334,11 @@ const (
 	// actionable retry guidance ("raise your plan or lower
 	// --min-instances").
 	CodeMaxMinInstancesExceeded = "max_min_instances_exceeded"
+	// CodeOverageCapRequired and CodeOverageCapAboveMax (ADR-20261105120000):
+	// a paid subject keeps a spend cap, at most its plan's self-service
+	// ceiling.
+	CodeOverageCapRequired = "overage_cap_required"
+	CodeOverageCapAboveMax = "overage_cap_above_max"
 
 	// CodePlanTrafficSplitNotAllowed (issue #556 / traffic
 	// splitting across deployments) is a 403 for plan-tier
@@ -1415,6 +1467,10 @@ const (
 	// CodePlanQueueBacklogBytes: the account's pending queue messages hold
 	// the plan's MaxQueueBacklogBytesPerAccount (ADR-20261022105723).
 	CodePlanQueueBacklogBytes = "plan_queue_backlog_bytes"
+	// CodePlanWorkerReplicas: a worker asks for more running workers than
+	// the plan's WorkerReplicasMax, or the plan runs none
+	// (ADR-20261018101500 amendment 2026-10-31).
+	CodePlanWorkerReplicas = "plan_worker_replicas"
 	// CodeCustomMetricLimit: a push of a NEW ADR-202 metric name by an app
 	// already at MaxCustomMetricsPerApp. A push to an EXISTING name never
 	// produces this — it is an upsert and cannot grow the count.
@@ -1839,6 +1895,15 @@ const (
 	// Distinct from app_startup_timeout (still running, never ready) and
 	// app_not_listening (running, nothing bound).
 	CodeAppStartupCrash = "app_startup_crash"
+	// CodeFunctionInitFailed means a function's init hook threw
+	// before its worker became ready (ADR-20261110190000); an init that never
+	// finishes is an app_startup_timeout. The adapter's
+	// FunctionInitFailedMarker line in the workload output names it; it is
+	// otherwise an app_startup_crash, and customer-caused like one.
+	CodeFunctionInitFailed = "function_init_failed"
+	// FunctionInitFailedMarker begins the line the Node and Python function
+	// adapters print to stderr when init fails (pkg/fnadapter).
+	FunctionInitFailedMarker = "gregale: function init failed:"
 	// CodeExecutionModeConflict means the workload's startup behavior
 	// contradicts its declared execution mode: a worker that bound a port or
 	// exited, or a job that served. Customer-caused, like app_startup_crash.
@@ -1855,11 +1920,23 @@ const (
 	// failed, timed out, or was cancelled. The previous deployment remains
 	// live; task output is available through the app-task inspection surface.
 	CodeReleaseCommandFailed = "release_command_failed"
+	// CodeReleaseInfrastructure means the deployment's release task failed
+	// before or around the command for a platform reason (its environment
+	// could not be prepared, the result channel broke, or the guest answered
+	// outside the protocol), so the command's own outcome is unknown or never
+	// happened. The previous deployment remains live; deploying again retries.
+	CodeReleaseInfrastructure = "release_infrastructure_failed"
 	// CodeReleasePhaseUnavailable means a deployment declares a release command
 	// but this imaged host has release-phase execution disabled. The candidate
 	// fails before serving VMs are booted so the command cannot be silently
 	// skipped.
 	CodeReleasePhaseUnavailable = "release_phase_unavailable"
+	// CodeReleaseOutcomeUncertain means an earlier release command of the
+	// app scope started but ended without an exit code, so its effect on the
+	// database is unknown. The deployment fails before its own release
+	// command runs; a person checks the database and records it with
+	// POST /v1/deployments/{id}/release-outcome (ADR-1448 amendment 1).
+	CodeReleaseOutcomeUncertain = "release_outcome_uncertain"
 	// CodeAPIContractDiffDisabled is returned by the read-only contract
 	// endpoint while the operator keeps the dark-launch flag off.
 	CodeAPIContractDiffDisabled = "api_contract_diff_disabled"
@@ -2124,8 +2201,8 @@ const (
 	CodeWorkflowStepRetryNotAllowed       = "workflow_step_retry_not_allowed"
 	CodeWorkflowDefinitionNotFound        = "workflow_definition_not_found"
 	CodeWorkflowEventNotFound             = "workflow_event_not_found"
-	CodeWebhookAutomationUnavailable      = "webhook_automation_unavailable"
-	CodeWebhookAutomationConflict         = "webhook_automation_conflict"
+	CodeWebhookWorkflowUnavailable        = "webhook_workflow_unavailable"
+	CodeWebhookWorkflowConflict           = "webhook_workflow_conflict"
 	CodeEventRecoveryChanged              = "event_recovery_changed"
 	CodeWorkflowResumeConflict            = "workflow_resume_conflict"
 	CodeWorkflowResumeUnsafe              = "workflow_resume_unsafe"
@@ -2183,7 +2260,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
-	case CodeAutomationInvalid, CodeEdgeFeatureUnavailable:
+	case CodeStoredWorkflowInvalid, CodeEdgeFeatureUnavailable:
 		return http.StatusUnprocessableEntity
 	case CodeEdgeRulesVersionMismatch:
 		return http.StatusPreconditionFailed
@@ -2193,7 +2270,7 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodePlanLimitEdgeRuleLists, CodePlanLimitEdgeRuleListItems:
 		return http.StatusForbidden
-	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitDeveloperLease, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
+	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitDeveloperLease, CodePlanLimitRAM, CodePlanLimitBuildMinutes, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed,
 		CodeAccountAbuseHold:
 		return http.StatusForbidden
@@ -2253,7 +2330,7 @@ func StatusForCode(code string) int {
 		return http.StatusUnauthorized
 	case CodeNotFound, CodeUndeclaredRoute:
 		return http.StatusNotFound
-	case CodeWebhookAutomationUnavailable, CodeDeclaredRoutePolicyUnavailable:
+	case CodeWebhookWorkflowUnavailable, CodeDeclaredRoutePolicyUnavailable:
 		return http.StatusServiceUnavailable
 	case CodeNotImplemented:
 		return http.StatusNotImplemented
@@ -2263,12 +2340,12 @@ func StatusForCode(code string) int {
 	// since the StatusForCode fallback returns 422 generically).
 	case CodeDatabaseCutoverFenced, CodeRealtimeConditionConflict, CodeRealtimeEntityVersionConflict, CodeRealtimeSequenceConflict, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeEnvironmentQualificationUnconfirmed,
 		CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
-		CodeAutomationVersionConflict, CodeAutomationOwnershipConflict,
-		CodeWebhookAutomationConflict, CodeEventRecoveryChanged, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
+		CodeStoredWorkflowVersionConflict, CodeStoredWorkflowOwnershipConflict,
+		CodeWebhookWorkflowConflict, CodeEventRecoveryChanged, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
 		CodeWorkflowResumeLimit,
 		CodeWorkflowNotRunning, CodeWorkflowTenantIdentityUnavailable, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeWorkflowStepRetryNotAllowed,
-		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
+		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable, CodeDeploymentHideInFlight,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged,
@@ -2363,10 +2440,12 @@ func StatusForCode(code string) int {
 		CodeDepInstallFailed,
 		CodeAppStartupTimeout,
 		CodeAppStartupCrash,
+		CodeFunctionInitFailed,
 		CodeExecutionModeConflict,
 		CodeDeploymentSmokeFailed,
 		CodeReleaseCommandFailed,
-		CodeReleasePhaseUnavailable:
+		CodeReleasePhaseUnavailable,
+		CodeReleaseOutcomeUncertain:
 		// 422 — error-explanations cluster (spec §6.4 amendment 1).
 		// Same family as CodeStatelessOnlyViolation / CodeDeployFailed:
 		// well-formed request, content policy refuses. The Detail
@@ -2474,7 +2553,7 @@ func StatusForCode(code string) int {
 	// 404 (the URL resource IS the signer name; we deliberately
 	// diverge from the secret/env 400 to make the resource model
 	// explicit on the new surface).
-	case CodePlanLimitTrustedSigners:
+	case CodePlanLimitTrustedSigners, CodePlanLimitDeploymentAliases:
 		return http.StatusForbidden
 	case CodeTrustedSignerInvalid:
 		return http.StatusBadRequest
@@ -2833,18 +2912,14 @@ func ErrInvalidAppRAM(requestedMB int) *Problem {
 		"Invalid RAM", fmt.Sprintf("ram_mb must be greater than zero; requested %d MB.", requestedMB))
 }
 
-// ErrInvalidCPURAMPair rejects an explicit guest topology that does not match
-// the plan's canonical RAM/vCPU shape. Guest vCPU is plan-derived in v1, so
-// the pair is validated without introducing a per-app database column.
+// ErrInvalidCPURAMPair rejects an explicit guest vCPU count that is not its
+// size's: one vCPU per GB of ram_mb, at least one (ADR-20261109172421). Guest
+// vCPU is derived, so the pair is validated without a per-app column.
 func ErrInvalidCPURAMPair(l Limits, ramMB, guestVCPU int) *Problem {
-	shape, ok := PlanResourceShapeFor(l.Plan)
-	if !ok {
-		shape = PlanResourceShape{Plan: l.Plan, RAMMB: l.RAMMB, VCPU: l.VCPU}
-	}
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidCPURAMPair,
 		"Invalid CPU/RAM pair",
-		fmt.Sprintf("invalid (ram_mb, vcpu) pair for plan %s: expected (%d, %d), received (%d, %d). Omit vcpu to use the plan default.",
-			l.Plan, shape.RAMMB, shape.VCPU, ramMB, guestVCPU)).
+		fmt.Sprintf("invalid (ram_mb, vcpu) pair on plan %s: an instance of %d MB has %d vCPU (one per GB), received %d. Omit vcpu to use the size's.",
+			l.Plan, ramMB, SizeVCPUs(ramMB), guestVCPU)).
 		WithDocs(docsBase + "/plans#resources")
 }
 
@@ -3135,6 +3210,16 @@ func ErrExportRateLimited(retryAfterS int) *Problem {
 		WithDocs("https://gregale.dev/docs/gdpr#export-rate-limit")
 }
 
+// ErrPlanLimitBuildMinutes refuses a build once the paying account used its
+// plan's monthly build minutes (ADR-20261104132753). Image deploys still work.
+func ErrPlanLimitBuildMinutes(l Limits, usedMinutes int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitBuildMinutes,
+		"Build minutes used up",
+		fmt.Sprintf("%s plan includes %d build minutes a month; this month's builds used %d. Builds resume on the 1st (UTC) or after an upgrade; deploying a prebuilt image still works.", l.Plan, l.BuildMinutesPerMonth, usedMinutes)).
+		WithLimit(int64(l.BuildMinutesPerMonth), int64(usedMinutes)).
+		WithDocs(docsBase + "/plans#builds")
+}
+
 // ErrDeployRateLimited reports an exhausted account deploy window. The
 // remaining/reset headers are added by apid from the atomic store result.
 func ErrDeployRateLimited(limit, retryAfterS int) *Problem {
@@ -3202,6 +3287,17 @@ func ErrNotificationChannelInUseBy(rules, releases []string) *Problem {
 	}
 	return NewProblem(http.StatusConflict, CodeNotificationChannelInUse, "Notification channel in use",
 		strings.Join(parts, " ")+" Then delete the channel.").
+		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
+}
+
+// ErrPagerDutyKeyHasOpenIncidents refuses replacing a PagerDuty routing key
+// while rules using the channel are firing (ADR-20261109153000): their
+// resolves would go to the new key's service and leave the incidents the
+// old key opened open for good.
+func ErrPagerDutyKeyHasOpenIncidents(rules []string) *Problem {
+	return NewProblem(http.StatusConflict, CodeNotificationChannelInUse, "Channel has open incidents",
+		fmt.Sprintf("%d alert rule(s) using this channel are firing: %s. Their PagerDuty incidents were opened with the current routing key and are closed with it. Wait for them to recover, or disable the rules to close the incidents now, then replace the key.",
+			len(rules), strings.Join(rules, ", "))).
 		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
 }
 
@@ -3309,6 +3405,15 @@ func ErrStepUpRequired() *Problem {
 	return NewProblem(http.StatusForbidden, CodeStepUpRequired,
 		"Step-up required",
 		"step-up MFA required for this action: complete /v1/account/mfa/verify to refresh")
+}
+
+// ErrRecentSignInRequired asks a browser to sign in again before an account
+// change it can prove with nothing but its session.
+func ErrRecentSignInRequired() *Problem {
+	return NewProblem(http.StatusForbidden, CodeRecentSignInRequired,
+		"Sign in again",
+		fmt.Sprintf("this change needs a sign-in from the last %d minutes; sign in again, then retry", int(RecentSignInWindow.Minutes()))).
+		WithDocs(docsBase + "/auth")
 }
 
 // ErrBillingNotImplemented is returned by an apid handler when the selected
@@ -3457,6 +3562,17 @@ func ErrUploadSessionOffsetConflict(uploadID string, expected, current int64) *P
 	return NewProblem(http.StatusConflict, CodeUploadSessionOffsetConflict,
 		"Upload session offset conflict",
 		fmt.Sprintf("Upload session %q expected offset %d but server is at %d; resume from current offset.", uploadID, expected, current)).
+		WithDocs(docsBase + "/deploy-from-source#uploads")
+}
+
+// ErrUploadChecksumMismatch is returned by commit when the received bytes do
+// not hash to the declared sha256_hex. 410 like an expired session: this
+// session is gone and a fresh upload is the fix.
+func ErrUploadChecksumMismatch(uploadID, declared, got string) *Problem {
+	return NewProblem(http.StatusGone, CodeUploadChecksumMismatch,
+		"Uploaded archive does not match its checksum",
+		fmt.Sprintf("Upload session %q declared sha256 %s but the received bytes hash to %s; the session was cancelled.", uploadID, declared, got)).
+		WithHint("Start the upload again; gregale deploy does this automatically.").
 		WithDocs(docsBase + "/deploy-from-source#uploads")
 }
 
@@ -3817,6 +3933,15 @@ const CodePlanCronQuota = "plan_cron_quota"
 // event_triggers would leave more enabled event subscriptions than the plan's
 // per-app or per-account cap (ADR-20261031130000).
 const CodePlanEventSubscriptionQuota = "plan_event_subscription_quota"
+
+// CodeEventSubscriptionFilterTooLarge and CodeEventSubscriptionFilterTooDeep
+// are the 422s for an event_triggers filter over
+// EventSubscriptionFilterMaxBytes or EventSubscriptionFilterMaxDepth
+// (events hunt #9).
+const (
+	CodeEventSubscriptionFilterTooLarge = "event_subscription_filter_too_large"
+	CodeEventSubscriptionFilterTooDeep  = "event_subscription_filter_too_deep"
+)
 
 // CodeCronFireNowBusy is the 429 a manual cron run gets while the cron
 // already has CronFireNowActivePerCron runs waiting or running
@@ -4181,14 +4306,23 @@ func ErrRealtimeWriteRateLimited(perSecond, writes int, retryAfter time.Duration
 const (
 	RealtimeConnectionLimitAccount     = "account"
 	RealtimeConnectionLimitAccountNode = "account_node"
+	// RealtimeConnectionLimitEndpoint is the endpoint's own max_connections.
+	RealtimeConnectionLimitEndpoint = "endpoint"
+	// RealtimeConnectionLimitNode is the realtime node's total capacity.
+	RealtimeConnectionLimitNode = "node"
 )
 
 // ErrRealtimeConnectionLimit reports a refused realtime connection with the
 // limit that applied and the connections observed against it.
 func ErrRealtimeConnectionLimit(scope string, limit, observed int64) *Problem {
 	detail := fmt.Sprintf("Your plan allows %d concurrent realtime connections per account across all endpoints; %d are open. Close idle connections or upgrade the plan.", limit, observed)
-	if scope == RealtimeConnectionLimitAccountNode {
+	switch scope {
+	case RealtimeConnectionLimitAccountNode:
 		detail = fmt.Sprintf("One account may hold at most %d connections on a single realtime node; %d are open on this node. Retry with backoff.", limit, observed)
+	case RealtimeConnectionLimitEndpoint:
+		detail = fmt.Sprintf("This endpoint's max_connections is %d; %d are open. Close idle connections or raise the endpoint's max_connections.", limit, observed)
+	case RealtimeConnectionLimitNode:
+		detail = fmt.Sprintf("This realtime node holds its maximum of %d connections. Retry with backoff.", limit)
 	}
 	return NewProblem(http.StatusTooManyRequests, CodeRealtimeConnectionLimit, "Realtime connection limit reached", detail).
 		WithLimit(limit, observed).
@@ -4563,6 +4697,11 @@ const (
 	// already gone; the operator's fix is to start a fresh
 	// upload session.
 	CodeUploadSessionAlreadyCancelled = "upload_session_already_cancelled"
+	// CodeUploadChecksumMismatch is the 410 emitted by
+	// POST /v1/uploads/{id}/commit when the received archive's SHA-256
+	// differs from the sha256_hex declared at start. The session is
+	// cancelled, so the CLI restarts with a fresh upload.
+	CodeUploadChecksumMismatch = "upload_checksum_mismatch"
 )
 
 // ErrPlanCronsNotAllowed is returned by apid's createCron handler
@@ -4614,6 +4753,28 @@ func ErrPlanEventSubscriptionQuota(plan Plan, scope string, limit, observed int)
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/events#subscription-limits")
+}
+
+// ErrEventSubscriptionFilterTooLarge is the 422 for an event_triggers filter
+// whose compact JSON exceeds EventSubscriptionFilterMaxBytes.
+func ErrEventSubscriptionFilterTooLarge(field string, limit, observed int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeEventSubscriptionFilterTooLarge,
+		"Event filter too large",
+		fmt.Sprintf("%s is %d bytes as compact JSON; event filters are capped at %d bytes. Filter on fewer fields, or route by source and type instead.",
+			field, observed, limit)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/events#filter-limits")
+}
+
+// ErrEventSubscriptionFilterTooDeep is the 422 for an event_triggers filter
+// nested deeper than EventSubscriptionFilterMaxDepth.
+func ErrEventSubscriptionFilterTooDeep(field string, limit, observed int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeEventSubscriptionFilterTooDeep,
+		"Event filter nested too deeply",
+		fmt.Sprintf("%s nests %d levels deep; event filters are capped at %d levels.",
+			field, observed, limit)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/events#filter-limits")
 }
 
 // ErrCronConflict is the 409 for a cron another cron of the same app already
@@ -5080,6 +5241,23 @@ func ErrRealtimeInvalid(reason string) *Problem {
 		"Invalid managed realtime endpoint", reason)
 }
 
+// ErrRealtimeMessageTooLarge refuses a realtime message over a size limit:
+// the endpoint's max_message_bytes or the platform maximum.
+func ErrRealtimeMessageTooLarge(limit, observed int64) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeRealtimeInvalid, "Realtime message too large",
+		fmt.Sprintf("The message is %d bytes; this endpoint accepts at most %d. Send a smaller message or raise the endpoint's max_message_bytes.", observed, limit)).
+		WithByteLimit(limit, observed).
+		WithDocs(docsBase + "/realtime#fair-use-limits")
+}
+
+// ErrRealtimeInvalidText refuses a text realtime message that is not UTF-8.
+// RFC 6455 makes every receiving client drop the socket on such a frame.
+func ErrRealtimeInvalidText() *Problem {
+	return NewProblem(http.StatusBadRequest, CodeRealtimeInvalid, "Invalid realtime text message",
+		"A text message must be valid UTF-8, or clients drop the connection when they receive it. Send other bytes with binary=true.").
+		WithDocs(docsBase + "/realtime#original-protocol")
+}
+
 // ErrRealtimeUnavailable is safe to expose at the public WebSocket proxy.
 // The socket or dial error stays in structured logs; customers receive a
 // stable retryable code without internal paths or host details.
@@ -5469,10 +5647,13 @@ func ErrDeploySignatureInvalid(detail string) *Problem {
 
 // ErrSecurityPostureBlocked is returned when the app's explicit security
 // policy prevents a deploy until its high-severity findings are remediated.
-func ErrSecurityPostureBlocked(codes string) *Problem {
+// The hint names the CLI command; the detail alone sent CLI users to a raw
+// API path (Hunt 32 H32-82).
+func ErrSecurityPostureBlocked(slug, codes string) *Problem {
 	return NewProblem(http.StatusForbidden, CodeSecurityPostureBlocked,
 		"Security posture blocks this deploy",
 		"security_policy=enforce and high-severity findings remain: "+codes+"; review GET /v1/apps/{slug}/security and remediate the findings").
+		WithHint("Run gregale app " + slug + " security to see the findings.").
 		WithDocs(docsBase + "/security#deploy-enforcement")
 }
 
@@ -5728,6 +5909,16 @@ func ErrAPIKeyLimitExceeded(l Limits, observed int) *Problem {
 // so the SDK's quota-reached branch decodes this code without
 // hand-rolling a new switch arm. Distinct `code` keeps the dashboard
 // row count for "trusted publishers" separate from "env vars".
+// ErrPlanLimitDeploymentAliases refuses a new deployment alias above the
+// plan's per-app cap.
+func ErrPlanLimitDeploymentAliases(l Limits, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitDeploymentAliases,
+		"Deployment alias limit reached",
+		fmt.Sprintf("%s plan allows %d deployment aliases per app; this app has %d. Delete an alias or re-point an existing one.", l.Plan, l.DeploymentAliasesMax, observed)).
+		WithLimit(int64(l.DeploymentAliasesMax), int64(observed)).
+		WithDocs(docsBase + "/deploys#deployment-aliases")
+}
+
 func ErrPlanLimitTrustedSigners(l Limits, observed int) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanLimitTrustedSigners,
 		"Trusted signer count limit reached",
@@ -5909,6 +6100,18 @@ func ErrDeploymentCancelLiveForbidden(id string) *Problem {
 		WithDocs(docsBase + "/deploys#cancel")
 }
 
+// ErrDeploymentHideInFlight refuses to hide a deployment that is still in
+// flight. Hiding only sets deleted_at, so the pipeline would keep running on
+// a row no list shows; cancelling stops it.
+func ErrDeploymentHideInFlight(id, status string) *Problem {
+	return NewProblem(http.StatusConflict, CodeDeploymentHideInFlight,
+		"Cannot hide a deployment that is still in progress",
+		fmt.Sprintf("deployment %s is %s; hiding it would not stop it.", id, status)).
+		WithHint("Cancel the deployment first, then hide it.").
+		WithFix("Run: gregale release cancel " + id + ", then gregale release hide " + id).
+		WithDocs(docsBase + "/deploys#cancel")
+}
+
 // ErrDeploymentCancelNotCancellable (ADR-124) is returned when
 // the deployment's current status is in
 // {failed, superseded, cancelled} — i.e. terminal and therefore
@@ -5973,6 +6176,36 @@ func ErrInvalidMinInstances(got, maxConcur int) *Problem {
 // can render actionable retry guidance ("raise your plan or lower
 // --min-instances"). Distinct from ErrInvalidMinInstances which
 // rejects negative values or values above MaxConcurrency.
+// OverageCapProblem validates a spend cap a subject on plan asks for
+// (ADR-20261105120000). nil clears the cap: allowed on Free, which stops at
+// its allowance, and refused on a paid plan. A paid cap may not exceed the
+// plan's self-service ceiling.
+func OverageCapProblem(plan Plan, cents *int64) *Problem {
+	if cents != nil && *cents < 0 {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"overage_cap_cents must be >= 0 or null", "negative values are rejected")
+	}
+	ceiling, paid := plan.MaxSelfServiceOverageCapCents()
+	if !paid {
+		return nil
+	}
+	if cents == nil {
+		return NewProblem(http.StatusUnprocessableEntity, CodeOverageCapRequired,
+			"Spend cap required",
+			fmt.Sprintf("a paid plan keeps a spend cap; set overage_cap_cents to at most %d. Contact support for a higher cap.", ceiling)).
+			WithLimit(ceiling, 0).
+			WithDocs(docsBase + "/billing#spend-cap")
+	}
+	if *cents > ceiling {
+		return NewProblem(http.StatusUnprocessableEntity, CodeOverageCapAboveMax,
+			"Spend cap above plan maximum",
+			fmt.Sprintf("overage_cap_cents must be at most %d on this plan; got %d. Contact support for a higher cap.", ceiling, *cents)).
+			WithLimit(ceiling, *cents).
+			WithDocs(docsBase + "/billing#spend-cap")
+	}
+	return nil
+}
+
 func ErrMaxMinInstancesExceeded(got, planMax int) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeMaxMinInstancesExceeded,
 		"min_instances exceeds plan cap",
@@ -6105,6 +6338,15 @@ func ErrTrafficSplitReleaseLimit(limit, requested int) *Problem {
 // ErrTrafficServingChanged makes a stale promotion actionable without
 // disclosing any deployment the caller has not already been authorized to
 // read through the target app.
+// ErrTrafficSplitChanged is the expected_traffic form of
+// ErrTrafficServingChanged: the split changed after the caller read it.
+func ErrTrafficSplitChanged() *Problem {
+	return NewProblem(http.StatusConflict, CodeTrafficServingChanged,
+		"Traffic split changed",
+		"the environment's traffic split no longer matches expected_traffic; run gregale release traffic status and plan the change again.").
+		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+}
+
 func ErrTrafficServingChanged() *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficServingChanged,
 		"Production revision changed",
@@ -6827,6 +7069,19 @@ func ErrPlanFeatureGated(feature string, p Plan) *Problem {
 		WithDocs(docsBase + "/plans#event-driven")
 }
 
+// ErrPlanWorkerReplicas refuses a worker that the plan cannot run: Free runs
+// no workers, and no plan runs more than WorkerReplicasMax at once
+// (ADR-20261018101500 amendment 2026-10-31).
+func ErrPlanWorkerReplicas(p Plan, limit, observed int) *Problem {
+	detail := fmt.Sprintf("the %s plan runs at most %d workers at once; this worker asks for up to %d. Lower worker.scale.max or upgrade.", p, limit, observed)
+	if limit == 0 {
+		detail = fmt.Sprintf("the %s plan doesn't run workers; upgrade to Hobby or higher to deploy one.", p)
+	}
+	return NewProblem(http.StatusForbidden, CodePlanWorkerReplicas, "Plan worker limit", detail).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/workers#limits")
+}
+
 // ErrPlanDelayedTasksCap is the variant surfaced when a delayed-task
 // schedule would push the per-app delayed-task count past the plan
 // cap. Distinct code so the dashboard can suggest "schedule later"
@@ -6964,6 +7219,20 @@ func ErrSourceRefUnavailable(reason string) *Problem {
 		WithDocs(docsBase + "/build/source-ref#errors")
 }
 
+// PreviewDatabaseRetryAfter is the Retry-After of
+// ErrPreviewDatabaseProvisioning.
+const PreviewDatabaseRetryAfter = 10 * time.Second
+
+// ErrPreviewDatabaseProvisioning holds a deployment into a PR preview until
+// the preview's managed PostgreSQL databases are ready (ADR-20261102123523).
+func ErrPreviewDatabaseProvisioning() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodePreviewDatabaseProvisioning,
+		"Preview database provisioning",
+		"The preview's managed PostgreSQL database is still provisioning; retry after the indicated delay.").
+		WithDocs(docsBase+"/preview-databases").
+		WithHeader("Retry-After", strconv.Itoa(int(PreviewDatabaseRetryAfter.Seconds())))
+}
+
 // ErrSourceRefStale is returned when a caller binds an immutable source SHA
 // to a mutable GitHub branch and that branch no longer points at the SHA.
 func ErrSourceRefStale(reason string) *Problem {
@@ -7051,6 +7320,16 @@ func ErrEmailVerificationRequired() *Problem {
 	return NewProblem(http.StatusForbidden, CodeEmailVerificationRequired,
 		"Email verification required",
 		"verify your email address before deploying apps or changing billing settings.").
+		WithDocs(docsBase + "/auth#email-verification")
+}
+
+// ErrEmailVerificationOverdue is returned once an unverified account is past
+// its verification grace period: it keeps its data, but signing in and using
+// existing credentials wait until the address is verified.
+func ErrEmailVerificationOverdue() *Problem {
+	return NewProblem(http.StatusForbidden, CodeEmailVerificationRequired,
+		"Email verification required",
+		"this account's email address was not verified within 30 days. We sent a new verification link; open it to continue.").
 		WithDocs(docsBase + "/auth#email-verification")
 }
 
@@ -7160,10 +7439,17 @@ func ErrOrgMemberCapExceeded(limit, observed int) *Problem {
 func ErrOrgFreeLimitExceeded(limit, observed int) *Problem {
 	return NewProblem(http.StatusForbidden, CodeOrgFreeLimitExceeded,
 		"Free organization limit reached",
-		fmt.Sprintf("an account may own %d organization(s) on the Free plan; you own %d. Upgrade or delete one to create another.",
+		fmt.Sprintf("an account may own %d organization(s) on the Free plan; you own %d. Upgrade one to create another; a Free organization deleted this month counts until the month ends.",
 			limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/orgs#free-organizations")
+}
+
+// ErrOrgFreeTransferLimitExceeded reports the recipient's ownership count.
+func ErrOrgFreeTransferLimitExceeded(limit, observed int) *Problem {
+	p := ErrOrgFreeLimitExceeded(limit, observed)
+	p.Detail = fmt.Sprintf("the new owner already owns %d organization(s) on the Free plan; the limit is %d. They must upgrade one before accepting another; a Free organization deleted this month counts until the month ends.", observed, limit)
+	return p
 }
 
 // ErrOrgInvitationCapExceeded is the 403 returned when the

@@ -128,3 +128,19 @@ with debugfs as its non-root user, as the warm-builder refresh already does.
   compares the time from handoff to live on the canary node.
 - Not covered: a faster cache export itself. Kernel overlayfs
   (ADR-20261029105325) and zstd layers (ADR-20261028084018) work on that.
+
+## Amendment 1 (2026-11-06): the switch is refused until the drive edit leaves the host
+
+Bug hunt H104. The cache export run is prepared on the host: builderd replays
+the build drive's journal with e2fsck and rewrites build.json, the entropy seed
+and build-done.json with debugfs, unsandboxed, as faas-builderd. The drive is
+guest-written, so any account with a build could hand a crafted ext4 to the
+host's libext2fs, the escape ADR-20261025090100 exists to prevent.
+
+`ParseDeferCacheExport` now refuses `FAAS_BUILD_DEFER_CACHE_EXPORT=true`, and
+`TestBuilderdDoesNotParseGuestDrivesOnTheHost` fails on any new host-side
+e2fsprogs or mount call in pkg/builderd. The switch comes back once the cache
+export inputs (CacheExportOnly manifest, fresh entropy seed, cleared result) reach
+the second VM without a host-side edit: staged by vmmd through pkg/guestdisk as it
+stages secrets.env, which needs a delete operation and a BuildSpec field, or
+delivered on a fresh read-only config drive.

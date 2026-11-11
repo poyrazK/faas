@@ -130,6 +130,39 @@ func (t *table[K]) take(key K) (bool, float64) {
 	return true, e.tokens
 }
 
+// takeN spends n tokens from key's bucket and reports whether it held them.
+// Spending 1/s tokens a request scales the bucket's rate and burst by s, so a
+// caller can tighten a limit without rebuilding the table.
+func (t *table[K]) takeN(key K, n float64) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	e, _ := t.lookup(key, t.now())
+	if e.tokens < n {
+		return false
+	}
+	e.tokens -= n
+	return true
+}
+
+// takeTracked is take for a table whose keys the client chooses freely, such
+// as a hostname: a key the full table cannot track passes without spending
+// from the shared overflow bucket. Otherwise anyone who can send that many
+// distinct keys between sweeps would drain the one bucket every untracked key
+// shares and refuse them all (a node's every hostname, for Hosts).
+func (t *table[K]) takeTracked(key K) (bool, float64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	e, tracked := t.lookup(key, t.now())
+	if !tracked {
+		return true, t.burst
+	}
+	if e.tokens < 1 {
+		return false, e.tokens
+	}
+	e.tokens--
+	return true, e.tokens
+}
+
 // size is the number of addresses tracked, for tests.
 func (t *table[K]) size() int {
 	t.mu.Lock()

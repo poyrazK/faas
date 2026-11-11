@@ -1,5 +1,6 @@
 """Synchronous PostgreSQL pool adoption without a database-driver dependency."""
 
+import os
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -15,11 +16,31 @@ class PostgresPoolBindingError(Exception):
     """Sanitized adoption/retirement error without driver diagnostics."""
 
 
+POSTGRES_POOL_MAX_ENV = "GREGALE_POSTGRES_POOL_MAX"
+"""Carries the pool size Gregale derives from the instance's concurrency."""
+
+
 @dataclass(frozen=True)
 class PostgresPoolConfig:
-    """Explicit connection identity; never use ambient credential fallbacks."""
+    """Explicit connection identity; never use ambient credential fallbacks.
+
+    ``max_size`` is how many connections one instance can use, from
+    ``GREGALE_POSTGRES_POOL_MAX`` when Gregale sets it (ADR-20261104141122),
+    else ``None``. Pass it to the pool, e.g. psycopg's ``max_size``.
+    """
 
     connection_string: str = field(repr=False)
+    max_size: int | None = None
+
+
+def postgres_pool_max(value: str | None = None) -> int | None:
+    """Read GREGALE_POSTGRES_POOL_MAX, ignoring a value outside 1-1000."""
+    text = (os.environ.get(POSTGRES_POOL_MAX_ENV) if value is None else value) or ""
+    text = text.strip()
+    if not re.fullmatch(r"[0-9]{1,4}", text):
+        return None
+    size = int(text)
+    return size if 1 <= size <= 1000 else None
 
 
 def _configuration(key: str, values: Mapping[str, str]) -> PostgresPoolConfig:
@@ -42,7 +63,7 @@ def _configuration(key: str, values: Mapping[str, str]) -> PostgresPoolConfig:
             raise ValueError
     except ValueError:
         raise PostgresPoolBindingError(invalid) from None
-    return PostgresPoolConfig(value)
+    return PostgresPoolConfig(value, postgres_pool_max())
 
 
 class PostgresPoolLease(_ClientLease[T]):

@@ -52,9 +52,15 @@ DELETE FROM data_api_usage_hourly WHERE ctid IN (
   LIMIT sqlc.arg(row_limit)::integer);
 
 -- name: UpsertAccessConfig :exec
+-- A report from a runtime process that started before the one whose settings
+-- are stored is older configuration (a restored older snapshot, or a process
+-- a fresh restart has not replaced yet): it never replaces newer settings.
+-- Reports without a start time (runtimes before it) still apply.
 INSERT INTO data_api_access_configs (app_id,config,reported_at)
  VALUES (sqlc.arg(app_id)::text::uuid,sqlc.arg(config)::jsonb,now())
- ON CONFLICT (app_id) DO UPDATE SET config=EXCLUDED.config, reported_at=EXCLUDED.reported_at;
+ ON CONFLICT (app_id) DO UPDATE SET config=EXCLUDED.config, reported_at=EXCLUDED.reported_at
+ WHERE NOT (data_api_access_configs.config ? 'started_at' AND EXCLUDED.config ? 'started_at'
+   AND (EXCLUDED.config->>'started_at')::timestamptz < (data_api_access_configs.config->>'started_at')::timestamptz);
 
 -- name: GetAccessConfig :one
 SELECT config,reported_at FROM data_api_access_configs WHERE app_id=sqlc.arg(app_id)::text::uuid;
@@ -62,3 +68,22 @@ SELECT config,reported_at FROM data_api_access_configs WHERE app_id=sqlc.arg(app
 -- name: DeleteAccessConfig :execrows
 DELETE FROM data_api_access_configs c USING apps a
  WHERE c.app_id=sqlc.arg(app_id)::text::uuid AND a.id=c.app_id AND a.account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: UpsertChangeHookReport :execrows
+-- Zero rows: the token's app no longer belongs to its account or was deleted.
+-- Each relay knows only its own publications, so the latest one is kept.
+INSERT INTO data_api_change_hook_reports (app_id,reported_at,pending,failed,oldest_pending_at,last_published_at,last_failure_code,publishing,last_dropped_at)
+SELECT a.id, sqlc.arg(reported_at)::timestamptz, sqlc.arg(pending)::bigint, sqlc.arg(failed)::bigint,
+       sqlc.narg(oldest_pending_at)::timestamptz, sqlc.narg(last_published_at)::timestamptz,
+       sqlc.narg(last_failure_code)::text, sqlc.arg(publishing)::text, sqlc.narg(last_dropped_at)::timestamptz
+  FROM apps a
+ WHERE a.id=sqlc.arg(app_id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.deleted_at IS NULL
+ON CONFLICT (app_id) DO UPDATE SET reported_at=EXCLUDED.reported_at, pending=EXCLUDED.pending, failed=EXCLUDED.failed,
+  oldest_pending_at=EXCLUDED.oldest_pending_at,
+  last_published_at=GREATEST(data_api_change_hook_reports.last_published_at, EXCLUDED.last_published_at),
+  last_failure_code=EXCLUDED.last_failure_code, publishing=EXCLUDED.publishing,
+  last_dropped_at=GREATEST(data_api_change_hook_reports.last_dropped_at, EXCLUDED.last_dropped_at);
+
+-- name: GetChangeHookReport :one
+SELECT reported_at,pending,failed,oldest_pending_at,last_published_at,last_failure_code,publishing,last_dropped_at
+  FROM data_api_change_hook_reports WHERE app_id=sqlc.arg(app_id)::text::uuid;

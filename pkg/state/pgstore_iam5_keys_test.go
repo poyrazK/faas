@@ -368,13 +368,12 @@ func TestPg_SetAccountKeyGraceWindow_NilClearsOverride(t *testing.T) {
 	}
 }
 
-func TestPg_SetAccountKeyGraceWindow_UnknownAccountIsNoop(t *testing.T) {
+func TestPg_SetAccountKeyGraceWindow_UnknownAccountIsNotFound(t *testing.T) {
 	s, ctx := pgStore(t)
 	days := 7
-	// Unknown account — UPDATE matches zero rows but the call still
-	// returns nil. The handler relies on this so a wrong actor doesn't
-	// surface a 500 to the customer; authn check is upstream.
-	if err := s.SetAccountKeyGraceWindow(ctx, "00000000-0000-0000-0000-000000000000", &days); err != nil {
-		t.Errorf("SetAccountKeyGraceWindow(unknown) = %v, want nil", err)
+	// An UPDATE that matches no account reports ErrNotFound, like the
+	// MemStore, rather than claiming a write it did not make (#6604).
+	if err := s.SetAccountKeyGraceWindow(ctx, "00000000-0000-0000-0000-000000000000", &days); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("SetAccountKeyGraceWindow(unknown) = %v, want ErrNotFound", err)
 	}
 }

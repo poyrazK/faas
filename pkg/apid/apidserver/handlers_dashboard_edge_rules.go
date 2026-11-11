@@ -288,7 +288,7 @@ func (s *server) dashboardTraceEdgeRules(w http.ResponseWriter, r *http.Request)
 func projectDashboardEdgeRules(rows []state.EdgeRule, unreleased func(state.EdgeRule) []string) []dashboard.EdgeRulePageItem {
 	items := make([]dashboard.EdgeRulePageItem, 0, len(rows))
 	for _, row := range rows {
-		actionJSON, _ := json.Marshal(row.Action)
+		actionJSON, _ := json.Marshal(edgerules.RedactHeaderSecrets(row.Action))
 		item := dashboard.EdgeRulePageItem{
 			ID: row.ID, Kind: string(row.Kind), MatchHost: row.MatchHost, MatchPath: row.MatchPath,
 			MatchMethods: strings.Join(row.MatchMethods, ", "), Priority: row.Priority, Enabled: row.Enabled,

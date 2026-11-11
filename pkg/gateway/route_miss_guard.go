@@ -20,6 +20,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/knownhosts"
 )
 
 // errRouteLookupShed is a route read refused by the new-host budget. The
@@ -28,10 +29,15 @@ import (
 var errRouteLookupShed = errors.New("gateway: route lookup shed: new-host lookup budget spent")
 
 type routeMissGuard struct {
-	mu      sync.Mutex
-	missing map[string]time.Time // host -> when its remembered miss expires
-	known   map[string]struct{}  // hosts this gateway has seen route
-	budget  *rate.Limiter
+	mu             sync.Mutex
+	missing        map[string]time.Time // host -> when its remembered miss expires
+	known          map[string]struct{}  // hosts this gateway has seen route
+	budget         *rate.Limiter
+	wildcardBudget *rate.Limiter
+	// preloaded holds every app slug and verified custom domain, refreshed
+	// from the store, so a real app's host skips the budget even before
+	// this gateway has served it (after a restart). Set before serving.
+	preloaded *knownhosts.Set
 
 	missTTL    time.Duration
 	maxWait    time.Duration
@@ -42,14 +48,15 @@ type routeMissGuard struct {
 
 func newRouteMissGuard() *routeMissGuard {
 	return &routeMissGuard{
-		missing:    map[string]time.Time{},
-		known:      map[string]struct{}{},
-		budget:     rate.NewLimiter(rate.Limit(api.GatewayNewHostLookupsPerSecond), api.GatewayNewHostLookupBurst),
-		missTTL:    api.GatewayRouteMissTTL,
-		maxWait:    api.GatewayNewHostLookupMaxWait,
-		maxMissing: api.GatewayRouteMissMaxHosts,
-		maxKnown:   api.GatewayRouteKnownMaxHosts,
-		now:        time.Now,
+		missing:        map[string]time.Time{},
+		known:          map[string]struct{}{},
+		budget:         rate.NewLimiter(rate.Limit(api.GatewayNewHostLookupsPerSecond), api.GatewayNewHostLookupBurst),
+		wildcardBudget: rate.NewLimiter(rate.Limit(api.GatewayWildcardRecoveryPerSecond), api.GatewayWildcardRecoveryBurst),
+		missTTL:        api.GatewayRouteMissTTL,
+		maxWait:        api.GatewayNewHostLookupMaxWait,
+		maxMissing:     api.GatewayRouteMissMaxHosts,
+		maxKnown:       api.GatewayRouteKnownMaxHosts,
+		now:            time.Now,
 	}
 }
 
@@ -78,6 +85,9 @@ func (g *routeMissGuard) admit(ctx context.Context, host string) error {
 	if g == nil {
 		return nil
 	}
+	if g.preloaded.Has(host) {
+		return nil
+	}
 	g.mu.Lock()
 	_, seen := g.known[host]
 	g.mu.Unlock()
@@ -89,6 +99,9 @@ func (g *routeMissGuard) admit(ctx context.Context, host string) error {
 	delay := reservation.DelayFrom(now)
 	if !reservation.OK() || delay > g.maxWait {
 		reservation.CancelAt(now)
+		if g.preloaded.Recover(ctx, host) || (g.preloaded.WildcardCandidate(host) && g.wildcardBudget.Allow()) {
+			return nil
+		}
 		return errRouteLookupShed
 	}
 	if delay == 0 {

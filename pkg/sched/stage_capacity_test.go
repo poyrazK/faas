@@ -296,3 +296,31 @@ func TestNativeProductionRolloutBridgesUnpinnedLegacyCapacity(t *testing.T) {
 		}
 	}
 }
+
+// ADR-590 amendment 2026-11-10 (apps/projects review P7): while production
+// has no instance, stages never take the app's last shared slot, so a busy
+// stage cannot refuse production's wake on a small plan. A one-instance plan
+// keeps its only slot for whichever environment wakes first.
+func TestStagesReserveTheLastSlotForProduction(t *testing.T) {
+	admit := func(ledger *NodeLedger, id, key string, production bool, plan api.Plan) error {
+		return ledger.Admit(Request{Instance: id, AppID: "app", EnvironmentKey: key, ProductionEnvironment: production, Plan: plan, RAMMB: 128})
+	}
+	ledger := NewNodeLedger()
+	if err := admit(ledger, "stage-one", "environment:stage", false, api.PlanHobby); err != nil {
+		t.Fatal(err)
+	}
+	assertServingCapacityRefusal(t, admit(ledger, "stage-two", "environment:other", false, api.PlanHobby), 1, 1)
+	assertServingCapacityRefusal(t, admit(ledger, "scope-two", "scope:staging", false, api.PlanHobby), 1, 1)
+	if err := admit(ledger, "prod", "environment:production", true, api.PlanHobby); err != nil {
+		t.Fatalf("production refused while a stage held its only spare slot: %v", err)
+	}
+	ledger.Release("stage-one")
+	if err := admit(ledger, "stage-again", "environment:stage", false, api.PlanHobby); err != nil {
+		t.Fatalf("stage refused while production serves: %v", err)
+	}
+
+	free := NewNodeLedger()
+	if err := admit(free, "free-stage", "environment:stage", false, api.PlanFree); err != nil {
+		t.Fatalf("a one-instance plan's stage could never run: %v", err)
+	}
+}

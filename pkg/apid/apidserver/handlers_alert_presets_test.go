@@ -69,15 +69,15 @@ func TestLoginTargetPresetTestAlertLinksToObservations(t *testing.T) {
 	}
 }
 
-func TestAutomationBacklogPresetAndRuleAreNotificationOnly(t *testing.T) {
+func TestStoredWorkflowBacklogPresetAndRuleAreNotificationOnly(t *testing.T) {
 	e := apidserver.SetupAlerts(t, api.PlanHobby)
 	appID := apidserver.MustSeedApp(t, e, "backlog-alert")
-	(*e.Store()).SeedAlertPresetForTest(state.AlertPreset{Name: "automation_backlog", DisplayName: "Automation backlog exceeds five minutes", Category: "reliability",
+	(*e.Store()).SeedAlertPresetForTest(state.AlertPreset{Name: "stored_workflow_backlog", DisplayName: "Stored workflow backlog exceeds five minutes", Category: "reliability",
 		Metric: string(state.AlertMetricWorkflowDueAge), Comparison: "gte", Threshold: api.WorkflowBacklogAlertThresholdSeconds, WindowSpec: "5m",
 		DefaultCooldownMinutes: api.WorkflowBacklogAlertCooldownMinutes, EnabledInCatalog: true, MinimumPlan: "hobby"})
 	base := "/v1/apps/backlog-alert"
 	req := api.EnableAlertPresetRequest{WebhookURL: "https://example.com/hook", WebhookSecret: "backlog-webhook-secret"}
-	response := e.Do(t, "POST", base+"/alert-presets/automation_backlog/enable", req, nil)
+	response := e.Do(t, "POST", base+"/alert-presets/stored_workflow_backlog/enable", req, nil)
 	var rule api.AlertRuleResponse
 	if response.Code != 201 || json.Unmarshal(response.Body.Bytes(), &rule) != nil || rule.AppID != appID || rule.Metric != string(state.AlertMetricWorkflowDueAge) || rule.Threshold != api.WorkflowBacklogAlertThresholdSeconds || rule.CooldownMinutes != api.WorkflowBacklogAlertCooldownMinutes || rule.Action != "webhook" {
 		t.Fatalf("enable backlog preset: %d %s", response.Code, response.Body.String())
@@ -88,7 +88,7 @@ func TestAutomationBacklogPresetAndRuleAreNotificationOnly(t *testing.T) {
 	for _, action := range []string{"rollback", "demote", "promote"} {
 		bad := req
 		bad.Action = &action
-		response = e.Do(t, "POST", base+"/alert-presets/automation_backlog/enable", bad, nil)
+		response = e.Do(t, "POST", base+"/alert-presets/stored_workflow_backlog/enable", bad, nil)
 		if response.Code != 400 {
 			t.Fatalf("preset accepted %s: %d %s", action, response.Code, response.Body.String())
 		}

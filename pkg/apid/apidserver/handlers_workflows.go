@@ -281,10 +281,10 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.ErrWorkflowDefinitionNotFound())
 		return
 	}
-	if store, ok := s.store.(state.AutomationStore); ok {
+	if store, ok := s.store.(state.StoredWorkflowStore); ok {
 		dep.Workflows, err = store.EffectiveWorkflowDefinitions(r.Context(), app.ID, dep.Workflows)
 		if err != nil {
-			api.WriteProblem(w, api.ErrCapacity("failed to read published automations"))
+			api.WriteProblem(w, api.ErrCapacity("failed to read published stored workflows"))
 			return
 		}
 	}

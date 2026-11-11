@@ -21,6 +21,8 @@ package apidserver
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"net"
 	"slices"
@@ -245,6 +247,32 @@ func checkPointsToGregale(ctx context.Context, domain string) ProbeResult {
 	}
 }
 
+// checkDomainRouting retries a failed fixed wildcard probe using an
+// unpredictable name. An explicit DNS record for the fixed probe must not
+// revoke an otherwise healthy wildcard claim.
+func checkDomainRouting(ctx context.Context, domain string) (ProbeResult, string) {
+	probe, wildcard := state.WildcardProbeHost(domain)
+	result := checkPointsToGregale(ctx, probe)
+	if !wildcard || result.Status != probeFail {
+		return result, probe
+	}
+	suffix, _ := state.WildcardDomainSuffix(domain)
+	available := api.TrafficPolicyMaxHostnameBytes - len(suffix) - 1
+	var random [16]byte
+	if available < 1 {
+		return ProbeResult{Status: probePending, Detail: "wildcard DNS probe name is too long"}, probe
+	}
+	if _, err := rand.Read(random[:]); err != nil {
+		return ProbeResult{Status: probePending, Detail: "wildcard DNS probe unavailable"}, probe
+	}
+	label := hex.EncodeToString(random[:])
+	if available < len(label) {
+		label = label[:available]
+	}
+	alternative := label + "." + suffix
+	return checkPointsToGregale(ctx, alternative), alternative
+}
+
 // checkCAA answers "does the customer's DNS permit certificate
 // issuance?". A `0 issue "letsencrypt.org"` record permits; a
 // `0 issue ";"` record denies ALL issuance; missing CAA
@@ -348,6 +376,12 @@ func checkAAAAConflict(ctx context.Context, domain string) ProbeResult {
 			ObservedAt: now,
 		}
 	}
+	if len(customDomainAddresses()) == 0 {
+		return ProbeResult{
+			Status: probePending, Detail: "configure edge addresses to check IPv6 routing",
+			Observed: strings.Join(aaaa, ","), ObservedAt: now,
+		}
+	}
 	if addressesAreEdge(aaaa) {
 		return ProbeResult{
 			Status:     probeOK,
@@ -402,14 +436,18 @@ func errorsAs(err error, target any) bool {
 // returns within the budget, its result is recorded; if
 // the budget elapses, the probe is reported as pending
 // (the customer can re-poll).
-func runProbesParallel(ctx context.Context, domain string) (dnsFound, pointsToG, caa, aaaa ProbeResult) {
+func runProbesParallel(ctx context.Context, domain string) (dnsFound, pointsToG, caa, aaaa ProbeResult, routingProbe string) {
 	probeDomain, _ := state.WildcardProbeHost(domain)
 	var wg sync.WaitGroup
 	wg.Add(4)
 	go func() { defer wg.Done(); dnsFound = checkApexA_AAAA(ctx, probeDomain) }()
-	go func() { defer wg.Done(); pointsToG = checkPointsToGregale(ctx, probeDomain) }()
+	go func() { defer wg.Done(); pointsToG, routingProbe = checkDomainRouting(ctx, domain) }()
 	go func() { defer wg.Done(); caa = checkCAA(ctx, domain) }()
 	go func() { defer wg.Done(); aaaa = checkAAAAConflict(ctx, probeDomain) }()
 	wg.Wait()
+	if routingProbe != probeDomain {
+		dnsFound = checkApexA_AAAA(ctx, routingProbe)
+		aaaa = checkAAAAConflict(ctx, routingProbe)
+	}
 	return
 }

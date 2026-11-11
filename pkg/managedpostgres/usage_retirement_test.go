@@ -161,8 +161,10 @@ func TestUsageRetirementRecoversAndCorrectsFiniteWindowsAcrossRestart(t *testing
 			if err := collect(); err != nil || len(provider.windows) != 4 {
 				t.Fatalf("final recovery: %v; windows=%v", err, provider.windows)
 			}
-			if err := registry.UsagePolicy().Admit(ctx, store, database.AccountID, now); !errors.Is(err, ErrUsageStale) {
-				t.Fatalf("final corrections not yet observed: %v", err)
+			// ADR-20261104143000: every window has a reading, so the account
+			// is admitted while the correction tail is still being replayed.
+			if err := registry.UsagePolicy().Admit(ctx, store, database.AccountID, now); err != nil {
+				t.Fatalf("covered tombstone waited for its correction tail: %v", err)
 			}
 			now = end.Add(3 * time.Hour)
 			missing := end.Add(-2 * time.Hour)
@@ -173,6 +175,15 @@ func TestUsageRetirementRecoversAndCorrectsFiniteWindowsAcrossRestart(t *testing
 				return nil
 			}
 			provider.usageReadings = func(UsageWindow) []MeterReading { return []MeterReading{{Meter: MeterComputeUnitSeconds, Quantity: 9}} }
+			if err := collect(); !errors.Is(err, ErrUnavailable) {
+				t.Fatalf("final correction failure: %v", err)
+			}
+			if err := registry.UsagePolicy().Admit(ctx, store, database.AccountID, now); err != nil {
+				t.Fatalf("a correction failure blocked before the tail was overdue: %v", err)
+			}
+			// Past the tail's deadline plus StaleAfter, the failed window
+			// fails closed even though its neighbours were corrected.
+			now = end.Add(3*time.Hour + registry.UsagePolicy().StaleAfter + time.Minute)
 			if err := collect(); !errors.Is(err, ErrUnavailable) {
 				t.Fatalf("final correction failure: %v", err)
 			}

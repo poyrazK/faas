@@ -11,6 +11,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -53,12 +54,20 @@ func topLevelUsage(showAll, showOperator bool) string {
 		b.WriteString("Run 'gregale help --all --operator' to include operator and compatibility commands.\n")
 	}
 	b.WriteString("\nGlobal flags:\n")
+	b.WriteString("  --agent-reason TEXT    With an agent key, tell the person who approves a request\n")
+	b.WriteString("                         what it is for (before the command; up to 280 characters).\n")
+	b.WriteString("                         Equivalent env: GREGALE_AGENT_REASON.\n")
 	b.WriteString("  --json                 Machine-readable output where supported. Slices emit\n")
 	b.WriteString("                         NDJSON; scalars emit indented JSON; errors print\n")
 	b.WriteString("                         RFC 7807 to stderr. Equivalent env: FAAS_JSON=1.\n")
 	b.WriteString("                         Interactive-only commands retain human prompts.\n")
 	b.WriteString("  --non-interactive      Disable prompts and browser launches (before the command).\n")
+	b.WriteString("  --org SLUG             Run project commands on a company's projects (before\n")
+	b.WriteString("                         the command), e.g. gregale --org acme deploy --project.\n")
 	b.WriteString("  --profile NAME         Select a connection profile (before the command).\n")
+	b.WriteString("  --wait-for-approval    When an agent key's request needs a person's approval,\n")
+	b.WriteString("                         wait for the decision and retry once (before the\n")
+	b.WriteString("                         command). Equivalent env: GREGALE_WAIT_FOR_APPROVAL=1.\n")
 	fmt.Fprintf(&b, "Docs: %s\n", docsURL)
 	return b.String()
 }
@@ -111,9 +120,14 @@ func run(args []string) (status int) {
 		jsonUsageHelp = previousUsageHelp
 		invokedCommandPath = previousPath
 	}()
-	previousAutomation := nonInteractive
-	defer func() { nonInteractive = previousAutomation }()
+	previousAutomation, previousWait, previousOrg, previousReason := nonInteractive, approvalWaitEnabled, projectOrganization, agentReason
+	defer func() {
+		nonInteractive, approvalWaitEnabled, projectOrganization, agentReason = previousAutomation, previousWait, previousOrg, previousReason
+	}()
 	nonInteractive = false
+	projectOrganization = ""
+	agentReason = os.Getenv("GREGALE_AGENT_REASON")
+	approvalWaitEnabled = os.Getenv("GREGALE_WAIT_FOR_APPROVAL") == "1"
 	previousInsecureWarned := insecureAPIWarned
 	defer func() { insecureAPIWarned = previousInsecureWarned }()
 	insecureAPIWarned = false
@@ -144,6 +158,9 @@ func run(args []string) (status int) {
 	typed := args
 	args, err := rewriteCliTree(args)
 	if err != nil {
+		if errors.As(err, new(errFoldFlagRequired)) {
+			return printErr("Missing required flag", err)
+		}
 		return printErr("Invalid app target", err)
 	}
 	if slices.Equal(typed, args) {
@@ -155,6 +172,14 @@ func run(args []string) (status int) {
 	if len(args) > 0 {
 		if name, hidden := hiddenFlagArg(manifestLeafFlags(args), args[1:]); hidden {
 			return printErr("Unknown flag", fmt.Errorf("gregale: unknown flag %s; run 'gregale %s --help' for its options", name, leadingWords(typed)))
+		}
+	}
+	// A bare group that has nothing to run on its own lists its commands, as
+	// its --help does; `gregale bucket` printed one subcommand's usage and
+	// `gregale mcp` the usage of `mcp server` (Hunt 32 H32-2).
+	if len(typed) == 1 && bareGroupListsCommands[typed[0]] {
+		if printTreeManifestHelp(osStderr, typed) {
+			return 1
 		}
 	}
 	// Help under a tree noun or a shortcut comes from the tree manifest the
@@ -231,6 +256,11 @@ func run(args []string) (status int) {
 	// A command that names its app only with --app also takes the app as the
 	// first argument after its verb.
 	rewritten, err := appArgumentAsFlag(args)
+	if err == nil {
+		// …and a command that takes the app only as its first argument also
+		// takes --app.
+		rewritten, err = appFlagAsArgument(rewritten)
+	}
 	if err != nil {
 		return printErr("Invalid app target", err)
 	}
@@ -706,9 +736,9 @@ func run(args []string) (status int) {
 	case "workflows":
 		// ADR-081: durable execution workflows (list|run|status|steps|resume|resumes|cancel|events).
 		return cmdWorkflows(args[1:])
-	case "automations":
-		// Manage declarative automation definitions: validate, save a draft, publish.
-		return cmdAutomations(args[1:])
+	case "stored-workflows":
+		// Manage stored workflow definitions: validate, save a draft, publish.
+		return cmdStoredWorkflows(args[1:])
 	case "commit":
 		return cmdCommit(args[1:])
 	case "data-repair":
@@ -799,7 +829,7 @@ func run(args []string) (status int) {
 		// requires an authenticated session + 5-min step-up.
 		return cmdInvitations(args[1:])
 	case "overage-cap":
-		// Tier B audit gap: per-account overage cap ($0.01/GB-h
+		// Tier B audit gap: per-account overage cap ($0.05/GB-h
 		// above the plan's included GB-h). schedd refuses new wakes
 		// once the cap is hit.
 		return cmdOverageCap(args[1:])
@@ -1061,7 +1091,7 @@ func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 func printLocalPathHelp(w io.Writer, command cliCommand, sub cliSub, names []string) {
 	usage := localHelpSubcommandPath(command, names)
 	if len(sub.Subcommands) > 0 {
-		usage += " <" + sub.subcommandChoice() + ">"
+		usage += " " + sub.subcommandSynopsis()
 	}
 	if sub.SubcommandsAfterPositionals {
 		usage = localHelpArguments(usage, nil, sub.Flags, false)
@@ -1081,7 +1111,7 @@ func printLocalPathHelp(w io.Writer, command cliCommand, sub cliSub, names []str
 		printCLIExamples(w, sub.Examples)
 	}
 	printHelpNotes(w, sub.Notes)
-	if takesAppArgument(sub.Flags, sub.Positionals, sub.Subcommands) {
+	if takesAppArgument(sub.Flags, sub.Positionals, sub.Subcommands, "app") {
 		_, _ = fmt.Fprintf(w, "\nThe app can also be the first argument: %s my-api\n", localHelpSubcommandPath(command, names))
 	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
@@ -1152,7 +1182,9 @@ func printLocalHelpFlag(w io.Writer, flag cliFlag) {
 	if flag.Req {
 		description += " (required)"
 	}
-	if flag.Repeatable {
+	// Many descriptions already end in "(repeatable)"; saying it twice read
+	// "OIDC audience (repeatable) (repeatable)".
+	if flag.Repeatable && !strings.Contains(description, "(repeatable") {
 		description += " (repeatable)"
 	}
 	label := mdFlagLabel(flag)
@@ -1183,3 +1215,7 @@ func findCliSubcommand(subcommands []cliSub, name string) (cliSub, bool) {
 	}
 	return cliSub{}, false
 }
+
+// bareGroupListsCommands names the groups whose bare invocation prints their
+// command list (on stderr, exit 1) instead of one subcommand's usage.
+var bareGroupListsCommands = map[string]bool{"bucket": true, "mcp": true}

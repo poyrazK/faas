@@ -22,8 +22,8 @@ func TestEventRecoveryFence(t *testing.T) {
 			state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 				ctx := context.Background()
 				app, _ := state.SeedEventWorkflow(t, store)
-				author := store.(state.AutomationStore)
-				draft := state.MutateForTest(t, author, app.ID, "paid", "save", 0, state.AutomationDraft("paid", "/paid", `{"type":"event","source":"billing.*","event_type":"invoice.paid"}`), false)
+				author := store.(state.StoredWorkflowStore)
+				draft := state.MutateForTest(t, author, app.ID, "paid", "save", 0, state.StoredWorkflowDraft("paid", "/paid", `{"type":"event","source":"billing.*","event_type":"invoice.paid"}`), false)
 				published := state.MutateForTest(t, author, app.ID, "paid", "publish", draft.Version, nil, true)
 				work := state.PublishWorkflowEvent(t, store, app, "fenced-recovery")
 				if len(work.RecipientSnapshot) != 1 {

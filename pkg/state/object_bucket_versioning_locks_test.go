@@ -65,7 +65,7 @@ func waitVersioningAccountLock(ctx context.Context, pool *pgxpool.Pool, pid int3
 		var blocked bool
 		err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity
  WHERE datname=current_database() AND wait_event_type='Lock'
- AND $1=ANY(pg_blocking_pids(pid)) AND query LIKE '%FROM accounts%FOR UPDATE%')`, pid).Scan(&blocked)
+ AND $1=ANY(pg_blocking_pids(pid)) AND query LIKE '%FROM accounts%FOR%UPDATE%')`, pid).Scan(&blocked)
 		if err != nil || blocked {
 			return err
 		}

@@ -29,6 +29,17 @@ func (p *Provider) ProbeDeletionHold(ctx context.Context, providerResourceID str
 	if err != nil {
 		return evidence, err
 	}
+	// Qualification starts with a disposable lifecycle resource. Freeze its
+	// dataset once, then use it for both hold and cleanup even if the default
+	// branch changes during the probe.
+	observed, err := p.Inspect(ctx, providerResourceID)
+	if err != nil || observed.DataResourceID == "" {
+		if err == nil {
+			err = managedpostgres.ErrUnavailable
+		}
+		return evidence, err
+	}
+	providerResourceID = observed.DataResourceID
 	if err := p.HoldForDeletion(ctx, providerResourceID); err != nil {
 		return evidence, err
 	}

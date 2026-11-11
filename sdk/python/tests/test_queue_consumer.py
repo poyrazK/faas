@@ -100,11 +100,28 @@ async def test_uses_a_cached_workload_token():
 
     consumer = fake.consumer(handle, api_key=None, identity_endpoint="http://127.0.0.1:9/token")
     run = asyncio.create_task(consumer.run())
-    await until(lambda: len(fake.verbs("ack")) == 3)
+    await until(lambda: sum(len(call[1]["receipts"]) for call in fake.verbs("ack")) == 3)
     consumer.stop()
     await run
     assert [call[0] for call in fake.calls if call[0].startswith("identity")] == ["identity:gregale:queues"]
     assert all(call[2] == "Bearer eyJ.workload.token" for call in fake.calls if not call[0].startswith("identity"))
+
+
+@pytest.mark.asyncio
+async def test_acks_messages_that_finish_together_in_one_call():
+    fake = FakeQueue(list(range(5)))
+
+    async def handle(message):
+        return None
+
+    consumer = fake.consumer(handle, concurrency=5)
+    run = asyncio.create_task(consumer.run())
+    await until(lambda: sum(len(call[1]["receipts"]) for call in fake.verbs("ack")) == 5)
+    consumer.stop()
+    await run
+    acks = fake.verbs("ack")
+    assert len(acks) == 1
+    assert sorted(acks[0][1]["receipts"]) == ["m0.r", "m1.r", "m2.r", "m3.r", "m4.r"]
 
 
 @pytest.mark.asyncio
@@ -122,7 +139,7 @@ async def test_never_runs_more_handlers_than_concurrency():
 
     consumer = fake.consumer(handle, concurrency=2)
     run = asyncio.create_task(consumer.run())
-    await until(lambda: len(fake.verbs("ack")) == 7)
+    await until(lambda: sum(len(call[1]["receipts"]) for call in fake.verbs("ack")) == 7)
     consumer.stop()
     await run
     assert peak == 2

@@ -7,9 +7,22 @@ import logging
 import os
 import re
 import threading
+import time
 
 DEFAULT_API_URL = "https://api.gregale.dev"
 APP_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+QUEUE_GAUGES = (
+    ("mcp_tasks_outstanding", "outstanding_tasks"),
+    ("mcp_tasks_oldest_age_seconds", "oldest_age_seconds"),
+    ("mcp_tasks_without_compatible_worker", "without_compatible_worker_tasks"),
+    ("mcp_tasks_running", "running_tasks"),
+    ("mcp_tasks_failed", "failed_tasks"),
+    ("mcp_tasks_capacity_waiting", "capacity_waiting_tasks"),
+    ("mcp_tasks_retry_waiting", "retry_waiting_tasks"),
+    ("mcp_tasks_active_workers", "active_workers"),
+    ("mcp_tasks_draining_workers", "draining_workers"),
+    ("mcp_tasks_unsupported_handler_tasks", "unsupported_handler_tasks"),
+)
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -72,12 +85,19 @@ def _publish_loop(runtime, settings, observer, stopped):
     while not stopped.is_set():
         try:
             metrics = runtime.queue_metrics()
-            _push(opener, settings, "mcp_tasks_outstanding", metrics["outstanding_tasks"])
-            _push(opener, settings, "mcp_tasks_oldest_age_seconds", metrics["oldest_age_seconds"])
-            _push(opener, settings, "mcp_tasks_without_compatible_worker", metrics["without_compatible_worker_tasks"])
+            deadline = time.monotonic() + 5
+
+            def remaining():
+                value = deadline - time.monotonic()
+                if value <= 0:
+                    raise TimeoutError("Task metric publication deadline exceeded")
+                return value
+
+            for name, field in QUEUE_GAUGES:
+                _push(opener, settings, name, metrics[field], timeout=remaining())
             if observer:
-                _push_compatibility_report(opener, settings, metrics["handler_compatibility"], metrics["compatibility_truncated"])
-                _push(opener, settings, "mcp_tasks_observer_heartbeat", 1)
+                _push_compatibility_report(opener, settings, metrics["handler_compatibility"], metrics["compatibility_truncated"], timeout=remaining())
+                _push(opener, settings, "mcp_tasks_observer_heartbeat", 1, timeout=remaining())
         except Exception:
             # Avoid logging exception details: database URLs and API tokens are
             # configured secrets and do not belong in application logs.
@@ -85,7 +105,7 @@ def _publish_loop(runtime, settings, observer, stopped):
         stopped.wait(15)
 
 
-def _push(opener, settings, name, value):
+def _push(opener, settings, name, value, timeout=5):
     endpoint = (
         f"{settings['api_url']}/v1/apps/{quote(settings['app_slug'], safe='')}"
         f"/custom-metrics/{name}"
@@ -100,14 +120,14 @@ def _push(opener, settings, name, value):
         method="PUT",
     )
     try:
-        with opener.open(request, timeout=5) as response:
+        with opener.open(request, timeout=timeout) as response:
             if response.status != 204:
                 raise RuntimeError("Gregale custom metric push failed")
     except Exception:
         raise RuntimeError("Gregale custom metric push failed") from None
 
 
-def _push_compatibility_report(opener, settings, handlers, truncated):
+def _push_compatibility_report(opener, settings, handlers, truncated, timeout=5):
     endpoint = f"{settings['api_url']}/v1/apps/{quote(settings['app_slug'], safe='')}/mcp-task-compatibility"
     request = Request(
         endpoint,
@@ -119,7 +139,7 @@ def _push_compatibility_report(opener, settings, handlers, truncated):
         method="PUT",
     )
     try:
-        with opener.open(request, timeout=5) as response:
+        with opener.open(request, timeout=timeout) as response:
             if response.status != 204:
                 raise RuntimeError("Gregale MCP task compatibility report failed")
     except Exception:

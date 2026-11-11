@@ -10312,3 +10312,25 @@ snapshot guard. Both paths must refuse admission. Customer-platform acceptance
 retains its entire suite and existing compiler memory bounds, with a forty-five
 minute cold-build budget after the thirty-minute job completed state/API tests
 but expired while compiling remaining packages.
+
+Runtime admission captures environment-owned egress, signing and scan-policy
+values from the deployment pin. Those values are also used for native producer
+authorization. Current application-standard enrollment, revision, expiry,
+signer and log-drain sources remain authoritative. A currently materialized
+standard-controlled scalar field must match its effective projection; a scoped
+pin cannot override it. Uncontrolled fields may differ between environments.
+
+## Amendment 2026-11-10: stages leave production a slot
+
+Stages share the app's plan concurrency budget, so on a small plan busy
+stages could hold every slot while production was parked and refuse
+production's wake (apps/projects review 2026-11-10, P7). While production has
+no instance, a non-production environment (catalog stage or app-only scope)
+is admitted only below the plan budget minus one. Once production serves, the
+reserve no longer applies, so stages may use the rest of the budget. A plan
+whose budget is one instance keeps its only slot for whichever environment
+wakes first; reserving it would leave stages unable to run. The refusal names
+the reserved ceiling with the stable concurrency-limit code. Invariant 1 is
+unchanged: this only narrows admission.
+
+Verification: `TestStagesReserveTheLastSlotForProduction` (pkg/sched).

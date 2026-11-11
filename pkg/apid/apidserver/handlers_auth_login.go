@@ -36,6 +36,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -132,8 +133,8 @@ func (s *server) postLoginEmail(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrInvalidCredentials())
 		return
 	}
-	if !acct.EmailVerified() {
-		s.sendEmailVerification(r.Context(), r, acct)
+	if s.unverifiedSignInRefused(w, r, acct) {
+		return
 	}
 	s.issueSessionCookie(w, r, acct)
 	writeLoginJSON(w, acct)
@@ -201,6 +202,7 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 			Email:                    email,
 			Plan:                     api.PlanFree,
 			RequireEmailVerification: true,
+			InitialPasswordHash:      phc,
 		})
 		created := res.Account
 		if createErr != nil {
@@ -234,10 +236,10 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 					api.WriteProblem(w, api.ErrInvalidCredentials())
 					return
 				}
-				s.issueSessionCookie(w, r, existing)
-				if !existing.EmailVerified() {
-					s.sendEmailVerification(r.Context(), r, existing)
+				if s.unverifiedSignInRefused(w, r, existing) {
+					return
 				}
+				s.issueSessionCookie(w, r, existing)
 				writeLoginJSON(w, existing)
 				return
 			}
@@ -246,12 +248,6 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 			s.log.Error("signup.create_account", "err", createErr, "email", email)
 			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
 				"internal_error", "Internal Error", "failed to create account"))
-			return
-		}
-		if err := s.store.SetAccountPassword(r.Context(), created.ID, phc); err != nil {
-			s.log.Error("signup.set_password", "err", err)
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-				"internal_error", "Internal Error", "failed to set password"))
 			return
 		}
 		s.sendEmailVerification(r.Context(), r, created)
@@ -284,10 +280,10 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrInvalidCredentials())
 		return
 	}
-	s.issueSessionCookie(w, r, acct)
-	if !acct.EmailVerified() {
-		s.sendEmailVerification(r.Context(), r, acct)
+	if s.unverifiedSignInRefused(w, r, acct) {
+		return
 	}
+	s.issueSessionCookie(w, r, acct)
 	writeLoginJSON(w, acct)
 }
 
@@ -322,12 +318,26 @@ func (s *server) postForgotPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 // forgotPasswordFor mails a reset link when email belongs to a verified
-// account. Lookup may fail because the email is unbound or the store is
+// account. An unverified account gets a magic sign-in link instead: its
+// password may belong to whoever signed up with the address first, so a
+// reset must not keep that account's other credentials. Redeeming the
+// magic link claims the account (claimAccountByEmailOwnership clears the
+// password, sessions, keys and MFA, then marks the address verified), and
+// the owner sets a new password from the account page. Without this, an
+// owner who never clicked the verification link and forgot the password
+// had no way back in except an OAuth provider with the same address.
+// Lookup may fail because the email is unbound or the store is
 // unreachable; either way nothing is sent and nothing surfaces.
 func (s *server) forgotPasswordFor(ctx context.Context, base, email string) {
-	if acct, err := s.store.AccountByEmail(ctx, email); err == nil && acct.EmailVerified() {
-		s.sendPasswordResetEmail(ctx, base, acct, email)
+	acct, err := s.store.AccountByEmail(ctx, email)
+	if err != nil {
+		return
 	}
+	if acct.EmailVerified() {
+		s.sendPasswordResetEmail(ctx, base, acct, email)
+		return
+	}
+	s.sendMagicLinkEmailAt(ctx, base, acct, email)
 }
 
 // passwordResetLinkBase is the scheme and host a reset link points at: the
@@ -465,6 +475,9 @@ func (s *server) finishPasswordReset(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	s.revokeSignInKeysAfterPasswordChange(r, acct)
+	s.removeForeignProviderLinks(r.Context(), accountID, "password_reset")
+	leftKeys := s.keysLeftAfterReset(r.Context(), acct)
+	s.mailKeysLeftAfterReset(r.Context(), acct, leftKeys)
 	if !s.passwordChangedAlertRequested() {
 		// The durable path queued its own alert in the reset transaction.
 		s.alertPasswordChangedInline(r.Context(), acct, "password_reset")
@@ -473,7 +486,11 @@ func (s *server) finishPasswordReset(w http.ResponseWriter, r *http.Request, acc
 	// pause someone else's guessing put on it.
 	s.loginFailures.reset(auth.HashEmail(acct.Email))
 	s.issueSessionCookie(w, r, acct)
-	http.Redirect(w, r, "/dashboard/", http.StatusFound)
+	target := "/dashboard/"
+	if len(leftKeys) > 0 {
+		target = accountPagePath + "?password_reset=keys"
+	}
+	http.Redirect(w, r, target, http.StatusFound)
 }
 
 // postSetPassword is the authenticated POST /dashboard/account/set-password.
@@ -593,6 +610,10 @@ func (s *server) revokeSessionsAfterPasswordChange(ctx context.Context, accountI
 	if keepSID == "" {
 		keepSID = uuid.Nil.String()
 	}
+	// A changed password or email also forgets remembered browsers and
+	// ends grants the old credentials started.
+	s.forgetTrustedBrowsers(ctx, accountID, "credential_change")
+	s.endPendingGrants(ctx, accountID, "credential_change")
 	n, err := s.store.RevokeAllSessions(ctx, accountID, keepSID)
 	if err != nil {
 		s.log.Warn("password change: revoke sessions failed", "account", accountID, "err", err)
@@ -613,6 +634,14 @@ const setPasswordStepUpTTL = 5 * time.Minute
 // whether a password already existed. On refusal it has written the
 // problem and returns ok=false.
 func (s *server) setPasswordProof(w http.ResponseWriter, r *http.Request, acct state.Account) (proof string, replacing bool, ok bool) {
+	return s.accountChangeProof(w, r, acct, setPasswordPath, r.FormValue("current_password"))
+}
+
+// accountChangeProof is the proof-of-presence ladder documented on
+// postSetPassword, shared by every account change that a stolen session
+// alone must not make (password, sign-in email). path names the route in
+// the audit rows; current is the submitted current password.
+func (s *server) accountChangeProof(w http.ResponseWriter, r *http.Request, acct state.Account, path, current string) (proof string, replacing bool, ok bool) {
 	hash, err := s.store.AccountPasswordByAccountID(r.Context(), acct.ID)
 	replacing = err == nil
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
@@ -635,7 +664,7 @@ func (s *server) setPasswordProof(w http.ResponseWriter, r *http.Request, acct s
 	// proof-selection handler instead of RequireMFA.
 	if acct.MFARequired && !acct.MFAEnrolled() {
 		s.audit.Emit(r.Context(), "auth.mfa_gate_hit", &acct.ID, map[string]any{
-			"path":   setPasswordPath,
+			"path":   path,
 			"method": http.MethodPost,
 		})
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeMFARequired,
@@ -658,7 +687,7 @@ func (s *server) setPasswordProof(w http.ResponseWriter, r *http.Request, acct s
 		// request: the row is identical, and nothing request-derived
 		// flows into the audit payload.
 		s.audit.Emit(r.Context(), "auth.step_up_required", &acct.ID, map[string]any{
-			"path":    setPasswordPath,
+			"path":    path,
 			"method":  http.MethodPost,
 			"reason":  reason,
 			"ttl_sec": int(setPasswordStepUpTTL.Seconds()),
@@ -668,7 +697,6 @@ func (s *server) setPasswordProof(w http.ResponseWriter, r *http.Request, acct s
 	}
 
 	if replacing {
-		current := r.FormValue("current_password")
 		matched, verr := auth.VerifyContext(r.Context(), hash, current)
 		if passwordNotChecked(verr) {
 			writePasswordCheckUnavailable(w)
@@ -690,6 +718,11 @@ func (s *server) setPasswordProof(w http.ResponseWriter, r *http.Request, acct s
 		return "current_password", true, true
 	}
 
+	// Neither a password nor an authenticator: the session is the only
+	// proof, so it must be a recent sign-in (ADR 20261110100000).
+	if !s.requireRecentSignIn(w, r, acct, path) {
+		return "", false, false
+	}
 	return "session", false, true
 }
 
@@ -818,7 +851,15 @@ func writePasswordCheckUnavailable(w http.ResponseWriter) {
 // provider. Fresh OAuth accounts already default verified; this closes the
 // existing-password-account path when the customer later signs in through a
 // provider with the same verified address.
-func (s *server) verifyOAuthAccountEmail(ctx context.Context, acct state.Account) (state.Account, error) {
+func (s *server) verifyOAuthAccountEmail(ctx context.Context, acct state.Account, providerEmail string) (state.Account, error) {
+	// The provider proved its own (verified) address, not the account's: a
+	// provider linked to an account under another address must not mark the
+	// account's address verified, or a squatter who linked their own
+	// identity would verify the victim's address (account-flow audit
+	// 2026-11-10, ADR 20261111090000).
+	if !strings.EqualFold(strings.TrimSpace(providerEmail), strings.TrimSpace(acct.Email)) {
+		return acct, nil
+	}
 	return s.claimAccountByEmailOwnership(ctx, acct)
 }
 
@@ -854,6 +895,8 @@ func (s *server) revokePreVerificationCredentials(ctx context.Context, accountID
 	if err != nil {
 		return fmt.Errorf("revoke pre-verification sessions: %w", err)
 	}
+	s.endPendingGrants(ctx, accountID, "ownership_claim")
+	s.removeForeignProviderLinks(ctx, accountID, "ownership_claim")
 	keys, err := s.store.ListAPIKeys(ctx, accountID)
 	if err != nil {
 		return fmt.Errorf("list pre-verification api keys: %w", err)
@@ -1004,6 +1047,7 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 			Email:                    email,
 			Plan:                     api.PlanFree,
 			RequireEmailVerification: true,
+			InitialPasswordHash:      phc,
 		})
 		if createErr != nil {
 			if errors.Is(createErr, errSignupNetworkCap) {
@@ -1024,8 +1068,8 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 					api.WriteProblem(w, api.ErrInvalidCredentials())
 					return
 				}
-				if !existing.EmailVerified() {
-					s.sendEmailVerification(r.Context(), r, existing)
+				if s.unverifiedSignInRefused(w, r, existing) {
+					return
 				}
 				s.mintAndWriteV1AuthJSON(w, r, existing, email)
 				return
@@ -1038,12 +1082,6 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		created := res.Account
-		if err := s.store.SetAccountPassword(r.Context(), created.ID, phc); err != nil {
-			s.log.Error("v1auth_signup.set_password", "err", err)
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-				"internal_error", "Internal Error", "failed to set password"))
-			return
-		}
 		s.sendEmailVerification(r.Context(), r, created)
 		s.mintAndWriteV1AuthJSON(w, r, created, email)
 		return
@@ -1067,8 +1105,8 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrInvalidCredentials())
 		return
 	}
-	if !existing.EmailVerified() {
-		s.sendEmailVerification(r.Context(), r, existing)
+	if s.unverifiedSignInRefused(w, r, existing) {
+		return
 	}
 	s.mintAndWriteV1AuthJSON(w, r, existing, email)
 }
@@ -1095,8 +1133,8 @@ func (s *server) postV1AuthLogin(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrInvalidCredentials())
 		return
 	}
-	if !acct.EmailVerified() {
-		s.sendEmailVerification(r.Context(), r, acct)
+	if s.unverifiedSignInRefused(w, r, acct) {
+		return
 	}
 	s.mintAndWriteV1AuthJSON(w, r, acct, email)
 }
@@ -1202,6 +1240,11 @@ func (s *server) mintAndWriteV1AuthJSON(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
+	// A password traded for a key is the path a stolen password takes;
+	// a brand-new account's own signup key is not news.
+	if !acct.CreatedAt.IsZero() && time.Since(acct.CreatedAt) > credentialNoticeSignupQuiet {
+		s.noticeCredentialCreated(r, acct, credentialAPISignIn, k.Label)
+	}
 	writeV1AuthJSON(w, acct, requestEmail, plaintext, k)
 }
 
@@ -1333,6 +1376,12 @@ func writeV1AuthJSON(w http.ResponseWriter, acct state.Account, requestEmail, pl
 // via the platform mailer. Mailer errors are logged but never
 // surface — the public endpoint remains a constant 200.
 func (s *server) sendMagicLinkEmail(ctx context.Context, r *http.Request, acct state.Account, email string) {
+	s.sendMagicLinkEmailAt(ctx, s.passwordResetLinkBase(r), acct, email)
+}
+
+// sendMagicLinkEmailAt sends the magic link with base (scheme://host) as
+// the link prefix, for callers that no longer hold the request.
+func (s *server) sendMagicLinkEmailAt(ctx context.Context, base string, acct state.Account, email string) {
 	if !s.allowSecurityMail(ctx, acct, "magic_link") {
 		return
 	}
@@ -1351,16 +1400,7 @@ func (s *server) sendMagicLinkEmail(ctx context.Context, r *http.Request, acct s
 		s.log.Error("v1auth_signup_magic.issue_token", "err", err)
 		return
 	}
-	scheme := schemeHTTP
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS {
-		scheme = schemeHTTPS
-	}
-	host := r.Host
-	if platform := s.platformHost(); platform != "" && platform != domainUnset {
-		host = platform
-		scheme = schemeHTTPS
-	}
-	link := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, magicLinkPath, base64.RawURLEncoding.EncodeToString(raw))
+	link := fmt.Sprintf("%s%s?token=%s", base, magicLinkPath, base64.RawURLEncoding.EncodeToString(raw))
 	subject, body := mailpkg.MagicLinkBodyV1(link)
 	if err := s.mailer.Send(ctx, Message{
 		To:       []string{email},
@@ -1375,6 +1415,12 @@ func (s *server) sendMagicLinkEmail(ctx context.Context, r *http.Request, acct s
 // token. Delivery errors remain server-side because signup has already
 // committed; a same-credential signup retry mints and sends a fresh link.
 func (s *server) sendEmailVerification(ctx context.Context, r *http.Request, acct state.Account) {
+	s.sendEmailVerificationAt(ctx, s.passwordResetLinkBase(r), acct)
+}
+
+// sendEmailVerificationAt is sendEmailVerification with the link base
+// already resolved, for work that runs after the request has returned.
+func (s *server) sendEmailVerificationAt(ctx context.Context, base string, acct state.Account) {
 	if !s.allowSecurityMail(ctx, acct, "email_verification") {
 		return
 	}
@@ -1392,16 +1438,7 @@ func (s *server) sendEmailVerification(ctx context.Context, r *http.Request, acc
 		s.log.Error("email_verification.issue_token", "err", err, "account_id", acct.ID)
 		return
 	}
-	scheme := schemeHTTP
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS {
-		scheme = schemeHTTPS
-	}
-	host := r.Host
-	if platform := s.platformHost(); platform != "" && platform != domainUnset {
-		host = platform
-		scheme = schemeHTTPS
-	}
-	link := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, emailVerificationPath, base64.RawURLEncoding.EncodeToString(raw))
+	link := fmt.Sprintf("%s%s?token=%s", base, emailVerificationPath, base64.RawURLEncoding.EncodeToString(raw))
 	subject, body := mailpkg.EmailVerificationBody(acct.Email, link, expiresAt)
 	if err := s.mailer.Send(ctx, Message{
 		To:       []string{acct.Email},
@@ -1458,13 +1495,21 @@ func (s *server) verifyEmail(w http.ResponseWriter, r *http.Request) {
 	s.verifyEmailToken(w, r, strings.TrimSpace(r.PostFormValue("token")))
 }
 
-// verifyEmailToken consumes a verification token without authenticating the
-// browser. The success page explicitly sends the customer back through sign
-// in, so possession of the email link never becomes a session credential.
+// verifyEmailToken consumes a verification token. Possession of the email
+// link never becomes a session credential, and the link verifies only from a
+// browser signed in to its account (ADR 20261109120000): whoever signed up
+// with the address may not own it, and the mailbox owner clicking a link
+// someone else's sign-up sent them must not vouch for that someone's
+// password, keys and authenticator. The mailbox owner who did not sign up
+// cannot sign in with that password; they use an email sign-in link, which
+// clears whatever the sign-up left.
 func (s *server) verifyEmailToken(w http.ResponseWriter, r *http.Request, token string) {
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil || len(raw) != 32 {
 		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
+		return
+	}
+	if !s.verificationFromAccountBrowser(w, r, api.HashToken(raw), token) {
 		return
 	}
 	accountID, err := s.store.ConsumeEmailVerificationToken(r.Context(), api.HashToken(raw))
@@ -1486,3 +1531,30 @@ func (s *server) verifyEmailToken(w http.ResponseWriter, r *http.Request, token 
 // Keep the imports tidy — these helpers are referenced by the
 // future test surface and the README expansion; the imports stay
 // green so gofmt doesn't flag them on a future edit.
+
+// verificationFromAccountBrowser reports whether r comes from a browser fully
+// signed in to the account the verification link belongs to. Otherwise it
+// answers: a browser goes to sign in and comes back to the link, any other
+// client gets 401; the link is not consumed.
+func (s *server) verificationFromAccountBrowser(w http.ResponseWriter, r *http.Request, hash []byte, token string) bool {
+	peek, ok := s.store.(state.EmailVerificationPeekStore)
+	if !ok {
+		return true
+	}
+	ownerID, err := peek.EmailVerificationTokenAccount(r.Context(), hash)
+	if err != nil {
+		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
+		return false
+	}
+	if owner, err := s.store.AccountByID(r.Context(), ownerID); err == nil && s.signedInBrowserAs(r, owner) {
+		return true
+	}
+	if api.AcceptsHTML(r) {
+		next := emailVerificationPath + "?token=" + url.QueryEscape(token)
+		http.Redirect(w, r, loginPath+"?verify=1&next="+url.QueryEscape(next), http.StatusSeeOther)
+		return false
+	}
+	api.WriteProblemForRequest(w, r, api.NewProblem(http.StatusUnauthorized, api.CodeSessionExpired,
+		"Sign in to verify", "open the link in a browser signed in to the account it was sent for"))
+	return false
+}

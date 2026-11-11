@@ -103,6 +103,7 @@ func TestCDControlPlaneRestartsOptionalDaemonsBeforeTargetGate(t *testing.T) {
 		"- name: Restart configured optional S3 gateway",
 		"- name: Restart configured optional live-query hub",
 		"- name: Restart configured optional hosted management MCP server",
+		"- name: Restart configured optional edge DNS daemon",
 	} {
 		at := strings.Index(workflow, step)
 		if at < 0 {

@@ -163,6 +163,7 @@ func TestPublicHostSnapshotPostgresDoesNotMixAppAccountAndIngress(t *testing.T) 
 func TestPublicHostSnapshotPostgresScopesIngressAndRefreshesAliasWithoutNotify(t *testing.T) {
 	f := newPublicRoutingPGFixture(t)
 	production := f.deployment(t, "production", "sha256:prod")
+	f.environment(t, "staging")
 	staging := f.deployment(t, "staging", "sha256:stage")
 	f.ingress(t, production.ID, 8081)
 	f.ingress(t, staging.ID, 8082)

@@ -27,6 +27,23 @@
     mode: "0644"
   register: realtimed_unit
 
+- name: gatewayd_internal_service — create custom-domain TLS drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-gatewayd-internal.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: gatewayd_internal_service — align custom-domain certificate ownership with the public edge
+  ansible.builtin.template:
+    src: 99-faas-custom-domain-tls.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-custom-domain-tls.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-gatewayd-internal
+
 # Durable listeners (ADR-1736), off unless faas_compute_durable_listeners.
 # The socket units are inert until a service drop-in Wants= them. Nothing
 # here starts a socket: a daemon that bound the address itself unlinks the
@@ -496,6 +513,21 @@
     group: root
     mode: "0644"
   notify: restart faas-gatewayd-internal
+
+# Manifest hot_path: these switches were first turned on by hand on
+# production (2026-11-06). 99-faas-role.conf now carries them, so the hand-made
+# drop-ins go; left behind they would keep a switch on after the manifest
+# turned it off.
+- name: gatewayd_internal_service — remove the hand-made hot-path drop-ins
+  notify: restart faas-gatewayd-internal
+  ansible.builtin.file:
+    path: "/etc/systemd/system/faas-gatewayd-internal.service.d/{{ item }}"
+    state: absent
+  loop:
+    - 60-faas-edge-local-first.conf
+    - 60-faas-request-journal-local.conf
+    - 61-faas-request-telemetry-minute-collapse.conf
+    - 63-faas-gateway-local-vmmd-socket.conf
 
 - name: gatewayd_internal_service — install split-box public listener drop-in
   ansible.builtin.template:

@@ -38,6 +38,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/sealsig"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
@@ -329,7 +330,7 @@ type bringUpTimings struct {
 	restoreFallbackReason string
 	// prepare is filled by Wake from wakePhases just before bringUp so the
 	// RestoreSpec can carry the pre-restore phases onto the timeline
-	// (ADR-192).
+	// (ADR-192). bringUp adds the ADR-510 backing check to it.
 	prepare WakePrepareTimings
 }
 
@@ -423,7 +424,18 @@ func (w *wakePhases) attrs() []any {
 }
 
 type Instance struct {
-	publicForwardTarget *netns.PublicForwardTarget
+	resolvedEgressGeneration string // immutable once captured, guarded by Manager.mu
+	// booting marks a network owner registered before publication
+	// (booting_egress.go); it is never in live.
+	booting bool
+	// awaitingExit: teardown has recorded its cleanup intent but is waiting
+	// for the guest to exit by itself (a builder finishing its build), so
+	// its DNS answers are still granted. Guarded by Manager.mu.
+	awaitingExit bool
+	// Cached contents do not establish convergence after an uncertain nft write.
+	egressAllowlistUncertain bool // guarded by Manager.mu
+	egressPortsUncertain     bool // guarded by Manager.mu
+	publicForwardTarget      *netns.PublicForwardTarget
 	// Immutable launch identity; late network work cannot acquire a replacement VM.
 	nativeGeneration          string
 	operatorRestartGeneration string
@@ -472,6 +484,12 @@ type Instance struct {
 	// QuietPauseAfter is the ADR-1151 quiet pause delay; zero means the
 	// instance keeps running between requests (quiet_pause.go).
 	QuietPauseAfter time.Duration
+	// IdleLadderEligible marks a request-serving instance the idle ladder's
+	// observe mode measures (ADR-20261107122928; idle_ladder.go).
+	IdleLadderEligible bool
+	// IdleLadderGuardedPause marks an app the idle ladder may quiet-pause
+	// behind its activity guard (idle_ladder_apps.go).
+	IdleLadderGuardedPause bool
 	// AgentWaitPauseAfter is an agent run's model-wait pause delay
 	// (ADR-20261027090012; agent_wait_pause.go); zero means the run VM keeps
 	// running while it waits on the model.
@@ -593,7 +611,12 @@ type Instance struct {
 	// needing to thread the plan through the vmm-side Lease type.
 	// The Lease stays allocator-owned and instance-id-keyed; the Plan
 	// is schedd-owned and recorded at Wake time.
-	Plan                  api.Plan
+	Plan api.Plan
+	// RequestConcurrency is the HTTP admission limit schedd sent with the
+	// wake (ADR-20261101215228); 0 keeps the plan's concurrency_per_vm. It
+	// is not journaled: an instance adopted after a vmmd restart keeps the
+	// plan bound until its next wake.
+	RequestConcurrency    int
 	httpForwardGeneration string
 
 	// Port (issue #460 / ADR-053, PR-C) is the per-deployment
@@ -752,6 +775,10 @@ type Instance struct {
 	// set on a claimed warm instance. Recorded in the adoption block.
 	// Guarded by Manager.mu.
 	warmSpare bool
+	// resumeIdentity is the identity schedd assigned this instance at wake.
+	// Every later resume hook carries it (ADR-20261107160000): a warm-pool
+	// restore sends no hook until it is promoted.
+	resumeIdentity ResumeIdentity
 }
 
 // LiveEgressInstance is the minimal live-instance view needed by vmmd's
@@ -849,6 +876,7 @@ type Manager struct {
 	// outboundRelayEnabled advertises vmmd's streaming relay to
 	// outbound-enabled Runs (ADR-990).
 	outboundRelayEnabled      atomic.Bool
+	scanRefresh               scanRefreshCoalescer // O36: one canonical scan re-read per refusal burst
 	alloc                     *Allocator
 	nativeRecoveryReady       bool // guarded by mu; precedes all native admission
 	nativeRecoveryFlight      *nativeRecoveryInitFlight
@@ -910,6 +938,9 @@ type Manager struct {
 	// egress on this node (FAAS_EGRESS_DNS_GATING=off). Gating is on by
 	// default; turning it off keeps every other egress control.
 	dnsGatingOff bool
+	// releaseConnectionsOnDestroy resets an app guest's TCP connections
+	// before teardown destroys it (ADR-20261109130000).
+	releaseConnectionsOnDestroy bool
 	// appCPUPolicyUpdates serializes concurrent desired-policy changes so an
 	// older request cannot finish after a newer one and leave existing VMs at
 	// the stale quota. appCPUPolicies is guarded by mu and also fences a Wake
@@ -971,6 +1002,10 @@ type Manager struct {
 	// request's runtime identity so a booting guest can register its
 	// secret execution before exec (ADR-508), ahead of publication.
 	waking map[string]wakingInstance
+	// bootingEgress is the network owner of each booting guest whose
+	// namespace exists, until publication or teardown (booting_egress.go).
+	// Guarded by mu.
+	bootingEgress map[string]*Instance
 	// provenWorkers holds the deployments whose declared worker passed the
 	// full characterization window on this node; their later cold boots
 	// use the short window (ADR-20261018101500). Guarded by mu. Losing it on restart
@@ -1125,6 +1160,9 @@ type Manager struct {
 	lifecycleCtx         context.Context
 	frameworkReadyReader func(context.Context, string) (frameworkready.Status, error)
 	frameworkReadyRuns   map[string]*frameworkReadyRun
+	// qualificationFrameworkReadyRecorder stores a restored qualification
+	// target's framework-ready receipt (ADR 20261023093000).
+	qualificationFrameworkReadyRecorder func(context.Context, state.EnvironmentQualificationExecution, string, int64) error
 	// hostIdentities is the slice of X25519 secret keys used to
 	// unseal per-app sealed env blobs at wake time (spec §11/G2).
 	// Holds the current identity alone in the normal pre-rotation
@@ -1177,6 +1215,12 @@ type Manager struct {
 	// beforeBackingHash, when set, runs before a file version is hashed.
 	// Tests use it to hold a hash in flight.
 	beforeBackingHash func(path string)
+	// backingRecorder keeps digests with the files across vmmd restarts
+	// (ADR-510 amendment 2); nil uses the platform's (a trusted xattr on
+	// Linux). backingKeys are the base keys this vmmd attached, which the
+	// digest primer follows. Both guarded by backingMu where mutable.
+	backingRecorder backingDigestRecorder
+	backingKeys     map[string]struct{}
 	// baseGenerations binds each logical runtime base key to the immutable
 	// OCI reference configured for this node. The separate mutex serializes
 	// the rare cross-node cache adoption path without holding Manager.mu
@@ -1293,8 +1337,9 @@ type Manager struct {
 	// reconciled through the vmmd control surface. The map is only a cache for
 	// idempotent command planning; the kernel remains the source of truth and
 	// the capture runner probes it after a vmmd restart.
-	privateNetworkFabric   map[string]netip.Prefix
-	privateNetworkFabricMu sync.Mutex
+	privateNetworkFabric          map[string]netip.Prefix
+	privateNetworkPeeringPolicies map[string][]privatenetwork.PeeringRoute // guarded by privateNetworkFabricMu
+	privateNetworkFabricMu        sync.Mutex
 	// privateNetworkTransport records the node-local VXLAN links that have
 	// been reconciled for each account/network. It is only an idempotency
 	// cache; ReconcilePrivateNetworkFabric probes the kernel after restart.
@@ -1326,6 +1371,27 @@ type Manager struct {
 	quietTick     time.Duration
 	quietMu       sync.Mutex
 	quietStates   map[string]*quietState
+
+	// Idle ladder (ADR-20261107122928; idle_ladder.go). idleActivity is nil
+	// unless vmmd.toml sets idle_ladder; idleLadderOn applies levels L1 and
+	// L2. idleMu guards idleStates and idleLast and is a leaf lock: it is
+	// never held while m.mu is taken.
+	idleActivity QuietActivity
+	idleLadderOn bool
+	idleAppsOn   bool
+	idleCPU      IdleLadderCPU
+	idleNet      IdleLadderNet
+	idleMetrics  *IdleLadderMetrics
+	idleTick     time.Duration
+	idleMu       sync.Mutex
+	idleStates   map[string]*idleLadderState
+	idleLast     time.Time
+	// idleCompressOn applies L3/L4 (idle_compress.go). idleColdMu guards
+	// idleColdCeilings, each app's compression ceiling, and is a leaf lock.
+	idleCompressOn      bool
+	idleCompressMetrics *IdleCompressMetrics
+	idleColdMu          sync.Mutex
+	idleColdCeilings    map[string]coldCeiling
 
 	// Model-wait pause of agent runs (ADR-20261027090012;
 	// agent_wait_pause.go). agentWaitCPU is nil unless vmmd.toml enables it.
@@ -3773,6 +3839,9 @@ type WakeRequest struct {
 	CPUMillicores int
 	EgressMbit    int       // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
 	Snapshot      *Snapshot // nil => cold boot
+	// RequestConcurrency is the instance's HTTP admission limit
+	// (ADR-20261101215228); 0 keeps the plan's concurrency_per_vm.
+	RequestConcurrency int
 	// KeepPaused restores a snapshot into the warm pool without resuming the
 	// guest. It is intentionally valid only with Snapshot; cold boots cannot
 	// produce a paused pool entry.
@@ -3783,6 +3852,15 @@ type WakeRequest struct {
 	// Manager ignores it for instances that cannot be paused safely; see
 	// quietPauseAfterFor.
 	QuietPauseAfter time.Duration
+	// IdleLadderEligible (ADR-20261107122928) marks a request-serving
+	// workload the pause tiers may pause, whatever its declared pause.
+	// vmmd's idle_ladder observe mode measures it; see idleLadderEligibleFor.
+	IdleLadderEligible bool
+	// IdleLadderGuardedPause (ADR-20261107122928 §6) lets vmmd quiet-pause a
+	// request-serving app that declared no pause, behind the idle ladder's
+	// activity guard, when idle_ladder_apps is on; see
+	// idleLadderGuardedPauseFor.
+	IdleLadderGuardedPause bool
 	// Plan is the apps row's owning plan tier (issue #301, ADR-044).
 	// Drives the parent-cgroup path (ParentCgroupFor) and the
 	// --cgroup cpu.weight=N jailer argv, plus the per-instance
@@ -3830,6 +3908,18 @@ type WakeRequest struct {
 	StartupDeadlineS int
 	// DisableStartupCPUBoost opts out of the bounded startup CPU allowance.
 	DisableStartupCPUBoost bool
+	// CPUWeight is the instance's cgroup cpu.weight (ADR-20261109172421);
+	// 0 gives an app instance its memory's weight (wakeLeaseCPU). The json
+	// tag keeps the checkpoint wake commitment of a request without it
+	// unchanged.
+	CPUWeight int `json:",omitempty"`
+	// CPUUncapped runs the instance with cpu.max = max and no startup boost
+	// while CPUMillicores is the app default; an app's 250 or 500 millicore
+	// choice stays a cap, also after a live CPU policy update
+	// (ADR-20261109172421). vmmd runs every app instance this way whatever
+	// the field says (wakeLeaseCPU, step 6.3); it stays on the wire for
+	// schedd N-1.
+	CPUUncapped bool `json:",omitempty"`
 	// ExecutionMode is the declared lifecycle mode used to constrain the
 	// cold-boot characterization result. Empty preserves legacy inference.
 	ExecutionMode string
@@ -3890,6 +3980,12 @@ type WakeRequest struct {
 	// FIFO. They are deliberately unexported and never cross the gRPC wire.
 	preparedSecretsEnvJSON []byte
 	preparedAPIEnvJSON     []byte
+	// qualificationRestoreReceipt is a native qualification restore's fresh
+	// guest receipt control. It is sent with the resume hook, never staged.
+	// The restore consumes the waiter's receipt before its private guest
+	// channels close.
+	qualificationRestoreReceipt       qualificationRestoreReceiptControl
+	qualificationRestoreReceiptWaiter *qualificationConfigReceiptWaiter
 	// EgressAllowlist (ADR-031, tier-2 of the network roadmap): per-app
 	// outbound IPv4/v6 allowlist. Each entry is a CIDR string (e.g.
 	// "1.2.3.0/24"); empty slice = current behaviour (no allowlist rule
@@ -3905,6 +4001,11 @@ type WakeRequest struct {
 	// on top of api.TenantEgressBasePorts. Forbidden ports are dropped
 	// again when the policy is applied.
 	EgressPorts []uint16
+	// EgressRevision is the apps.egress_allowlist_revision that
+	// EgressAllowlist/EgressPorts were read at. wake uses the cached app
+	// policy (UpdateAppEgressPolicy) unless this revision is newer than it;
+	// 0 = unknown (older scheduler), the cache wins.
+	EgressRevision int64
 	// PrivateNetworkCIDRs contains provider-verified VPC destinations. Empty
 	// means the attachment is pending/error (or not configured); vmmd keeps the
 	// default RFC1918 deny in that case. Ready CIDRs are validated again here
@@ -4132,6 +4233,8 @@ type ColdBootRequest struct {
 	EgressAllowlist []string
 	// EgressPorts (ADR-361) — same shape as WakeRequest.
 	EgressPorts []uint16
+	// EgressRevision — same meaning as WakeRequest.EgressRevision.
+	EgressRevision int64
 	// PrivateNetworkCIDRs mirrors WakeRequest.PrivateNetworkCIDRs for callers
 	// that invoke ColdBoot directly instead of using the scheduler wire.
 	PrivateNetworkCIDRs         []string
@@ -4174,6 +4277,10 @@ type ColdBootRequest struct {
 	StartupDeadlineS int
 	// DisableStartupCPUBoost is forwarded to WakeRequest.
 	DisableStartupCPUBoost bool
+	// CPUWeight and CPUUncapped are forwarded to WakeRequest
+	// (ADR-20261109172421).
+	CPUWeight   int
+	CPUUncapped bool
 	// ExecutionMode is forwarded to WakeRequest. Empty preserves legacy
 	// characterization inference for direct callers predating ADR-137.
 	ExecutionMode string
@@ -4215,6 +4322,7 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		APIEnvEntries:               req.APIEnvEntries,
 		EgressAllowlist:             req.EgressAllowlist,
 		EgressPorts:                 req.EgressPorts,
+		EgressRevision:              req.EgressRevision,
 		PrivateNetworkCIDRs:         req.PrivateNetworkCIDRs,
 		PrivateNetworkAllowedCIDRs:  req.PrivateNetworkAllowedCIDRs,
 		PrivateNetworkFirewallRules: req.PrivateNetworkFirewallRules,
@@ -4233,6 +4341,8 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
 		StartupDeadlineS:         req.StartupDeadlineS,
 		DisableStartupCPUBoost:   req.DisableStartupCPUBoost,
+		CPUWeight:                req.CPUWeight,
+		CPUUncapped:              req.CPUUncapped,
 		ExecutionMode:            req.ExecutionMode,
 		// PR #470-FU-B: forward the runtime id so the framework-ready
 		// receipt handler can label the warmup histogram. See
@@ -4335,6 +4445,11 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// fence and can OOM-kill the box. CR-2 / code-review #2.
 	// Mirrors manager.go:2581 in the Wake path.
 	lease.MemoryMaxMiB = req.MemSizeMiB
+	// A job's share of a busy host follows its memory, as an app
+	// instance's does; its cpu.max stays one core (ADR-20261109172421).
+	if req.MemSizeMiB > 0 {
+		lease.CPUWeight = api.SizeCPUWeight(req.MemSizeMiB)
+	}
 
 	// Match the wake path's defer-and-unwind pattern: any error
 	// after Acquire must release the slot AND tear down the netns.
@@ -4620,6 +4735,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if m.nativeVMM() != nil && !req.Plan.Valid() {
 		return nil, fmt.Errorf("wake %s: invalid plan %q", req.Instance, req.Plan)
 	}
+	if req.CPUWeight < 0 || req.CPUWeight > MaxCPUWeight {
+		return nil, fmt.Errorf("wake %s: invalid cpu_weight %d (ADR-20261109172421)", req.Instance, req.CPUWeight)
+	}
 	ctx, flight, err := m.beginInstanceBoot(ctx, req.Instance)
 	if err != nil {
 		return nil, err
@@ -4661,13 +4779,18 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			m.mu.Unlock()
 			return nil, err
 		}
-	} else if policy, ok := m.appEgressPolicies[req.AppID]; ok {
+	} else if policy, ok := m.appEgressPolicies[req.AppID]; ok && !wakeEgressNewerThanCache(req, policy) {
 		if err := validateAppEgressPolicyPlan(req.Plan, policy); err != nil {
 			m.mu.Unlock()
 			return nil, err
 		}
 		req.EgressAllowlist = egressPrefixStrings(policy.allowlist)
 		req.EgressPorts = append([]uint16{}, policy.ports...)
+	} else if ok && len(req.EgressPorts) > req.Plan.EgressExtraPortsMax() {
+		// The newer request replaces a cached policy that was plan-checked;
+		// hold it to the same bound.
+		m.mu.Unlock()
+		return nil, fmt.Errorf("fcvm: app egress policy exceeds live workload plan")
 	}
 	m.mu.Unlock()
 
@@ -4757,6 +4880,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.MemoryMaxMiB = wakeGuestMemoryMiB(req)
 	lease.CPUMillicores = req.CPUMillicores
 	lease.DisableStartupCPUBoost = req.DisableStartupCPUBoost
+	lease.CPUWeight, lease.CPUUncapped = wakeLeaseCPU(req, lease.IsBuilder)
 	lease.AppPort = req.Port
 	m.mu.Lock()
 	if m.waking == nil {
@@ -4861,6 +4985,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		err = fmt.Errorf("wake %s: prepare runtime env: %w", req.Instance, err)
 		return nil, err
 	}
+	resumeIdentity := resumeIdentityFromAPIEnv(req.preparedAPIEnvJSON)
+	ctx = withResumeIdentity(ctx, resumeIdentity)
 	if err = m.prepareSidecarEnvFiles(ctx, &req); err != nil {
 		err = fmt.Errorf("wake %s: prepare sidecar env: %w", req.Instance, err)
 		return nil, err
@@ -5059,6 +5185,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			// Circuit policy must be installed before the guest can boot.
 			return m.registerEgressCircuitNetwork(ctx, req.AppID, nc)
 		}, func() {
+			m.registerBootingEgressOwner(lease, nc, req, qualificationOnly)
 			if networkReady != nil {
 				networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns, JailUID: lease.UID})
 			}
@@ -5122,6 +5249,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 				return nil, err
 			}
 		}
+		m.registerBootingEgressOwner(lease, nc, req, qualificationOnly)
 		if networkReady != nil && !req.ExecutionOnly {
 			networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns, PublicTarget: publicTarget, JailUID: lease.UID})
 		}
@@ -5153,6 +5281,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	phases.mark("bring_up")
 	if err != nil {
 		return nil, err
+	}
+	if method == WakeRestore && !req.KeepPaused {
+		m.releaseInheritedConnections(ctx, lease, req.ExportDir != "" || lease.IsBuilder || req.ExecutionOnly || req.AppTaskOnly || qualificationOnly)
 	}
 
 	// Test VMMs retain the legacy observable staging hooks. Production
@@ -5362,7 +5493,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	inst := &Instance{
 		functionDestination: m.functionDestinationForWake(req),
 		publicForwardTarget: publicTarget,
-		Lease:               lease, Net: nc, Method: method, wakeID: wakeID,
+		Lease:               lease, Net: nc, Method: method, wakeID: wakeID, resumeIdentity: resumeIdentity,
 		adoptionVCPUs: req.VcpuCount, adoptionMemSizeMiB: req.MemSizeMiB,
 		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AgentRunOnly: req.agentRunOnly, AgentRunRelay: req.agentRunRelay, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
 		ExecutionID:                     executionID,
@@ -5371,15 +5502,17 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		AppID:                           req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
 		StaticEgressExcluded: req.StaticEgressExcluded,
 		WakeID:               wakeID, NodeID: fields.NodeID,
-		Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, HealthcheckGRPC: req.HealthcheckGRPC,
+		Plan: req.Plan, RequestConcurrency: req.RequestConcurrency, Port: req.Port, HealthcheckPath: req.HealthcheckPath, HealthcheckGRPC: req.HealthcheckGRPC,
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:           append(json.RawMessage(nil), req.ReadinessProbe...),
 		StartupDeadlineS:         req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars),
-		QuietPauseAfter:     quietPauseAfterFor(req, qualificationOnly),
-		AgentWaitPauseAfter: agentWaitPauseAfterFor(req),
-		ExecutionMode:       req.ExecutionMode,
-		Characterization:    report, Runtime: req.Runtime,
+		QuietPauseAfter:        quietPauseAfterFor(req, qualificationOnly),
+		IdleLadderEligible:     idleLadderEligibleFor(req, qualificationOnly),
+		IdleLadderGuardedPause: idleLadderGuardedPauseFor(req, qualificationOnly),
+		AgentWaitPauseAfter:    agentWaitPauseAfterFor(req),
+		ExecutionMode:          req.ExecutionMode,
+		Characterization:       report, Runtime: req.Runtime,
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
 		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
 	}
@@ -5514,6 +5647,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			return nil, err
 		}
 		delete(m.waking, req.Instance)
+		m.adoptBootingEgressLocked(inst)
 		m.live[req.Instance] = inst
 		m.recordProvenWorkerLocked(inst)
 		if starting := m.functionStarting[req.Instance]; starting != nil && starting.Lease.processGeneration == inst.Lease.processGeneration {
@@ -5547,6 +5681,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		"restore_ms", timings.restoreMs, "cold_boot_ms", timings.coldBootMs,
 		"restore_prefetch_bytes", restorePrefetchBytes,
 	}
+	// ADR-510: the backing check runs inside bring_up but outside restore_ms
+	// and cold_boot_ms; without it the gap between them was unattributed.
+	wakeAttrs = append(wakeAttrs, timings.prepare.Backing.attrs()...)
 	// Include every outer phase measurement on successes too. A
 	// fallback can spend most of its wall time before Firecracker Boot (for
 	// example materializing runtime files); reporting only cold_boot_ms hid
@@ -5629,7 +5766,11 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// than the ones it was captured with. The refusal happens before any
 		// VM process starts, so there is nothing to kill; the wake cold-boots
 		// and schedd marks the snapshot stale.
-		if refusal := m.verifySnapshotBacking(ctx, req.Snapshot, req.BaseKey); refusal != nil {
+		backing, refusal := m.checkSnapshotBacking(ctx, req.Snapshot, req.BaseKey)
+		if timings != nil {
+			timings.prepare.Backing = backing
+		}
+		if refusal != nil {
 			if sealed {
 				return WakeRestore, fmt.Errorf("sealed crash capture: %w", refusal)
 			}
@@ -5675,6 +5816,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			KernelKey: m.paths.Kernel,
 			BaseKey:   req.BaseKey,
 			LayerKey:  req.LayerKey,
+			VCPUs:     req.VcpuCount,
 			// ADR-022: same vsock device the cold-boot path attaches, derived
 			// from the lease's slot so the guest's listener is reachable at a
 			// globally unique guest_cid.
@@ -5795,6 +5937,11 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	}
 
 	spec := m.coldBootSpecForWake(nc, req, serviceDiscoveryIP)
+	if timings != nil {
+		// A check that refused the restore, or accepted one that then
+		// failed, delayed this cold boot too.
+		spec.Backing = timings.prepare.Backing
+	}
 	coldBootStartedAt := time.Now()
 	coldBootErr := m.bootColdBootWithSources(ctx, lease, spec, req.ArtifactSources)
 	if timings != nil {
@@ -6000,7 +6147,9 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 	// have published a complete scan for the same base (H10-103 left a
 	// refusal cached on fsn-3 after fsn-2 rewrote it), so a refusal is
 	// re-checked once against the canonical copy before the boot fails.
-	if gateErr != nil && m.refreshCachedScan(ctx, baseKey, scanKey) {
+	if gateErr != nil && m.scanRefresh.do(ctx, scanKey, time.Now(), func(ctx context.Context) bool {
+		return m.refreshCachedScan(ctx, baseKey, scanKey)
+	}) {
 		scan, readErr = m.readBaseScan(ctx, scanKey)
 		reason, gateErr = m.baseScanVerdict(baseKey, scanKey, scan, readErr)
 	}
@@ -6140,6 +6289,10 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 
+	// ADR-20261110160000: the capturing guest is torn down right after the
+	// snapshot. Reset its off-guest connections first so its peers free the
+	// sessions now and every restore wakes with failed sockets, not live ones.
+	m.releaseConnectionsBeforeCapture(operationCtx, inst)
 	spec.nativeRuntime = m.nativeRuntimeCapture(operationCtx, inst, spec)
 	info, snapshotErr := m.vmm.Snapshot(operationCtx, inst.Lease, spec)
 	info, snapshotErr = checkedNativeSnapshotResult(operationCtx, spec, info, snapshotErr)
@@ -6463,9 +6616,11 @@ func (m *Manager) resumeAndProbe(ctx context.Context, op string, inst *Instance,
 		return fmt.Errorf("%s %s: %w", op, instance, err)
 	}
 	m.mu.Lock()
+	wasSpare := inst.warmSpare
 	inst.migrationPaused, inst.warmSpare = false, false
 	m.mu.Unlock()
 	m.clearFrozen(inst) // Rewrites the adoption block, clearing all three.
+
 	if inst.ImageHealthcheckRequired {
 		checker, ok := m.vmm.(interface {
 			WaitImageHealthcheck(context.Context, Lease, int) error
@@ -6473,19 +6628,24 @@ func (m *Manager) resumeAndProbe(ctx context.Context, op string, inst *Instance,
 		if !ok {
 			return fmt.Errorf("%s %s: image healthcheck capability unavailable", op, instance)
 		}
-		if err := m.vmm.TriggerResumeHook(ctx, inst.Lease, time.Now().UnixNano()); err != nil {
+		if err := m.vmm.TriggerResumeHook(withResumeIdentity(ctx, inst.resumeIdentity), inst.Lease, time.Now().UnixNano()); err != nil {
 			return fmt.Errorf("%s %s: resume hook: %w", op, instance, err)
 		}
 		if err := checker.WaitImageHealthcheck(ctx, inst.Lease, inst.StartupDeadlineS); err != nil {
 			return err
 		}
 	} else if runResumeHook {
-		if err := m.vmm.TriggerResumeHook(ctx, inst.Lease, time.Now().UnixNano()); err != nil {
+		if err := m.vmm.TriggerResumeHook(withResumeIdentity(ctx, inst.resumeIdentity), inst.Lease, time.Now().UnixNano()); err != nil {
 			return fmt.Errorf("%s %s: resume hook: %w", op, instance, err)
 		}
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("%s %s: %w", op, instance, err)
+	}
+	if wasSpare {
+		// A warm-pool spare was restored from a snapshot and kept paused; it
+		// holds the capture's sockets (ADR-20261110160000).
+		m.releaseInheritedConnections(ctx, inst.Lease, false)
 	}
 	m.reopenHTTPForwards(inst)
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
@@ -6606,11 +6766,21 @@ func (m *Manager) destroyWithReservation(ctx, cleanupCtx context.Context, instan
 		return m.vmm.DestroyWithExport(ctx, Lease{Instance: instance}, exportDir)
 	}
 	m.retireHTTPForwards(inst.Lease)
+	// The VMM lets a builder run to its own exit (builderd waits for a build
+	// with this call), so the guest keeps its DNS grants until it exits
+	// (ADR-373). A retried teardown has no running guest to wait for.
+	m.mu.Lock()
+	inst.awaitingExit = (exportDir != "" || inst.Lease.IsBuilder) && m.pendingCleanup[instance] == nil
+	m.mu.Unlock()
 	m.retainCleanup(inst.Lease, inst.Net, inst.WorkloadNames)
 	// A completed teardown retires the record; a failed one keeps this
 	// intent so a successor resumes it (adoption ADR §3).
 	m.beginAdoptionOp(instance, adoptionOpStop)
+	m.releaseConnectionsBeforeDestroy(ctx, inst, exportDir)
 	exitCode, destroyErr := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
+	m.mu.Lock()
+	inst.awaitingExit = false // Teardown proper refuses grants from here.
+	m.mu.Unlock()
 	cleanupErr := m.cleanup(cleanupCtx, inst.Lease, inst.Net, inst.WorkloadNames)
 	if err = errors.Join(destroyErr, cleanupErr); err != nil {
 		return exitCode, err
@@ -6900,9 +7070,23 @@ func (m *Manager) NetnsFor(instance string) (string, bool) {
 	defer m.mu.Unlock()
 	inst, ok := m.live[instance]
 	if !ok {
-		return "", false
+		if inst = m.restoredQualificationTargetLocked(instance); inst == nil {
+			return "", false
+		}
 	}
 	return inst.Lease.Netns, true
+}
+
+// restoredQualificationTargetLocked returns a restored qualification target
+// from the private registry. It stays out of the serving index, but its
+// isolated smoke must reach it the way a source candidate's does (ADR
+// 20261023093000). Held qualification Jobs stay unreachable. Caller holds m.mu.
+func (m *Manager) restoredQualificationTargetLocked(instance string) *Instance {
+	inst := m.qualificationInstances[instance]
+	if inst == nil || !inst.QualificationOnly || inst.Method != WakeRestore || inst.IsJob {
+		return nil
+	}
+	return inst
 }
 
 // operatorBundleSnapshot returns a copy of the current
@@ -7146,23 +7330,12 @@ func dedupSortedPrefixes(in []netip.Prefix) []netip.Prefix {
 //     priorAllowlistHandleV6) under m.mu. Released before any
 //     netns exec so Wake/Park/Destroy don't see a held Manager
 //     lock.
-//  2. Per family (v4 then v6):
-//     a. If the prior handle is non-empty, emit
-//     `nft delete rule ip[6] faas forward handle <H>`.
-//     b. Emit `nft add rule ip[6] faas forward … accept` (or
-//     skip when the new family half is empty) using the
-//     renderer's ForwardAllowlistRule / ForwardAllowlistRule6
-//     argv builders.
-//  3. On any nft failure mid-patch, revert by re-rendering the
-//     prior argv (the cached priorAllowlistHandle* is the
-//     invariant) and re-applying it. The revert runs synchronously
-//     before returning; a revert failure is returned to the
-//     caller as an Internal problem (the live netns is then in
-//     an undefined state and schedd's watchdog will Park + ColdBoot
-//     the affected instances on its next tick).
+//  2. Swap both families at their existing rule positions in one transaction.
+//     Shape changes and unknown handles require a full policy reconstruction.
+//  3. Publish each completed replica immediately. Uncertain writes or handle
+//     capture failures clear handles so retries reconstruct the policy.
 //
-// Idempotency: identical allowlist re-pushed → samePrefixSet
-// fast-path returns nil without running nft. The next cold boot
+// Idempotency: identical allowlists with known handles skip nft. The next cold boot
 // re-reads the column, so a snapshot-restore Wake always sees the
 // current allowlist. Durable scheduler repair uses UpdateAppEgressPolicy,
 // which also fences the physical CIDR/port projection by revision.
@@ -7171,10 +7344,8 @@ func dedupSortedPrefixes(in []netip.Prefix) []netip.Prefix {
 //   - m.mu held briefly to snapshot targets and to update the
 //     cached handles after a successful patch.
 //   - m.mu released before any per-netns nft exec. The kernel
-//     serialises nft operations per-netns (the netlink socket is
-//     per-call), so concurrent UpdateEgressAllowlist calls on
-//     different netns are safe; concurrent calls on the same
-//     netns serialise at the nft level.
+//     handles one atomic transaction for both families. App, circuit and
+//     instance policy gates serialize other live policy writes.
 //
 // On an empty allowlist, the per-family add argv is skipped
 // (matches the Wake contract for empty EgressAllowlist: no rule
@@ -7221,7 +7392,7 @@ func (m *Manager) UpdateAppCPULimit(ctx context.Context, appID string, revision 
 	if revision <= 0 {
 		return fmt.Errorf("fcvm: UpdateAppCPULimit: invalid revision %d", revision)
 	}
-	if !api.ValidAppCPUMillicores(cpuMillicores) {
+	if !api.ValidAnyAppCPUCeilingMillicores(cpuMillicores) {
 		return fmt.Errorf("fcvm: UpdateAppCPULimit: invalid cpu_millicores %d", cpuMillicores)
 	}
 	_, ok := m.vmm.(LiveAppCPULimitUpdater)
@@ -7337,6 +7508,7 @@ func (m *Manager) updateEgressAllowlist(ctx context.Context, appID string, allow
 		prior      []netip.Prefix
 		handleV4   uint64
 		handleV6   uint64
+		uncertain  bool
 	}
 	var targets []patchTarget
 	m.mu.Lock()
@@ -7348,11 +7520,12 @@ func (m *Manager) updateEgressAllowlist(ctx context.Context, appID string, allow
 		copy(prior, inst.Net.EgressAllowlist)
 		targets = append(targets, patchTarget{
 			instanceID: id, instance: inst, generation: inst.nativeGeneration,
-			netns:    inst.Net.Netns,
-			net:      inst.Net,
-			prior:    prior,
-			handleV4: inst.AllowlistHandleV4,
-			handleV6: inst.AllowlistHandleV6,
+			netns:     inst.Net.Netns,
+			net:       inst.Net,
+			prior:     prior,
+			handleV4:  inst.AllowlistHandleV4,
+			handleV6:  inst.AllowlistHandleV6,
+			uncertain: inst.egressAllowlistUncertain,
 		})
 	}
 	m.mu.Unlock()
@@ -7382,9 +7555,8 @@ func (m *Manager) updateEgressAllowlist(ctx context.Context, appID string, allow
 
 	// Apply per-instance. A failure on any one surfaces to the
 	// caller; the loop stops (the caller logs + retries on its
-	// next reconcile). Each nft step is atomic, so a failed
-	// instance keeps a consistent ruleset and its cached state.
-	newHandles := make(map[string]struct{ v4, v6 uint64 }, len(targets))
+	// next reconcile). Both families commit together, and an uncertain
+	// result clears handles so the retry reconstructs policy.
 	for _, t := range targets {
 		// Idempotent fast-path: if the prior allowlist is
 		// set-equal to the new one, the live netns already
@@ -7392,15 +7564,14 @@ func (m *Manager) updateEgressAllowlist(ctx context.Context, appID string, allow
 		// (delete-then-add the same rule). Skip both the
 		// argv build and the nft exec — schedd's pg_notify
 		// redelivery lands here on reconnect.
-		if samePrefixSet(t.prior, allowlist) {
-			newHandles[t.instanceID] = struct{ v4, v6 uint64 }{v4: t.handleV4, v6: t.handleV6}
+		if !t.uncertain && samePrefixSet(t.prior, allowlist) && !egressAllowlistNeedsReplacement(t.prior, allowlist, t.handleV4, t.handleV6) {
 			continue
 		}
 		ctx, err := m.nativeInstanceNetworkContext(ctx, t.instanceID, t.generation)
 		if err != nil {
 			return err
 		}
-		if egressAllowlistNeedsReplacement(t.prior, allowlist, t.handleV4, t.handleV6) {
+		if t.uncertain || egressAllowlistNeedsReplacement(t.prior, allowlist, t.handleV4, t.handleV6) {
 			nc := t.net
 			nc.EgressAllowlist = append([]netip.Prefix(nil), allowlist...)
 			if err := m.replaceNetworkPolicy(ctx, t.instance, nc); err != nil {
@@ -7409,39 +7580,37 @@ func (m *Manager) updateEgressAllowlist(ctx context.Context, appID string, allow
 			m.mu.Lock()
 			if inst := m.live[t.instanceID]; inst == t.instance {
 				inst.Net.EgressAllowlist = nc.EgressAllowlist
-				newHandles[t.instanceID] = struct{ v4, v6 uint64 }{inst.AllowlistHandleV4, inst.AllowlistHandleV6}
 				m.markAdoptionDirty(t.instanceID)
 			}
 			m.mu.Unlock()
 			continue
 		}
 		next := build(t)
-		newH, err := m.applyOneInstancePatch(ctx, t.netns, next.v4Argv, next.v6Argv, t.handleV4, t.handleV6)
+		newH, err := m.applyOneInstancePatch(ctx, t.instanceID, t.instance, t.netns, next.v4Argv, next.v6Argv, t.handleV4, t.handleV6)
 		if err != nil {
+			// The command may have committed before its error or handle-read
+			// failure arrived. Rebuild on retry instead of reusing uncertain IDs.
+			m.mu.Lock()
+			if inst := m.live[t.instanceID]; inst == t.instance {
+				inst.AllowlistHandleV4, inst.AllowlistHandleV6 = 0, 0
+				inst.egressAllowlistUncertain = true
+				m.markAdoptionDirty(t.instanceID)
+			}
+			m.mu.Unlock()
 			return fmt.Errorf("fcvm: UpdateEgressAllowlist app=%s netns=%s: %w", appID, t.netns, err)
 		}
-		newHandles[t.instanceID] = newH
-	}
-
-	// Update cached handles + prior lists so the next patch's
-	// fast-path compares against the new baseline.
-	m.mu.Lock()
-	for _, t := range targets {
+		// Retain each completed replica immediately. A later replica's error
+		// must not lose the handles installed on this one.
+		m.mu.Lock()
 		inst := m.live[t.instanceID]
-		if inst != t.instance {
-			continue
+		if inst == t.instance {
+			inst.Net.EgressAllowlist = append([]netip.Prefix(nil), allowlist...)
+			inst.AllowlistHandleV4, inst.AllowlistHandleV6 = newH.v4, newH.v6
+			inst.egressAllowlistUncertain = false
+			m.markAdoptionDirty(t.instanceID)
 		}
-		nh, ok := newHandles[t.instanceID]
-		if !ok {
-			continue
-		}
-		inst.Net.EgressAllowlist = make([]netip.Prefix, len(allowlist))
-		copy(inst.Net.EgressAllowlist, allowlist)
-		inst.AllowlistHandleV4 = nh.v4
-		inst.AllowlistHandleV6 = nh.v6
-		m.markAdoptionDirty(t.instanceID)
+		m.mu.Unlock()
 	}
-	m.mu.Unlock()
 	// Keep the defense-in-depth host exception in sync with the live
 	// per-netns allowlist. Port 25 remains denied by the host policy.
 	return m.renderHostSMTPAllowlistRules(ctx, false)
@@ -7556,7 +7725,7 @@ func (m *Manager) updatePrivateNetworkForTargets(ctx context.Context, appID stri
 		if err := errors.Join(m.checkOwnedNamespace(t.net.Netns), m.checkNetworkLinks(checked)); err != nil {
 			return fmt.Errorf("fcvm: private network resource identity: %w", err)
 		}
-		if samePrefixSet(t.prior, cidrs) && samePrefixSet(t.priorPolicy, allowedCIDRs) && sameFirewallRules(t.net.PrivateNetworkFirewallRules, renderedRules) && (len(cidrs) != 0 || t.net.PrivateVethHost == "") {
+		if samePrefixSet(t.prior, cidrs) && samePrefixSet(t.priorPolicy, allowedCIDRs) && sameFirewallRules(t.net.PrivateNetworkFirewallRules, renderedRules) && (len(cidrs) != 0 || (t.net.PrivateVethHost == "" && m.privateNetworkMemberRelease == nil)) {
 			newHandles[t.id] = struct{ h4, h6 uint64 }{t.h4, t.h6}
 			continue
 		}
@@ -7564,23 +7733,16 @@ func (m *Manager) updatePrivateNetworkForTargets(ctx context.Context, appID stri
 		if err != nil {
 			return err
 		}
-		cap, err := m.networkCaptureRunner(ctx)
-		if err != nil {
-			return err
-		}
 		nc := t.net
 		nc.PrivateNetworkCIDRs = cidrs
 		nc.PrivateNetworkAllowedCIDRs = allowedCIDRs
 		nc.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
-		nx := func(parts ...string) []string {
-			return append([]string{"ip", "netns", "exec", t.netns, "nft"}, parts...)
-		}
 		// Add routes first. The accept rule is still absent, so a partial
 		// update cannot expose a newly requested destination.
 		if err := m.runCommands(ctx, nc.PrivateNetworkRouteCommands()); err != nil {
 			return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s routes: %w", appID, t.netns, err)
 		}
-		if len(cidrs) == 0 && t.net.PrivateVethHost != "" {
+		if len(cidrs) == 0 && (t.net.PrivateVethHost != "" || m.privateNetworkMemberRelease != nil) {
 			clean := nc
 			clean.PrivateNetworkBridge = ""
 			clean.PrivateVethHost, clean.PrivateVethPeer = "", ""
@@ -7597,10 +7759,14 @@ func (m *Manager) updatePrivateNetworkForTargets(ctx context.Context, appID stri
 				inst.PrivateNetworkHandleV4, inst.PrivateNetworkHandleV6 = 0, 0
 			}
 			m.mu.Unlock()
-			if err := m.removeNetworkLink(ctx, t.net.Instance, t.net.PrivateVethHost); err != nil {
+			link := t.net.PrivateVethHost
+			if link == "" {
+				link, _ = privateVethNames(t.instance.Lease.Slot)
+			}
+			if err := m.removeNetworkLink(ctx, t.net.Instance, link); err != nil {
 				return fmt.Errorf("fcvm: private side-link removal: %w", err)
 			}
-			if err := m.releasePrivateNetworkMember(ctx, t.net, t.id, false); err != nil {
+			if err := m.releaseAllPrivateNetworkMembers(ctx, t.net, t.id); err != nil {
 				return err
 			}
 			// Publish each detached target immediately: a later sibling failure
@@ -7621,72 +7787,11 @@ func (m *Manager) updatePrivateNetworkForTargets(ctx context.Context, appID stri
 			newHandles[t.id] = struct{ h4, h6 uint64 }{}
 			continue
 		}
-		if nc.PrivateVethHost != "" || len(renderedRules) > 0 || len(t.net.PrivateNetworkFirewallRules) > 0 {
-			// Multiple protocol/port rules cannot be tracked by the legacy
-			// single-handle patch path. Rebuild atomically so stale accepts and
-			// terminal drops are removed together, preserving fail-closed updates.
-			if err := m.replaceNetworkPolicy(ctx, t.instance, nc); err != nil {
-				return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s firewall rebuild: %w", appID, t.netns, err)
-			}
-			for _, old := range t.prior {
-				if containsPrefix(cidrs, old) {
-					continue
-				}
-				if err := m.runNetworkCommand(ctx, []string{"ip", "netns", "exec", t.netns, "ip", "route", "del", old.String()}); err != nil {
-					m.log.Warn("fcvm: private network stale route removal failed", "netns", t.netns, "prefix", old, "err", err)
-				}
-			}
-			newHandles[t.id] = struct{ h4, h6 uint64 }{}
-			continue
+		// Rebuild even legacy provider attachments: replacing one accept
+		// handle leaves established flows authorized by conntrack.
+		if err := m.replaceNetworkPolicy(ctx, t.instance, nc); err != nil {
+			return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s policy rebuild: %w", appID, t.netns, err)
 		}
-		h4, h6 := t.h4, t.h6
-		priorRuleCIDRs := t.prior
-		if len(t.priorPolicy) > 0 {
-			priorRuleCIDRs = t.priorPolicy
-		}
-		if h4 == 0 && hasFamily(priorRuleCIDRs, true) && cap != nil {
-			h4, err = listPrivateNetworkHandle(ctx, cap, t.netns, "ip", priorRuleCIDRs)
-			if err != nil && m.nativeVMM() != nil {
-				return err
-			}
-		}
-		if h6 == 0 && hasFamily(priorRuleCIDRs, false) && cap != nil {
-			h6, err = listPrivateNetworkHandle(ctx, cap, t.netns, "ip6", priorRuleCIDRs)
-			if err != nil && m.nativeVMM() != nil {
-				return err
-			}
-		}
-		if h4 > 0 {
-			if err := m.runCommands(ctx, [][]string{nx("delete", "rule", "ip", "faas", "forward", "handle", strconv.FormatUint(h4, 10))}); err != nil {
-				return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s delete v4 rule: %w", appID, t.netns, err)
-			}
-		}
-		if h6 > 0 {
-			if err := m.runCommands(ctx, [][]string{nx("delete", "rule", "ip6", "faas", "forward", "handle", strconv.FormatUint(h6, 10))}); err != nil {
-				return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s delete v6 rule: %w", appID, t.netns, err)
-			}
-		}
-
-		v4 := nc.ForwardPrivateNetworkRule(func(parts ...string) []string { return append([]string{}, nx(parts...)...) })
-		v6 := nc.ForwardPrivateNetworkRule6(func(parts ...string) []string { return append([]string{}, nx(parts...)...) })
-		// The boot renderer emits private accepts before lateral-movement
-		// denies. Preserve that ordering for a live patch by inserting at the
-		// chain head; appending would leave RFC1918 traffic matched by the
-		// deny rules first.
-		v4 = insertNftRule(v4)
-		v6 = insertNftRule(v6)
-		if v4 != nil {
-			if err := m.runCommands(ctx, [][]string{v4}); err != nil {
-				return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s add v4 rule: %w", appID, t.netns, err)
-			}
-		}
-		if v6 != nil {
-			if err := m.runCommands(ctx, [][]string{v6}); err != nil {
-				return fmt.Errorf("fcvm: UpdatePrivateNetwork app=%s netns=%s add v6 rule: %w", appID, t.netns, err)
-			}
-		}
-		// Remove routes no longer requested only after the new accept rules
-		// are installed, preserving fail-closed behavior during transitions.
 		for _, old := range t.prior {
 			if containsPrefix(cidrs, old) {
 				continue
@@ -7695,30 +7800,7 @@ func (m *Manager) updatePrivateNetworkForTargets(ctx context.Context, appID stri
 				m.log.Warn("fcvm: private network stale route removal failed", "netns", t.netns, "prefix", old, "err", err)
 			}
 		}
-		if cap != nil {
-			nextRuleCIDRs := cidrs
-			if len(allowedCIDRs) > 0 {
-				nextRuleCIDRs = allowedCIDRs
-			}
-			if v4 != nil {
-				h4, err = listPrivateNetworkHandle(ctx, cap, t.netns, "ip", nextRuleCIDRs)
-				if err != nil && m.nativeVMM() != nil {
-					return err
-				}
-			} else {
-				h4 = 0
-			}
-			if v6 != nil {
-				h6, err = listPrivateNetworkHandle(ctx, cap, t.netns, "ip6", nextRuleCIDRs)
-				if err != nil && m.nativeVMM() != nil {
-					return err
-				}
-			} else {
-				h6 = 0
-			}
-		}
-
-		newHandles[t.id] = struct{ h4, h6 uint64 }{h4, h6}
+		newHandles[t.id] = struct{ h4, h6 uint64 }{}
 	}
 	m.mu.Lock()
 	for _, t := range targets {
@@ -7850,6 +7932,9 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 				return memberErr
 			}
 			memberAddress, serviceAddress = identity.Address, identity.Service
+			if nc.PrivateNetworkID == networkID && !serviceAddress.IsValid() && !nc.PrivateNetworkServiceAddress.IsValid() && identity.WithdrawService.IsValid() {
+				nc.PrivateNetworkServiceAddress = identity.WithdrawService
+			}
 		}
 		desiredBridge := privatenetwork.BridgeName(t.account, networkID)
 		nc.PrivateNetworkMTU = m.privateNetworkMTU()
@@ -7903,10 +7988,11 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 			if err := m.releasePrivateNetworkMember(ctx, nc, t.id, false); err != nil {
 				return err
 			}
-			nc.PrivateVethHost, nc.PrivateVethPeer, nc.PrivateNetworkBridge = "", "", ""
-			nc.PrivateNetworkAddress = netip.Addr{}
+			nc = clean
+			nc.PrivateNetworkID, nc.PrivateNetworkAppID, nc.PrivateNetworkAccountID = "", "", ""
 			m.mu.Lock()
 			if inst := m.live[t.id]; inst == t.instance {
+				inst.Net = nc
 				inst.PrivateNetworkHandleV4, inst.PrivateNetworkHandleV6 = 0, 0
 				m.markAdoptionDirty(t.id)
 			}
@@ -7924,7 +8010,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 		nc.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
 		nc.PrivateVethHost, nc.PrivateVethPeer = privateVethNames(t.slot)
 		if err := m.runJournalIPSetup(ctx, nc, nc.PrivateNetworkSetupCommands()); err != nil {
-			_ = m.removeNetworkLink(context.WithoutCancel(ctx), nc.Instance, nc.PrivateVethHost)
+			err = errors.Join(err, m.rollbackPrivateNetworkAttachment(context.WithoutCancel(ctx), nc, t.id))
 			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s side-link: %w", appID, t.id, err)
 		}
 		// A fresh side-link needs both directions of the complete policy. The
@@ -7932,7 +8018,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 		// established/reply accept and lateral deny rules, so rebuild the table
 		// fail-closed before publishing the link in the live instance state.
 		if err := m.replaceNetworkPolicy(ctx, t.instance, nc); err != nil {
-			_ = m.removeNetworkLink(context.WithoutCancel(ctx), nc.Instance, nc.PrivateVethHost)
+			err = errors.Join(err, m.rollbackPrivateNetworkAttachment(context.WithoutCancel(ctx), nc, t.id))
 			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s private policy: %w", appID, t.id, err)
 		}
 		m.mu.Lock()
@@ -7945,6 +8031,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 			inst.Net.PrivateNetworkAllowedCIDRs = append([]netip.Prefix(nil), allowedCIDRs...)
 			inst.Net.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
 			inst.Net.PrivateVethHost, inst.Net.PrivateVethPeer = nc.PrivateVethHost, nc.PrivateVethPeer
+			m.markAdoptionDirty(t.id)
 		}
 		m.mu.Unlock()
 	}
@@ -7953,24 +8040,6 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 		originalTargets[t.id] = t.instance
 	}
 	return m.updatePrivateNetworkForTargets(ctx, appID, cidrs, allowedCIDRs, firewallRules, originalTargets)
-}
-
-func insertNftRule(argv []string) []string {
-	if len(argv) < 7 || argv[5] != "add" || argv[6] != "rule" {
-		return argv
-	}
-	out := append([]string(nil), argv...)
-	out[5] = "insert"
-	return out
-}
-
-func hasFamily(prefixes []netip.Prefix, v4 bool) bool {
-	for _, p := range prefixes {
-		if p.Addr().Is4() == v4 {
-			return true
-		}
-	}
-	return false
 }
 
 func containsPrefix(prefixes []netip.Prefix, want netip.Prefix) bool {
@@ -8121,121 +8190,93 @@ func (m *Manager) applyStaticEgressIPLocked(ctx context.Context, accountID, appI
 	return nil
 }
 
-// applyOneInstancePatch runs the per-family patch sequence for a
-// single netns. Returns the handles of the freshly-installed v4 /
-// v6 allowlist rules (zero when the family half is empty / no
-// rule was emitted).
-//
-// The returned handle values come from the nft argv sequence we
-// emit: a fresh `nft add rule ip faas forward …` produces a
-// handle that the kernel assigns; we capture it by re-listing the
-// chain with `nft -a list chain` and matching on the argv
-// substring. That second read is what the unit suite's
-// fakeRunner can't simulate (the kernel isn't there), so for
-// tests we accept handle == 0 as "unknown, will be re-captured
-// on the next patch's pre-read" — the production runner with a
-// real `nft` resolves the handle.
-//
-// Sequence:
-//
-//  1. Delete prior v4 rule by handle (skip if handle == 0).
-//  2. Add new v4 rule (skip if new argv is nil).
-//  3. Same for v6.
-//  4. On any failure, run the revert: re-add the prior rule by
-//     re-rendering its argv. The prior argv was the one cached
-//     on the live-instance struct (kept across patches).
-//
-// Per-family revert: the v4 and v6 patch sequences are run
-// independently so that a v4 success isn't rolled back when the
-// v6 patch fails. The reverted family re-renders the prior
-// allowlist into its argv and re-adds the rule; the successful
-// family is left alone. The catch is that handle capture only
-// knows the new handle for the family that succeeded (the other
-// stays at the prior handle, which is still valid for the
-// reverted-on-failure family).
+// applyOneInstancePatch swaps both address families in a single nft transaction.
+// Rule positions are retained before the DNS and terminal drops. Any execution
+// or capture failure invalidates cached handles in the caller so retries rebuild.
 func (m *Manager) applyOneInstancePatch(
 	ctx context.Context,
+	instanceID string,
+	inst *Instance,
 	netnsName string,
 	v4New, v6New []string,
 	handleV4, handleV6 uint64,
 ) (struct{ v4, v6 uint64 }, error) {
 	var zero struct{ v4, v6 uint64 }
+	// Join DNS, circuit and cleanup effects in the same lock order used by a
+	// full policy replacement. Teardown cannot recycle this namespace mid-write.
+	m.egressCircuitMu.Lock()
+	defer m.egressCircuitMu.Unlock()
+	unlock := m.lockInstanceNetworkPolicy(inst)
+	defer unlock()
+	m.mu.Lock()
+	current := m.live[instanceID] == inst && m.pendingCleanup[instanceID] == nil
+	m.mu.Unlock()
+	if !current {
+		return zero, errors.New("fcvm: allowlist original live target changed")
+	}
 	// Caller already short-circuited the set-equal case via
-	// samePrefixSet and routed changes that need a restart away
+	// samePrefixSet and routed changes that need a full rebuild away
 	// (egressAllowlistNeedsReplacement), so every family here either has a
 	// rule to rewrite or a rule to drop.
 	nx := func(parts ...string) []string {
 		return append([]string{"ip", "netns", "exec", netnsName, "nft"}, parts...)
-	}
-	type familyOp struct {
-		family string // "v4" or "v6"
-		argv   []string
 	}
 	// The accept rule is swapped at its position before the DNS gate, SMTP
 	// and terminal allowlist drops; delete-then-add appended it after them
 	// (H10-36). See swapRuleArgv for why it is not `nft replace rule`.
 	// A family emptied while the other keeps entries is deleted: the
 	// terminal drop then rightly blocks that family.
-	var ops []familyOp
-	addFamily := func(family, nftFamily string, handle uint64, next []string) {
+	var ops [][]string
+	addFamily := func(nftFamily string, handle uint64, next []string) {
 		if handle == 0 {
 			return
 		}
 		h := fmt.Sprintf("%d", handle)
 		if next == nil {
-			ops = append(ops, familyOp{family: family, argv: nx("delete", "rule", nftFamily, "faas", "forward", "handle", h)})
+			ops = append(ops, nx("delete", "rule", nftFamily, "faas", "forward", "handle", h))
 			return
 		}
-		ops = append(ops, familyOp{family: family, argv: swapRuleArgv(next, nftFamily, h)})
+		ops = append(ops, swapRuleArgv(next, nftFamily, h))
 	}
-	addFamily("v4", "ip", handleV4, v4New)
-	addFamily("v6", "ip6", handleV6, v6New)
+	addFamily("ip", handleV4, v4New)
+	addFamily("ip6", handleV6, v6New)
 	// Idempotent fast-path: nothing to do.
 	if len(ops) == 0 {
 		return zero, nil
 	}
 
-	// Run per-family patches. replace and delete are atomic in nft, so a
-	// failed step leaves its family's rule as it was; the error goes to
-	// the caller, which keeps the instance's cached allowlist so the next
-	// update compares against what is live.
-	for _, op := range ops {
-		if err := m.runCommands(ctx, [][]string{op.argv}); err != nil {
-			return zero, fmt.Errorf("%s allowlist patch: %w", op.family, err)
-		}
+	// Both families commit together. A failed IPv6 operation cannot strand
+	// IPv4 on a new handle while the cache still points to its deleted rule.
+	if err := m.runAtomicNetworkPolicy(ctx, netnsName, ops); err != nil {
+		return zero, fmt.Errorf("allowlist patch: %w", err)
 	}
 
 	// Handle capture: re-list the chain (when captureRunner is wired)
 	// so the next patch targets the rule as the kernel now numbers it.
-	// A deleted family has no accept rule left; the last matching line
-	// would then be another `iifname tap0 <family> daddr` rule (the
-	// lateral-movement deny), so its handle is cleared instead. With a
-	// nil capture runner (unit tests), a kept rule's handle stays.
+	// A deleted family has no accept rule left. With a nil capture runner,
+	// the new identity is unknown and the next update rebuilds.
 	cap, err := m.networkCaptureRunner(ctx)
 	if err != nil {
 		return zero, err
 	}
-	capture := func(family string, handle uint64, next []string) (uint64, error) {
+	capture := func(family string, next []string) (uint64, error) {
 		if next == nil {
 			return 0, nil
 		}
 		if cap == nil {
-			return handle, nil
+			return 0, nil
 		}
 		h, err := listChainHandles(ctx, cap, netnsName, family, "faas", "forward")
 		if err != nil {
-			if m.nativeVMM() != nil {
-				return 0, err
-			}
-			return handle, nil
+			return 0, err
 		}
 		return h, nil
 	}
-	newH4, err := capture("ip", handleV4, v4New)
+	newH4, err := capture("ip", v4New)
 	if err != nil {
 		return zero, err
 	}
-	newH6, err := capture("ip6", handleV6, v6New)
+	newH6, err := capture("ip6", v6New)
 	if err != nil {
 		return zero, err
 	}
@@ -8512,8 +8553,8 @@ func (m *Manager) runCommands(ctx context.Context, cmds [][]string) error {
 // just-added rule. Production wires an adapter that wraps
 // exec.CommandContext with CombinedOutput; unit tests stub
 // through WithCaptureRunner. Nil is a valid value: the wake path
-// then leaves AllowlistHandle{V4,V6} at 0 (the orphan rule
-// stays correct, the next patch picks it up via listChainHandles).
+// then leaves AllowlistHandle{V4,V6} at 0. The next update reconstructs
+// any family whose live rule identity cannot be established.
 type CaptureRunner interface {
 	RunCapture(ctx context.Context, argv []string) ([]byte, error)
 }
@@ -8623,35 +8664,35 @@ func (m *Manager) capturePrivateNetworkHandlesForWake(ctx context.Context, netns
 // listChainHandles runs `ip netns exec <ns> nft -a list chain
 // <family> faas forward` and returns the handle of the rule that
 // matches the allowlist-renderer invariant
-// `iifname "<tap>" <family> daddr { … } accept`. Returns 0 when
-// no such rule is present (empty allowlist on that family half).
+// `iifname "<tap>" <family> daddr { … } tcp dport != <blocked> accept`.
+// Both the legacy port-25 guard and the current canonical blocked set qualify.
+// Returns 0 when the rule is absent or ambiguous.
 //
 // The renderer always emits tap0 (identical in every netns per
 // ADR-009) so the substring is well-defined. If a future renderer
 // lets tap vary per instance, this helper needs to take the tap
 // name as a parameter.
 func listChainHandles(ctx context.Context, cap CaptureRunner, netnsName, family, table, chain string) (uint64, error) {
-	argv := []string{"ip", "netns", "exec", netnsName, "nft", "-a", "list", "chain", family, table, chain}
+	argv := []string{"ip", "netns", "exec", netnsName, "nft", "-a", "-n", "list", "chain", family, table, chain}
 	out, err := cap.RunCapture(ctx, argv)
 	if err != nil {
 		return 0, fmt.Errorf("nft -a list chain %s %s %s: %w", family, table, chain, err)
 	}
-	// Match on the `iifname "tap0"` substring to anchor to the
-	// allowlist accept rule (the lateral-movement deny lines don't
-	// match). Modern nft prints handles at end-of-rule with
-	// `handle N`; the regex below extracts the integer.
+	// Match the public CIDR exception, including its explicit SMTP exclusion.
 	//
 	// Output sample:
 	//   chain forward {
 	//    type filter hook forward priority 0; policy accept;
-	//    iifname "tap0" ip daddr { 1.2.3.0/24 } accept # handle 42
+	//    iifname "tap0" ip daddr { 1.2.3.0/24 } tcp dport != 25 accept # handle 42
 	//   }
 	needleAllow := `iifname "tap0" ` + family + ` daddr`
 	var matched uint64
 	scanner := bufio.NewScanner(bytes.NewReader(out))
 	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.Contains(line, needleAllow) {
+		line := strings.Join(strings.Fields(scanner.Text()), " ")
+		// A legacy SMTP exclusion or the current blocked-port set identifies
+		// the public CIDR exception. Private/database accepts cannot supply it.
+		if !strings.Contains(line, needleAllow) || !publicAllowlistGuard(line) {
 			continue
 		}
 		idx := strings.LastIndex(line, "# handle ")
@@ -8668,12 +8709,27 @@ func listChainHandles(ctx context.Context, cap CaptureRunner, netnsName, family,
 		if perr != nil {
 			continue
 		}
+		if matched != 0 {
+			return 0, nil // Unknown/duplicate legacy rules require a full rebuild.
+		}
 		matched = h
 	}
-	// Private-network rules are emitted before public allowlists at boot,
-	// while a live allowlist patch is appended after them. Returning the last
-	// matching rule selects the public rule in both cases.
+	// Only one public allowlist rule may identify this address family.
 	return matched, nil
+}
+
+// Numeric listings make the current anonymous port set comparable to the
+// renderer, while legacy port-25 rules remain identifiable during upgrades.
+func publicAllowlistGuard(line string) bool {
+	_, tail, ok := strings.Cut(line, " tcp dport != ")
+	if !ok {
+		return false
+	}
+	guard, _, ok := strings.Cut(tail, " accept # handle ")
+	if !ok {
+		return false
+	}
+	return guard == "25" || strings.ReplaceAll(guard, " ", "") == "{"+netns.AllowlistBlockedPortsSet()+"}"
 }
 
 // listPrivateNetworkHandle resolves the handle for a private-network accept
@@ -8955,7 +9011,7 @@ func (m *Manager) updateEgressPorts(ctx context.Context, appID string, extra []u
 			continue
 		}
 		ports := tenantEgressPorts(inst.Plan, extra)
-		if slices.Equal(inst.Net.EgressPorts, ports) {
+		if !inst.egressPortsUncertain && slices.Equal(inst.Net.EgressPorts, ports) {
 			continue
 		}
 		nc := inst.Net
@@ -8971,12 +9027,18 @@ func (m *Manager) updateEgressPorts(ctx context.Context, appID string, extra []u
 			continue
 		}
 		if err := m.runNftCommands(ctx, t.nc.Netns, t.nc.EgressPortsUpdateCommands()); err != nil {
+			m.mu.Lock()
+			if inst := m.live[t.id]; inst == t.instance {
+				inst.egressPortsUncertain = true
+			}
+			m.mu.Unlock()
 			errs = append(errs, fmt.Errorf("fcvm: update egress ports for %s: %w", t.id, err))
 			continue
 		}
 		m.mu.Lock()
 		if inst := m.live[t.id]; inst == t.instance {
 			inst.Net.EgressPorts = t.nc.EgressPorts
+			inst.egressPortsUncertain = false
 		}
 		m.mu.Unlock()
 	}

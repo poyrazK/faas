@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
@@ -21,14 +23,14 @@ import (
 // Upload keys are resolved by apid (credentials, ADR 20261029202403): their
 // stored hashes are keyed by a secret only apid holds.
 func publicObjectStorageRoot(store *state.EdgeStore, credentials objectstorage.UploadAuthenticator, registry *objectstorage.Registry, reads *objectstorage.ReadAdmitter,
-	hostLookups *objectstorage.HostLookupBudget, enabled func() bool, domains hostidentity.Domains, next http.Handler, log *slog.Logger) (http.Handler, error) {
-	publicHandler, err := publicObjectReads(store, registry, reads, nil, hostLookups, enabled, domains, next, log)
+	hostLookups *objectstorage.HostLookupBudget, clientKey func(*http.Request) string, enabled, tenantSurfaces func() bool, domains hostidentity.Domains, next http.Handler, log *slog.Logger) (http.Handler, error) {
+	publicHandler, err := publicObjectReads(store, registry, reads, nil, hostLookups, clientKey, enabled, tenantSurfaces, domains, next, log)
 	if err != nil {
 		return nil, err
 	}
 	upload, err := objectstorage.NewUploadHandler(objectstorage.UploadConfig{
 		Store: store, Routes: store, Buckets: store, Authenticator: credentials,
-		Registry: registry, Accounting: store, RequestMetrics: store, Enabled: enabled,
+		Registry: registry, Accounting: store, RequestMetrics: store, Enabled: enabled, TenantSurfacesEnabled: tenantSurfaces,
 		AppsDomain: domains.Apps, Next: publicHandler, Log: log,
 	})
 	if err != nil {
@@ -43,10 +45,10 @@ func publicObjectStorageRoot(store *state.EdgeStore, credentials objectstorage.U
 // next. transfers paces their bodies; nil leaves them unpaced. hostLookups
 // bounds host lookups for names never seen naming an app.
 func publicObjectReads(store *state.EdgeStore, registry *objectstorage.Registry, reads *objectstorage.ReadAdmitter, transfers *objectstorage.TransferLimiter,
-	hostLookups *objectstorage.HostLookupBudget, enabled func() bool, domains hostidentity.Domains, next http.Handler, log *slog.Logger) (http.Handler, error) {
+	hostLookups *objectstorage.HostLookupBudget, clientKey func(*http.Request) string, enabled, tenantSurfaces func() bool, domains hostidentity.Domains, next http.Handler, log *slog.Logger) (http.Handler, error) {
 	h, err := objectstorage.NewPublicReadHandler(objectstorage.PublicReadConfig{
-		Store: store, Registry: registry, RequestMetrics: store, Accounting: store, ReadAdmitter: reads,
-		Transfers: transfers, HostLookups: hostLookups, Enabled: enabled, AppsDomain: domains.Apps, Next: next, Log: log,
+		Store: store, Registry: registry, RequestMetrics: store, Accounting: store, ReadAdmitter: reads, ClientKey: clientKey,
+		Transfers: transfers, HostLookups: hostLookups, Enabled: enabled, TenantSurfacesEnabled: tenantSurfaces, AppsDomain: domains.Apps, Next: next, Log: log,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("gatewayd-public: public object storage handler: %w", err)
@@ -87,5 +89,19 @@ func startPublicReadAdmitter(ctx context.Context, store *state.EdgeStore, regist
 	return reads, func() {
 		cancel()
 		<-done
+	}
+}
+
+// publicReadClientKey names an anonymous public read's client by the
+// canonical client address behind the trusted ingress (CF-Connecting-IP via
+// cloudflareClientIP), as the edge's per-address request limit does, for the
+// per-client public read limit (object storage audit OS-5).
+func publicReadClientKey(trusted []netip.Prefix) func(*http.Request) string {
+	return func(r *http.Request) string {
+		ip, _ := gateway.CanonicalForwardingContext(r, trusted)
+		if addr, err := netip.ParseAddr(ip); err == nil {
+			return addr.Unmap().String()
+		}
+		return ""
 	}
 }

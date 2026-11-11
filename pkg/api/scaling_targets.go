@@ -123,6 +123,9 @@ func ValidateScalingTargets(field string, targets []ScalingTarget) *Problem {
 		key := t.Metric
 		if t.Metric == ScalingMetricCustom {
 			key += ":" + t.Name
+			if len(t.Labels) > 0 {
+				key += "{" + CustomMetricSeriesKey(t.Labels) + "}"
+			}
 		}
 		if _, dup := seen[key]; dup {
 			// Two targets on one metric have no defined meaning: the
@@ -165,6 +168,14 @@ func ValidateScalingTargets(field string, targets []ScalingTarget) *Problem {
 					fmt.Sprintf("%s[%d].name %q is required for metric %q and must match [a-z][a-z0-9_]{0,%d}.",
 						field, i, t.Name, ScalingMetricCustom, CustomMetricNameMaxBytes-1))
 			}
+			if msg := ValidateCustomMetricLabels(t.Labels); msg != "" {
+				return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+					"Invalid scaling policy", fmt.Sprintf("%s[%d].labels: %s", field, i, msg))
+			}
+		} else if len(t.Labels) > 0 {
+			return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+				"Invalid scaling policy",
+				fmt.Sprintf("%s[%d].labels is only valid with metric %q.", field, i, ScalingMetricCustom))
 		} else if t.Name != "" {
 			return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
 				"Invalid scaling policy",
@@ -258,10 +269,12 @@ func ErrScalingTargetConflict() *Problem {
 }
 
 // ValidatePerInstanceConcurrency bounds scaling_policy.per_instance_concurrency
-// (ADR-20261022203523) to [0, the plan's concurrency_per_vm]. Zero means the
-// plan bound. The problem carries the limit and the requested value.
+// (ADR-20261022203523) to [0, the plan's concurrency_per_vm], which runtime
+// config may replace with app_request_concurrency_max (ADR-20261101215228).
+// Zero means the default. The problem carries the limit and the requested
+// value.
 func ValidatePerInstanceConcurrency(plan Plan, requested int) *Problem {
-	limit := plan.ConcurrencyPerVMBound()
+	limit := plan.RequestConcurrencyBound()
 	if requested >= 0 && requested <= limit {
 		return nil
 	}

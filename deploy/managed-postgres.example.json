@@ -33,6 +33,7 @@
       "namespace": "org-replace-with-neon-org-id",
       "data_api_enabled": false,
       "auth_enabled": false,
+      "session_enabled": false,
       "settings": {
         "region_id": "aws-eu-central-1",
         "database_name": "gregale",

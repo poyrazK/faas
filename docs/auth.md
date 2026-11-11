@@ -69,7 +69,65 @@ session a fresh MFA verification. Accounts with a password must enter their
 current password to confirm setup. A pending setup cannot verify a session
 or provide recovery access. An already-enrolled account uses `verify`
 for further challenges; repeating `confirm` returns a conflict. A suspended
-account can obtain the CSRF token needed to use its saved recovery codes.
+account can enroll, verify, recover or reset its authenticator so billing
+recovery never depends on first restoring billing.
+
+MFA is optional for ordinary accounts. Plan changes, billing details and key
+creation ask for recent verification only when MFA is enabled or explicitly
+required. Enrollment, an authenticator code and a saved recovery code each
+establish five minutes of recent verification; enrollment needs no second code.
+Resetting MFA also clears the browser's pending challenge unless an explicit
+policy or operator access requires a replacement.
+
+If your last recovery code remains, use it to reset the authenticator and set
+up a replacement. If neither the device nor codes are available, choose email
+recovery. Its link can be confirmed after the existing 24-hour waiting period.
+If you have lost the device, the codes and the mailbox, contact
+support@gregale.dev. Support checks two independent proofs of ownership (such
+as payment details and a sign-in with your password or linked provider), mails
+the account's address and any co-owners, and after 72 hours without objection
+turns two-factor authentication off; you then sign in, set it up again and,
+if needed, change your email. Support never changes the sign-in email for you.
+To replace your recovery codes while you still have your authenticator, run
+`gregale account mfa rotate` (or use **New recovery codes** on the
+two-factor page) after verifying the session; the previous codes stop working
+and you get an email.
+
+At the dashboard sign-in check you can tick **Remember this browser for 30
+days**: that browser then skips the code at sign-in (not for sensitive
+actions) until it expires or you forget it on the account page. Operator
+accounts are always asked. See [account](account.md#profile-sign-in-and-sessions).
+
+## Email verification
+
+A password signup must verify its email address. Until it does, deploying,
+billing changes, creating API keys and organizations, and inviting members
+answer `email_verification_required`. The verification link works only in a
+browser signed in to that account: opened anywhere else, it asks you to sign
+in first and then verifies. (Someone who signed up with your address cannot
+verify their account by getting you to click the link; if you did not create
+the account, use **Forgot password** or a sign-in link instead, which claims
+it.) Send a new 24-hour link
+with `gregale account email verify` or the account page's button. After 30
+days unverified the account keeps its data, but password sign-in and existing
+sessions and keys only reach the account page, logout, deletion, the resend and
+the email change (so an address with a typo can be fixed); opening a
+verification link, a magic sign-in link, confirming a new address, or signing
+in with Google or GitHub at the same address lifts the restriction. Accounts
+created before 16 November 2026 get their 30 days from that date
+(`api.EmailVerificationEnforcedFrom`). In the last 7 days before the deadline,
+an account that is still in use (a signed-in browser or an API key) is mailed
+a fresh verification link at most once a day. An account still unverified 60
+days after sign-up (counted from 16 November 2026 for older accounts) that
+never created an app and has no billing is scheduled for deletion: its
+address is mailed and it can be restored for 30 days.
+
+If you never verified and forgot your password, use **Forgot password** anyway:
+an unverified account receives a magic sign-in link. Opening it proves the
+address, signs out anything the earlier signup created, and lets you set a new
+password from the account page.
+`gregale org invitation accept TOKEN` opens the invitation in a browser so
+acceptance uses your own session and enabled MFA policy, rather than a CLI key.
 
 For shared applications, the current organization role and the credential's
 scope both apply. Use an organization-bound key to work on a teammate's app;

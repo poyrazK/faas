@@ -21,7 +21,7 @@ def test_initial_queue_evidence_round_trip():
                 "repairable": False,
             },
             "evidence_url": "/initial-recovery-reviews/review/evidence",
-            "cli_command": "gregale automations failure-recovery-evidence --app orders --review review",
+            "cli_command": "gregale workflow stored failure-recovery-evidence --app orders --review review",
         },
     }
     assert WorkflowRecoveryAutomaticQueueEntry.from_dict(body).to_dict() == body

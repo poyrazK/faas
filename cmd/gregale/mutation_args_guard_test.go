@@ -122,7 +122,7 @@ func TestMutationLeavesRejectTrailingArgumentsBeforeNetwork(t *testing.T) {
 			return main.CmdOrgsTransferOwnership([]string{"--org", "demo-org", "--to", "user-id", "unexpected"})
 		}},
 		{"org key add", func() int {
-			return main.CmdOrgsKeysAdd([]string{"--org", "demo-org", "--label", "automation", "unexpected"})
+			return main.CmdOrgsKeysAdd([]string{"--org", "demo-org", "--label", "stored_workflow", "unexpected"})
 		}},
 		{"org update", func() int {
 			return main.CmdOrgsUpdate([]string{"--org", "demo-org", "--name", "Updated", "unexpected"})
