@@ -307,7 +307,7 @@ func (q *Queries) RecordRequestAnalyticsWindow(ctx context.Context, db DBTX, arg
 
 const requestAnalyticsCoverageGaps = `-- name: RequestAnalyticsCoverageGaps :many
 WITH participating_nodes AS (
- SELECT node_name FROM request_analytics_coverage_watermarks WHERE registered_at < $1::timestamptz AND source_at >= $2::timestamptz
+ SELECT node_name FROM request_analytics_coverage_watermarks WHERE registered_at < $1::timestamptz
  UNION
  SELECT name AS node_name FROM compute_nodes WHERE active AND created_at < $1::timestamptz
  UNION

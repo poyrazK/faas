@@ -365,7 +365,7 @@ DELETE FROM request_analytics_rollup_windows WHERE id=sqlc.arg(id)::uuid AND sta
 -- Prefer independent gateway counting proof for rollups, while raw responses
 -- require raw delivery proof. Later heartbeats never rewrite historical proof.
 WITH participating_nodes AS (
- SELECT node_name FROM request_analytics_coverage_watermarks WHERE registered_at < sqlc.arg(window_until)::timestamptz AND source_at >= sqlc.arg(window_from)::timestamptz
+ SELECT node_name FROM request_analytics_coverage_watermarks WHERE registered_at < sqlc.arg(window_until)::timestamptz
  UNION
  SELECT name AS node_name FROM compute_nodes WHERE active AND created_at < sqlc.arg(window_until)::timestamptz
  UNION

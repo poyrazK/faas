@@ -260,3 +260,25 @@ func TestAnalyticsCountingHistoryIgnoresLaterRawLoss(t *testing.T) {
 		t.Fatalf("counting loss was hidden: %v %v", gaps, err)
 	}
 }
+
+func TestAnalyticsHistoryRequiresProofForRetiredSilentNodes(t *testing.T) {
+	store, ctx := pgStore(t)
+	_, app, _ := seedLiveDeploy(t, store, ctx, "retired-history", "retired-history")
+	pool := *store.Pool()
+	now := time.Now().UTC()
+	from, until := now.Add(-3*time.Hour), now.Add(-2*time.Hour)
+	if _, err := pool.Exec(ctx, `INSERT INTO request_telemetry_coverage(node_name,boot_id,sequence,enabled,sampling_basis_points,dropped_total,pending_count,source_at,received_at,healthy_since)
+ SELECT name,gen_random_uuid(),1,true,10000,0,0,$1,$1,$1::timestamptz-interval '4 hours' FROM compute_nodes WHERE active`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO request_analytics_rollup_audit(app_id,audited_since) VALUES($1,$2)`, app, from.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO request_analytics_coverage_watermarks(node_name,registered_at,previous_source_at,source_at) VALUES('retired-silent',$1,$2,$2)`, from.Add(-time.Hour), from.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	gaps, err := store.RequestAnalyticsCompleteness(ctx, app, from, until)
+	if err != nil || !slices.Contains(gaps, "telemetry_coverage_unknown") {
+		t.Fatalf("silence before retirement was treated as proven absence: %v %v", gaps, err)
+	}
+}

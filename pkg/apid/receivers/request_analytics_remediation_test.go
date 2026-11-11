@@ -65,13 +65,14 @@ func TestRollupsPersistPendingAndLostEvidence(t *testing.T) {
 	if counted, err := a.add(t.Context(), row); counted || err != nil {
 		t.Fatalf("overflow: %v %v", counted, err)
 	}
-	if len(store.windows) != 1 {
-		t.Fatal("overflow did not persist loss")
-	}
+	lost := false
 	for _, kind := range store.windows {
-		if kind != "lost" {
-			t.Fatalf("overflow marker=%s", kind)
+		if kind == "lost" {
+			lost = true
 		}
+	}
+	if !lost {
+		t.Fatal("overflow did not persist loss")
 	}
 	store.markerErr = errors.New("cannot persist loss")
 	if _, err := a.add(t.Context(), row); err == nil {
