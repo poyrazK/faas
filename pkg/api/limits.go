@@ -274,6 +274,10 @@ const (
 	AgentApprovalBodyBindBytes = 1 << 20
 )
 
+// MaxAgentReasonChars bounds the reason an agent gives for a request
+// (Gregale-Agent-Reason, ADR-20261110182236), in characters.
+const MaxAgentReasonChars = 280
+
 // Agent activity (ADR-20261107220000): an agent key's write requests are
 // kept AgentActivityRetention; a page holds DefaultAgentActivityPage rows
 // unless ?limit asks for up to MaxAgentActivityPage.

@@ -54,6 +54,9 @@ func topLevelUsage(showAll, showOperator bool) string {
 		b.WriteString("Run 'gregale help --all --operator' to include operator and compatibility commands.\n")
 	}
 	b.WriteString("\nGlobal flags:\n")
+	b.WriteString("  --agent-reason TEXT    With an agent key, tell the person who approves a request\n")
+	b.WriteString("                         what it is for (before the command; up to 280 characters).\n")
+	b.WriteString("                         Equivalent env: GREGALE_AGENT_REASON.\n")
 	b.WriteString("  --json                 Machine-readable output where supported. Slices emit\n")
 	b.WriteString("                         NDJSON; scalars emit indented JSON; errors print\n")
 	b.WriteString("                         RFC 7807 to stderr. Equivalent env: FAAS_JSON=1.\n")
@@ -117,12 +120,13 @@ func run(args []string) (status int) {
 		jsonUsageHelp = previousUsageHelp
 		invokedCommandPath = previousPath
 	}()
-	previousAutomation, previousWait, previousOrg := nonInteractive, approvalWaitEnabled, projectOrganization
+	previousAutomation, previousWait, previousOrg, previousReason := nonInteractive, approvalWaitEnabled, projectOrganization, agentReason
 	defer func() {
-		nonInteractive, approvalWaitEnabled, projectOrganization = previousAutomation, previousWait, previousOrg
+		nonInteractive, approvalWaitEnabled, projectOrganization, agentReason = previousAutomation, previousWait, previousOrg, previousReason
 	}()
 	nonInteractive = false
 	projectOrganization = ""
+	agentReason = os.Getenv("GREGALE_AGENT_REASON")
 	approvalWaitEnabled = os.Getenv("GREGALE_WAIT_FOR_APPROVAL") == "1"
 	previousInsecureWarned := insecureAPIWarned
 	defer func() { insecureAPIWarned = previousInsecureWarned }()

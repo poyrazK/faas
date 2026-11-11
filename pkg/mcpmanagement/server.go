@@ -274,6 +274,9 @@ func registerTool[In any](s *mcp.Server, m *management, name, description string
 					return m.selectedToolError(ctx, name, args, err), nil, nil
 				}
 			}
+			if !readOnly {
+				ctx = m.withPlanReason(ctx, args)
+			}
 			output, err := handle(ctx, args)
 			if pending, ok := output.(*needsInput); ok && err == nil {
 				return &mcp.CallToolResult{InputRequests: pending.requests, RequestState: pending.state}, nil, nil

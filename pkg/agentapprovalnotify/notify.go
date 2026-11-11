@@ -248,8 +248,11 @@ func message(agent string, lines []state.PendingAgentApprovalLine) (string, stri
 		if label == "" {
 			label = line.Category
 		}
-		fmt.Fprintf(&b, "%s: %s %s\nExpires %s\nReview: %s\n\n", label, line.Method, line.Path,
-			line.ExpiresAt.UTC().Format("2006-01-02 15:04 MST"), line.ReviewURL)
+		fmt.Fprintf(&b, "%s: %s %s\n", label, line.Method, line.Path)
+		if line.Reason != "" {
+			fmt.Fprintf(&b, "The agent's reason (its own words): %q\n", line.Reason)
+		}
+		fmt.Fprintf(&b, "Expires %s\nReview: %s\n\n", line.ExpiresAt.UTC().Format("2006-01-02 15:04 MST"), line.ReviewURL)
 	}
 	b.WriteString("Sign in to approve or deny. If you deny, you can tell the agent why. ")
 	b.WriteString("A request you do not decide expires; the agent is told and stops asking.\n")

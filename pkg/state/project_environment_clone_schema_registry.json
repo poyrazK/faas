@@ -72,6 +72,7 @@
       "method",
       "org_id",
       "path",
+      "reason",
       "status"
     ],
     "kind": "operational"
@@ -113,6 +114,7 @@
       "method",
       "org_id",
       "path",
+      "reason",
       "status"
     ],
     "kind": "account_identity"
