@@ -4968,6 +4968,13 @@ type EnvironmentBranchCapture struct {
 	ReadyAt          pgtype.Timestamptz
 }
 
+// ADR-20261031193635 objects written by credential-free capture attempts; imaged deletes those no ready capture references.
+type EnvironmentBranchCaptureObject struct {
+	StorageKey   string
+	DeploymentID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+}
+
 type EnvironmentBuildArtifactPin struct {
 	SourceID    pgtype.UUID
 	CandidateID pgtype.UUID
@@ -12669,6 +12676,7 @@ type ProjectEnvironmentBranch struct {
 	DataLeaseToken      pgtype.UUID
 	DataLeaseUntil      pgtype.Timestamptz
 	CreatedAt           pgtype.Timestamptz
+	PrivateNetworks     string
 }
 
 // ADR-20261031193635 overlay buckets owned by an environment branch; purged and deleted after the branch is gone.
