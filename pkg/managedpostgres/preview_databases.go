@@ -210,6 +210,13 @@ func (s *Service) emptyPreview(source Database, storageLimitBytes int64) (Databa
 	if err := spec.Validate(); err != nil {
 		return Database{}, err
 	}
+	// The source's backend first: the preview takes the production bindings'
+	// access modes, which the region's default backend may not offer (the
+	// default can change after the source was created).
+	if backend, err := s.registry.Resolve(source.BackendID, source.BackendFingerprint); err == nil &&
+		backend.Capabilities.SupportsNewDatabase(spec) == nil {
+		return Database{Spec: spec, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint}, nil
+	}
 	backend, err := s.registry.Default(spec.Region)
 	if err != nil {
 		return Database{}, err
