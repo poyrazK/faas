@@ -69907,6 +69907,55 @@ func (q *Queries) ObjectInventoriesDue(ctx context.Context, db DBTX, arg ObjectI
 	return items, nil
 }
 
+const objectInventoryBacklog = `-- name: ObjectInventoryBacklog :one
+WITH r AS (
+  SELECT b.created_at, u.observed_at, u.attempt_at, u.lease_until,
+    EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=b.id AND v.state<>'ready') AS versioning,
+    EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')) AS reconciling,
+    EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=b.id AND l.state<>'ready') AS locking,
+    COALESCE(i.pages > 0 AND NOT i.complete AND i.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz)
+      AND i.started_at > now() - $1::bigint * interval '1 second', false) AS listing,
+    COALESCE(i.pages > 0 AND i.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz) AND i.progress_at <= now()
+      AND i.progress_at >= now() - $2::bigint * interval '1 second', false) AS progressing
+  FROM object_buckets b
+  LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
+  LEFT JOIN object_storage_inventory_scans i ON i.bucket_id=b.id
+  WHERE b.state='ready'
+)
+SELECT
+  (count(*) FILTER (WHERE NOT versioning AND NOT reconciling AND (attempt_at IS NULL OR attempt_at < now() - interval '5 minutes' OR listing)
+    AND (lease_until IS NULL OR lease_until < now())))::bigint AS due_buckets,
+  COALESCE(EXTRACT(EPOCH FROM now() - min(COALESCE(observed_at, created_at)) FILTER (WHERE NOT (observed_at IS NOT NULL AND (
+    versioning OR locking OR reconciling
+    OR (progressing AND observed_at > now() - $1::bigint * interval '1 second'))))), 0)::float8 AS oldest_age_seconds
+FROM r
+`
+
+type ObjectInventoryBacklogParams struct {
+	ScanMaxAgeSeconds     int64
+	ProgressWindowSeconds int64
+}
+
+type ObjectInventoryBacklogRow struct {
+	DueBuckets       int64
+	OldestAgeSeconds float64
+}
+
+// ADR-20261110151628 §3: how far the inventory sweep is behind. due_buckets
+// counts what ObjectInventoriesDue would hand out now (same rule).
+// oldest_age_seconds is the oldest observation admission still holds to the
+// 900 s window: a bucket held by a versioning, Object Lock or capacity change
+// (with an observation), or whose listing advanced within progress_window on
+// an observation under scan_max_age, stays fresh on an older one and does not
+// count (objectBucketInventoryStale). A bucket never observed counts from its
+// creation.
+func (q *Queries) ObjectInventoryBacklog(ctx context.Context, db DBTX, arg ObjectInventoryBacklogParams) (ObjectInventoryBacklogRow, error) {
+	row := db.QueryRow(ctx, objectInventoryBacklog, arg.ScanMaxAgeSeconds, arg.ProgressWindowSeconds)
+	var i ObjectInventoryBacklogRow
+	err := row.Scan(&i.DueBuckets, &i.OldestAgeSeconds)
+	return i, err
+}
+
 const objectInventoryClaim = `-- name: ObjectInventoryClaim :execrows
 INSERT INTO object_storage_bucket_usage (bucket_id, attempt_at, lease_until, token)
 SELECT b.id, now(), now()+interval '2 minutes', $2::text FROM object_buckets b WHERE b.id=$1 AND b.state='ready' AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=$1 AND state<>'ready') AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning'))

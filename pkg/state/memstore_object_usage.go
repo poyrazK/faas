@@ -321,6 +321,39 @@ func (m *MemStore) DueObjectInventoryQueue(ctx context.Context, limit int32, ski
 	return out, nil
 }
 
+func (m *MemStore) ObjectInventoryBacklog(ctx context.Context) (ObjectInventoryBacklog, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ObjectInventoryBacklog{}, err
+	}
+	now := time.Now()
+	var out ObjectInventoryBacklog
+	for _, b := range m.objectBuckets {
+		if b.State != "ready" {
+			continue
+		}
+		u := m.objectUsage[b.ID]
+		scan := u.InventoryScan
+		listing := scan.Pages > 0 && !scan.Complete && scan.StartedAt.After(u.ObservedAt) && now.Sub(scan.StartedAt) < api.ObjectInventoryScanMaxAge
+		if !m.inventoryClaimFencedLocked(b.ID) && (u.AttemptAt.IsZero() || now.Sub(u.AttemptAt) > 5*time.Minute || listing) && !u.LeaseUntil.After(now) {
+			out.DueBuckets++
+		}
+		// A bucket fresh on any observation age is exempt: held, or listing
+		// within the progress window.
+		u.InventoryHeld = m.objectBucketTransitionLocked(b.ID)
+		if !u.ObservedAt.IsZero() && !objectBucketInventoryStale(u, 0, now) {
+			continue
+		}
+		observed := u.ObservedAt
+		if observed.IsZero() {
+			observed = b.CreatedAt
+		}
+		out.OldestObservationAge = max(out.OldestObservationAge, now.Sub(observed))
+	}
+	return out, nil
+}
+
 func (m *MemStore) ClaimObjectInventory(ctx context.Context, bucket, token string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
