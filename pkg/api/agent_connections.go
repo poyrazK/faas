@@ -68,6 +68,11 @@ type OrgAgentPolicyRequest struct {
 	// the approval requests of agents acting in the organization; absent
 	// keeps the current ones (ADR-20261107140000 §3).
 	ApprovalChannels *[]string `json:"approval_channels,omitempty"`
+	// MaxAgentBudgetCents caps every agent's monthly budget in the
+	// organization (ADR-20261111114059); absent keeps the current ceiling,
+	// and ClearMaxAgentBudget removes it.
+	MaxAgentBudgetCents *int64 `json:"max_agent_budget_cents,omitempty"`
+	ClearMaxAgentBudget bool   `json:"clear_max_agent_budget,omitempty"`
 }
 
 // OrgAgentPolicyResponse is an organization's agent policy. Revoked counts
@@ -80,8 +85,11 @@ type OrgAgentPolicyResponse struct {
 	// ApprovalChannels are the caller's channels that get the
 	// organization's agents' approval requests.
 	ApprovalChannels []string `json:"approval_channels"`
-	UpdatedAt        string   `json:"updated_at,omitempty"`
-	Revoked          int      `json:"revoked,omitempty"`
+	// MaxAgentBudgetCents is the ceiling on every agent's monthly budget,
+	// when the organization set one.
+	MaxAgentBudgetCents *int64 `json:"max_agent_budget_cents,omitempty"`
+	UpdatedAt           string `json:"updated_at,omitempty"`
+	Revoked             int    `json:"revoked,omitempty"`
 }
 
 // AgentClientRequest names the client of the calling hosted MCP key. Site
