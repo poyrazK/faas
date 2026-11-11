@@ -73,6 +73,9 @@ func (m *Manifest) PlanFunctionsFS(fsys fs.FS, projectSlug string) ([]FunctionPl
 		if err := fn.validateHookTimeouts(); err != nil {
 			return nil, err
 		}
+		if err := fn.resolveSchemas(fsys, root); err != nil {
+			return nil, err
+		}
 		planned = append(planned, FunctionPlan{Spec: fn, Slug: slug, Root: root, Runtime: runtime, Handler: handler})
 	}
 	return planned, nil

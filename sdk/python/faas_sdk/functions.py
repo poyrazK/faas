@@ -41,6 +41,9 @@ FUNCTION_CONFIG_KEYS = frozenset(
         "webhooks",
         "before_snapshot_timeout_ms",
         "after_restore_timeout_ms",
+        "input",
+        "output",
+        "calls",
         "queue_bindings",
         "event_triggers",
     }

@@ -338,7 +338,9 @@ func stringOrList(key string, v any) ([]string, error) {
 // normalizeNested converts nested object keys to snake_case, except the
 // keys of env, which are the customer's variable names.
 func normalizeNested(key string, v any) any {
-	if key == "env" {
+	// env keys are variable names, and input/output are JSON Schema whose
+	// keywords (additionalProperties, minLength) must keep their spelling.
+	if key == "env" || key == "input" || key == "output" {
 		return v
 	}
 	switch t := v.(type) {
