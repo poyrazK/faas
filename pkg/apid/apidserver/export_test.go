@@ -2408,3 +2408,5 @@ func NewUsageSummaryEgressProvider(mode billing.MeterDeliveryMode) billing.Provi
 
 // PlanWorkloadPublicAuthMode exposes the plan's public URL auth (H32-30).
 var PlanWorkloadPublicAuthMode = planWorkloadPublicAuthMode
+
+var KeyApprovalCategories = keyApprovalCategories
