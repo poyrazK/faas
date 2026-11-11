@@ -29,7 +29,7 @@ func (branchAPIProvider) Restore(_ context.Context, r managedpostgres.RestoreReq
 		RestoreLineage: &managedpostgres.RestoreLineage{SourceResourceID: r.SourceResourceID, PointInTime: r.PointInTime}}, nil
 }
 
-func branchAPIService(t *testing.T, account string, now *time.Time) (*managedpostgres.Service, managedpostgres.Database) {
+func branchAPIService(t *testing.T, account string, now *time.Time, branches int) (*managedpostgres.Service, managedpostgres.Database) {
 	t.Helper()
 	registry, err := managedpostgres.NewRegistry(managedpostgres.Config{DefaultRegion: "us-east-1", MaxDatabasesPerAccount: 3, Defaults: map[string]string{"us-east-1": "private-backend"}, Backends: []managedpostgres.BackendConfig{{ID: "private-backend", Driver: "fixture", Region: "us-east-1", Namespace: "private"}}}, func(string) string { return "PRIVATE_SECRET" }, map[string]managedpostgres.Factory{"fixture": func(managedpostgres.BackendConfig, func(string) string) (managedpostgres.Provider, error) {
 		return branchAPIProvider{}, nil
@@ -37,7 +37,8 @@ func branchAPIService(t *testing.T, account string, now *time.Time) (*managedpos
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc, err := managedpostgres.NewService(registry, managedpostgres.NewMemoryStore(), managedpostgres.ServiceOptions{ProvisioningEnabled: func() bool { return true }, Now: func() time.Time { return *now }})
+	svc, err := managedpostgres.NewService(registry, managedpostgres.NewMemoryStore(), managedpostgres.ServiceOptions{ProvisioningEnabled: func() bool { return true }, Now: func() time.Time { return *now },
+		MaxBranchesPerAccount: func(context.Context, string) (int, error) { return branches, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +52,7 @@ func branchAPIService(t *testing.T, account string, now *time.Time) (*managedpos
 func TestManagedPostgresRestoreWithoutAPointBranchesFromLatestWithATTL(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
-	service, source := branchAPIService(t, (*e.Acct()).ID, &now)
+	service, source := branchAPIService(t, (*e.Acct()).ID, &now, api.ManagedPostgresBranchesMax(api.PlanPro))
 	(*(*e.S()).ManagedPostgres()) = service
 	now = now.Add(time.Minute)
 	path := "/v1/postgres/databases/" + source.ID + "/restore"
@@ -89,5 +90,25 @@ func TestManagedPostgresRestoreWithoutAPointBranchesFromLatestWithATTL(t *testin
 	}
 	if restored := decodeManagedPostgresDatabase(t, rec.Body.Bytes()); restored.RestorePointInTime != point || restored.ExpiresAt != "" {
 		t.Fatalf("restore at a point = %q, expires %q", restored.RestorePointInTime, restored.ExpiresAt)
+	}
+}
+
+// TestManagedPostgresBranchLimitNamesTheAllowance: past the branch allowance
+// the restore is a 403 that says how to make room (ADR-20261106103654
+// amendment 1).
+func TestManagedPostgresBranchLimitNamesTheAllowance(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	service, source := branchAPIService(t, (*e.Acct()).ID, &now, 1)
+	(*(*e.S()).ManagedPostgres()) = service
+	now = now.Add(time.Minute)
+	path := "/v1/postgres/databases/" + source.ID + "/restore"
+	if rec := e.Do(t, http.MethodPost, path, api.RestoreManagedPostgresDatabaseRequest{Name: "pr-1", TTLSeconds: 3600}, nil); rec.Code != http.StatusCreated {
+		t.Fatalf("first branch = %d %s", rec.Code, rec.Body.String())
+	}
+	rec := e.Do(t, http.MethodPost, path, api.RestoreManagedPostgresDatabaseRequest{Name: "pr-2", TTLSeconds: 3600}, nil)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), `"code":"managed_postgres_branch_limit"`) ||
+		!strings.Contains(rec.Body.String(), "1 of 1") || !strings.Contains(rec.Body.String(), "gregale postgres branch delete") {
+		t.Fatalf("second branch = %d %s, want the branch limit with its hint", rec.Code, rec.Body.String())
 	}
 }

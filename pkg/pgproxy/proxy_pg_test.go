@@ -111,6 +111,7 @@ type harness struct {
 	waker     *countingWaker
 	dbName    string
 	metrics   *Metrics
+	proxy     *Proxy
 }
 
 func newHarness(t *testing.T) *harness {
@@ -142,6 +143,7 @@ func newHarnessWith(t *testing.T, adjust func(*Config)) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
+	h.proxy = p
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

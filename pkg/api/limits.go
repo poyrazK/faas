@@ -944,6 +944,31 @@ func ManagedPostgresPreviewDatabasesMax(p Plan) int {
 	return limits.PreviewApps * databases.DatabasesMax
 }
 
+// ManagedPostgresAllowanceBranchTTLMax is the longest TTL a branch may carry
+// and still sit in the plan's branch allowance instead of its database limit
+// (ADR-20261106103654 amendment 1). A branch with a longer TTL, or none,
+// counts toward DatabasesMax like any restore.
+const ManagedPostgresAllowanceBranchTTLMax = 7 * 24 * time.Hour
+
+// managedPostgresBranchesMax is how many short-lived branches (a TTL of at
+// most ManagedPostgresAllowanceBranchTTLMax) an account may hold at once
+// outside its database limit (ADR-20261106103654 amendment 1). On Neon a
+// branch lives in its source's project, which includes 25 branches, so the
+// allowance costs only the branch's compute and the data written to it,
+// both metered like any database.
+var managedPostgresBranchesMax = map[Plan]int{
+	PlanFree:  0,
+	PlanHobby: 2,
+	PlanPro:   5,
+	PlanScale: 20,
+}
+
+// ManagedPostgresBranchesMax returns the plan's branch allowance. Unknown
+// plans fail closed.
+func ManagedPostgresBranchesMax(p Plan) int {
+	return managedPostgresBranchesMax[p]
+}
+
 // ManagedPostgresPreviewFleetSharePercent caps one account's PR preview
 // databases at this share of the operator's fleet database cap
 // (max_databases), at least one (ADR-20261102123523 amendment 2026-11-10).
@@ -3694,6 +3719,12 @@ const (
 // ValidSnapshotRefresh reports whether v is a valid `snapshot_refresh`.
 func ValidSnapshotRefresh(v string) bool {
 	return v == SnapshotRefreshOff || v == SnapshotRefreshShadow || v == SnapshotRefreshOn
+}
+
+// ValidGatewayAwaitingResponseMax reports whether v is a valid
+// `gateway_awaiting_response_max`.
+func ValidGatewayAwaitingResponseMax(v int) bool {
+	return v >= GatewayAwaitingResponseMaxMin && v <= GatewayAwaitingResponseMaxMax
 }
 
 // ValidSnapshotRefreshWindowHours reports whether v is a valid
@@ -8242,13 +8273,20 @@ const (
 	// biggest-over-quota accounts first). Matches spec §12. NaN lv-fc
 	// readings (lvs missing on dev/macOS) short-circuit the pressure branch.
 	SnapshotBudgetAlarmPct = 90.0
-	// SnapshotStaleRetention is how long a snapshot lives in stale state
-	// after the F2 FC-version sweep marks it before imaged evicts it
-	// (F-07). Spec §4.4 + ADR-005: stale snapshots must remain
-	// restore-able for a brief window so an operator rollback across a
-	// firecracker upgrade doesn't pay an extra cold boot. 7 days is the
-	// v1 box's typical reset cycle.
-	SnapshotStaleRetention = 7 * 24 * time.Hour
+	// SnapshotStaleRetention is how long a stale snapshot is kept, from its
+	// stale_at, before imaged deletes its row and files (F-07).
+	//
+	// It was 7 days, so that an operator rollback across a Firecracker
+	// upgrade would not pay a cold boot. But a snapshot only restores while
+	// stale=false (spec §6), and nothing ever clears stale, so a stale
+	// snapshot is never restored again. The window only held dead files: on
+	// 2026-11-11 production kept 361 stale snapshots, 47 GB, none of them
+	// Firecracker-version marks; 325 belonged to deployments still live.
+	//
+	// The hour covers a restore or replica fetch that read the row just
+	// before it was marked. imaged evicts on its GC tick, so files go
+	// within a tick of the hour passing.
+	SnapshotStaleRetention = time.Hour
 	// FcVolumeRoot is where the spec §8 lv-fc volume (app layers +
 	// snapshots) is mounted. Schedd statfs-es it to populate
 	// `fcvm_lv_fc_used_pct`; the gauge reports no data where the path is
@@ -8374,6 +8412,28 @@ const (
 	// for a gateway admission slot. Per-app waiter caps are enforced by
 	// WakeAdmissionPolicyForPlan in pkg/gateway; this is the cross-app bound.
 	GatewayWakeAdmissionQueueCap = 128
+
+	// GatewayAwaitingResponseMax bounds the app requests one gatewayd-internal
+	// process holds before their response head is written: waiting for a
+	// wake, a concurrency slot or the guest's first byte. Past it the gateway
+	// answers 503 gateway_overloaded at once instead of holding another one
+	// (pkg/gateway/backlog). A node saturated on CPU otherwise holds requests
+	// until the process passes its MemoryMax: on 2026-11-11 1,400 req/s at one
+	// node grew gatewayd-internal from ~120 MB to ~500 MB and the kernel
+	// killed it, taking the node's entry down. A waiting request held about
+	// 100 KB there, so 2,048 keeps the backlog near 200 MB, under the unit's
+	// GOMEMLIMIT of 384 MiB. A healthy node holds tens: 1,000 req/s at 60 ms.
+	// The gateway_awaiting_response_max runtime-config key changes it without
+	// a restart, between GatewayAwaitingResponseMaxMin and
+	// GatewayAwaitingResponseMaxMax; raise MemoryMax and GOMEMLIMIT with it.
+	GatewayAwaitingResponseMax    = 2048
+	GatewayAwaitingResponseMaxMin = 64
+	GatewayAwaitingResponseMaxMax = 65536
+	// A gateway_overloaded answer's Retry-After is drawn from
+	// GatewayOverloadedRetryAfterMin to GatewayOverloadedRetryAfterMax seconds,
+	// so refused clients don't return together.
+	GatewayOverloadedRetryAfterMin = 1
+	GatewayOverloadedRetryAfterMax = 3
 
 	// Gateway wake admission defaults are plan policy, kept here with the
 	// rest of the platform's quotas so gateway and scheduler-facing code do
@@ -8591,6 +8651,11 @@ const (
 	// MaxRequestBodyBytes (which bounds inbound request bodies, not
 	// schema documents).
 	MaxEdgeRuleValidateSchemaBytes = 64 * 1024 // 64 KiB
+	// Exact validation arithmetic has a separate per-number work bound
+	// (ADR-20261111140000), independent of the request/schema byte ceiling.
+	MaxEdgeRuleValidateNumberBytes     = 4096
+	MaxEdgeRuleValidateNumberExponent  = 4096
+	MaxEdgeRuleValidateNumberWorkBytes = MaxRequestBodyBytes
 
 	// MaxEdgeRuleRespondBodyBytes bounds the JSON body stored in a
 	// preview-only kind=respond rule. Keeping this bounded protects both

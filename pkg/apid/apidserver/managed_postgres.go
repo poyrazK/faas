@@ -207,6 +207,15 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			}
 			return limit, nil
 		},
+		// ADR-20261106103654 amendment 1: short-lived branches sit in their
+		// own allowance, outside the database limit.
+		MaxBranchesPerAccount: func(ctx context.Context, accountID string) (int, error) {
+			account, err := state.BillingResourceAccount(ctx, accountStore, accountID)
+			if err != nil {
+				return 0, err
+			}
+			return api.ManagedPostgresBranchesMax(api.Plan(account.Plan)), nil
+		},
 		FreePlan: func(ctx context.Context, subjectID string) (bool, error) {
 			account, err := state.BillingResourceAccount(ctx, accountStore, subjectID)
 			if err != nil {
