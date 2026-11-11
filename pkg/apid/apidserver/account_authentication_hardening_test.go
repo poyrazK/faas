@@ -162,7 +162,7 @@ func TestAccountOwnershipClaimUsesFreshMFAState(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				claimed, err := srv.VerifyOAuthAccountEmail(t.Context(), acct)
+				claimed, err := srv.VerifyOAuthAccountEmail(t.Context(), acct, acct.Email)
 				if err != nil || !claimed.EmailVerified() || claimed.MFAEnrolled() || len(claimed.MFASecretEncrypted) != 0 {
 					t.Fatalf("stale OAuth claim: %+v %v", claimed, err)
 				}
