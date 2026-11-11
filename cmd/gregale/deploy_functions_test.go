@@ -801,3 +801,39 @@ func TestFunctionSetReconcilesRoutes(t *testing.T) {
 		t.Fatalf("idempotent run: exit %d, rule writes %v", code, client.ruleLog)
 	}
 }
+
+// ADR-20261111150000 §2: before each function's build, the deploy binds it to
+// its siblings and its `calls:` apps under the declared policy and sets the
+// GREGALE_FUNCTIONS map its typed client reads.
+func TestFunctionSetBindsSiblingsForTypedClients(t *testing.T) {
+	manifest := "functions:\n  - name: web\n    root: w\n    runtime: node24\n    calls: [billing-api]\n  - name: users\n    root: u\n    runtime: node24\n"
+	dir := writeFunctionProject(t, manifest, "w", "u")
+	m, _, _ := functionSetManifest(dir)
+	client := newFakeFunctionSetClient()
+	for _, slug := range []string{"shop-web", "shop-users"} {
+		client.apps[slug] = api.AppResponse{ID: testFunctionAppID, Slug: slug, Type: "function", ServiceBindingPolicy: api.ServiceBindingPolicyAccount}
+	}
+	var out bytes.Buffer
+	d := functionSetDeploy{cwd: dir, projectDir: dir, projectSlug: "shop", manifest: m, out: &out,
+		deployOne: func([]string) int { return 0 }}
+	if code := d.run(context.Background(), client); code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out.String())
+	}
+	for slug, want := range map[string][]string{"shop-web": {"billing-api", "shop-users"}, "shop-users": {"shop-web"}} {
+		var bound *api.UpdateAppRequest
+		for i, u := range client.updates[slug] {
+			if u.ServiceBindingTargets != nil {
+				bound = &client.updates[slug][i]
+			}
+		}
+		if bound == nil || !slices.Equal(*bound.ServiceBindingTargets, want) || bound.ServiceBindingPolicy == nil || *bound.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
+			t.Errorf("%s bindings = %+v, want %v under the declared policy", slug, bound, want)
+		}
+	}
+	if got := client.env["shop-web"]["GREGALE_FUNCTIONS"]; got != `{"billing-api":"billing-api","users":"shop-users"}` {
+		t.Errorf("shop-web GREGALE_FUNCTIONS = %q", got)
+	}
+	if got := client.env["shop-users"]["GREGALE_FUNCTIONS"]; got != `{"web":"shop-web"}` {
+		t.Errorf("shop-users GREGALE_FUNCTIONS = %q", got)
+	}
+}

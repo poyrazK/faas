@@ -81,6 +81,9 @@ type plannedFunction struct {
 	root    string // relative to cwd, as passed to --path
 	runtime string
 	handler string
+	// calls is what the function may call through its typed client
+	// (ADR-20261111150000).
+	calls gregalemanifest.FunctionCalls
 }
 
 // functionSetManifest returns the manifest's functions when this deploy is a
@@ -122,6 +125,16 @@ func (d functionSetDeploy) plan() ([]plannedFunction, error) {
 	if err != nil {
 		return nil, err
 	}
+	specs := make([]gregalemanifest.FunctionSpec, 0, len(resolved))
+	for _, p := range resolved {
+		specs = append(specs, p.Spec)
+	}
+	graph, err := gregalemanifest.FunctionCallGraph(specs, func(name string) string {
+		return gregalemanifest.FunctionSlug(d.projectSlug, name)
+	})
+	if err != nil {
+		return nil, err
+	}
 	planned := make([]plannedFunction, 0, len(resolved))
 	for _, p := range resolved {
 		absRoot := filepath.Join(d.projectDir, filepath.FromSlash(p.Root))
@@ -129,7 +142,7 @@ func (d functionSetDeploy) plan() ([]plannedFunction, error) {
 		if err != nil {
 			root = absRoot
 		}
-		planned = append(planned, plannedFunction{spec: p.Spec, slug: p.Slug, root: root, runtime: p.Runtime, handler: p.Handler})
+		planned = append(planned, plannedFunction{spec: p.Spec, slug: p.Slug, root: root, runtime: p.Runtime, handler: p.Handler, calls: graph[p.Spec.Name]})
 	}
 	return planned, nil
 }
@@ -463,7 +476,8 @@ func (d functionSetDeploy) lookupEnv() func(string) string {
 // env and secrets reach its first wake. A new function's app is created
 // first, without a deployment.
 func (d functionSetDeploy) applySettings(ctx context.Context, client functionSetClient, fn plannedFunction) error {
-	if !fn.spec.HasPreDeploySettings() {
+	callable := len(fn.calls.Names) > 0
+	if !fn.spec.HasPreDeploySettings() && !callable {
 		return nil
 	}
 	app, err := client.GetApp(ctx, fn.slug)
@@ -486,6 +500,13 @@ func (d functionSetDeploy) applySettings(ctx context.Context, client functionSet
 	if hooksChanged {
 		update.AfterRestore, update.BeforeCheckpoint, changed = after, before, true
 	}
+	// Private bindings to the apps the function may call, and the name map
+	// its typed client reads (ADR-20261111150000 §2).
+	if callable {
+		if bindings, bound := fn.calls.BindingUpdate(app); bound {
+			update.ServiceBindingTargets, update.ServiceBindingPolicy, changed = bindings.ServiceBindingTargets, bindings.ServiceBindingPolicy, true
+		}
+	}
 	if changed {
 		if _, err := client.UpdateApp(ctx, fn.slug, update); err != nil {
 			return fmt.Errorf("update app settings: %w", err)
@@ -496,12 +517,31 @@ func (d functionSetDeploy) applySettings(ctx context.Context, client functionSet
 			return fmt.Errorf("set env %s: %w", key, err)
 		}
 	}
+	if callable {
+		if err := putFunctionsEnv(ctx, client, fn.slug, fn.calls.Env()); err != nil {
+			return err
+		}
+	}
 	if fn.spec.PruneEnv {
-		if err := pruneFunctionEnv(ctx, client, d.out, fn.slug, fn.spec.Env); err != nil {
+		keep := maps.Clone(fn.spec.Env)
+		if keep == nil {
+			keep = map[string]string{}
+		}
+		keep[gregalemanifest.FunctionsEnv] = fn.calls.Env()
+		if err := pruneFunctionEnv(ctx, client, d.out, fn.slug, keep); err != nil {
 			return err
 		}
 	}
 	return sealFunctionSecrets(ctx, client, fn.slug, fn.spec.SecretsFromEnv, d.lookupEnv())
+}
+
+// putFunctionsEnv sets GREGALE_FUNCTIONS, the name map the typed client
+// reads. The env API never returns values, so it is written on each deploy.
+func putFunctionsEnv(ctx context.Context, client functionSetClient, slug, value string) error {
+	if err := client.PutAppsSlugEnvKey(ctx, slug, gregalemanifest.FunctionsEnv, value); err != nil {
+		return fmt.Errorf("set env %s: %w", gregalemanifest.FunctionsEnv, err)
+	}
+	return nil
 }
 
 // pruneFunctionEnv removes the default-scope env keys a prune_env function
