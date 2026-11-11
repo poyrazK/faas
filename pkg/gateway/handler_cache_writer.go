@@ -58,6 +58,7 @@ import (
 // 413 — the cacheability predicate below would correctly skip
 // the Put.
 type cacheWriter struct {
+	fill               *responseCacheFill
 	servedDeploymentID string
 	http.ResponseWriter
 	inner *statusRecorder // the next-in-chain recorder (for header copy + status)
@@ -114,14 +115,19 @@ func (c *cacheWriter) ProblemHTMLRequest() *http.Request {
 // ResponseCacheDefaultMaxBytesEntry). The cap is independent of
 // the plan-level response body cap (capWriter) — the cache cap
 // is much smaller to bound resident memory per node.
-func newCacheWriter(w http.ResponseWriter, rec *statusRecorder, rule *EdgeRuleCacheResolved, cap int64) *cacheWriter {
+func newCacheWriter(w http.ResponseWriter, rec *statusRecorder, rule *EdgeRuleCacheResolved, cap int64, fills ...*responseCacheFill) *cacheWriter {
 	platform := http.Header{}
 	for k, vs := range w.Header() {
 		if isGatewayRateLimitHeader(k) {
 			platform[k] = append([]string(nil), vs...)
 		}
 	}
+	var fill *responseCacheFill
+	if len(fills) > 0 {
+		fill = fills[0]
+	}
 	return &cacheWriter{
+		fill:                     fill,
 		ResponseWriter:           w,
 		inner:                    rec,
 		rule:                     rule,
@@ -388,7 +394,7 @@ func (c *cacheWriter) finishCacheCapture(cache *ResponseCache, key CacheKey, now
 	staleWhileRevalidate := time.Duration(c.rule.StaleWhileRevalidateSeconds) * time.Second
 	staleIfError := time.Duration(c.rule.StaleIfErrorSeconds) * time.Second
 	freshUntil := now.Add(maxAge)
-	return cache.PutWithDeployment(
+	return cache.putWithDeployment(
 		key,
 		c.status,
 		c.header,
@@ -399,5 +405,6 @@ func (c *cacheWriter) finishCacheCapture(cache *ResponseCache, key CacheKey, now
 		c.ruleAction,
 		c.tags,
 		c.servedDeploymentID,
+		c.fill,
 	)
 }

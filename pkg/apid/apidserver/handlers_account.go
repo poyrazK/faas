@@ -196,6 +196,9 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 // returns the same envelope (status + scheduled_at + restore_until)
 // without re-stamping the timestamp or re-sending the email.
 func (s *server) deleteAccount(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !s.sessionPresenceForIrreversible(w, r, acct, "account_delete") {
+		return
+	}
 	fresh, err := s.scheduleDeletion(r.Context(), acct, "rest", r.URL.Query().Get(includeManagedPostgresParam) == "true")
 	if err != nil {
 		api.WriteProblem(w, err)

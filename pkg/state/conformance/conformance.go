@@ -2019,6 +2019,28 @@ func testInvoiceRefunds(t *testing.T, fx *Fixture) {
 		t.Fatalf("failed totals = (%+v, %v), want settled=350 pending=0", inv, err)
 	}
 
+	// A provider can fail a refund after reporting it succeeded: the settled
+	// amount is reversed, and a stale success afterwards does not restore it
+	// (implicit state machines audit 2026-11-08, finding 5).
+	returned := state.InvoiceRefund{
+		InvoiceID: inv.ID, ProviderRefundID: "refund-returned-" + uuid.NewString(),
+		IdempotencyKey: "refund-returned-key-" + uuid.NewString(),
+		AmountCents:    100, Source: "operator", Status: "succeeded",
+	}
+	if err := fx.Store.RecordInvoiceRefund(fx.Ctx, returned); err != nil {
+		t.Fatalf("RecordInvoiceRefund(settled): %v", err)
+	}
+	for _, status := range []string{"failed", "succeeded"} {
+		returned.Status = status
+		if err := fx.Store.RecordInvoiceRefund(fx.Ctx, returned); err != nil {
+			t.Fatalf("RecordInvoiceRefund(settled->%s): %v", status, err)
+		}
+		inv, err = fx.Store.GetInvoiceByID(fx.Ctx, inv.ID)
+		if err != nil || inv.AmountRefundedCents != 350 || inv.AmountRefundPendingCents != 0 {
+			t.Fatalf("after settled->%s totals = (%+v, %v), want settled=350 pending=0", status, inv, err)
+		}
+	}
+
 	credit, err := fx.Store.CreateAccountCredit(fx.Ctx, state.AccountCredit{
 		AccountID: fx.Account.ID, CentsRemaining: 100, Reason: "async refund",
 	})

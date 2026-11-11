@@ -66,13 +66,35 @@ operation still enforces its own authorization and admission checks.
   links whichever provider account you sign in with, even if its email
   differs from your Gregale email; it is also the only way to add back a
   provider you removed ("Continue with Google" with the same email is refused
-  after a removal). Linking or removing a provider emails you.
+  after a removal). Linking needs a verified email and, like removing, a
+  code from the last 5 minutes when two-factor authentication is on, else a
+  sign-in from the last 15 minutes. Linking or removing a provider emails you.
+  Signing in with a provider verifies your email only when the provider's
+  verified email is your Gregale email.
+- **Recovery removes unknown provider sign-ins:** a password reset, claiming
+  an unverified address with an email link, and an operator's email revert or
+  two-factor reset remove every linked provider whose email is not your
+  Gregale email, and email you for each. Link it again from the account page
+  if it was yours.
 - **Signing in again for sensitive changes:** if your account has neither a
   password nor two-factor authentication, setting a first password,
   changing the email, removing a sign-in method and setting up two-factor
   authentication need a sign-in from the last 15 minutes. An older browser
   session is sent to the sign-in page first (`recent_sign_in_required` from
-  the API).
+  the API). Deleting the account and transferring an organization's
+  ownership from such a browser need the same recent sign-in.
+- **Approving a CLI or agent (MCP) sign-in** in the browser needs a verified
+  email, and a sign-in from the last 15 minutes (with two-factor
+  authentication on, a code from the last 15 minutes). An older browser
+  signs in again and comes back to the same code.
+- **Two-factor changes:** turning two-factor authentication on signs out
+  every other browser and revokes CLI and agent sign-in keys; hand-made API
+  keys keep working. Turning it off with your password also needs a code
+  from the last 5 minutes; without your authenticator, use a recovery code
+  or the emailed disable link.
+- **Sign-in keys and recovery:** CLI and agent sign-in keys are also revoked
+  when you confirm an email change and when an operator signs out your
+  browsers or resets your two-factor authentication.
 - **Sessions:** `gregale account sessions list`, `gregale account sessions
   revoke SESSION_ID`, or `--all` to sign out every browser. A sign-in from a
   browser and network none of your recent sessions used sends an email. A
@@ -87,7 +109,8 @@ operation still enforces its own authorization and admission checks.
   `gregale account activity list` (`GET /v1/account/security-activity`, a
   full-access key) show sign-ins, API keys, CLI and agent sign-ins, and
   password, email, two-factor and sign-in method changes of the last 90 days.
-- **Credential emails:** creating or rotating an API key, a CLI or agent
+- **Credential emails:** creating or rotating a deploy token (the mail names
+  the app), and creating or rotating an API key, a CLI or agent
   (MCP) sign-in, and a password sign-in through the API each email you, so a
   credential you did not create is noticed.
 - **Rotation grace window:** `gregale key grace-window set --days N` keeps a

@@ -142,7 +142,7 @@ func (p *Provider) ownerCredentials(ctx context.Context, projectID, branchID str
 		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnavailable
 	}
 	return managedpostgres.CredentialMaterial{ProviderIdentityID: ownerLogin, Username: parsed.username, Password: parsed.password,
-		Database: parsed.database, TLSMode: parsed.tlsMode, Endpoints: []managedpostgres.Endpoint{{Role: managedpostgres.EndpointDirect, Host: parsed.host, Port: parsed.port}}}, nil
+		Database: parsed.database, TLSMode: platformTLSMode, Endpoints: []managedpostgres.Endpoint{{Role: managedpostgres.EndpointDirect, Host: parsed.host, Port: parsed.port}}}, nil
 }
 
 func validateCredentialRequest(request managedpostgres.CredentialRequest) error {

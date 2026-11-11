@@ -34,7 +34,9 @@ type slotFixture struct {
 	sweeper  *RestoreSlotSweeper
 	clock    *time.Time
 	limit    *int
-	expired  *[]Database
+	// branches is the branch allowance (ADR-20261106103654 amendment 1).
+	branchAllowance *int
+	expired         *[]Database
 	// notified records the notices mailed; notifyErr, when set, fails them.
 	notified  *[]RestoreSlotNotice
 	notifyErr *error
@@ -43,7 +45,7 @@ type slotFixture struct {
 func newSlotFixture(t *testing.T) slotFixture {
 	t.Helper()
 	clock := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
-	limit := 1
+	limit, branches := 1, 5
 	var expired []Database
 	var notified []RestoreSlotNotice
 	var notifyErr error
@@ -57,6 +59,7 @@ func newSlotFixture(t *testing.T) slotFixture {
 		NewID:                  func() string { sequence++; return fmt.Sprintf("database-%d", sequence) },
 		NewLeaseToken:          func() string { sequence++; return fmt.Sprintf("lease-%d", sequence) },
 		MaxDatabasesPerAccount: func(context.Context, string) (int, error) { return limit, nil },
+		MaxBranchesPerAccount:  func(context.Context, string) (int, error) { return branches, nil },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +82,7 @@ func newSlotFixture(t *testing.T) slotFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return slotFixture{service: service, store: store, provider: provider, bindings: bindings, sweeper: sweeper, clock: &clock, limit: &limit, expired: &expired,
+	return slotFixture{service: service, store: store, provider: provider, bindings: bindings, sweeper: sweeper, clock: &clock, limit: &limit, branchAllowance: &branches, expired: &expired,
 		notified: &notified, notifyErr: &notifyErr}
 }
 
@@ -362,5 +365,87 @@ func TestRestoreSlotEndingNoticeIsNotMailedOnceTheSlotIsReleased(t *testing.T) {
 	notices, err := f.store.UnmailedRestoreSlotNotices(ctx, f.clock.Add(-api.InternalMailManagedPostgresRestoreSlotTTL), *f.clock, 10)
 	if err != nil || len(notices) != 0 {
 		t.Fatalf("unmailed = %+v, %v", notices, err)
+	}
+}
+
+// ADR-20261031123259 amendment 2026-11-10: a one-database plan recovers from a
+// bad migration by restoring, pointing the app at the copy and deleting the
+// original. The original's scheduled delete frees the room, so the copy keeps
+// its binding past the slot's end; the original can come back only once
+// there is room for it again.
+func TestRestoreSlotEndsWhenTheCopyReplacesItsScheduledSource(t *testing.T) {
+	f := newSlotFixture(t)
+	ctx := context.Background()
+	source, restored := f.sourceAndCopy(t)
+	if _, err := f.bindings.Create(ctx, CreateBindingRequest{AccountID: "account-a", DatabaseID: restored.ID, AppID: "app-a", Scope: "default", EnvironmentKey: "DATABASE_URL", Access: CredentialReadWrite}); err != nil {
+		t.Fatalf("bind the copy: %v", err)
+	}
+	if summary, err := f.sweeper.Sweep(ctx); err != nil || summary.Released != 0 {
+		t.Fatalf("sweep while the source is live = %+v, %v", summary, err)
+	}
+	if _, err := f.service.ScheduleDelete(ctx, "account-a", source.ID); err != nil {
+		t.Fatalf("schedule the source's delete: %v", err)
+	}
+	if summary, err := f.sweeper.Sweep(ctx); err != nil || summary.Released != 1 {
+		t.Fatalf("sweep after the source's delete = %+v, %v, want the slot released", summary, err)
+	}
+	if _, err := f.service.Undelete(ctx, "account-a", source.ID); !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("recover the replaced source past the limit = %v, want the quota refusal", err)
+	}
+	*f.clock = restored.RestoreSlotUntil.Add(-time.Hour)
+	if summary, err := f.sweeper.Sweep(ctx); err != nil || summary.Holders != 0 {
+		t.Fatalf("sweep inside the source's undo window = %+v, %v", summary, err)
+	}
+	*f.clock = restored.RestoreSlotUntil.Add(time.Hour)
+	if summary, err := f.sweeper.Sweep(ctx); err != nil || summary.Holders != 0 || len(*f.expired) != 0 {
+		t.Fatalf("the replacing copy reached the slot's end: %+v, %v, expired %d", summary, err, len(*f.expired))
+	}
+	copyNow, err := f.service.Get(ctx, "account-a", restored.ID)
+	if err != nil || copyNow.State != StateReady || !copyNow.RestoreSlotUntil.IsZero() || f.provider.held[restored.ProviderResourceID] {
+		t.Fatalf("replacing copy = %+v, %v", copyNow, err)
+	}
+	bindings, err := f.bindings.List(ctx, "account-a", restored.ID)
+	if err != nil || len(bindings) != 1 || bindings[0].State == BindingStateDeleted || bindings[0].State == BindingStateDeleting {
+		t.Fatalf("the replacing copy lost its binding: %+v, %v", bindings, err)
+	}
+}
+
+// With room under the limit, the replaced source comes back from its undo
+// window as before.
+func TestReplacedSourceRecoversWithRoom(t *testing.T) {
+	f := newSlotFixture(t)
+	ctx := context.Background()
+	source, _ := f.sourceAndCopy(t)
+	if _, err := f.service.ScheduleDelete(ctx, "account-a", source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if summary, err := f.sweeper.Sweep(ctx); err != nil || summary.Released != 1 {
+		t.Fatalf("sweep = %+v, %v", summary, err)
+	}
+	*f.limit = 2
+	if recovered, err := f.service.Undelete(ctx, "account-a", source.ID); err != nil || recovered.State != StateReady {
+		t.Fatalf("recover the source with room = %+v, %v", recovered, err)
+	}
+}
+
+// Only the copy's own source makes room: another database's scheduled delete
+// still counts, as a scheduled delete always does.
+func TestRestoreSlotIgnoresAnUnrelatedScheduledDelete(t *testing.T) {
+	f := newSlotFixture(t)
+	ctx := context.Background()
+	*f.limit = 2
+	other, err := f.service.Create(ctx, CreateRequest{AccountID: "account-a", Name: "sessions", Spec: testSpec()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, restored := f.sourceAndCopy(t)
+	if restored.RestoreSlotUntil.IsZero() {
+		t.Fatalf("the copy past a two-database limit holds no slot: %+v", restored)
+	}
+	if _, err := f.service.ScheduleDelete(ctx, "account-a", other.ID); err != nil {
+		t.Fatal(err)
+	}
+	if summary, err := f.sweeper.Sweep(ctx); err != nil || summary.Released != 0 {
+		t.Fatalf("sweep after an unrelated delete = %+v, %v, want the slot kept", summary, err)
 	}
 }

@@ -43,6 +43,7 @@ var accountFormErrors = map[string]string{
 	"failed":       "Gregale could not save that change. Try again in a moment.",
 	"link_session": "Linking needs this browser to stay signed in. Sign in again and press Link once more.",
 	"link_taken":   "That provider account already signs in to another Gregale account. Remove it there first.",
+	"verify_email": "Verify your email address before linking another way to sign in.",
 }
 
 // fillAccountProfileForms mints the form tokens and lists the account page
@@ -252,14 +253,7 @@ func (s *server) dashboardUnlinkProvider(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if acct.MFAEnrolled() {
-		ts, has := authmw.StepUpFrom(r)
-		if !has || ts.IsZero() || time.Since(ts) > accountStepUpTTL {
-			redirectAccountError(w, r, "step_up")
-			return
-		}
-	} else if !s.requireRecentSignIn(&capturedResponse{header: http.Header{}}, r, acct, "sign_in_method_unlink") {
-		redirectRecentSignIn(w, r)
+	if !s.accountFormPresence(w, r, acct, "sign_in_method_unlink") {
 		return
 	}
 	if problem := s.unlinkProvider(r.Context(), acct, strings.ToLower(r.PathValue("provider"))); problem != nil {
@@ -267,6 +261,26 @@ func (s *server) dashboardUnlinkProvider(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	http.Redirect(w, r, accountPagePath+"?provider=removed", http.StatusSeeOther)
+}
+
+// accountFormPresence asks an account-page form that changes how the account
+// signs in for fresh proof of presence: a code verified within the last five
+// minutes when two-factor authentication is on, else a recent sign-in. On
+// refusal it has redirected and returns false.
+func (s *server) accountFormPresence(w http.ResponseWriter, r *http.Request, acct state.Account, action string) bool {
+	if acct.MFAEnrolled() {
+		ts, has := authmw.StepUpFrom(r)
+		if !has || ts.IsZero() || time.Since(ts) > accountStepUpTTL {
+			redirectAccountError(w, r, "step_up")
+			return false
+		}
+		return true
+	}
+	if !s.requireRecentSignIn(&capturedResponse{header: http.Header{}}, r, acct, action) {
+		redirectRecentSignIn(w, r)
+		return false
+	}
+	return true
 }
 
 // patchAccountProfile is PATCH /v1/account.

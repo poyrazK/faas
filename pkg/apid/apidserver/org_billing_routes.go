@@ -88,6 +88,7 @@ func (s *server) putOrgBillingEmail(w http.ResponseWriter, r *http.Request, targ
 	s.audit.Emit(r.Context(), "org.billing_email_changed", &target.ID, map[string]any{
 		"org_id": target.ResourceOrgID,
 	})
+	s.mailOrgBillingEmailChanged(r.Context(), target.ResourceOrgID, target.Email, email)
 	writeJSON(w, http.StatusOK, api.OrgBillingEmailResponse{BillingEmail: email})
 }
 

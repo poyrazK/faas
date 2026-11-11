@@ -11,6 +11,7 @@ package fcvm
 // first, so memory.current is not measured: only private pages are.
 
 import (
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -28,8 +29,10 @@ type AgentRunUsage struct {
 	// memory.
 	Samples, ExpectedSamples int
 	// MeasuredMillis spans the first sample's baseline to the last sample;
-	// PausedMillis is the part of it the VM spent quiet-paused.
-	MeasuredMillis, PausedMillis int64
+	// PausedMillis is the part of it that is not billed: quiet-paused, and
+	// for a sandbox session also frozen. FrozenMillis is the frozen part (a
+	// run is never frozen).
+	MeasuredMillis, PausedMillis, FrozenMillis int64
 	// PrivateMBMillis sums private MB × ms over the read intervals, and
 	// UnpausedPrivateMBMillis only over their unpaused time.
 	PrivateMBMillis, UnpausedPrivateMBMillis int64
@@ -57,15 +60,20 @@ func (v *JailerVMM) VMPrivateBytes(l Lease) (int64, error) {
 	return stat["anon"] + stat["shmem"], nil
 }
 
-// agentUsageMeter accumulates one run's usage. Only its own goroutine and,
-// after that goroutine ends, the stop function touch it.
+// agentUsageMeter accumulates one VM's usage. A run's meter is touched only
+// by its own goroutine and, after that goroutine ends, the stop function; a
+// session's is also read by Snapshot, so sample and Snapshot hold mu.
 type agentUsageMeter struct {
 	read   func(Lease) (int64, error)
 	paused func(now time.Time) time.Duration
+	// frozen, when set, is the part of paused spent frozen.
+	frozen func(now time.Time) time.Duration
 	lease  Lease
 
+	mu                      sync.Mutex
 	started, last           time.Time
 	lastPaused, pausedTotal time.Duration
+	lastFrozen, frozenTotal time.Duration
 	usage                   AgentRunUsage
 }
 
@@ -76,6 +84,8 @@ func newAgentUsageMeter(read func(Lease) (int64, error), paused func(time.Time) 
 
 // sample closes the interval that ends at now, valued at the memory read now.
 func (u *agentUsageMeter) sample(now time.Time) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	dt := now.Sub(u.last)
 	if dt <= 0 {
 		return
@@ -84,6 +94,12 @@ func (u *agentUsageMeter) sample(now time.Time) {
 	dPaused := min(max(p-u.lastPaused, 0), dt)
 	u.last, u.lastPaused = now, max(p, u.lastPaused)
 	u.pausedTotal += dPaused
+	if u.frozen != nil {
+		f := u.frozen(now)
+		u.frozenTotal += min(max(f-u.lastFrozen, 0), dPaused)
+		u.lastFrozen = max(f, u.lastFrozen)
+		u.usage.FrozenMillis = u.frozenTotal.Milliseconds()
+	}
 	u.usage.ExpectedSamples++
 	u.usage.MeasuredMillis = now.Sub(u.started).Milliseconds()
 	u.usage.PausedMillis = u.pausedTotal.Milliseconds()
@@ -98,6 +114,13 @@ func (u *agentUsageMeter) sample(now time.Time) {
 	billable := max(bytes, int64(api.AgentRunUsageFloorMB)<<20) + int64(api.PerVMOverheadMB)<<20
 	u.usage.BillableMBMillis += billable * unpausedMS >> 20
 	u.usage.PeakPrivateMB = max(u.usage.PeakPrivateMB, bytes>>20)
+}
+
+// snapshot is the usage so far.
+func (u *agentUsageMeter) snapshot() AgentRunUsage {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.usage
 }
 
 // agentUsagePaused is the VM's quiet-paused time so far: its completed
@@ -145,7 +168,7 @@ func (m *Manager) agentUsageRun(instance string, inst *Instance) func() *AgentRu
 		close(stop)
 		<-done
 		meter.sample(time.Now())
-		usage := meter.usage
+		usage := meter.snapshot()
 		return &usage
 	}
 }

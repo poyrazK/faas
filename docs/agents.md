@@ -170,6 +170,22 @@ for your decision and repeat the request once when you approve:
 gregale --non-interactive --wait-for-approval app delete demo --yes
 ```
 
+An agent can say why it makes a request, so you are not deciding from the
+method and path alone. It sends the `Gregale-Agent-Reason` header (up to 280
+characters) on the write request; the CLI sends it with `--agent-reason`
+before the command, or `GREGALE_AGENT_REASON`:
+
+```sh
+gregale --agent-reason "remove the demo app we replaced with shop-api" app delete demo --yes
+```
+
+The reason shows on the review page, in the approval email, channel
+notification and webhook events, in `GET /v1/agent-approvals` (`reason`) and
+in the agent's activity log. It is the agent's own words, not evidence:
+what you approve is still the exact method, path and body shown. Over MCP,
+the bridge sends the `reason` of the plan you reviewed when it applies the
+plan. The Go SDK sets it per call with `api.WithAgentReason(ctx, text)`.
+
 If you deny, you can give the agent a reason. When the agent repeats a
 request you denied, or one that expired, within 30 minutes, it gets
 `403 approval_denied` (with your reason) or `410 approval_expired` instead of
@@ -192,7 +208,8 @@ and, for a new request, its review link. It never includes the request body.
 
 Gregale keeps each agent's write requests (`POST`, `PUT`, `PATCH` and
 `DELETE`) for 7 days: when, method, path, the response status, and the
-approval request it went through on, if any. Reads are not listed, and
+approval request it went through on, if any, and the reason the agent gave
+for it (`Gregale-Agent-Reason`), if any. Reads are not listed, and
 neither are requests waiting for approval. Request bodies are never kept.
 
 ```sh

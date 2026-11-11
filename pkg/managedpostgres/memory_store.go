@@ -33,6 +33,7 @@ type MemoryStore struct {
 	usageImports              map[string]usageImportReceipt
 	accountingReconciliations map[string]accountingReconciliationReceipt
 	overage                   map[string]bool
+	egressElected             map[string]bool
 	capEvents                 map[memoryCapEventKey]CapEvent
 	capEventsMailed           map[memoryCapEventKey]bool
 	restoreSlotNotices        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice
@@ -64,6 +65,7 @@ func NewMemoryStore() *MemoryStore {
 		usageImports:              map[string]usageImportReceipt{},
 		accountingReconciliations: map[string]accountingReconciliationReceipt{},
 		overage:                   map[string]bool{},
+		egressElected:             map[string]bool{},
 		capEvents:                 map[memoryCapEventKey]CapEvent{},
 		capEventsMailed:           map[memoryCapEventKey]bool{},
 		restoreSlotNotices:        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice{},
@@ -99,7 +101,8 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 		}
 		return cloneDatabase(s.databases[id]), false, nil
 	}
-	if database.ID == "" || database.AccountID == "" || !ValidName(database.Name) || database.State != StateProvisioning || database.BackendID == "" || database.BackendFingerprint == "" {
+	if database.ID == "" || database.AccountID == "" || !ValidName(database.Name) || database.State != StateProvisioning || database.BackendID == "" || database.BackendFingerprint == "" ||
+		!validReservationExpiry(database) {
 		return Database{}, false, ErrInvalid
 	}
 	if database.RetryAt.IsZero() {
@@ -118,11 +121,26 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 			return Database{}, false, ErrConflict
 		}
 	}
+	if database.InBranchAllowance() {
+		// A short-lived branch takes a place in the branch allowance, never
+		// the database limit or the restore slot (ADR-20261106103654
+		// amendment 1).
+		held := 0
+		for _, existing := range s.databases {
+			if s.sameQuotaOwner(ctx, existing, database) && existing.CountsTowardLimit() && existing.InBranchAllowance() {
+				held++
+			}
+		}
+		if allowance := branchLimit(ctx); allowance < 1 || held >= allowance {
+			return Database{}, false, ErrBranchLimit
+		}
+		return s.insertReservationLocked(ctx, database), true, nil
+	}
 	active := 0
 	for _, existing := range s.databases {
-		// A PR preview environment's database is outside the plan's limit
-		// (ADR-20261102123523).
-		if s.sameQuotaOwner(ctx, existing, database) && existing.CountsTowardLimit() && existing.Preview.IsZero() {
+		// A PR preview environment's database and a short-lived branch are
+		// outside the plan's limit (ADR-20261102123523, ADR-20261106103654).
+		if s.sameQuotaOwner(ctx, existing, database) && existing.countsTowardDatabaseLimit() {
 			active++
 		}
 	}
@@ -143,10 +161,15 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 		}
 		database.RestoreSlotUntil = database.CreatedAt.Add(api.ManagedPostgresRestoreSlotWindow)
 	}
+	return s.insertReservationLocked(ctx, database), true, nil
+}
+
+// insertReservationLocked stores a new reservation; s.mu is held.
+func (s *MemoryStore) insertReservationLocked(ctx context.Context, database Database) Database {
 	s.databases[database.ID] = cloneDatabase(database)
 	s.billingSubjects[database.ID] = PolicySubject(ctx, database.AccountID)
-	s.names[key] = database.ID
-	return cloneDatabase(database), true, nil
+	s.names[databaseNameKey(database)] = database.ID
+	return cloneDatabase(database)
 }
 
 func (s *MemoryStore) FindByName(ctx context.Context, accountID, name string) (Database, error) {

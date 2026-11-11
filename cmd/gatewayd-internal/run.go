@@ -43,6 +43,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -71,6 +72,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gateway/activity"
+	"github.com/onebox-faas/faas/pkg/gateway/backlog"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/gateway/ingress"
@@ -87,6 +89,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
+	"github.com/onebox-faas/faas/pkg/sandboxtoken"
 	schedpkg "github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
@@ -1194,6 +1197,10 @@ type runDeps struct {
 	// (ADR-20261018090210), following the api_monetization_enabled runtime
 	// setting. Nil keeps monetization off.
 	apiMonetization func() bool
+	// awaitingResponseMax is the app-request backlog limit
+	// (pkg/gateway/backlog), kept current by the runtime-config watcher from
+	// gateway_awaiting_response_max. Nil holds api.GatewayAwaitingResponseMax.
+	awaitingResponseMax *atomic.Int64
 	// platformFlags is every platform flag gatewayd-internal decides (the
 	// api_monetization flag, ADR-20261020170649, the edge feature flags,
 	// ADR-20261023113721, and the product capability flags,
@@ -1350,7 +1357,13 @@ type runDeps struct {
 	edgeChallengeSecret    []byte
 	edgeChallengeKeySource string
 	trafficDeadlines       *trafficdeadline.Signer
-	trafficRevocations     *trafficrevocation.Registry
+	// sandboxTokens verifies sandbox session tokens with apid's public keys
+	// (ADR-20261027090013); nil keeps the sandbox data plane off.
+	sandboxTokens *sandboxtoken.Verifier
+	// sandboxPreviewDomain is FAAS_SANDBOX_PREVIEW_DOMAIN (ADR-20261027090013
+	// §11); "" keeps sandbox previews off.
+	sandboxPreviewDomain string
+	trafficRevocations   *trafficrevocation.Registry
 	// publicRoutingView admits ordinary public requests (ADR-20261027085556);
 	// runWithDeps builds it when nil.
 	publicRoutingView *publicrouting.Registry
@@ -1674,6 +1687,13 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	defer func() { _ = credentialAuth.Close() }()
 	credentialMatcher := apidgrpc.NewCredentialMatcher(credentialAuth)
 	deps.credentialMatcher = credentialMatcher
+	// ADR-20261027090013: sandbox session tokens verify with apid's public
+	// key, fetched over the same channel; the gateway can mint none.
+	deps.sandboxTokens = sandboxtoken.NewVerifier()
+	go apidgrpc.RefreshSandboxKeys(ctx, credentialAuth, deps.sandboxTokens, log)
+	if deps.sandboxPreviewDomain, err = api.NormalizeSandboxPreviewDomain(osGetenv("FAAS_SANDBOX_PREVIEW_DOMAIN")); err != nil {
+		return fmt.Errorf("gatewayd-internal: %w", err)
+	}
 	// Operation capabilities and dev-bridge tokens are keyed under rings this
 	// node never holds; apid matches them (amendment 1, decision 2).
 	credhash.SetRemote(credhash.FamilyScheduler, credentialMatcher.Remote())
@@ -2237,10 +2257,15 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		defer runtimeCancel()
 		// ADR-20261101215228: per-instance request limits.
 		requestConcurrency := &runtimeconfig.RequestConcurrency{}
+		deps.awaitingResponseMax = new(atomic.Int64)
+		deps.awaitingResponseMax.Store(api.GatewayAwaitingResponseMax)
 		keys, apply := runtimeconfig.WithPlatformFlags(
-			append([]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization, runtimeconfig.KeyFullEnvironmentClones}, runtimeconfig.RequestConcurrencyKeys...),
+			append([]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization, runtimeconfig.KeyFullEnvironmentClones, runtimeconfig.KeyGatewayAwaitingResponseMax}, runtimeconfig.RequestConcurrencyKeys...),
 			func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 				if handled, err := requestConcurrency.Apply(key, value); handled {
+					return err
+				}
+				if handled, err := runtimeconfig.ApplyGatewayAwaitingResponseMax(deps.awaitingResponseMax, key, value); handled {
 					return err
 				}
 				enabled, err := runtimeconfig.Bool(value)
@@ -3883,7 +3908,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-741: the `gregale dev --debug` tunnel is compute-owned like the
 	// log stream. Its waker is the service proxy, wired below once built.
 	debugTunnel := newDevDebugTunnel(deps, log)
-	apidHandler := devDebugRoute(debugTunnel, newApidProxyWithGate(apidTarget, gateway.TrustedTrafficIngress(handler), logsHandler, writeGate, deps.domains.Platform, log))
+	// App traffic past gateway_awaiting_response_max requests awaiting their
+	// response head is answered 503 at once, so a CPU-saturated node sheds
+	// load instead of growing past its MemoryMax (pkg/gateway/backlog).
+	appTraffic := backlog.New(gateway.TrustedTrafficIngress(handler), deps.awaitingResponseMax, gatewayRegistry(deps.metrics))
+	apidHandler := devDebugRoute(debugTunnel, newApidProxyWithGate(apidTarget, appTraffic, logsHandler, writeGate, deps.domains.Platform, log))
 	// ADR-1037: interactive app-task attach is compute-owned too. The
 	// handler dials the task node's vmmd, which apid must never do.
 	if deps.authMw != nil && deps.pgStore != nil && deps.nodeCache != nil {
@@ -3899,6 +3928,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		logsMux.Handle("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream",
 			&JobTaskLogsHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log, Traffic: deps.trafficRevocations})
 		apidHandler = jobTaskLogsCarveOut{logs: logsMux, next: apidHandler}
+	}
+	// ADR-20261027090013: sandbox session commands and files run in the
+	// session's VM, so they are compute-owned like attach.
+	if sandbox := newSandboxDataHandler(deps, deps.sandboxTokens, log); sandbox != nil {
+		apidHandler = sandboxDataCarveOut{sandbox: sandbox, next: apidHandler}
+	}
+	if preview := newSandboxPreviewHandler(deps, log); preview != nil {
+		apidHandler = sandboxPreviewCarveOut{preview: preview, next: apidHandler}
 	}
 
 	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy
@@ -4652,13 +4689,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if upstreams == nil {
 				upstreams = serviceDiscoveryUpstreams
 			}
-			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort} {
+			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort, gateway.SandboxRegistriesDNSPort} {
 				dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, upstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
 				if dnsErr != nil {
 					return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
 				}
 				if dnsPort == gateway.RehearsalServiceDiscoveryDNSPort {
 					dnsHandler.WithPrivateServiceNamesOnly()
+				}
+				// ADR-20261027090013 §6: registries-mode sandbox sessions
+				// resolve package registries and git hosts only.
+				if dnsPort == gateway.SandboxRegistriesDNSPort {
+					dnsHandler.WithAllowedNamesOnly(api.SandboxRegistryHost)
 				}
 				if chaosMatchRecorder != nil {
 					dnsHandler.WithScenarioDNSChaos(newServiceDNSChaosResolver(deps.pgStore, cfg.NodeName), chaosMatchRecorder.Observe)
@@ -5308,4 +5350,13 @@ func applyWorkflowOperationHeaders(h http.Header, step *state.WorkflowOperationS
 	h.Set(api.OperationGenerationHeader, strconv.Itoa(step.Generation))
 	h.Set(api.OperationAttemptHeader, strconv.Itoa(step.Attempt))
 	h.Set(api.OperationWorkflowCapabilityHeader, step.Capability)
+}
+
+// gatewayRegistry is the registry gatewayd-internal's /metrics serves, or nil
+// when the daemon runs without gateway metrics (some tests).
+func gatewayRegistry(m *gateway.Metrics) prometheus.Registerer {
+	if m == nil {
+		return nil
+	}
+	return m.Registry()
 }

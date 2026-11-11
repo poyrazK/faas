@@ -23,17 +23,19 @@ database reservation boundary:
 
 | Plan | Databases | Pooled storage | Compute per month | Restore window | Classes |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Free | 1 | 0.5 GiB | 5 CU-hours | 7 days | development |
+| Free | — | — | — | — | — |
 | Hobby | 1 | 1 GiB | 25 CU-hours | 7 days | development |
 | Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
 | Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
 
-A Free-plan database needs enforced compute caps, because Free has no
-overage to pay for compute past its allowance. Until the platform enforces
-them, `gregale postgres create`, `gregale dev --postgres`, pipeline mirrors
-and restores answer `403 managed_postgres_not_in_plan` on Free, and a
-Compose `postgres` service is not provisioned (the deploy names the plan as
-the reason).
+The Free plan includes no managed PostgreSQL
+([ADR-20261110184700](adr/20261110184700-free-plan-includes-no-managed-postgres.md)):
+`gregale postgres create`, `gregale dev --postgres`, pipeline mirrors and
+restores answer `403 managed_postgres_not_in_plan` on Free, whatever the cap
+enforcement mode, and a Compose `postgres` service is not provisioned (the
+deploy names the plan as the reason). An account that falls to Free from a
+paid plan keeps its databases suspended as past the plan
+([Databases past a lowered plan](#databases-past-a-lowered-plan)).
 
 Storage is pooled across the account's databases: one database may use the
 whole pool. Storage and compute are limits unless a paid account turns
@@ -171,9 +173,13 @@ customers out until the owner has tested production
 3. Turn on enforcement after each shadow readout (until both caps are `on`,
    step 6's default releases nobody):
    `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on`,
-   `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on`, and the cap emails
+   `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on`, the cap emails
    (`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=1` on apid and
-   maild). Create the [SQL probe](#sql-availability-probe) canary databases.
+   maild), and the restore slot emails
+   (`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_RESTORE_SLOT_OUTBOX_ENABLED=1` on apid
+   and maild). Without the latter, a one-database plan's restored copy loses
+   its bindings and has its delete scheduled at `restore_slot_until` with no
+   warning. Create the [SQL probe](#sql-availability-probe) canary databases.
    Set `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT=on` once the release
    shows [databases past a lowered plan](#databases-past-a-lowered-plan) to
    the customer.
@@ -1280,7 +1286,15 @@ sweep. The same sweep suspends the databases the plan no longer includes
   source's project) is left running and logged as shared.
 - Each sweep recomputes the set. Once the subject fits (an upgrade, a deleted
   database, or a resize to an included class), the next sweep restores the
-  ordinary quota. Nothing is deleted.
+  ordinary quota.
+- A database that stays past the plan for 30 days
+  (`api.ManagedPostgresPlanExcessDeleteAfter`, counted from its first
+  suspension) is deleted
+  ([ADR-20261110184700](adr/20261110184700-free-plan-includes-no-managed-postgres.md)):
+  the sweep revokes its bindings and schedules its delete through the delete
+  grace period, so the owner can still recover it for 7 days. Fitting the
+  plan again clears the clock. A suspended, abuse-held or deleting account's
+  databases are never deleted this way.
 
 `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT` selects the mode:
 
@@ -1288,6 +1302,21 @@ sweep. The same sweep suspends the databases the plan no longer includes
   project it would suspend, and writes nothing.
 - `on` writes the quota, only while `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` is
   `on` too; it logs `managed postgres plan excess suspended` when it does.
+- `off` does nothing.
+
+`FAAS_MANAGED_POSTGRES_PLAN_EXCESS_DELETE` selects the deletion pass. It acts
+only on databases the sweep suspends, so only while both modes above are `on`:
+
+- `shadow` (the default) logs `managed postgres plan excess due for deletion
+  (shadow)` for each database past its 30 days.
+- `on` deletes them and logs `managed postgres plan excess delete scheduled`.
+  The suspension email then names the deletion date, and a database is
+  deleted only once the date its queued email named has come. A suspension
+  mailed earlier without a date, or never mailed, starts again when `on`
+  first sees it, so its owner gets a full 30 days' notice. apid refuses `on`
+  unless `FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_PLAN_EXCESS_OUTBOX_ENABLED=1`
+  and the producer outbox are on. Turn it on only once every apid runs the
+  release that added it: an older apid cannot read that email's payload.
 - `off` does nothing.
 
 While it is `on`, `GET /v1/postgres/databases` and the read show

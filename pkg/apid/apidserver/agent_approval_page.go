@@ -81,6 +81,7 @@ func (h *cliAuthHandlers) renderAgentApprovalPage(w http.ResponseWriter, r *http
 		"Agent": agentconnections.AgentName(r.Context(), h.srv.store, approval), "ConnectedBy": connectedBy,
 		"CategoryLabel": approvalCategoryLabels[approval.Category], "Method": approval.Method, "Path": approval.Path,
 		"BodyBound": approval.BodySHA256 != nil, "ExpiresAt": approval.ExpiresAt.UTC().Format(time.RFC1123),
+		"Reason": approval.Reason,
 	})
 }
 

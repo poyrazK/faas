@@ -68,7 +68,10 @@ type NodeLedger struct {
 	// cpuAdmission counts what the vCPU and CPU gates would have refused
 	// (ADR-20261109172421).
 	cpuAdmission *cpuAdmission
-	now          func() time.Time // nil means time.Now; tests set it
+	// agentMemory, when set with measured admission, charges agent run
+	// VMs their measured memory (admission_agent_charge.go).
+	agentMemory AgentMemory
+	now         func() time.Time // nil means time.Now; tests set it
 }
 
 func (l *NodeLedger) clock() time.Time {
@@ -102,6 +105,9 @@ type nodeReservation struct {
 	// frozenRAM is the part of residentRAM booked by frozen reservations
 	// (ADR-1151). It stays outside measured admission's overcommit cap.
 	frozenRAM int
+	// agentDiscountMB is what agent runs booked below ram_mb + 8 under
+	// measured charge: the reservation check adds it back.
+	agentDiscountMB int
 }
 
 // reservation remembers the node it belongs to so Release can route
@@ -139,8 +145,11 @@ type reservation struct {
 	// (SettleSeededFrozenCharge, ADR 20261031190030).
 	frozenSeeded bool
 	// agentRun marks an agent run VM (KindAgentRun). It has no instances
-	// row, so no node measurement includes it.
-	agentRun bool
+	// row, so no node measurement includes it. agentRAMMB and agentPeakMB
+	// are its plan RAM and version peak, and agentDiscountMB is what it
+	// booked below ram_mb + 8 (admission_agent_charge.go).
+	agentRun                                 bool
+	agentRAMMB, agentPeakMB, agentDiscountMB int
 }
 
 // NewNodeLedger returns an empty per-node ledger. Backwards-compat
@@ -310,6 +319,10 @@ type Request struct {
 	// value (KindWake) is the standard wake path; KindMigration is
 	// the Tier A5 destination-side reservation.
 	Kind Kind
+	// AgentPeakMB is a KindAgentRun's version p95 private peak
+	// (ADR-20261027090015 §3); 0 means its version has no history yet.
+	// Only measured charge (admission_agent_charge.go) reads it.
+	AgentPeakMB int
 	// FrozenChargeMB is the RAM a KindFrozen reservation books, at least
 	// FrozenChargeFloorMB (ADR 20261031143521).
 	FrozenChargeMB int
@@ -544,17 +557,19 @@ func (l *NodeLedger) Admit(r Request) error {
 	boostCPU := max(0, r.CPUStartupBoostMillicores-r.CPUMillicores)
 	reservedCPU := r.CPUMillicores + boostCPU
 
+	book, agentDiscount := l.agentBooking_locked(r)
 	l.putEntry_locked(r.Instance, &reservation{
 		appID: r.AppID, deploymentID: r.DeploymentID, environmentKey: r.EnvironmentKey, nodeID: r.NodeID,
 		production:  r.ProductionEnvironment || r.EnvironmentKey == "",
-		admissionMB: r.admissionMB(), vcpu: r.VCPU, cpuMillicores: r.CPUMillicores,
+		admissionMB: book, vcpu: r.VCPU, cpuMillicores: r.CPUMillicores,
 		deploymentScope:    normalizedDeploymentScope(r.DeploymentScope),
 		cpuBoostMillicores: boostCPU, cpuBoostUntil: r.CPUStartupBoostUntil,
 		countsConc: kindCountsConcurrency(r.Kind),
 		admittedAt: l.clock(),
-		agentRun:   r.Kind == KindAgentRun,
+		agentRun:   r.Kind == KindAgentRun, agentRAMMB: r.RAMMB, agentPeakMB: r.AgentPeakMB, agentDiscountMB: agentDiscount,
 	})
-	node.residentRAM += r.admissionMB()
+	node.residentRAM += book
+	node.agentDiscountMB += agentDiscount
 	node.usedVCPU += r.VCPU
 	node.usedCPUMillicores += reservedCPU
 	if kindCountsConcurrency(r.Kind) {
@@ -738,6 +753,7 @@ func (l *NodeLedger) Release(instance string) {
 		if e.frozen {
 			node.frozenRAM = max(node.frozenRAM-e.admissionMB, 0)
 		}
+		node.agentDiscountMB = max(node.agentDiscountMB-e.agentDiscountMB, 0)
 		node.usedVCPU -= e.vcpu
 		if node.usedVCPU < 0 {
 			node.usedVCPU = 0
@@ -868,7 +884,7 @@ func (l *NodeLedger) AdmissionHeadroomMB() int {
 		if ceiling <= 0 {
 			ceiling = l.ceilingForNode_locked(nodeID, api.Limits{})
 		}
-		used, _ := l.admissionUsed_locked(nodeID, r.residentRAM, r.frozenRAM, ceiling)
+		used, _ := l.admissionUsed_locked(nodeID, r.residentRAM, r.frozenRAM, r.agentDiscountMB, ceiling)
 		best = max(best, ceiling-used)
 	}
 	return best
@@ -965,7 +981,10 @@ func (l *NodeLedger) NodeCount() int {
 // variant when measured admission is enabled.
 func (l *NodeLedger) ramHeadroom_locked(r Request, node *nodeReservation, ramCeiling int) error {
 	want := r.admissionMB()
-	used, basis := l.admissionUsed_locked(r.NodeID, node.residentRAM, node.frozenRAM, ramCeiling)
+	used, basis := l.admissionUsed_locked(r.NodeID, node.residentRAM, node.frozenRAM, node.agentDiscountMB, ramCeiling)
+	if r.Kind == KindAgentRun && l.agentChargeOn_locked() && basis != basisResident {
+		return l.agentRAMHeadroom_locked(r, node, ramCeiling)
+	}
 	if used+want > ramCeiling {
 		return explainAdmission(api.ErrCapacity(fmt.Sprintf(
 			"RAM headroom: node %q %s %d MB + %d MB requested exceeds the %d MB per-node admission ceiling",
@@ -976,24 +995,17 @@ func (l *NodeLedger) ramHeadroom_locked(r Request, node *nodeReservation, ramCei
 
 // admissionUsed_locked is the RAM a node counts against its ceiling: a
 // request fits iff used + request <= ceiling. By default that is the
-// node's reservations, Σ(ram_mb + 8). Under measured admission (ADR-909)
-// it is the node's measured charge plus every reservation admitted after
-// the measurement, unless the reservations' overcommit cap binds first.
-// basis names the figure for capacity errors.
-func (l *NodeLedger) admissionUsed_locked(nodeID string, reserved, frozen, ceiling int) (used int, basis string) {
+// node's reservations, Σ(ram_mb + 8), with agentDiscount (what agent runs
+// booked below ram_mb + 8 under measured charge) added back. Under measured
+// admission (ADR-909) it is measuredUsed_locked, unless the reservations'
+// overcommit cap binds first. basis names the figure for capacity errors.
+func (l *NodeLedger) admissionUsed_locked(nodeID string, reserved, frozen, agentDiscount, ceiling int) (used int, basis string) {
 	if l.measured == nil {
-		return reserved, "resident"
+		return reserved + agentDiscount, basisResident
 	}
-	used, asOf, ok := l.measured(nodeID)
+	used, ok := l.measuredUsed_locked(nodeID)
 	if !ok {
-		return reserved, "resident"
-	}
-	// The measurement cannot include instances admitted after it, nor agent
-	// run VMs at all: it sums instances rows, and agent runs have none.
-	for _, e := range l.entriesOnNode_locked(nodeID) {
-		if e.agentRun || e.admittedAt.After(asOf) {
-			used += e.admissionMB
-		}
+		return reserved + agentDiscount, basisResident
 	}
 	// reserved + request <= cap  <=>  reserved - (cap - ceiling) + request <= ceiling
 	// Frozen reservations already book measured memory, so the cap on
@@ -1005,6 +1017,32 @@ func (l *NodeLedger) admissionUsed_locked(nodeID string, reserved, frozen, ceili
 	return used, "measured"
 }
 
+// basisResident names the reservation figure in capacity errors.
+const basisResident = "resident"
+
+// measuredUsed_locked is the node's measured charge plus what no
+// measurement includes: every reservation admitted after it, and agent run
+// VMs at all, since the measurement sums instances rows and agent runs have
+// none. ok is false without a fresh measurement.
+func (l *NodeLedger) measuredUsed_locked(nodeID string) (int, bool) {
+	used, asOf, ok := l.measured(nodeID)
+	if !ok {
+		return 0, false
+	}
+	// The measurement cannot include instances admitted after it, nor agent
+	// run VMs at all: it sums instances rows, and agent runs have none.
+	agents := l.agentSamples_locked(nodeID)
+	for id, e := range l.entriesOnNode_locked(nodeID) {
+		switch {
+		case e.agentRun:
+			used += agents.charge(id, e)
+		case e.admittedAt.After(asOf):
+			used += e.admissionMB
+		}
+	}
+	return used, true
+}
+
 // AdmissionUsedMB is the RAM a node counts against its admission ceiling
 // for the next reservation: ResidentRAMForNode by default, the measured
 // figure under measured admission (ADR-909). The placement chooser uses it
@@ -1014,14 +1052,14 @@ func (l *NodeLedger) AdmissionUsedMB(nodeID string) int {
 	defer l.mu.Unlock()
 	node := l.resident[nodeID]
 	if node == nil {
-		used, _ := l.admissionUsed_locked(nodeID, 0, 0, l.ceilingForNode_locked(nodeID, api.Limits{}))
+		used, _ := l.admissionUsed_locked(nodeID, 0, 0, 0, l.ceilingForNode_locked(nodeID, api.Limits{}))
 		return used
 	}
 	ceiling := node.ceilingMB
 	if ceiling <= 0 {
 		ceiling = l.ceilingForNode_locked(nodeID, api.Limits{})
 	}
-	used, _ := l.admissionUsed_locked(nodeID, node.residentRAM, node.frozenRAM, ceiling)
+	used, _ := l.admissionUsed_locked(nodeID, node.residentRAM, node.frozenRAM, node.agentDiscountMB, ceiling)
 	return used
 }
 

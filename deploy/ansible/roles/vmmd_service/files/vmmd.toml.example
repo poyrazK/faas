@@ -60,6 +60,17 @@
 # Default: false
 # adopt_running_vms = true
 
+# flat_tenant_cgroups: launch every new tenant VM directly under
+# faas-tenant.slice instead of its plan's sub-slice (ADR-20261109172421 step
+# 6.5), so a busy host shares CPU between all instances by cpu.weight. VMs in
+# a sub-slice stay there until they park. An older vmmd only knows the
+# sub-slices: turn this off, and let flat VMs park, before rolling vmmd back
+# past the release that added it. Not with native_process_recovery. The unit
+# environment's FAAS_VMMD_FLAT_TENANT_CGROUPS (ansible
+# vmmd_flat_tenant_cgroups) overrides it.
+# Default: false
+# flat_tenant_cgroups = true
+
 # adopt_admitted_runtimes: EXPERIMENTAL. Also adopt guests booted under an
 # application standard's runtime-admission receipt; schedd re-binds their
 # admission to the new vmmd (ADR-595 extension). Off, they are refused at

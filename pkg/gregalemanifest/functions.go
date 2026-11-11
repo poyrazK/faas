@@ -56,6 +56,12 @@ type FunctionSpec struct {
 	QueueBindings []QueueBinding `yaml:"queue_bindings,omitempty"`
 	EventTriggers []EventTrigger `yaml:"event_triggers,omitempty"`
 
+	// BeforeSnapshotTimeoutMS and AfterRestoreTimeoutMS bound the snapshot
+	// hooks the handler declares, within the lifecycle hook limit; zero
+	// keeps the default (ADR-20261110190000 §7).
+	BeforeSnapshotTimeoutMS int `yaml:"before_snapshot_timeout_ms,omitempty"`
+	AfterRestoreTimeoutMS   int `yaml:"after_restore_timeout_ms,omitempty"`
+
 	// Hooks are the snapshot hooks the handler declares in code (init,
 	// before_snapshot, after_restore), read by the plan without running it
 	// (ADR-20261110190000). Never set from yaml.
@@ -289,6 +295,11 @@ func validateFunctionSettings(field string, fn FunctionSpec, limits api.Limits) 
 		seen[name] = true
 		if _, plain := fn.Env[name]; plain {
 			return fmt.Errorf("%s: %q is both a plain env value and a secret; keep one", field, name)
+		}
+	}
+	for key, ms := range map[string]int{"before_snapshot_timeout_ms": fn.BeforeSnapshotTimeoutMS, "after_restore_timeout_ms": fn.AfterRestoreTimeoutMS} {
+		if ms < 0 || ms > api.AfterRestoreHookMaxTimeoutMS {
+			return fmt.Errorf("%s.%s %d must be between 1 and %d", field, key, ms, api.AfterRestoreHookMaxTimeoutMS)
 		}
 	}
 	if fn.Entry && len(fn.Routes) > 0 {

@@ -2804,6 +2804,7 @@ func (s *server) renderOrgDetail(w http.ResponseWriter, r *http.Request, log *sl
 	}
 	populateOrgApps(r.Context(), log, s.store, org, &data)
 	populateOrgActivity(r.Context(), r, log, s.store, org, &data)
+	s.populateOrgGitHub(w, r.Context(), log, acct, org, callerRole, &data)
 
 	page := dashboard.Page{
 		Title:   org.Name,

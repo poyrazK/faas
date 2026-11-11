@@ -39,7 +39,7 @@ func TestDurableReservationIgnoresUnseenVCPU(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	vcpus := api.MustLimitsFor(api.PlanPro).VCPU
+	vcpus := api.SizeVCPUs(256) // a node's vCPU budget holds two of these instances
 	f := &failoverFleet{store: mem, ctx: ctx, vmm: newRefusingVMM(nil), ops: wire.NewOpsMetrics("schedd")}
 	// The owner has more physical CPU, so CPU-first ranking and the owner
 	// preference both pick it.

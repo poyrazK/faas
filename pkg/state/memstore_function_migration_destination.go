@@ -302,12 +302,10 @@ func (m *MemStore) functionDestinationCapacityLocked(nodeID, excludeID string, e
 	if !ok || !node.Active || node.Lifecycle != "active" || node.AdmissionCeilingMB <= 0 || node.VPCPUs <= 0 {
 		return ErrNodeCapacity
 	}
+	// Memory is the only capacity limit (ADR-20261109172421); CPU and vCPUs
+	// are measured, never refused.
 	used := m.migrationNodeUsedLocked(nodeID, excludeID)
-	budget := node.VCPUBudget
-	if budget <= 0 {
-		budget = api.VCPUSlots
-	}
-	if used.RAM+extra.RAM > int64(node.AdmissionCeilingMB) || used.CPU+extra.CPU > int64(node.VPCPUs)*1000*api.CPUOvercommit || used.VCPU+extra.VCPU > int64(budget) {
+	if used.RAM+extra.RAM > int64(node.AdmissionCeilingMB) {
 		return ErrNodeCapacity
 	}
 	return nil
@@ -341,11 +339,10 @@ func (m *MemStore) functionDestinationShapeLocked(ins Instance) capacityResource
 	}
 	app := m.apps[ins.AppID]
 	ram, cpu := capacitySidecarResources(m.deployments[ins.DeploymentID].Sidecars)
-	limits, ok := api.LimitsFor(m.accounts[app.AccountID].Plan)
-	if !ok {
+	if _, ok := api.LimitsFor(m.accounts[app.AccountID].Plan); !ok {
 		return capacityResources{RAM: int64(api.RAMAdmissionCeilingMB), CPU: int64(api.RAMAdmissionCeilingMB), VCPU: int64(api.VCPUSlots)}
 	}
-	return capacityResources{RAM: int64(ins.RAMMB+api.PerVMOverheadMB) + ram, CPU: int64(m.instanceCapacityCPULocked(ins, app)) + cpu, VCPU: int64(limits.VCPU)}
+	return capacityResources{RAM: int64(ins.RAMMB+api.PerVMOverheadMB) + ram, CPU: int64(m.instanceCapacityCPULocked(ins, app)) + cpu, VCPU: m.instanceCapacityVCPULocked(ins, app)}
 }
 func (m *MemStore) functionDestinationInstanceCapacityLocked(ins Instance) error {
 	if !capacityResident(State(ins.State)) && State(ins.State) != StateFrozen {

@@ -73,6 +73,7 @@ type EdgeRuleCircuitBreakerResolved struct {
 	Window           time.Duration
 	OpenDuration     time.Duration
 	MaxOpenDuration  time.Duration
+	ExpiresAt        time.Time `json:",omitempty"`
 }
 
 // PickFirstRetryMatch is the priority-ASC + methods + path-glob filter over

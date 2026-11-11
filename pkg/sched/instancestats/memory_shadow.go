@@ -125,6 +125,7 @@ func (p *Poller) publishMemoryShadowWithBridges(instances []state.Instance, rows
 	shadow := memoryShadow(instances, charged, bridgeMB)
 	if p.Reader != nil {
 		p.Reader.replaceMemoryShadow(shadow, asOf)
+		p.Reader.replaceVMMemory(rows, asOf)
 	}
 	if p.Metrics == nil {
 		return
@@ -180,4 +181,37 @@ func (r *Reader) MeasuredMB(nodeID string, now time.Time) (int, time.Time, bool)
 	}
 	s, ok := snap.byNode[nodeID]
 	return s.MeasuredMB, snap.asOf, ok
+}
+
+type vmMemorySnapshot struct {
+	byNode map[string]map[string]float64
+	asOf   time.Time
+}
+
+// replaceVMMemory keeps each row's latest memory.current by node. Unlike
+// the measurement above it covers VMs without an instances row, such as
+// agent run VMs (ADR-20261027090015 §3).
+func (r *Reader) replaceVMMemory(rows []InstanceStat, asOf time.Time) {
+	byNode := make(map[string]map[string]float64)
+	for _, row := range rows {
+		if row.NodeID == "" || !(row.RSSMB >= 0) { // NaN: not measured
+			continue
+		}
+		if byNode[row.NodeID] == nil {
+			byNode[row.NodeID] = make(map[string]float64)
+		}
+		byNode[row.NodeID][row.InstanceID] = row.RSSMB
+	}
+	r.vmMemory.Store(&vmMemorySnapshot{byNode: byNode, asOf: asOf})
+}
+
+// VMMemory is every VM's latest memory sample (MB) on a node and when the
+// tick that read it started. ok is false when the sample is older than
+// MeasuredAdmissionSampleMaxAgeMillis.
+func (r *Reader) VMMemory(nodeID string, now time.Time) (map[string]float64, time.Time, bool) {
+	snap := r.vmMemory.Load()
+	if snap == nil || now.Sub(snap.asOf) > time.Duration(api.MeasuredAdmissionSampleMaxAgeMillis)*time.Millisecond {
+		return nil, time.Time{}, false
+	}
+	return snap.byNode[nodeID], snap.asOf, true
 }

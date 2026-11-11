@@ -1,0 +1,13 @@
+# Flat tenant cgroups (ADR-20261109172421 step 6.5).
+#
+# On, vmmd launches every new tenant VM directly under faas-tenant.slice
+# instead of its plan's sub-slice, so a busy host shares CPU between all
+# instances by their cpu.weight (ram_mb / 16) rather than first splitting it
+# evenly between the plan sub-slices. VMs already running in a sub-slice stay
+# there until they park; vmmd adopts and tears down VMs in either place.
+#
+# Turn it on only after every compute node runs a vmmd release that reads
+# flat VMs, and after a builder-native metal run of that release. An older
+# vmmd only knows the sub-slices: turn this off, and let flat VMs park, before
+# rolling vmmd back past that release.
+vmmd_flat_tenant_cgroups: false

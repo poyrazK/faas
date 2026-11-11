@@ -752,7 +752,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			fenceOpen := startObjectStorageFence(runtimeCtx, pgStore, log)
 			reads, stopReads := startPublicReadAdmitter(ctx, pgStore, publicStorageRegistry, opsMetrics.Registry(), log)
 			defer stopReads()
-			localReads, err = publicObjectReads(pgStore, publicStorageRegistry, reads, transfers, hostLookups, func() bool { return s3Flag.Load() && fenceOpen() },
+			localReads, err = publicObjectReads(pgStore, publicStorageRegistry, reads, transfers, hostLookups, publicReadClientKey(trustedIngressCIDRs), func() bool { return s3Flag.Load() && fenceOpen() },
 				tenantSurfacesFlag.Load, domains, controlPlaneHandler, log)
 			if err != nil {
 				return err
@@ -779,7 +779,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// flush runs before the pool closes.
 		reads, stopReads := startPublicReadAdmitter(ctx, pgStore, publicStorageRegistry, opsMetrics.Registry(), log)
 		defer stopReads()
-		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, reads, hostLookups, func() bool { return s3Flag.Load() && fenceOpen() },
+		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, reads, hostLookups, publicReadClientKey(trustedIngressCIDRs), func() bool { return s3Flag.Load() && fenceOpen() },
 			tenantSurfacesFlag.Load, domains, controlPlaneHandler, log)
 		if err != nil {
 			return err
