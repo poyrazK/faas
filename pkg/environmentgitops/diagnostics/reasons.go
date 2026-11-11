@@ -7,6 +7,27 @@ import "github.com/onebox-faas/faas/pkg/api"
 func Explain(resource, code string) api.EnvironmentGitOpsDiagnostic {
 	issue := api.EnvironmentGitOpsDiagnostic{Resource: resource, Stage: "assessment", Code: code, Actor: "operator"}
 	switch code {
+	case "current_report_missing", "report_stale":
+		issue.Stage, issue.Actor = "observation", "operator"
+		issue.Message, issue.Action = "No recent completed report proves the current intent.", "Inspect drift reporting and the latest attempt; historical reports do not describe newer intent."
+	case "environment_adoption_required", "environment_ownership_conflict":
+		issue.Stage, issue.Actor = "ownership", "customer"
+		issue.Message, issue.Action = "Existing fields require reviewed adoption or belong to another manager.", "Review the current adoption preview and field ownership before adopting the approved definition."
+	case "environment_pruning_disabled":
+		issue.Stage, issue.Actor = "ownership", "customer"
+		issue.Message, issue.Action = "Removing previously owned fields requires pruning authorization.", "Review the removal plan before changing the source pruning control."
+	case "environment_plan_quota_exceeded":
+		issue.Stage, issue.Actor = "contract", "customer"
+		issue.Message, issue.Action = "The definition exceeds the resource owner's plan limits.", "Review the workload settings and the organization's current resource plan."
+	case "environment_secret_reference_unavailable":
+		issue.Stage, issue.Actor = "contract", "customer"
+		issue.Message, issue.Action = "A retained or desired secret reference has no source in this environment.", "Restore the referenced secret or review a definition that removes or replaces its reference."
+	case "environment_observation_failed", "environment_verification_failed", "environment_runtime_verification_failed", "environment_apply_failed", "environment_definition_invalid":
+		issue.Stage = "observation"
+		issue.Message, issue.Action = "The reconciliation attempt could not establish a complete observation.", "Inspect the recorded attempt and control-plane health before retrying the approved definition."
+	case "environment_runtime_unacknowledged", "environment_fleet_unacknowledged":
+		issue.Stage, issue.Actor = "serving", "controller"
+		issue.Message, issue.Action = "Current runtime inputs or durable fleet effects remain unacknowledged.", "Inspect runtime freshness and pending effects for this environment before accepting serving readiness."
 	case "source_binding_unknown":
 		issue.Message, issue.Action = "The source binding is unknown.", "Read the current environment binding before reviewing a revision."
 	case "source_suspended", "source_detached":

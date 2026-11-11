@@ -443,3 +443,21 @@ Consequences:
 - Delivery: (a) live use and the planner without a margin, (b) the hold and
   release, (c) qualification version 2. Each step can merge on its own:
   `on` needs a version 2 artifact, which only (c) writes.
+
+## Amendment 2026-11-11: a held database can still be resized
+
+The hold disables the database's endpoint, but the database stays `ready`, so
+`gregale postgres resize` accepts it. The Neon resize treated a disabled
+endpoint as a conflict: the change retried forever in `updating`, the sweep
+skips databases being changed, and the hold was never released, not at the
+month's end and not after an upgrade. The plan excess email tells an owner to
+resize to a class the plan includes, which always hit this.
+
+A ready database's disabled endpoint is a cap hold (one in its delete grace
+period is `deleting`, which a resize refuses). The resize now changes the
+endpoint's compute settings while it stays disabled. Its PATCH never names the
+flag, so a resize does not lift the hold, and the next sweep decides from the
+new class. If Neon refuses the change on the disabled endpoint (409), the resize
+ends on its source spec with code `compute_held` instead of retrying forever.
+Neon's acceptance of the PATCH on a disabled endpoint is verified only against
+a fake so far; a native check against Neon is still owed.

@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"bufio"
 	"context"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -51,6 +53,9 @@ func agentWrite(method string) bool {
 type activityWriter struct {
 	http.ResponseWriter
 	status int
+	// onHijack records the row when a handler takes the connection over: a
+	// WebSocket handler returns only when the connection ends.
+	onHijack func()
 }
 
 func (a *activityWriter) WriteHeader(status int) {
@@ -73,12 +78,28 @@ func (a *activityWriter) Unwrap() http.ResponseWriter { return a.ResponseWriter 
 // Flush keeps streaming handlers streaming.
 func (a *activityWriter) Flush() { _ = http.NewResponseController(a.ResponseWriter).Flush() }
 
+// Hijack hands the connection to a WebSocket handler; the request is
+// recorded as switching protocols at that moment (ADR-20261111150000).
+func (a *activityWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, rw, err := http.NewResponseController(a.ResponseWriter).Hijack()
+	if err == nil && a.status == 0 {
+		a.status = http.StatusSwitchingProtocols
+		if a.onHijack != nil {
+			a.onHijack()
+		}
+	}
+	return conn, rw, err
+}
+
 // recordAgentActivity writes the row off the request path: a detached
 // context with a short timeout, so a slow database never delays the answer.
 func (m *Middleware) recordAgentActivity(r *http.Request, acct state.Account, key state.APIKey, status int, note *agentActivityNote) {
 	rec, ok := m.Authn.(AgentActivityRecorder)
 	if !ok {
-		return
+		// A gateway's store does not record activity; apid does it for it.
+		if rec, ok = m.ActivityRecorder, m.ActivityRecorder != nil; !ok {
+			return
+		}
 	}
 	if status == 0 {
 		// Nothing was written through this writer: the rate-limit probe

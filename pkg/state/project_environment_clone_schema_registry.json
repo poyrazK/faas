@@ -155,6 +155,18 @@
     "kind": "account_identity"
   },
   {
+    "table": "complimentary_accounts",
+    "columns": [
+      "account_id",
+      "expires_at",
+      "granted_at",
+      "granted_by",
+      "plan",
+      "reason"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "financial_budget_alert_channel_deliveries",
     "columns": [
       "account_id",
