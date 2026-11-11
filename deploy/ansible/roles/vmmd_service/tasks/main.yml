@@ -232,6 +232,32 @@
   notify: restart faas-vmmd
   when: faas_secretd_target | default('') | length == 0 or not (faas_vmmd_secretd_open | default(false) | bool)
 
+# ADR-20261110210000 slice 3i: vmmd opens sealed edge-rule request header
+# values through secretd for the instances this node runs.
+- name: vmmd_service — require secretd for edge rule header values (ADR-20261110210000)
+  ansible.builtin.assert:
+    that:
+      - faas_secretd_target | default('') | length > 0
+    fail_msg: faas_vmmd_edge_header_secrets needs faas_secretd_target (the node's secretd client leaf).
+  when: faas_vmmd_edge_header_secrets | default(false) | bool
+
+- name: vmmd_service — install vmmd's edge rule header values drop-in (ADR-20261110210000)
+  ansible.builtin.template:
+    src: 99-faas-vmmd-edge-header-secrets.conf.j2
+    dest: /etc/systemd/system/faas-vmmd.service.d/99-faas-vmmd-edge-header-secrets.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-vmmd
+  when: faas_vmmd_edge_header_secrets | default(false) | bool
+
+- name: vmmd_service — remove vmmd's edge rule header values drop-in (ADR-20261110210000)
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-vmmd.service.d/99-faas-vmmd-edge-header-secrets.conf
+    state: absent
+  notify: restart faas-vmmd
+  when: not (faas_vmmd_edge_header_secrets | default(false) | bool)
+
 - name: vmmd_service — install app outbound relay target (ADR-989)
   ansible.builtin.template:
     src: 99-faas-outbound-relay.conf.j2

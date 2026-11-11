@@ -2066,6 +2066,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// configured base generation, so a node that cannot is marked degraded.
 	impl.WithBaseGenerationReadiness(vmmdgrpc.NewCachedBaseGenerationReadiness(
 		baseGenerationReadinessCheck(storageBackend, baseGenerations)))
+	// ADR-20261110210000 slice 3i: sealed edge-rule request headers open
+	// here, for this node's instances, through the control plane's secretd.
+	edgeHeaderSecrets, closeEdgeHeaderSecrets, err := edgeHeaderSecretOpenerFromEnv(ctx, os.Getenv, mgr.InstanceAppID, log)
+	if err != nil {
+		return err
+	}
+	defer closeEdgeHeaderSecrets()
+	if edgeHeaderSecrets != nil {
+		impl.WithEdgeHeaderSecrets(edgeHeaderSecrets)
+	}
 	if err := vmmdgrpc.FenceStaleStreamBridges(ctx); err != nil {
 		return fmt.Errorf("vmmd: fence previous HTTP forwarding owner: %w", err)
 	}

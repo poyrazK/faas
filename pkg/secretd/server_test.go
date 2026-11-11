@@ -32,6 +32,15 @@ type fakeStore struct {
 	rows        map[rowKey][]byte
 	drains      map[[2]string][]byte // {app, drain} -> sealed header
 	triggers    map[[2]string]fakeTrigger
+	edgeHeaders map[[2]string][]byte // {app, secret} -> sealed value
+}
+
+func (f *fakeStore) EdgeHeaderSecret(_ context.Context, appID, secretID string) ([]byte, error) {
+	sealed, ok := f.edgeHeaders[[2]string{appID, secretID}]
+	if !ok {
+		return nil, secretd.ErrUnknownEdgeHeaderSecret
+	}
+	return sealed, nil
 }
 
 func (f *fakeStore) TriggerConfig(_ context.Context, appID, triggerID string) (string, []byte, error) {

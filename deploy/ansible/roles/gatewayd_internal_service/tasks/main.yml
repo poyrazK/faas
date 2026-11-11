@@ -505,6 +505,22 @@
     mode: "0644"
   notify: restart faas-gatewayd-internal
 
+# ADR-20261110210000 slice 3i: who opens sealed edge-rule request headers.
+- name: gatewayd_internal_service — check the edge rule header values mode
+  ansible.builtin.assert:
+    that:
+      - faas_gateway_edge_header_secrets in ['local', 'inject']
+    fail_msg: faas_gateway_edge_header_secrets is local or inject.
+
+- name: gatewayd_internal_service — install the edge rule header values drop-in
+  ansible.builtin.template:
+    src: 99-faas-gateway-edge-header-secrets.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-gateway-edge-header-secrets.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-gatewayd-internal
+
 # ADR-20261110210000 slice 3f: with faas_gateway_secretd_log_drains (and
 # vmmd_service's faas_secretd_target, which issues the node's client leaf),
 # drain headers open through secretd for the app's owner node only.

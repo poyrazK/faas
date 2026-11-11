@@ -204,8 +204,34 @@ func TestReferenceLookupsOnPostgres(t *testing.T) {
 		VALUES ($1, $2, $3, 'kafka', 'orders', '{"topic":"orders"}'::jsonb)`, triggerID, account.ID, appA.ID); err != nil {
 		t.Fatal(err)
 	}
+	// Edge rule header values (slice 3i): a value of the named app that one
+	// of its headers rules references; an orphaned value does not open.
+	referenced, orphan := uuid.NewString(), uuid.NewString()
+	if _, err := conn.Exec(ctx, `INSERT INTO edge_rule_header_secrets (id, account_id, app_id, ciphertext)
+		VALUES ($1, $3, $4, '\x02'::bytea), ($2, $3, $4, '\x03'::bytea)`, referenced, orphan, account.ID, appA.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `INSERT INTO edge_rules (account_id, app_id, match_host, kind, action)
+		VALUES ($1, $2, 'a.example.com', 'headers', jsonb_build_object('kind', 'headers', 'headers',
+		  jsonb_build_object('request_headers', jsonb_build_array(
+		    jsonb_build_object('name', 'Authorization', 'action', 'set', 'secret', true, 'secret_id', $3::text)))))`,
+		account.ID, appA.ID, referenced); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := conn.Exec(ctx, `RESET session_replication_role`); err != nil {
 		t.Fatal(err)
+	}
+	if sealed, err := store.EdgeHeaderSecret(ctx, appA.ID, referenced); err != nil || len(sealed) != 1 || sealed[0] != 2 {
+		t.Fatalf("referenced edge header value = %x, %v", sealed, err)
+	}
+	for name, args := range map[string][2]string{
+		"orphaned value":      {appA.ID, orphan},
+		"another app's value": {appB.ID, referenced},
+		"bad value id":        {appA.ID, "not-a-uuid"},
+	} {
+		if _, err := store.EdgeHeaderSecret(ctx, args[0], args[1]); !errors.Is(err, secretd.ErrUnknownEdgeHeaderSecret) {
+			t.Errorf("%s = %v", name, err)
+		}
 	}
 	if kind, cfg, err := store.TriggerConfig(ctx, appA.ID, triggerID); err != nil || kind != "kafka" || !strings.Contains(string(cfg), "orders") {
 		t.Fatalf("own trigger = %s %s %v", kind, cfg, err)

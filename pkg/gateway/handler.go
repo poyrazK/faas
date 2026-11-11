@@ -2910,8 +2910,13 @@ func (h *Handler) applyEdgeRuleHeaders(w http.ResponseWriter, r *http.Request, a
 	// any request-side op runs (ADR-968).
 	requestOps := expandHeaderOps(rule.RequestHeaders, r)
 	responseOps := expandHeaderOps(rule.ResponseHeaders, r)
-	// Request-side ops: apply directly to r.Header.
+	// Request-side ops: apply directly to r.Header. A sealed value is added
+	// by the instance's vmmd (ADR-20261110210000 slice 3i).
 	for _, op := range requestOps {
+		if op.SecretID != "" {
+			recordEdgeSecretHeader(r, op)
+			continue
+		}
 		applyHeaderOp(r.Header, op)
 	}
 	// Response-side ops: wrap w with a headerRecorder that
@@ -8512,6 +8517,13 @@ haveApp:
 		capped := h.setupBufferedCapWriter(w, r.Method, app, planCap)
 		completionTarget = h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
+				// Only vmmd adds sealed edge-rule headers
+				// (ADR-20261110210000 slice 3i); without it the
+				// request would reach the app without its credential.
+				if len(edgeSecretHeadersFrom(req.Context())) > 0 {
+					writeForwarderProblem(w, http.StatusServiceUnavailable)
+					return
+				}
 				req, _ = stampTargetIdentity(req, app, tgt)
 				req, endTracking := h.trackSlowRequest(req, app, tgt, isStreaming)
 				defer endTracking()

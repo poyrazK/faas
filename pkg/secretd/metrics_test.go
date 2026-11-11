@@ -94,8 +94,8 @@ func TestMetricsCountOpensAndRefusalsByReason(t *testing.T) {
 			t.Errorf("%s%v = %v, want %v", tc.name, tc.labels, got, tc.want)
 		}
 	}
-	// Alerts take increase() over pre-created series: 6 RPCs x 8 reasons.
-	if n, err := testutil.GatherAndCount(reg, "faas_secretd_refusals_total"); err != nil || n != 48 {
+	// Alerts take increase() over pre-created series: 7 RPCs x 8 reasons.
+	if n, err := testutil.GatherAndCount(reg, "faas_secretd_refusals_total"); err != nil || n != 56 {
 		t.Fatalf("refusal series = %d, %v", n, err)
 	}
 }

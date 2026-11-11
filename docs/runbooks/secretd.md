@@ -142,6 +142,32 @@ only by apid), and the edge checks presented credentials against it.
 An edge-key rotation re-seals credentials into new blobs; the same migrate
 command writes their verifiers before it returns.
 
+## Edge-rule request headers on the instance's node (slice 3i)
+
+A headers rule's sealed request header value (`edge_rule_header_secrets`) is
+added by the vmmd of the node that runs the instance, which opens it through
+secretd. The edge never holds it.
+
+1. **Edge identity on the control plane:** as for slice 3f
+   (`SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE=true`), so secretd answers
+   `OpenEdgeHeaderSecret`.
+2. **Every compute node's vmmd:** set `faas_vmmd_edge_header_secrets: true`
+   (needs `faas_secretd_target`) and converge every compute node. Until a
+   gateway sends references nothing changes.
+3. **Gateways, one node first:** set `faas_gateway_edge_header_secrets:
+   inject` on one node and converge it. Check
+   `faas_secretd_opens_total{rpc="OpenEdgeHeaderSecret"}` rises when such a
+   rule is hit and that requests through that node still reach the app with
+   the header. Then the rest of compute.
+
+Do not set inject while any node's vmmd lacks step 2: an older vmmd ignores
+the references and the request reaches the app without the header; a
+current vmmd without the opener refuses the request (503 at the edge).
+`OpenEdgeHeaderSecret` refusals with reason `wrong_account` page through
+`FaasSecretdCrossTenantRequest`. Roll back with
+`faas_gateway_edge_header_secrets: local` while the edge identity is still on
+compute.
+
 ## Rotation
 
 The runtime domain rotates as before (`docs/runbooks/seal-domain-key-escrow.md`).

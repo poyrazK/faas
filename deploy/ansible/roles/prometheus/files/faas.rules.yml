@@ -985,7 +985,7 @@ groups:
           family: secretd
         annotations:
           summary: "A compute node asked secretd for another tenant's secrets ({{ $labels.reason }})"
-          description: "secretd refused {{ $value | humanize }} {{ $labels.rpc }} request(s) in the last 15 minutes with reason {{ $labels.reason }}: the caller sent an envelope bound to another account than the app's, or named another app's crash capture. No release sends either. Treat the node as compromised: `journalctl -u faas-secretd --since -1h | grep refused` names it; drain it and rotate the runtime domain."
+          description: "secretd refused {{ $value | humanize }} {{ $labels.rpc }} request(s) in the last 15 minutes with reason {{ $labels.reason }}: the caller sent an envelope bound to another account than the app's, named another app's crash capture, or asked for an edge rule header value of another account's app. No release sends either. Treat the node as compromised: `journalctl -u faas-secretd --since -1h | grep refused` names it; drain it and rotate the runtime domain."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/secretd.md"
       - alert: FaasSecretdBudgetExhausted
         expr: sum by (rpc) (increase(faas_secretd_refusals_total{reason="budget_exhausted"}[15m])) > 0

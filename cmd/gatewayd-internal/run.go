@@ -2581,6 +2581,17 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 			deps.edgeRulesMatcher.headerSecretOpener = newEdgeRuleHeaderSecretOpener(identities)
 		}
 	}
+	injectEdgeHeaderSecrets, err := edgeHeaderSecretsInjectFromEnv(osGetenv)
+	if err != nil {
+		return err
+	}
+	if injectEdgeHeaderSecrets && deps.edgeRulesMatcher != nil {
+		// ADR-20261110210000 slice 3i: this gateway never opens a sealed
+		// request header value; the instance's vmmd does.
+		deps.edgeRulesMatcher.headerSecretsInject = true
+		deps.edgeRulesMatcher.headerSecretOpener = nil
+		log.Info("edge rule header values are added by the instance's vmmd")
+	}
 	log.Info("edge seal domain", "domain_identity", len(edgeDomainIdentities) > 0, "identities", len(deps.edgeIdentities))
 	// PR-3 / ADR-125 fleet-wide signing key: try the
 	// cluster_signing_keys PG row FIRST so a JWT minted by
@@ -4861,7 +4872,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			ManagedHTTP:        managedHTTP, ManagedCircuit: managedHTTP && managedCircuitWired,
 			// apid seals edge-rule header values only while every serving
 			// gateway reports that it opens them (ADR-20261108110000).
-			EdgeHeaderSecrets: deps.edgeRulesMatcher != nil && deps.edgeRulesMatcher.headerSecretOpener != nil,
+			EdgeHeaderSecrets: deps.edgeRulesMatcher != nil &&
+				(deps.edgeRulesMatcher.headerSecretOpener != nil || deps.edgeRulesMatcher.headerSecretsInject),
 		}, readyProbe.ReadyFunc(), log)
 		defer stopTrafficObserver()
 	}

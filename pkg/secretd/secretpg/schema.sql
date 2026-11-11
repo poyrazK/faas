@@ -53,3 +53,19 @@ CREATE TABLE triggers (
     kind   text  NOT NULL,
     config jsonb NOT NULL
 );
+
+-- Projections of edge_rule_header_secrets and edge_rules: the sealed value
+-- OpenEdgeHeaderSecret reads by reference, and the rules that reference it
+-- (ADR-20261110210000 slice 3i).
+CREATE TABLE edge_rule_header_secrets (
+    id         uuid  NOT NULL PRIMARY KEY,
+    app_id     uuid  NOT NULL,
+    ciphertext bytea NOT NULL
+);
+
+CREATE TABLE edge_rules (
+    id     uuid  NOT NULL PRIMARY KEY,
+    app_id uuid  NOT NULL,
+    kind   text  NOT NULL,
+    action jsonb NOT NULL
+);

@@ -42,9 +42,21 @@ func runtimeSecretOpenerFromEnv(ctx context.Context, getenv func(string) string,
 		return nil, nil, errors.New("vmmd: FAAS_RUNTIME_SECRET_OPENER=secretd needs runtime secret binding required " +
 			"(faas_seal_domain_runtime_binding_required): secretd refuses unbound envelopes")
 	}
+	rpc, closeConn, err := dialSecretd(ctx, getenv, "FAAS_RUNTIME_SECRET_OPENER", log)
+	if err != nil {
+		return nil, nil, err
+	}
+	log.Info("vmmd: app secrets opened by secretd")
+	return secretdOpener{rpc: rpc}, closeConn, nil
+}
+
+// dialSecretd connects to the control plane's secretd at FAAS_SECRETD_TARGET
+// over mTLS with the node's identity leaf. setting names the variable that
+// asked for it, for error messages.
+func dialSecretd(ctx context.Context, getenv func(string) string, setting string, log *slog.Logger) (secretdpb.SecretdClient, func(), error) {
 	target := getenv("FAAS_SECRETD_TARGET")
 	if target == "" {
-		return nil, nil, errors.New("vmmd: FAAS_RUNTIME_SECRET_OPENER=secretd needs FAAS_SECRETD_TARGET")
+		return nil, nil, fmt.Errorf("vmmd: %s=secretd needs FAAS_SECRETD_TARGET", setting)
 	}
 	parsed, err := wire.ParseTarget(target)
 	if err != nil || parsed.Scheme == wire.SchemeUnix {
@@ -56,7 +68,7 @@ func runtimeSecretOpenerFromEnv(ctx context.Context, getenv func(string) string,
 		return nil, nil, fmt.Errorf("vmmd: load secretd client TLS: %w", err)
 	}
 	if tlsCfg == nil {
-		return nil, nil, errors.New("vmmd: FAAS_RUNTIME_SECRET_OPENER=secretd needs FAAS_SECRETD_TLS_{CERT,KEY,CA}_PATH")
+		return nil, nil, fmt.Errorf("vmmd: %s=secretd needs FAAS_SECRETD_TLS_{CERT,KEY,CA}_PATH", setting)
 	}
 	// secretd's leaf names only secretd.faas (pkg/pki FeatureSecretOpener): a
 	// leaf of another daemon from the same CA does not pass as secretd.
@@ -67,8 +79,8 @@ func runtimeSecretOpenerFromEnv(ctx context.Context, getenv func(string) string,
 	if err != nil {
 		return nil, nil, fmt.Errorf("vmmd: dial secretd: %w", err)
 	}
-	log.Info("vmmd: app secrets opened by secretd", "target", target)
-	return secretdOpener{rpc: secretdpb.NewSecretdClient(conn)}, func() {
+	log.Info("vmmd: connected to secretd", "target", target, "for", setting)
+	return secretdpb.NewSecretdClient(conn), func() {
 		if err := conn.Close(); err != nil {
 			log.Warn("vmmd: close secretd client", "err", err)
 		}

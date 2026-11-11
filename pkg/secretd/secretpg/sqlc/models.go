@@ -28,6 +28,19 @@ type CrashCapture struct {
 	SealedKey []byte
 }
 
+type EdgeRule struct {
+	ID     pgtype.UUID
+	AppID  pgtype.UUID
+	Kind   string
+	Action []byte
+}
+
+type EdgeRuleHeaderSecret struct {
+	ID         pgtype.UUID
+	AppID      pgtype.UUID
+	Ciphertext []byte
+}
+
 type SecretGrant struct {
 	AppID           pgtype.UUID
 	NodeID          pgtype.UUID

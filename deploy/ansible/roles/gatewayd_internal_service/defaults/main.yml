@@ -140,3 +140,11 @@ faas_gateway_secretd_log_drains: false
 # verifier-only never opens it (after gregalectl seal-domain migrate
 # --domain edge reports no basic_auth_verifiers.failed).
 faas_gateway_basic_auth: sealed
+
+# ADR-20261110210000 slice 3i: who opens sealed edge-rule request header
+# values. local opens them here with the edge identity (today's behaviour);
+# inject never opens them and names them to the instance's vmmd, which opens
+# them through secretd. Set inject only after every compute node runs
+# vmmd_service's faas_vmmd_edge_header_secrets: an older vmmd ignores the
+# names and the request would reach the app without its credential.
+faas_gateway_edge_header_secrets: local

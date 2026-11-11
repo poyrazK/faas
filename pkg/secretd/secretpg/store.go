@@ -203,6 +203,27 @@ func (s *Store) LogDrainHeader(ctx context.Context, appID, drainID string) ([]by
 	return sealed, nil
 }
 
+// EdgeHeaderSecret implements secretd.Store: a value of appID that one of
+// appID's headers rules references.
+func (s *Store) EdgeHeaderSecret(ctx context.Context, appID, secretID string) ([]byte, error) {
+	app, err := pgUUID(appID)
+	if err != nil {
+		return nil, secretd.ErrUnknownEdgeHeaderSecret
+	}
+	id, err := pgUUID(secretID)
+	if err != nil {
+		return nil, secretd.ErrUnknownEdgeHeaderSecret
+	}
+	sealed, err := s.q.EdgeHeaderSecretSealed(ctx, s.db, sqlc.EdgeHeaderSecretSealedParams{ID: id, AppID: app})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, secretd.ErrUnknownEdgeHeaderSecret
+	}
+	if err != nil {
+		return nil, fmt.Errorf("secretpg: edge header secret: %w", err)
+	}
+	return sealed, nil
+}
+
 // TriggerConfig implements secretd.Store: a trigger of appID only.
 func (s *Store) TriggerConfig(ctx context.Context, appID, triggerID string) (string, []byte, error) {
 	app, err := pgUUID(appID)

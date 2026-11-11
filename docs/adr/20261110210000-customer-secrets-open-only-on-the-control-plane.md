@@ -371,12 +371,12 @@ source connections). Each moves as follows:
   argon2id verifier beside the sealed value, gateways compare against it
   (with an in-memory cache of passing credentials keyed by a hash of the
   presented header), and never open the credential.
-- **3i, secret edge-rule request headers:** for requests to the app's own
-  instances, the header is added on the instance's node by vmmd's forward
-  path, which opens it through secretd with owner or grant authorization.
-  Only `route` rules to an external origin need the value at the receiving
-  edge; those open through secretd by reference, cached, budgeted and
-  audited. The edge identity then leaves compute.
+- **3i, secret edge-rule request headers:** the header is added on the
+  instance's node by vmmd's forward path, which opens it through secretd
+  with owner or grant authorization for the instance's app. `route` rules
+  target only apps of the same account (`target_app_slug`), so every request
+  a header rule touches reaches an instance through vmmd and no edge needs
+  the value. The edge identity then leaves compute.
 - **3j, registry passwords:** builder VMs pull private images through a
   control-plane registry proxy that adds the app's credentials per build
   token, scoped to the app's registries. No compute node or builder VM sees
@@ -570,7 +570,8 @@ Operations:
 | 3f | Log drain headers by reference: secretd `OpenLogDrainHeader` (edge identity on the control plane with `SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE`), gatewayd-internal `FAAS_GATEWAY_LOG_DRAIN_OPENER=secretd` per node (`faas_gateway_secretd_log_drains`) (code in #7003) | 3c |
 | 3g-1 | Broker trigger credentials by reference (secretd `OpenTriggerConfig` with the CP's delivery identity); compute schedd `FAAS_SCHEDD_DELIVERY_OPENER=secretd` (`faas_schedd_secretd_delivery`) also leaves webhook delivery to the CP schedd, since account webhooks have no app to authorize by, and refuses execution dispatch and the commit relay (not deployed) (code in #7003) | 3f |
 | 3h | Verify-only basic auth: `app_basic_auth_verifiers` (argon2id, keyed by the sealed blob's SHA-256 so every copy path keeps working and a stale verifier cannot match a new credential; apid-only writes), gateway `FAAS_GATEWAY_BASIC_AUTH=sealed|verifier|verifier-only`, backfill in `seal-domain migrate --domain edge` (code in #7003) | 3f |
-| 3g-2–3j | Delivery identity retired from compute, basic-auth verifiers, edge-rule headers injected on the instance's node, CP registry pull proxy (decided above) | 3f |
+| 3i | Edge-rule headers injected on the instance's node: the forward init frames (`ForwardHTTPRequestInit`, `ForwardRawRequestInit`) gain `edge_secret_headers` (name, set/add, rule app, row id; proto fields, so neither a client nor a tenant app can forge one); gatewayd-internal `FAAS_GATEWAY_EDGE_HEADER_SECRETS=inject` keeps the reference and never opens the value (a set op still drops the client's own value at the edge, and the shared cache treats the request as credentialed); vmmd `FAAS_VMMD_EDGE_HEADER_SECRETS=secretd` opens each through secretd `OpenEdgeHeaderSecret(target app = the live instance's app, rule app, id)`, cached 5 minutes per target app, adds it after the request's headers (raw upgrades: into the request head), and refuses the forward if any value is unavailable. secretd answers the owner or a granted peer of the target app, for a value of an app with the same resource account that one of its headers rules still references; the audit names the rule's app (code in #7003). Ordering: a secret op now applies after the rule's other ops, and the gateway's own checks no longer see the value | 3h |
+| 3g-2, 3j | Delivery identity retired from compute, CP registry pull proxy (decided above) | 3f |
 | 4 | HSM hardware, ceremony runbook, Tier A wrapped identities for every control-plane reader, measurements | — |
 | 5 | Tier B envelope v3 + re-seal of every sealed column | 4 |
 

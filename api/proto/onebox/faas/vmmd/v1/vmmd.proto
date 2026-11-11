@@ -2516,6 +2516,26 @@ message ForwardHTTPRequestInit {
   // requests leave content_length_known false.
   int64 content_length = 8;
   bool content_length_known = 9;
+  // edge_secret_headers (ADR-20261110210000 slice 3i) are sealed edge-rule
+  // request headers vmmd opens through the control plane's secretd and adds
+  // to the guest request after `headers`. The gateway that matched the rule
+  // never holds the values. Additive per ADR-016: an older gateway sends none.
+  repeated EdgeSecretHeader edge_secret_headers = 10;
+}
+
+// EdgeSecretHeader (ADR-20261110210000 slice 3i) names one sealed edge-rule
+// request header value. vmmd asks secretd for it as the instance's node:
+// secretd answers only the owner (or a granted peer) of the instance's app,
+// for a value of an app of the same resource account that one of its headers
+// rules still references.
+message EdgeSecretHeader {
+  string name = 1;
+  // action is "set" (replace every value of name) or "add".
+  string action = 2;
+  // secret_app_id is the app whose headers rule holds the value.
+  string secret_app_id = 3;
+  // secret_id is the edge_rule_header_secrets row.
+  string secret_id = 4;
 }
 
 // ForwardHTTPStreamResponse is one frame on the server→client
@@ -2734,6 +2754,10 @@ message ForwardRawRequestInit {
   // a clean half-close. Defaults to 100 MiB (matches
   // ForwardStreamMaxBodyBytes) when zero.
   int64 max_request_bytes = 3;
+  // edge_secret_headers (ADR-20261110210000 slice 3i): as on
+  // ForwardHTTPRequestInit. vmmd adds them to the request head, which must
+  // then arrive whole in the first body_chunk (the gateway sends it so).
+  repeated EdgeSecretHeader edge_secret_headers = 4;
 }
 
 // ForwardRawRequest (issue #676 / ADR-080) is one frame on the

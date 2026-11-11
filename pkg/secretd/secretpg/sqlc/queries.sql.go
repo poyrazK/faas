@@ -60,6 +60,30 @@ func (q *Queries) DeleteExpiredSecretGrants(ctx context.Context, db DBTX, before
 	return result.RowsAffected(), nil
 }
 
+const edgeHeaderSecretSealed = `-- name: EdgeHeaderSecretSealed :one
+SELECT s.ciphertext FROM edge_rule_header_secrets s
+ WHERE s.id = $1::uuid AND s.app_id = $2::uuid
+   AND EXISTS (
+     SELECT 1 FROM edge_rules r,
+       jsonb_array_elements(CASE WHEN jsonb_typeof(r.action->'headers'->'request_headers') = 'array'
+         THEN r.action->'headers'->'request_headers' ELSE '[]'::jsonb END) op
+      WHERE r.app_id = s.app_id AND r.kind = 'headers' AND op->>'secret_id' = s.id::text)
+`
+
+type EdgeHeaderSecretSealedParams struct {
+	ID    pgtype.UUID
+	AppID pgtype.UUID
+}
+
+// A header value of the named app that one of its headers rules still
+// references (ADR-20261110210000 slice 3i).
+func (q *Queries) EdgeHeaderSecretSealed(ctx context.Context, db DBTX, arg EdgeHeaderSecretSealedParams) ([]byte, error) {
+	row := db.QueryRow(ctx, edgeHeaderSecretSealed, arg.ID, arg.AppID)
+	var ciphertext []byte
+	err := row.Scan(&ciphertext)
+	return ciphertext, err
+}
+
 const insertSecretOpenAudit = `-- name: InsertSecretOpenAudit :exec
 INSERT INTO secret_open_audit (node_id, app_id, via, entries)
 VALUES ($1::uuid, $2::uuid, $3::text, $4::integer)

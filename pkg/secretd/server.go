@@ -69,7 +69,14 @@ type Store interface {
 	// TriggerConfig returns the kind and stored (sealed) config of
 	// triggerID, a trigger of appID, or ErrUnknownTrigger.
 	TriggerConfig(ctx context.Context, appID, triggerID string) (kind string, config []byte, err error)
+	// EdgeHeaderSecret returns the sealed value of secretID, an
+	// edge_rule_header_secrets row of appID that one of appID's headers
+	// rules references, or ErrUnknownEdgeHeaderSecret.
+	EdgeHeaderSecret(ctx context.Context, appID, secretID string) ([]byte, error)
 }
+
+// ErrUnknownEdgeHeaderSecret is returned by Store.EdgeHeaderSecret.
+var ErrUnknownEdgeHeaderSecret = errors.New("secretd: the app has no referenced edge rule header value of that id")
 
 // ErrUnknownTrigger is returned by Store.TriggerConfig.
 var ErrUnknownTrigger = errors.New("secretd: the app has no trigger of that id")
@@ -541,6 +548,71 @@ func (s *Server) OpenTriggerConfig(ctx context.Context, req *secretdpb.OpenTrigg
 	}
 	s.metrics.open(rpcOpenTriggerConfig, via)
 	return &secretdpb.OpenTriggerConfigResponse{ConfigJson: opened}, nil
+}
+
+// OpenEdgeHeaderSecret implements secretdpb.SecretdServer (ADR-20261110210000
+// slice 3i): the node that runs an instance of target_app_id asks for one
+// sealed edge-rule request header value, which vmmd adds to the guest
+// request. The caller must own the target app or hold a grant for it; the
+// value's app must share the target app's resource account (a route rule may
+// send one app's host to another app of the account) and still reference the
+// value from one of its headers rules.
+func (s *Server) OpenEdgeHeaderSecret(ctx context.Context, req *secretdpb.OpenEdgeHeaderSecretRequest) (*secretdpb.OpenEdgeHeaderSecretResponse, error) {
+	targetID, secretApp, secretID := req.GetTargetAppId(), req.GetSecretAppId(), req.GetSecretId()
+	if targetID == "" || secretApp == "" || secretID == "" {
+		return nil, rpcErr(codes.InvalidArgument, "secretd needs a target app id, a secret app id and a secret id")
+	}
+	if len(s.edgeIdentities) == 0 {
+		return nil, rpcErr(codes.FailedPrecondition, "secretd holds no edge identity")
+	}
+	name, nodeID, via, err := s.authorizeByReference(ctx, rpcOpenEdgeHeaderSecret, targetID)
+	if err != nil {
+		return nil, err
+	}
+	if secretApp != targetID {
+		target, terr := s.store.AppTarget(ctx, targetID)
+		owner, oerr := s.store.AppTarget(ctx, secretApp)
+		if terr != nil || oerr != nil {
+			return nil, rpcErr(codes.NotFound, "secretd found no such app")
+		}
+		if owner.AccountID == "" || owner.AccountID != target.AccountID {
+			s.log.Error("secretd: refused an edge header value of another account", "node", logsanitize.Field(name),
+				"app_id", logsanitize.Field(targetID), "secret_app_id", logsanitize.Field(secretApp))
+			s.metrics.refuse(rpcOpenEdgeHeaderSecret, ReasonWrongAccount)
+			return nil, rpcErr(codes.PermissionDenied, "secretd refused: the value belongs to an app of another account")
+		}
+	}
+	sealed, err := s.store.EdgeHeaderSecret(ctx, secretApp, secretID)
+	if errors.Is(err, ErrUnknownEdgeHeaderSecret) {
+		return nil, rpcErr(codes.NotFound, "secretd found no such edge rule header value referenced by the app")
+	}
+	if err != nil {
+		s.log.Error("secretd: edge header value lookup", "secret_app_id", logsanitize.Field(secretApp), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not look up the edge rule header value")
+	}
+	namespace, plaintext, err := secretbox.OpenBytesMulti(s.edgeIdentities, sealed)
+	if err == nil && namespace != api.EdgeRuleHeaderSecretSealNamespace {
+		err = fmt.Errorf("namespace %q, want %s", namespace, api.EdgeRuleHeaderSecretSealNamespace)
+	}
+	if err == nil && (len(plaintext) == 0 || len(plaintext) > api.EdgeRuleHeaderSecretMaxBytes) {
+		err = errors.New("value is empty or exceeds the size limit")
+	}
+	if err != nil {
+		clear(plaintext)
+		s.log.Warn("secretd: edge header value does not open", "secret_app_id", logsanitize.Field(secretApp),
+			"secret_id", logsanitize.Field(secretID), "err", err)
+		s.metrics.refuse(rpcOpenEdgeHeaderSecret, ReasonEnvelope)
+		return nil, rpcErr(codes.FailedPrecondition, "secretd could not open the edge rule header value")
+	}
+	// The audit names the app whose value left, under the authorization the
+	// caller holds for the app it runs.
+	if err := s.store.RecordOpen(ctx, nodeID, secretApp, via, 1); err != nil {
+		clear(plaintext)
+		s.log.Error("secretd: record open", "node", logsanitize.Field(name), "app_id", logsanitize.Field(secretApp), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not record the open")
+	}
+	s.metrics.open(rpcOpenEdgeHeaderSecret, via)
+	return &secretdpb.OpenEdgeHeaderSecretResponse{Value: string(plaintext)}, nil
 }
 
 // authorizeByReference checks a by-reference open of appID's material: the

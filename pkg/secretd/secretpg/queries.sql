@@ -37,6 +37,17 @@ SELECT ciphertext FROM app_secrets
 SELECT auth_header_sealed FROM app_log_drains
  WHERE id = sqlc.arg(id)::uuid AND app_id = sqlc.arg(app_id)::uuid;
 
+-- name: EdgeHeaderSecretSealed :one
+-- A header value of the named app that one of its headers rules still
+-- references (ADR-20261110210000 slice 3i).
+SELECT s.ciphertext FROM edge_rule_header_secrets s
+ WHERE s.id = sqlc.arg(id)::uuid AND s.app_id = sqlc.arg(app_id)::uuid
+   AND EXISTS (
+     SELECT 1 FROM edge_rules r,
+       jsonb_array_elements(CASE WHEN jsonb_typeof(r.action->'headers'->'request_headers') = 'array'
+         THEN r.action->'headers'->'request_headers' ELSE '[]'::jsonb END) op
+      WHERE r.app_id = s.app_id AND r.kind = 'headers' AND op->>'secret_id' = s.id::text);
+
 -- name: TriggerConfig :one
 -- A trigger of the named app only (ADR-20261110210000 slice 3g).
 SELECT kind, config FROM triggers

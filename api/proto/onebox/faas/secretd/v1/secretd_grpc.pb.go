@@ -22,12 +22,13 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Secretd_OpenAppSecrets_FullMethodName     = "/onebox.faas.secretd.v1.Secretd/OpenAppSecrets"
-	Secretd_GrantPeer_FullMethodName          = "/onebox.faas.secretd.v1.Secretd/GrantPeer"
-	Secretd_OpenCaptureKey_FullMethodName     = "/onebox.faas.secretd.v1.Secretd/OpenCaptureKey"
-	Secretd_OpenSidecarEnv_FullMethodName     = "/onebox.faas.secretd.v1.Secretd/OpenSidecarEnv"
-	Secretd_OpenLogDrainHeader_FullMethodName = "/onebox.faas.secretd.v1.Secretd/OpenLogDrainHeader"
-	Secretd_OpenTriggerConfig_FullMethodName  = "/onebox.faas.secretd.v1.Secretd/OpenTriggerConfig"
+	Secretd_OpenAppSecrets_FullMethodName       = "/onebox.faas.secretd.v1.Secretd/OpenAppSecrets"
+	Secretd_GrantPeer_FullMethodName            = "/onebox.faas.secretd.v1.Secretd/GrantPeer"
+	Secretd_OpenCaptureKey_FullMethodName       = "/onebox.faas.secretd.v1.Secretd/OpenCaptureKey"
+	Secretd_OpenSidecarEnv_FullMethodName       = "/onebox.faas.secretd.v1.Secretd/OpenSidecarEnv"
+	Secretd_OpenLogDrainHeader_FullMethodName   = "/onebox.faas.secretd.v1.Secretd/OpenLogDrainHeader"
+	Secretd_OpenTriggerConfig_FullMethodName    = "/onebox.faas.secretd.v1.Secretd/OpenTriggerConfig"
+	Secretd_OpenEdgeHeaderSecret_FullMethodName = "/onebox.faas.secretd.v1.Secretd/OpenEdgeHeaderSecret"
 )
 
 // SecretdClient is the client API for Secretd service.
@@ -61,6 +62,14 @@ type SecretdClient interface {
 	// (ADR-20261110210000 slice 3g). Broker triggers are polled only by the
 	// app's owner node, so the owner-or-grant rule applies.
 	OpenTriggerConfig(ctx context.Context, in *OpenTriggerConfigRequest, opts ...grpc.CallOption) (*OpenTriggerConfigResponse, error)
+	// OpenEdgeHeaderSecret opens one sealed edge-rule request header value by
+	// reference for the node that runs an instance of target_app_id
+	// (ADR-20261110210000 slice 3i): the caller owns target_app_id or holds a
+	// grant for it, secret_app_id has the same resource account (a route rule
+	// may send one app's host to another app of the account), and one of
+	// secret_app_id's headers rules still references the value. secretd reads
+	// edge_rule_header_secrets itself and opens it with the edge seal domain.
+	OpenEdgeHeaderSecret(ctx context.Context, in *OpenEdgeHeaderSecretRequest, opts ...grpc.CallOption) (*OpenEdgeHeaderSecretResponse, error)
 }
 
 type secretdClient struct {
@@ -131,6 +140,16 @@ func (c *secretdClient) OpenTriggerConfig(ctx context.Context, in *OpenTriggerCo
 	return out, nil
 }
 
+func (c *secretdClient) OpenEdgeHeaderSecret(ctx context.Context, in *OpenEdgeHeaderSecretRequest, opts ...grpc.CallOption) (*OpenEdgeHeaderSecretResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OpenEdgeHeaderSecretResponse)
+	err := c.cc.Invoke(ctx, Secretd_OpenEdgeHeaderSecret_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SecretdServer is the server API for Secretd service.
 // All implementations must embed UnimplementedSecretdServer
 // for forward compatibility.
@@ -162,6 +181,14 @@ type SecretdServer interface {
 	// (ADR-20261110210000 slice 3g). Broker triggers are polled only by the
 	// app's owner node, so the owner-or-grant rule applies.
 	OpenTriggerConfig(context.Context, *OpenTriggerConfigRequest) (*OpenTriggerConfigResponse, error)
+	// OpenEdgeHeaderSecret opens one sealed edge-rule request header value by
+	// reference for the node that runs an instance of target_app_id
+	// (ADR-20261110210000 slice 3i): the caller owns target_app_id or holds a
+	// grant for it, secret_app_id has the same resource account (a route rule
+	// may send one app's host to another app of the account), and one of
+	// secret_app_id's headers rules still references the value. secretd reads
+	// edge_rule_header_secrets itself and opens it with the edge seal domain.
+	OpenEdgeHeaderSecret(context.Context, *OpenEdgeHeaderSecretRequest) (*OpenEdgeHeaderSecretResponse, error)
 	mustEmbedUnimplementedSecretdServer()
 }
 
@@ -189,6 +216,9 @@ func (UnimplementedSecretdServer) OpenLogDrainHeader(context.Context, *OpenLogDr
 }
 func (UnimplementedSecretdServer) OpenTriggerConfig(context.Context, *OpenTriggerConfigRequest) (*OpenTriggerConfigResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method OpenTriggerConfig not implemented")
+}
+func (UnimplementedSecretdServer) OpenEdgeHeaderSecret(context.Context, *OpenEdgeHeaderSecretRequest) (*OpenEdgeHeaderSecretResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method OpenEdgeHeaderSecret not implemented")
 }
 func (UnimplementedSecretdServer) mustEmbedUnimplementedSecretdServer() {}
 func (UnimplementedSecretdServer) testEmbeddedByValue()                 {}
@@ -319,6 +349,24 @@ func _Secretd_OpenTriggerConfig_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Secretd_OpenEdgeHeaderSecret_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OpenEdgeHeaderSecretRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SecretdServer).OpenEdgeHeaderSecret(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Secretd_OpenEdgeHeaderSecret_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SecretdServer).OpenEdgeHeaderSecret(ctx, req.(*OpenEdgeHeaderSecretRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Secretd_ServiceDesc is the grpc.ServiceDesc for Secretd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -349,6 +397,10 @@ var Secretd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "OpenTriggerConfig",
 			Handler:    _Secretd_OpenTriggerConfig_Handler,
+		},
+		{
+			MethodName: "OpenEdgeHeaderSecret",
+			Handler:    _Secretd_OpenEdgeHeaderSecret_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
