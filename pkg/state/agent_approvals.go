@@ -43,6 +43,9 @@ type AgentApproval struct {
 	// Reason is what the agent said the request is for
 	// (Gregale-Agent-Reason, ADR-20261110182236); empty when it gave none.
 	Reason string
+	// BudgetCostMillicents is a budget request's added monthly cost
+	// (category budget, ADR-20261111114059); zero otherwise.
+	BudgetCostMillicents int64
 	// ReviewURL is the review page, and AgentName the connection's name, for
 	// a new request's webhook event and notification (ADR-20261107140000
 	// §4, §5). Neither is stored on the request.
@@ -179,6 +182,7 @@ func (s *PgStore) RequestAgentApproval(ctx context.Context, request AgentApprova
 		ID: mustPgUUID(request.ID), KeyID: key, AccountID: mustPgUUID(request.AccountID), OrgID: mustPgUUID(request.OrgID),
 		Category: request.Category, Method: request.Method, Path: request.Path, BodySha256: request.BodySHA256,
 		ExpiresAt: pgTime(request.ExpiresAt), Reason: pgText(request.Reason),
+		BudgetCostMillicents: budgetCostParam(request),
 	}); err != nil {
 		return AgentApproval{}, mapErr(err)
 	}
@@ -317,7 +321,7 @@ func agentApprovalFromRow(row sqlc.AgentApprovalRequest) AgentApproval {
 		Category: row.Category, Method: row.Method, Path: row.Path, BodySHA256: row.BodySha256, Status: row.Status,
 		DecidedBy: pgUUIDString(row.DecidedBy), CreatedAt: row.CreatedAt.Time, DecidedAt: row.DecidedAt.Time,
 		ConsumedAt: row.ConsumedAt.Time, ExpiresAt: row.ExpiresAt.Time, Note: row.DecisionNote.String,
-		Reason: row.Reason.String,
+		Reason: row.Reason.String, BudgetCostMillicents: row.BudgetCostMillicents.Int64,
 	}
 }
 
@@ -396,7 +400,7 @@ func (m *MemStore) RequestAgentApproval(_ context.Context, request AgentApproval
 	if !m.hasKeyLocked(request.KeyID) {
 		return AgentApproval{}, ErrNotFound
 	}
-	if !slices.Contains(api.AgentApprovalCategories, request.Category) {
+	if !slices.Contains(api.AgentApprovalCategories, request.Category) && request.Category != api.AgentApprovalBudget {
 		return AgentApproval{}, ErrConflict
 	}
 	now := time.Now()

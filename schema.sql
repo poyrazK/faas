@@ -30072,8 +30072,9 @@ CREATE TABLE public.agent_approval_requests (
     expires_at timestamp with time zone NOT NULL,
     decision_note text,
     reason text,
+    budget_cost_millicents bigint,
     CONSTRAINT agent_approval_requests_body_sha256_check CHECK (((body_sha256 IS NULL) OR (length(body_sha256) = 32))),
-    CONSTRAINT agent_approval_requests_category_check CHECK ((category = ANY (ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text]))),
+    CONSTRAINT agent_approval_requests_category_budget_check CHECK ((category = ANY (ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text, 'budget'::text]))),
     CONSTRAINT agent_approval_requests_check CHECK (((status = 'pending'::text) = (decided_at IS NULL))),
     CONSTRAINT agent_approval_requests_check1 CHECK (((status = 'consumed'::text) = (consumed_at IS NOT NULL))),
     CONSTRAINT agent_approval_requests_method_check CHECK ((method = ANY (ARRAY['POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text]))),
@@ -30087,6 +30088,20 @@ CREATE TABLE public.agent_approval_requests (
 --
 
 COMMENT ON TABLE public.agent_approval_requests IS 'ADR-20261104140058 agent requests awaiting or holding a person''s approval; apid is the only writer.';
+
+
+--
+-- Name: agent_budget_spend; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_budget_spend (
+    key_id uuid NOT NULL,
+    month date NOT NULL,
+    spent_millicents bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_budget_spend_month_check CHECK ((month = (date_trunc('month'::text, (month)::timestamp with time zone))::date)),
+    CONSTRAINT agent_budget_spend_spent_millicents_check CHECK ((spent_millicents >= 0))
+);
 
 
 --
@@ -30205,6 +30220,19 @@ CREATE TABLE public.agent_execution_workflows (
     CONSTRAINT agent_execution_workflows_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text]))),
     CONSTRAINT agent_execution_workflows_step_count_check CHECK (((step_count >= 1) AND (step_count <= 16))),
     CONSTRAINT agent_execution_workflows_updated_check CHECK ((updated_at >= created_at))
+);
+
+
+--
+-- Name: agent_key_budgets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_key_budgets (
+    key_id uuid NOT NULL,
+    monthly_cents bigint,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by uuid,
+    CONSTRAINT agent_key_budgets_monthly_cents_check CHECK (((monthly_cents IS NULL) OR ((monthly_cents >= 0) AND (monthly_cents <= 100000000))))
 );
 
 
@@ -49473,6 +49501,7 @@ CREATE TABLE public.org_agent_policies (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_by uuid,
     approval_categories text[] DEFAULT '{}'::text[] NOT NULL,
+    max_agent_budget_cents bigint,
     CONSTRAINT org_agent_policies_allowed_scopes_check CHECK ((allowed_scopes <@ ARRAY['deploy:write'::text, 'secrets:request'::text, 'storage:manage'::text, 'postgres:manage'::text])),
     CONSTRAINT org_agent_policies_approval_categories_check CHECK ((approval_categories <@ ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text]))
 );
@@ -59543,6 +59572,14 @@ ALTER TABLE ONLY public.agent_approval_notifications
 
 
 --
+-- Name: agent_approval_requests agent_approval_requests_budget_cost_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.agent_approval_requests
+    ADD CONSTRAINT agent_approval_requests_budget_cost_check CHECK (((budget_cost_millicents IS NULL) OR (budget_cost_millicents >= 0))) NOT VALID;
+
+
+--
 -- Name: agent_approval_requests agent_approval_requests_decision_note_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -59564,6 +59601,14 @@ ALTER TABLE ONLY public.agent_approval_requests
 
 ALTER TABLE public.agent_approval_requests
     ADD CONSTRAINT agent_approval_requests_reason_check CHECK (((reason IS NULL) OR ((char_length(reason) >= 1) AND (char_length(reason) <= 280)))) NOT VALID;
+
+
+--
+-- Name: agent_budget_spend agent_budget_spend_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_budget_spend
+    ADD CONSTRAINT agent_budget_spend_pkey PRIMARY KEY (key_id, month);
 
 
 --
@@ -59596,6 +59641,14 @@ ALTER TABLE ONLY public.agent_deliveries
 
 ALTER TABLE ONLY public.agent_execution_workflows
     ADD CONSTRAINT agent_execution_workflows_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_key_budgets agent_key_budgets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_key_budgets
+    ADD CONSTRAINT agent_key_budgets_pkey PRIMARY KEY (key_id);
 
 
 --
@@ -68044,6 +68097,14 @@ ALTER TABLE ONLY public.org_activity
 
 ALTER TABLE ONLY public.org_activity
     ADD CONSTRAINT org_activity_source_unique UNIQUE (org_id, source_type, source_id);
+
+
+--
+-- Name: org_agent_policies org_agent_policies_max_agent_budget_cents_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.org_agent_policies
+    ADD CONSTRAINT org_agent_policies_max_agent_budget_cents_check CHECK (((max_agent_budget_cents IS NULL) OR ((max_agent_budget_cents >= 0) AND (max_agent_budget_cents <= 100000000)))) NOT VALID;
 
 
 --
@@ -90766,6 +90827,14 @@ ALTER TABLE ONLY public.agent_approval_requests
 
 
 --
+-- Name: agent_budget_spend agent_budget_spend_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_budget_spend
+    ADD CONSTRAINT agent_budget_spend_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
+
+
+--
 -- Name: agent_callback_revocations agent_callback_revocations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -90795,6 +90864,14 @@ ALTER TABLE ONLY public.agent_deliveries
 
 ALTER TABLE ONLY public.agent_execution_workflows
     ADD CONSTRAINT agent_execution_workflows_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_key_budgets agent_key_budgets_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_key_budgets
+    ADD CONSTRAINT agent_key_budgets_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
 
 
 --

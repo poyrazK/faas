@@ -43,6 +43,8 @@ type PendingAgentApprovalLine struct {
 	Path       string
 	ExpiresAt  time.Time
 	Reason     string // the agent's reason, if it gave one
+	// BudgetCostMillicents is a budget request's added monthly cost.
+	BudgetCostMillicents int64
 }
 
 // AgentApprovalNotificationStore is meterd's side of the notification outbox.
@@ -135,6 +137,7 @@ func (s *PgStore) PendingAgentApprovalNotificationsForKey(ctx context.Context, k
 		out = append(out, PendingAgentApprovalLine{
 			ApprovalID: pgUUIDString(row.ApprovalID), ReviewURL: row.ReviewUrl, Category: row.Category,
 			Method: row.Method, Path: row.Path, ExpiresAt: row.ExpiresAt.Time, Reason: row.Reason.String,
+			BudgetCostMillicents: row.BudgetCostMillicents.Int64,
 		})
 	}
 	return out, nil
@@ -268,6 +271,7 @@ func (m *MemStore) PendingAgentApprovalNotificationsForKey(_ context.Context, ke
 		}
 		lines = append(lines, line{PendingAgentApprovalLine{
 			ApprovalID: id, ReviewURL: n.ReviewURL, Category: a.Category, Method: a.Method, Path: a.Path, ExpiresAt: a.ExpiresAt, Reason: a.Reason,
+			BudgetCostMillicents: a.BudgetCostMillicents,
 		}, a.CreatedAt})
 	}
 	sort.Slice(lines, func(i, j int) bool { return lines[i].created.Before(lines[j].created) })

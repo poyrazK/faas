@@ -1421,9 +1421,12 @@ type MemStore struct {
 	agentApprovalChannelBindings []memApprovalChannelBinding
 	// ADR-20261107220000: agent keys' write requests.
 	agentActivity []AgentActivity
-	orgsBySlug    map[string]string // lower(slug) -> id
-	memberships   map[orgAccountKey]OrgMembership
-	invitations   map[string]OrgInvitation // hex(hash) -> OrgInvitation
+	// ADR-20261111114059: agent keys' budgets and monthly spend.
+	agentKeyBudgets  map[string]AgentKeyBudget
+	agentBudgetSpend map[agentBudgetSpendKey]int64
+	orgsBySlug       map[string]string // lower(slug) -> id
+	memberships      map[orgAccountKey]OrgMembership
+	invitations      map[string]OrgInvitation // hex(hash) -> OrgInvitation
 	// computeNodes mirrors the compute_nodes table; keyed by id (issue
 	// #97 / ADR-025 axis 3). The synthetic 'default-local' row is
 	// seeded by NewMemStore so tests don't have to call

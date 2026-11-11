@@ -29,10 +29,11 @@ DELETE FROM agent_approval_requests
 WHERE key_id = sqlc.arg(key_id)::uuid AND expires_at < now() - interval '7 days';
 
 -- name: InsertAgentApproval :exec
-INSERT INTO agent_approval_requests (id, key_id, account_id, org_id, category, method, path, body_sha256, expires_at, reason)
+INSERT INTO agent_approval_requests (id, key_id, account_id, org_id, category, method, path, body_sha256, expires_at, reason,
+                                     budget_cost_millicents)
 VALUES (sqlc.arg(id)::uuid, sqlc.arg(key_id)::uuid, sqlc.arg(account_id)::uuid, sqlc.arg(org_id)::uuid,
         sqlc.arg(category), sqlc.arg(method), sqlc.arg(path), sqlc.narg(body_sha256)::bytea, sqlc.arg(expires_at),
-        sqlc.narg(reason));
+        sqlc.narg(reason), sqlc.narg(budget_cost_millicents)::bigint);
 
 -- name: ConsumeAgentApproval :one
 -- Uses one approved, unexpired request with the same binding, in the same
@@ -55,12 +56,12 @@ RETURNING id;
 
 -- name: GetAgentApproval :one
 SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
-       created_at, decided_at, consumed_at, expires_at, decision_note, reason
+       created_at, decided_at, consumed_at, expires_at, decision_note, reason, budget_cost_millicents
 FROM agent_approval_requests WHERE id = sqlc.arg(id)::uuid;
 
 -- name: ListAgentApprovalsForKey :many
 SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
-       created_at, decided_at, consumed_at, expires_at, decision_note, reason
+       created_at, decided_at, consumed_at, expires_at, decision_note, reason, budget_cost_millicents
 FROM agent_approval_requests
 WHERE key_id = sqlc.arg(key_id)::uuid
 ORDER BY created_at DESC
@@ -70,7 +71,7 @@ LIMIT sqlc.arg(max_rows)::int;
 -- Undecided requests of agents the account connected, or of agents acting in
 -- the organizations given (those the account owns or administers).
 SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
-       created_at, decided_at, consumed_at, expires_at, decision_note, reason
+       created_at, decided_at, consumed_at, expires_at, decision_note, reason, budget_cost_millicents
 FROM agent_approval_requests
 WHERE status = 'pending' AND expires_at > now()
   AND (account_id = sqlc.arg(account_id)::uuid OR org_id = ANY(sqlc.arg(org_ids)::uuid[]))
@@ -82,7 +83,7 @@ LIMIT sqlc.arg(max_rows)::int;
 -- when it was denied, or expired undecided or unused, within the window. A
 -- newer request of any other status (pending, approved, consumed) hides it.
 SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
-       created_at, decided_at, consumed_at, expires_at, decision_note, reason
+       created_at, decided_at, consumed_at, expires_at, decision_note, reason, budget_cost_millicents
 FROM (
     SELECT * FROM agent_approval_requests
     WHERE key_id = sqlc.arg(key_id)::uuid
@@ -117,7 +118,7 @@ SET status = sqlc.arg(status), decided_by = sqlc.arg(decided_by)::uuid, decided_
     decision_note = sqlc.narg(decision_note)
 WHERE id = sqlc.arg(id)::uuid AND status = 'pending' AND expires_at > now()
 RETURNING id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
-          created_at, decided_at, consumed_at, expires_at, decision_note, reason;
+          created_at, decided_at, consumed_at, expires_at, decision_note, reason, budget_cost_millicents;
 
 -- name: InsertAgentApprovalNotification :exec
 -- ADR-20261107140000 §5: tell people about a new request; apid inserts it in
@@ -144,7 +145,7 @@ RETURNING n.approval_id, n.account_id, n.org_id, n.key_id, n.agent_name, n.revie
 -- name: PendingAgentApprovalNotificationsForKey :many
 -- The key's notifications still waiting whose requests are still pending and
 -- unexpired: what one email lists.
-SELECT n.approval_id, n.review_url, r.category, r.method, r.path, r.expires_at, r.reason
+SELECT n.approval_id, n.review_url, r.category, r.method, r.path, r.expires_at, r.reason, r.budget_cost_millicents
 FROM agent_approval_notifications n
 JOIN agent_approval_requests r ON r.id = n.approval_id
 WHERE n.key_id = sqlc.arg(key_id)::uuid AND n.state = 'pending'

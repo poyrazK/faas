@@ -10990,6 +10990,26 @@ func (p Plan) DefaultOverageCapCents() (int64, bool) {
 	return int64(p.PlanIncludedGBHours()) * DefaultOverageCapAllowances * OverageMillicentsPerGBHour / MillicentsPerCent, true
 }
 
+// AgentBudgetDefaultCents is the monthly budget for committed cost an agent
+// key gets when neither it nor its organization chose one
+// (ADR-20261111114059): half the plan's default spend cap, so Hobby $5, Pro
+// $25, Scale $75. Free has none: it cannot keep instances warm.
+func (p Plan) AgentBudgetDefaultCents() int64 {
+	spendCap, ok := p.DefaultOverageCapCents()
+	if !ok {
+		return 0
+	}
+	return spendCap / 2
+}
+
+// MaxAgentBudgetCents bounds a budget a key or an organization sets
+// (ADR-20261111114059): $1,000,000 a month, the column CHECK.
+const MaxAgentBudgetCents int64 = 100_000_000
+
+// AgentBudgetHoursPerMonth prices committed cost over an average month
+// (8,760 h / 12).
+const AgentBudgetHoursPerMonth = 730
+
 // Self-service spend cap ceilings per paid plan, in cents (ADR-20261105120000,
 // owner's numbers 2026-11-07): Hobby $75, Pro $200, Scale $1,000. A larger
 // cap is an operator change.

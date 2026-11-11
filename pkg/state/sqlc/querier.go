@@ -79,6 +79,8 @@ type Querier interface {
 	ActiveSafeProjectReleaseID(ctx context.Context, db DBTX, projectID string) (string, error)
 	ActiveServiceProjectReleaseTargets(ctx context.Context, db DBTX, appID pgtype.UUID) ([]string, error)
 	ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppTcpListener, error)
+	// Spend only grows: a change that lowers cost records nothing.
+	AddAgentBudgetSpend(ctx context.Context, db DBTX, arg AddAgentBudgetSpendParams) error
 	AddDatabaseEgress(ctx context.Context, db DBTX, arg AddDatabaseEgressParams) error
 	// ADR-20261103113952 amendment 2: the same flush folded to UTC hours, in
 	// the same shape as AddRequestAnalyticsMinutes.
@@ -1068,6 +1070,7 @@ type Querier interface {
 	DeleteAgentActivityBefore(ctx context.Context, db DBTX, arg DeleteAgentActivityBeforeParams) (int64, error)
 	// ADR-20261107140000 §3: clear one scope's bindings before setting them.
 	DeleteAgentApprovalChannelBindings(ctx context.Context, db DBTX, arg DeleteAgentApprovalChannelBindingsParams) error
+	DeleteAgentKeyBudget(ctx context.Context, db DBTX, keyID pgtype.UUID) error
 	DeleteAlertChannelResolveRetry(ctx context.Context, db DBTX, arg DeleteAlertChannelResolveRetryParams) error
 	DeleteAlertChannelStandDown(ctx context.Context, db DBTX, arg DeleteAlertChannelStandDownParams) error
 	// ADR-749 slice 2: alert rule -> notification channel bindings.
@@ -2181,6 +2184,9 @@ type Querier interface {
 	GetAgentApproval(ctx context.Context, db DBTX, id pgtype.UUID) (AgentApprovalRequest, error)
 	GetAgentApprovalEmailLastSent(ctx context.Context, db DBTX, arg GetAgentApprovalEmailLastSentParams) (pgtype.Timestamptz, error)
 	GetAgentApprovalRequestState(ctx context.Context, db DBTX, id pgtype.UUID) (GetAgentApprovalRequestStateRow, error)
+	GetAgentBudgetSpend(ctx context.Context, db DBTX, arg GetAgentBudgetSpendParams) (int64, error)
+	// ADR-20261111114059: the key's own budget; no row means the plan default.
+	GetAgentKeyBudget(ctx context.Context, db DBTX, keyID pgtype.UUID) (pgtype.Int8, error)
 	GetAlertRollback(ctx context.Context, db DBTX, arg GetAlertRollbackParams) ([]byte, error)
 	GetAppConfigGuard(ctx context.Context, db DBTX, id pgtype.UUID) (AppConfigGuard, error)
 	GetAppConfigRevision(ctx context.Context, db DBTX, arg GetAppConfigRevisionParams) (GetAppConfigRevisionRow, error)
@@ -8131,6 +8137,7 @@ type Querier interface {
 	// Replay admissions update fairness without rewriting the scheduler cursor's
 	// last outcome or nominal schedule time.
 	UpdateWorkflowScheduleLastAdmittedAt(ctx context.Context, db DBTX, arg UpdateWorkflowScheduleLastAdmittedAtParams) (int64, error)
+	UpsertAgentKeyBudget(ctx context.Context, db DBTX, arg UpsertAgentKeyBudgetParams) error
 	// ADR-20261020085706: release approvals.
 	UpsertAppReleaseApprovalPolicy(ctx context.Context, db DBTX, arg UpsertAppReleaseApprovalPolicyParams) (AppReleaseApprovalPolicy, error)
 	// Hold the matching claim through the observation write, so a replacement
