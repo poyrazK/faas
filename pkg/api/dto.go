@@ -1057,6 +1057,10 @@ type UpdateAppRequest struct {
 	// call and their app slugs (ADR-20261111150000); {} clears them. It takes
 	// effect on the next deploy, as GREGALE_FUNCTIONS.
 	FunctionCallables *map[string]string `json:"function_callables,omitempty"`
+	// FunctionInputSchema replaces the JSON Schema typed-client calls to
+	// the function are checked against; {} clears it. It takes effect on
+	// the next deploy.
+	FunctionInputSchema *json.RawMessage `json:"function_input_schema,omitempty"`
 	// RequestRateLimitRPS and RequestRateLimitBurst override the app-wide
 	// request token bucket without changing the deployment. Zero restores the
 	// plan default; positive values may lower, but never exceed, the plan cap.
@@ -2050,6 +2054,9 @@ type AppResponse struct {
 	// FunctionCallables are the names the function's typed client may call
 	// and their app slugs (ADR-20261111150000).
 	FunctionCallables map[string]string `json:"function_callables,omitempty"`
+	// FunctionInputSchema is the JSON Schema typed-client calls to the
+	// function are checked against (ADR-20261111150000).
+	FunctionInputSchema json.RawMessage `json:"function_input_schema,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
 	MinInstances int    `json:"min_instances"`

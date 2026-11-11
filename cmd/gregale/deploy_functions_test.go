@@ -848,3 +848,51 @@ func TestFunctionSetBindsSiblingsForTypedClients(t *testing.T) {
 		t.Errorf("GREGALE_FUNCTIONS must not be written as user env: %v", client.env["shop-web"])
 	}
 }
+
+// ADR-20261111150000 §1: the deploy sets each function's input schema from
+// gregale.yaml before its build.
+func TestFunctionSetSetsInputSchema(t *testing.T) {
+	manifest := "functions:\n  - name: users\n    root: u\n    runtime: node24\n    input:\n      type: object\n      required: [email]\n"
+	dir := writeFunctionProject(t, manifest, "u")
+	m, _, _ := functionSetManifest(dir)
+	client := newFakeFunctionSetClient()
+	client.apps["shop-users"] = api.AppResponse{ID: testFunctionAppID, Slug: "shop-users", Type: "function"}
+	var out bytes.Buffer
+	d := functionSetDeploy{cwd: dir, projectDir: dir, projectSlug: "shop", manifest: m, out: &out,
+		deployOne: func([]string) int { return 0 }}
+	if code := d.run(context.Background(), client); code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out.String())
+	}
+	var got json.RawMessage
+	for _, u := range client.updates["shop-users"] {
+		if u.FunctionInputSchema != nil {
+			got = *u.FunctionInputSchema
+		}
+	}
+	if !jsonEqual(got, json.RawMessage(`{"type":"object","required":["email"]}`)) {
+		t.Fatalf("function_input_schema = %s", got)
+	}
+}
+
+// A schema the config no longer declares is cleared with {}; an unchanged one
+// is not rewritten.
+func TestFunctionInputSchemaUpdate(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object"}`)
+	for _, tc := range []struct {
+		name              string
+		current, declared json.RawMessage
+		want              string
+		set               bool
+	}{
+		{"neither", nil, nil, "", false},
+		{"new", nil, schema, `{"type":"object"}`, true},
+		{"same up to spacing", json.RawMessage(`{ "type": "object" }`), schema, "", false},
+		{"changed", json.RawMessage(`{"type":"array"}`), schema, `{"type":"object"}`, true},
+		{"dropped", schema, nil, `{}`, true},
+	} {
+		got, set := functionInputSchemaUpdate(tc.current, tc.declared)
+		if set != tc.set || string(got) != tc.want {
+			t.Errorf("%s: got %s %v, want %s %v", tc.name, got, set, tc.want, tc.set)
+		}
+	}
+}

@@ -266,6 +266,21 @@ func applyFunctionCallables(manifest api.AppManifest, app state.App) api.AppMani
 	return manifest
 }
 
+// applyFunctionInputSchema gives a function's adapter the schema it checks
+// typed-client calls against (ADR-20261111150000).
+func applyFunctionInputSchema(manifest api.AppManifest, app state.App) api.AppManifest {
+	if len(app.Manifest.FunctionInputSchema) == 0 {
+		return manifest
+	}
+	env := maps.Clone(manifest.Env)
+	if env == nil {
+		env = map[string]string{}
+	}
+	env[api.FunctionInputSchemaEnv] = string(app.Manifest.FunctionInputSchema)
+	manifest.Env = env
+	return manifest
+}
+
 // applyFunctionConcurrency tells a function's generated adapter how many
 // requests one worker may serve at once (ADR-1342). The default of one
 // leaves the env untouched, so existing functions build exactly as before.

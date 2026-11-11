@@ -46,6 +46,17 @@ Owner decisions on 2026-11-11 (all were the recommended options).
    The callee checks its input against its own schema before the handler
    runs and answers 422 `function_input_invalid` naming the failing path, so
    a caller built from an older schema fails loudly at the boundary.
+   Mechanics: the deploy sets the app's `function_input_schema` (≤ 64 KiB,
+   too large for a plan-capped env value, so an app setting like
+   `function_callables`); imaged stamps it as `FAAS_FUNCTION_INPUT_SCHEMA`;
+   the Node and Python adapters check only requests carrying
+   `X-Gregale-Function-Call: 1`, which the SDK client always sends, so a
+   function's browser, webhook and plain service traffic is never checked.
+   The checker covers type, enum, const, properties, required,
+   additionalProperties, items, min/maxItems, min/maxLength, pattern and
+   the numeric bounds, and ignores other keywords rather than refusing on
+   them. Repository pushes leave the schema as it is (they do not read
+   schema files); a CLI deploy sets it.
 
 2. **Transport is an automatic private binding.** At deploy every function
    in a functions project gets service bindings to each of its siblings
@@ -118,6 +129,8 @@ Owner decisions on 2026-11-11 (all were the recommended options).
   an unrelated app by `.svc.gregale` must list it under `calls:`; the deploy
   plan names that change the first time.
 - `function_callables` is a new app setting (PATCH and the app response), stamped as `GREGALE_FUNCTIONS`.
+- `function_input_schema` is a new app setting, stamped as
+  `FAAS_FUNCTION_INPUT_SCHEMA`; `function_input_invalid` is a new error code.
 
 ## Alternatives considered
 

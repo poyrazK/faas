@@ -44,6 +44,7 @@ def test_async_send_asks_for_an_async_invocation():
     sent = asyncio.run(fns.mailer.send({"to": "a@example.com"}))
     assert sent.invocation_id == "inv-1"
     assert seen[0].headers["x-gregale-invoke"] == "async"
+    assert seen[0].headers["x-gregale-function-call"] == "1"
 
 
 def test_a_non_2xx_answer_raises_with_the_problem():

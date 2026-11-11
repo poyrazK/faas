@@ -30,6 +30,8 @@ import httpx
 from .release_context import AsyncGregaleReleaseTransport, GregaleReleaseTransport
 
 GREGALE_INVOKE_HEADER = "X-Gregale-Invoke"
+# Marks a typed-client call; the callee checks only these against its input schema.
+GREGALE_FUNCTION_CALL_HEADER = "X-Gregale-Function-Call"
 GREGALE_FUNCTIONS_ENV = "GREGALE_FUNCTIONS"
 
 
@@ -121,7 +123,8 @@ class FunctionClient:
         self._async = async_client
 
     def _request(self, input: Any, path: str, headers: Mapping[str, str] | None, send: bool) -> dict[str, Any]:
-        all_headers = {"content-type": "application/json", "accept": "application/json", **(headers or {})}
+        all_headers = {"content-type": "application/json", "accept": "application/json", **(headers or {}),
+                       GREGALE_FUNCTION_CALL_HEADER: "1"}
         if send:
             all_headers[GREGALE_INVOKE_HEADER] = "async"
         return {

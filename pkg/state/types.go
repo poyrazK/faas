@@ -2095,6 +2095,10 @@ type AppManifest struct {
 	// its app slug (ADR-20261111150000); imaged stamps it as
 	// GREGALE_FUNCTIONS.
 	FunctionCallables map[string]string `json:"function_callables,omitempty"`
+	// FunctionInputSchema is the JSON Schema a function's adapter checks
+	// typed-client calls against (ADR-20261111150000 §1); imaged stamps it
+	// as FAAS_FUNCTION_INPUT_SCHEMA.
+	FunctionInputSchema json.RawMessage `json:"function_input_schema,omitempty"`
 }
 
 // EffectiveCrawlerPolicy returns the persisted policy or the backwards-

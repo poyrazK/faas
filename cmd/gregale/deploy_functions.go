@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -477,7 +478,7 @@ func (d functionSetDeploy) lookupEnv() func(string) string {
 // first, without a deployment.
 func (d functionSetDeploy) applySettings(ctx context.Context, client functionSetClient, fn plannedFunction) error {
 	callable := len(fn.calls.Names) > 0
-	if !fn.spec.HasPreDeploySettings() && !callable {
+	if !fn.spec.HasPreDeploySettings() && !callable && len(fn.spec.InputSchema) == 0 {
 		return nil
 	}
 	app, err := client.GetApp(ctx, fn.slug)
@@ -510,6 +511,9 @@ func (d functionSetDeploy) applySettings(ctx context.Context, client functionSet
 			names := maps.Clone(fn.calls.Names)
 			update.FunctionCallables, changed = &names, true
 		}
+	}
+	if schema, set := functionInputSchemaUpdate(app.FunctionInputSchema, fn.spec.InputSchema); set {
+		update.FunctionInputSchema, changed = &schema, true
 	}
 	if changed {
 		if _, err := client.UpdateApp(ctx, fn.slug, update); err != nil {
@@ -938,4 +942,28 @@ func deployFunctionSet(ctx context.Context, d functionSetDeploy) int {
 		}
 	}
 	return d.run(ctx, client)
+}
+
+// functionInputSchemaUpdate is the function_input_schema PATCH for a
+// function's declared input schema: set when it differs, {} to clear one the
+// code no longer declares (ADR-20261111150000 §1).
+func functionInputSchemaUpdate(current, declared json.RawMessage) (json.RawMessage, bool) {
+	if len(declared) == 0 {
+		if len(current) == 0 {
+			return nil, false
+		}
+		return json.RawMessage(`{}`), true
+	}
+	if jsonEqual(current, declared) {
+		return nil, false
+	}
+	return declared, true
+}
+
+func jsonEqual(a, b json.RawMessage) bool {
+	var x, y any
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return false
+	}
+	return reflect.DeepEqual(x, y)
 }

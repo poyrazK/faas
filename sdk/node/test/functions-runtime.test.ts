@@ -45,6 +45,7 @@ test('send asks for an async invocation and returns its id', async () => {
   const fns = createFunctions<Fns>({ functions: { mailer: 'shop-mailer' }, env: {}, fetch });
   assert.deepEqual(await fns.mailer.send({ to: 'a@example.com' }), { invocationId: 'inv-1' });
   assert.equal(new Headers(calls[0]?.init.headers).get('x-gregale-invoke'), 'async');
+  assert.equal(new Headers(calls[0]?.init.headers).get('x-gregale-function-call'), '1');
 });
 
 test('a non-2xx answer raises FunctionCallError with the problem', async () => {

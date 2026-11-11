@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -44,4 +45,13 @@ func nonEmptyCallables(callables map[string]string) map[string]string {
 		return nil
 	}
 	return maps.Clone(callables)
+}
+
+// nonEmptySchema stores {} as nil, so an empty object clears the schema.
+func nonEmptySchema(raw json.RawMessage) json.RawMessage {
+	var schema map[string]any
+	if json.Unmarshal(raw, &schema) != nil || len(schema) == 0 {
+		return nil
+	}
+	return append(json.RawMessage(nil), raw...)
 }

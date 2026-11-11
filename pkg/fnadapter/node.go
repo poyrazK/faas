@@ -76,7 +76,7 @@ const output = (id) => {
   };
   return out;
 };
-` + NodeBackground + `
+` + NodeBackground + NodeInputSchema + `
 const toBuffer = (piece) => Buffer.isBuffer(piece) ? piece
   : piece instanceof Uint8Array ? Buffer.from(piece.buffer, piece.byteOffset, piece.byteLength)
   : Buffer.from(String(piece));
@@ -179,6 +179,13 @@ async function handleOne(input, out) {
   const env = typeof input === "string" ? JSON.parse(input) : input;
   if (typeof env.function_hook === "string" && env.function_hook !== "") {
     await runFunctionHook(env, out);
+    return;
+  }
+  // A typed-client call whose body breaks the function's input schema is
+  // refused before the handler runs (ADR-20261111150000 §1).
+  const inputProblem = functionInputProblem(env, env.headers);
+  if (inputProblem) {
+    emitInputProblem(out, inputProblem);
     return;
   }
   setupBackground(env, out);

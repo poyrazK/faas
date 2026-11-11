@@ -17,6 +17,8 @@ import { createGregaleFetch } from './release-context.js';
 
 /** Header asking the service proxy to enqueue an async invocation. */
 export const GREGALE_INVOKE_HEADER = 'X-Gregale-Invoke';
+/** Marks a typed-client call; the callee checks only these against its input schema. */
+export const GREGALE_FUNCTION_CALL_HEADER = 'X-Gregale-Function-Call';
 /** Env variable a deploy sets: callable name -> app slug. */
 export const GREGALE_FUNCTIONS_ENV = 'GREGALE_FUNCTIONS';
 
@@ -133,6 +135,7 @@ export function createFunctions<M = GregaleFunctions>(options: CreateFunctionsOp
     const request = async (input: unknown, opts: FunctionCallOptions | undefined, async: boolean): Promise<Response> => {
       const path = opts?.path ?? '/';
       const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json', ...opts?.headers };
+      headers[GREGALE_FUNCTION_CALL_HEADER] = '1';
       if (async) headers[GREGALE_INVOKE_HEADER] = 'async';
       const res = await fetchImpl(baseURL(slug) + (path.startsWith('/') ? path : '/' + path), {
         method: 'POST', headers, body: JSON.stringify(input ?? null), ...(opts?.signal ? { signal: opts.signal } : {}),
