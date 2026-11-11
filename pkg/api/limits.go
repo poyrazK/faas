@@ -8583,6 +8583,11 @@ const (
 	// MaxRequestBodyBytes (which bounds inbound request bodies, not
 	// schema documents).
 	MaxEdgeRuleValidateSchemaBytes = 64 * 1024 // 64 KiB
+	// Exact validation arithmetic has a separate per-number work bound
+	// (ADR-20261111140000), independent of the request/schema byte ceiling.
+	MaxEdgeRuleValidateNumberBytes     = 4096
+	MaxEdgeRuleValidateNumberExponent  = 4096
+	MaxEdgeRuleValidateNumberWorkBytes = MaxRequestBodyBytes
 
 	// MaxEdgeRuleRespondBodyBytes bounds the JSON body stored in a
 	// preview-only kind=respond rule. Keeping this bounded protects both

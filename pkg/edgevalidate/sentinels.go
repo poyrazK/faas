@@ -60,6 +60,16 @@ const MaxSchemaBytes = 64 * 1024
 // to validate {"a":1} in the shared gateway (bug hunt 2026-10-28 H58).
 const MaxSchemaCombinatorDepth = 8
 
+// These mirror api.MaxEdgeRuleValidateNumberBytes/NumberExponent. Keeping
+// the validator independent of pkg/api avoids a dependency cycle.
+const MaxNumberBytes = 4096
+const MaxNumberExponent = 4096
+
+// MaxNumberWorkBytes mirrors api.MaxEdgeRuleValidateNumberWorkBytes. Numeric
+// tokens and absolute exponents together consume this request-wide allowance;
+// schema compilation uses the smaller MaxSchemaBytes allowance.
+const MaxNumberWorkBytes = 25 * 1024 * 1024
+
 // Sentinel errors. handler.go (and tests) match on errors.Is to pick
 // the right audit kind / metric outcome. mapParseError translates
 // jsonschema/v6's typed errors into this set so the failure modes
