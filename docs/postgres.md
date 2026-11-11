@@ -17,11 +17,15 @@ Operators: see the [operator guide](managed-postgres.md).
 
 | Plan | Databases | Pooled storage | Compute per month | Restore window | Classes |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Free | 1 | 0.5 GiB | 5 CU-hours | 7 days | development |
+| Free | — | — | — | — | — |
 | Hobby | 1 | 1 GiB | 25 CU-hours | 7 days | development |
 | Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
 | Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
 
+- The Free plan includes no managed PostgreSQL: create, `gregale dev
+  --postgres`, a Compose `postgres` service and restores answer
+  `403 managed_postgres_not_in_plan` there. Upgrade to Hobby or above for a
+  database.
 - Storage is pooled across your databases: one database may use the whole
   pool.
 - Compute suspends when a database is idle. Always-on compute is not part of
@@ -35,8 +39,7 @@ Operators: see the [operator guide](managed-postgres.md).
   lists the databases to delete and the ones to move to a class the plan
   includes. A database whose delete is scheduled no longer counts.
 - A plan can also drop without that check, for example when a subscription
-  ends. Databases the new plan no longer includes are then suspended, never
-  deleted:
+  ends. Databases the new plan no longer includes are then suspended:
   - your oldest databases are kept, up to the plan's database limit;
   - a newer one shows `plan_excess: database_limit`;
   - one in a class the plan does not include shows
@@ -46,9 +49,11 @@ Operators: see the [operator guide](managed-postgres.md).
   credentials and app bindings are kept, but it does not start until you
   upgrade, delete a database, or resize it to an included class. The next
   usage sweep, within minutes, resumes it.
-- When the platform is near capacity, new databases on the Free plan pause
-  first (`503 managed_postgres_new_databases_paused`); paid plans can still
-  create them.
+  - A database still suspended 30 days later is deleted. The email names the
+    date. Its app bindings are removed, and `gregale postgres recover` brings
+    it back for 7 days after that.
+- A subscription that ends drops the account to Free, which includes no
+  databases, so every database it holds is suspended this way.
 
 ## Create a database
 
@@ -175,6 +180,7 @@ Choose the credential with `--access`:
 | `read_only` | Read-only queries, for example `--env READ_DATABASE_URL`. |
 | `migration` | Schema changes. Only the release task receives it, never the serving instances. |
 | `data_api` | The [Data API](data-api.md). |
+| `session` | The same privileges as `read_write` over a direct connection, for serving code that needs session state. |
 
 `read_write` and `data_api` URLs, and `read_only` ones unless they reach a
 replica, go through a connection pooler in transaction mode. Session state does not carry from one transaction to the
@@ -185,7 +191,24 @@ next, so these don't work through it:
 - SQL-level `PREPARE` (driver prepared statements work);
 - temporary tables kept across transactions.
 
-A `migration` binding connects directly and supports all of them.
+A `migration` binding connects directly and supports all of them, but only the
+release task receives it. When the serving app itself needs one of them, bind
+a `session` credential instead:
+
+```sh
+gregale postgres attach orders my-api --access session --env SESSION_DATABASE_URL
+```
+
+Each serving instance then holds its own server connections, so keep its pool
+small: a `session` login allows at most 42 connections across every instance
+of the app (2 per instance at Scale concurrency), and further connections are
+refused with "too many connections for role". Keep ordinary query traffic on a
+pooled `read_write` binding. `session` is offered only where the database
+backend has qualified it (`gregale postgres capabilities` lists it).
+
+An app holds at most 8 managed PostgreSQL bindings on Free, 25 on Hobby, 50 on
+Pro and 100 on Scale. A binding's environment key must start with a letter and
+may not be `PORT` or start with `GREGALE_` or `FAAS_`, which the platform sets.
 
 Run migrations as a release task, with a Procfile `release: npm run migrate` or
 `release.command` in `gregale.yaml`, and point the migration tool at a
@@ -248,13 +271,50 @@ every plan:
   happen together, so a worker restart cannot lose the notice.
 - A second restore past the limit while a copy holds the slot returns
   `403 managed_postgres_restore_slot_in_use`. Purge the copy to restore again.
-- A copy can replace its source on a one-database plan: detach the source's
-  apps and purge it. The source no longer counts, so the copy becomes an
-  ordinary database. The source is kept, with its name and storage, until the
-  copy is deleted.
+- A copy can replace its source on a one-database plan: point your app at
+  the copy, then delete the source. A normal delete is enough; you do not
+  have to purge. Once the source's delete is scheduled, the copy becomes an
+  ordinary database and keeps its bindings past `restore_slot_until`. The
+  source keeps its 7-day undo, but recovering it then needs room under your
+  plan's limit (delete or purge the copy, or upgrade). A purged source is
+  kept, with its name and storage, until the copy is deleted.
 - A [rollback that restores the database](deploys.md#rollbacks-that-restore-the-database)
   never uses the slot: its copy becomes the app's database, so the account
   needs room for it inside the limit.
+
+## Branches
+
+A branch is a restore from the database's latest point: a new database that
+shares its source's storage until it is written to. Use one to test a
+migration or a destructive job against real data, then throw it away.
+
+```sh
+gregale postgres branch orders pr-42 --ttl 2h
+gregale postgres attach pr-42 my-api-pr-42 --env DATABASE_URL
+# run migrations and tests against pr-42
+gregale postgres branch delete orders pr-42 --yes
+```
+
+- `--from live` (the default) takes the latest point, a couple of seconds
+  before the request. `--from 2026-11-06T09:00:00Z` branches from any time in
+  the source's `restore_range`.
+- `--ttl` (5m to 30d, for example `90m`, `2h` or `7d`) purges the branch that
+  long after it is created. `get` and `list` show it as `expires_at`. At that
+  time its bindings are removed and it is purged: there is no undo window. A
+  branch that has branches of its own is kept until they are gone.
+- `gregale postgres branch list orders` lists the branches of `orders`.
+  `branch delete` purges a branch at once, and refuses a database that is not
+  a branch of the one you name.
+- The source and its apps are never changed. A source you delete while it has
+  branches is kept until they are gone.
+- A branch's name is its database name, so it is unique in your account like
+  any database name. With several databases, include the source in it, for
+  example `orders-pr-42`.
+- A branch is a restore: it counts toward your plan's database limit and may
+  take the one restore slot past it (see
+  [Restore to a point in time](#restore-to-a-point-in-time)).
+- In the API, a restore without `point_in_time` is a branch from the latest
+  point, and `ttl_seconds` sets its expiry.
 
 ## Change the compute class
 
@@ -290,6 +350,23 @@ databases by up to two hours.
 - Storage: at the pooled storage limit, writes that would grow a database
   fail. Reads, deletes and `VACUUM` keep working, and nothing is suspended or
   deleted.
+- Egress: your apps and databases share the plan's monthly egress
+  allowance. `usage` shows `egress_allowance_bytes`, what the databases sent
+  (`egress_bytes`) and what the apps sent (`app_egress_bytes`).
+  `egress_state` is `warning` at 80% of the allowance and `held` once the two
+  together reach it: the databases then refuse connections until the 1st of
+  next month or an upgrade. Data a database sends your app counts as
+  database egress.
+- With egress overage on (`gregale billing egress-overage`), your apps use
+  the allowance first and database egress past it is billed at $0.105 per GB.
+  `egress_state` is then `overage`, and the databases are held only at twice
+  the allowance.
+
+When the platform stops a database that is still `ready`, `get`, `list` and
+the API say why in `hold`: `compute_ceiling`, `egress`, `inactive` (the
+account is suspended), `plan_excess` or `preview` (a PR preview database once
+the account used 80% of its compute). `usage` shows `hold` when every database
+of the account is held. A held database keeps its data.
 
 ## Delete, recover and purge
 

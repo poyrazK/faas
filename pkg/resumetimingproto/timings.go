@@ -45,6 +45,12 @@ type Timings struct {
 	ReseedClients        int    `json:"reseed_clients"`
 	ReseedSlowestUs      int64  `json:"reseed_slowest_us"`
 	ReseedSlowestRuntime string `json:"reseed_slowest_runtime,omitempty"`
+	// ReseedUnregistered counts running Node, Python, Bun and Deno processes
+	// the barrier did not reach (ADR-20261109140000); they may replay the
+	// snapshot's random values. ReseedUnregisteredRuntimes is their sorted,
+	// comma-separated runtime labels, "-sidecar" marking a sidecar's.
+	ReseedUnregistered         int    `json:"reseed_unregistered,omitempty"`
+	ReseedUnregisteredRuntimes string `json:"reseed_unregistered_runtimes,omitempty"`
 	// ProfilesUs resumes guest profilers; AfterRestoreUs is the application's
 	// after_restore callback.
 	ProfilesUs     int64 `json:"profiles_us"`

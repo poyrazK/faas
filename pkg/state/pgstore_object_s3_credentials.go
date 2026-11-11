@@ -111,7 +111,7 @@ func insertObjectS3ComputeBindingTx(ctx context.Context, tx pgx.Tx, req ObjectS3
 	if err != nil {
 		return ObjectS3Credential{}, mapErr(err)
 	}
-	if credentialCount >= int64(req.MaxCredentialsPerBucket) || secretCount+int64(len(req.Secrets)) > int64(req.MaxSecretsPerApp) {
+	if credentialCount >= int64(req.MaxCredentialsPerBucket) || secretCount > int64(req.MaxSecretsPerApp) {
 		return ObjectS3Credential{}, ErrConflict
 	}
 	row, err := q.ObjectS3CredentialInsert(ctx, tx, sqlc.ObjectS3CredentialInsertParams{
@@ -232,6 +232,20 @@ func (s *PgStore) PendingObjectS3CredentialRotation(ctx context.Context, account
 		return "", nil
 	}
 	return wakeID, mapErr(err)
+}
+
+func (s *PgStore) PendingObjectS3CredentialRotations(ctx context.Context, accountID, bucketID string) (map[string]string, error) {
+	rows, err := sqlc.New().ObjectS3CredentialRotationsPendingForBucket(ctx, s.pool, sqlc.ObjectS3CredentialRotationsPendingForBucketParams{
+		AccountID: mustPgUUID(accountID), BucketID: mustPgUUID(bucketID),
+	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := make(map[string]string, len(rows))
+	for _, row := range rows {
+		out[row.BindingID] = row.WakeID
+	}
+	return out, nil
 }
 
 func (s *PgStore) StageObjectS3CredentialRotation(ctx context.Context, req ObjectS3CredentialRotationRequest) (ObjectS3Credential, error) {

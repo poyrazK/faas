@@ -105,6 +105,12 @@ func (s *server) postObsAccountResetMFA(w http.ResponseWriter, r *http.Request, 
 	s.postObsAccountMutation(w, r, acct, "reset-mfa")
 }
 
+// postObsAccountRevertEmail moves a customer back to the address their last
+// confirmed email change replaced (ADR 20261110100000).
+func (s *server) postObsAccountRevertEmail(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.postObsAccountMutation(w, r, acct, "revert-email")
+}
+
 func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, acct state.Account, action string) {
 	if allowed, prob := s.adminAllows(acct); !allowed {
 		api.WriteProblem(w, prob)
@@ -148,6 +154,7 @@ func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, 
 		}
 		if err == nil {
 			s.forgetTrustedBrowsers(r.Context(), targetID, "operator_suspend")
+			s.endPendingGrants(r.Context(), targetID, "operator_suspend")
 		}
 	case "restore":
 		err = s.store.UpdateAccountStatus(r.Context(), targetID, state.AccountActive)
@@ -158,6 +165,8 @@ func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, 
 		revokedSessions, err = s.store.RevokeAllSessions(r.Context(), targetID, uuid.Nil.String())
 		if err == nil {
 			s.forgetTrustedBrowsers(r.Context(), targetID, "operator_revoke")
+			s.endPendingGrants(r.Context(), targetID, "operator_revoke")
+			s.revokeTargetSignInKeys(r, targetID, "operator_revoke")
 		}
 	case "reset-mfa":
 		if problem := s.operatorMFAResetRefusal(r.Context(), targetID); problem != nil {
@@ -165,6 +174,16 @@ func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		revokedSessions, err = s.operatorResetMFA(r.Context(), targetID)
+		if err == nil {
+			s.revokeTargetSignInKeys(r, targetID, "operator_mfa_reset")
+		}
+	case "revert-email":
+		var problem *api.Problem
+		revokedSessions, problem, err = s.operatorRevertEmail(r, targetID)
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	default:
 		err = fmt.Errorf("unsupported account action %q", action)
 	}

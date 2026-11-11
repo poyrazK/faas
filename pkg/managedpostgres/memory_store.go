@@ -33,6 +33,7 @@ type MemoryStore struct {
 	usageImports              map[string]usageImportReceipt
 	accountingReconciliations map[string]accountingReconciliationReceipt
 	overage                   map[string]bool
+	egressElected             map[string]bool
 	capEvents                 map[memoryCapEventKey]CapEvent
 	capEventsMailed           map[memoryCapEventKey]bool
 	restoreSlotNotices        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice
@@ -64,6 +65,7 @@ func NewMemoryStore() *MemoryStore {
 		usageImports:              map[string]usageImportReceipt{},
 		accountingReconciliations: map[string]accountingReconciliationReceipt{},
 		overage:                   map[string]bool{},
+		egressElected:             map[string]bool{},
 		capEvents:                 map[memoryCapEventKey]CapEvent{},
 		capEventsMailed:           map[memoryCapEventKey]bool{},
 		restoreSlotNotices:        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice{},
@@ -86,12 +88,12 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 	if limit < 1 || limit > 100 {
 		return Database{}, false, ErrInvalid
 	}
-	if database.EnvironmentCloneOperationID != "" || database.DataResourceID != "" {
+	if database.EnvironmentCloneOperationID != "" || database.DataResourceID != "" || !database.Preview.IsZero() {
 		return Database{}, false, ErrInvalid
 	}
 	key := databaseNameKey(database)
 	if id, ok := s.names[key]; ok {
-		if s.databases[id].EnvironmentCloneOperationID != "" {
+		if s.databases[id].EnvironmentCloneOperationID != "" || !s.databases[id].Preview.IsZero() {
 			return Database{}, false, ErrConflict
 		}
 		if !restoreSlotAllowed(ctx) && !s.databases[id].RestoreSlotUntil.IsZero() {
@@ -99,7 +101,8 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 		}
 		return cloneDatabase(s.databases[id]), false, nil
 	}
-	if database.ID == "" || database.AccountID == "" || !ValidName(database.Name) || database.State != StateProvisioning || database.BackendID == "" || database.BackendFingerprint == "" {
+	if database.ID == "" || database.AccountID == "" || !ValidName(database.Name) || database.State != StateProvisioning || database.BackendID == "" || database.BackendFingerprint == "" ||
+		!validReservationExpiry(database) {
 		return Database{}, false, ErrInvalid
 	}
 	if database.RetryAt.IsZero() {
@@ -120,7 +123,9 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 	}
 	active := 0
 	for _, existing := range s.databases {
-		if s.sameQuotaOwner(ctx, existing, database) && existing.CountsTowardLimit() {
+		// A PR preview environment's database is outside the plan's limit
+		// (ADR-20261102123523).
+		if s.sameQuotaOwner(ctx, existing, database) && existing.CountsTowardLimit() && existing.Preview.IsZero() {
 			active++
 		}
 	}

@@ -376,7 +376,10 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		VcpuCount:     int(app.GetVcpuCount()),
 		MemSizeMiB:    int(app.GetMemSizeMib()),
 		CPUMillicores: int(app.GetCpuMillicores()),
-		EgressMbit:    int(app.GetEgressMbit()),
+		// ADR-20261109172421: the busy-host share and the uncapped quota.
+		CPUWeight:   int(app.GetCpuWeight()),
+		CPUUncapped: app.GetCpuUncapped(),
+		EgressMbit:  int(app.GetEgressMbit()),
 		// ADR-20261101215228: negative values are ignored (plan bound).
 		RequestConcurrency: max(0, int(app.GetRequestConcurrency())),
 		SealedEnvEntries:   sealedFromProto(app.GetSealedEnv()),
@@ -569,6 +572,8 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		VcpuCount:        int(app.GetVcpuCount()),
 		MemSizeMiB:       int(app.GetMemSizeMib()),
 		CPUMillicores:    int(app.GetCpuMillicores()),
+		CPUWeight:        int(app.GetCpuWeight()),
+		CPUUncapped:      app.GetCpuUncapped(),
 		EgressMbit:       int(app.GetEgressMbit()),
 		SealedEnvEntries: sealedFromProto(app.GetSealedEnv()),
 		// Issue #395 / ADR-045: see toWakeRequest's APIEnvEntries

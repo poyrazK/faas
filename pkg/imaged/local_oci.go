@@ -688,6 +688,11 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		return fmt.Errorf("imaged: Compose healthcheck: %w", err)
 	}
 	config = applySourceBuildProcess(config, *dep)
+	if app.SandboxTemplate && len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
+		// A template image never runs its own command: sessions run
+		// guest-init's sandbox server, and their commands need a shell.
+		config.Cmd = []string{sandboxTemplateShell}
+	}
 	manifest, err := manifestFromLocalOCIConfig(config, *dep)
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest: %w", err)
@@ -725,6 +730,9 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
 		return fmt.Errorf("imaged: persist local OCI secret reload support: %w", err)
 	}
+	if err := h.store.SetDeploymentBeforeCheckpointHook(ctx, dep.ID, manifest.BeforeCheckpoint != nil); err != nil {
+		return fmt.Errorf("imaged: persist local OCI before_checkpoint hook: %w", err)
+	}
 
 	be, err := h.storageFor()
 	if err != nil {
@@ -733,6 +741,11 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	appsKey := storagekey.AppLayer(app.Slug, dep.ID)
 	buildLayers := layersAsReaders(layers)
 	runtime := sharedRuntimeClaim(app, source)
+	if app.SandboxTemplate {
+		// A template boots as a whole root filesystem over the agent base,
+		// never on a runner base (ADR-20261027090013).
+		return h.publishSandboxTemplateRootfs(ctx, app, *dep, acct, source, be, appsKey, buildLayers, manifest)
+	}
 	if source == nil {
 		unsigned, provErr := h.sharedRuntimeFromProvenance(ctx, app, *dep)
 		if provErr != nil {

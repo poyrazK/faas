@@ -72,6 +72,24 @@ service Auth {
   // caller still checks the session row itself. Errors are InvalidArgument
   // (empty cookie) and Unavailable (apid has no session manager).
   rpc VerifySession(VerifySessionRequest) returns (VerifySessionResponse);
+
+  // SandboxTokenKeys returns the public keys that verify sandbox session
+  // tokens (ADR-20261027090013 §3). apid signs them with an Ed25519 key
+  // derived from its session key; a gateway verifies with these and cannot
+  // mint one (ADR-20261102191500). Unavailable: apid has no session key.
+  rpc SandboxTokenKeys(SandboxTokenKeysRequest) returns (SandboxTokenKeysResponse);
+}
+
+message SandboxTokenKeysRequest {}
+
+message SandboxTokenKeysResponse {
+  repeated SandboxTokenKey keys = 1;
+}
+
+// SandboxTokenKey is one Ed25519 public key and the ID tokens name it by.
+message SandboxTokenKey {
+  string id = 1;
+  bytes public_key = 2;
 }
 
 message MatchCredentialRequest {

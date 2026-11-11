@@ -648,12 +648,18 @@ plan's history window. Physical deletion belongs to Pyroscope: configure a
 maximum 14-day backend retention and per-tenant 3/7/14-day overrides where the
 backend supports them. API query restrictions alone do not delete stored data.
 Monitor backend storage and label cardinality before enabling more tenants.
-Each VM lifetime and instrumented process has an opaque collector label so that
-identical captures from separate workers add CPU instead of being deduplicated.
-Retry uploads retain a stable sample ID.
+Each VM lifetime and instrumented process takes one of 32 `collector_id`
+values per deployment and shifts its capture times by an offset of its own
+below a millisecond, so identical captures from separate workers add CPU
+instead of being deduplicated while scale-to-zero wakes add no series. Retry
+uploads retain a stable sample ID.
 
 Uploads are bounded to 1 MiB, expansion to 8 MiB, and concurrency to four at the
-bridge, broker and parser. Export is synchronous with a two-second transport
+bridge, broker and parser. Before parsing, a profile is counted: at most
+20,000 samples, locations, functions and mappings, about 80,000 strings,
+200,000 stack frames, and 256 frames and 64 labels per sample. apid merges at
+most two captures at once (views, comparisons, downloads and the dashboard
+page) and answers `503` to others. Export is synchronous with a two-second transport
 budget and no unbounded host queue. Collector failure or a full budget drops
 diagnostics. Parked apps retain no collector RAM. Capture windows from before
 the current collection epoch or observed instance lifetime are rejected.

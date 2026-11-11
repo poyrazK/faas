@@ -195,7 +195,9 @@ func TestPGCloneCheckpointObjectPublicationRollback(t *testing.T) {
 					}
 				}
 			case "secret quota":
-				max := api.MustLimitsFor(api.PlanFree).SecretCountMax
+				// Managed values do not count; like a direct bind, only an app
+				// already over its customer-secret cap is refused (ADR-20261110120000).
+				max := api.MustLimitsFor(api.PlanFree).SecretCountMax + 1
 				_, err = f.pool.Exec(t.Context(), "update accounts set plan='free' where id=$1", plan.AccountID)
 				if err == nil {
 					for _, b := range plan.Buckets {

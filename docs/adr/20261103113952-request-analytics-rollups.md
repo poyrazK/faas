@@ -337,3 +337,98 @@ Two more reductions follow in the same change:
    so the active apps are found. With more than one apid replica, a crash
    also marks the minutes the others answered, which errs toward
    "incomplete". A marker that cannot be written turns this off for the run.
+
+## Amendment 5 (2026-11-09): the gateway counts its own requests
+
+apid counted a request only when its raw telemetry row reached apid. A row
+the gateway's 4096-row ring overwrote under a burst, or one dropped after
+its retries while apid was slow or down, was lost to analytics as well as to
+the debugger, and the minute was marked incomplete. Analytics counts are
+cheap to keep exactly; raw rows are not.
+
+1. **Counted at record time.** With `FAAS_REQUEST_ANALYTICS_GATEWAY_ROLLUPS=1`
+   the gateway counts each request into a per-minute rollup as it records it,
+   before the ring, with the aggregator apid uses (`pkg/requestanalytics`):
+   the same route rows, folded kinds, top-50 fold and latency histogram. It
+   buffers at most `RequestAnalyticsGatewayRollupRowsMax` rows; a request
+   that does not fit is left for apid to count.
+2. **`analytics_counted` on raw rows.** A raw row the gateway counted is
+   shipped with `analytics_counted` set, and apid does not count it again.
+   Raw rows still ship as before and the debugger's ingest cap still applies
+   to them; only the counting moved.
+3. **Batches applied once.** The gateway ships each minute 30 s after it
+   closes (the grace of amendment 3), in batches of at most
+   `RequestAnalyticsRollupBatchRowsMax` rows through
+   `RequestTelemetry.AddRequestAnalyticsRollups`. Each batch carries a
+   `batch_id`. apid claims it in `request_analytics_rollup_batches` in the
+   same transaction as the rollup upserts, so a batch resent after a lost
+   answer adds nothing. meterd deletes ledger rows after a day, far past any
+   resend. apid leaves out the rows of apps whose plan keeps no telemetry,
+   as its own counting does, and rejects rows that break the minute tier's
+   contract.
+4. **Failures.** A batch apid could not apply is resent with the same
+   `batch_id` on later ticks. Past `RequestAnalyticsGatewayRollupBatchesMax`
+   waiting batches, or when apid refuses a batch (`InvalidArgument`), the
+   batch is given up and its requests are reported as lost per app in the
+   gateway's coverage heartbeat, so the minutes read as incomplete. Requests
+   in closed minutes not yet acknowledged are reported as pending, so apid
+   does not call a minute complete before its rollup lands. The gateway
+   ships every buffered minute in its bounded final flush.
+5. **Rollout and rollback.** Deploy order puts apid first. A gateway counts
+   nothing until apid answers an empty batch: an apid that predates the RPC,
+   or one without rollups, answers `Unimplemented`, and the gateway asks
+   again every `RequestAnalyticsGatewayRollupProbeInterval` while apid keeps
+   counting raw rows. When apid starts answering `Unimplemented` later (a
+   rollback), the gateway stops counting and discards its buffer without
+   reporting a loss: the older apid ignores `analytics_counted` and counts
+   those rows itself.
+6. **What this does not fix.** A gateway crash loses its buffered minutes,
+   up to about 90 s, where the raw ring held a few seconds; its last
+   heartbeat reported them as pending. With apid replicas on mixed versions
+   during an apid rollout, a row an older replica receives is counted there
+   and in the gateway's batch. Gateway counting stays off by default until a
+   production check compares its counts with apid's.
+
+Metrics: `gateway_request_analytics_rollup_requests_total{outcome}`
+(`shipped`, `lost`).
+
+## Amendment 6 (2026-11-09): analytics completeness apart from raw delivery
+
+Analytics judged a window complete with the raw coverage heartbeats route
+removal reads: any raw row a gateway lost, or still held, marked the window
+incomplete. With gateway counting (amendment 5) a lost raw row the gateway
+had counted leaves the rollups whole, so analytics reported windows as
+incomplete that were not. Amendment 5 also added the requests of every
+closed but unsent rollup minute to the raw pending count, which would have
+held raw completeness and route removal "pending" for 30 s of every minute;
+that is removed.
+
+1. **The gateway reports an analytics part.** Each heartbeat of a gateway
+   with `FAAS_REQUEST_ANALYTICS_GATEWAY_ROLLUPS=1` carries whether it is
+   counting, its cumulative analytics losses it cannot attribute to an app,
+   and per app `analytics_dropped_count` and `analytics_pending_count`. An
+   analytics loss is a rollup batch given up, or a lost raw row the gateway
+   did not count (counting off, buffer full); a lost raw row it counted is
+   a raw loss only. Analytics pending is rollups past their send time (a
+   minute plus the 30 s grace) and not yet acknowledged, and raw rows the
+   gateway did not count still waiting to ship. A batch given up no longer
+   counts as a raw loss: its raw rows shipped.
+2. **apid records it with the raw heartbeat**, in the same transaction
+   (`record_request_analytics_coverage`): `request_analytics_node_coverage`
+   keeps since when each node has counted without a break, restarting it on
+   a reboot, a 30 s heartbeat gap, an unattributed analytics loss or counting
+   turned off; `request_analytics_app_gaps` keeps each app's last analytics
+   loss or late rollup, as `request_telemetry_app_gaps` does for raw rows.
+   Counting reads as off on an apid without rollups. The raw tables and
+   `route_removal_coverage_blockers` are unchanged.
+3. **Analytics answered by rollups reads
+   `request_analytics_completeness_blockers`.** Every active node must
+   report, fresh, enabled, unsampled and caught up to the window's end, as
+   before. A node whose latest heartbeat carried an analytics part showing it
+   counting since before the window is then judged by its analytics gaps;
+   any other node by raw delivery, exactly as before. Analytics answered by
+   raw rows keeps raw completeness: there a lost raw row is a missing
+   request.
+4. **Rollout.** A heartbeat without the analytics part, from an older
+   gateway, or recorded by an older apid, leaves the node judged by raw
+   delivery. The migration only adds tables and functions.

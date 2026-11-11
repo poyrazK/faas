@@ -1822,6 +1822,10 @@ type ScalingTarget struct {
 	// kind of accepted-but-inert field this codebase keeps having to
 	// remove.
 	Name string `json:"name,omitempty"`
+	// Labels selects one labelled series of the custom metric
+	// (ADR-20261108160000 slice C2). Empty: the metric's aggregate (the
+	// maximum of its fresh series). Only valid with Metric "custom".
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // ScalingSchedule is one recurring window that raises the warm floor
@@ -1959,6 +1963,13 @@ type AppEffectiveLimits struct {
 	RequestBudgetMaxMS     int64 `json:"request_budget_max_ms"`
 	ResponseWriteTimeoutS  int64 `json:"response_write_timeout_s"`
 	RequestBodyMaxBytes    int64 `json:"request_body_max_bytes"`
+	// IdleTimeoutS is the idle timeout the reaper applies: the app's own
+	// setting, or its type's default, clamped to the plan bounds (spec §4.3).
+	IdleTimeoutS int `json:"idle_timeout_s,omitempty"`
+	// Pause is when the platform may pause the VM (ADR-1151): the declared
+	// value, or the default for the app's type. Apps attached to a private
+	// network are never paused whatever they declare.
+	Pause string `json:"pause,omitempty"`
 }
 
 // AppConfiguredResources is the resource shape selected for an app. It is
@@ -4136,6 +4147,19 @@ func ParseMirrorWindow(s string) (MirrorWindowDuration, error) {
 	return 0, errInvalidMirrorWindow
 }
 
+// MirrorSafeMethod reports whether a method is mirrored and replayed without
+// the mirror rule's allow_unsafe_methods opt-in: GET, HEAD and OPTIONS. Live
+// mirroring, debugger replay and the replay dispatcher share it, so a rule
+// that opted out of side effects is never replayed with one.
+func MirrorSafeMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	default:
+		return false
+	}
+}
+
 // MirrorAlwaysStrippedHeaders is the set of headers the gateway
 // strips from every mirror invocation regardless of the
 // customer-supplied RedactHeaders list (issue #72 / ADR-125
@@ -5479,8 +5503,7 @@ func ValidateAppConfig(l Limits, ramMB, maxConcurrency int, guestVCPU ...int) *P
 // ValidateAppConfig keeps existing callers source-compatible while allowing
 // create-time callers to opt into the joint contract.
 func ValidateAppCPURAMPair(l Limits, ramMB, guestVCPU int) *Problem {
-	shape, ok := PlanResourceShapeFor(l.Plan)
-	if !ok || guestVCPU != shape.VCPU || ramMB != shape.RAMMB {
+	if guestVCPU != SizeVCPUs(ramMB) {
 		return ErrInvalidCPURAMPair(l, ramMB, guestVCPU)
 	}
 	return nil
@@ -6056,9 +6079,12 @@ type LogQueryEvent struct {
 	Level        string    `json:"level,omitempty"`
 	Stream       string    `json:"stream,omitempty"`
 	Message      string    `json:"message"`
-	LatencyMS    int       `json:"latency_ms,omitempty"`
-	Count        int       `json:"count,omitempty"`
-	ColdBoot     bool      `json:"cold_boot,omitempty"`
+	// LatencyMS is set on every HTTP row, 0 ms included, and absent on rows
+	// with no latency (runtime and build lines). A plain omitempty int dropped
+	// the field from 0 ms requests (ADR-20261110090000).
+	LatencyMS *int `json:"latency_ms,omitempty"`
+	Count     int  `json:"count,omitempty"`
+	ColdBoot  bool `json:"cold_boot,omitempty"`
 }
 
 // AccountTraceLookupResponse is the tenant-scoped correlation envelope used
@@ -7660,8 +7686,11 @@ type SourceTarballDeployRequest struct {
 // existing app, and which existing app row the update targets. ID is
 // empty when Action == "create".
 type PlanWorkload struct {
-	AppSlug          string              `json:"app_slug,omitempty"`
-	PublicURL        string              `json:"public_url,omitempty"`
+	AppSlug   string `json:"app_slug,omitempty"`
+	PublicURL string `json:"public_url,omitempty"`
+	// PublicAuthMode is the public URL's auth after apply ("bearer",
+	// "basic", ...); omitted when the URL is open to anonymous requests.
+	PublicAuthMode   string              `json:"public_auth_mode,omitempty"`
 	Name             string              `json:"name"`
 	RootDir          string              `json:"root_dir"`
 	Dockerfile       string              `json:"dockerfile,omitempty"`
@@ -13554,6 +13583,20 @@ type CustomMetricResponse struct {
 	// Kind is "gauge" (pushed, a scaling signal) or "counter" (an ADR-745
 	// OTLP cumulative sum, charted as a rate and never a scaling signal).
 	Kind string `json:"kind,omitempty"`
+	// Series lists a labelled metric's series (ADR-20261108160000 slice C);
+	// Value is then their aggregate: the sum for counters, the maximum of
+	// fresh series for gauges. Empty for an unlabelled metric.
+	Series []CustomMetricSeriesValue `json:"series,omitempty"`
+}
+
+// CustomMetricSeriesValue is one labelled series' latest value. Key is the
+// canonical "k=v,..." form accepted by the history endpoint's labels query.
+type CustomMetricSeriesValue struct {
+	Key        string            `json:"key"`
+	Labels     map[string]string `json:"labels"`
+	Value      float64           `json:"value"`
+	ObservedAt time.Time         `json:"observed_at"`
+	Stale      bool              `json:"stale"`
 }
 
 // CustomMetricListResponse carries the rows plus the two limits an operator
@@ -13563,6 +13606,8 @@ type CustomMetricListResponse struct {
 	Metrics    []CustomMetricResponse `json:"metrics"`
 	FreshnessS int                    `json:"freshness_seconds"`
 	MaxMetrics int                    `json:"max_metrics"`
+	// MaxSeries is the app's cap on labelled series (slice C).
+	MaxSeries int `json:"max_series,omitempty"`
 }
 
 // EgressFlowLogEntry is one ADR-371 egress flow log row: a destination

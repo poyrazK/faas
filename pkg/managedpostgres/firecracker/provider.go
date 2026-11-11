@@ -91,6 +91,9 @@ type Config struct {
 	// ADR-650): DML on schema api only, under the Data API's statement
 	// timeout.
 	DataAPI bool
+	// Session issues direct session logins (the backend's session_enabled,
+	// ADR-20261110120000).
+	Session bool
 }
 
 // MinCredentialKeyBytes is the shortest accepted credential key.
@@ -112,7 +115,7 @@ const (
 func ParseConfig(backend managedpostgres.BackendConfig) (Config, error) {
 	s := backend.Settings
 	cfg := Config{
-		Region: backend.Region, HostSuffix: strings.TrimPrefix(strings.ToLower(s[settingHostSuffix]), "."), DataAPI: backend.DataAPIEnabled,
+		Region: backend.Region, HostSuffix: strings.TrimPrefix(strings.ToLower(s[settingHostSuffix]), "."), DataAPI: backend.DataAPIEnabled, Session: backend.SessionEnabled,
 		// Every major database nodes build bases for by default (the
 		// database_vmmd role's pins); postgres_majors narrows it.
 		Port: 5432, TLSMode: "verify-full", Database: "gregale", Majors: []int{14, 15, 16, 17, 18}, MaxStorageBytes: 100 << 30,
@@ -219,6 +222,9 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 		}
 	}
 	access := []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration}
+	if p.cfg.Session {
+		access = append(access, managedpostgres.CredentialSession)
+	}
 	if p.cfg.DataAPI {
 		access = append(access, managedpostgres.CredentialDataAPI)
 	}

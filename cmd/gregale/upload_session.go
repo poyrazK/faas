@@ -50,6 +50,7 @@ type resumableUploadProgress func(uploaded, total int64)
 func canUseResumableUpload(sh shape, runtime, handler string, dockerfile bool, sourceRoot string, ann api.DeployAnnotations, trafficPercent int, canaryPreset, canaryStages string) bool {
 	return (sh == shapeApp || sh == shapeFunction) &&
 		len(ann.OverrideEnv) == 0 &&
+		ann.LivenessProbe == nil && // the resumable session carries no liveness probe
 		!ann.MCPTaskMigrationOverride &&
 		trafficPercent < 0 &&
 		canaryPreset == "" &&

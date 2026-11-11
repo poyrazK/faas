@@ -155,6 +155,14 @@ budget. `TestPublicTrafficSecurityFollowsItsPeers`,
 this. A new header requirement needs the same fleet gate or an opt-in
 negotiation, plus a case in those tests.
 
+**Policy data the edge reads is part of the contract too.** apid writes edge
+rules before the gateways upgrade, so a new field that changes what a rule
+does must not be written until every gateway reads it. ADR-20261108110000
+sealed header values as an empty `value` plus `secret_id`; an N-1 gateway
+ignored `secret_id` and sent the header empty. apid now seals only while every
+gateway reports `edge_header_secrets` in its traffic runtime report, a
+capability tied to the reporting boot so a rolled-back gateway stops counting.
+
 ## Gate 1: version skew (CI, every pull request)
 
 `make version-skew-check` runs `scripts/ci/versionskew`, a Go tool. CI runs
@@ -348,6 +356,15 @@ The linter rejects an `expand` migration that does any of these:
 - drops a function, type, sequence, trigger or unique constraint that it
   does not create again;
 - drops a column default.
+
+A `RENAME` or `DROP` that a migration assembles at run time (`EXECUTE
+format(...)` or a concatenated string inside a function or `DO` block) is a
+`dynamic-ddl` finding whatever the class: the linter cannot check the previous
+release's references to objects it only knows at run time. Write those
+statements literally, or waive the finding with the reason the previous
+release does not read them. Migration `20261107145315064` renamed eleven
+tables that way; the previous release kept reading the old names until its
+daemons restarted, and deployments failed for five minutes.
 
 What no linter sees is the author's claim to make: a trigger function's
 `pg_notify` payload, whether the previous release's writes satisfy a new

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
 
@@ -1118,22 +1119,12 @@ func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
 	return admissionBlockers(err)
 }
 
-// GuestVCPUs exposes guestVCPUs (ADR-20261101160231).
-func (e *Engine) GuestVCPUs(app state.App, limits api.Limits) int { return e.guestVCPUs(app, limits) }
-
-// AppCPUBookingMillicores and AppCPUBookingStamp expose the step 5b
-// bookings (ADR-20261101160231).
-func (e *Engine) AppCPUBookingMillicores(app state.App, limits api.Limits) int {
-	return e.appCPUBookingMillicores(app, limits)
-}
-func (e *Engine) AppCPUBookingStamp(app state.App, limits api.Limits) int {
-	return e.appCPUBookingStamp(app, limits)
-}
-
-// AppCPUMillicores exposes appCPUMillicores (ADR-20261101160231).
-func (e *Engine) AppCPUMillicores(app state.App, limits api.Limits) int {
-	return e.appCPUMillicores(app, limits)
-}
+// AppVCPUs, AppCPUMillicores, AppCPUBookingMillicores and AppCPUWeight
+// expose an app instance's CPU, which follows its size (ADR-20261109172421).
+func AppVCPUs(app state.App) int                { return appVCPUs(app) }
+func AppCPUMillicores(app state.App) int        { return appCPUMillicores(app) }
+func AppCPUBookingMillicores(app state.App) int { return appCPUBookingMillicores(app) }
+func AppCPUWeight(app state.App) int32          { return appCPUWeight(app) }
 
 // ReportNodeMemory, NodeFrozenCount and UnreportedNodeUsedMB reach the node
 // memory report (ADR 20261101091815).
@@ -1373,4 +1364,46 @@ func (r *SnapshotRefresher) XSetNow(now func() time.Time) { r.now = now }
 // XResidentRAMForNode is the refresher engine's ledger residency on nodeID.
 func (r *SnapshotRefresher) XResidentRAMForNode(nodeID string) int {
 	return r.e.ledger.ResidentRAMForNode(nodeID)
+}
+
+// XCPUAdmissionWouldRefuse is how many admissions gate counted past a node's
+// CPU budgets (ADR-20261109172421).
+func (l *NodeLedger) XCPUAdmissionWouldRefuse(gate string) float64 {
+	return promtestutil.ToFloat64(l.cpuAdmission.wouldRefuse.WithLabelValues(gate))
+}
+
+// XCPUOverBudget is the refusal the ledger's vCPU or CPU budget would have
+// made for r on its node now, nil within both (ADR-20261109172421): Admit
+// counts it and admits. The vCPU budget is reported first.
+func (l *NodeLedger) XCPUOverBudget(r Request) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	node := l.resident[r.NodeID]
+	if node == nil {
+		node = &nodeReservation{}
+	}
+	if over := l.cpuOverBudget_locked(r, node); len(over) > 0 {
+		return over[0].err
+	}
+	return nil
+}
+
+// XChooseWithCPUAdmission places r over nodes as the engine's placement
+// snapshot does, and returns how many refusals the placement gate counted.
+func XChooseWithCPUAdmission(nodes []state.ComputeNode, usedMB, usedVCPU, usedCPU map[string]int64, r Request) (Placement, float64, error) {
+	c := newCPUAdmission()
+	p, err := placementSnapshot{nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU, usedCPUMillicores: usedCPU, cpu: c}.choose(r)
+	return p, promtestutil.ToFloat64(c.wouldRefuse.WithLabelValues(CPUGatePlacement)), err
+}
+
+// NodeBudgetRefusal builds the scheduler's node-budget refusal carrying the
+// given blockers, as placement returns it.
+func NodeBudgetRefusal(detail string, blockers ...api.WorkerAdmissionBlocker) error {
+	return explainAdmission(api.ErrCapacity(detail), blockers...)
+}
+
+// FinishFailedPrime reaches the decision dispatchPrime makes after a prime
+// failed its retries.
+func (r *Loop) FinishFailedPrime(ctx context.Context, appID, deploymentID string, err error) {
+	r.finishFailedPrime(ctx, appID, deploymentID, 1, err)
 }

@@ -975,6 +975,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-907: Firecracker before 1.14 rejects the balloon field, so an
 	// older or undetected binary boots without it.
 	freePageReporting := !cfg.DisableFreePageReporting && fcvm.FreePageReportingSupported(fcVersion)
+	// ADR-20261109120000: advance a restored guest's monotonic clock by the
+	// parked time. Firecracker 1.16+ only, and only where KVM records the
+	// realtime clock flag in captures (a tsc host clocksource).
+	restoreClockRealtime := !cfg.DisableRestoreClockRealtime && fcvm.ClockRealtimeSupported(fcVersion) && fcvm.HostClocksourceTSC()
 	// ADR-908: pmem needs Firecracker 1.16+, and native recovery stages
 	// images through its own journal, which has no pmem slot yet.
 	pmemBaseDir := ""
@@ -996,6 +1000,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRestoreConcurrency(cfg.RestoreConcurrency).
 		WithRestorePrefetch(!cfg.DisableRestorePrefetch).
 		WithFreePageReporting(freePageReporting).
+		WithRestoreClockRealtime(restoreClockRealtime).
 		WithCPUTemplate(cfg.CPUTemplate).
 		WithPmemBase(pmemBaseDir).
 		WithRestoreReseedThread(cfg.RestoreReseedThread).
@@ -1017,7 +1022,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			ops.IncLogDropped("slow_subscriber")
 		})
 	log.Info("vmmd: snapshot restore concurrency configured", "limit", cfg.RestoreConcurrency,
-		"working_set_prefetch", !cfg.DisableRestorePrefetch, "free_page_reporting", freePageReporting, "pmem_base_dir", pmemBaseDir,
+		"working_set_prefetch", !cfg.DisableRestorePrefetch, "free_page_reporting", freePageReporting, "restore_clock_realtime", restoreClockRealtime, "pmem_base_dir", pmemBaseDir,
 		"cpu_template", cfg.CPUTemplate)
 	if deps.prepareJailHelper != nil {
 		if err := deps.prepareJailHelper(jailer); err != nil {
@@ -1096,6 +1101,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	mgr.WithFlatTenantCgroups(cfg.FlatTenantCgroups)
 	mgr.WithPrivateNetworkMembers(privateNetworkMemberSource(store, identityNodeID), privateNetworkMemberRelease(store, identityNodeID))
 	mgr.WithPrivateNetworkTransportIdentitySource(func(ctx context.Context, account, network, region string) (uint32, error) {
 		source, ok := store.(state.PrivateNetworkTransportStore)
@@ -1120,6 +1126,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	mgr.WithEgressCircuitBreaker(egressCircuitEnabled)
+	// ADR-20261109130000: reset an app guest's TCP connections before
+	// destroying it, so its databases free the sessions at once.
+	mgr.WithReleaseConnectionsOnDestroy(!cfg.DisableReleaseConnectionsOnDestroy)
 	if egressCircuitEnabled {
 		if store == nil {
 			return fmt.Errorf("vmmd: FAAS_EGRESS_CIRCUIT_BREAKER requires a compute-node database configuration for durable policy")
@@ -2030,7 +2039,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithBridgeStreamHeadroom(cfg.BridgeStreamHeadroom).
 		WithStreamBridgeGoRuntime(cfg.StreamBridgeGOMAXPROCS, cfg.StreamBridgeGOGC).
 		// ADR-20261027090010 §1: agent runs stay off unless this node opts in.
-		WithAgentRuns(strings.TrimSpace(os.Getenv("FAAS_VMMD_AGENT_RUNS")) == "1")
+		WithAgentRuns(strings.TrimSpace(os.Getenv("FAAS_VMMD_AGENT_RUNS")) == "1").
+		// ADR-20261027090013 step 7: sandbox workspaces persist to, and
+		// sessions start from, this node's artifact store.
+		WithSandboxWorkspaces(storageBackend)
 	// ADR-20261022184531: Ping tells schedd whether this vmmd can adopt each
 	// configured base generation, so a node that cannot is marked degraded.
 	impl.WithBaseGenerationReadiness(vmmdgrpc.NewCachedBaseGenerationReadiness(

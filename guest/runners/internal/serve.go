@@ -50,6 +50,10 @@ type Envelope struct {
 	Background        *BackgroundPolicy `json:"background,omitempty"`
 	ForbidBackground  bool              `json:"forbid_background,omitempty"`
 	ResourceLifecycle bool              `json:"resource_lifecycle,omitempty"`
+	// FunctionHook asks the adapter to run the function's own snapshot hook
+	// ("before_snapshot" or "after_restore") instead of its handler
+	// (ADR-20261110190000). Only the runner sets it, for guest-init's calls.
+	FunctionHook string `json:"function_hook,omitempty"`
 }
 
 // RequiresCompletion participates in the worker-pool capability negotiation.
@@ -104,6 +108,10 @@ type ServeConfig struct {
 // status is sent, a failure can only abort the response, so the client sees a
 // truncated body rather than a clean end.
 func Serve(w http.ResponseWriter, r *http.Request, cfg ServeConfig) {
+	if hook := functionlifetime.FunctionHook(r.URL.Path, lifecycleHook(r)); hook != "" {
+		serveFunctionHook(w, r, cfg, hook)
+		return
+	}
 	if cfg.Execution != nil {
 		cfg.Execution.serve(w, r, cfg)
 		return

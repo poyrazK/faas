@@ -71,7 +71,7 @@ func newResolvedEgressHook(clients vmmdClientLookup, localNode *localNodeID, dat
 				return fmt.Errorf("local vmmd %s unavailable for DNS grant", nodeID)
 			}
 			defer func() { _ = lease.Close() }()
-			return allowResolvedEgressNamed(ctx, client, host, owner, name, addrs, ttl, databasePort)
+			return allowResolvedEgress(ctx, client, host, name, owner, addrs, ttl, databasePort)
 		}, nil
 	}
 }
@@ -222,21 +222,11 @@ func (l *localNodeID) Forget() {
 	l.mu.Unlock()
 }
 
-func allowResolvedEgress(ctx context.Context, cli allowResolvedEgressClient, host string, owner resolvedEgressOwner, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
-	return allowResolvedEgressNamed(ctx, cli, host, owner, "", addrs, ttl, databasePort)
-}
-
-// allowResolvedEgressNamed also sends the answered name with a database
-// port: a contained environment branch instance reaches only its branch's
-// own databases, which vmmd matches by name (ADR-20261031193635).
-func allowResolvedEgressNamed(ctx context.Context, cli allowResolvedEgressClient, host string, owner resolvedEgressOwner, name string, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
+func allowResolvedEgress(ctx context.Context, cli allowResolvedEgressClient, host, name string, owner resolvedEgressOwner, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
 	if owner.instance == "" || owner.generation == "" {
 		return fmt.Errorf("DNS grant requires its original network owner")
 	}
-	req := &vmmdpb.AllowResolvedEgressRequest{SourceIp: host, InstanceId: owner.instance, NetworkGeneration: owner.generation, TtlSeconds: uint32(min(ttl/time.Second, 1<<31)), DatabasePort: uint32(databasePort)}
-	if databasePort != 0 {
-		req.Name = name
-	}
+	req := &vmmdpb.AllowResolvedEgressRequest{SourceIp: host, Name: name, InstanceId: owner.instance, NetworkGeneration: owner.generation, TtlSeconds: uint32(min(ttl/time.Second, 1<<31)), DatabasePort: uint32(databasePort)}
 	for _, a := range addrs {
 		req.Addresses = append(req.Addresses, a.String())
 	}

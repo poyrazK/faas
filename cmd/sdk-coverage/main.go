@@ -244,6 +244,9 @@ var routeExclude = map[string]bool{
 	// Mirror across this list AND scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
 	"POST /v1/postgres/databases/{id}/upgrade":              true,
 	"GET /v1/postgres/databases/{id}/upgrades/{upgrade_id}": true,
+	// ADR-20261102123523 PR preview databases, behind the preview-databases
+	// capability until launch.
+	"PUT /v1/postgres/databases/{id}/previews": true,
 
 	"GET /v1/account/dpa":                                                    true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"GET /v1/apps/{slug}/tasks/{id}/attach":                                  true, // ADR-1037 WebSocket attach; the CLI drives it directly
@@ -302,6 +305,22 @@ var routeExclude = map[string]bool{
 	"GET /v1/agent-tools/.well-known/rap-toolset":     true,
 	"POST /v1/agent-tools/invoke":                     true,
 	"POST /v1/agent-tools/close_thread":               true,
+	"POST /v1/sandboxes":                              true,
+	"GET /v1/sandboxes":                               true,
+	"GET /v1/sandboxes/{id}":                          true,
+	"PATCH /v1/sandboxes/{id}":                        true,
+	"DELETE /v1/sandboxes/{id}":                       true,
+	"GET /v1/sandbox-snapshots":                       true,
+	"GET /v1/sandbox-snapshots/{id}":                  true,
+	"DELETE /v1/sandbox-snapshots/{id}":               true,
+	"GET /v1/sandbox-templates":                       true,
+	"GET /v1/sandbox-templates/{name}":                true,
+	"PUT /v1/sandbox-templates/{name}":                true,
+	"DELETE /v1/sandbox-templates/{name}":             true,
+	"POST /v1/sandboxes/{id}/ports":                   true,
+	"GET /v1/sandboxes/{id}/ports":                    true,
+	"GET /v1/sandboxes/{id}/ports/{port}":             true,
+	"DELETE /v1/sandboxes/{id}/ports/{port}":          true,
 	"GET /v1/agents":                                  true,
 	"GET /v1/agents/{agent}":                          true,
 	"DELETE /v1/agents/{agent}":                       true,
@@ -572,6 +591,7 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/orgs/{slug}/billing/budgets/{id}":                                                                         "UpdateOrgFinancialBudget",
 	"DELETE /v1/orgs/{slug}/billing/budgets/{id}":                                                                      "DeleteOrgFinancialBudget",
 	"GET /v1/orgs/{slug}/billing/budgets/{id}/revisions":                                                               "ListOrgFinancialBudgetRevisions",
+	"GET /v1/orgs/{organization}/github/installations":                                                                 "ListOrgGitHubInstallations",
 	"GET /v1/orgs/{organization}/projects":                                                                             "ListOrgProjects",
 	"GET /v1/orgs/{organization}/projects/{slug}":                                                                      "GetOrgProject",
 	"PATCH /v1/orgs/{organization}/projects/{slug}":                                                                    "UpdateOrgProject",

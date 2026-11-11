@@ -68,6 +68,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/apid/queueleases"
 	"github.com/onebox-faas/faas/pkg/apid/routejobs"
+	"github.com/onebox-faas/faas/pkg/apid/sandboxes"
 	"github.com/onebox-faas/faas/pkg/apid/servicemap"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
@@ -252,6 +253,9 @@ type server struct {
 	liveRollout livequeries.Rollout
 	// agentAPI serves the agent routes; nil until configureAgents runs.
 	agentAPI *agents.Handler
+	// sandboxAPI serves the sandbox session routes; nil until
+	// configureSandboxes runs.
+	sandboxAPI *sandboxes.Handler
 	// realtimeRollout is who sees the realtime preview until an operator
 	// writes the realtime_preview platform flag (ADR-20261019102657).
 	realtimeRollout               managedrealtime.PreviewGate
@@ -887,6 +891,7 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.signupMetrics = nil
 	} else if s.signupMetrics == nil || s.signupMetrics.registry != ops.Registry() {
 		s.signupMetrics = newSignupMetrics(ops.Registry(), ops.MetricPrefix())
+		registerBackgroundMailDropped(ops.Registry(), ops.MetricPrefix(), s.resetMail)
 	}
 	if ops == nil {
 		s.releaseMetrics = nil
@@ -1719,6 +1724,7 @@ func newServerWithDeps(
 	s.edgeRules.SettingCheck = s.edgeRuleSettingsProblem
 	s.edgeRules.AuthorizeApp = s.authorizeNamedApp
 	s.edgeRules.SealHeaderValue = sealEdgeRuleHeaderValue
+	s.edgeRules.EnvironmentPolicyHost = s.environmentPolicyHost
 	s.profileCaptures.Host = profileCaptureHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}
 	s.realtime.Host = realtimeHost{s}
@@ -1796,6 +1802,15 @@ func (noopNotifier) WaitFor(_ context.Context, _ string, _ func(payload string) 
 // New routes append here; do not introduce per-feature sub-muxes.
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
+	// Company project operations registered only under /v1/projects/{slug}
+	// (apps/projects review 2026-11-10, P1); see orgProjectMirror.
+	var orgProjectInner http.Handler
+	mux.Handle(orgProjectMirrorPattern, orgProjectMirror(func() http.Handler { return orgProjectInner }))
+	// Company storage operations registered only under /v1/apps/{slug}
+	// (object storage audit OS-4); see orgObjectMirror.
+	for _, pattern := range []string{orgBucketMirrorPattern, orgUploadRoutesMirrorPattern, orgUploadRouteMirrorPattern} {
+		mux.Handle(pattern, orgObjectMirror(func() http.Handler { return orgProjectInner }))
+	}
 	s.registerProductControl(mux)
 	s.registerInternalCI(mux)
 	s.registerInternalCIRuntime(mux)
@@ -1881,7 +1896,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}/copy-sources", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.ListObjectS3CopySources))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}/copy-sources/{source}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.SetObjectS3CopySource))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}/copy-sources/{source}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.DeleteObjectS3CopySource))))
-	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/compute-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.ListObjectStorageComputeBindings))))
+	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/compute-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageBindingReadSurface...)(s.object.ListObjectStorageComputeBindings))))
 	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/compute-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.CreateObjectStorageComputeBinding))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.DeleteObjectStorageComputeBinding))))
 	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.RotateObjectStorageComputeBinding))))
@@ -1971,6 +1986,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/postgres/databases/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.idempotent(s.deleteManagedPostgresDatabase)))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/undelete", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.undeleteManagedPostgresDatabase))))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.restoreManagedPostgresDatabase))))))
+	// ADR-20261102123523: PR preview databases; the preview-databases
+	// capability hides the route until launch.
+	mux.HandleFunc("PUT /v1/postgres/databases/{id}/previews", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresPreviews)))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listManagedPostgresBindings))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/connection-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.managedPostgresConnectionBudget))))
 	// Private workload reporting surface; customer API keys cannot publish evidence.
@@ -2103,7 +2121,7 @@ func (s *server) handler() http.Handler {
 	// subscription-item quantities) per ADR-061 §"Out of scope";
 	// PR 8 ships SSO + invitation-accept step-up.
 	mux.HandleFunc("GET /v1/orgs", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listOrgsForCaller)))
-	mux.HandleFunc("POST /v1/orgs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createSharedOrg)))))
+	mux.HandleFunc("POST /v1/orgs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createSharedOrg))))))
 	mux.HandleFunc("GET /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getOrg)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/activity", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgActivity)))))
 	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-reviews", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.idempotent(s.previewApplicationStandardAssignment))))))
@@ -2134,7 +2152,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.patchOrg)))))
 	mux.HandleFunc("DELETE /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.softDeleteOrg)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/members", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgMembers)))))
-	mux.HandleFunc("POST /v1/orgs/{slug}/members", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.inviteOrgMember)))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/members", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.loadOrg(s.inviteOrgMember))))))
 	mux.HandleFunc("PATCH /v1/orgs/{slug}/members/{user_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.changeOrgMemberRole)))))
 	mux.HandleFunc("DELETE /v1/orgs/{slug}/members/{user_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.removeOrgMember)))))
 	mux.HandleFunc("POST /v1/orgs/{slug}/leave", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.leaveOrg)))))
@@ -2195,7 +2213,9 @@ func (s *server) handler() http.Handler {
 	// and invalidates the in-process cache so the next rotation
 	// sees the new value.
 	mux.HandleFunc("GET /v1/account/keys/grace_window_days", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getGraceWindow))))
-	mux.HandleFunc("PATCH /v1/account/keys/grace_window_days", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.setGraceWindow))))
+	// Raising the grace window keeps a rotated key working longer, so it
+	// needs the same step-up as minting one (ADR 20261109120000).
+	mux.HandleFunc("PATCH /v1/account/keys/grace_window_days", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.setGraceWindow)))))
 	// Per-account additive budget on top of the plan's
 	// apps.egress_allowlist cap (issue #679 / PR-B / ADR-082).
 	// Customers may read it; only a platform operator may write it.
@@ -3350,6 +3370,29 @@ func (s *server) handler() http.Handler {
 	// ADR-20261027090010 agents: the agents capability owns these routes, so
 	// the capability gate hides them like unregistered routes from every
 	// account it is off for.
+	// ADR-20261027090013: sandbox session intents. Reading a session mints
+	// its data-plane token, so it needs the write scope; the list carries no
+	// tokens.
+	mux.HandleFunc("POST /v1/sandboxes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.sandboxRoute((*sandboxes.Handler).Create))))))
+	mux.HandleFunc("GET /v1/sandboxes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).List)))))
+	mux.HandleFunc("GET /v1/sandboxes/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).Get)))))
+	mux.HandleFunc("PATCH /v1/sandboxes/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).Update)))))
+	mux.HandleFunc("DELETE /v1/sandboxes/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).Close)))))
+	// ADR-20261027090013 §11: exposed ports. Exposing or reading one port
+	// mints its preview token, so both need the write scope.
+	mux.HandleFunc("POST /v1/sandboxes/{id}/ports", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).ExposePort)))))
+	mux.HandleFunc("GET /v1/sandboxes/{id}/ports", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).ListPorts)))))
+	mux.HandleFunc("GET /v1/sandboxes/{id}/ports/{port}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).GetPort)))))
+	mux.HandleFunc("DELETE /v1/sandboxes/{id}/ports/{port}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).UnexposePort)))))
+	// ADR-20261027090013 step 7: persisted workspaces.
+	mux.HandleFunc("GET /v1/sandbox-snapshots", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).ListSnapshots)))))
+	mux.HandleFunc("GET /v1/sandbox-snapshots/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).GetSnapshot)))))
+	mux.HandleFunc("DELETE /v1/sandbox-snapshots/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).DeleteSnapshot)))))
+	// Templates (ADR-20261027090013 step 10, part three).
+	mux.HandleFunc("GET /v1/sandbox-templates", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).ListTemplates)))))
+	mux.HandleFunc("GET /v1/sandbox-templates/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.sandboxRoute((*sandboxes.Handler).GetTemplate)))))
+	mux.HandleFunc("PUT /v1/sandbox-templates/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.sandboxRoute((*sandboxes.Handler).PutTemplate)))))))
+	mux.HandleFunc("DELETE /v1/sandbox-templates/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sandboxRoute((*sandboxes.Handler).DeleteTemplate)))))
 	mux.HandleFunc("POST /v1/agents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAgent)))))
 	mux.HandleFunc("GET /v1/agents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAgents))))
 	mux.HandleFunc("GET /v1/agents/{agent}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgent))))
@@ -4369,7 +4412,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listKeys))))
 	// Minting needs the same step-up as rotating (and as the org-key
 	// twin): a new admin key outlives the session that created it.
-	mux.HandleFunc("POST /v1/keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.createKey)))))
+	mux.HandleFunc("POST /v1/keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.requireStepUp(5*time.Minute)(s.createKey))))))
 	mux.HandleFunc("DELETE /v1/keys/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.deleteKey))))
 	// IAM-5 (issue #189): rotation endpoint. Admin-only because
 	// rotation mints a new key that retains the predecessor's
@@ -4424,7 +4467,7 @@ func (s *server) handler() http.Handler {
 	// operationIds match the Go SDK method names 1:1 so
 	// cmd/sdk-coverage compiles cleanly.
 	mux.HandleFunc("GET /v1/orgs/{slug}/keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgAPIKeys)))))
-	mux.HandleFunc("POST /v1/orgs/{slug}/keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.createOrgAPIKey))))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.loadOrg(s.requireStepUp(5*time.Minute)(s.createOrgAPIKey)))))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/keys/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getOrgAPIKey)))))
 	mux.HandleFunc("DELETE /v1/orgs/{slug}/keys/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.revokeOrgAPIKey)))))
 	mux.HandleFunc("POST /v1/orgs/{slug}/keys/{id}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.rotateOrgAPIKey))))))
@@ -4677,6 +4720,8 @@ func (s *server) handler() http.Handler {
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountRevokeSessions))))
 	mux.Handle("POST /v1/admin/ops/accounts/{id}/reset-mfa",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountResetMFA))))
+	mux.Handle("POST /v1/admin/ops/accounts/{id}/revert-email",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountRevertEmail))))
 	// ADR-20261101214152: support raises (or returns to the plan's) a paid
 	// billing subject's object-storage ceiling.
 	mux.Handle("POST /v1/admin/ops/accounts/{id}/object-storage-ceiling",
@@ -5396,6 +5441,7 @@ func (s *server) handler() http.Handler {
 	// provider-confirmed checkout or portal flow. The local plan changes
 	// only after the provider webhook confirms the operation.
 	mux.Handle("POST /dashboard/postgres/overage", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardPostgresOverage))))))
+	mux.Handle("POST /dashboard/orgs/{slug}/github/{installationID}/disconnect", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDisconnectOrgGitHub))))
 	mux.Handle("POST /dashboard/account/plan", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(http.HandlerFunc(s.dashboardAccountPlan)))))
 	// Issue #561 — spend cap self-service form. Same CSRF-envelope
 	// envelope shape as dashboardDelete (see cmd/apid/dashboard_delete.go).
@@ -5784,13 +5830,15 @@ func (s *server) handler() http.Handler {
 	// nonce and stamps it on the context that dashboard.Render reads
 	// to mark up <script>/<style> tags. apid serves only dashboard
 	// + JSON so the gate is unconditionally true.
+	inner := s.hosting.HideDisabled(s.hideDisabledMonetization(operation.OperationCustomerCORS(s.productControl.SurfaceGate(ciapi.HideDisabledRoutes(
+		func() ci.Config { return s.ciConfig }, s.capabilityKillSwitch(mux, apiContractHandler(mux, func(r *http.Request) bool {
+			return s.durable.Hidden(r) || s.liveGate().Hidden(r) || s.realtimePreviewProbe(r) || s.capabilityPathHidden(r) || s.agentPathHidden(r) || s.upgrades().HidesUpgrade(r)
+		})),
+	)))))
+	orgProjectInner = inner
 	return middleware.RequestID(httpsec.Static(httpsec.Nonce(
 		func(*http.Request) bool { return true },
-		s.observeWrap(s.hosting.HideDisabled(s.hideDisabledMonetization(operation.OperationCustomerCORS(s.productControl.SurfaceGate(ciapi.HideDisabledRoutes(
-			func() ci.Config { return s.ciConfig }, s.capabilityKillSwitch(mux, apiContractHandler(mux, func(r *http.Request) bool {
-				return s.durable.Hidden(r) || s.liveGate().Hidden(r) || s.realtimePreviewProbe(r) || s.capabilityPathHidden(r) || s.agentPathHidden(r) || s.upgrades().HidesUpgrade(r)
-			})),
-		)))))),
+		s.observeWrap(inner),
 	)))
 }
 

@@ -72,6 +72,7 @@
       "method",
       "org_id",
       "path",
+      "reason",
       "status"
     ],
     "kind": "operational"
@@ -113,6 +114,7 @@
       "method",
       "org_id",
       "path",
+      "reason",
       "status"
     ],
     "kind": "account_identity"
@@ -710,6 +712,7 @@
       "cooldown_minutes",
       "created_at",
       "created_by_account_id",
+      "custom_metric_labels",
       "custom_metric_name",
       "edge_rule_id",
       "enabled",
@@ -1278,6 +1281,19 @@
       "last_error",
       "node_id",
       "observed_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_custom_metric_series",
+    "columns": [
+      "app_id",
+      "kind",
+      "labels",
+      "name",
+      "observed_at",
+      "series_key",
+      "value"
     ],
     "kind": "operational"
   },
@@ -1939,6 +1955,7 @@
       "max_change_percent",
       "max_failure_percent",
       "max_new_groups",
+      "metric_labels",
       "metric_name",
       "min_events",
       "min_samples",
@@ -2859,6 +2876,7 @@
       "root_dir",
       "route_metrics_enabled",
       "runtime",
+      "sandbox_template",
       "scaling_policy",
       "scaling_policy_revision",
       "scaling_revision",
@@ -5018,6 +5036,7 @@
       "account_id",
       "app_id",
       "created_at",
+      "created_by_account_id",
       "expires_at",
       "id",
       "label",
@@ -5620,6 +5639,7 @@
     "columns": [
       "api_hosting_receipt",
       "app_id",
+      "before_checkpoint_hook",
       "build_id",
       "canary_preset",
       "canary_stages",
@@ -5940,6 +5960,19 @@
       "owner": "account",
       "strategy": "shared"
     }
+  },
+  {
+    "table": "artifact_signatures",
+    "columns": [
+      "bytes",
+      "deployment_id",
+      "digest",
+      "node_name",
+      "signature_format",
+      "signed_at",
+      "storage_key"
+    ],
+    "kind": "operational"
   },
   {
     "table": "edge_tls_certificates",
@@ -7814,6 +7847,7 @@
     "columns": [
       "boot_id",
       "deadline_signing",
+      "edge_header_secrets_boot",
       "generation",
       "managed_circuit",
       "managed_http",
@@ -8417,6 +8451,7 @@
       "application_standard_boot_token",
       "application_standard_promotion_token",
       "booked_cpu_millicores",
+      "booked_vcpu",
       "capacity_cpu_millicores",
       "capacity_ram_mb",
       "capacity_vcpu",
@@ -10175,6 +10210,7 @@
   {
     "table": "managed_postgres_overage_deliveries",
     "columns": [
+      "billed_egress_bytes",
       "billed_storage_byte_seconds",
       "billed_unit_seconds",
       "delivered_millicents",
@@ -10190,8 +10226,11 @@
     "table": "managed_postgres_overage_pending",
     "columns": [
       "allowance_unit_seconds",
+      "app_egress_bytes",
+      "billed_egress_bytes",
       "billed_storage_byte_seconds",
       "billed_unit_seconds",
+      "egress_allowance_bytes",
       "from_millicents",
       "live",
       "period_start",
@@ -10202,6 +10241,7 @@
       "storage_pool_bytes",
       "subject_id",
       "target_millicents",
+      "used_egress_bytes",
       "used_storage_byte_seconds",
       "used_unit_seconds"
     ],
@@ -10509,6 +10549,7 @@
       "deleted_at",
       "desired_generation",
       "environment_clone_operation_id",
+      "expires_at",
       "id",
       "labels",
       "last_error_code",
@@ -10518,6 +10559,10 @@
       "observed_generation",
       "org_id",
       "postgres_major",
+      "preview_environment_id",
+      "preview_pr_number",
+      "preview_source_database_id",
+      "previews",
       "provider_resource_id",
       "purge_after",
       "region",
@@ -17521,6 +17566,105 @@
     }
   },
   {
+    "table": "sandbox_ports",
+    "columns": [
+      "account_id",
+      "created_at",
+      "port",
+      "sandbox_id",
+      "visibility"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_session_usage",
+    "columns": [
+      "account_id",
+      "billable_mb_ms",
+      "cold_boot",
+      "expected_samples",
+      "final",
+      "frozen_ms",
+      "measured_ms",
+      "method",
+      "paused_ms",
+      "peak_private_mb",
+      "private_mb_ms",
+      "recorded_at",
+      "samples",
+      "sandbox_id",
+      "unpaused_private_mb_ms",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_sessions",
+    "columns": [
+      "account_id",
+      "close_requested_at",
+      "closed_at",
+      "created_at",
+      "expires_at",
+      "id",
+      "idle_timeout_sec",
+      "image_job_id",
+      "image_ref",
+      "instance_id",
+      "kind",
+      "labels",
+      "last_activity_at",
+      "lease_expires_at",
+      "lease_owner",
+      "lease_token",
+      "network_mode",
+      "node_id",
+      "outcome_code",
+      "outcome_message",
+      "preset",
+      "ram_mb",
+      "state",
+      "template_id",
+      "tenant_id",
+      "updated_at",
+      "workspace_snapshot_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_templates",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "name",
+      "ready_cmd",
+      "ready_timeout_s",
+      "start_cmd",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_workspace_snapshots",
+    "columns": [
+      "account_id",
+      "bytes",
+      "created_at",
+      "delete_requested_at",
+      "expires_at",
+      "id",
+      "ready_at",
+      "reserved_bytes",
+      "sandbox_id",
+      "sha256",
+      "state",
+      "storage_key"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "static_egress_provisioning_grants",
     "columns": [
       "account_id",
@@ -17617,6 +17761,15 @@
     "columns": [
       "account_id",
       "connections",
+      "node_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "realtime_node_endpoint_connections",
+    "columns": [
+      "connections",
+      "endpoint_id",
       "node_name"
     ],
     "kind": "operational"
@@ -17738,6 +17891,17 @@
     "kind": "operational"
   },
   {
+    "table": "request_analytics_app_gaps",
+    "columns": [
+      "app_id",
+      "last_gap_at",
+      "node_name",
+      "pending_count",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "request_analytics_hours",
     "columns": [
       "account_id",
@@ -17780,10 +17944,30 @@
     "kind": "operational"
   },
   {
+    "table": "request_analytics_node_coverage",
+    "columns": [
+      "boot_id",
+      "counting_since",
+      "heartbeat_at",
+      "node_name",
+      "unattributed_dropped_total"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "request_analytics_rollup_gaps",
     "columns": [
       "app_id",
       "bucket_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_rollup_batches",
+    "columns": [
+      "applied_at",
+      "batch_id",
+      "node_id"
     ],
     "kind": "operational"
   },

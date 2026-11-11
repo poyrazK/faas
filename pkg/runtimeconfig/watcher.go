@@ -45,16 +45,17 @@ const (
 	// their first reconcile; turn it on fleet-wide before admitting clones.
 	KeyFullEnvironmentClones = "full_environment_clones_enabled"
 
-	// The values that shape the CPU of an app on the
-	// KeyGuestVCPUFromCPUApps list (ADR-20261101215228), read by schedd.
-	// Each default is the compiled value; bounds are in pkg/api/limits.go.
+	// Retired CPU shape keys (ADR-20261109172421): every app's CPU follows
+	// its instance size, so no daemon reads them. apid keeps them as
+	// read-only catalog entries for the rows already stored.
 	KeyAppCPUBaselineMillicoresPerGB = "app_cpu_baseline_millicores_per_gb"
 	KeyAppCPUCeilingFloorMillicores  = "app_cpu_ceiling_floor_millicores"
 	KeyGuestVCPUMillicores           = "guest_vcpu_millicores"
-	// KeyGuestVCPUFromCPUApps lists the apps, comma-separated IDs or "*",
-	// whose vCPUs follow their CPU ceiling and that book their plan's
-	// baseline (ADR-20261101160231). Empty keeps every app on its plan.
-	KeyGuestVCPUFromCPUApps = "guest_vcpu_from_cpu_apps"
+	KeyGuestVCPUFromCPUApps          = "guest_vcpu_from_cpu_apps"
+	KeyCPUSizeApps                   = "cpu_size_apps"
+	// KeyCPUAdmission (enforce or observe) is retired too: CPU never
+	// refuses work.
+	KeyCPUAdmission = "cpu_admission"
 
 	// KeySnapshotRefresh is schedd's snapshot refresh after a release:
 	// off, shadow or on (ADR-20261106214916). KeySnapshotRefreshWindowHours
@@ -99,6 +100,9 @@ type Watcher struct {
 
 	mu       sync.Mutex
 	versions map[string]int64
+	// fingerprint is the global rows' fingerprint as of the last repair
+	// that applied every row it read; "" until one has.
+	fingerprint string
 	// failed is the last version whose apply failure was reported, so a
 	// value that keeps failing is recorded once rather than every repair.
 	failed map[string]int64
@@ -214,7 +218,7 @@ func (w *Watcher) runSubscription(ctx context.Context, notifications <-chan db.N
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if err := w.Reconcile(ctx); err != nil {
+			if err := w.Repair(ctx); err != nil {
 				w.Log.Warn("runtime_config reconcile failed", "err", err)
 			}
 		case _, ok := <-notifications:
@@ -226,6 +230,40 @@ func (w *Watcher) runSubscription(ctx context.Context, notifications <-chan db.N
 			}
 		}
 	}
+}
+
+// Repair is the periodic reconcile. A store that fingerprints its rows lets
+// it skip the full read while nothing changed since a reconcile that applied
+// everything it read; a notification, a failed apply or a fingerprint error
+// always reads the rows. The fingerprint is taken before the rows are listed,
+// so a write between the two only costs one more read.
+func (w *Watcher) Repair(ctx context.Context) error {
+	if w == nil || w.Store == nil || w.Apply == nil || len(w.Keys) == 0 {
+		return nil
+	}
+	fingerprinter, ok := w.Store.(state.RuntimeConfigFingerprinter)
+	if !ok {
+		return w.Reconcile(ctx)
+	}
+	fingerprint, err := fingerprinter.RuntimeConfigFingerprint(ctx, state.RuntimeConfigScopeGlobal)
+	if err != nil {
+		return w.Reconcile(ctx)
+	}
+	w.mu.Lock()
+	unchanged := fingerprint == w.fingerprint && len(w.failed) == 0
+	w.mu.Unlock()
+	if unchanged {
+		return nil
+	}
+	if err := w.Reconcile(ctx); err != nil {
+		return err
+	}
+	w.mu.Lock()
+	if len(w.failed) == 0 {
+		w.fingerprint = fingerprint
+	}
+	w.mu.Unlock()
+	return nil
 }
 
 // Reconcile applies every acknowledged row for this daemon. Rows with a

@@ -23,17 +23,19 @@ database reservation boundary:
 
 | Plan | Databases | Pooled storage | Compute per month | Restore window | Classes |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Free | 1 | 0.5 GiB | 5 CU-hours | 7 days | development |
+| Free | — | — | — | — | — |
 | Hobby | 1 | 1 GiB | 25 CU-hours | 7 days | development |
 | Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
 | Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
 
-A Free-plan database needs enforced compute caps, because Free has no
-overage to pay for compute past its allowance. Until the platform enforces
-them, `gregale postgres create`, `gregale dev --postgres`, pipeline mirrors
-and restores answer `403 managed_postgres_not_in_plan` on Free, and a
-Compose `postgres` service is not provisioned (the deploy names the plan as
-the reason).
+The Free plan includes no managed PostgreSQL
+([ADR-20261110184700](adr/20261110184700-free-plan-includes-no-managed-postgres.md)):
+`gregale postgres create`, `gregale dev --postgres`, pipeline mirrors and
+restores answer `403 managed_postgres_not_in_plan` on Free, whatever the cap
+enforcement mode, and a Compose `postgres` service is not provisioned (the
+deploy names the plan as the reason). An account that falls to Free from a
+paid plan keeps its databases suspended as past the plan
+([Databases past a lowered plan](#databases-past-a-lowered-plan)).
 
 Storage is pooled across the account's databases: one database may use the
 whole pool. Storage and compute are limits unless a paid account turns
@@ -43,6 +45,12 @@ overage on ([Compute overage](#compute-overage)):
   allowance;
 - the pool doubles, and storage past the plan's pool, averaged over the
   month, costs $0.50 per GiB-month.
+
+Data your databases send counts toward your plan's monthly egress allowance
+together with your apps' egress (Free 10 GiB, Hobby 100 GiB, Pro 500 GiB,
+Scale 2,000 GiB; see [plans](plans.md)). Once the two together reach it, your
+databases stop and refuse connections until the month ends or the plan grows.
+Egress overage does not extend this for databases yet.
 
 All current plans use provider-managed compute suspension. Always-on database
 compute is not included in the bundled plans, and requests that disable
@@ -165,9 +173,13 @@ customers out until the owner has tested production
 3. Turn on enforcement after each shadow readout (until both caps are `on`,
    step 6's default releases nobody):
    `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on`,
-   `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on`, and the cap emails
+   `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on`, the cap emails
    (`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=1` on apid and
-   maild). Create the [SQL probe](#sql-availability-probe) canary databases.
+   maild), and the restore slot emails
+   (`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_RESTORE_SLOT_OUTBOX_ENABLED=1` on apid
+   and maild). Without the latter, a one-database plan's restored copy loses
+   its bindings and has its delete scheduled at `restore_slot_until` with no
+   warning. Create the [SQL probe](#sql-availability-probe) canary databases.
    Set `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT=on` once the release
    shows [databases past a lowered plan](#databases-past-a-lowered-plan) to
    the customer.
@@ -498,7 +510,8 @@ them.
 | `postgres_majors` | Comma-separated majors offered. Default `14,15,16,17,18`. |
 | `port`, `tls_mode`, `database_name` | Connection details in issued URLs. Defaults `5432`, `verify-full`, `gregale`. |
 
-`data_api_enabled` issues Data API logins, as on Neon. Service classes have
+`data_api_enabled` issues Data API logins and `session_enabled` session
+logins, as on Neon. Service classes have
 fixed shapes:
 
 - `development`: 1 vCPU and 512 MiB.
@@ -535,6 +548,10 @@ credential mode and the dedicated `api` schema. See the
 [Data API guide](data-api.md) for JWT authentication, RLS policies, type export
 and schema refresh. Neon advertises this mode only when the backend explicitly
 sets `data_api_enabled: true` and passes fresh qualification for that configuration.
+The direct `session` mode follows the same rule with `session_enabled: true`;
+its qualification probe proves that a session advisory lock outlives its
+statement, LISTEN receives NOTIFY, and revocation ends the login
+(ADR-20261110120000).
 
 Neon's create-project operation is non-idempotent. The adapter never retries
 that POST at the HTTP layer. It assigns a deterministic, hashed project name,
@@ -565,6 +582,7 @@ codes without response bodies, connection strings, endpoint hosts, or API keys.
 | `migration` | Direct required; release tasks only | Schema changes through a stable non-login schema owner; no role/database administration or replication |
 | `read_only` | Replica when available, otherwise pooled/direct primary | Public-schema SELECT and sequence inspection; no sequence advancement, DML, DDL, administration or RLS bypass |
 | `data_api` | Pooled, with direct fallback | `api`-schema DML only for the [Data API](data-api.md); RLS enforced |
+| `session` | Direct required; serving instances; role `CONNECTION LIMIT 42` | Same as `read_write`; for LISTEN/NOTIFY, session advisory locks, `SET` and SQL `PREPARE` (ADR-20261109180000, ADR-20261110120000) |
 
 The pooled connection is a transaction pool: each transaction may run on a
 different server session, and a session goes back to the pool between
@@ -1268,7 +1286,15 @@ sweep. The same sweep suspends the databases the plan no longer includes
   source's project) is left running and logged as shared.
 - Each sweep recomputes the set. Once the subject fits (an upgrade, a deleted
   database, or a resize to an included class), the next sweep restores the
-  ordinary quota. Nothing is deleted.
+  ordinary quota.
+- A database that stays past the plan for 30 days
+  (`api.ManagedPostgresPlanExcessDeleteAfter`, counted from its first
+  suspension) is deleted
+  ([ADR-20261110184700](adr/20261110184700-free-plan-includes-no-managed-postgres.md)):
+  the sweep revokes its bindings and schedules its delete through the delete
+  grace period, so the owner can still recover it for 7 days. Fitting the
+  plan again clears the clock. A suspended, abuse-held or deleting account's
+  databases are never deleted this way.
 
 `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT` selects the mode:
 
@@ -1276,6 +1302,17 @@ sweep. The same sweep suspends the databases the plan no longer includes
   project it would suspend, and writes nothing.
 - `on` writes the quota, only while `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` is
   `on` too; it logs `managed postgres plan excess suspended` when it does.
+- `off` does nothing.
+
+`FAAS_MANAGED_POSTGRES_PLAN_EXCESS_DELETE` selects the deletion pass. It acts
+only on databases the sweep suspends, so only while both modes above are `on`:
+
+- `shadow` (the default) logs `managed postgres plan excess due for deletion
+  (shadow)` for each database past its 30 days.
+- `on` deletes them and logs `managed postgres plan excess delete scheduled`.
+  The suspension email then names the deletion date. Turn it on only once
+  every apid runs the release that added it: an older apid cannot read that
+  email's payload.
 - `off` does nothing.
 
 While it is `on`, `GET /v1/postgres/databases` and the read show

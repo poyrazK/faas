@@ -39,6 +39,19 @@ type storeAuthAdapter struct{ state.Store }
 // assertion fails and every deploy token is rejected with a bare 401.
 var _ middleware.DeployTokenAuthenticator = storeAuthAdapter{}
 
+// ProjectByOrgSlug lives on the optional ProjectOwnershipStore, so it is
+// forwarded for the middleware's organization project limit
+// (ADR-20261104085712).
+var _ middleware.OrgProjectResolver = storeAuthAdapter{}
+
+func (a storeAuthAdapter) ProjectByOrgSlug(ctx context.Context, orgID, slug string) (state.Project, error) {
+	owners, ok := a.Store.(state.ProjectOwnershipStore)
+	if !ok {
+		return state.Project{}, state.ErrNotFound
+	}
+	return owners.ProjectByOrgSlug(ctx, orgID, slug)
+}
+
 type deployTokenStore interface {
 	middleware.DeployTokenAuthenticator
 	TouchDeployTokenLastUsed(ctx context.Context, tokenID string) error

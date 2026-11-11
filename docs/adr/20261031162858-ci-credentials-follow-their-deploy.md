@@ -131,3 +131,23 @@ count against the deployer's plan (`GET /v1/account`). A company app's crons
 follow the company's plan, so a Free member deploying a Pro company's app was
 refused; apid checks each cron against the app owner's plan and a refusal
 rolls the set back. The CLI refuses only a count that no plan allows.
+
+## Amendment 3 (2026-11-10): an app-bound credential deploys, it does not administer
+
+A deploy token or a per-app OIDC bearer was confined to its app's
+`/v1/apps/{slug}` routes but reached every one of them that `deploy:write`
+opens, including `DELETE /v1/apps/{slug}`, while the docs said the token "can
+only deploy one app". The owner chose a deny-list over an allow-list so no CI
+deploy step breaks. The middleware (`appBoundCredentialDeniedRoute`) refuses
+these routes to an app-bound credential with `403`, after the app binding, so
+another app's routes still answer `404`:
+
+- deleting or renaming the app;
+- sending its data elsewhere: log drains, mirrors, outbound webhooks;
+- minting credentials: consumers and their keys, AI access tokens, issue
+  ingest tokens;
+- reading or forking its memory: debug requests, crash snapshots, forks.
+
+A CI deploy, including a `gregale.yaml` reconciliation, uses none of them;
+inbound webhooks (`inbound-webhooks`) stay open. Account API keys with
+`deploy:write` are unchanged. Validation: `TestDeployToken_RefusedOutsideDeploying`.

@@ -81,7 +81,7 @@ func TestContainedBranchWakeInstallsTheProfileAndDeniesHostActions(t *testing.T)
 	}
 	addrs := []netip.Addr{netip.MustParseAddr("203.0.113.7")}
 	before := len(run.batches)
-	if err := m.AllowResolvedEgressForName(t.Context(), source, owner, "ep-parent.eu.neon.tech", addrs, time.Minute, 5432); err != nil {
+	if err := m.AllowResolvedEgressNamed(t.Context(), source, owner, "ep-parent.eu.neon.tech", addrs, time.Minute, 5432); err != nil {
 		t.Fatal(err)
 	}
 	for _, batch := range run.batches[before:] {
@@ -90,7 +90,7 @@ func TestContainedBranchWakeInstallsTheProfileAndDeniesHostActions(t *testing.T)
 		}
 	}
 	before = len(run.batches)
-	if err := m.AllowResolvedEgressForName(t.Context(), source, owner, "ep-branch.eu.neon.tech.", addrs, time.Minute, 5432); err != nil {
+	if err := m.AllowResolvedEgressNamed(t.Context(), source, owner, "ep-branch.eu.neon.tech.", addrs, time.Minute, 5432); err != nil {
 		t.Fatal(err)
 	}
 	var added bool
@@ -103,7 +103,7 @@ func TestContainedBranchWakeInstallsTheProfileAndDeniesHostActions(t *testing.T)
 		t.Fatal("the branch database did not enter branch_db")
 	}
 	before = len(run.batches)
-	if err := m.AllowResolvedEgressForName(t.Context(), source, owner, "ep-branch.eu.neon.tech", addrs, time.Minute, 5432); err != nil || len(run.batches) != before {
+	if err := m.AllowResolvedEgressNamed(t.Context(), source, owner, "ep-branch.eu.neon.tech", addrs, time.Minute, 5432); err != nil || len(run.batches) != before {
 		t.Fatalf("a repeat within half the TTL re-ran nft (runs %d, err %v)", len(run.batches)-before, err)
 	}
 	// An older resolver sends no name: nothing enters branch_db.

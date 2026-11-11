@@ -127,6 +127,12 @@ func (s *server) mfaEnroll(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Already enrolled", "call /v1/account/mfa/disable before re-enrolling"))
 		return
 	}
+	// Confirming asks for the current password. Without one, a stolen
+	// session could add an authenticator that locks the owner out, so it
+	// must have signed in recently (ADR 20261110100000).
+	if !s.mfaEnrollFirstFactorReady(w, r, acct) {
+		return
+	}
 	// mfaRecipient stays nil when apid boots without an age identity;
 	// calling it panicked (a recovered 500) instead of reporting 503. The
 	// TOTP secret is an account value (ADR 20261022111812).
@@ -220,7 +226,7 @@ func (s *server) mfaConfirm(w http.ResponseWriter, r *http.Request, acct state.A
 	if !s.confirmMFAFirstFactor(w, r, acct, req.CurrentPassword) {
 		return
 	}
-	if !s.totpAttemptAllowed(w, acct) {
+	if !s.totpAttemptAllowed(w, r, acct) {
 		return
 	}
 	if s.tryMFAEnabledAlert(w, r, acct, req.Totp) {
@@ -261,7 +267,7 @@ func (s *server) confirmInlineMFA(w http.ResponseWriter, r *http.Request, acct s
 }
 
 func (s *server) finishMFAConfirmation(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	s.totp.reset(acct.ID) // a correct code clears the counted attempts
+	s.resetTOTPAttempts(r.Context(), acct.ID) // a correct code clears the counted attempts
 	if err := s.reissueSessionCookieWithStepUp(w, r, acct, false, time.Now()); err != nil {
 		// Cookie re-issue failure is non-fatal — the customer's
 		// enrollment landed; the next request will trip
@@ -280,7 +286,22 @@ func (s *server) finishMFAConfirmation(w http.ResponseWriter, r *http.Request, a
 	}
 	s.audit.Emit(r.Context(), "account.mfa_enrolled", &acct.ID, nil)
 	s.audit.Emit(r.Context(), "account.mfa_confirmed", &acct.ID, map[string]any{"method": "totp"})
+	s.endOtherAccessAfterMFAEnroll(r, acct)
 	writeJSON(w, http.StatusOK, api.MFAConfirmResponse{})
+}
+
+// endOtherAccessAfterMFAEnroll signs out every other browser and revokes the
+// CLI and MCP sign-in keys. Turning on two-factor authentication is what a
+// customer does when they suspect someone else is in: sessions and keys
+// issued before it never passed the new factor (account-flow audit
+// 2026-11-10, ADR 20261111110000). The enrolling browser stays signed in.
+func (s *server) endOtherAccessAfterMFAEnroll(r *http.Request, acct state.Account) {
+	keep := ""
+	if sess, ok := sessionFrom(r); ok {
+		keep = sess.ID
+	}
+	s.revokeSessionsAfterPasswordChange(r.Context(), acct.ID, keep)
+	s.revokeInteractiveSignInKeys(r, acct, "mfa_enrolled")
 }
 
 // mfaVerify steps up an mfa_pending session. Same verify path
@@ -302,7 +323,7 @@ func (s *server) mfaVerify(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Invalid request", "malformed JSON body"))
 		return
 	}
-	if !s.totpAttemptAllowed(w, acct) {
+	if !s.totpAttemptAllowed(w, r, acct) {
 		return
 	}
 	secret := readSealedSecret(s, w, r, acct.ID)
@@ -324,7 +345,7 @@ func (s *server) mfaVerify(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode, "Invalid code", detail))
 		return
 	}
-	s.totp.reset(acct.ID)
+	s.resetTOTPAttempts(r.Context(), acct.ID)
 	if err := s.reissueSessionCookieWithStepUp(w, r, acct, false, time.Now()); err != nil {
 		s.log.Error("mfa.verify.reissue_cookie", "err", err.Error())
 		api.WriteProblem(w, api.ErrCapacity("could not re-issue session cookie"))
@@ -607,6 +628,16 @@ func (s *server) mfaDisable(w http.ResponseWriter, r *http.Request, acct state.A
 			"Invalid request", "exactly one of password or recovery_code is required"))
 		return
 	}
+	// The enrolled factor outranks the password: switching it off with the
+	// password alone let a stolen session and password remove the second
+	// factor. The password path also needs a code verified within the
+	// step-up window; without the authenticator, use a recovery code or the
+	// emailed disable link (account-flow audit 2026-11-10, ADR 20261111110000).
+	if hasPassword && !freshStepUp(r) {
+		s.audit.Emit(r.Context(), "account.mfa_disable_failed", &acct.ID, map[string]any{"reason": "step_up_required"})
+		api.WriteProblem(w, api.ErrStepUpRequired())
+		return
+	}
 
 	if s.tryMFADisabledAlert(w, r, acct, req) {
 		return
@@ -650,6 +681,13 @@ func (s *server) completeInlineMFADisable(w http.ResponseWriter, r *http.Request
 	}
 	s.alertMFADisabledInline(r.Context(), acct, method)
 	s.finishMFADisable(w, r, acct, method)
+}
+
+// freshStepUp reports whether the session verified a two-factor code within
+// the account step-up window.
+func freshStepUp(r *http.Request) bool {
+	ts, has := authmw.StepUpFrom(r)
+	return has && !ts.IsZero() && time.Since(ts) <= accountStepUpTTL
 }
 
 // Clear stale pending proof, while preserving an operator or explicit policy.
@@ -1151,8 +1189,8 @@ func consumeRecoveryCode(ctx context.Context, st consumeRecoveryCodeSelector, ac
 
 // totpAttemptAllowed counts a TOTP attempt, or answers 429 while the account
 // has used up its attempts (totp_guard.go).
-func (s *server) totpAttemptAllowed(w http.ResponseWriter, acct state.Account) bool {
-	wait := s.totp.reserve(acct.ID, time.Now())
+func (s *server) totpAttemptAllowed(w http.ResponseWriter, r *http.Request, acct state.Account) bool {
+	wait := s.reserveTOTPAttempt(r.Context(), acct.ID)
 	if wait <= 0 {
 		return true
 	}

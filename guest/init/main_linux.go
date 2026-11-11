@@ -68,6 +68,7 @@ const (
 	modeAppTask
 	modeDataRepair
 	modeAgent
+	modeSandbox
 )
 
 // main is guest PID 1. Any fatal error here panics the VM (panic=1 in boot args
@@ -179,6 +180,12 @@ func boot() error {
 	if mode == modeAgent {
 		guestStage("before-agent-run")
 		return runAgentGuest(slog.Default())
+	}
+	// Sandbox sessions (ADR-20261027090013 §4) serve many operations until
+	// vmmd stops the VM.
+	if mode == modeSandbox {
+		guestStage("before-sandbox")
+		return runSandboxGuest(slog.Default())
 	}
 	var extensionHooks *extensionLifecycle
 	var afterRestore atomic.Pointer[afterRestoreRuntime]
@@ -659,16 +666,23 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// boundary. Empty = no OTel configured, the env is unchanged.
 	env = StampTraceparentEnv(env, GetResumeTraceparent())
 	// ADR-741: `gregale dev --debug` starts the Node inspector for the main
-	// workload only.
+	// workload only, and only in a developer environment: schedd owns the
+	// marker, so the switch set on any other app is ignored.
+	developer := apiEnv[api.PlatformDeveloperEnvironmentEnv] == "1"
 	preload := ""
 	if devDebugEnvValue(env, api.DevDebugEnv) == api.DevDebugRuntimeNode {
-		if err := writeDevDebugPreload(devDebugPreloadPath); err != nil {
-			slog.Warn("dev debug preload unavailable; inspecting the first node process", "err", err)
-		} else {
-			preload = devDebugPreloadPath
+		switch {
+		case !developer:
+			slog.Warn("dev debug ignored: not a developer environment", "key", api.DevDebugEnv)
+		default:
+			if err := writeDevDebugPreload(devDebugPreloadPath); err != nil {
+				slog.Warn("dev debug preload unavailable; inspecting the first node process", "err", err)
+			} else {
+				preload = devDebugPreloadPath
+			}
 		}
 	}
-	env = StampDevDebugEnv(env, preload)
+	env = StampDevDebugEnv(env, preload, developer)
 	// ADR-1170: a watch-mode developer image runs a development server that
 	// reloads patched files itself.
 	devWatchActive.Store(devDebugEnvValue(env, api.DevWatchEnv) == "1")
@@ -697,7 +711,12 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	if sup != nil {
 		output = io.MultiWriter(os.Stdout, sup.LogBuffer())
 	}
-	outputPipe, err := newWorkloadOutputPipe(output, int(credential.Uid), int(credential.Gid))
+	// Spec §17 G2: sealed values never reach the logs in cleartext. A
+	// reloadable app shares one redactor across restarts so reloaded values
+	// are masked too (ADR-20261110090000).
+	redactor := processSecrets.logRedactor()
+	redactor.update(secrets)
+	outputPipe, err := newWorkloadOutputPipe(redactor.writer(output), int(credential.Uid), int(credential.Gid))
 	if err != nil {
 		return fmt.Errorf("run app: workload output pipe: %w", err)
 	}
@@ -855,6 +874,7 @@ func errorKind(err error) string {
 //
 // Mode priority (ADR-171):
 //  0. agent.json with kind=="agent"            → modeAgent (ADR-20261027090010), alone
+//     sandbox.json with kind=="sandbox"        → modeSandbox (ADR-20261027090013), alone
 //  1. app-task.json with kind=="app_task"     → modeAppTask
 //  2. execution.json with kind=="execution"   → modeExecution
 //  3. job.json with kind=="job"               → modeJob
@@ -889,7 +909,7 @@ func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
 		if markerErr := validateAgentManifest(data); markerErr != nil {
 			return modeAgent, api.BuildManifest{}, fmt.Errorf("invalid agent manifest: %w", markerErr)
 		}
-		for _, other := range []string{appTaskManifestRelativePath, executionManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
+		for _, other := range []string{sandboxManifestRelativePath, appTaskManifestRelativePath, executionManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
 			if _, err = fs.Stat(fsys, other); !errors.Is(err, fs.ErrNotExist) {
 				return modeAgent, api.BuildManifest{}, errors.New("conflicting agent guest mode")
 			}
@@ -897,6 +917,19 @@ func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
 		return modeAgent, api.BuildManifest{}, nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return modeAgent, api.BuildManifest{}, fmt.Errorf("read agent manifest: %w", err)
+	}
+	if data, err := fs.ReadFile(fsys, sandboxManifestRelativePath); err == nil {
+		if markerErr := validateSandboxManifest(data); markerErr != nil {
+			return modeSandbox, api.BuildManifest{}, fmt.Errorf("invalid sandbox manifest: %w", markerErr)
+		}
+		for _, other := range []string{appTaskManifestRelativePath, executionManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
+			if _, err = fs.Stat(fsys, other); !errors.Is(err, fs.ErrNotExist) {
+				return modeSandbox, api.BuildManifest{}, errors.New("conflicting sandbox guest mode")
+			}
+		}
+		return modeSandbox, api.BuildManifest{}, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return modeSandbox, api.BuildManifest{}, fmt.Errorf("read sandbox manifest: %w", err)
 	}
 	if data, err := fs.ReadFile(fsys, appTaskManifestRelativePath); err == nil {
 		if markerErr := validateAppTaskManifest(data); markerErr != nil {

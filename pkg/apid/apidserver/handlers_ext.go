@@ -1222,6 +1222,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.afterRestoreBudgetProblem(r.Context(), acct.ID, app.ID, req.AfterRestore); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := s.executionModeApprovalProblem(r.Context(), app, &req); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -1685,7 +1689,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		fallback := api.ErrCapacity("could not update app")
+		fallback := appUpdateUnavailable(err)
 		if problem := deploySettingsUpdateProblem(err); problem != nil {
 			fallback = problem
 		} else if errors.Is(err, state.ErrServiceBindingPlanConflict) {
@@ -5459,10 +5463,19 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 // handler is the only caller; nil-safe when the cache is nil
 // (legacy tests that pre-date the cache field).
 func (s *server) resolveGraceWindow(ctx context.Context, accountID string) (*int, error) {
+	var days *int
+	var err error
 	if s.graceWindowCache == nil {
-		return s.store.GetAccountKeyGraceWindow(ctx, accountID)
+		days, err = s.store.GetAccountKeyGraceWindow(ctx, accountID)
+	} else {
+		days, err = s.graceWindowCache.resolveGraceWindow(ctx, s.store, accountID)
 	}
-	return s.graceWindowCache.resolveGraceWindow(ctx, s.store, accountID)
+	// A value saved before the cap existed is held to it (ADR 20261109120000).
+	if err == nil && days != nil && *days > api.APIKeyGraceWindowMaxDays {
+		capped := api.APIKeyGraceWindowMaxDays
+		days = &capped
+	}
+	return days, err
 }
 
 // --- usage -----------------------------------------------------------------
@@ -8493,6 +8506,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 			Metric: sp.Target.Metric,
 			Value:  sp.Target.Value,
 			Name:   sp.Target.Name,
+			Labels: sp.Target.Labels,
 		}
 	}
 	// ADR-194 targets, ADR-195 schedules. These were absent here for the
@@ -8506,7 +8520,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 	// fails if a field is added to either type without being copied here.
 	for _, t := range sp.Targets {
 		out.Targets = append(out.Targets, state.ScalingTarget{
-			Metric: t.Metric, Value: t.Value, Name: t.Name,
+			Metric: t.Metric, Value: t.Value, Name: t.Name, Labels: t.Labels,
 		})
 	}
 	out.Timezone = sp.Timezone
@@ -8556,4 +8570,17 @@ func (s *server) notifyAppRenamed(ctx context.Context, acct state.Account, updat
 	// both so a future relax of validSlug (or a hostile migration)
 	// cannot smuggle CR/LF into the audit line.
 	s.log.Info("app renamed", "app", updated.ID, "from", logsanitize.Field(oldSlug), "to", logsanitize.Field(newSlug), "account", acct.ID)
+}
+
+// appUpdateUnavailable is the fallback refusal of an app update that failed
+// for a reason the customer cannot fix. A control-plane database that did
+// not answer in time gets its own detail and a Retry-After: Hunt 32 H32-56
+// saw "Briefly at capacity — could not update app" for a deadline exceeded
+// while the CP database was slow, which read like a quota.
+func appUpdateUnavailable(err error) *api.Problem {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return api.ErrCapacity("the control plane did not answer in time; the app was not changed, retry shortly").
+			WithHeader("Retry-After", "5")
+	}
+	return api.ErrCapacity("could not update app")
 }

@@ -241,6 +241,7 @@ type AgentActivity struct {
 	Status     int32
 	ApprovalID pgtype.UUID
 	CreatedAt  pgtype.Timestamptz
+	Reason     pgtype.Text
 }
 
 // ADR-20261107140000 notification channels that get agent approval requests; apid is the only writer.
@@ -293,6 +294,7 @@ type AgentApprovalRequest struct {
 	ConsumedAt   pgtype.Timestamptz
 	ExpiresAt    pgtype.Timestamptz
 	DecisionNote pgtype.Text
+	Reason       pgtype.Text
 }
 
 // ADR-20261030125501 agent callback revocations written by apid: a thread's latest revocation time.
@@ -594,6 +596,7 @@ type AlertRule struct {
 	LogQuery                        pgtype.Text
 	CreatedByAccountID              pgtype.UUID
 	NotifyResolved                  bool
+	CustomMetricLabels              []byte
 }
 
 type AlertRuleChannel struct {
@@ -1043,6 +1046,7 @@ type App struct {
 	GithubProductionTrigger           pgtype.Text
 	GithubPreviewEnabled              pgtype.Bool
 	ScalingRevision                   int64
+	SandboxTemplate                   bool
 }
 
 type AppApiRoute struct {
@@ -1164,6 +1168,16 @@ type AppCustomMetric struct {
 	Value      float64
 	ObservedAt pgtype.Timestamptz
 	Kind       string
+}
+
+type AppCustomMetricSeries struct {
+	AppID      pgtype.UUID
+	Name       string
+	SeriesKey  string
+	Labels     []byte
+	Kind       string
+	Value      float64
+	ObservedAt pgtype.Timestamptz
 }
 
 type AppDefaultDomain struct {
@@ -1637,6 +1651,7 @@ type AppReleaseGate struct {
 	SyntheticCheckID  pgtype.UUID
 	MaxFailurePercent pgtype.Int4
 	MaxChangePercent  pgtype.Int4
+	MetricLabels      []byte
 }
 
 type AppResourceAccount struct {
@@ -2244,6 +2259,16 @@ type ApplicationStandardVersion struct {
 	Description    string
 	CreatedBy      pgtype.UUID
 	CreatedAt      pgtype.Timestamptz
+}
+
+type ArtifactSignature struct {
+	StorageKey      string
+	Digest          string
+	Bytes           int64
+	DeploymentID    pgtype.UUID
+	NodeName        string
+	SignatureFormat string
+	SignedAt        pgtype.Timestamptz
 }
 
 type AuditEventOutbox struct {
@@ -4045,18 +4070,19 @@ type DebugRegressionObservation struct {
 }
 
 type DeployToken struct {
-	ID            pgtype.UUID
-	AccountID     pgtype.UUID
-	AppID         pgtype.UUID
-	TokenSha256   []byte
-	Label         string
-	Scopes        []string
-	Status        string
-	CreatedAt     pgtype.Timestamptz
-	ExpiresAt     pgtype.Timestamptz
-	LastUsedAt    pgtype.Timestamptz
-	RevokedAt     pgtype.Timestamptz
-	RotatedFromID pgtype.UUID
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	TokenSha256        []byte
+	Label              string
+	Scopes             []string
+	Status             string
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	LastUsedAt         pgtype.Timestamptz
+	RevokedAt          pgtype.Timestamptz
+	RotatedFromID      pgtype.UUID
+	CreatedByAccountID pgtype.UUID
 }
 
 type Deployment struct {
@@ -4171,6 +4197,7 @@ type Deployment struct {
 	MailFailureSuccessRevision pgtype.Int8
 	PromotedAt                 pgtype.Timestamptz
 	RollbackReleaseReview      []byte
+	BeforeCheckpointHook       pgtype.Bool
 }
 
 type DeploymentAlias struct {
@@ -6457,19 +6484,20 @@ type GatewayTrafficPolicyObservation struct {
 }
 
 type GatewayTrafficRuntimeObservation struct {
-	NodeName           string
-	Generation         int64
-	BootID             pgtype.UUID
-	ReportedAt         pgtype.Timestamptz
-	RetryEnabled       bool
-	RateCounterMode    string
-	RetryCounterMode   string
-	RetryBackendID     string
-	DeadlineSigning    bool
-	PolicySnapshot     bool
-	SecurityRevocation bool
-	ManagedHttp        bool
-	ManagedCircuit     bool
+	NodeName              string
+	Generation            int64
+	BootID                pgtype.UUID
+	ReportedAt            pgtype.Timestamptz
+	RetryEnabled          bool
+	RateCounterMode       string
+	RetryCounterMode      string
+	RetryBackendID        string
+	DeadlineSigning       bool
+	PolicySnapshot        bool
+	SecurityRevocation    bool
+	ManagedHttp           bool
+	ManagedCircuit        bool
+	EdgeHeaderSecretsBoot pgtype.UUID
 }
 
 type GdprRequest struct {
@@ -6842,6 +6870,7 @@ type Instance struct {
 	CapacityCpuMillicores             int64
 	CapacityVcpu                      int32
 	BookedCpuMillicores               pgtype.Int4
+	BookedVcpu                        pgtype.Int4
 }
 
 type InstanceApplicationStandardAdmission struct {
@@ -8649,6 +8678,11 @@ type ManagedPostgresDatabase struct {
 	PurgeAfter                  pgtype.Timestamptz
 	RestoreSlotUntil            pgtype.Timestamptz
 	Labels                      []byte
+	Previews                    string
+	PreviewSourceDatabaseID     pgtype.UUID
+	PreviewEnvironmentID        pgtype.Text
+	PreviewPrNumber             pgtype.Int4
+	ExpiresAt                   pgtype.Timestamptz
 }
 
 type ManagedPostgresDatabaseEndpoint struct {
@@ -8719,6 +8753,7 @@ type ManagedPostgresOverageDelivery struct {
 	DeliveredMillicents      int64
 	UpdatedAt                pgtype.Timestamptz
 	BilledStorageByteSeconds int64
+	BilledEgressBytes        int64
 }
 
 // A managed PostgreSQL overage step reserved before it is sent to the billing provider; written only by apid (ADR-20261101143527).
@@ -8738,6 +8773,10 @@ type ManagedPostgresOveragePending struct {
 	BilledStorageByteSeconds int64
 	PreviousMillicents       int64
 	PreviousLive             bool
+	UsedEgressBytes          int64
+	AppEgressBytes           int64
+	EgressAllowanceBytes     int64
+	BilledEgressBytes        int64
 }
 
 // Notices for managed PostgreSQL databases suspended past their plan; written only by apid (ADR-20261102125208).
@@ -14008,6 +14047,12 @@ type RealtimeNodeConnectionSync struct {
 	SyncedAt pgtype.Timestamptz
 }
 
+type RealtimeNodeEndpointConnection struct {
+	NodeName    string
+	EndpointID  pgtype.UUID
+	Connections int32
+}
+
 type RealtimeUsageHour struct {
 	EndpointID            pgtype.UUID
 	Hour                  pgtype.Timestamptz
@@ -14150,6 +14195,15 @@ type ReleaseSecretRekeyDocument struct {
 	Payload []byte
 }
 
+// Per gateway node and app: the last analytics loss or late rollup and the requests still late (ADR-20261103113952 amendment 6); written only by apid.
+type RequestAnalyticsAppGap struct {
+	NodeName     string
+	AppID        pgtype.UUID
+	LastGapAt    pgtype.Timestamptz
+	PendingCount int32
+	UpdatedAt    pgtype.Timestamptz
+}
+
 // Hourly request analytics rollups; added to only by apid, swept only by meterd (ADR-20261103113952 amendment 2).
 type RequestAnalyticsHour struct {
 	AppID           pgtype.UUID
@@ -14186,6 +14240,22 @@ type RequestAnalyticsMinute struct {
 	LatencyMaxMs    int32
 	LatencyHist     []int64
 	LatencyHistInt4 []int32
+}
+
+// Per gateway node: since when it has counted every request into analytics rollups without a break (ADR-20261103113952 amendment 6); written only by apid.
+type RequestAnalyticsNodeCoverage struct {
+	NodeName                 string
+	BootID                   pgtype.UUID
+	CountingSince            pgtype.Timestamptz
+	HeartbeatAt              pgtype.Timestamptz
+	UnattributedDroppedTotal int64
+}
+
+// Gateway analytics rollup batches apid applied; written only by apid, swept only by meterd (ADR-20261103113952 amendment 5).
+type RequestAnalyticsRollupBatch struct {
+	BatchID   pgtype.UUID
+	NodeID    string
+	AppliedAt pgtype.Timestamptz
 }
 
 // First minute held in request_analytics_minutes per app; written only by apid (ADR-20261103113952).
@@ -15014,6 +15084,97 @@ type SafeReleaseWorkerLease struct {
 	Singleton bool
 	HealthyAt pgtype.Timestamptz
 	ExpiresAt pgtype.Timestamptz
+}
+
+// ADR-20261027090013 §11 exposed sandbox ports; apid inserts and deletes rows; gatewayd-internal caches them to route preview hosts.
+type SandboxPort struct {
+	SandboxID  pgtype.UUID
+	AccountID  pgtype.UUID
+	Port       int32
+	Visibility string
+	CreatedAt  pgtype.Timestamptz
+}
+
+// ADR-20261027090013 sandbox sessions; apid inserts queued intents, closes queued ones and requests the close of live ones; agentd (ADR-20261027090014) owns every other transition.
+type SandboxSession struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	TenantID            pgtype.UUID
+	Kind                string
+	Preset              string
+	RamMb               int32
+	NetworkMode         string
+	State               string
+	IdleTimeoutSec      int32
+	ExpiresAt           pgtype.Timestamptz
+	Labels              []byte
+	OutcomeCode         pgtype.Text
+	OutcomeMessage      pgtype.Text
+	LeaseOwner          pgtype.Text
+	LeaseToken          pgtype.Text
+	LeaseExpiresAt      pgtype.Timestamptz
+	NodeID              pgtype.Text
+	InstanceID          pgtype.Text
+	CloseRequestedAt    pgtype.Timestamptz
+	LastActivityAt      pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	ClosedAt            pgtype.Timestamptz
+	WorkspaceSnapshotID pgtype.UUID
+	ImageRef            pgtype.Text
+	// ADR-20261027090013: the image-run runner job (ADR-1161) caching the session image; a live session keeps it from eviction.
+	ImageJobID pgtype.UUID
+	// ADR-20261027090013: the sandbox template the session boots; NULL for a preset or image session, or once the template is deleted.
+	TemplateID pgtype.UUID
+}
+
+// ADR-20261027090013 step 11 measured private memory of sandbox session VMs, cumulative, written by agentd from vmmd's usage frames; not billed yet.
+type SandboxSessionUsage struct {
+	SandboxID           pgtype.UUID
+	AccountID           pgtype.UUID
+	Method              int16
+	Samples             int32
+	ExpectedSamples     int32
+	MeasuredMs          int64
+	PausedMs            int64
+	FrozenMs            int64
+	PrivateMbMs         int64
+	UnpausedPrivateMbMs int64
+	BillableMbMs        int64
+	PeakPrivateMb       int64
+	ColdBoot            bool
+	Final               bool
+	RecordedAt          pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+// ADR-20261027090013: named sandbox templates; each owns one apps row with sandbox_template = true that builds its image.
+type SandboxTemplate struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	Name          string
+	AppID         pgtype.UUID
+	StartCmd      pgtype.Text
+	ReadyCmd      pgtype.Text
+	ReadyTimeoutS int32
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+// ADR-20261027090013 step 7 persisted sandbox workspaces; agentd inserts, completes and deletes rows; apid reads them and sets delete_requested_at.
+type SandboxWorkspaceSnapshot struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	SandboxID         pgtype.UUID
+	State             string
+	StorageKey        string
+	ReservedBytes     int64
+	Bytes             pgtype.Int8
+	Sha256            pgtype.Text
+	ExpiresAt         pgtype.Timestamptz
+	DeleteRequestedAt pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	ReadyAt           pgtype.Timestamptz
 }
 
 type SavedRouteRequirement struct {

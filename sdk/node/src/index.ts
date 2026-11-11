@@ -61,7 +61,9 @@ export {
   type FunctionConfig,
   type FunctionBucketEventConfig,
   type FunctionEventTriggerConfig,
+  type FunctionHookContext,
   type FunctionQueueBindingConfig,
+  type FunctionSnapshotHooks,
   type FunctionWebhookConfig,
 } from './function-config.js';
 // Request-scoped release propagation for app-to-app calls.

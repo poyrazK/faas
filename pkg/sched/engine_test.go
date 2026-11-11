@@ -2492,22 +2492,15 @@ func TestEngineWake_AdmissionDeniedReturnsProblem(t *testing.T) {
 	}
 }
 
-func TestEngineWake_AdmissionDeniedOnVCPU(t *testing.T) {
+func TestEngineWake_RunsPastTheVCPUBudget(t *testing.T) {
 	// Companion to TestEngineWake_AdmissionDeniedReturnsProblem
 	// (RAM-bound rejection). Fills the per-node vCPU budget
 	// (Tier A2, default-local vcpu_budget=160) without binding RAM,
-	// then drives a wake whose request vCPU cannot fit and asserts
-	// the row transitions to FAILED with a CodeCapacity problem.
-	//
-	// The vCPU fillers use VCPU=1 (the smallest non-zero request)
-	// and distinct appIDs so the per-app concurrency gate allows
-	// each admit. The wake's app uses Pro (VCPU=2) so the 161st
-	// filler is the rejection point — the wake's own vCPU=2 admit
-	// pushes the node over the 160 budget. RAM is well below the
-	// 47,600 MB ceiling (160 × 16 MB = 2,560 MB), so the RAM gate
-	// doesn't bind first.
+	// then drives a wake past it. Memory is the only capacity limit
+	// (ADR-20261109172421): the wake boots, and the budget it passed is
+	// counted.
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanPro, 128, 1) // Pro plan → vCPU=2
+	_, app, _ := seedApp(t, store, api.PlanPro, 128, 1)
 	vmm := &fakeVMM{}
 	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
@@ -2520,52 +2513,17 @@ func TestEngineWake_AdmissionDeniedOnVCPU(t *testing.T) {
 			NodeID: e.defaultLocalNodeID,
 		})
 		if err != nil {
-			t.Fatalf("vCPU filler %d: %v (test setup; vCPU gate fired before RAM filled)", i, err)
+			t.Fatalf("vCPU filler %d: %v", i, err)
 		}
 	}
-	// The 161st fill (VCPU=1) would push the node to 161/160 — the
-	// vCPU gate is the rejection point. The wake's own vCPU=2
-	// admit is the test's load-bearing rejection: it's the same
-	// path the wake takes in production (placement → admit → ledger
-	// gate), and it should reach the ledger with the node at
-	// 160/160, accept 2 only by lifting the ledger floor (which
-	// it doesn't), and return CodeCapacity.
-	//
-	// We don't run the 161st filler; the wake itself is the
-	// rejection. This mirrors the RAM test's pattern, which also
-	// stops the filler loop at the first admit capacity failure
-	// and uses the wake as the assertion path.
-
-	_, err := e.Wake(context.Background(), app.ID, "", "", "")
-	if err == nil {
-		t.Fatal("expected vCPU capacity denial")
+	if _, err := e.Wake(context.Background(), app.ID, "", "", ""); err != nil {
+		t.Fatalf("wake past the vCPU budget: %v, want it booted on memory", err)
 	}
-	var p *api.Problem
-	if !errors.As(err, &p) || p.Code != api.CodeCapacity {
-		t.Fatalf("error = %v, want *api.Problem capacity (vCPU headroom)", err)
+	if vmm.coldBoots != 1 {
+		t.Errorf("coldBoots = %d, want 1", vmm.coldBoots)
 	}
-	// The chooser surfaces the vCPU binding constraint in the
-	// denial detail so an operator triaging the failure can
-	// identify which limit bound first. The substring is the
-	// chooser's "no active compute_node fits %d MB billable / %d
-	// vCPU" message (placement.go:312).
-	if !strings.Contains(p.Detail, "vCPU") {
-		t.Errorf("denial detail = %q, want substring \"vCPU\" (the vCPU gate is the binding constraint)", p.Detail)
-	}
-	if vmm.coldBoots != 0 {
-		t.Errorf("no boot should happen on vCPU denial; coldBoots=%d", vmm.coldBoots)
-	}
-	// The chooser rejected the placement — no instance row was
-	// created (the engine creates the row only after the chooser
-	// picks a node). This is correct: the chooser's vCPU fit
-	// check is the load-bearing Tier A2 gate, and a fleet-wide
-	// refusal is the expected lever (vs. the RAM-bound test
-	// where the chooser still picks the node and the ledger
-	// rejects at Admit because the store sum was zero — the
-	// test-seam difference, not a Tier A2 issue).
-	rows, _ := store.ListInstancesForApp(context.Background(), app.ID)
-	if len(rows) != 0 {
-		t.Errorf("rows = %+v, want empty (chooser rejected, no row created)", rows)
+	if counted := e.Ledger().XCPUAdmissionWouldRefuse(CPUGatePlacement) + e.Ledger().XCPUAdmissionWouldRefuse(CPUGateLedgerVCPU); counted < 1 {
+		t.Errorf("the vCPU budget the wake passed was not counted")
 	}
 }
 
@@ -4772,10 +4730,9 @@ func TestParkWarmPoolDestroysPausedVMWithoutSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateInstanceWithMode: %v", err)
 	}
-	limits := api.MustLimitsFor(api.PlanPro)
 	if err := e.Ledger().Admit(Request{
 		Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID,
-		Plan: api.PlanPro, RAMMB: app.RAMMB, VCPU: limits.VCPU,
+		Plan: api.PlanPro, RAMMB: app.RAMMB, VCPU: api.SizeVCPUs(app.RAMMB),
 		MaxConcurrency: app.MaxConcurrency, Kind: KindWarmPool,
 		NodeID: state.DefaultLocalNodeName,
 	}); err != nil {

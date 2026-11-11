@@ -132,14 +132,28 @@ and Python `random`, `ssl`, and numpy's global `numpy.random` functions. If a
 process cannot confirm the reseed, the instance cold-boots instead of waking
 from the snapshot.
 
+Java on Java 16 or newer is reseeded the same way
+([ADR-20261110150000](adr/20261110150000-restore-reseed-java-agent-and-go-helper.md)):
+Gregale adds a small agent to `JAVA_TOOL_OPTIONS`, which resets `Math.random`,
+`ThreadLocalRandom`, `SplittableRandom` and the seed that a `new Random()`
+draws from. Every JVM then prints `Picked up JAVA_TOOL_OPTIONS: …` on stderr
+when it starts. Java's default `SecureRandom` reads the kernel and needs
+nothing.
+
+Go cannot be reseeded from outside the program. Use `crypto/rand` for anything
+that must be unique. To reseed generators your program owns, import
+`github.com/poyrazK/faas/sdk/go/reseed` and register a callback with
+`reseed.OnRestore`; Gregale runs it after each restore, before the instance
+serves traffic.
+
 Reseed these yourself, or avoid keeping them across a snapshot:
 
-- generators in other runtimes, such as Go `math/rand` and `math/rand/v2`,
-  Java `Random` and `Math.random`, Ruby `Random`, and PHP `mt_rand`. Two
-  restores of one snapshot return the same Go and Java values (measured,
-  ADR-20261107160000). Go `crypto/rand` and Java's default `SecureRandom`
-  read the kernel on each draw and do not replay; a `SecureRandom` you seed
-  yourself or create as `SHA1PRNG` does;
+- Go `math/rand` and `math/rand/v2` global functions, Ruby `Random`, and PHP
+  `mt_rand`. Two restores of one snapshot return the same Go values
+  (measured, ADR-20261107160000);
+- a Java `Random` object, or a `SecureRandom` you seed yourself or create as
+  `SHA1PRNG`, that your code created before the snapshot, and any JVM older
+  than Java 16;
 - generator objects your code created before the snapshot, such as Python
   `random.Random()` or `numpy.random.default_rng()`;
 - values your code generated before the snapshot, such as a secret, nonce or
@@ -149,10 +163,28 @@ Reseed these yourself, or avoid keeping them across a snapshot:
   from the file named by `FAAS_INSTANCE_IDENTITY_FILE`, which Gregale rewrites
   on every wake ([trace propagation](runtimes/trace-propagation.md#deployment-identity));
 - `Math.random` inside Node worker threads;
-- sidecars that run from their own root filesystem.
+- sidecars that run from their own root filesystem;
+- Bun and Deno, which do not load the Node reseed; Python started with `-S`,
+  `-E` or `-I`, which skips the Python reseed; and any Node, Python or Java
+  process started with a cleared environment. Gregale logs a warning on each
+  wake when it finds such a process running, or a Go program that does not
+  import the `reseed` package
+  ([ADR-20261109140000](adr/20261109140000-report-processes-the-reseed-barrier-missed.md));
+- OpenSSL copies bundled inside Python packages, such as `psycopg2-binary` and
+  `cryptography` wheels: the reseed reaches only the standard library's `ssl`;
+- ID libraries that keep a random pool or per-process state, other than the
+  ones Gregale resets: instances restored from one snapshot can generate the
+  same IDs. Gregale resets npm `uuid` (its random pool and its v1, v6 and v7
+  state), `nanoid` and `bson` `ObjectId` in Node, and `bson` `ObjectId` in
+  Python, on every restore
+  ([ADR-20261110170000](adr/20261110170000-restore-resets-id-library-state.md)).
+  Copies bundled into one file by esbuild or webpack, ES modules on Node older
+  than 22.15, and Go libraries are not reset: Go `rs/xid`, the MongoDB Go
+  driver's `ObjectID` and the OpenTelemetry Go SDK's trace IDs repeat, and
+  Gregale logs a warning on each wake of a Go app that uses them.
 
 Setting `GREGALE_RESTORE_RESEED=off` in the app's environment disables the
-Node and Python reseed. Only do that for an app that never generates tokens,
+Node, Python and Java reseed. Only do that for an app that never generates tokens,
 keys, nonces or identifiers.
 
 ## Support boundaries

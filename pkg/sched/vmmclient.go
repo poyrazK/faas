@@ -463,6 +463,12 @@ type AppSpec struct {
 	MemSizeMiB    int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
 	CPUMillicores int32  // sustained cgroup CPU allowance; 250, 500, or 1000
 	EgressMbit    int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
+	// CPUWeight and CPUUncapped carry CPU that follows instance size
+	// (ADR-20261109172421, Engine.appCPUWeight): the instance's cpu.weight,
+	// and no quota while CPUMillicores is the app default. Zero and false
+	// keep the plan's weight and quota.
+	CPUWeight   int32
+	CPUUncapped bool
 	// RequestConcurrency is vmmd's HTTP admission limit for the instance
 	// (ADR-20261101215228, vmmRequestConcurrency); 0 keeps the plan bound.
 	RequestConcurrency int32
@@ -2003,6 +2009,8 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		VcpuCount:                  a.VCPUCount,
 		MemSizeMib:                 a.MemSizeMiB,
 		CpuMillicores:              a.CPUMillicores,
+		CpuWeight:                  a.CPUWeight,
+		CpuUncapped:                a.CPUUncapped,
 		RequestConcurrency:         a.RequestConcurrency,
 		EgressMbit:                 a.EgressMbit,
 		AppId:                      a.AppID,

@@ -108,6 +108,9 @@ func (s *server) transferOrgOwnership(w http.ResponseWriter, r *http.Request, ac
 	if !s.requireOrgAction(w, r, authz.OrgActionTransferOwnership) {
 		return
 	}
+	if !s.sessionPresenceForIrreversible(w, r, acct, "org_ownership_transfer") {
+		return
+	}
 	mem, ok := s.requireMembership(w, r)
 	if !ok {
 		return

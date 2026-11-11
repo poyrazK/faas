@@ -9039,7 +9039,7 @@ paths:
     get:
       operationId: listObjectStorageComputeBindings
       summary: List compute bindings for a bucket
-      description: Requires storage:manage or admin. Secret values are never returned; only the sealed app-secret names are listed.
+      description: Requires storage:read, storage:manage or admin. Secret values are never returned; only the sealed app-secret names are listed.
       tags: [storage]
       responses:
         '200':
@@ -12612,7 +12612,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
-          description: 'An API key was used, or a recent authenticator verification is required (`step_up_required`).'
+          description: 'An API key was used, a recent authenticator verification is required (`step_up_required`), or, on an account with neither a password nor an authenticator, the browser session signed in more than 15 minutes ago (`recent_sign_in_required`): sign in again.'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -12674,6 +12674,9 @@ paths:
       responses:
         '204': { description: Sign-in method unlinked. }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'A recent authenticator verification is required (`step_up_required`), or, without an authenticator, the browser session signed in more than 15 minutes ago (`recent_sign_in_required`): sign in again.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '404':
           description: The provider is not linked to this account.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
@@ -13107,6 +13110,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/MFAEnrollResponse'
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'An API key was used, or the account has no password and the browser session signed in more than 15 minutes ago (`recent_sign_in_required`): sign in again.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '409':
           description: Already enrolled. Call /v1/account/mfa/disable first.
           content:
@@ -21607,6 +21613,11 @@ paths:
           required: false
           description: History window. Default 24h.
           schema: { type: string, enum: ['1h', '6h', '24h', '7d', '15d'], default: '24h' }
+        - name: labels
+          in: query
+          required: false
+          description: "One labelled series, by the `key` the metric list returns for it (for example `queue=emails`). Omitted: the metric's aggregate."
+          schema: { type: string, maxLength: 1024 }
       responses:
         '200':
           description: The recorded history.
@@ -26865,7 +26876,9 @@ paths:
         '503':
           description: |
             The GitHub integration unreachable or source-ref tarball fetch failed
-            (code: source_ref_unavailable). Retry in ~30s.
+            (code: source_ref_unavailable). Retry in ~30s. A PR preview whose
+            managed PostgreSQL database is still provisioning answers
+            code: preview_database_provisioning; retry after Retry-After.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -38777,11 +38790,23 @@ paths:
       tags: [projects]
       operationId: deleteProject
       summary: Delete a project and detach its live workloads.
-      description: The apps remain live. Their project_id is cleared by the database foreign-key action.
+      description: |
+        The apps remain live. Their project_id is cleared by the database
+        foreign-key action. While the project's services call each other by
+        service name, deletion is refused with 409
+        project_services_call_each_other, because detached services no longer
+        resolve those names; pass detach_services=true once they do not.
+      parameters:
+        - name: detach_services
+          in: query
+          required: false
+          description: Confirms the project's services no longer call each other by service name.
+          schema: { type: boolean }
       responses:
         '204': { description: Project deleted. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}/environment-clones:
@@ -54808,7 +54833,7 @@ paths:
                 $ref: '#/components/schemas/GraceWindowResponse'
               example: { days: 14, plan_default: 7 }
         '400':
-          description: "Invalid body (e.g. negative days)."
+          description: "Invalid body (negative days, or more than 30)."
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -66241,6 +66266,26 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/orgs/{organization}/github/installations:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    get:
+      tags: [github]
+      operationId: listOrgGitHubInstallations
+      summary: "List the GitHub installations a company organization owns."
+      description: "Company projects link repositories only through these installations. An owner or admin connects one from Connect GitHub with the organization selected. Members' personal installations are not listed; tokens are never returned."
+      responses:
+        '200':
+          description: "The organization's installations; empty before one is connected or before billing adoption."
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/GitHubInstallationSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/orgs/{organization}/projects:
     parameters:
       - $ref: '#/components/parameters/OrgProjectOrganization'
@@ -85607,7 +85652,7 @@ components:
         postgres_majors: { type: array, items: { type: integer, minimum: 12, maximum: 99 } }
         service_classes: { type: array, items: { type: string, enum: [development, burstable, production] } }
         availability: { type: array, items: { type: string, enum: [single_zone, high_availability] } }
-        credential_access: { type: array, items: { type: string, enum: [read_write, read_only, migration, data_api, auth] } }
+        credential_access: { type: array, items: { type: string, enum: [read_write, read_only, migration, data_api, auth, session] } }
         scale_to_zero: { type: boolean }
         always_on: { type: boolean }
         pooled_connections: { type: boolean }
@@ -85692,10 +85737,18 @@ components:
           type: string
           format: date-time
           description: "Set while a restored database is one past the plan's database limit. It becomes an ordinary database once the account has room; otherwise its delete is scheduled at this time."
+        expires_at:
+          type: string
+          format: date-time
+          description: Set on a database restored with ttl_seconds. Its bindings are revoked and it is purged at this time.
         plan_excess:
           type: string
           enum: [database_limit, service_class]
           description: "Set while the plan no longer includes this database, for example after a subscription ended, and it is suspended: database_limit when it ranks past the plan's database limit (oldest databases are kept), service_class when the plan does not include its class. Its data is kept. Upgrading, deleting a database or resizing to an included class resumes it."
+        hold:
+          type: string
+          enum: [compute_ceiling, egress, inactive, plan_excess, preview]
+          description: "Set while the platform stops this database's compute and refuses its connections although its state is ready: compute_ceiling once the account used its monthly compute ceiling; egress once its apps and databases sent the plan's monthly egress allowance; inactive while the account is suspended; plan_excess (see plan_excess); preview for a PR preview database once the account used 80% of its compute. Its data is kept. Omitted while nothing holds it; the platform applies a change within a few minutes."
         restore_range:
           $ref: '#/components/schemas/ManagedPostgresRestoreRange'
     ManagedPostgresRestoreRange:
@@ -85771,6 +85824,24 @@ components:
           description: When the compute cap suspended the account's databases this month; present while compute_cap_state is suspended.
           type: string
           format: date-time
+        egress_allowance_bytes:
+          description: The plan's monthly egress allowance, shared by the account's apps and databases. Absent on a plan without one.
+          type: integer
+          format: int64
+          minimum: 0
+        app_egress_bytes:
+          description: What the account's apps sent this month toward the shared egress allowance; egress_bytes is the databases' part.
+          type: integer
+          format: int64
+          minimum: 0
+        egress_state:
+          description: "healthy; warning at 80% of the shared egress allowance; overage past it while the account's egress overage election bills database egress (at Neon's price plus 5%, up to twice the allowance); held once apps and databases together reach the allowance (twice it with overage billed) and the platform enforces caps, until the month ends or the plan grows."
+          type: string
+          enum: [healthy, warning, overage, held]
+        hold:
+          description: Set while every database of the account is held, with the same reason each database reports.
+          type: string
+          enum: [compute_ceiling, egress, inactive]
     ManagedPostgresOverage:
       description: An account's managed PostgreSQL compute overage setting.
       type: object
@@ -85969,13 +86040,22 @@ components:
         storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
         restore_window_seconds: { type: integer, format: int64, minimum: 0 }
     RestoreManagedPostgresDatabaseRequest:
-      description: Point-in-time restore request that creates a new database.
+      description: Point-in-time restore request that creates a new database. A restore is a copy-on-write branch of the source where the backend supports it.
       type: object
       additionalProperties: false
-      required: [name, point_in_time]
+      required: [name]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
-        point_in_time: { type: string, format: date-time }
+        point_in_time:
+          type: string
+          format: date-time
+          description: A time inside the source's restore_range. Omit it to restore from the latest point, a couple of seconds before the request.
+        ttl_seconds:
+          type: integer
+          format: int64
+          minimum: 300
+          maximum: 2592000
+          description: Purge the new database this many seconds after it is created. Its bindings are revoked first; the source is never touched. The database shows expires_at.
     ManagedPostgresBinding:
       description: Workload binding metadata. Credentials are delivered through the app secret surface and never returned here.
       type: object
@@ -85986,7 +86066,7 @@ components:
         app_id: { type: string, minLength: 1, maxLength: 128 }
         scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
-        access: { type: string, enum: [read_write, read_only, migration, data_api, auth] }
+        access: { type: string, enum: [read_write, read_only, migration, data_api, auth, session] }
         credential_generation: { type: integer, format: int64, minimum: 1 }
         rotation_pending: { type: boolean, description: The previous provider credential remains valid until the rolling app runtime refresh completes. }
         state: { type: string, enum: [provisioning, ready, deleting, retiring, failed, deleted] }
@@ -86076,6 +86156,7 @@ components:
         auth_consumers: { type: integer, format: int64, minimum: 0 }
         migration_bindings: { type: integer, format: int64, minimum: 0 }
         other_bindings: { type: integer, format: int64, minimum: 0 }
+        session_bindings: { type: integer, format: int64, minimum: 0, description: Session bindings are modeled at their role connection limit and are not counted in other_bindings. }
         resident_instances: { type: integer, format: int64, minimum: 0 }
         parked_instances: { type: integer, format: int64, minimum: 0 }
         auxiliary_instances: { type: integer, format: int64, minimum: 0 }
@@ -86091,6 +86172,7 @@ components:
         data_api_resident_estimate: { type: integer, format: int64, minimum: 0 }
         data_api_wake_estimate: { type: integer, format: int64, minimum: 0 }
         auth_wake_estimate: { type: integer, format: int64, minimum: 0 }
+        session_connection_ceiling: { type: integer, format: int64, minimum: 0, description: The session role connection limit per session binding; two roles while a binding rotates. }
         control_headroom: { type: integer, format: int64, minimum: 0 }
         migration_headroom: { type: integer, format: int64, minimum: 0 }
         modeled_peak_connections: { type: integer, format: int64, minimum: 0 }
@@ -86310,7 +86392,7 @@ components:
         app_id: { type: string, minLength: 1, maxLength: 128 }
         scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
-        access: { type: string, enum: [read_write, read_only, migration, data_api, auth], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved. }
+        access: { type: string, enum: [read_write, read_only, migration, data_api, auth, session], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved. }
 
     PrepareManagedPostgresCutoverRequest:
       description: Stage source bindings for one app and scope on a ready database restored from that source.
@@ -86432,7 +86514,7 @@ components:
       properties:
         source_binding_id: { type: string, format: uuid }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
-        access: { type: string, enum: [read_write, read_only, migration, data_api, auth] }
+        access: { type: string, enum: [read_write, read_only, migration, data_api, auth, session] }
         state: { type: string, enum: [pending, sealed, revoked] }
         verified_at: { type: string, format: date-time }
 
@@ -90161,6 +90243,8 @@ components:
         request_budget_max_ms: { type: integer, format: int64, description: "Maximum end-to-end request budget allowed through route overrides, in milliseconds." }
         response_write_timeout_s: { type: integer, format: int64, description: "Maximum response write window for the plan, in seconds." }
         request_body_max_bytes: { type: integer, format: int64, description: "Maximum inbound request body accepted for this app's plan, in bytes." }
+        idle_timeout_s: { type: integer, description: "Idle timeout the platform applies: the app's own setting or its type's default, within the plan bounds (seconds)." }
+        pause: { type: string, enum: [between_requests, when_idle, never], description: "When the platform may pause the VM: the declared value or the default for the app's type. Apps on a private network are never paused." }
 
     AppConfiguredResources:
       description: "The memory and sustained CPU shape selected for each instance of this app."
@@ -90412,6 +90496,9 @@ components:
         security_revocation: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
         managed_http: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
         managed_circuit: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+        edge_header_secrets:
+          description: Gateways open sealed edge-rule request header values; until every serving gateway does, new credential values are stored as written. Omitted by older releases.
+          allOf: [{ $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }]
 
     TrafficRuntimeFeatureStatus:
       description: Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified.
@@ -90830,7 +90917,7 @@ components:
           type: boolean
           example: false
         # Issue #470 / ADR-055: per-app two-tier snapshot flag +
-        # thresholds. True on Pro/Scale by default; Free/Hobby
+        # thresholds. Off by default (opt-in on Pro/Scale); Free/Hobby
         # always false (the only legal state on those tiers —
         # apid rejects PATCH-true with 403
         # plan_warm_snapshot_not_allowed). Customer PATCH may
@@ -90838,7 +90925,7 @@ components:
         # out-of-range threshold values are rejected with 422
         # invalid_warm_snapshot_min_*.
         warm_snapshot_enabled:
-          description: "Per-app two-tier snapshot flag. True on Pro/Scale by default; Free/Hobby always false."
+          description: "Per-app two-tier snapshot flag. False by default; Pro/Scale may opt in, Free/Hobby always false."
           type: boolean
           example: true
         warm_snapshot_min_requests:
@@ -95420,7 +95507,24 @@ components:
           type: string
           enum: [gauge, counter]
           description: "gauge for pushed values (a scaling signal); counter for OTLP cumulative sums, which never drive scaling."
+        series:
+          description: "A labelled metric's series. value is then their aggregate: the sum for counters, the maximum of fresh series for gauges. Absent for an unlabelled metric."
+          type: array
+          items: { $ref: '#/components/schemas/CustomMetricSeriesValue' }
       example: { name: orders_pending, value: 1284, observed_at: "2026-09-21T12:00:00Z", stale: false, kind: gauge }
+    CustomMetricSeriesValue:
+      description: "One labelled series of a custom metric (from OTLP data point attributes)."
+      type: object
+      required: [key, labels, value, observed_at, stale]
+      properties:
+        key: { type: string, description: "Canonical k=v,... form, keys sorted; pass it as labels to the history endpoint.", example: "queue=emails" }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+          example: { queue: emails }
+        value: { type: number }
+        observed_at: { type: string, format: date-time }
+        stale: { type: boolean }
     CustomMetricSeriesResponse:
       description: "History of one pushed custom metric. Degraded responses carry null points."
       type: object
@@ -95429,6 +95533,7 @@ components:
         app_id: { type: string }
         name: { type: string }
         kind: { type: string, enum: [gauge, counter], description: "counter histories are a per-second rate of the cumulative count." }
+        labels: { type: string, description: "The series key this history is for; absent for the metric's aggregate." }
         range: { type: string, enum: ['1h', '6h', '24h', '7d', '15d'] }
         step: { type: string, description: "Prometheus step between points." }
         source: { type: string, description: '"prometheus", or "degraded: <reason>" when the metric history could not be read.' }
@@ -95455,9 +95560,13 @@ components:
           type: integer
           example: 300
         max_metrics:
-          description: "Maximum distinct metric names this app may hold."
+          description: "Maximum distinct metric names this app may hold (per plan)."
           type: integer
-          example: 5
+          example: 50
+        max_series:
+          description: "Maximum labelled series this app may hold across its metrics (per plan); each metric also holds at most 50."
+          type: integer
+          example: 500
 
     MCPTaskHandlerCompatibility:
       description: Outstanding task counts and live worker coverage for one tool and handler version.
@@ -95523,6 +95632,11 @@ components:
           type: string
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           example: orders_pending
+        labels:
+          description: "custom targets only: watch the one labelled gauge series of the metric with exactly these labels instead of its aggregate. Keys match ^[a-z_][a-z0-9_]{0,62}$."
+          type: object
+          maxProperties: 3
+          additionalProperties: { type: string, maxLength: 128 }
         value:
           description: "Target value (units depend on Metric). Must be >= 0 in the singular `target` field for compatibility; inside `targets` it must be > 0. queue_depth requires a positive per-worker backlog budget, and cpu is capped at 100."
           type: number
@@ -110362,6 +110476,9 @@ components:
         public_url:
           type: string
           description: Reviewed public HTTPS base URL derived from this app allocation and installation domain. Absent when wildcard app URLs are disabled.
+        public_auth_mode:
+          type: string
+          description: "Public URL auth the app will have after apply (bearer, basic, ...), from the existing app or the plan default for a new app. Omitted when the URL accepts anonymous requests."
         app_slug:
           type: string
           description: "Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original identity. Present for migration scans, existing allocations, and new workloads whose name cannot be a slug, which get the project-prefixed name."
@@ -110501,7 +110618,7 @@ components:
         detector:
           type: string
           description: "closed vocabulary — the detector that won identity for this workload"
-          enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, other]
+          enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, functions, other]
           example: compose
         marker:
           type: string
@@ -110524,7 +110641,7 @@ components:
             get its own workload?" — it merged into the compose `web`.
           items:
             type: string
-            enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, other]
+            enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, functions, other]
           example: [procfile]
 
     PlanDetectionWarning:
@@ -110540,7 +110657,7 @@ components:
           description: "Workload affected by the decision; omitted for source-wide warnings."
         detector:
           type: string
-          enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, other]
+          enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, functions, other]
         marker:
           type: string
           description: "Concrete source marker associated with the detector decision."
@@ -110702,7 +110819,7 @@ components:
         environment_config_hash: { type: string, pattern: '^[a-f0-9]{64}$', description: "Hash of the non-secret environment configuration bound into this plan" }
         scan_source:
           type: string
-          enum: [compose, procfile, k8s, render, fly, serverless, workspace, convention, single, unknown]
+          enum: [compose, procfile, k8s, render, fly, serverless, workspace, convention, single, unknown, functions]
         tier: { type: string }
         workloads:
           type: array
@@ -111370,6 +111487,11 @@ components:
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           description: 'The pushed custom metric a custom_metric rule watches. Present only when metric is custom_metric.'
           example: orders_pending
+        custom_metric_labels:
+          type: object
+          additionalProperties: { type: string, maxLength: 128 }
+          maxProperties: 3
+          description: 'The labelled series a custom_metric rule watches: the series with exactly these labels. Absent when the rule watches the aggregate.'
         log_query:
           type: string
           description: 'The canonical log search filters a log_search_matches rule counts. Present only when metric is log_search_matches.'
@@ -111471,6 +111593,11 @@ components:
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           description: 'Required when metric is custom_metric; omit otherwise. A gauge is compared on its average over the window and a counter on its per-second rate. custom_metric rules support webhook action only and windows up to 24h.'
           example: orders_pending
+        custom_metric_labels:
+          type: object
+          additionalProperties: { type: string, maxLength: 128 }
+          maxProperties: 3
+          description: 'custom_metric rules only: watch the one labelled series with exactly these labels instead of the aggregate (counters summed, gauges max across series). Keys match ^[a-z_][a-z0-9_]{0,62}$.'
         log_query:
           type: string
           maxLength: 2048
@@ -113948,6 +114075,10 @@ components:
         approval_id:
           type: string
           description: The approval request the write went through on, when it needed one.
+        reason:
+          type: string
+          maxLength: 280
+          description: "What the agent said this write was for (its Gregale-Agent-Reason header), if it said. Untrusted agent text."
         created_at: { type: string, format: date-time }
     AgentApprovalResponse:
       description: "One request of an agent connection that needed a person's approval."
@@ -113966,6 +114097,7 @@ components:
         expires_at: { type: string, format: date-time, description: After this time the request can no longer be approved or used. }
         decided_at: { type: string, format: date-time, description: When a person approved or denied it. }
         note: { type: string, maxLength: 280, description: "Why the person denied this request, if they said; absent otherwise." }
+        reason: { type: string, maxLength: 280, description: "What the agent said the request is for (Gregale-Agent-Reason on the request that opened it), if it said. Untrusted agent text: it never changes what is approved." }
 
     AgentApprovalsResponse:
       description: "Approval requests, newest first: an agent's own, or those pending that the caller may decide."
@@ -114149,7 +114281,7 @@ components:
       description: "Body of PATCH /v1/account/keys/grace_window_days. `days` is the per-account override for the rotation grace window. `days=0` is atomic rotation; `days=null` (or omitted) clears the override and falls back to the plan default (api.DefaultAPIKeyGraceWindowDays = 7)."
       type: object
       properties:
-        days: { type: [integer, "null"], minimum: 0, description: "Per-account override in days. 0 = atomic, null = use plan default." }
+        days: { type: [integer, "null"], minimum: 0, maximum: 30, description: "Per-account override in days, at most 30 (`api.APIKeyGraceWindowMaxDays`). 0 = atomic, null = use plan default. Changing it needs a recent step-up when the account uses two-factor authentication." }
 
     GraceWindowResponse:
       description: "Body of GET /v1/account/keys/grace_window_days. `days` is the customer's override (null = no override); `plan_default` is the platform default the rotation handler uses when the row is null."
@@ -114932,6 +115064,7 @@ components:
         check: { type: string, description: "synthetic gates: the synthetic check probed on the canary and its stable revision." }
         max_failure_percent: { type: integer, minimum: 0, maximum: 100, description: "synthetic gates: the share of the candidate's probes that may fail." }
         max_change_percent: { type: integer, minimum: 1, maximum: 1000, description: "metric_change gates: how far the metric may move from its average before the rollout, in percent." }
+        labels: { type: object, additionalProperties: { type: string }, description: "custom_metric and metric_change gates: the labelled series judged. Absent when the gate judges the aggregate." }
         min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Requests, probes, metric values or AI calls (on each side, for ai gates) needed before the gate is judged." }
         created_by: { type: string }
         created_at: { type: string, format: date-time }
@@ -114953,6 +115086,7 @@ components:
         check: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$', description: "synthetic gates: the name of one of the app's synthetic checks." }
         max_failure_percent: { type: integer, minimum: 0, maximum: 100, description: "synthetic gates: default 10." }
         max_change_percent: { type: integer, minimum: 1, maximum: 1000, description: "metric_change gates: the change, in percent of the average before the rollout, that fails the gate." }
+        labels: { type: object, maxProperties: 3, additionalProperties: { type: string, maxLength: 128 }, description: "custom_metric and metric_change gates: judge the one labelled series with exactly these labels instead of the metric's aggregate. Keys match ^[a-z_][a-z0-9_]{0,62}$." }
         min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Default 20; 6 probes for synthetic gates." }
     ListReleaseGatesResponse:
       description: "An app's release gates, by name."
@@ -122701,6 +122835,7 @@ components:
         review_url: { type: string, format: uri, description: "On agent.approval.requested: the page where a member who may decide opens it." }
         decided_at: { type: string, format: date-time, description: When the person approved or denied the request. }
         note: { type: string, maxLength: 280, description: "On agent.approval.denied: the reason the person gave the agent, if any." }
+        reason: { type: string, maxLength: 280, description: "The agent's own account of what the request is for, if it gave one. Untrusted agent text." }
       additionalProperties: true
 
     RolloutCompletedWebhookPayload:
@@ -125854,6 +125989,14 @@ components:
       properties:
         enabled: { type: boolean }
         sample_ratio: { type: number, exclusiveMinimum: 0, maximum: 1, default: 1, description: "Fraction of requests whose spans the app exports." }
+        forward: { $ref: '#/components/schemas/TracingForward' }
+        metrics: { type: boolean, default: false, description: "Sends the app's OpenTelemetry metrics to Gregale from inside its instance, stored as its custom metrics (no API key needed). Requires tracing to be enabled and a plan with custom metrics. The managed auto-instrumentation's own metrics count toward the app's metric limit." }
+    TracingForward:
+      description: "Sends a copy of every OpenTelemetry trace and log export the app makes to your own OTLP/HTTP endpoint, from inside the app's instance. Requires tracing to be enabled."
+      type: object
+      properties:
+        endpoint: { type: string, maxLength: 2048, description: "Base OTLP/HTTP URL (http or https, no credentials, query or fragment); /v1/traces and /v1/logs are appended." }
+        headers_secret: { type: string, maxLength: 128, description: "Name of an app secret holding request headers as comma-separated key=value pairs, in the OTEL_EXPORTER_OTLP_HEADERS format." }
     ProfileQuery:
       description: Authorized deployment CPU capture window.
       type: object

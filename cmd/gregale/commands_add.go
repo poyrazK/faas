@@ -106,14 +106,12 @@ func cmdAddBucket(args []string) int {
 	}
 	*scope = resolvedScope
 	usage := "usage: gregale add bucket NAME --app APP [--env SCOPE] [--region REGION] [--public --serve-at PATH] [--permission read|write|read_write] [--label LABEL] [--prefix PREFIX] [--key-prefix KEYS/] [--wait-timeout DURATION]"
-	if strings.TrimSpace(*scope) == "" {
-		// Outside a linked project the scope has no default; the usage line
-		// alone did not say which argument was missing (Snapbox SB-2).
-		PrintFail(os.Stderr, "--env is required outside a linked project: a standalone app reads the default scope (pass --env default), a project app its environment's scope")
-		return 1
-	}
+	// A standalone app reads the default scope, so --env defaults to it once
+	// the app is known; only a project app outside a linked checkout needs
+	// --env (Snapbox SB-2). The CLI named the answer and still made the user
+	// pass it (Hunt 32 H32-23).
 	if fs.NArg() != 1 || strings.TrimSpace(*appSlug) == "" || !api.ValidAppSlug(strings.TrimSpace(*appSlug)) ||
-		strings.TrimSpace(*scope) == "" || api.ValidateScope(strings.TrimSpace(*scope)) != nil ||
+		(strings.TrimSpace(*scope) != "" && api.ValidateScope(strings.TrimSpace(*scope)) != nil) ||
 		!addBucketNameRE.MatchString(strings.TrimSpace(fs.Arg(0))) || !objectStoragePermissionOK(*permission) ||
 		(strings.TrimSpace(*label) == "" || len(strings.TrimSpace(*label)) > 64) ||
 		(strings.TrimSpace(*prefix) != "" && !addBucketPrefixRE.MatchString(strings.TrimSpace(*prefix))) ||
@@ -131,6 +129,13 @@ func cmdAddBucket(args []string) int {
 	if err != nil {
 		return printErr("Could not find app", err)
 	}
+	if strings.TrimSpace(*scope) == "" {
+		if app.ProjectID != "" {
+			PrintFail(os.Stderr, "--env is required outside a linked project: a project app's bucket credentials go to one of its environments' scopes")
+			return 1
+		}
+		*scope = "default"
+	}
 	appName := strings.TrimSpace(app.Slug)
 	if appName == "" {
 		appName = strings.TrimSpace(*appSlug)
@@ -146,6 +151,11 @@ func cmdAddBucket(args []string) int {
 	}
 	bucketCreated := false
 	if !found {
+		// add bucket always binds; on a plan without compute bindings the bind
+		// step is refused, so refuse before leaving an unattached bucket.
+		if problem := addBucketBindingUnavailable(ctx, client); problem != nil {
+			return printErr("Cannot attach a bucket to this app", problem)
+		}
 		createCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("bucket", appName, name, *scope))
 		bucket, err = client.CreateObjectBucket(createCtx, appName, api.CreateObjectBucketRequest{
 			Name: name, Scope: strings.TrimSpace(*scope), Region: strings.TrimSpace(*region), Public: *public, ServeAt: strings.TrimSpace(*serveAt),
@@ -321,7 +331,7 @@ func cmdAddPostgres(args []string) int {
 	scaleToZero := fs.Bool("scale-to-zero", true, "suspend compute when idle")
 	storage := fs.Int64("storage-bytes", 0, "storage limit in bytes (0 uses plan allowance)")
 	restoreWindow := fs.Int64("restore-window-seconds", 0, "point-in-time restore window (0 uses plan allowance)")
-	access := fs.String("access", "read_write", "credential access: read_write|read_only|migration|data_api|auth")
+	access := fs.String("access", "read_write", "credential access: read_write|read_only|migration|data_api|session")
 	waitTimeout := fs.Duration("wait-timeout", addResourceDefaultWait, "maximum time to wait for the database and binding to become ready")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
@@ -331,7 +341,7 @@ func cmdAddPostgres(args []string) int {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	*scope = resolvedScope
-	usage := "usage: gregale add postgres [NAME] --app APP [--env SCOPE] [--database REF] [--region REGION] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--environment-key KEY] [--access read_write|read_only|migration|data_api|auth] [--wait-timeout DURATION]"
+	usage := "usage: gregale add postgres [NAME] --app APP [--env SCOPE] [--database REF] [--region REGION] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--environment-key KEY] [--access read_write|read_only|migration|data_api|session] [--wait-timeout DURATION]"
 	if fs.NArg() != 0 && fs.NArg() != 1 {
 		PrintUsage(os.Stderr, usage, "add")
 		return 1
@@ -393,6 +403,9 @@ func cmdAddPostgres(args []string) int {
 			printCommandValidation(os.Stderr, "add postgres: no managed database named %q exists yet; pass --region REGION to create it, or --database REF to attach an existing one\n", name)
 			return 1
 		}
+		if err := addPostgresUnsupported(ctx, client, *region, *access, *availability, true); err != nil {
+			return printErr("Cannot create managed PostgreSQL database", err)
+		}
 		createCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("database", appName, name, *scope, *environmentKey))
 		database, err = client.CreateManagedPostgresDatabase(createCtx, api.CreateManagedPostgresDatabaseRequest{
 			Name: name, Region: strings.TrimSpace(*region), PostgresMajor: *major,
@@ -415,6 +428,11 @@ func cmdAddPostgres(args []string) int {
 	database, err = waitForManagedPostgresDatabase(ctx, client, database, *waitTimeout)
 	if err != nil {
 		return printErr("Managed PostgreSQL database is not ready", err)
+	}
+	if !databaseCreated {
+		if err := addPostgresUnsupported(ctx, client, database.Region, *access, *availability, false); err != nil {
+			return printErr("Cannot attach managed PostgreSQL database", err)
+		}
 	}
 	bindingIsNew := postgresBindingIsNew(ctx, client, database.ID, app.ID, strings.TrimSpace(*scope), strings.TrimSpace(*environmentKey))
 	bindingCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("binding", app.ID, database.ID, *scope, *environmentKey))
@@ -446,6 +464,7 @@ func cmdAddPostgres(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Attached %s to app %s as %s (%s).\n", database.Name, appName, binding.EnvironmentKey, binding.Scope)
 	if bindingIsNew {
 		printPostgresBindingDelivery(osStdout, appName, binding.EnvironmentKey, binding.Access)
+		printAddPostgresMigrationHint(osStdout, database.Name, appName, binding.Scope, binding.Access)
 	}
 	return 0
 }

@@ -159,6 +159,28 @@
         - { path: /usr/local/bin, mode: "0755" }
         - { path: /var/lib/faas/bootstrap, mode: "0700" }
 
+    # ADR 20261022111812, "Retiring the fleet key on compute nodes": once
+    # every compute reader is contracted, nothing on this node opens a value
+    # with the fleet identity, so the node does not hold it. Each contract
+    # step already proved its domain holds no value only the fleet key opens.
+    - name: Require every compute seal domain contracted before retiring the fleet key
+      ansible.builtin.assert:
+        that:
+          - faas_seal_domain_runtime_contracted | default(false) | bool
+          - faas_seal_domain_build_contracted | default(false) | bool
+          - faas_seal_domain_edge_contracted | default(false) | bool
+          - faas_seal_domain_control_contracted | default(false) | bool
+          - faas_seal_domain_delivery_contracted | default(false) | bool
+          - >-
+            not (faas_object_gateway_on_compute_nodes | default(false) | bool)
+            or (faas_seal_domain_storage_contracted | default(false) | bool)
+        fail_msg: >-
+          faas_compute_fleet_key_retired removes fleet.age from this node, but
+          a compute reader still loads it: contract runtime, build, edge,
+          control and delivery (and storage when s3-gatewayd runs on compute
+          nodes) first (runbook seal-domains-rollout.md).
+      when: faas_compute_fleet_key_retired | default(false) | bool
+
     # The production bootstrap renders units with fleet.age as a required
     # systemd credential. Stage it before importing bootstrap.yml so a fresh
     # host cannot transiently start with a host-local unseal domain.
@@ -170,6 +192,16 @@
         group: root
         mode: "0400"
       no_log: true
+      when: not (faas_compute_fleet_key_retired | default(false) | bool)
+
+    - name: Remove the retired fleet unseal identity
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/faas/secrets/fleet.age
+        - /etc/faas/secrets/fleet.age.previous
+      when: faas_compute_fleet_key_retired | default(false) | bool
 
     - name: Stage the fleet unseal recipient before bootstrap
       ansible.builtin.copy:
@@ -474,6 +506,21 @@
         - (faas_join_expected_cert_fingerprint | default('') | trim) != ''
       changed_when: true
 
+    # ADR-20261109170000: once signd on the control plane signs this node's
+    # app layers and the stored layers are re-signed
+    # (docs/runbooks/artifact-signer-rollout.md), the node holds no signing
+    # key at all.
+    - name: Require signd before retiring the image-signing key
+      ansible.builtin.assert:
+        that:
+          - faas_imaged_signd_target | default('') is match('^tcp://')
+        fail_msg: >-
+          faas_compute_sign_key_retired removes sign.key from this node, but
+          imaged only runs without it when signd signs its app layers: set
+          faas_imaged_signd_target first (runbook artifact-signer-rollout.md
+          step 2).
+      when: faas_compute_sign_key_retired | default(false) | bool
+
     - name: Stage the image-signing private key
       ansible.builtin.copy:
         src: "{{ faas_join_sign_key_source }}"
@@ -482,6 +529,13 @@
         group: faas
         mode: "0440"
       no_log: true
+      when: not (faas_compute_sign_key_retired | default(false) | bool)
+
+    - name: Remove the retired image-signing private key
+      ansible.builtin.file:
+        path: /etc/faas/secrets/sign.key
+        state: absent
+      when: faas_compute_sign_key_retired | default(false) | bool
 
     - name: Stage the image-signing public key
       ansible.builtin.copy:
@@ -909,6 +963,26 @@
                  - ((faas_node_sizing.host_cpus | int)
                     - (faas_node_sizing.tenant_cpus | default(faas_node_sizing.host_cpus) | int))] | max }}
 
+    # ADR-20261109172421 §4: the platform's CPU is protected at the tenant
+    # slice, not per instance. Tenants together may use every host thread
+    # except faas_tenant_cpu_reserve_threads (default 2), which keep
+    # gatewayd-public, gatewayd-internal, vmmd and schedd responsive while
+    # tenants saturate the host. A host var sets another reserve per host
+    # class. Tenants always keep at least one thread.
+    - name: Validate the tenant CPU reserve
+      ansible.builtin.assert:
+        that:
+          - faas_tenant_cpu_reserve_threads | default(2) | string is match('^[0-9]+$')
+        fail_msg: >-
+          faas_tenant_cpu_reserve_threads must be a whole number of host
+          threads (got {{ faas_tenant_cpu_reserve_threads | default(2) }}).
+
+    - name: Derive the tenant slice CPU quota
+      ansible.builtin.set_fact:
+        faas_join_tenant_cpu_quota_pct: >-
+          {{ ([1, (ansible_processor_vcpus | int)
+                  - (faas_tenant_cpu_reserve_threads | default(2) | int)] | max) * 100 }}
+
     - name: Ensure the tenant slice drop-in directory exists
       ansible.builtin.file:
         path: /etc/systemd/system/faas-tenant.slice.d
@@ -920,6 +994,8 @@
     - name: Fence the tenant slice at the derived tenant slice maximum
       # The kernel fence and the admission ceiling are two views of the same
       # calculation. This drop-in was previously hand-written and unmanaged.
+      # CPUQuota replaces the systemd_slices role's fixed 1600%, which is no
+      # limit on a host with fewer threads.
       ansible.builtin.copy:
         dest: /etc/systemd/system/faas-tenant.slice.d/90-host-capacity.conf
         owner: root
@@ -928,6 +1004,7 @@
         content: |
           [Slice]
           MemoryMax={{ faas_node_sizing.tenant_slice_max_mb }}M
+          CPUQuota={{ faas_join_tenant_cpu_quota_pct }}%
 
     - name: Reload systemd so the re-fenced tenant slice takes effect
       # Unconditional rather than a handler: handlers flush at the end of
@@ -977,6 +1054,7 @@
           Environment=FAAS_VMMD_ADOPTION_RECORD={{ 'true' if (vmmd_adoption_record | default(false) | bool) else '' }}
           Environment=FAAS_VMMD_ADOPT_RUNNING_VMS={{ 'true' if (vmmd_adopt_running_vms | default(false) | bool) else '' }}
           Environment=FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES={{ 'true' if (vmmd_adopt_admitted_runtimes | default(false) | bool) else '' }}
+          Environment=FAAS_VMMD_FLAT_TENANT_CGROUPS={{ 'true' if (vmmd_flat_tenant_cgroups | default(false) | bool) else '' }}
 
     # Connection survival: the instance bridge switches, rendered the same way.
     # An off switch sets nothing: vmmd's default (off) decides.
@@ -1231,7 +1309,9 @@
           Environment=FAAS_BASE_STAGING_ROOT=/dev/shm/faas-base-staging
           Environment=FAAS_BASE_EXTRACT_ROOT=/srv/fc/base-staging
           Environment=FAAS_BASE_TMP_ROOT=/srv/fc/base
+          {% if not (faas_compute_fleet_key_retired | default(false) | bool) %}
           Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/faas_fleet_age_identity
+          {% endif %}
           Environment=FAAS_GUEST_INIT=/opt/faas/prestage/{{ faas_join_release_git_sha }}/init
           Environment=FAAS_FUNCTION_RUNNER_NODE22=/opt/faas/prestage/{{ faas_join_release_git_sha }}/runners/node22/faas-runner
           Environment=FAAS_FUNCTION_RUNNER_NODE24=/opt/faas/prestage/{{ faas_join_release_git_sha }}/runners/node24/faas-runner
@@ -1239,7 +1319,9 @@
           Environment=FAAS_FUNCTION_RUNNER_PYTHON313=/opt/faas/prestage/{{ faas_join_release_git_sha }}/runners/python313/faas-runner
           Environment=FAAS_FUNCTION_RUNNER_GO124=/opt/faas/prestage/{{ faas_join_release_git_sha }}/runners/go124/faas-runner
           Environment=FAAS_FUNCTION_RUNNER_GO124_ALPINE=/opt/faas/prestage/{{ faas_join_release_git_sha }}/runners/go124-alpine/faas-runner
+          {% if not (faas_compute_fleet_key_retired | default(false) | bool) %}
           LoadCredential=faas_fleet_age_identity:/etc/faas/secrets/fleet.age
+          {% endif %}
           LoadCredential=faas_host_age_identity:/etc/faas/secrets/host.age
           NoNewPrivileges=yes
           ProtectSystem=strict
@@ -1421,6 +1503,7 @@
         FAAS_VMMD_ADOPTION_RECORD: "{{ 'true' if (vmmd_adoption_record | default(false) | bool) else '' }}"
         FAAS_VMMD_ADOPT_RUNNING_VMS: "{{ 'true' if (vmmd_adopt_running_vms | default(false) | bool) else '' }}"
         FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES: "{{ 'true' if (vmmd_adopt_admitted_runtimes | default(false) | bool) else '' }}"
+        FAAS_VMMD_FLAT_TENANT_CGROUPS: "{{ 'true' if (vmmd_flat_tenant_cgroups | default(false) | bool) else '' }}"
       register: faas_join_adoption_check
       changed_when: false
       failed_when: faas_join_adoption_check.rc not in [0, 3]
@@ -1865,8 +1948,7 @@
           - /usr/local/bin/gregalectl
           - fleet-seal
           - verify
-          - --fleet-key
-          - /etc/faas/secrets/fleet.age
+          - "{{ '--fleet-retired' if (faas_compute_fleet_key_retired | default(false) | bool) else '--fleet-key=/etc/faas/secrets/fleet.age' }}"
           - --host-key
           - /etc/faas/secrets/host.age
           - --db-env

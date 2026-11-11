@@ -81,7 +81,9 @@ func (p *Provider) IssueLiveLogin(ctx context.Context, request managedpostgres.L
 		}
 	}
 	material := managedpostgres.CredentialMaterial{ProviderIdentityID: login.name, Username: login.name, Password: password,
-		Database: owner.Database, TLSMode: owner.TLSMode, Endpoints: direct}
+		// livequeryd is the platform's own client, so it verifies the
+		// endpoint's certificate whatever sslmode Neon's URI suggests.
+		Database: owner.Database, TLSMode: platformTLSMode, Endpoints: direct}
 	ref, _ := parseResourceRef(request.ProviderResourceID)
 	return managedpostgres.LiveLogin{CredentialMaterial: material, Awake: neonAwake(ref.projectID, direct)}, nil
 }
@@ -296,12 +298,12 @@ func (m *sqlLiveLogins) Revoke(ctx context.Context, owner managedpostgres.Creden
 // bindingMarkers are the markers of the binding logins a live query may read
 // as in role's database.
 func bindingMarkers(role credentialRole) []string {
-	out := make([]string, 0, 6)
+	out := make([]string, 0, 8)
 	for _, scope := range []string{role.scope, role.liveLegacyScope} {
 		if scope == "" {
 			continue
 		}
-		for _, access := range []managedpostgres.CredentialAccess{managedpostgres.CredentialReadOnly, managedpostgres.CredentialReadWrite, managedpostgres.CredentialDataAPI} {
+		for _, access := range []managedpostgres.CredentialAccess{managedpostgres.CredentialReadOnly, managedpostgres.CredentialReadWrite, managedpostgres.CredentialDataAPI, managedpostgres.CredentialSession} {
 			out = append(out, "gregale:credential:v1:"+scope+":"+string(access))
 		}
 	}

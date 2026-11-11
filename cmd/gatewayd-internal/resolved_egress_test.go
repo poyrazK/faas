@@ -33,38 +33,32 @@ func (c *recordingResolvedEgressClient) AllowResolvedEgress(_ context.Context, i
 func TestAllowResolvedEgressRequest(t *testing.T) {
 	cli := &recordingResolvedEgressClient{}
 	addrs := []netip.Addr{netip.MustParseAddr("198.51.100.10"), netip.MustParseAddr("2001:db8::1")}
-	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", resolvedEgressOwner{instance: "instance", generation: "generation"}, addrs, 90*time.Second, 0); err != nil {
+	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", "example.com", resolvedEgressOwner{instance: "instance", generation: "generation"}, addrs, 90*time.Second, 0); err != nil {
 		t.Fatal(err)
 	}
 	if cli.req.GetInstanceId() != "instance" || cli.req.GetNetworkGeneration() != "generation" || cli.req.GetSourceIp() != "10.100.0.7" || cli.req.GetTtlSeconds() != 90 || len(cli.req.GetAddresses()) != 2 ||
 		cli.req.GetAddresses()[1] != "2001:db8::1" {
 		t.Fatalf("request = %+v", cli.req)
 	}
-	if cli.req.GetName() != "" {
-		t.Fatalf("a name without a database port was sent: %q", cli.req.GetName())
-	}
-	// A database answer carries its name, which a contained branch instance
-	// matches against its own databases (ADR-20261031193635).
-	if err := allowResolvedEgressNamed(context.Background(), cli, "10.100.0.7", resolvedEgressOwner{instance: "instance", generation: "generation"}, "ep-branch.eu.neon.tech", addrs, time.Minute, 5432); err != nil {
+	// A database answer carries its name and port, which a contained branch
+	// instance matches against its own databases (ADR-20261031193635).
+	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", "ep-branch.eu.neon.tech", resolvedEgressOwner{instance: "instance", generation: "generation"}, addrs, time.Minute, 5432); err != nil {
 		t.Fatal(err)
 	}
 	if cli.req.GetName() != "ep-branch.eu.neon.tech" || cli.req.GetDatabasePort() != 5432 {
 		t.Fatalf("database request = %+v", cli.req)
 	}
-	if err := allowResolvedEgressNamed(context.Background(), cli, "10.100.0.7", resolvedEgressOwner{instance: "instance", generation: "generation"}, "example.com", addrs, time.Minute, 0); err != nil || cli.req.GetName() != "" {
-		t.Fatalf("a non-database answer carried its name: %+v, %v", cli.req, err)
-	}
 	cli.err = status.Error(codes.Unimplemented, "old vmmd")
-	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", resolvedEgressOwner{instance: "instance", generation: "generation"}, addrs, time.Minute, 0); err != nil {
+	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", "example.com", resolvedEgressOwner{instance: "instance", generation: "generation"}, addrs, time.Minute, 0); err != nil {
 		t.Fatalf("an older vmmd must not be an error: %v", err)
 	}
 	cli.err = errors.New("unavailable")
-	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", resolvedEgressOwner{instance: "instance", generation: "generation"}, addrs, time.Minute, 0); err == nil {
+	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", "example.com", resolvedEgressOwner{instance: "instance", generation: "generation"}, addrs, time.Minute, 0); err == nil {
 		t.Fatal("a real failure must surface")
 	}
 	// rc.324: vmmd refused every builder's grants and nothing said so.
 	cli.err, cli.refused = nil, true
-	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", resolvedEgressOwner{instance: "instance", generation: "generation"}, addrs, time.Minute, 0); !errors.Is(err, errResolvedEgressRefused) {
+	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", "example.com", resolvedEgressOwner{instance: "instance", generation: "generation"}, addrs, time.Minute, 0); !errors.Is(err, errResolvedEgressRefused) {
 		t.Fatalf("a refused grant must surface, got %v", err)
 	}
 }

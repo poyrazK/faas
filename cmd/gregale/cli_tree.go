@@ -156,6 +156,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"app deploy-token", "deploy-tokens"},
 	{"app streaming-cap", "apps streaming-cap"},
 	{"sandbox run", "run"},
+	{"sandbox template publish", "sandbox-templates build"},
+	{"sandbox template", "sandbox-templates"},
 	{"sandbox", "runs"},
 	{"invocation watch", "tail"},
 	{"invocation", "invocations"},
@@ -605,6 +607,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"postgres compute-policy set", "postgres compute-policy"},
 	{"postgres compute-policy status", "postgres compute-policy-status"},
 	{"postgres resize status", "postgres resize-status"},
+	// ADR-20261102123523: what a database gives PR previews is a setting.
+	{"postgres previews set", "postgres previews"},
 
 	// Operator tools live under the hidden admin command (rule 7) and keep
 	// their names; the naming rules cover the customer tree.
@@ -655,14 +659,31 @@ func cliTreeStandardVerb(verb string) string {
 }
 
 // cliTreeVerbFor spells a verb of siblings in its standard form. A synonym
-// whose standard verb is also a sibling (`rm` beside `delete`) is not
-// listed: the standard verb runs the sibling.
+// whose standard verb is also a sibling alias of it (`rm` beside `delete`)
+// is not listed: the standard verb runs the sibling. A synonym that is a
+// command of its own (`flags inspect` beside `flags get`) keeps its name;
+// folding it hid the command from help (Hunt 32 H32-72).
 func cliTreeVerbFor(verb string, siblings []cliSub) (string, bool) {
 	standard := cliTreeStandardVerb(verb)
-	if standard != verb && slices.ContainsFunc(siblings, func(sub cliSub) bool { return sub.Name == standard }) {
+	if standard == verb {
+		return verb, true
+	}
+	i := slices.IndexFunc(siblings, func(sub cliSub) bool { return sub.Name == standard })
+	if i < 0 {
+		return standard, true
+	}
+	j := slices.IndexFunc(siblings, func(sub cliSub) bool { return sub.Name == verb })
+	if j < 0 || cliSubsAreOneCommand(siblings[j], siblings[i]) {
 		return "", false
 	}
-	return standard, true
+	return verb, true
+}
+
+// cliSubsAreOneCommand reports whether two sibling verbs run one command:
+// one names the other as an alias, or both carry the same description.
+func cliSubsAreOneCommand(a, b cliSub) bool {
+	return a.Short == b.Short || a.Short == "Alias for "+b.Name || b.Short == "Alias for "+a.Name ||
+		slices.Contains(a.Aliases, b.Name) || slices.Contains(b.Aliases, a.Name)
 }
 
 func lookupCliTreeNoun(name string) (cliTreeNoun, bool) {

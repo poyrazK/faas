@@ -128,6 +128,12 @@ type Lease struct {
 	// map lookup. Empty for pre-issue-301 callers (legacy 2-level
 	// hierarchy); see ParentCgroupFor for the empty fallback.
 	Plan api.Plan
+	// cgroupParent is the parent cgroup a tenant VM was launched under:
+	// CgroupMountRoot when vmmd runs flat_tenant_cgroups
+	// (ADR-20261109172421 step 6.5), else empty for its plan's sub-slice.
+	// Unexported, so neither journal's lease record changes; a lease rebuilt
+	// from a record finds its parent again (tenantCgroupParent).
+	cgroupParent string
 	// IsBuilder selects the dedicated faas-cp-build.slice cgroup for an
 	// ephemeral builder VM. Builder memory must not be charged to vmmd's
 	// supervisor cgroup or to tenant RAM.
@@ -149,10 +155,26 @@ type Lease struct {
 	CPUMillicores int
 	// DisableStartupCPUBoost opts out of the bounded startup CPU allowance.
 	DisableStartupCPUBoost bool
+	// CPUWeight, when positive, is the per-VM cpu.weight instead of the
+	// plan's (ADR-20261109172421). Every app instance has one since step
+	// 6.3 (wakeLeaseCPU); jobs keep their plan's.
+	CPUWeight int
+	// CPUUncapped writes cpu.max = max and skips the startup boost while the
+	// ceiling is the app default; a 250 or 500 millicore ceiling stays a cap
+	// (ADR-20261109172421, leaseUncappedAt).
+	CPUUncapped bool
 	// Networkless marks the dedicated disposable-execution lifecycle. Such a
 	// lease still owns a unique slot, uid, cgroup, and vsock identity, but it
 	// deliberately has no tenant netns/veth/tap resources to tear down.
 	Networkless bool
+	// AgentSized sizes the VM's cpu.max in whole vCPUs like an agent run
+	// (ADR-20261027090014 §3) though it has a network: a sandbox session in
+	// registries mode.
+	AgentSized bool
+	// SandboxManifest is /etc/faas/sandbox.json, staged on a seller-image or
+	// template sandbox session's private drive1 before boot
+	// (ADR-20261027090013); nil for every other VM.
+	SandboxManifest string
 	// Quarantine marks a production fork (ADR-732). A restore scrubs the
 	// captured secrets files from the fork's private drive1 copy before the
 	// guest resumes.

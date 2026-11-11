@@ -29,6 +29,7 @@
         "/v1/account/email",
         "/v1/account/mfa",
         "/v1/account/rate-limits",
+        "/v1/account/security-activity",
         "/v1/account/sign-in-methods",
         "/v1/auth/capabilities",
         "/v1/auth/csrf",
@@ -80,7 +81,13 @@
         "/v1/agent-callbacks",
         "/v1/agent-runs",
         "/v1/agent-tools",
-        "/v1/agents"
+        "/v1/agents",
+        "/v1/sandbox-snapshots",
+        "/v1/sandbox-templates",
+        "/v1/sandboxes"
+      ],
+      "cli": [
+        "sandbox-templates"
       ],
       "consumers": [
         "schedd"
@@ -1259,7 +1266,6 @@
       "description": "Serve a managed Postgres database over a generated HTTP API.",
       "maturity": "preview",
       "plans": [
-        "free",
         "hobby",
         "pro",
         "scale"
@@ -2237,7 +2243,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/env",
+      "docs_url": "/docs/environment-gitops",
       "acceptance_test": "pkg/apid/apidserver/handlers_environment_gitops_test.go::TestEnvironmentGitOpsHTTPScopedConfigWorkflow",
       "parent": "environments",
       "routes": [
@@ -3178,7 +3184,6 @@
       "description": "Create a managed PostgreSQL database and bind it to an app.",
       "maturity": "ga",
       "plans": [
-        "free",
         "hobby",
         "pro",
         "scale"
@@ -3524,9 +3529,9 @@
     },
     {
       "id": "object-storage-compute",
-      "name": "Object storage compute triggers",
+      "name": "Object storage compute bindings and triggers",
       "category": "data",
-      "description": "Run app code on bucket notifications.",
+      "description": "Bind buckets to apps and run app code on bucket notifications.",
       "maturity": "preview",
       "plans": [
         "hobby",
@@ -3934,7 +3939,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/networking",
+      "docs_url": "/docs/outbound-integrations",
       "acceptance_test": "pkg/apid/apidserver/handlers_outbound_ai_test.go::TestCreateOutboundIntegrationRejectsInvalidAIPolicy",
       "routes": [
         "/dashboard/apps/{}/outbound-bindings",
@@ -4034,7 +4039,6 @@
       "description": "Bind databases to apps and rotate their credentials.",
       "maturity": "ga",
       "plans": [
-        "free",
         "hobby",
         "pro",
         "scale"
@@ -4139,7 +4143,6 @@
       "description": "Restore a database to an earlier point in time.",
       "maturity": "ga",
       "plans": [
-        "free",
         "hobby",
         "pro",
         "scale"
@@ -4179,6 +4182,27 @@
       ],
       "cli": [
         "preview"
+      ]
+    },
+    {
+      "id": "preview-databases",
+      "name": "PR preview databases",
+      "category": "data",
+      "description": "Each pull request's preview gets its own managed PostgreSQL database, migrated by its release command and removed with the preview.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/preview-databases",
+      "acceptance_test": "pkg/apid/apidserver/preview_databases_test.go::TestPreviewDatabasesFollowTheirPreview",
+      "parent": "pr-previews",
+      "routes": [
+        "/v1/postgres/databases/{}/previews"
+      ],
+      "cli": [
+        "postgres previews"
       ]
     },
     {
@@ -4818,6 +4842,20 @@
       "acceptance_test": "pkg/reposcan/scan_test.go::TestScan_RootsOnly",
       "cli": [
         "scan"
+      ]
+    },
+    {
+      "id": "repository-functions",
+      "name": "Functions projects from repository pushes",
+      "category": "delivery",
+      "description": "Deploy a gregale.yaml functions project from a connected repository, one function app per function.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261108160000-functions-projects-from-repository-pushes",
+      "acceptance_test": "pkg/reposcan/functions_test.go::TestScanFunctionsProject",
+      "parent": "projects",
+      "consumers": [
+        "githubd"
       ]
     },
     {
