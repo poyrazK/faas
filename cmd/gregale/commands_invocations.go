@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -260,7 +261,7 @@ func cmdInvocationsList(args []string) int {
 		return 0
 	}
 	for _, inv := range resp.Invocations {
-		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", inv.ID, inv.CreatedAt.Format("2006-01-02T15:04:05Z07:00"), inv.State, inv.Method, inv.Path, appLabel(slugs, inv.AppID), inv.Source)
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", inv.ID, inv.CreatedAt.Format("2006-01-02T15:04:05Z07:00"), inv.State, inv.Method, inv.Path, appLabel(slugs, inv.AppID), invocationSourceLabel(inv))
 	}
 	if resp.NextBefore != "" {
 		_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", resp.NextBefore)
@@ -354,7 +355,7 @@ func renderInvocation(w io.Writer, inv api.Invocation) {
 	if inv.InstanceID != "" {
 		_, _ = fmt.Fprintf(w, "Instance:   %s\n", inv.InstanceID)
 	}
-	_, _ = fmt.Fprintf(w, "Source:     %s\n", inv.Source)
+	_, _ = fmt.Fprintf(w, "Source:     %s\n", invocationSourceLabel(inv))
 	_, _ = fmt.Fprintf(w, "State:      %s\n", inv.State)
 	_, _ = fmt.Fprintf(w, "Method:     %s\n", inv.Method)
 	_, _ = fmt.Fprintf(w, "Path:       %s\n", inv.Path)
@@ -440,4 +441,21 @@ func renderInvocationWaitProblem(problem api.Problem, code int) int {
 		renderAPIError(osStderr, &APIError{Problem: problem})
 	}
 	return code
+}
+
+// invocationSourceLabel names a synchronous `gregale invoke` sync_invoke. The
+// row is stored with the async source and retry_policy.sync_invoke, so lists
+// showed every sync call as async_invoke (Hunt 33 H33-16). --json keeps the
+// stored values.
+func invocationSourceLabel(inv api.Invocation) string {
+	if inv.Source != "async_invoke" || len(inv.RetryPolicyJSON) == 0 {
+		return inv.Source
+	}
+	var policy struct {
+		SyncInvoke bool `json:"sync_invoke"`
+	}
+	if json.Unmarshal(inv.RetryPolicyJSON, &policy) == nil && policy.SyncInvoke {
+		return "sync_invoke"
+	}
+	return inv.Source
 }
