@@ -76,6 +76,9 @@ branch head, a completed build or historical applied revision cannot pass.
 Scheduled Jobs require the successful current post-activation occurrence.
 Missing or contradictory evidence remains unproven. Older APIs without the
 current graph's commit identity cannot satisfy the wait; upgrade both API and CLI.
+Serving also requires current resident and snapshot freshness and completion of
+pending runtime and fleet effects. Historical qualification or serving receipts
+cannot replace a resident's acknowledgement of its current runtime inputs.
 
 The wait pins the initial source binding. Once it observes the requested graph,
 it also pins that approved revision and generation. Binding or approval changes
@@ -83,6 +86,8 @@ end as superseded. Before observing the target graph, a different commit remains
 waiting; the command does not infer commit ancestry or whether the target
 previously deployed. Normal intent changes can progress only with fresh evidence
 for the same approval.
+Transient status failures respect `Retry-After` seconds or HTTP dates, bounded
+by the overall deadline. Cancellation interrupts that wait immediately.
 
 Text mode prints changed progress and workload actions to stderr, with a final
 receipt on stdout. Explicit --json and global JSON emit one final JSON receipt
@@ -117,6 +122,13 @@ automation. The existing status API includes the same assessment under
 Observed Git commits, approved revision IDs, historical applied revision IDs,
 and currently proven serving revision IDs are shown separately. They are not
 interchangeable: an applied ID alone never establishes current serving.
+
+The assessment also identifies the latest completed report for the current
+revision, generation and intent version. It shows safe ownership, adoption,
+quota and observation diagnostics even when no workload graph exists. Reports
+older than three reporting intervals are marked stale; reports for older intent
+cannot establish a current blocker or a recovery. A failed observation records
+the intent claimed by that attempt rather than attributing it to later edits.
 
 Each current graph member reports artifact/build preparation, qualification,
 active release membership and serving proof. Stages are `complete`, `pending`,
@@ -348,6 +360,16 @@ normal reporting cadence. A plan using a temporary override schedules its next
 check no later than that override's expiry; an override that expires during the
 run triggers a fresh check at the next poll. Completed reports remain historical
 observations, and do not certify changes made after their observed intent version.
+Runtime drift keeps the drift notification active until runtime acknowledgement
+is proven. GitHub repository verification propagates poll cancellation through
+provider pagination. Observation and archive limits use the project's current
+resource owner policy, including an organization's adopted billing plan.
+
+Configuration and smoke payload numbers are canonicalized without rounding
+their parsed decimal digits or large integers, so PostgreSQL's exponent rewriting
+does not invalidate an approved definition digest. Pruning an explicitly removed,
+owned secret reference does not require recreating its deleted source secret;
+references retained by the definition or an active override still require it.
 
 ## Preview a pull or merge request
 
@@ -1392,6 +1414,10 @@ Both operations require the current generation and report mode, release only the
 retired binding's Git ownership and overrides, and preserve existing values,
 resource identities, revisions, reports and execution journals. Pending effects,
 graph preparation and unfinished qualification cleanup block retirement.
+An obsolete preparation journal does not block retirement after its candidate
+deployments have failed, been cancelled, or finished preparing their artifacts.
+Unfinished candidate preparation and physical qualification cleanup still block
+both detach and rebind.
 Completed qualification records remain protected without preventing retirement:
 every capture and restore execution must have retirement evidence and any
 associated instance must be terminal. Rebinding creates

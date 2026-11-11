@@ -104,6 +104,28 @@ func currentEnvironmentGitOpsWorkloadEvidenceTx(ctx context.Context, tx sqlc.DBT
 		return nil, err
 	}
 	evidence.CommitSHA = revision.CommitSHA
+	// Read physical freshness directly: readGitOpsRuntime also consumes this
+	// graph's qualification evidence and would recurse into this reader.
+	drifted, err := q.HasEnvironmentGitOpsRuntimeDrift(ctx, tx, rawSource.ID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	pendingRuntime, err := q.HasPendingEnvironmentGitOpsRuntime(ctx, tx, rawSource.ID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	pendingFleet, err := q.HasPendingEnvironmentGitOpsEffects(ctx, tx, rawSource.ID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	blockers := []string{}
+	if drifted || pendingRuntime {
+		blockers = append(blockers, "environment_runtime_unacknowledged")
+	}
+	if pendingFleet {
+		blockers = append(blockers, "environment_fleet_unacknowledged")
+	}
+	applyEnvironmentGitOpsRuntimeReadiness(&evidence, blockers)
 	return &evidence, nil
 }
 

@@ -21,7 +21,7 @@ func gitOpsSecretBaselineResource(resource string) string {
 
 // Live deployments must agree on desired or owned keys after scoped intent is applied. Adoption
 // cannot choose one canary mapping and silently discard another serving value.
-func observedGitOpsSecretReferences(app gitOpsIntentApp, relevant map[string]bool) (map[string]string, string, string) {
+func observedGitOpsSecretReferences(app gitOpsIntentApp, relevant, pruned map[string]bool) (map[string]string, string, string) {
 	intent := AppEnvironmentSecretIntent{References: app.SecretRefs, SuppressedKeys: app.SuppressedKeys}
 	current := intent.EffectiveReferences(nil)
 	ids := make([]string, 0, len(app.LiveDeployments))
@@ -72,7 +72,7 @@ func observedGitOpsSecretReferences(app gitOpsIntentApp, relevant map[string]boo
 		if api.ValidateEnvKey(key) != nil || !ValidSecretReference(ref) {
 			return nil, "", "scoped secret references are invalid"
 		}
-		if !names[strings.TrimPrefix(ref, api.SecretRefPrefix)] {
+		if !pruned[key] && !names[strings.TrimPrefix(ref, api.SecretRefPrefix)] {
 			return nil, "", "a current secret reference source is unavailable in this environment"
 		}
 	}
