@@ -29973,6 +29973,7 @@ CREATE TABLE public.agent_activity (
     status integer NOT NULL,
     approval_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    reason text,
     CONSTRAINT agent_activity_method_check CHECK ((method = ANY (ARRAY['POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text]))),
     CONSTRAINT agent_activity_path_check CHECK (((char_length(path) >= 1) AND (char_length(path) <= 512))),
     CONSTRAINT agent_activity_status_check CHECK (((status >= 100) AND (status <= 599)))
@@ -30071,6 +30072,7 @@ CREATE TABLE public.agent_approval_requests (
     consumed_at timestamp with time zone,
     expires_at timestamp with time zone NOT NULL,
     decision_note text,
+    reason text,
     CONSTRAINT agent_approval_requests_body_sha256_check CHECK (((body_sha256 IS NULL) OR (length(body_sha256) = 32))),
     CONSTRAINT agent_approval_requests_category_check CHECK ((category = ANY (ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text]))),
     CONSTRAINT agent_approval_requests_check CHECK (((status = 'pending'::text) = (decided_at IS NULL))),
@@ -59714,6 +59716,14 @@ ALTER TABLE ONLY public.agent_activity
 
 
 --
+-- Name: agent_activity agent_activity_reason_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.agent_activity
+    ADD CONSTRAINT agent_activity_reason_check CHECK (((reason IS NULL) OR ((char_length(reason) >= 1) AND (char_length(reason) <= 280)))) NOT VALID;
+
+
+--
 -- Name: agent_approval_email_log agent_approval_email_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -59743,6 +59753,14 @@ ALTER TABLE public.agent_approval_requests
 
 ALTER TABLE ONLY public.agent_approval_requests
     ADD CONSTRAINT agent_approval_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_approval_requests agent_approval_requests_reason_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.agent_approval_requests
+    ADD CONSTRAINT agent_approval_requests_reason_check CHECK (((reason IS NULL) OR ((char_length(reason) >= 1) AND (char_length(reason) <= 280)))) NOT VALID;
 
 
 --

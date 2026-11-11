@@ -22,10 +22,29 @@ var approvalWaitEnabled bool
 // --org option keeps its meaning (apps/projects review 2026-11-10, P3).
 var projectOrganization string
 
+// agentReason is what the agent says its write requests are for, sent as
+// Gregale-Agent-Reason (ADR-20261110182236). Set by the --agent-reason
+// prefix or GREGALE_AGENT_REASON. It is not --reason, which several
+// commands already take with their own meaning.
+var agentReason string
+
 func extractAutomationFlag(args []string) ([]string, error) {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
+		if arg == "--agent-reason" || strings.HasPrefix(arg, "--agent-reason=") {
+			value := strings.TrimPrefix(arg, "--agent-reason=")
+			if arg == "--agent-reason" {
+				rest := args[i+1:]
+				if len(rest) == 0 {
+					return args, errors.New("--agent-reason requires the text of the reason")
+				}
+				value = rest[0]
+				i++
+			}
+			agentReason = value
+			continue
+		}
 		if arg == "--org" || strings.HasPrefix(arg, "--org=") {
 			value := strings.TrimPrefix(arg, "--org=")
 			if arg == "--org" {
