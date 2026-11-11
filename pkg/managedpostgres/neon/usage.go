@@ -193,8 +193,14 @@ func sumConsumption(project projectConsumption) (int64, int64, int64, int64, err
 					storageByteMonths, err = addQuantity(storageByteMonths, value)
 				case "instant_restore_bytes_month", "snapshot_storage_bytes_month":
 					historyByteMonths, err = addQuantity(historyByteMonths, value)
-				case "public_network_transfer_bytes", "private_network_transfer_bytes":
+				case "public_network_transfer_bytes":
 					egress, err = addQuantity(egress, value)
+				case "private_network_transfer_bytes":
+					// Private network transfer (Private Link, VPC) never
+					// leaves for the internet. It is not egress: it does
+					// not count toward the plan's shared egress allowance
+					// (ADR-20261110160000) and is not billed as egress
+					// overage, which is priced from Neon's public transfer.
 				default:
 					return 0, 0, 0, 0, managedpostgres.ErrUnavailable
 				}

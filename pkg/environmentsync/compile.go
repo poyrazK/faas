@@ -73,6 +73,11 @@ func Compile(input api.EnvironmentDefinition) (DesiredState, error) {
 		}
 		_ = json.Unmarshal(canonical, &d.Configuration)
 		for key, value := range d.Configuration {
+			value, err := canonicalJSON(value)
+			if err != nil {
+				return DesiredState{}, err
+			}
+			d.Configuration[key] = value
 			fields = append(fields, Field{Resource: "environment", Path: "configuration/" + key, Value: value})
 		}
 	}
@@ -559,6 +564,10 @@ func canonicalJSON(raw []byte) (json.RawMessage, error) {
 	var extra any
 	if err := dec.Decode(&extra); err != io.EOF {
 		return nil, fmt.Errorf("expected one JSON value")
+	}
+	value, err := canonicalJSONNumbers(value)
+	if err != nil {
+		return nil, err
 	}
 	return json.Marshal(value)
 }
