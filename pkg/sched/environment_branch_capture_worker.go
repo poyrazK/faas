@@ -64,9 +64,9 @@ func (e *Engine) CaptureEnvironmentBranch(ctx context.Context, capture state.Env
 	if app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep); err != nil {
 		return zero, fmt.Errorf("sched: credential-free capture: workload settings: %w", err)
 	}
-	cpu := effectiveAppCPUMillicores(app)
+	cpu := appCPUBookingMillicores(app)
 	placement, err := e.choosePlacementLocked(ctx, Request{AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB,
-		VCPU: limits.VCPU, CPUMillicores: cpu, MaxConcurrency: app.MaxConcurrency, PreferredNodeID: app.NodeID})
+		VCPU: appVCPUs(app), CPUMillicores: cpu, MaxConcurrency: app.MaxConcurrency, PreferredNodeID: app.NodeID})
 	if err != nil {
 		return zero, err
 	}
@@ -82,7 +82,7 @@ func (e *Engine) CaptureEnvironmentBranch(ctx context.Context, capture state.Env
 	// The VM counts toward the node's RAM ceiling but never as serving
 	// concurrency, exactly like a production fork.
 	if err := e.ledger.Admit(Request{Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope,
-		Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: cpu, MaxConcurrency: app.MaxConcurrency,
+		Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: appVCPUs(app), CPUMillicores: cpu, MaxConcurrency: app.MaxConcurrency,
 		Kind: KindFork, NodeID: placement.NodeID, NodeCeilingMB: placement.CeilingMB, VCPUBudget: placement.VCPUBudget,
 		CPUBudgetMillicores: placement.CPUBudgetMillicores}); err != nil {
 		e.rollbackAdmittedInstance(ctx, ins.ID, app.ID, "branch_capture_admission")
