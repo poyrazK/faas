@@ -82,11 +82,26 @@ values are not exported. Runtime host/port settings are reserved for the local
 proxy. Local runs do not reproduce microVM isolation or snapshot behavior.
 Function projects retain their existing runner and local trigger behavior.
 
+Local apps and functions use `dev.env_file` from `gregale.yaml` unless
+`--env-file` is supplied. Manifest paths are relative to the source directory;
+flag paths are relative to the directory where you invoke the CLI.
+`--env-file=` disables the manifest default. The selected path stays fixed
+for the run; restart the CLI to select a different file.
+
+Saving that file restarts the app or function workers after edits settle,
+including when the file is ignored or outside the source directory. Each
+restart rebuilds the environment from the original shell and resource bindings,
+then the file, then each function's declared `env:`. Removing a key restores
+the underlying setting; an empty or comment-only file clears all file
+overrides. Invalid, missing, or symlinked files leave the current processes
+running and report an error without echoing values. Fix the file and save to
+retry. `--no-reload` disables these CLI restarts too.
+
 ## Run functions on this machine
 
 `gregale dev --local` runs the project's Node, Python and Go functions on
 your computer, with the same adapters and runner code a deployed function
-uses, and reloads a function within a second of saving its files. Nothing is
+uses, and reloads functions after source edits settle. Nothing is
 uploaded and no login is needed:
 
 ```sh
