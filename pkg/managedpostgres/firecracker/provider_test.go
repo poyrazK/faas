@@ -684,6 +684,7 @@ func TestIssueCredentialsPublishesOnlyAVerifier(t *testing.T) {
 		want := []managedpostgres.Endpoint{
 			{Role: managedpostgres.EndpointDirect, Host: testDatabaseID + ".db.gregale.test", Port: 5432},
 			{Role: managedpostgres.EndpointPooled, Host: testDatabaseID + "-pooler.db.gregale.test", Port: 5432},
+			{Role: managedpostgres.EndpointReadOnly, Host: testDatabaseID + "-ro-pooler.db.gregale.test", Port: 5432},
 		}
 		if !reflect.DeepEqual(material.Endpoints, want) {
 			t.Fatalf("%s: endpoints = %+v", access, material.Endpoints)

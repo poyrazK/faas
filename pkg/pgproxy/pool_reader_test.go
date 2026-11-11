@@ -37,7 +37,7 @@ func TestServerReaderMarksAnIdleServerEnded(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r, w := io.Pipe()
-			srv := newServerConn(pipeConn{PipeReader: r, Writer: io.Discard}, backendKey{})
+			srv := newServerConn(pipeConn{PipeReader: r, Writer: io.Discard}, pgproto3.NewFrontend(r, io.Discard), backendKey{})
 			srv.events = make(chan serverEvent, 64)
 			go readServer(srv)
 

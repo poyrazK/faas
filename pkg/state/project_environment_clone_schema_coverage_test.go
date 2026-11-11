@@ -210,6 +210,9 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"financial_budget_revisions":           state.CloneSchemaConfiguration,
 		"financial_usage_evidence":             state.CloneSchemaIdentity,
 		"financial_price_snapshots":            state.CloneSchemaIdentity,
+		"billing_plan_activations":             state.CloneSchemaIdentity,
+		"billing_usage_intents":                state.CloneSchemaOperational,
+		"spend_cap_notice_outbox":              state.CloneSchemaOperational,
 		"financial_evidence_coverage":          state.CloneSchemaOperational,
 		"financial_sampling_windows":           state.CloneSchemaOperational,
 		// Retained funding and execution authority stay with their original owners.
