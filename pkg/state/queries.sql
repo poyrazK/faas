@@ -6071,6 +6071,37 @@ AND (u.lease_until IS NULL OR u.lease_until < now())
 AND NOT (b.id = ANY(COALESCE(sqlc.arg(skip)::uuid[], '{}')))
 ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT sqlc.arg(row_limit);
 
+-- name: ObjectInventoryBacklog :one
+-- ADR-20261110151628 §3: how far the inventory sweep is behind. due_buckets
+-- counts what ObjectInventoriesDue would hand out now (same rule).
+-- oldest_age_seconds is the oldest observation admission still holds to the
+-- 900 s window: a bucket held by a versioning, Object Lock or capacity change
+-- (with an observation), or whose listing advanced within progress_window on
+-- an observation under scan_max_age, stays fresh on an older one and does not
+-- count (objectBucketInventoryStale). A bucket never observed counts from its
+-- creation.
+WITH r AS (
+  SELECT b.created_at, u.observed_at, u.attempt_at, u.lease_until,
+    EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=b.id AND v.state<>'ready') AS versioning,
+    EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')) AS reconciling,
+    EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=b.id AND l.state<>'ready') AS locking,
+    COALESCE(i.pages > 0 AND NOT i.complete AND i.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz)
+      AND i.started_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second', false) AS listing,
+    COALESCE(i.pages > 0 AND i.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz) AND i.progress_at <= now()
+      AND i.progress_at >= now() - sqlc.arg(progress_window_seconds)::bigint * interval '1 second', false) AS progressing
+  FROM object_buckets b
+  LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
+  LEFT JOIN object_storage_inventory_scans i ON i.bucket_id=b.id
+  WHERE b.state='ready'
+)
+SELECT
+  (count(*) FILTER (WHERE NOT versioning AND NOT reconciling AND (attempt_at IS NULL OR attempt_at < now() - interval '5 minutes' OR listing)
+    AND (lease_until IS NULL OR lease_until < now())))::bigint AS due_buckets,
+  COALESCE(EXTRACT(EPOCH FROM now() - min(COALESCE(observed_at, created_at)) FILTER (WHERE NOT (observed_at IS NOT NULL AND (
+    versioning OR locking OR reconciling
+    OR (progressing AND observed_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second'))))), 0)::float8 AS oldest_age_seconds
+FROM r;
+
 -- name: ObjectInventoryClaim :execrows
 INSERT INTO object_storage_bucket_usage (bucket_id, attempt_at, lease_until, token)
 SELECT b.id, now(), now()+interval '2 minutes', sqlc.arg(token)::text FROM object_buckets b WHERE b.id=$1 AND b.state='ready' AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=$1 AND state<>'ready') AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning'))

@@ -10186,6 +10186,7 @@
   {
     "table": "managed_postgres_overage_deliveries",
     "columns": [
+      "billed_egress_bytes",
       "billed_storage_byte_seconds",
       "billed_unit_seconds",
       "delivered_millicents",
@@ -10201,8 +10202,11 @@
     "table": "managed_postgres_overage_pending",
     "columns": [
       "allowance_unit_seconds",
+      "app_egress_bytes",
+      "billed_egress_bytes",
       "billed_storage_byte_seconds",
       "billed_unit_seconds",
+      "egress_allowance_bytes",
       "from_millicents",
       "live",
       "period_start",
@@ -10213,6 +10217,7 @@
       "storage_pool_bytes",
       "subject_id",
       "target_millicents",
+      "used_egress_bytes",
       "used_storage_byte_seconds",
       "used_unit_seconds"
     ],

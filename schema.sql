@@ -45605,6 +45605,7 @@ CREATE TABLE public.managed_postgres_overage_deliveries (
     delivered_millicents bigint NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     billed_storage_byte_seconds bigint DEFAULT 0 NOT NULL,
+    billed_egress_bytes bigint DEFAULT 0 NOT NULL,
     CONSTRAINT managed_postgres_overage_deliveries_billed_unit_seconds_check CHECK ((billed_unit_seconds >= 0)),
     CONSTRAINT managed_postgres_overage_deliveries_check CHECK ((isfinite(updated_at) AND (updated_at >= period_start))),
     CONSTRAINT managed_postgres_overage_deliveries_delivered_millicents_check CHECK ((delivered_millicents > 0)),
@@ -45640,6 +45641,10 @@ CREATE TABLE public.managed_postgres_overage_pending (
     billed_storage_byte_seconds bigint NOT NULL,
     previous_millicents bigint NOT NULL,
     previous_live boolean NOT NULL,
+    used_egress_bytes bigint DEFAULT 0 NOT NULL,
+    app_egress_bytes bigint DEFAULT 0 NOT NULL,
+    egress_allowance_bytes bigint DEFAULT 0 NOT NULL,
+    billed_egress_bytes bigint DEFAULT 0 NOT NULL,
     CONSTRAINT managed_postgres_overage_pending_allowance_unit_seconds_check CHECK ((allowance_unit_seconds >= 0)),
     CONSTRAINT managed_postgres_overage_pending_billed_storage_check CHECK ((billed_storage_byte_seconds >= 0)),
     CONSTRAINT managed_postgres_overage_pending_billed_unit_seconds_check CHECK ((billed_unit_seconds >= 0)),
@@ -66708,6 +66713,14 @@ ALTER TABLE ONLY public.managed_postgres_live_logins
 
 
 --
+-- Name: managed_postgres_overage_deliveries managed_postgres_overage_deliveries_billed_egress_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_overage_deliveries
+    ADD CONSTRAINT managed_postgres_overage_deliveries_billed_egress_check CHECK ((billed_egress_bytes >= 0)) NOT VALID;
+
+
+--
 -- Name: managed_postgres_overage_deliveries managed_postgres_overage_deliveries_billed_storage_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -66721,6 +66734,14 @@ ALTER TABLE public.managed_postgres_overage_deliveries
 
 ALTER TABLE ONLY public.managed_postgres_overage_deliveries
     ADD CONSTRAINT managed_postgres_overage_deliveries_pkey PRIMARY KEY (provider, subject_id, period_start);
+
+
+--
+-- Name: managed_postgres_overage_pending managed_postgres_overage_pending_egress_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_overage_pending
+    ADD CONSTRAINT managed_postgres_overage_pending_egress_check CHECK (((used_egress_bytes >= 0) AND (app_egress_bytes >= 0) AND (egress_allowance_bytes >= 0) AND (billed_egress_bytes >= 0))) NOT VALID;
 
 
 --

@@ -245,12 +245,14 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 		return
 	}
 	excess := s.managedPostgresPlanExcess(databases, acct.Plan)
+	in, holdOK := s.managedPostgresHoldInputsOrLog(r.Context(), acct)
 	items := make([]api.ManagedPostgresDatabase, 0, len(databases))
 	for _, database := range databases {
 		if filter.keep(database.ID) {
 			view := managedPostgresView(database)
 			view.Labels = filter.labelsOf(database.ID)
 			view.PlanExcess = excess[database.ID]
+			s.withManagedPostgresHold(&view, database, in, holdOK)
 			items = append(items, view)
 		}
 	}
@@ -349,6 +351,12 @@ func (s *server) getManagedPostgresUsage(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	view := managedPostgresUsageView(summary, limits, s.managedPostgresCapMode, overage)
+	in, err := s.managedPostgresHoldInputsFrom(r.Context(), acct, subject, summary)
+	if err != nil {
+		managedPostgresProblem(w, err)
+		return
+	}
+	managedPostgresUsageHoldView(&view, in)
 	if view.ComputeCapState == api.ManagedPostgresComputeCapSuspended {
 		if view.ComputeSuspendedAt, err = s.managedPostgres.CapSuspendedAt(r.Context(), subject, time.Now().UTC()); err != nil {
 			managedPostgresProblem(w, err)
@@ -499,6 +507,8 @@ func (s *server) getManagedPostgresDatabase(w http.ResponseWriter, r *http.Reque
 	view := managedPostgresView(database)
 	view.Labels = s.resourceLabels(r, acct, state.LabelKindDatabase, database.ID)
 	view.PlanExcess = s.managedPostgresPlanExcessOf(r.Context(), acct, database.ID)
+	in, holdOK := s.managedPostgresHoldInputsOrLog(r.Context(), acct)
+	s.withManagedPostgresHold(&view, database, in, holdOK)
 	writeJSON(w, http.StatusOK, view)
 }
 
