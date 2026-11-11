@@ -44,7 +44,7 @@ func newMigrationAdmissionFixture(t *testing.T, s migrationAdmissionStore) migra
 	if err := s.MarkInstanceMigrating(t.Context(), i.ID, source.ID, lease.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
-	p := state.MigrationAdmissionPlan{ID: uuid.NewString(), InstanceID: i.ID, SourceNodeID: source.ID, DestinationNodeID: dest.ID, SourceWakeID: i.WakeID, DestinationWakeID: uuid.NewString(), LeaseToken: lease.LeaseToken, MemStorageKey: "migration/mem", VMStateStorageKey: "migration/state", RequestDigest: strings.Repeat("a", 64), DestinationGeneration: dest.LifecycleGeneration, RAMMB: 128 + api.PerVMOverheadMB, CPUMillicores: api.DefaultAppCPUMillicores, VCPU: api.MustLimitsFor(api.PlanPro).VCPU, ExpiresAt: time.Now().Add(30 * time.Second).UTC().Truncate(time.Microsecond)}
+	p := state.MigrationAdmissionPlan{ID: uuid.NewString(), InstanceID: i.ID, SourceNodeID: source.ID, DestinationNodeID: dest.ID, SourceWakeID: i.WakeID, DestinationWakeID: uuid.NewString(), LeaseToken: lease.LeaseToken, MemStorageKey: "migration/mem", VMStateStorageKey: "migration/state", RequestDigest: strings.Repeat("a", 64), DestinationGeneration: dest.LifecycleGeneration, RAMMB: 128 + api.PerVMOverheadMB, CPUMillicores: api.DefaultAppCPUMillicores, VCPU: api.SizeVCPUs(128), ExpiresAt: time.Now().Add(30 * time.Second).UTC().Truncate(time.Microsecond)}
 	return migrationAdmissionFixture{s: s, source: source, dest: dest, instance: i, plan: p}
 }
 

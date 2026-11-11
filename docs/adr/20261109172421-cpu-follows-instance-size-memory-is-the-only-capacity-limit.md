@@ -235,9 +235,12 @@ schema change ships before its first user.
       that show them, and the SQL `plan_vcpus` fallbacks.
       *The API and CLI show an app's size (#6944), the SQL capacity paths
       count an instance's size vCPUs (#6948), and `CPUWeight`, `CPUQuotaUS`
-      and `CPUPeriodUS` are gone. Left: `VCPU` and `VCPUPerPlan`, which
-      function executions still boot at, and the `plan_vcpus` contract
-      migration.*
+      and `CPUPeriodUS` are gone (#6998). Function executions boot at their
+      size's vCPUs too (one for every execution shape), so `VCPU` and
+      `VCPUPerPlan` are gone. The `service_capacity_policy.plan_vcpus` and
+      `cpu_overcommit` columns stay, unread: issued migrations that read them
+      must stay replayable, and the repo's replay tests run them against the
+      current schema.*
    5. The flat hierarchy: app instances directly under `faas-tenant.slice`,
       with vmmd still adopting VMs in the old sub-slices for a release.
    6. The dead `FaasCpuStarvation` alert (nothing feeds its throttle
