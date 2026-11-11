@@ -4,6 +4,7 @@
 package secretpg_test
 
 import (
+	"encoding/base64"
 	"errors"
 	"testing"
 	"time"
@@ -105,5 +106,91 @@ func TestStoreOnPostgres(t *testing.T) {
 	}
 	if err := store.RecordOpen(ctx, node.ID, app.ID, "stolen", 1); err == nil {
 		t.Fatal("audit accepted an unknown via")
+	}
+}
+
+// Slice 3d: the by-reference lookups read only the named app's rows.
+func TestReferenceLookupsOnPostgres(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	st := state.NewPgStore(pool)
+	store := secretpg.New(pool, st)
+	ctx := t.Context()
+
+	account, err := st.CreateAccount(ctx, uuid.NewString()+"@secretd.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newApp := func() state.App {
+		app, err := st.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "ref-" + uuid.NewString()[:8], RAMMB: 128, MaxConcurrency: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return app
+	}
+	appA, appB := newApp(), newApp()
+
+	// App secrets: the app's own (scope, key) row only.
+	if err := st.UpsertAppSecret(ctx, account.ID, appA.ID, "DB_URL", []byte("ct-a")); err != nil {
+		t.Fatal(err)
+	}
+	if ct, err := store.AppSecretCiphertext(ctx, appA.ID, "default", "DB_URL"); err != nil || string(ct) != "ct-a" {
+		t.Fatalf("own secret = %q, %v", ct, err)
+	}
+	if _, err := store.AppSecretCiphertext(ctx, appB.ID, "default", "DB_URL"); !errors.Is(err, secretd.ErrUnknownSecret) {
+		t.Fatalf("another app's secret = %v", err)
+	}
+	if _, err := store.AppSecretCiphertext(ctx, appA.ID, "preview", "DB_URL"); !errors.Is(err, secretd.ErrUnknownSecret) {
+		t.Fatalf("other scope = %v", err)
+	}
+
+	// Sidecar env: only from a deployment of the named app.
+	sidecars := []byte(`[{"name":"proxy","image":"example/proxy","env":{"TOKEN":"` + base64.StdEncoding.EncodeToString([]byte("ct-token")) + `"}}]`)
+	dep, err := st.CreateDeployment(ctx, state.Deployment{AppID: appA.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:secretd-ref", Status: state.DeployLive, Sidecars: sidecars})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := store.SidecarEnv(ctx, appA.ID, dep.ID, "proxy")
+	if err != nil || string(env["TOKEN"]) != "ct-token" {
+		t.Fatalf("own sidecar env = %q, %v", env, err)
+	}
+	if _, err := store.SidecarEnv(ctx, appB.ID, dep.ID, "proxy"); !errors.Is(err, secretd.ErrUnknownSidecar) {
+		t.Fatalf("another app's deployment = %v", err)
+	}
+	if _, err := store.SidecarEnv(ctx, appA.ID, uuid.NewString(), "proxy"); !errors.Is(err, secretd.ErrUnknownSidecar) {
+		t.Fatalf("unknown deployment = %v", err)
+	}
+
+	// Crash captures: a live sealed capture's app and key. The fixture row
+	// skips foreign keys and the status-transition trigger.
+	captureID := uuid.NewString()
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, `SET session_replication_role = replica`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `INSERT INTO crash_captures
+		(id, account_id, app_id, deployment_id, instance_id, trigger, status, requested_at, updated_at,
+		 storage_key, vmstate_storage_key, fc_version, mem_bytes, captured_at, expires_at,
+		 plaintext_state, sealed_key, encrypted_at)
+		VALUES ($1, $2, $3, $4, $5, 'manual', 'ready', now(), now(),
+		 'k/mem', 'k/vmstate', '1.12.0', 1, now(), now() + interval '1 day',
+		 'sealed', '\x01'::bytea, now())`, captureID, account.ID, appA.ID, dep.ID, uuid.NewString()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `RESET session_replication_role`); err != nil {
+		t.Fatal(err)
+	}
+	if app, sealed, err := store.CaptureKey(ctx, captureID); err != nil || app != appA.ID || len(sealed) != 1 {
+		t.Fatalf("capture key = %s %x %v", app, sealed, err)
+	}
+	if _, _, err := store.CaptureKey(ctx, uuid.NewString()); !errors.Is(err, secretd.ErrUnknownCapture) {
+		t.Fatalf("unknown capture = %v", err)
+	}
+	if _, _, err := store.CaptureKey(ctx, "not-a-uuid"); !errors.Is(err, secretd.ErrUnknownCapture) {
+		t.Fatalf("bad capture id = %v", err)
 	}
 }
