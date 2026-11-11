@@ -11134,15 +11134,23 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 		if err := json.Unmarshal(appManifestJSON, &appManifest); err != nil {
 			return fmt.Errorf("state: decode app manifest for revision pin: %w", err)
 		}
-		if appManifest.RevisionPinTTLSeconds > 0 && appManifest.RevisionPinTTLSeconds <= api.RevisionPinMaxTTLSeconds {
-			// Only traffic-bearing siblings receive a new deadline. Already
-			// retained revisions keep the original cutover deadline.
-			if err := sqlc.New().RetainServingDeploymentSiblings(ctx, tx, sqlc.RetainServingDeploymentSiblingsParams{AppID: mustPgUUID(dep.AppID), Scope: normalizedDeploymentScope(dep.Scope), TargetID: mustPgUUID(id), Ttl: int32(appManifest.RevisionPinTTLSeconds)}); err != nil {
-				return fmt.Errorf("state: retain replaced revisions: %w", err)
+		for _, lane := range servingLaneScopes(dep.Scope) {
+			if appManifest.RevisionPinTTLSeconds > 0 && appManifest.RevisionPinTTLSeconds <= api.RevisionPinMaxTTLSeconds {
+				// Only traffic-bearing siblings receive a new deadline. Already
+				// retained revisions keep the original cutover deadline.
+				if err := sqlc.New().RetainServingDeploymentSiblings(ctx, tx, sqlc.RetainServingDeploymentSiblingsParams{AppID: mustPgUUID(dep.AppID), Scope: lane, TargetID: mustPgUUID(id), Ttl: int32(appManifest.RevisionPinTTLSeconds)}); err != nil {
+					return fmt.Errorf("state: retain replaced revisions: %w", err)
+				}
 			}
-		}
-		if err := retireLiveDeploymentSiblingsTx(ctx, tx, dep.AppID, dep.Scope, id); err != nil {
-			return fmt.Errorf("state: mark stable live retire siblings: %w", err)
+			if lane != normalizedDeploymentScope(dep.Scope) {
+				if err := retireOtherProductionLiteralTx(ctx, tx, dep.AppID, lane, id); err != nil {
+					return fmt.Errorf("state: mark stable live retire production siblings: %w", err)
+				}
+				continue
+			}
+			if err := retireLiveDeploymentSiblingsTx(ctx, tx, dep.AppID, dep.Scope, id); err != nil {
+				return fmt.Errorf("state: mark stable live retire siblings: %w", err)
+			}
 		}
 		if _, err := tx.Exec(ctx,
 			`update deployments set

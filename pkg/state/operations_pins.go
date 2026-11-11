@@ -113,6 +113,26 @@ func retireLiveDeploymentSiblingsTx(ctx context.Context, tx pgx.Tx, appID, scope
 	return err
 }
 
+// retireOtherProductionLiteralTx retires the live rows of the production
+// lane's other scope name (servingLaneScopes) after the same task
+// compatibility check as the candidate's own scope.
+func retireOtherProductionLiteralTx(ctx context.Context, tx pgx.Tx, appID, scope, deploymentID string) error {
+	app, err := operationUUID(appID)
+	if err != nil {
+		return err
+	}
+	deployment, err := operationUUID(deploymentID)
+	if err != nil {
+		return err
+	}
+	if err := checkMCPTaskCompatibilityCutoverTx(ctx, tx, appID, scope, deploymentID); err != nil {
+		return err
+	}
+	_, err = sqlc.New().RetireLiveDeploymentSiblings(ctx, tx, sqlc.RetireLiveDeploymentSiblingsParams{
+		AppID: app, Scope: scope, DeploymentID: deployment})
+	return err
+}
+
 func operationPinsTx(ctx context.Context, tx pgx.Tx, op Operation) error {
 	q := sqlc.New()
 	dep, err := operationUUID(op.DeploymentID)

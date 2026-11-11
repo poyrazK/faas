@@ -82,3 +82,27 @@ func ResolveProductionDeployment(ctx context.Context, store interface {
 	}
 	return selected, nil
 }
+
+// servingLaneScopes lists the deployment scopes a stable go-live in scope
+// retires. Production is one serving lane with two scope names: a deploy
+// writes the legacy default scope and an environment promotion writes
+// "production". Retiring only the exact name left the other name's
+// deployment live after a cutover, holding an instance and a concurrency
+// slot (Hunt 33 H33-34: production answered 429 after a promotion), or,
+// the other way round, still taking the lane's traffic.
+func servingLaneScopes(scope string) []string {
+	switch normalizedDeploymentScope(scope) {
+	case DefaultEnvScope:
+		return []string{DefaultEnvScope, "production"}
+	case "production":
+		return []string{"production", DefaultEnvScope}
+	default:
+		return []string{normalizedDeploymentScope(scope)}
+	}
+}
+
+// sameServingLane reports whether two deployment scopes serve one lane.
+func sameServingLane(a, b string) bool {
+	a, b = normalizedDeploymentScope(a), normalizedDeploymentScope(b)
+	return a == b || IsProductionScope(a) && IsProductionScope(b)
+}

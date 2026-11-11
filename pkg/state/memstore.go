@@ -10583,7 +10583,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 			return err
 		}
 		for otherID, other := range m.deployments {
-			if otherID == id || other.AppID != d.AppID || normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(d.Scope) || other.Status != DeployLive {
+			if otherID == id || other.AppID != d.AppID || !sameServingLane(other.Scope, d.Scope) || other.Status != DeployLive {
 				continue
 			}
 			ttl := m.apps[d.AppID].Manifest.RevisionPinTTLSeconds
