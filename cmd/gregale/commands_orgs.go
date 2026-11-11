@@ -226,14 +226,19 @@ func cmdOrgsCreate(args []string) int {
 	fs := newFlagSet("orgs create", flag.ContinueOnError)
 	slug := fs.String("slug", "", "org slug (required; lowercase alphanumeric + dashes)")
 	name := fs.String("name", "", "display name (required)")
-	if err := fs.Parse(args); err != nil {
+	// `org create acme --name "Acme"` names the slug positionally, as
+	// `org get <slug>` does; it stopped parsing at the slug and reported
+	// the flags as positional arguments (Hunt 32 H32-6).
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) {
+	if *slug == "" && fs.NArg() == 1 {
+		*slug = fs.Arg(0)
+	} else if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" || *name == "" {
-		PrintUsage(os.Stderr, "usage: gregale org create --slug <slug> --name <display>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org create [--slug] <slug> --name <display>", "orgs")
 		return 1
 	}
 	client, err := authedClient()
@@ -349,12 +354,15 @@ func validOrgActivityActor(actor string) bool {
 	}
 }
 
+// activityDisplayTime prints a server timestamp in UTC with its zone, like
+// `audit list` and `org get`. It used the Mac's local zone with no label
+// (Hunt 32 H32-5), so one activity row and its audit row disagreed.
 func activityDisplayTime(raw string) string {
 	at, err := time.Parse(time.RFC3339Nano, raw)
 	if err != nil {
 		return raw
 	}
-	return at.Local().Format("2006-01-02 15:04")
+	return at.UTC().Format("2006-01-02 15:04 UTC")
 }
 
 // cmdOrgsRm takes its flags before or after the slug: `org delete acme -q`
@@ -633,9 +641,9 @@ func cmdOrgsSeatUsage(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	fmt.Printf("plan:  %s\n", resp.Plan)
-	fmt.Printf("used:  %d\n", resp.Used)
-	fmt.Printf("limit: %d\n", resp.Limit)
+	// "used: 1 limit: 200" named no unit (Hunt 32 H32-54): these are seats.
+	_, _ = fmt.Fprintf(osStdout, "plan:  %s\n", resp.Plan)
+	_, _ = fmt.Fprintf(osStdout, "seats: %d used of %d\n", resp.Used, resp.Limit)
 	return 0
 }
 

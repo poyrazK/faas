@@ -118,6 +118,29 @@ func (a *ReadAdmitter) AdmitRead(ctx context.Context, b state.ObjectBucket) (Adm
 	return AdmittedRead{bucket: b.ID, period: d.Period, owner: u, maxEgress: d.MaxEgressBytes, downloadErr: d.DownloadErr}, nil
 }
 
+// RefundRead takes back the request and authorization AdmitRead counted for
+// r, when the provider answered that the object does not exist. Anonymous
+// reads of missing keys miss the CDN cache, so counting them let a stranger
+// spend the owner's budget with random paths (object storage audit OS-5). It
+// refunds only counts still pending in this process, and reports whether it
+// did; a count already flushed stays.
+func (a *ReadAdmitter) RefundRead(r AdmittedRead) bool {
+	if r.owner == nil || r.bucket == "" {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	p := a.pending[readUsageKey{bucket: r.bucket, period: r.period, owner: r.owner.key.owner}]
+	if p == nil || p.owner != r.owner || p.Requests < 1 || p.Authorizations < 1 {
+		return false
+	}
+	p.Requests--
+	p.Authorizations--
+	r.owner.unwritten.Requests--
+	r.owner.unwritten.Authorizations--
+	return true
+}
+
 // ReserveEgress counts an admitted GET's body of bytes against its bucket's
 // egress ceiling before it is sent. An unknown length fails closed.
 func (a *ReadAdmitter) ReserveEgress(r AdmittedRead, bytes int64) error {

@@ -18,3 +18,19 @@ ON CONFLICT (storage_key) DO NOTHING;
 SELECT storage_key, digest, bytes, deployment_id::text AS deployment_id, node_name, signature_format, signed_at
 FROM artifact_signatures
 WHERE storage_key = sqlc.arg(storage_key);
+
+-- name: StoredLayers :many
+-- Every signed layer a deployment that still exists can boot: its main layer
+-- (legacy rows without rootfs_key keep layers/<id>.ext4) and its sidecars'.
+-- The re-sign pass walks them (ADR-20261109170000 §5 step 3).
+SELECT d.id::text AS deployment_id,
+       (CASE WHEN d.rootfs_key <> '' THEN d.rootfs_key
+             ELSE 'layers/' || d.id::text || '.ext4' END)::text AS storage_key
+FROM deployments d
+WHERE d.deleted_at IS NULL AND (d.rootfs_key <> '' OR COALESCE(d.rootfs_path, '') <> '')
+UNION ALL
+SELECT l.deployment_id::text AS deployment_id, l.storage_key
+FROM deployment_sidecar_layers l
+JOIN deployments d ON d.id = l.deployment_id
+WHERE d.deleted_at IS NULL
+ORDER BY 1, 2;

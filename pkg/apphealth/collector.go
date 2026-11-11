@@ -37,6 +37,13 @@ type Collector struct {
 // quiet apps every app's evidence went stale and rollout watching saw
 // expired health (bug hunt O35). Claims are leased and skip locked rows, so
 // workers never collect the same app at once.
+//
+// A claim scans the apps for the next one due, about 4 ms of control-plane
+// database time. Most sweeps find nothing due, so the sweep probes with one
+// claim before starting the other workers, and the first claim that comes
+// back empty stops them all: four workers polling every second were ~70% of
+// the claims and the largest statement cost on the control plane (prod
+// 2026-11-10: 5.6 claims/s, ~4 of them empty).
 func (c *Collector) Sweep(ctx context.Context) (int, error) {
 	if c.Store == nil {
 		return 0, errors.New("app health collector requires a store")
@@ -44,17 +51,30 @@ func (c *Collector) Sweep(ctx context.Context) (int, error) {
 	if _, err := c.prune(ctx); err != nil {
 		return 0, fmt.Errorf("prune expired app health history: %w", err)
 	}
+	found, err := c.checkNext(ctx)
+	if err != nil || !found {
+		return 0, err
+	}
 	var (
 		wg       sync.WaitGroup
 		checked  atomic.Int64
+		drained  atomic.Bool
 		errOnce  sync.Once
 		firstErr error
 	)
-	for range max(api.AppHealthCollectorWorkers, 1) {
+	checked.Store(1)
+	for worker := range max(api.AppHealthCollectorWorkers, 1) {
+		batch := api.AppHealthCollectorBatch
+		if worker == 0 {
+			batch-- // the probe was this worker's first claim
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for range api.AppHealthCollectorBatch {
+			for range batch {
+				if drained.Load() {
+					return
+				}
 				if err := ctx.Err(); err != nil {
 					errOnce.Do(func() { firstErr = err })
 					return
@@ -65,6 +85,7 @@ func (c *Collector) Sweep(ctx context.Context) (int, error) {
 					return
 				}
 				if !found {
+					drained.Store(true)
 					return
 				}
 				checked.Add(1)

@@ -44,7 +44,7 @@ func newMigrationAdmissionFixture(t *testing.T, s migrationAdmissionStore) migra
 	if err := s.MarkInstanceMigrating(t.Context(), i.ID, source.ID, lease.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
-	p := state.MigrationAdmissionPlan{ID: uuid.NewString(), InstanceID: i.ID, SourceNodeID: source.ID, DestinationNodeID: dest.ID, SourceWakeID: i.WakeID, DestinationWakeID: uuid.NewString(), LeaseToken: lease.LeaseToken, MemStorageKey: "migration/mem", VMStateStorageKey: "migration/state", RequestDigest: strings.Repeat("a", 64), DestinationGeneration: dest.LifecycleGeneration, RAMMB: 128 + api.PerVMOverheadMB, CPUMillicores: api.DefaultAppCPUMillicores, VCPU: api.MustLimitsFor(api.PlanPro).VCPU, ExpiresAt: time.Now().Add(30 * time.Second).UTC().Truncate(time.Microsecond)}
+	p := state.MigrationAdmissionPlan{ID: uuid.NewString(), InstanceID: i.ID, SourceNodeID: source.ID, DestinationNodeID: dest.ID, SourceWakeID: i.WakeID, DestinationWakeID: uuid.NewString(), LeaseToken: lease.LeaseToken, MemStorageKey: "migration/mem", VMStateStorageKey: "migration/state", RequestDigest: strings.Repeat("a", 64), DestinationGeneration: dest.LifecycleGeneration, RAMMB: 128 + api.PerVMOverheadMB, CPUMillicores: api.DefaultAppCPUMillicores, VCPU: api.SizeVCPUs(128), ExpiresAt: time.Now().Add(30 * time.Second).UTC().Truncate(time.Microsecond)}
 	return migrationAdmissionFixture{s: s, source: source, dest: dest, instance: i, plan: p}
 }
 
@@ -213,6 +213,8 @@ func runMigrationAdmissionTests(t *testing.T, newStore func(*testing.T) migratio
 			t.Fatalf("cleanup receipt overwritten: %v", err)
 		}
 	})
+	// An inbound migration reserves its destination's memory; its CPU and
+	// vCPUs are measured, never refused (ADR-20261109172421).
 	t.Run("ordinary_admission_cannot_spend_inbound_capacity", func(t *testing.T) {
 		for _, resource := range []string{"ram", "cpu", "vcpu"} {
 			t.Run(resource, func(t *testing.T) {
@@ -230,7 +232,14 @@ func runMigrationAdmissionTests(t *testing.T, newStore func(*testing.T) migratio
 					t.Fatal(err)
 				}
 				f.reserve(t)
-				if _, err := f.s.CreateInstance(t.Context(), f.instance.AppID, f.instance.DeploymentID, "cold_booting", 128, f.dest.ID, uuid.NewString()); !errors.Is(err, state.ErrNodeCapacity) {
+				_, err := f.s.CreateInstance(t.Context(), f.instance.AppID, f.instance.DeploymentID, "cold_booting", 128, f.dest.ID, uuid.NewString())
+				if resource != "ram" {
+					if err != nil {
+						t.Fatalf("CPU refused an admission memory fits: %v", err)
+					}
+					return
+				}
+				if !errors.Is(err, state.ErrNodeCapacity) {
 					t.Fatalf("ordinary admission spent reserved capacity: %v", err)
 				}
 			})

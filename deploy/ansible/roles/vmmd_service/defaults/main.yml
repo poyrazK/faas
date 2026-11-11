@@ -60,6 +60,13 @@ vmmd_adoption_record: false
 vmmd_adopt_running_vms: false
 vmmd_adopt_admitted_runtimes: false
 
+# vmmd_flat_tenant_cgroups launches new tenant VMs directly under
+# faas-tenant.slice instead of their plan's sub-slice (ADR-20261109172421
+# step 6.5). Turn it on only once every compute node runs a vmmd that reads
+# flat VMs; turn it off, and let flat VMs park, before rolling vmmd back past
+# that release. Rendered in the same drop-in as the adoption switches.
+vmmd_flat_tenant_cgroups: false
+
 # Connection survival (docs/adr/20261017-connection-survival-across-data-path-restarts.md),
 # phase P1: with all three on and the adoption switches above, an instance's
 # bridge outlives a vmmd restart that adopts the guest. Streams through it

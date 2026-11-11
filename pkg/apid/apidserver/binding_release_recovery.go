@@ -127,6 +127,9 @@ func (s *server) recoverPinnedCanaryRollout(w http.ResponseWriter, r *http.Reque
 		decision = release.ManualDecision(api.RolloutRuleAbortManual, candidate, time.Now())
 	}
 	problem, err := s.withBindingReleaseObservations(r, acct, app, observations, func(writeCtx context.Context) error {
+		if isInternalSafeDeployRequest(r) {
+			writeCtx = state.WithRolloutRecoveryActor(writeCtx, state.RolloutRecoveryActorSafeDeploy)
+		}
 		var writeErr error
 		if decisions, ok := s.store.(state.RolloutDecisionStore); ok {
 			updated, auditID, writeErr = decisions.RecoverRolloutForDeploymentWithDecision(writeCtx, app.ID, candidate.ID, predecessor.ID, "abort", req.Reason, decision)

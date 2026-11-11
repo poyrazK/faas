@@ -411,6 +411,9 @@ func objectS3CredentialRotationSuite(t *testing.T, base state.Store) {
 	if err != nil || pending != req.WakeID {
 		t.Fatalf("pending = %q, %v", pending, err)
 	}
+	if all, err := bindings.PendingObjectS3CredentialRotations(ctx, acct.ID, bucket.ID); err != nil || len(all) != 1 || all[parent.ID] != req.WakeID {
+		t.Fatalf("pending for bucket = %v, %v", all, err)
+	}
 	if _, err := bindings.StageObjectS3CredentialRotation(ctx, makeRequest("C")); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("overlapping rotation = %v", err)
 	}
@@ -423,6 +426,9 @@ func objectS3CredentialRotationSuite(t *testing.T, base state.Store) {
 	pending, err = bindings.PendingObjectS3CredentialRotation(ctx, acct.ID, bucket.ID, parent.ID)
 	if err != nil || pending != "" {
 		t.Fatalf("pending after finalization = %q, %v", pending, err)
+	}
+	if all, err := bindings.PendingObjectS3CredentialRotations(ctx, acct.ID, bucket.ID); err != nil || len(all) != 0 {
+		t.Fatalf("pending for bucket after finalization = %v, %v", all, err)
 	}
 	second, err := bindings.StageObjectS3CredentialRotation(ctx, makeRequest("C"))
 	if err != nil {

@@ -222,7 +222,7 @@ func TestOAuthProofVerifiesExistingPasswordAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
-	acct, err := srv.VerifyOAuthAccountEmail(context.Background(), res.Account)
+	acct, err := srv.VerifyOAuthAccountEmail(context.Background(), res.Account, res.Account.Email)
 	if err != nil {
 		t.Fatal(err)
 	}

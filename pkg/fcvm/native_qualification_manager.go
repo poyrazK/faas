@@ -215,8 +215,7 @@ func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame sta
 	lease.MemoryMaxMiB = req.MemSizeMiB
 	lease.CPUMillicores = req.CPUMillicores
 	lease.DisableStartupCPUBoost = req.DisableStartupCPUBoost
-	lease.CPUWeight = req.CPUWeight
-	lease.CPUUncapped = req.CPUUncapped
+	lease.CPUWeight, lease.CPUUncapped = wakeLeaseCPU(req, false)
 	lease.AppPort = req.Port
 	lease = m.beginProcessAttempt(lease)
 	var nc netns.Config

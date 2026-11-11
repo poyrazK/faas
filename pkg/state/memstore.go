@@ -4879,8 +4879,9 @@ func (m *MemStore) ApplyProjectReconcile(
 					continue
 				}
 				// A function app `gregale deploy` made outside any project is
-				// taken over by the repository (ADR-20261108160000 §1).
-				if mutation.App.Type == AppTypeFunction && existing.Type == AppTypeFunction && existing.AccountID == storedProject.AccountID && existing.ProjectID == "" {
+				// taken over by the repository (ADR-20261108160000 §1), only
+				// when it has the project's owner (same org, or both personal).
+				if mutation.App.Type == AppTypeFunction && existing.Type == AppTypeFunction && existing.AccountID == storedProject.AccountID && existing.OrgID == storedProject.OrgID && existing.ProjectID == "" {
 					adopt[key] = existing.ID
 					adopted = true
 					continue
@@ -5838,7 +5839,7 @@ func (m *MemStore) ListApps(_ context.Context, accountID string) ([]App, error) 
 	defer m.mu.Unlock()
 	var out []App
 	for _, a := range m.apps {
-		if (a.AccountID == accountID || a.OrgID == accountID) && a.Status != AppDeleted {
+		if (a.AccountID == accountID || a.OrgID == accountID) && a.Status != AppDeleted && !a.SandboxTemplate {
 			out = append(out, a)
 		}
 	}
@@ -5854,7 +5855,7 @@ func (m *MemStore) ListAppsByOrg(_ context.Context, orgID string) ([]App, error)
 	defer m.mu.Unlock()
 	var out []App
 	for _, app := range m.apps {
-		if app.OrgID == orgID && app.Status != AppDeleted {
+		if app.OrgID == orgID && app.Status != AppDeleted && !app.SandboxTemplate {
 			out = append(out, app)
 		}
 	}
@@ -8976,6 +8977,25 @@ func (m *MemStore) SetDeploymentSecretReloadSignal(ctx context.Context, id, sign
 	return nil
 }
 
+// SetDeploymentBeforeCheckpointHook mirrors PgStore (H32-49).
+func (m *MemStore) SetDeploymentBeforeCheckpointHook(ctx context.Context, id string, hook bool) error {
+	if id == "" {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+	d, ok := m.deployments[id]
+	if !ok {
+		return ErrNotFound
+	}
+	d.BeforeCheckpointHook, d.BeforeCheckpointHookKnown = hook, true
+	m.putDeploymentLocked(id, d)
+	return nil
+}
+
 func (m *MemStore) SetDeploymentSidecarSecretReloadSignal(ctx context.Context, deploymentID, sidecarName, signal string) error {
 	if deploymentID == "" || sidecarName == "" || !ValidSecretRuntimeWorkloadName(sidecarName) || !validSecretReloadSignal(signal) {
 		return ErrInvalidArgument
@@ -9524,7 +9544,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			DeploymentID: uuid.MustParse(target.ID),
 			AccountID:    nil,
 			Kind:         DeployRolledBack,
-			Actor:        "operator:cli:recover_rollout",
+			Actor:        rolloutRecoveryActor(ctx),
 			At:           now,
 			Data:         json.RawMessage(rolloutAuditData("abort_requested", reason)),
 		})
@@ -9594,7 +9614,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			DeploymentID: uuid.MustParse(target.ID),
 			AccountID:    nil,
 			Kind:         DeployTrafficChanged,
-			Actor:        "operator:cli:recover_rollout",
+			Actor:        rolloutRecoveryActor(ctx),
 			At:           now,
 			Data:         json.RawMessage(rolloutAuditDataWithDecision("advance", reason, decision)),
 		})
@@ -9632,7 +9652,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			DeploymentID: uuid.MustParse(target.ID),
 			AccountID:    nil,
 			Kind:         DeployTrafficChanged,
-			Actor:        "operator:cli:recover_rollout",
+			Actor:        rolloutRecoveryActor(ctx),
 			At:           now,
 			Data:         json.RawMessage(rolloutAuditDataWithDecision("promote", reason, decision)),
 		})
@@ -9664,7 +9684,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			predecessor.TrafficPercent = 100
 			m.putDeploymentLocked(expectedPredecessorID, predecessor)
 			m.putDeploymentLocked(target.ID, *target)
-			entry := DeploymentAudit{DeploymentID: uuid.MustParse(target.ID), Kind: DeployRolledBack, Actor: "operator:cli:recover_rollout", At: now,
+			entry := DeploymentAudit{DeploymentID: uuid.MustParse(target.ID), Kind: DeployRolledBack, Actor: rolloutRecoveryActor(ctx), At: now,
 				Data: json.RawMessage(withAuditDecision(rolloutRecoveryAuditData(reason, expectedPredecessorID, bindingReleaseFences(ctx)), decision))}
 			if auditOverride != nil {
 				entry = *auditOverride
@@ -9703,7 +9723,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			DeploymentID: uuid.MustParse(target.ID),
 			AccountID:    nil,
 			Kind:         DeployRolledBack,
-			Actor:        "operator:cli:recover_rollout",
+			Actor:        rolloutRecoveryActor(ctx),
 			At:           now,
 			Data:         json.RawMessage(rolloutAuditDataWithDecision("abort", reason, decision)),
 		})
@@ -10844,6 +10864,9 @@ func (m *MemStore) ClearDeployment(_ context.Context, id, principal string) erro
 	if d.Status == DeployLive {
 		return ErrCancelLiveForbidden
 	}
+	if d.Status.IsCancelEligible() {
+		return ErrClearInFlightForbidden
+	}
 	now := time.Now().UTC()
 	d.DeletedAt = &now
 	d.DeletedByPrincipal = principal
@@ -10853,7 +10876,8 @@ func (m *MemStore) ClearDeployment(_ context.Context, id, principal string) erro
 
 // ClearObsoleteDeployments (ADR-124) — memstore mirror. Honours
 // the "current + previous" retention window per app by skipping
-// the 2 most-recent rows per app regardless of status.
+// the 2 most-recent rows per app regardless of status, and keeps every
+// superseded deployment in its scope's rollback window.
 func (m *MemStore) ClearObsoleteDeployments(ctx context.Context, appID string, olderThan time.Time) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -10884,10 +10908,9 @@ func (m *MemStore) ClearObsoleteDeployments(ctx context.Context, appID string, o
 				}
 			}
 		}
+		// The two newest rows are the ones kept, as the SQL's rn<=2.
 		if len(arr) > 2 {
-			recentByApp[app] = arr[2:]
-		} else {
-			recentByApp[app] = nil
+			recentByApp[app] = arr[:2]
 		}
 	}
 	skippable := map[string]bool{}
@@ -10896,11 +10919,20 @@ func (m *MemStore) ClearObsoleteDeployments(ctx context.Context, appID string, o
 			skippable[r.id] = true
 		}
 	}
+	// The rollback window is decided before any row is cleared, as the
+	// Postgres statement sees one snapshot: clearing a row must not move an
+	// older one into or out of the window mid-call.
+	inRollbackWindow := map[string]bool{}
+	for id, d := range m.deployments {
+		if d.AppID == appID && m.rollbackWindowRetainsDeploymentLocked(d) {
+			inRollbackWindow[id] = true
+		}
+	}
 	for id, d := range m.deployments {
 		if d.AppID != appID {
 			continue
 		}
-		if skippable[id] {
+		if skippable[id] || inRollbackWindow[id] {
 			continue
 		}
 		if m.buildArtifactOriginPinnedLocked(id) || m.recoveryProtectedDeploymentLocked(id) {
@@ -20721,6 +20753,14 @@ func (m *MemStore) RecordInvoiceRefund(_ context.Context, refund InvoiceRefund) 
 			existing.Status = refund.Status
 		} else if oldState == invoiceRefundPending {
 			existing.Status = refund.Status
+		} else if oldState == invoiceRefundSettled && newState == invoiceRefundFailed {
+			// Matches PgStore: a refund that fails after settling is reversed.
+			settledDelta = -refund.AmountCents
+			if existing.Source == "credit" {
+				creditDelta -= refund.AmountCents
+				reverseCredit = true
+			}
+			existing.Status = refund.Status
 		}
 		storedRefund = existing
 	}
@@ -27937,6 +27977,9 @@ func (m *MemStore) ConsumeOrgInvitation(_ context.Context, hash []byte, acceptin
 	}
 	if !strings.EqualFold(inv.Email, acceptingAccount.Email) {
 		return OrgMembership{}, OrgInvitation{}, ErrOrgInvitationInvalid
+	}
+	if err := m.checkInviterLocked(inv); err != nil {
+		return OrgMembership{}, OrgInvitation{}, err
 	}
 	// Status, plan and member admission share this lock with org mutations.
 	org, ok := m.orgs[inv.OrgID]

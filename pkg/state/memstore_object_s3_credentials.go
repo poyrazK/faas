@@ -279,6 +279,21 @@ func (m *MemStore) PendingObjectS3CredentialRotation(ctx context.Context, accoun
 	return "", nil
 }
 
+func (m *MemStore) PendingObjectS3CredentialRotations(ctx context.Context, accountID, bucketID string) (map[string]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, c := range m.objectS3Credentials {
+		if c.AccountID == accountID && c.BucketID == bucketID && c.RotationParentID != "" && c.Status == ObjectS3CredentialStatusActive {
+			out[c.RotationParentID] = c.RotationWakeID
+		}
+	}
+	return out, nil
+}
+
 func (m *MemStore) StageObjectS3CredentialRotation(ctx context.Context, req ObjectS3CredentialRotationRequest) (ObjectS3Credential, error) {
 	if !validObjectS3CredentialRotationRequest(req) {
 		return ObjectS3Credential{}, ErrInvalidArgument

@@ -67,6 +67,56 @@ func TestHandlePullRequest_PreviewNeedsDatastoreValue(t *testing.T) {
 	}
 }
 
+// A production database with previews on gives each preview its own
+// DATABASE_URL (ADR-20261102123523), so the check must not refuse a preview
+// for lacking a pr-preview value the preview database provides.
+func TestHandlePullRequest_PreviewDatabaseProvidesDatastoreValue(t *testing.T) {
+	ctx := context.Background()
+	rig := newPreviewRig(t)
+	if err := rig.mem.UpdateAccountPlan(ctx, rig.acct, api.PlanPro); err != nil {
+		t.Fatal(err)
+	}
+	svc, rec := newPreviewService(t, rig)
+	svc.Source = &stubSource{fsys: fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte("services:\n  api:\n    build: .\n    environment:\n      DATABASE_URL: postgres://app:secret@db:5432/app\n  db:\n    image: postgres:16\n")},
+		"Dockerfile":   &fstest.MapFile{Data: []byte("FROM scratch\n")},
+	}}
+	svc.WorkDir = t.TempDir()
+	enqueuer := &previewDependencyEnqueuer{}
+	svc.Enqueuer = enqueuer
+	svc.Reconcile.Scan = func(fs.FS, reposcan.ScanOptions) (reposcan.Result, error) {
+		return reposcan.Result{
+			Workloads: []reposcan.Workload{{Name: "api", Dockerfile: "Dockerfile"}},
+			Managed:   []reposcan.Managed{{Name: "db", Kind: "postgres", EnvHint: "DATABASE_URL"}},
+		}, nil
+	}
+	lookups := 0
+	svc.PreviewDatabaseEnvKeys = func(_ context.Context, accountID, appID string) ([]string, error) {
+		lookups++
+		if accountID != rig.acct || appID != rig.parentID {
+			t.Errorf("lookup for %s/%s, want the production app", accountID, appID)
+		}
+		return []string{"DATABASE_URL"}, nil
+	}
+	allowed := false
+	svc.CapabilityAllowed = func(capability, _ string) bool {
+		return capability != PreviewDatabasesCapability || allowed
+	}
+	if _, err := svc.handlePullRequest(ctx, pullRequestOpenedBody(42, strings.Repeat("a", 40))); !IsIgnored(err) {
+		t.Fatalf("open PR with preview databases off = %v, want a reported setup failure", err)
+	}
+	if summary := failedPreviewSummary(rec); !strings.Contains(summary, "DATABASE_URL") || strings.Contains(summary, "postgres previews") || lookups != 0 {
+		t.Fatalf("failed check = %q (lookups %d), want the old refusal without the preview database hint", summary, lookups)
+	}
+	allowed = true
+	if _, err := svc.handlePullRequest(ctx, pullRequestSyncBody(42, strings.Repeat("b", 40))); err != nil {
+		t.Fatalf("PR whose database has previews on = %v", err)
+	}
+	if len(enqueuer.specs) != 1 || lookups != 1 {
+		t.Fatalf("builds = %d, lookups = %d, want the api preview after one lookup", len(enqueuer.specs), lookups)
+	}
+}
+
 // A preview whose builds do not all fit the hour's PR preview deploys builds
 // none of them, so it never ends up half on the new commit.
 func TestHandlePullRequest_PreviewOverDeployShareBuildsNothing(t *testing.T) {

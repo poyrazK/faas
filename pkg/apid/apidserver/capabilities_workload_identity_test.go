@@ -1,6 +1,7 @@
 package apidserver_test
 
-// adr: 1141 — pull leases and the outbound relay need cluster workload identity.
+// adr: 1141 — the outbound relay needs cluster workload identity.
+// adr: 20261110120000 — pull leases also take API keys, so they do not.
 
 import (
 	"crypto/rand"
@@ -14,10 +15,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
 
-// Production advertised queue-pull-leases and outbound-integrations while vmmd
-// had no workload-identity key (2026-11-09), so the first lease or relay call
-// failed. They are available only with the cluster verifier configured.
-func TestCapabilitiesRequireWorkloadIdentityForPullLeasesAndOutbound(t *testing.T) {
+// Production advertised outbound-integrations while vmmd had no
+// workload-identity key (2026-11-09), so the first relay call failed; it is
+// available only with the cluster verifier configured. Pull leases accept API
+// keys with queues:consume too, so they stay available without it.
+func TestCapabilitiesRequireWorkloadIdentityForOutboundOnly(t *testing.T) {
 	private, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -44,17 +46,17 @@ func TestCapabilitiesRequireWorkloadIdentityForPullLeasesAndOutbound(t *testing.
 			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 				t.Fatalf("status %d: %v", recorder.Code, err)
 			}
-			for _, key := range []string{"queue-pull-leases", "outbound-integrations"} {
+			for key, want := range map[string]bool{"queue-pull-leases": true, "outbound-integrations": tc.want} {
 				found := false
 				for _, capability := range response.Capabilities {
 					if capability.Key != key {
 						continue
 					}
 					found = true
-					if capability.Enabled != tc.want {
-						t.Fatalf("%s enabled = %t, want %t (%+v)", key, capability.Enabled, tc.want, capability)
+					if capability.Enabled != want {
+						t.Fatalf("%s enabled = %t, want %t (%+v)", key, capability.Enabled, want, capability)
 					}
-					if !tc.want && capability.UnavailableReason != api.CapabilityUnavailableRuntime {
+					if !want && capability.UnavailableReason != api.CapabilityUnavailableRuntime {
 						t.Fatalf("%s reason = %q, want runtime", key, capability.UnavailableReason)
 					}
 				}

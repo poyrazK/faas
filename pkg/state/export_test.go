@@ -1184,3 +1184,16 @@ func (m *MemStore) SeedLegacyWorkflowEvent(event WorkflowEvent) {
 	m.workflowEvents[event.RunID] = append(m.workflowEvents[event.RunID], event)
 	m.workflowEventApps[event.RunID] = m.workflowRuns[event.RunID].AppID
 }
+
+// CandidatePostgresDeadlineForAccess runs candidatePostgresEvidenceDeadline
+// for one settled binding of the access mode whose receipt was recorded at
+// recorded and whose delivery the candidate was captured and restored with
+// (ADR-20261110120000).
+func CandidatePostgresDeadlineForAccess(access string, recorded time.Time, age time.Duration) (time.Time, error) {
+	request := EnvironmentWorkloadQualificationRequest{ID: "request", Attempt: 1}
+	request.FrozenInputs.Scope = "production"
+	delivery := candidatePostgresDelivery{BindingID: "binding", EnvironmentKey: "DATABASE_URL", Access: access, CredentialGeneration: 1, DeliveryVersion: 3, Settled: true}
+	receipts := map[string]time.Time{qualificationPostgresReceiptKey(request.ID, request.Attempt, delivery.BindingID, 1, 3): recorded}
+	inputs := RuntimeConfigInputs{SecretVersions: map[string]int64{"production/DATABASE_URL": 3}}
+	return candidatePostgresEvidenceDeadline(request, []candidatePostgresDelivery{delivery}, receipts, inputs, inputs, age, recorded.Add(time.Second))
+}

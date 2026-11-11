@@ -2,7 +2,6 @@ package fcvm
 
 import (
 	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -320,8 +319,8 @@ func TestJailerCommandMatchesSpec(t *testing.T) {
 		"--netns /run/netns/fc-abc",
 		"--cgroup-version 2",
 		"--parent-cgroup " + ParentCgroupFor(api.PlanHobby), // 3-level path (issue #301)
-		"--cgroup cpu.weight=" + fmt.Sprintf("%d", api.PlanHobby.CPUWeight()),
-		"-- --api-sock api.sock", // firecracker's own argv only — no binary name
+		"--cgroup cpu.weight=100",                           // no weight of its own: the cgroup default
+		"-- --api-sock api.sock",                            // firecracker's own argv only — no binary name
 	}
 	for _, w := range wants {
 		if !strings.Contains(line, w) {

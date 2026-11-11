@@ -130,3 +130,52 @@ func (m *Manager) releaseConnectionsBeforeDestroy(ctx context.Context, inst *Ins
 			"ms", time.Since(started).Milliseconds())
 	}
 }
+
+// Capture and restore (ADR-20261110160000).
+//
+// The guest that takes a snapshot (idle park with capture, deploy prime) is
+// paused for the capture and destroyed by Park, so before this its sessions
+// were orphaned once per capture, and every instance restored from the
+// snapshot woke holding the same "open" sockets: the first use got a reset or
+// hung on retransmits. Park now resets the capturing guest's off-guest
+// connections just before the capture, and a restored guest resets any it
+// inherited (a snapshot taken before this change, a warm-tier capture whose
+// guest kept serving) before it is published. Both are best effort, under
+// the same switch as the reset before destroy.
+
+// releaseConnectionsBeforeCapture resets the capturing guest's connections.
+func (m *Manager) releaseConnectionsBeforeCapture(ctx context.Context, inst *Instance) {
+	releaser, ok := m.vmm.(connectionReleaser)
+	if !ok || !m.releasesConnections(inst, "") {
+		return
+	}
+	started := time.Now()
+	n, err := releaser.ReleaseGuestConnections(ctx, inst.Lease)
+	if err != nil {
+		m.log.Debug("release connections before capture", "instance", inst.Lease.Instance, "err", err)
+		return
+	}
+	if n > 0 {
+		m.log.Info("released guest connections before capture", "instance", inst.Lease.Instance, "reset", n,
+			"ms", time.Since(started).Milliseconds())
+	}
+}
+
+// releaseInheritedConnections resets the connections a guest restored from a
+// snapshot inherited. Their sessions belong to the capture's guest, and the
+// restored network namespace has none of their state. skip covers guests
+// that hold no customer sessions.
+func (m *Manager) releaseInheritedConnections(ctx context.Context, l Lease, skip bool) {
+	releaser, ok := m.vmm.(connectionReleaser)
+	if !ok || skip || !m.releaseConnectionsOnDestroy {
+		return
+	}
+	n, err := releaser.ReleaseGuestConnections(ctx, l)
+	if err != nil {
+		m.log.Debug("release inherited connections after restore", "instance", l.Instance, "err", err)
+		return
+	}
+	if n > 0 {
+		m.log.Info("released inherited guest connections after restore", "instance", l.Instance, "reset", n)
+	}
+}

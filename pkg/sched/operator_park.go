@@ -109,10 +109,11 @@ func (l *Loop) prepareOperatorPark(ctx context.Context, store state.OperatorPark
 	if ins.TailCount > 0 {
 		return state.OperatorParkExecution{}, state.ErrOperatorParkCancelled
 	}
-	app, err := state.AppForInstance(ctx, l.engine.Store(), ins)
+	app, dep, err := appForInstanceAndDeployment(ctx, l.engine.Store(), ins)
 	if err != nil {
 		return state.OperatorParkExecution{}, err
 	}
+	app = withBuiltLifecycle(app, dep)
 	t := state.OperatorParkTarget{OperatorRestartTarget: state.OperatorRestartTarget{InstanceID: ins.ID, AppID: ins.AppID, DeploymentID: ins.DeploymentID, NodeID: l.engine.nodeForRoute(ins.NodeID), WakeID: ins.WakeID},
 		InitialState: ins.State, Mode: ins.Mode, Action: state.OperatorParkStop, Reason: "Instance is not ready for snapshot capture.", LastRequestAt: ins.LastRequestAt, RequestCount: ins.RequestCount, StartedAt: ins.StartedAt}
 	switch state.InstanceMode(ins.Mode) {

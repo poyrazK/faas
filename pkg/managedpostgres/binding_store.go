@@ -45,6 +45,18 @@ func (s *MemoryStore) ReserveBinding(ctx context.Context, binding Binding) (Bind
 	if s.databaseCutoverPinned(binding.DatabaseID) {
 		return Binding{}, false, ErrConflict
 	}
+	if limit := binding.appBindingLimit; limit > 0 {
+		count := 0
+		for _, existing := range s.bindings {
+			if existing.AppID == binding.AppID && existing.State != BindingStateDeleted {
+				count++
+			}
+		}
+		if count >= limit {
+			return Binding{}, false, &BindingLimitError{Limit: limit, Observed: count}
+		}
+	}
+	binding.appBindingLimit = 0
 	if binding.RetryAt.IsZero() {
 		binding.RetryAt = binding.CreatedAt
 	}

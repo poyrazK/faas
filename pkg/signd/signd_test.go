@@ -72,6 +72,11 @@ type fakeStore struct {
 	claim   signd.Claim
 	noClaim bool
 	rows    map[string]signd.Record
+	layers  []signd.StoredLayer
+}
+
+func (f *fakeStore) StoredLayers(context.Context) ([]signd.StoredLayer, error) {
+	return f.layers, nil
 }
 
 func (f *fakeStore) BuildClaim(context.Context, string) (signd.Claim, error) {
@@ -108,10 +113,12 @@ func peerContext(ctx context.Context, cn string) context.Context {
 }
 
 type fixture struct {
-	objects *memObjects
-	store   *fakeStore
-	srv     *signd.Server
-	pubPath string
+	objects  *memObjects
+	store    *fakeStore
+	srv      *signd.Server
+	pubPath  string
+	priv     *ecdsa.PrivateKey
+	privPath string
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -133,6 +140,15 @@ func newFixture(t *testing.T) *fixture {
 		store: &fakeStore{rows: map[string]signd.Record{}, claim: signd.Claim{Status: state.DeployImaging,
 			Sidecars: []byte(`[{"name":"proxy","type":"sidecar","image":"x"}]`), AppSlug: "alice", NodeName: node, Phase: state.ImagePreparing}},
 		pubPath: pubPath,
+		priv:    priv,
+	}
+	privDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.privPath = filepath.Join(t.TempDir(), "sign.key")
+	if err := os.WriteFile(f.privPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER}), 0o400); err != nil {
+		t.Fatal(err)
 	}
 	f.srv = signd.NewServer(f.store, priv, f.objects, nil)
 	return f
@@ -233,8 +249,15 @@ func (r *recordingSigner) Sign(_ context.Context, layerKey, _ string) error {
 func TestClientSendsOnlyAppLayersToSignd(t *testing.T) {
 	f := newFixture(t)
 	base := storagekey.BaseForArch("node22", "amd64")
-	if err := f.client(node).Sign(context.Background(), base, cosign.SigKeyFor(base)); err == nil {
+	// Without a local key a base is published unsigned: nothing verifies it.
+	if err := f.client(node).Sign(context.Background(), base, cosign.SigKeyFor(base)); err != nil {
+		t.Fatalf("base layer without a local signer: %v", err)
+	}
+	if _, written := f.objects.blobs[cosign.SigKeyFor(base)]; written {
 		t.Fatal("a base layer was signed with no local signer")
+	}
+	if len(f.store.rows) != 0 {
+		t.Fatal("a base layer reached signd")
 	}
 	local := &recordingSigner{}
 	c := signd.NewClient(direct{srv: f.srv, node: node}, f.objects, local)

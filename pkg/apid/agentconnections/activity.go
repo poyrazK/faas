@@ -124,7 +124,7 @@ func writeActivity(w http.ResponseWriter, r *http.Request, store state.Store, ke
 		}
 		out.Activity = append(out.Activity, api.AgentActivityEntry{
 			ID: row.ID, Method: row.Method, Path: row.Path, Status: row.Status,
-			ApprovalID: row.ApprovalID, CreatedAt: row.CreatedAt.UTC().Format(time.RFC3339),
+			ApprovalID: row.ApprovalID, Reason: row.Reason, CreatedAt: row.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
 	httpkit.WriteJSON(w, http.StatusOK, out)

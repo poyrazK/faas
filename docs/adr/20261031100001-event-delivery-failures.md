@@ -106,3 +106,24 @@ as plain `failed` rows; a caller polling an invocation sees `pending`
 between attempts and `dead_letter` instead of `failed` at the end; an
 `--on-failure-webhook` fires when the row dead-letters. No schema change; an
 older scheduler keeps the old verdict side by side.
+
+## Amendment 2026-11-10: a sync invoke keeps the gateway's verdict
+
+`POST /v1/apps/{slug}/invoke` (`gregale invoke`, the dashboard's Test
+button) reuses the `async_invoke` source; only its long-poll makes it
+synchronous. The 2026-11-07 amendment therefore also covered it: a
+production test (Hunt 32 H32-65, 2026-11-10) invoked a function whose
+handler threw, the caller got the failure back, and the row stayed
+`pending` for 11 attempts in 23 minutes with a 25-attempt budget and a
+24-hour deadline. Each attempt woke and billed the app, and a customer has
+no way to cancel an invocation.
+
+A sync invoke's caller already holds the failure and can send the request
+again, so it is not a source "a caller cannot resend by itself". The
+endpoint marks the row's retry policy (`"sync_invoke": true`, next to the
+budget and backoff), and `state.RetriesApplicationFailures` excludes marked
+rows: a thrown handler or another failure the app returned ends the row as
+`failed` after one attempt, as before 2026-11-07. Failures Gregale caused
+(wake, capacity, transport) still retry under the row's policy. A replay of
+such a row is an ordinary async delivery and keeps the retry rule. No
+schema change; an older scheduler ignores the mark and keeps retrying.

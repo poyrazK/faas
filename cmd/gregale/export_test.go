@@ -528,6 +528,7 @@ var AuthRestartRetryPause = &authRestartRetryPause
 var AuthRestartRetryWindow = &authRestartRetryWindow
 var AuthSigningKeyName = &authSigningKeyName
 var BillingRunPollInterval = &billingRunPollInterval
+var SandboxTemplatePoll = &sandboxTemplatePoll
 var CampaignTrendTemplate = &campaignTrendTemplate
 var CliCommands = &cliCommands
 var CorsDefaultMethods = &corsDefaultMethods
@@ -1305,7 +1306,6 @@ var EdgePolicySummary = edgePolicySummary
 var EdgeRuleValidateFlagsVisited = edgeRuleValidateFlagsVisited
 var EditDistance = editDistance
 var EffectiveKeyring = effectiveKeyring
-var EgressAllowlistChangeNeedsRestart = egressAllowlistChangeNeedsRestart
 var EmitInspectWatchEvent = emitInspectWatchEvent
 var EmptyPilotTextSHA256 = emptyPilotTextSHA256
 var EncodeCustomerOperationReceipt = encodeCustomerOperationReceipt
@@ -1315,6 +1315,7 @@ var EndpointRecoveryReport = endpointRecoveryReport
 var EndpointRecoverySpec = endpointRecoverySpec
 var EnsurePostgresEgress = ensurePostgresEgress
 var EnsureSourceRefApp = ensureSourceRefApp
+var DeployPreviewSource = deployPreviewSource
 var ErrAuth = errAuth
 var EnvCreate = envCreate
 var EnvPull = envPull
@@ -1533,6 +1534,7 @@ func NormalizeGitArchive(repoRoot, prefix, archivePath string) ([]string, error)
 var ParkedArchivePendingNote = parkedArchivePendingNote
 var ParkedLogsSelection = parkedLogsSelection
 var ParkedWindowInstances = parkedWindowInstances
+var RetainedLineLevelMatches = retainedLineLevelMatches
 var ParseAIPriceSpec = parseAIPriceSpec
 var ParseAIRouteTargets = parseAIRouteTargets
 var ParseStoredWorkflowLiveBaseline = parseStoredWorkflowLiveBaseline
@@ -1550,6 +1552,15 @@ var ParseCustomerOperationSignal = parseCustomerOperationSignal
 // (ADR-20261017100853), whose fields are unexported.
 func NewTenantCustomerOperationSignalClient(client *api.Client, definition string) tenantCustomerOperationSignalClient {
 	return tenantCustomerOperationSignalClient{client: client, definition: definition}
+}
+
+// DialDevDebugTunnel dials one debugger tunnel (ADR-20261111150000).
+func DialDevDebugTunnel(ctx context.Context, tunnelURL, token string) error {
+	conn, err := newDevDebugDialer(tunnelURL, token)(ctx)
+	if conn != nil {
+		_ = conn.Close()
+	}
+	return err
 }
 
 // NewEnvironmentAppClient builds a stage app client whose revision pin starts unset.
@@ -2785,6 +2796,7 @@ var (
 	MCPConnectHome        = &mcpConnectHome
 	MCPEndpointCheck      = &mcpEndpointCheck
 	MCPHeadlessToolCount  = &mcpHeadlessToolCount
+	MCPConnectRunStdin    = &mcpConnectRunStdin
 	UpsertCodexServer     = upsertCodexServer
 )
 
@@ -2795,3 +2807,41 @@ var RefuseDevFunctionSet = refuseDevFunctionSet
 
 // MetricLabelFlags exposes the --metric-label parser.
 var MetricLabelFlags = metricLabelFlags
+
+// ValidateSubscriptionCapacityCommandBudget exposes the receipt budget check.
+var ValidateSubscriptionCapacityCommandBudget = validateSubscriptionCapacityCommandBudget
+
+// ActivityDisplayTime exposes the org activity / keys list time formatter.
+var ActivityDisplayTime = activityDisplayTime
+
+// RenderHTTPLogQueryEvent exposes the `logs --source http` row renderer.
+var RenderHTTPLogQueryEvent = renderHTTPLogQueryEvent
+
+// ManifestDeclaredBindings exposes the bindings check manifest reader (ADR-20261110213000).
+var ManifestDeclaredBindings = manifestDeclaredBindings
+
+// ApplyFunctionHookLifecycleForTest exposes applyFunctionHookLifecycle.
+func ApplyFunctionHookLifecycleForTest(ctx context.Context, client interface {
+	GetApp(ctx context.Context, slug string) (api.AppResponse, error)
+	UpdateApp(ctx context.Context, slug string, req api.UpdateAppRequest) (api.AppResponse, error)
+}, slug, sourceDir, handler string) error {
+	return applyFunctionHookLifecycle(ctx, client, slug, sourceDir, handler)
+}
+
+// InvalidAlertMetricError exposes the unknown --metric error (H32-18).
+var InvalidAlertMetricError = invalidAlertMetricError
+var RealtimeClientURL = realtimeClientURL
+var CmdEdgeRuleListsRm = cmdEdgeRuleListsRm
+var CmdAppScaling = cmdAppScaling
+var CmdEventsSchemaRollout = cmdEventsSchemaRollout
+var CmdOrgsSeatUsage = cmdOrgsSeatUsage
+
+type CustomerOperationTypesResult = customerOperationTypesResult
+
+var CustomerOperationTypesMessage = customerOperationTypesMessage
+
+// WorkerNoInstancesLine exposes the empty worker pool explanation.
+var WorkerNoInstancesLine = workerNoInstancesLine
+
+// PrintPublicURLs exposes the plan's public URL list (H32-30).
+var PrintPublicURLs = printPublicURLs

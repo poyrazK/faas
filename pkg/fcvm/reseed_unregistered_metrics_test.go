@@ -29,8 +29,8 @@ func TestObserveReseedUnregistered(t *testing.T) {
 			t.Errorf("%s/%s = %v, want %v", tc.runtime, tc.scope, got, tc.want)
 		}
 	}
-	// The label set is closed: 5 runtimes × 2 scopes, pre-registered.
-	if n := testutil.CollectAndCount(m.reseedUnregistered); n != 10 {
-		t.Fatalf("series = %d, want 10", n)
+	// The label set is closed: 7 runtimes × 2 scopes, pre-registered.
+	if n := testutil.CollectAndCount(m.reseedUnregistered); n != 14 {
+		t.Fatalf("series = %d, want 14", n)
 	}
 }

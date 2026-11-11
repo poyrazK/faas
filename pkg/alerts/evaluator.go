@@ -29,6 +29,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -656,12 +657,17 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	if cooldown <= 0 {
 		cooldown = time.Minute // belt + braces; the schema defaults to >= 1
 	}
-	if !rule.LastFiredAt.IsZero() && now.Sub(rule.LastFiredAt) < cooldown {
-		// Still breaching inside the cool-down: record the breach even
-		// though the cool-down withholds a delivery. That covers a degraded
-		// read that recovered and a new breach after the rule resolved to
-		// ok, which otherwise read "ok" for a whole incident (production-us
-		// hunt #9, H9-94).
+	// The cool-down limits repeat notices for one incident. A breach after
+	// the previous incident closed (the rule recovered to ok and its
+	// resolve went out) is a new incident and fires at once: gating it on
+	// the old fire's time hid a whole incident that started and ended inside
+	// the window, and the receiver then heard a second resolve for a fire it
+	// never got (ADR-20261110090000).
+	if !rule.LastFiredAt.IsZero() && now.Sub(rule.LastFiredAt) < cooldown && e.episodeWasFiring(ctx, rule) {
+		// Still breaching inside the cool-down of the open incident: record
+		// the breach even though the cool-down withholds a delivery. That
+		// covers a degraded read that recovered, which otherwise read "ok"
+		// for a whole incident (production-us hunt #9, H9-94).
 		if rule.State != state.AlertStateFiring {
 			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateFiring, now); err != nil {
 				e.log.Warn("alerts: restore firing state", "rule", rule.ID, "err", err)
@@ -844,20 +850,20 @@ func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deli
 	}
 
 	// The delivery, retries included, gets AlertWebhookBudget
-	// (ADR-20261028101615): an unresponsive receiver costs its own
-	// account's evaluation that long, never every account's. Accounts are
-	// evaluated in parallel, so deliveries are not serialised;
-	// webhookout.Dispatcher only reads its options while dispatching.
-	// Recording the result uses the tick's context, so a delivery cut
-	// short is still recorded as failed.
-	dctx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
-	result := e.dispatch.Dispatch(dctx, webhookout.Target{
-		URL:    rule.WebhookURL,
-		Signer: e.newSigner(plaintext),
-	}, evt)
-	cancel()
-
-	e.recordResult(ctx, rule, deliveryID, observed, result, now, stats)
+	// (ADR-20261028101615) and runs on the account's webhook pool, so an
+	// unresponsive receiver delays neither every account nor this account's
+	// next rules (ADR-20261110090000). webhookout.Dispatcher only reads its
+	// options while dispatching. Recording the result uses the tick's
+	// context, so a delivery cut short is still recorded as failed.
+	e.send(ctx, stats, func(stats *Stats) {
+		dctx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
+		result := e.dispatch.Dispatch(dctx, webhookout.Target{
+			URL:    rule.WebhookURL,
+			Signer: e.newSigner(plaintext),
+		}, evt)
+		cancel()
+		e.recordResult(ctx, rule, deliveryID, observed, result, now, stats)
+	})
 }
 
 // openIdentities returns the host identities that open webhook secrets,
@@ -912,15 +918,17 @@ func (e *Evaluator) deliverResolve(ctx context.Context, rule state.AlertRule, ob
 		AppID:      rule.AppID,
 		Payload:    payload,
 	}
-	dctx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
-	result := e.dispatch.Dispatch(dctx, webhookout.Target{URL: rule.WebhookURL, Signer: e.newSigner(plaintext)}, evt)
-	cancel()
-	if result.Err != nil {
-		e.log.Warn("alerts: resolve webhook not delivered", "rule", rule.ID, "status", result.StatusCode, "attempts", result.Attempts, "err", result.Err)
-		stats.ResolvesFailed++
-		return
-	}
-	stats.ResolvesDelivered++
+	e.send(ctx, stats, func(stats *Stats) {
+		dctx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
+		result := e.dispatch.Dispatch(dctx, webhookout.Target{URL: rule.WebhookURL, Signer: e.newSigner(plaintext)}, evt)
+		cancel()
+		if result.Err != nil {
+			e.log.Warn("alerts: resolve webhook not delivered", "rule", rule.ID, "status", result.StatusCode, "attempts", result.Attempts, "err", result.Err)
+			stats.ResolvesFailed++
+			return
+		}
+		stats.ResolvesDelivered++
+	})
 }
 
 // runAction is the SAFE-RELEASES-B fan-out (issue #976 / ADR-122).
@@ -1617,6 +1625,24 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 // recordResult closes the loop: UpdateAlertDeliveryStatus stamps the
 // final status + attempt count + last error onto the dedupe row
 // already inserted by ClaimAlertFire + RecordAlertDelivery. On a
+// deliveryFailureText explains a failed delivery. A receiver that kept
+// answering an error status until the delivery budget ran out read
+// "http 500: context deadline exceeded", as if the receiver had timed out
+// (ADR-20261110090000).
+func deliveryFailureText(result webhookout.Result) string {
+	switch {
+	case result.Err != nil && errors.Is(result.Err, context.DeadlineExceeded) && result.StatusCode > 0:
+		return fmt.Sprintf("receiver answered HTTP %d; retries stopped when the %s delivery budget ran out", result.StatusCode, api.AlertWebhookBudget)
+	case result.Err != nil && errors.Is(result.Err, context.DeadlineExceeded):
+		return fmt.Sprintf("receiver did not answer within the %s delivery budget", api.AlertWebhookBudget)
+	case result.Err != nil:
+		return result.Err.Error()
+	case result.StatusCode > 0:
+		return fmt.Sprintf("receiver answered HTTP %d", result.StatusCode)
+	}
+	return "unknown dispatch failure"
+}
+
 // successful delivery the alert.delivered audit is emitted; on a
 // failure, alert.failed.
 func (e *Evaluator) recordResult(ctx context.Context, rule state.AlertRule, deliveryID string, observed float64, result webhookout.Result, now time.Time, stats *Stats) {
@@ -1629,18 +1655,16 @@ func (e *Evaluator) recordResult(ctx context.Context, rule state.AlertRule, deli
 		if e.ops != nil {
 			e.ops.AlertDeliveryAttemptsTotal(AlertOutcomeDelivered)()
 		}
-		deliveredAt = &now
+		// When the receiver accepted it, not when the rule fired: the two
+		// differ by the delivery's retries (ADR-20261110090000).
+		at := e.now()
+		deliveredAt = &at
 	} else {
 		stats.Failed++
 		if e.ops != nil {
 			e.ops.AlertDeliveryAttemptsTotal(AlertOutcomeFailed)()
 		}
-		if result.Err != nil {
-			lastErr = result.Err.Error()
-		}
-		if lastErr == "" {
-			lastErr = "unknown dispatch failure"
-		}
+		lastErr = deliveryFailureText(result)
 	}
 
 	if err := e.store.UpdateAlertDeliveryStatus(ctx, deliveryID, status, result.Attempts, result.StatusCode, lastErr, deliveredAt); err != nil {

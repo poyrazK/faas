@@ -6,6 +6,8 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="ConnectionBudgetInventory")
 
 
@@ -25,6 +27,8 @@ class ConnectionBudgetInventory:
     rotation_pending: int
     overlap_consumers: int
     stale_node_instances: int
+    session_bindings: int | Unset = UNSET
+    """Session bindings are modeled at their role connection limit and are not counted in other_bindings."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -52,6 +56,8 @@ class ConnectionBudgetInventory:
 
         stale_node_instances = self.stale_node_instances
 
+        session_bindings = self.session_bindings
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -70,6 +76,8 @@ class ConnectionBudgetInventory:
                 "stale_node_instances": stale_node_instances,
             }
         )
+        if session_bindings is not UNSET:
+            field_dict["session_bindings"] = session_bindings
 
         return field_dict
 
@@ -100,6 +108,8 @@ class ConnectionBudgetInventory:
 
         stale_node_instances = d.pop("stale_node_instances")
 
+        session_bindings = d.pop("session_bindings", UNSET)
+
         connection_budget_inventory = cls(
             bindings=bindings,
             data_api_consumers=data_api_consumers,
@@ -113,6 +123,7 @@ class ConnectionBudgetInventory:
             rotation_pending=rotation_pending,
             overlap_consumers=overlap_consumers,
             stale_node_instances=stale_node_instances,
+            session_bindings=session_bindings,
         )
 
         connection_budget_inventory.additional_properties = d

@@ -127,3 +127,21 @@ Two more paths authenticate the same keys outside apid's middleware:
   rotating never turns a limited key into an account-wide one.
 
 A gateway reads one primary-key row per agent key on a cache miss.
+
+## Amendment (2026-11-10): company projects
+
+Company projects live under `/v1/orgs/{organization}/projects/{slug}`, and
+their slugs are unique only within the company. Limits on them did not work:
+
+- **Minting** an organization's key resolved project slugs among the
+  creator's own projects, so a company project answered 404. It now looks in
+  the key's organization first.
+- **Using** the key: the middleware knew only `/v1/apps/{slug}` and
+  `/v1/projects/{slug}`, so every organization project and app route
+  answered 403 "Key limited to projects". Now an organization project route
+  resolves its project within `{organization}` and passes only a project in
+  the limit. `/v1/orgs/{organization}/apps/{slug}` routes are checked like
+  `/v1/apps/{slug}`; app slugs are unique across accounts. Anything outside
+  the limit answers 404.
+- **Listing:** `GET /v1/orgs/{organization}/projects` lists only the key's
+  projects.

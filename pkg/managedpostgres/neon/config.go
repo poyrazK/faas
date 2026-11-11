@@ -61,6 +61,7 @@ type Provider struct {
 	maxRestoreWindow       int64
 	dataAPIEnabled         bool
 	authEnabled            bool
+	sessionEnabled         bool
 	credentialPollInterval time.Duration
 	roles                  credentialRoleManager
 	liveLogins             liveLoginManager
@@ -102,6 +103,7 @@ func New(config managedpostgres.BackendConfig, getenv func(string) string) (mana
 	p := newProvider(config.Region, config.Namespace, apiKey, baseURL, client, parsed)
 	p.dataAPIEnabled = config.DataAPIEnabled
 	p.authEnabled = config.AuthEnabled
+	p.sessionEnabled = config.SessionEnabled
 	return p, nil
 }
 

@@ -33,7 +33,7 @@ func TestCmdTraceRendersAccountTraceEvidence(t *testing.T) {
 						CreatedAt: "2026-09-22T10:00:00.020Z", StartedAt: "2026-09-22T10:00:00.030Z", CompletedAt: "2026-09-22T10:00:00.070Z"},
 				},
 				Logs: []api.LogQueryEvent{
-					{ID: "log-alpha", App: "alpha", Timestamp: "2026-09-22T10:00:00.010Z", Source: api.LogSourceHTTP, Method: "GET", Route: "/checkout", Status: 200, LatencyMS: 100},
+					{ID: "log-alpha", App: "alpha", Timestamp: "2026-09-22T10:00:00.100Z", Source: api.LogSourceHTTP, Method: "GET", Route: "/checkout", Status: 200, LatencyMS: new(100)},
 				},
 				Spans: []api.DebugTelemetrySpan{
 					{TraceID: traceID, SpanID: "root", Name: "edge.request", Kind: "server", StartTime: "2026-09-22T10:00:00Z", EndTime: "2026-09-22T10:00:00.100Z", DurationNanos: 100_000_000},
@@ -65,7 +65,8 @@ func TestCmdTraceRendersAccountTraceEvidence(t *testing.T) {
 		"billing · POST other · HTTP 200 · 900 ms · telemetry row row-billing\n      woke by restore in 610 ms (wake wake-9) · app ≈270 ms · other ≈20 ms",
 		"INVOCATIONS",
 		"HTTP ACCESS LOGS",
-		"2026-09-22T10:00:00.010Z · alpha · GET /checkout · status=200 · latency=100ms · event log-alpha",
+		"2026-09-22T10:00:00.100Z · alpha · GET /checkout · status=200 · latency=100ms · event log-alpha",
+		"0.00ms → 100.00ms | alpha · HTTP GET /checkout · status=200",
 		"alpha · queue inv-queue · state=completed · attempts=1 · created_at=2026-09-22T10:00:00.020Z · queue=orders · started_at=2026-09-22T10:00:00.030Z · total=50.00ms",
 		"WATERFALL (relative to earliest retained event)",
 		"0.00ms → 100.00ms | edge.request [server]",

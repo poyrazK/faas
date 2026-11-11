@@ -64,8 +64,11 @@ func TestEvaluator_RefiresAfterCooldown(t *testing.T) {
 
 // Production-us hunt #9 (H9-94): an error-rate rule fired, resolved to ok,
 // and a bad release then returned 80% 5xx inside the 15-minute cool-down.
-// The cool-down correctly withheld a second delivery, but it returned before
-// recording the breach, so the rule read "ok" for the whole incident.
+// The rule read "ok" for the whole incident. The cool-down then withheld the
+// new incident's notice entirely: on production (2026-11-09) a 100% error
+// incident that started and ended inside the window was never announced, and
+// the receiver got a second alert.resolved for it. A breach after a recovery
+// is a new incident and fires at once (ADR-20261110090000).
 func TestEvaluator_BreachInsideCooldownAfterResolveIsFiring(t *testing.T) {
 	store := state.NewMemStore()
 	rule, _, _ := seedRule(t, store, state.AlertMetricErrorRate, state.AlertGt, 5)
@@ -78,11 +81,15 @@ func TestEvaluator_BreachInsideCooldownAfterResolveIsFiring(t *testing.T) {
 	if got := alertRuleState(t, store, rule.ID); got != state.AlertStateOk {
 		t.Fatalf("after recovery: state = %q, want ok", got)
 	}
-	if s := runAlertTick(t, store, 80, t0.Add(6*time.Minute)); s.Fired != 0 {
-		t.Fatalf("breach inside cool-down: Fired = %d, want 0 (cool-down dedupe)", s.Fired)
+	if s := runAlertTick(t, store, 80, t0.Add(6*time.Minute)); s.Fired != 1 {
+		t.Fatalf("new incident inside the old cool-down: Fired = %d, want 1", s.Fired)
 	}
 	if got := alertRuleState(t, store, rule.ID); got != state.AlertStateFiring {
-		t.Fatalf("breach inside cool-down: state = %q, want firing", got)
+		t.Fatalf("new incident: state = %q, want firing", got)
+	}
+	// The cool-down still limits repeats within that incident.
+	if s := runAlertTick(t, store, 80, t0.Add(7*time.Minute)); s.Fired != 0 {
+		t.Fatalf("same incident inside its cool-down: Fired = %d, want 0", s.Fired)
 	}
 }
 

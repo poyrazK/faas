@@ -33,6 +33,8 @@ var securityActivityKinds = map[string]string{
 	"account.password_set":                     "Password set or changed",
 	"account.email_change_requested":           "Email change requested",
 	"account.email_changed":                    "Sign-in email changed",
+	"account.email_reverted":                   "Sign-in email restored by Gregale support",
+	"auth.recent_sign_in_required":             "Change refused: sign in again first",
 	"account.mfa_enrolled":                     "Two-factor authentication set up",
 	"account.mfa_confirmed":                    "Two-factor authentication confirmed",
 	"account.mfa_disabled":                     "Two-factor authentication turned off",

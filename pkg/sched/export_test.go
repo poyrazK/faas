@@ -1115,30 +1115,12 @@ func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
 	return admissionBlockers(err)
 }
 
-// GuestVCPUs exposes guestVCPUs (ADR-20261101160231).
-func (e *Engine) GuestVCPUs(app state.App, limits api.Limits) int { return e.guestVCPUs(app, limits) }
-
-// AppCPUBookingMillicores and AppCPUBookingStamp expose the step 5b
-// bookings (ADR-20261101160231).
-func (e *Engine) AppCPUBookingMillicores(app state.App, limits api.Limits) int {
-	return e.appCPUBookingMillicores(app, limits)
-}
-func (e *Engine) AppCPUBookingStamp(app state.App, limits api.Limits) int {
-	return e.appCPUBookingStamp(app, limits)
-}
-
-// AppCPUMillicores exposes appCPUMillicores (ADR-20261101160231).
-func (e *Engine) AppCPUMillicores(app state.App, limits api.Limits) int {
-	return e.appCPUMillicores(app, limits)
-}
-
-// AppCPUWeight, CPUBySize and PolicyAppCPUMillicores expose CPU that follows
-// instance size (ADR-20261109172421).
-func (e *Engine) AppCPUWeight(app state.App) int32 { return e.appCPUWeight(app) }
-func (e *Engine) CPUBySize(appID string) bool      { return e.cpuBySize(appID) }
-func (e *Engine) PolicyAppCPUMillicores(ctx context.Context, appID string, configured int) (int, error) {
-	return e.policyAppCPUMillicores(ctx, appID, configured)
-}
+// AppVCPUs, AppCPUMillicores, AppCPUBookingMillicores and AppCPUWeight
+// expose an app instance's CPU, which follows its size (ADR-20261109172421).
+func AppVCPUs(app state.App) int                { return appVCPUs(app) }
+func AppCPUMillicores(app state.App) int        { return appCPUMillicores(app) }
+func AppCPUBookingMillicores(app state.App) int { return appCPUBookingMillicores(app) }
+func AppCPUWeight(app state.App) int32          { return appCPUWeight(app) }
 
 // ReportNodeMemory, NodeFrozenCount and UnreportedNodeUsedMB reach the node
 // memory report (ADR 20261101091815).
@@ -1380,26 +1362,32 @@ func (r *SnapshotRefresher) XResidentRAMForNode(nodeID string) int {
 	return r.e.ledger.ResidentRAMForNode(nodeID)
 }
 
-// XSetCPUAdmissionObserve makes l admit on memory alone (ADR-20261109172421).
-func (l *NodeLedger) XSetCPUAdmissionObserve(observe bool) { l.cpuAdmission.observe.Store(observe) }
-
-// XCPUAdmissionWouldRefuse is what gate would have refused while observing.
+// XCPUAdmissionWouldRefuse is how many admissions gate counted past a node's
+// CPU budgets (ADR-20261109172421).
 func (l *NodeLedger) XCPUAdmissionWouldRefuse(gate string) float64 {
 	return promtestutil.ToFloat64(l.cpuAdmission.wouldRefuse.WithLabelValues(gate))
 }
 
-// XAdmissionCompute is what an instance books at the durable node
-// reservation's vCPU and CPU budgets (ADR-20261109172421).
-func (e *Engine) XAdmissionCompute(nodeID string, vcpu, cpuMillicores int) state.NodeCompute {
-	return e.admissionCompute(nodeID, vcpu, cpuMillicores)
+// XCPUOverBudget is the refusal the ledger's vCPU or CPU budget would have
+// made for r on its node now, nil within both (ADR-20261109172421): Admit
+// counts it and admits. The vCPU budget is reported first.
+func (l *NodeLedger) XCPUOverBudget(r Request) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	node := l.resident[r.NodeID]
+	if node == nil {
+		node = &nodeReservation{}
+	}
+	if over := l.cpuOverBudget_locked(r, node); len(over) > 0 {
+		return over[0].err
+	}
+	return nil
 }
 
 // XChooseWithCPUAdmission places r over nodes as the engine's placement
-// snapshot does, enforcing or observing cpu_admission, and returns how many
-// refusals the placement gate counted.
-func XChooseWithCPUAdmission(nodes []state.ComputeNode, usedMB, usedVCPU, usedCPU map[string]int64, r Request, observe bool) (Placement, float64, error) {
+// snapshot does, and returns how many refusals the placement gate counted.
+func XChooseWithCPUAdmission(nodes []state.ComputeNode, usedMB, usedVCPU, usedCPU map[string]int64, r Request) (Placement, float64, error) {
 	c := newCPUAdmission()
-	c.observe.Store(observe)
 	p, err := placementSnapshot{nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU, usedCPUMillicores: usedCPU, cpu: c}.choose(r)
 	return p, promtestutil.ToFloat64(c.wouldRefuse.WithLabelValues(CPUGatePlacement)), err
 }

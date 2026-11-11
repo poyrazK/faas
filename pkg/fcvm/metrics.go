@@ -365,7 +365,7 @@ func NewWakePhaseMetrics() *WakePhaseMetrics {
 	}
 	m.reseedUnregistered = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "vmmd_restore_reseed_unregistered_total",
-		Help: "Restores whose guest reported running Node, Python, Bun or Deno processes its userspace RNG reseed barrier did not reach, counted once per reported runtime (ADR-20261109140000). Those processes may repeat the snapshot's random values across wakes; restores are not refused. runtime ∈ {node, python, bun, deno, other}; scope ∈ {workload, sidecar}.",
+		Help: "Restores whose guest reported running Node, Python, Bun, Deno, Java or Go processes its userspace RNG reseed barrier did not reach, counted once per reported runtime (ADR-20261109140000, ADR-20261110150000). Those processes may repeat the snapshot's random values across wakes; restores are not refused. runtime ∈ {node, python, bun, deno, java, go, other}; scope ∈ {workload, sidecar}.",
 	}, []string{"runtime", "scope"})
 	for _, runtime := range reseedRuntimeLabels {
 		for _, scope := range []string{"workload", "sidecar"} {
@@ -405,7 +405,7 @@ func (m *WakePhaseMetrics) ObserveResumeGuestStages(t resumetimingproto.Timings,
 
 // reseedRuntimeLabels is the closed runtime label set of
 // vmmd_restore_reseed_unregistered_total.
-var reseedRuntimeLabels = []string{"node", "python", "bun", "deno", "other"}
+var reseedRuntimeLabels = []string{"node", "python", "bun", "deno", "java", "go", "other"}
 
 // ObserveReseedUnregistered counts the runtimes a guest reported as missed by
 // its reseed barrier, once per reported runtime label. Safe on a nil

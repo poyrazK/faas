@@ -101,6 +101,9 @@ type AgentApprovalResponse struct {
 	DecidedAt string `json:"decided_at,omitempty"`
 	// Note is the person's reason for a denial, when they gave one.
 	Note string `json:"note,omitempty"`
+	// Reason is what the agent said the request is for, when it said
+	// (ADR-20261110182236). Untrusted agent text.
+	Reason string `json:"reason,omitempty"`
 }
 
 // AgentApprovalChannelsRequest replaces the notification channels that get

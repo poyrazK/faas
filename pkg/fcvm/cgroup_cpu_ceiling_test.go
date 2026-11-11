@@ -12,7 +12,7 @@ import (
 // vmmd accepts a two-core ceiling on Scale a release before schedd sends one
 // (ADR-20261101160231 rollout step 4).
 func TestAppCPUMaxAcceptsThePlansBurstCeiling(t *testing.T) {
-	period := api.PlanScale.CPUPeriodUS()
+	period := cpuMaxPeriodUS
 	got, err := appCPUMax(api.PlanScale, 2000)
 	if err != nil {
 		t.Fatalf("Scale 2000 m: %v", err)

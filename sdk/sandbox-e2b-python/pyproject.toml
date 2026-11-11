@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gregale-sandbox-e2b"
+version = "0.0.0"
+description = "An E2B-compatible client for Gregale sandbox sessions (ADR-20261027090013 §12). Written from E2B's public documentation; not affiliated with E2B. Not published until sandbox sessions launch."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+dependencies = []
+classifiers = ["Private :: Do Not Upload"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

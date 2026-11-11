@@ -581,17 +581,27 @@ export class ProjectsService {
   }
   /**
    * Delete a project and detach its live workloads.
-   * The apps remain live. Their project_id is cleared by the database foreign-key action.
+   * The apps remain live. Their project_id is cleared by the database
+   * foreign-key action. While the project's services call each other by
+   * service name, deletion is refused with 409
+   * project_services_call_each_other, because detached services no longer
+   * resolve those names; pass detach_services=true once they do not.
+   *
    * @returns void
    * @throws ApiError
    */
   public static deleteProject({
     slug,
+    detachServices,
   }: {
     /**
      * Project slug to inspect, update, or delete in the authenticated account.
      */
     slug: string,
+    /**
+     * Confirms the project's services no longer call each other by service name.
+     */
+    detachServices?: boolean,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
       method: 'DELETE',
@@ -599,9 +609,13 @@ export class ProjectsService {
       path: {
         'slug': slug,
       },
+      query: {
+        'detach_services': detachServices,
+      },
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

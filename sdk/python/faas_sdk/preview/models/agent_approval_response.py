@@ -46,6 +46,9 @@ class AgentApprovalResponse:
     """When a person approved or denied it."""
     note: str | Unset = UNSET
     """Why the person denied this request, if they said; absent otherwise."""
+    reason: str | Unset = UNSET
+    """What the agent said the request is for (Gregale-Agent-Reason on the request that opened it), if it said.
+    Untrusted agent text: it never changes what is approved."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,6 +78,8 @@ class AgentApprovalResponse:
 
         note = self.note
 
+        reason = self.reason
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -97,6 +102,8 @@ class AgentApprovalResponse:
             field_dict["decided_at"] = decided_at
         if note is not UNSET:
             field_dict["note"] = note
+        if reason is not UNSET:
+            field_dict["reason"] = reason
 
         return field_dict
 
@@ -132,6 +139,8 @@ class AgentApprovalResponse:
 
         note = d.pop("note", UNSET)
 
+        reason = d.pop("reason", UNSET)
+
         agent_approval_response = cls(
             id=id,
             category=category,
@@ -145,6 +154,7 @@ class AgentApprovalResponse:
             agent=agent,
             decided_at=decided_at,
             note=note,
+            reason=reason,
         )
 
         agent_approval_response.additional_properties = d

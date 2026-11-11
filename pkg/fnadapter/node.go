@@ -27,6 +27,28 @@ const fetchHandler = mod.fetch || (defaultExport && typeof defaultExport.fetch =
 if (typeof eventHandler !== "function" && typeof fetchHandler !== "function") {
   throw new Error("handler.js must export handler/default or default { fetch }");
 }
+// Snapshot hooks the function declares in code (ADR-20261110190000): methods
+// on the default export object, or named exports beside handler. init runs
+// once here, before the worker reports ready, so the snapshot never captures
+// half-done setup; beforeSnapshot and afterRestore run when the runner relays
+// guest-init's call to every worker.
+const functionHook = (name) => {
+  if (typeof mod[name] === "function") return mod[name];
+  if (defaultExport && typeof defaultExport === "object" && typeof defaultExport[name] === "function") {
+    return defaultExport[name].bind(defaultExport);
+  }
+  return null;
+};
+const functionHooks = { init: functionHook("init"), before_snapshot: functionHook("beforeSnapshot"),
+  after_restore: functionHook("afterRestore") };
+if (functionHooks.init) {
+  try {
+    await functionHooks.init({ signal: new AbortController().signal });
+  } catch (err) {
+    console.error("gregale: function init failed: " + (err && err.stack ? err.stack : err));
+    throw err;
+  }
+}
 // A worker serves FAAS_FUNCTION_CONCURRENCY requests at once when the app
 // sets function_concurrency (ADR-1342); requests and every response line
 // then carry the runner's __faas_id.
@@ -35,7 +57,8 @@ const concurrency = process.env.FAAS_PERSISTENT_WORKER === "1"
   : 1;
 if (process.env.FAAS_PERSISTENT_WORKER === "1") {
   process.stdout.write(JSON.stringify({ __faas_ready: true, concurrency, completion_version: 1,
-    resource_lifecycle_version: postgresResources ? 1 : 0 }) + "\n");
+    resource_lifecycle_version: postgresResources ? 1 : 0, function_hooks_version: 1,
+    function_hooks: Object.keys(functionHooks).filter((name) => functionHooks[name]) }) + "\n");
 }
 
 // Response frames (ADR-999): one line is a complete response; a "head" line
@@ -129,10 +152,35 @@ function inGregaleRequestContext(headers, run) {
   return typeof enter === "function" ? enter(headers, run) : run();
 }
 
+// runFunctionHook runs one snapshot hook for the runner within its deadline.
+// A function without that hook succeeds at once. Any throw or abort answers
+// 500, which fails the hook for the whole instance.
+async function runFunctionHook(env, out) {
+  const hook = functionHooks[env.function_hook];
+  if (env.function_hook !== "before_snapshot" && env.function_hook !== "after_restore") {
+    emitWhole(out, 400, {}, Buffer.from("unknown function hook"));
+    return;
+  }
+  if (hook) {
+    try {
+      await hook({ signal: out.controller.signal, hook: env.function_hook });
+    } catch (err) {
+      console.error("gregale: function " + env.function_hook + " hook failed: " + (err && err.stack ? err.stack : err));
+      emitWhole(out, 500, {}, Buffer.from("function hook failed"));
+      return;
+    }
+  }
+  emitWhole(out, 204, {}, Buffer.alloc(0));
+}
+
 async function handleOne(input, out) {
   let invocationID = "";
   try {
   const env = typeof input === "string" ? JSON.parse(input) : input;
+  if (typeof env.function_hook === "string" && env.function_hook !== "") {
+    await runFunctionHook(env, out);
+    return;
+  }
   setupBackground(env, out);
   const raw = Buffer.from(env.body_b64 || "", "base64").toString("utf8");
   let body = raw;

@@ -24,15 +24,23 @@ type ArtifactSignature struct {
 }
 
 type Deployment struct {
-	ID        pgtype.UUID
-	AppID     pgtype.UUID
-	Status    string
-	Sidecars  []byte
-	DeletedAt pgtype.Timestamptz
+	ID         pgtype.UUID
+	AppID      pgtype.UUID
+	Status     string
+	Sidecars   []byte
+	DeletedAt  pgtype.Timestamptz
+	RootfsKey  string
+	RootfsPath pgtype.Text
 }
 
 type DeploymentImagePreparation struct {
 	DeploymentID pgtype.UUID
 	NodeName     string
 	Phase        string
+}
+
+type DeploymentSidecarLayer struct {
+	DeploymentID pgtype.UUID
+	SidecarName  string
+	StorageKey   string
 }

@@ -15,7 +15,8 @@ func TestHotPathValidate(t *testing.T) {
 		wantErr string
 	}{
 		{name: "off"},
-		{name: "all on", hot: HotPath{LocalRequestIDJournal: true, RequestTelemetryMinuteCollapse: true, LocalVMMDDataSocket: true, EdgeKeepAlivePerNode: true, FrozenTier: true, FrozenFastPath: true, OwnerCache: true}, edge: PublicEdge{ComputeNodes: true}},
+		{name: "all on", hot: HotPath{LocalRequestIDJournal: true, RequestTelemetryMinuteCollapse: true, LocalVMMDDataSocket: true, EdgeKeepAlivePerNode: true, EdgeBinaryHop: true, FrozenTier: true, FrozenFastPath: true, OwnerCache: true}, edge: PublicEdge{ComputeNodes: true}},
+		{name: "binary hop without keep-alive", hot: HotPath{EdgeBinaryHop: true}, edge: PublicEdge{ComputeNodes: true}, wantErr: "hot_path.edge_binary_hop"},
 		{name: "keep-alive without compute edges", hot: HotPath{EdgeKeepAlivePerNode: true}, wantErr: "hot_path.edge_keepalive_per_node"},
 		{name: "fast path without the tier", hot: HotPath{FrozenFastPath: true}, wantErr: "hot_path.frozen_fast_path"},
 	} {

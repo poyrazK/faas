@@ -216,9 +216,6 @@ func (s *PostgresStore) UsageSnapshot(ctx context.Context, accountID string, per
 		coverage := accountingCoverageFromRow(row)
 		progress := coverage.Progress
 		progress.DatabaseID = coverage.DatabaseID
-		if len(snapshot.Databases) == 0 || progress.ObservedAt.Before(snapshot.LastObservedAt) {
-			snapshot.LastObservedAt = progress.ObservedAt
-		}
 		snapshot.Databases = append(snapshot.Databases, progress)
 		if row.State == string(StateReady) {
 			snapshot.ReadyDatabases++
@@ -227,6 +224,7 @@ func (s *PostgresStore) UsageSnapshot(ctx context.Context, accountID string, per
 	if err := tx.Commit(ctx); err != nil {
 		return UsageSnapshot{}, mapPostgresError(err)
 	}
+	snapshot.LastObservedAt = lastObservedAt(snapshot.Databases)
 	return snapshot, nil
 }
 

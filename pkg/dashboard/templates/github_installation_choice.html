@@ -43,6 +43,7 @@
           <input type="hidden" name="csrf_token" value="{{$.Data.ConnectGithubConfirmToken}}">
           <input type="hidden" name="return_to" value="{{$.Data.ReturnTo}}">
           <input type="hidden" name="installation_id" value="{{.ID}}">
+          {{if $.Data.Organization}}<input type="hidden" name="organization" value="{{$.Data.Organization}}">{{end}}
           <button type="submit" class="btn">{{.Account}}{{if .Organization}} (organization){{else}} (personal account){{end}}</button>
         </form>
       {{end}}

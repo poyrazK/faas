@@ -29,7 +29,7 @@ func TestSyntheticsStatusLatencyWithoutSuccessfulRuns(t *testing.T) {
 			main.ResetJSONOut(t)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_ = json.NewEncoder(w).Encode(api.SyntheticCheckResponse{
-					ID: "chk-1", Name: "missing", Method: "GET", URL: "https://web.gregale.dev/missing", IntervalSeconds: 300, Enabled: true,
+					ID: "0b5c3c1e-6a4f-4c39-9d1a-2f6c1a7e9b10", Name: "missing", Method: "GET", URL: "https://web.gregale.dev/missing", IntervalSeconds: 300, Enabled: true,
 					Results: &api.SyntheticCheckResults{Runs24h: 1, P95LatencyMS24h: tt.p95, Recent: []api.SyntheticCheckRun{{StartedAt: "2026-10-22T12:26:06Z", OK: tt.ok, StatusCode: 404, LatencyMS: 127}}},
 				})
 			}))
@@ -37,7 +37,7 @@ func TestSyntheticsStatusLatencyWithoutSuccessfulRuns(t *testing.T) {
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_test_x")
 			out, restore := main.CaptureStdout(t)
-			code := main.Run([]string{"synthetics", "status", "--app", "web", "chk-1"})
+			code := main.Run([]string{"synthetics", "status", "--app", "web", "0b5c3c1e-6a4f-4c39-9d1a-2f6c1a7e9b10"})
 			restore()
 			got := out.String()
 			if code != 0 || !strings.Contains(got, tt.want) || strings.Contains(got, tt.reject) {

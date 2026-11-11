@@ -11,7 +11,10 @@ import (
 // log request data, so an anonymous visitor could plant escape sequences
 // (OSC 52 clipboard writes, disguised OSC 8 links, title and screen
 // manipulation) that ran in whoever tailed the logs (bug hunt 2026-10-28
-// H32). --json output keeps the raw bytes.
+// H32). Unicode bidirectional controls become a \uNNNN escape: a planted
+// right-to-left override visually reorders the rest of the line, so a log line
+// could read as something it is not (ADR-20261110090000). --json output keeps
+// the raw bytes.
 func terminalSafe(s string) string {
 	if !strings.ContainsFunc(s, unsafeTerminalRune) {
 		return s
@@ -19,17 +22,27 @@ func terminalSafe(s string) string {
 	var b strings.Builder
 	b.Grow(len(s) + 8)
 	for _, r := range s {
-		if unsafeTerminalRune(r) {
+		switch {
+		case bidiControlRune(r):
+			fmt.Fprintf(&b, `\u%04x`, r)
+		case unsafeTerminalRune(r):
 			fmt.Fprintf(&b, `\x%02x`, r)
-			continue
+		default:
+			b.WriteRune(r)
 		}
-		b.WriteRune(r)
 	}
 	return b.String()
 }
 
 func unsafeTerminalRune(r rune) bool {
-	return r != '\t' && (r < 0x20 || r == 0x7f || r >= 0x80 && r <= 0x9f)
+	return r != '\t' && (r < 0x20 || r == 0x7f || r >= 0x80 && r <= 0x9f) || bidiControlRune(r)
+}
+
+// bidiControlRune reports the Unicode bidirectional formatting characters:
+// the embeddings and overrides (U+202A..U+202E), the isolates
+// (U+2066..U+2069) and the implicit marks (U+200E, U+200F, U+061C).
+func bidiControlRune(r rune) bool {
+	return r >= 0x202a && r <= 0x202e || r >= 0x2066 && r <= 0x2069 || r == 0x200e || r == 0x200f || r == 0x061c
 }
 
 // terminalSafeLines splits one build/deploy log entry into terminal-safe

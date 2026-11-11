@@ -86,6 +86,9 @@ func (a *authHandlers) renderLoginForm(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("verify") == "1" {
 		flash = verifySignInFlash
 	}
+	if r.URL.Query().Get("reauth") == "1" {
+		flash = recentSignInFlash
+	}
 	a.renderLogin(w, r, http.StatusOK, flash, false, next)
 }
 

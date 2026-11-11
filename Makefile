@@ -8,7 +8,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd edgednsd hostage-gen
+DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd edgednsd signd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -1115,6 +1115,10 @@ systemd-hardening-check: ## Static release gate for production systemd isolation
 canary-artifact-retention-test: ## Test bounded validation-artifact inventory, safety proofs, and cleanup
 	python3 scripts/ops/faas_canary_artifacts_test.py
 
+.PHONY: go-cache-retention-test
+go-cache-retention-test: ## Test the acceptance-host Go build cache trim (disk high/low water, lock, entry guards)
+	python3 scripts/ops/faas_go_cache_trim_test.py
+
 .PHONY: serving-probe-test
 serving-probe-test: ## Test the compute-node serving probe (ADR-20261023124955 §5)
 	python3 scripts/ops/faas_serving_probe_test.py
@@ -1767,6 +1771,18 @@ test-auth-app: ## Application Auth template and @gregale/auth SDK unit tests (AD
 	@scratch="$$(mktemp -d)" && trap 'rm -rf "$$scratch"' EXIT && \
 	  cp -R cmd/gregale/templates/auth "$$scratch/template" && (cd "$$scratch/template" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test) && \
 	  cp -R sdk/auth "$$scratch/sdk" && rm -rf "$$scratch/sdk/dist" "$$scratch/sdk/node_modules" && (cd "$$scratch/sdk" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test)
+
+.PHONY: test-agents-sandbox
+test-agents-sandbox: ## @gregale/agents-sandbox (OpenAI Agents SDK backend, ADR-20261027090013 §8) unit tests; needs Node 22+ and npm
+	@cd sdk/agents-sandbox && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test
+
+.PHONY: test-sandbox-e2b
+test-sandbox-e2b: ## @gregale/sandbox-e2b (E2B-compatible client, ADR-20261027090013 §12) unit tests; needs Node 22+ and npm
+	@cd sdk/sandbox-e2b && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test
+
+.PHONY: test-sandbox-e2b-python
+test-sandbox-e2b-python: ## gregale-sandbox-e2b (E2B-compatible Python client, ADR-20261027090013 §12) unit tests; needs Python 3.12+, no packages
+	@cd sdk/sandbox-e2b-python && PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests
 
 .PHONY: auth-staging-check auth-staging-canary
 auth-staging-check: ## Application Auth canary harness contracts without provider calls (ADR-1190)

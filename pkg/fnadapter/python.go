@@ -53,10 +53,6 @@ if os.environ.get("FAAS_PERSISTENT_WORKER") == "1":
         concurrency = min(max(int(os.environ.get("FAAS_FUNCTION_CONCURRENCY", "1")), 1), 256)
     except ValueError:
         concurrency = 1
-if os.environ.get("FAAS_PERSISTENT_WORKER") == "1":
-    real_stdout.write(json.dumps({"__faas_ready": True, "concurrency": concurrency}) + "\n")
-    real_stdout.flush()
-
 # One event loop for the life of the worker. asyncio.run() per request
 # closed the loop after every invocation, so async clients a handler keeps
 # between requests (DB pools, HTTP sessions, queues) were bound to a dead
@@ -64,6 +60,86 @@ if os.environ.get("FAAS_PERSISTENT_WORKER") == "1":
 # loop" / "Event loop is closed".
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
+
+# Snapshot hooks the function declares in code (ADR-20261110190000): module
+# functions init(), before_snapshot() and after_restore(), sync or async, with
+# an optional ctx argument. init runs once here, on the worker's event loop,
+# before the worker reports ready, so the snapshot never captures half-done
+# setup; the other two run when the runner relays guest-init's call.
+class _HookContext:
+    def __init__(self, hook):
+        self.hook = hook
+        self.cancelled = threading.Event()
+
+def _hook_args(fn, hook):
+    try:
+        takes_ctx = len(inspect.signature(fn).parameters) > 0
+    except (TypeError, ValueError):
+        takes_ctx = False
+    return (_HookContext(hook),) if takes_ctx else ()
+
+function_hooks = {}
+for _name in ("init", "before_snapshot", "after_restore"):
+    _fn = getattr(module, _name, None)
+    if callable(_fn):
+        function_hooks[_name] = _fn
+
+if "init" in function_hooks:
+    try:
+        _result = function_hooks["init"](*_hook_args(function_hooks["init"], "init"))
+        if inspect.isawaitable(_result):
+            loop.run_until_complete(_result)
+    except Exception:
+        print("gregale: function init failed:", file=sys.stderr)
+        traceback.print_exc()
+        raise
+
+if os.environ.get("FAAS_PERSISTENT_WORKER") == "1":
+    real_stdout.write(json.dumps({"__faas_ready": True, "concurrency": concurrency,
+                                  "function_hooks_version": 1,
+                                  "function_hooks": [name for name in ("init", "before_snapshot", "after_restore") if name in function_hooks]}) + "\n")
+    real_stdout.flush()
+
+def _hook_envelope(status):
+    return {"status": status, "headers": {}, "body_b64": ""}
+
+def _known_hook(request):
+    return request.get("function_hook") in ("before_snapshot", "after_restore")
+
+def _run_hook_sync(request):
+    # One-slot worker: the event loop is not running, so an async hook runs
+    # to completion on it. A throw fails the hook for the whole instance.
+    if not _known_hook(request):
+        return _hook_envelope(400)
+    fn = function_hooks.get(request["function_hook"])
+    if fn is None:
+        return _hook_envelope(204)
+    try:
+        result = fn(*_hook_args(fn, request["function_hook"]))
+        if inspect.isawaitable(result):
+            loop.run_until_complete(result)
+    except Exception:
+        print("gregale: function %s hook failed:" % request["function_hook"], file=sys.stderr)
+        traceback.print_exc()
+        return _hook_envelope(500)
+    return _hook_envelope(204)
+
+async def _run_hook_async(request):
+    # Shared worker: runs inside the running event loop.
+    if not _known_hook(request):
+        return _hook_envelope(400)
+    fn = function_hooks.get(request["function_hook"])
+    if fn is None:
+        return _hook_envelope(204)
+    try:
+        result = fn(*_hook_args(fn, request["function_hook"]))
+        if inspect.isawaitable(result):
+            await result
+    except Exception:
+        print("gregale: function %s hook failed:" % request["function_hook"], file=sys.stderr)
+        traceback.print_exc()
+        return _hook_envelope(500)
+    return _hook_envelope(204)
 
 class _Context:
     log = _Log()
@@ -193,6 +269,10 @@ def _serve_lines():
         # handler. Mirror the Node adapter: a terminal handler_error envelope.
         try:
             request = json.loads(line)
+            if isinstance(request, dict) and request.get("function_hook"):
+                real_stdout.write(json.dumps(_run_hook_sync(request)) + "\n")
+                real_stdout.flush()
+                continue
             with _gregale_context(request):
                 event, invocation_id = _event(request)
                 result = handler(event, _Context(invocation_id, lifecycle_hook=request.get("lifecycle_hook", "")))
@@ -348,6 +428,9 @@ async def _serve_shared():
                 _emit_tagged({"__faas_cancelled": cancel})
             continue
         rid = str(request.get("__faas_id", ""))
+        if request.get("function_hook"):
+            _emit_tagged({"__faas_id": rid, **(await _run_hook_async(request))})
+            continue
         if handler_is_async:
             cancelled = threading.Event()
             work = loop.create_task(_serve_one(request, rid, cancelled))

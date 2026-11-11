@@ -509,6 +509,9 @@ jobs:
       - name: canary artifact retention gate
         run: make canary-artifact-retention-test
 
+      - name: go cache retention gate
+        run: make go-cache-retention-test
+
       - name: serving probe gate
         run: make serving-probe-test
 

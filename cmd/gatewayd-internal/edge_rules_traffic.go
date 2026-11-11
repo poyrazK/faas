@@ -75,10 +75,18 @@ func compileCircuitBreakerRules(storeRules []state.EdgeRule) ([]gateway.EdgeRule
 	}
 	out := make([]gateway.EdgeRuleCircuitBreakerResolved, 0, len(storeRules))
 	var parseErrs []gateway.PathGlobError
+	now := time.Now()
 	for i := range storeRules {
 		r := &storeRules[i]
 		if !r.Enabled || r.Kind != state.EdgeRuleKindCircuitBreaker || r.Action.CircuitBreaker == nil {
 			continue
+		}
+		if r.ExpiresAt != nil && !now.Before(*r.ExpiresAt) {
+			continue
+		}
+		var expiresAt time.Time
+		if r.ExpiresAt != nil {
+			expiresAt = *r.ExpiresAt
 		}
 		if errs := validatePathGlob(r.ID, r.MatchPath); errs != nil {
 			parseErrs = append(parseErrs, errs...)
@@ -123,6 +131,7 @@ func compileCircuitBreakerRules(storeRules []state.EdgeRule) ([]gateway.EdgeRule
 			Window:            time.Duration(window) * time.Second,
 			OpenDuration:      time.Duration(open) * time.Second,
 			MaxOpenDuration:   time.Duration(maxOpen) * time.Second,
+			ExpiresAt:         expiresAt,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })

@@ -146,6 +146,10 @@ func (s *server) tearDownPreviewApp(w http.ResponseWriter, r *http.Request, acct
 		managedPostgresProblem(w, err)
 		return false
 	}
+	if err := s.releasePreviewDatabases(r.Context(), app); err != nil {
+		managedPostgresProblem(w, err)
+		return false
+	}
 	if _, err := s.store.SetPreviewPrState(r.Context(), app.ID, state.PreviewPrStateTornDown); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return true

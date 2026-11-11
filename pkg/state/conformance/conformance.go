@@ -64,6 +64,7 @@ func Run(t *testing.T, open Open) {
 		{"sidecar_secret_reload_signal_controls_target_support", testSidecarSecretReloadSignal},
 		{"non_uuid_invocation_identity_is_unowned", testNonUUIDInvocationIdentityIsUnowned},
 		{"deployment_secret_reload_signal_survives_read", testDeploymentSecretReloadSignalSurvivesRead},
+		{"deployment_before_checkpoint_hook_survives_read", testDeploymentBeforeCheckpointHookSurvivesRead},
 		{"rollback_on_5xx_candidates_track_the_opt_in", testRollbackOn5xxCandidates},
 		{"reverted_release_is_not_a_rollback_target", testRevertedReleaseIsNotARollbackTarget},
 		{"config_revisions_and_guards_track_each_write", testConfigRevisionsAndGuards},
@@ -2016,6 +2017,28 @@ func testInvoiceRefunds(t *testing.T, fx *Fixture) {
 	inv, err = fx.Store.GetInvoiceByID(fx.Ctx, inv.ID)
 	if err != nil || inv.AmountRefundedCents != 350 || inv.AmountRefundPendingCents != 0 {
 		t.Fatalf("failed totals = (%+v, %v), want settled=350 pending=0", inv, err)
+	}
+
+	// A provider can fail a refund after reporting it succeeded: the settled
+	// amount is reversed, and a stale success afterwards does not restore it
+	// (implicit state machines audit 2026-11-08, finding 5).
+	returned := state.InvoiceRefund{
+		InvoiceID: inv.ID, ProviderRefundID: "refund-returned-" + uuid.NewString(),
+		IdempotencyKey: "refund-returned-key-" + uuid.NewString(),
+		AmountCents:    100, Source: "operator", Status: "succeeded",
+	}
+	if err := fx.Store.RecordInvoiceRefund(fx.Ctx, returned); err != nil {
+		t.Fatalf("RecordInvoiceRefund(settled): %v", err)
+	}
+	for _, status := range []string{"failed", "succeeded"} {
+		returned.Status = status
+		if err := fx.Store.RecordInvoiceRefund(fx.Ctx, returned); err != nil {
+			t.Fatalf("RecordInvoiceRefund(settled->%s): %v", status, err)
+		}
+		inv, err = fx.Store.GetInvoiceByID(fx.Ctx, inv.ID)
+		if err != nil || inv.AmountRefundedCents != 350 || inv.AmountRefundPendingCents != 0 {
+			t.Fatalf("after settled->%s totals = (%+v, %v), want settled=350 pending=0", status, inv, err)
+		}
 	}
 
 	credit, err := fx.Store.CreateAccountCredit(fx.Ctx, state.AccountCredit{

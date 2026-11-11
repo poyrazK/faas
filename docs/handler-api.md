@@ -113,6 +113,11 @@ share a worker (`concurrency:`, see
 data in local variables, never in globals. Durable state belongs in Postgres,
 object storage or a queue.
 
+Async setup belongs in an `init` hook, which the snapshot waits for, and
+connections that must not be shared by restored instances are closed in
+`beforeSnapshot` and reopened in `afterRestore`
+([snapshot hooks](functions.md#snapshot-hooks)).
+
 ## Configuration and secrets
 
 Environment variables and secrets are both read from the environment:

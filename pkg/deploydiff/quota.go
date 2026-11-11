@@ -135,7 +135,7 @@ func Quota(p api.Plan, baseline Baseline, pending Pending, cfg QuotaConfig) []Br
 		if prob := api.ValidateAppCPURAMPair(limits, ramMB, *pending.AppConfig.VCPU); prob != nil {
 			out = append(out, Break{
 				Code: prob.Code, Severity: SeverityError, Reason: prob.Detail,
-				Field: "vcpu", Observed: AsAny(*pending.AppConfig.VCPU), Limit: AsAny(limits.VCPU),
+				Field: "vcpu", Observed: AsAny(*pending.AppConfig.VCPU), Limit: AsAny(api.SizeVCPUs(ramMB)),
 			})
 		}
 	}

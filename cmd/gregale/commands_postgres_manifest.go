@@ -202,8 +202,46 @@ func deployManifestPostgresBindings(ctx context.Context, client manifestPostgres
 			_, _ = fmt.Fprintf(osStdout, "  ✓ %s: database %s attached as %s\n", slug, database.Name, binding.EnvironmentKey)
 		}
 	}
+	declared := make(map[string]struct{}, len(plans))
+	for _, plan := range plans {
+		declared[plan.scope+"\x00"+plan.dependency.EffectiveEnvironmentKey()] = struct{}{}
+	}
+	warnUndeclaredPostgresBindings(ctx, client, slug, declared)
 	ensurePostgresEgress(ctx, client, app)
 	return nil
+}
+
+type appPostgresBindingLister interface {
+	ListAppPostgresBindings(context.Context, string) (api.AppPostgresBindingList, error)
+}
+
+// warnUndeclaredPostgresBindings reports live bindings, in a scope this
+// manifest binds, whose environment key no databases entry declares.
+// Deleting an entry never unbinds: that would revoke the credential the
+// serving release uses. The warning names the explicit removal instead.
+// Listing is best-effort; a failure leaves the deploy unaffected.
+func warnUndeclaredPostgresBindings(ctx context.Context, client manifestPostgresClient, slug string, declared map[string]struct{}) {
+	lister, ok := client.(appPostgresBindingLister)
+	if !ok || len(declared) == 0 {
+		return
+	}
+	scopes := map[string]struct{}{}
+	for key := range declared {
+		scopes[strings.SplitN(key, "\x00", 2)[0]] = struct{}{}
+	}
+	list, err := lister.ListAppPostgresBindings(ctx, slug)
+	if err != nil {
+		return
+	}
+	for _, binding := range list.Items {
+		if _, inScope := scopes[binding.Scope]; !inScope {
+			continue
+		}
+		if _, ok := declared[binding.Scope+"\x00"+binding.EnvironmentKey]; ok {
+			continue
+		}
+		PrintWarn(osStderr, "%s: %s (database %s, scope %s) is bound but not declared in gregale.yaml; removing a databases entry does not unbind it. Remove it with `gregale postgres bindings delete %s` once no release uses it", slug, binding.EnvironmentKey, binding.Database, binding.Scope, binding.ID)
+	}
 }
 
 // manifestPostgresDeploymentScope returns the one scope that the current app's

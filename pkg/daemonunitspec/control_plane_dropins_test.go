@@ -69,11 +69,59 @@ func TestAnsibleAndBundleRenderTheSameControlPlaneDropIns(t *testing.T) {
 	}
 	for _, dropin := range []string{"zz-faas-billing-mode.conf", "zz-faas-public-status.conf"} {
 		t.Run(dropin, func(t *testing.T) {
-			bundle := bundleHeredoc(t, string(workflow), dropin)
+			// The bundle writes the environment's billing mode over a
+			// placeholder (scripts/ci/faas_billing_mode.sh resolve), and the
+			// same script stages faas_billing_mode for Ansible, so both render
+			// one value. Compare at the role default.
+			bundle := strings.ReplaceAll(bundleHeredoc(t, string(workflow), dropin), "@FAAS_BILLING_MODE@", roleDefault(t, root, "faas_billing_mode"))
 			ansible := renderRoleTemplate(t, root, dropin+".j2")
 			if ansible != bundle {
 				t.Fatalf("Ansible renders %q but the bundle installs %q; deployctl would restart apid on every release", ansible, bundle)
 			}
 		})
+	}
+}
+
+// roleDefault returns a control_plane_service role default.
+func roleDefault(t *testing.T, root, name string) string {
+	t.Helper()
+	defaults, err := os.ReadFile(filepath.Join(root, "defaults", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^` + name + `:\s*(.+)$`).FindStringSubmatch(string(defaults))
+	if m == nil {
+		t.Fatalf("role does not default %s", name)
+	}
+	return strings.Trim(strings.TrimSpace(m[1]), `"'`)
+}
+
+// TestBundleBillingModeFollowsTheEnvironment pins that the signed bundle
+// writes the environment's FAAS_BILLING_MODE (validated by
+// scripts/ci/faas_billing_mode.sh) instead of a hard-coded value, and that
+// both Ansible staging sites stage the same setting (billing launch review
+// 2026-11-10: production billing was hard-coded off).
+func TestBundleBillingModeFollowsTheEnvironment(t *testing.T) {
+	workflow, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(workflow)
+	for _, want := range []string{
+		`billing_mode="$(bash scripts/ci/faas_billing_mode.sh resolve)"`,
+		`sed -i "s/@FAAS_BILLING_MODE@/${billing_mode}/"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("cd-controlplane.yml lacks %q", want)
+		}
+	}
+	if got := strings.Count(text, `bash scripts/ci/faas_billing_mode.sh vars "$work/vars.yml"`); got != 2 {
+		t.Errorf("Ansible staging sites stage faas_billing_mode %d times, want 2", got)
+	}
+	if got := strings.Count(text, "FAAS_BILLING_MODE_SETTING: ${{ vars.FAAS_BILLING_MODE }}"); got != 3 {
+		t.Errorf("steps reading vars.FAAS_BILLING_MODE = %d, want 3 (bundle + two Ansible steps)", got)
+	}
+	if strings.Contains(text, "Environment=FAAS_BILLING_MODE=disabled") {
+		t.Error("the bundle still hard-codes FAAS_BILLING_MODE=disabled")
 	}
 }

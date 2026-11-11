@@ -147,8 +147,26 @@ longer touches compute nodes beyond the public key.
     `FAAS_ARTIFACT_SIGNER=signd` and `FAAS_SIGND_TARGET` / `FAAS_SIGND_TLS_*`
     are set. Runtime bases and the agent layer, which no verifier checks
     today, keep the node's local signer until slice 3 decides them.
-- **Next:** signd's unit, release entry and converge; the re-sign pass; then
-  dropping `sign.key` from compute nodes, and refusing v1 at N+1.
+- **Slice 2b** (deploy, off until set):
+  - The `signd_service` role, run on every control-plane converge, installs
+    the `faas-signd` user, the unit (`UnitSignd`, release lane
+    `control-plane`), signd's server leaf, and a drop-in. That drop-in hands
+    `sign.key` and the TLS key to signd as credentials and logs it in as
+    `faas_signd`.
+  - It turns on with `faas_signd_listen` (`tcp://<private address>:8097`).
+    CD starts signd from the active release and waits for its listener.
+  - The host firewall opens 8097 to the compute CIDRs.
+  - On compute nodes, `faas_imaged_signd_target` issues imaged's client leaf
+    on the control plane and installs imaged's signd drop-in.
+  - `pki_renew.yml` renews both leaves.
+- **Next (slice 3):**
+  - `gregalectl artifacts resign`, an operator CLI run once on the control
+    plane, idempotent, with a dry run;
+  - imaged stops signing runtime bases and the agent layer, which no verifier
+    checks (user decision, 2026-11-10), so a node without `sign.key` builds
+    them unsigned;
+  - node join stops staging `sign.key` on compute;
+  - verifiers refuse v1 at N+1.
 
 ## Consequences
 

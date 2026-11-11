@@ -366,6 +366,14 @@ func IsPlatformIdentityEnvKey(key string) bool {
 	}
 }
 
+// PlatformProvidedEnvKey reports keys Gregale sets itself: the listener
+// port, platform settings, service URLs and identity. A managed binding may
+// not claim one (ADR-20261110120000): guest-init drops identity keys and the
+// others would shadow platform settings.
+func PlatformProvidedEnvKey(key string) bool {
+	return key == "PORT" || strings.HasPrefix(key, "GREGALE_") || strings.HasPrefix(key, "FAAS_") || IsPlatformIdentityEnvKey(key)
+}
+
 // IsInvocationAttemptHeader identifies volatile dispatch metadata, never guest identity or deduplication keys.
 func IsInvocationAttemptHeader(name string) bool {
 	return strings.EqualFold(name, InvocationAttemptHeader) || strings.EqualFold(name, InvocationReplayGenerationHeader) || strings.EqualFold(name, InvocationReplayedFromHeader) || strings.EqualFold(name, InvocationReplayRootHeader)

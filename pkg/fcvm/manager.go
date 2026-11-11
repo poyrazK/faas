@@ -461,6 +461,11 @@ type Instance struct {
 	// AgentRunOnly marks a VM WakeAgentRun booted for one agent run. It is
 	// also ExecutionOnly; ExecuteExecution refuses it and RunAgent requires it.
 	AgentRunOnly bool
+	// SandboxID is the sandbox session a VM was booted for
+	// (ADR-20261027090013); empty for every other VM. Only a VM that carries
+	// it serves sandbox calls, and only for that session. WakeSandbox sets
+	// it.
+	SandboxID string
 	// AgentRunRelay is the run principal of the VM's relay; host-only.
 	AgentRunRelay *AgentRunRelay `json:"-"`
 	// ExecutionID is the Runs execution principal (the one-shot instance ID).
@@ -500,6 +505,9 @@ type Instance struct {
 	// Manager.mu. Not to be confused with Paused, a warm-pool restore.
 	Frozen      bool
 	FrozenSince time.Time
+	// FrozenTotal sums this instance's completed freezes, for the sandbox
+	// session meter (sandbox_usage.go). Guarded by Manager.mu.
+	FrozenTotal time.Duration
 	// freezing is non-nil while a Freeze decides and pauses, and closes once
 	// that freeze has settled either way. Guarded by Manager.mu.
 	freezing chan struct{}
@@ -983,7 +991,9 @@ type Manager struct {
 	// instance whether or not they hold mu.
 	adoption atomic.Pointer[adoptionWriter]
 	// adoptAdmittedRuntimes: see WithAdoptAdmittedRuntimes.
-	adoptAdmittedRuntimes      bool
+	adoptAdmittedRuntimes bool
+	// flatTenantCgroups: see WithFlatTenantCgroups.
+	flatTenantCgroups          bool
 	resourceLinks              map[string]ownedResourceLink
 	linkProbe                  func(string, int) (*resourceLinkIdentity, error)
 	linkContext                func() (*resourceMountIdentity, error)
@@ -3802,8 +3812,18 @@ type WakeRequest struct {
 	// agentRunWaitPauseAfter is the run's model-wait pause delay, accepted
 	// only with agentRunOnly (ADR-20261027090012).
 	agentRunWaitPauseAfter time.Duration
-	RehearsalRunID         string // exact durable containment run; ordinary legacy callers may omit it
-	Instance               string
+	// sandboxID is set only by WakeSandbox (ADR-20261027090013), on top of
+	// ExecutionOnly; it becomes Instance.SandboxID. sandboxRegistries gives
+	// that VM a network in registries mode (§6): DNS-gated, TCP 443 only,
+	// through the registries-only resolver.
+	sandboxID         string
+	sandboxRegistries bool
+	// sandboxManifest marks a session booted from an image: LayerKey is
+	// a full-rootfs job image, and vmmd stages sandbox.json on its private
+	// drive1 before boot (Lease.SandboxManifest). It holds that file.
+	sandboxManifest string
+	RehearsalRunID  string // exact durable containment run; ordinary legacy callers may omit it
+	Instance        string
 	// Set only by WakeAdmitted after validating and consuming its grant.
 	admission *runtimeadmission.Binding
 	// Complete approved source identities; only WakeAdmitted accepts them.
@@ -3909,13 +3929,16 @@ type WakeRequest struct {
 	// DisableStartupCPUBoost opts out of the bounded startup CPU allowance.
 	DisableStartupCPUBoost bool
 	// CPUWeight is the instance's cgroup cpu.weight (ADR-20261109172421);
-	// 0 keeps the plan's weight. The json tag keeps the checkpoint wake
-	// commitment of a request without it unchanged.
+	// 0 gives an app instance its memory's weight (wakeLeaseCPU). The json
+	// tag keeps the checkpoint wake commitment of a request without it
+	// unchanged.
 	CPUWeight int `json:",omitempty"`
 	// CPUUncapped runs the instance with cpu.max = max and no startup boost
 	// while CPUMillicores is the app default; an app's 250 or 500 millicore
 	// choice stays a cap, also after a live CPU policy update
-	// (ADR-20261109172421). False keeps the CPUMillicores quota.
+	// (ADR-20261109172421). vmmd runs every app instance this way whatever
+	// the field says (wakeLeaseCPU, step 6.3); it stays on the wire for
+	// schedd N-1.
 	CPUUncapped bool `json:",omitempty"`
 	// ExecutionMode is the declared lifecycle mode used to constrain the
 	// cold-boot characterization result. Empty preserves legacy inference.
@@ -4433,6 +4456,7 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// cleans up via the same defer that releases the slot.
 	lease.Plan = req.Plan
 	lease.IsBuilder = false
+	m.stampCgroupParent(&lease)
 
 	// Stamp the per-instance memory cap (CLAUDE.md §11
 	// 'memory.max = plan + 8 MB'). Without this, l.MemoryMaxMiB
@@ -4442,6 +4466,11 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// fence and can OOM-kill the box. CR-2 / code-review #2.
 	// Mirrors manager.go:2581 in the Wake path.
 	lease.MemoryMaxMiB = req.MemSizeMiB
+	// A job's share of a busy host follows its memory, as an app
+	// instance's does; its cpu.max stays one core (ADR-20261109172421).
+	if req.MemSizeMiB > 0 {
+		lease.CPUWeight = api.SizeCPUWeight(req.MemSizeMiB)
+	}
 
 	// Match the wake path's defer-and-unwind pattern: any error
 	// after Acquire must release the slot AND tear down the netns.
@@ -4862,9 +4891,12 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// lifetime.
 	lease.Plan = req.Plan
 	lease.AccountID = req.AccountID
-	lease.Networkless = req.ExecutionOnly
+	lease.Networkless = req.networkless()
+	lease.AgentSized = req.sandboxRegistries
+	lease.SandboxManifest = req.sandboxManifest
 	lease.Quarantine = req.Quarantine && !req.ExecutionOnly
 	lease.IsBuilder = req.ExportDir != ""
+	m.stampCgroupParent(&lease)
 	lease.BuildTimeoutSec = req.BuildTimeoutSec
 	if lease.IsBuilder && lease.BuildTimeoutSec <= 0 {
 		lease.BuildTimeoutSec = api.BuildTimeoutSeconds
@@ -4872,8 +4904,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.MemoryMaxMiB = wakeGuestMemoryMiB(req)
 	lease.CPUMillicores = req.CPUMillicores
 	lease.DisableStartupCPUBoost = req.DisableStartupCPUBoost
-	lease.CPUWeight = req.CPUWeight
-	lease.CPUUncapped = req.CPUUncapped
+	lease.CPUWeight, lease.CPUUncapped = wakeLeaseCPU(req, lease.IsBuilder)
 	lease.AppPort = req.Port
 	m.mu.Lock()
 	if m.waking == nil {
@@ -4901,7 +4932,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 				cleanupNet.PrivateNetworkAppID = req.AppID
 				cleanupNet.PrivateNetworkAccountID = req.AccountID
 			}
-			if req.ExecutionOnly {
+			if req.networkless() {
 				cleanupNet = netns.Config{Instance: lease.Instance}
 			}
 			err = errors.Join(err, m.cleanup(context.WithoutCancel(ctx), lease, cleanupNet, nil))
@@ -4918,7 +4949,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			return nil, err
 		}
 	}
-	if req.ExecutionOnly {
+	if req.networkless() {
 		// Keep the allocator-derived identity on Instance for diagnostics, but
 		// never pass a tenant network plan to setup/teardown or host policy.
 		nc = netns.Config{Instance: lease.Instance}
@@ -4996,7 +5027,13 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	nc.RehearsalRunID = req.RehearsalRunID
 	nc.ConntrackCap = m.conntrackCap
 	// ADR-361: default-deny guest egress (base ports + per-plan rate).
-	if !req.ExecutionOnly {
+	switch {
+	case req.sandboxRegistries:
+		if m.dnsGatingOff {
+			return nil, fmt.Errorf("wake %s: sandbox registries egress needs DNS-gated egress, which this vmmd has switched off", req.Instance)
+		}
+		applySandboxRegistriesEgress(&nc, req.Plan)
+	case !req.ExecutionOnly:
 		applyTenantEgressPolicy(&nc, req.Plan, req.EgressPorts)
 		nc.DNSGated = nc.DNSGated && !m.dnsGatingOff
 		nc.EgressCircuitEnabled = m.egressCircuitEnabled && req.AppID != ""
@@ -5171,7 +5208,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// owner. Starting network helpers alongside jail provisioning can leave a
 	// helper in flight when image staging checks the owner's retired effects.
 	// Complete the network before provisioning on native-owned VMs.
-	if _, joins := m.vmm.(wakeNetworkJoiner); joins && !req.ExecutionOnly && m.nativeVMM() == nil {
+	if _, joins := m.vmm.(wakeNetworkJoiner); joins && !req.networkless() && m.nativeVMM() == nil {
 		// See wake_network.go: build the namespace while bringUp stages the
 		// jail; the VMM joins it before startJailer.
 		network := m.startWakeNetwork(ctx, nc, preparedNetwork, func() error {
@@ -5210,7 +5247,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		netnsStart := time.Now()
 		preparedHit := false
 		var networkErr error
-		if !req.ExecutionOnly {
+		if !req.networkless() {
 			preparedHit, networkErr = m.setupWakeNetwork(ctx, nc, preparedNetwork)
 			if networkErr == nil {
 				networkErr = m.registerEgressCircuitNetwork(ctx, req.AppID, nc)
@@ -5274,6 +5311,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	phases.mark("bring_up")
 	if err != nil {
 		return nil, err
+	}
+	if method == WakeRestore && !req.KeepPaused {
+		m.releaseInheritedConnections(ctx, lease, req.ExportDir != "" || lease.IsBuilder || req.ExecutionOnly || req.AppTaskOnly || qualificationOnly)
 	}
 
 	// Test VMMs retain the legacy observable staging hooks. Production
@@ -5409,10 +5449,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		// because the VM is already up and leaking a host-side cap is
 		// strictly better than failing the wake.
 		if len(req.Sidecars) > 0 {
-			parentCgroup := ParentCgroupFor(req.Plan)
-			if lease.IsBuilder {
-				parentCgroup = BuilderCgroupParent
-			}
+			parentCgroup := vmCgroupParent(lease)
 			parentScope := filepath.Join(cgroupRoot, parentCgroup, PerInstanceScope(req.Instance))
 			// Main workload: matches the per-instance memory.max (the
 			// customer pays for the plan RAM, not the +8 MB overhead).
@@ -5485,7 +5522,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		publicForwardTarget: publicTarget,
 		Lease:               lease, Net: nc, Method: method, wakeID: wakeID, resumeIdentity: resumeIdentity,
 		adoptionVCPUs: req.VcpuCount, adoptionMemSizeMiB: req.MemSizeMiB,
-		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AgentRunOnly: req.agentRunOnly, AgentRunRelay: req.agentRunRelay, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
+		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AgentRunOnly: req.agentRunOnly, SandboxID: req.sandboxID, AgentRunRelay: req.agentRunRelay, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
@@ -5712,7 +5749,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 // that wire bringUp directly without a Wake frame.
 func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req WakeRequest, timings *bringUpTimings) (WakeMethod, error) {
 	serviceDiscoveryIP := ""
-	if !req.ExecutionOnly && !lease.IsBuilder && nc.HostBridgeIP.IsValid() {
+	if !req.networkless() && !lease.IsBuilder && nc.HostBridgeIP.IsValid() {
 		serviceDiscoveryIP = nc.HostBridgeIP.String()
 	}
 	// issue #299: refuse to bring up an instance whose base ext4
@@ -5831,7 +5868,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			SecretsEnvJSON:     req.preparedSecretsEnvJSON,
 			APIEnvJSON:         req.preparedAPIEnvJSON,
 			ServiceDiscoveryIP: serviceDiscoveryIP,
-			Networkless:        req.ExecutionOnly,
+			Networkless:        req.networkless(),
 			KeepPaused:         req.KeepPaused,
 			AgentInput:         req.agentRunOnly,
 			InputKey:           req.agentRunInputKey,
@@ -6279,6 +6316,10 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 
+	// ADR-20261110160000: the capturing guest is torn down right after the
+	// snapshot. Reset its off-guest connections first so its peers free the
+	// sessions now and every restore wakes with failed sockets, not live ones.
+	m.releaseConnectionsBeforeCapture(operationCtx, inst)
 	spec.nativeRuntime = m.nativeRuntimeCapture(operationCtx, inst, spec)
 	info, snapshotErr := m.vmm.Snapshot(operationCtx, inst.Lease, spec)
 	info, snapshotErr = checkedNativeSnapshotResult(operationCtx, spec, info, snapshotErr)
@@ -6602,9 +6643,11 @@ func (m *Manager) resumeAndProbe(ctx context.Context, op string, inst *Instance,
 		return fmt.Errorf("%s %s: %w", op, instance, err)
 	}
 	m.mu.Lock()
+	wasSpare := inst.warmSpare
 	inst.migrationPaused, inst.warmSpare = false, false
 	m.mu.Unlock()
 	m.clearFrozen(inst) // Rewrites the adoption block, clearing all three.
+
 	if inst.ImageHealthcheckRequired {
 		checker, ok := m.vmm.(interface {
 			WaitImageHealthcheck(context.Context, Lease, int) error
@@ -6625,6 +6668,11 @@ func (m *Manager) resumeAndProbe(ctx context.Context, op string, inst *Instance,
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("%s %s: %w", op, instance, err)
+	}
+	if wasSpare {
+		// A warm-pool spare was restored from a snapshot and kept paused; it
+		// holds the capture's sockets (ADR-20261110160000).
+		m.releaseInheritedConnections(ctx, inst.Lease, false)
 	}
 	m.reopenHTTPForwards(inst)
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)

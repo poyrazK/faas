@@ -20,6 +20,10 @@ export type AgentActivityEntry = {
    * The approval request the write went through on, when it needed one.
    */
   approval_id?: string;
+  /**
+   * What the agent said this write was for (its Gregale-Agent-Reason header), if it said. Untrusted agent text.
+   */
+  reason?: string;
   created_at: string;
 };
 

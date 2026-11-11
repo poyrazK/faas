@@ -461,6 +461,42 @@ func TestOnlyAllowDeclaredRoutesRejectsBeforeWake(t *testing.T) {
 	}
 }
 
+// TestOnlyAllowDeclaredRoutesKeepsEdgeHealthAnswer pins Hunt 32 H32-48: the
+// gateway answers /healthz itself, so the declared-route gate must not 404 it;
+// a POST to it, or a health path that wakes the app, stays gated.
+func TestOnlyAllowDeclaredRoutesKeepsEdgeHealthAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		method      string
+		healthWakes bool
+		wantGated   bool
+	}{
+		{"edge GET", http.MethodGet, false, false},
+		{"edge HEAD", http.MethodHead, false, false},
+		{"POST is app surface", http.MethodPost, false, true},
+		{"health path that wakes", http.MethodGet, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, b, _ := newTestHandler(t)
+			b.app.OnlyAllowDeclaredRoutes = true
+			b.app.HealthPathWakes = tc.healthWakes
+			m := &declaredRouteMatcherStub{}
+			h.WithDeclaredRouteMatcher(m)
+
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(tc.method, "http://jane-api.apps.dom/healthz", nil))
+
+			gated := rec.Header().Get("x-faas-error-reason") == api.CodeUndeclaredRoute
+			if gated != tc.wantGated {
+				t.Fatalf("gated = %t, want %t (status %d, %s)", gated, tc.wantGated, rec.Code, rec.Body)
+			}
+			if !tc.wantGated && rec.Header().Get("X-Faas-Health-Source") != "edge" {
+				t.Fatalf("health answer source = %q, want edge (status %d)", rec.Header().Get("X-Faas-Health-Source"), rec.Code)
+			}
+		})
+	}
+}
+
 func TestOnlyAllowDeclaredRoutesAllowsDeclaredPathToWake(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	b.app.OnlyAllowDeclaredRoutes = true

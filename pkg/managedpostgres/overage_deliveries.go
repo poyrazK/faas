@@ -53,7 +53,7 @@ func (s *PostgresStore) OverageDelivered(ctx context.Context, provider, subjectI
 		return OverageDelivery{}, mapPostgresError(err)
 	}
 	delivery.Live, delivery.BilledUnitSeconds, delivery.Millicents, delivery.UpdatedAt = row.Live, row.BilledUnitSeconds, row.DeliveredMillicents, row.UpdatedAt.Time.UTC()
-	delivery.BilledStorageByteSeconds = row.BilledStorageByteSeconds
+	delivery.BilledStorageByteSeconds, delivery.BilledEgressBytes = row.BilledStorageByteSeconds, row.BilledEgressBytes
 	return delivery, nil
 }
 
@@ -79,7 +79,7 @@ func (s *PostgresStore) RecordOverageDelivery(ctx context.Context, delivery Over
 		Provider: delivery.Provider, SubjectID: subject, PeriodStart: pgtype.Timestamptz{Time: delivery.PeriodStart.UTC(), Valid: true},
 		Live: delivery.Live, BilledUnitSeconds: delivery.BilledUnitSeconds, DeliveredMillicents: delivery.Millicents,
 		UpdatedAt: pgtype.Timestamptz{Time: delivery.UpdatedAt.UTC(), Valid: true}, PreviousMillicents: previous.Millicents,
-		PreviousLive: previous.Live, BilledStorageByteSeconds: delivery.BilledStorageByteSeconds,
+		PreviousLive: previous.Live, BilledStorageByteSeconds: delivery.BilledStorageByteSeconds, BilledEgressBytes: delivery.BilledEgressBytes,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -112,6 +112,7 @@ func (s *PostgresStore) OveragePending(ctx context.Context, provider, subjectID 
 			UsedUnitSeconds: row.UsedUnitSeconds, AllowanceSeconds: row.AllowanceUnitSeconds, BilledUnitSeconds: row.BilledUnitSeconds,
 			DeliveredMillicents: row.FromMillicents, TargetMillicents: row.TargetMillicents,
 			UsedStorageByteSeconds: row.UsedStorageByteSeconds, StoragePoolBytes: row.StoragePoolBytes, BilledStorageByteSeconds: row.BilledStorageByteSeconds,
+			UsedEgressBytes: row.UsedEgressBytes, AppEgressBytes: row.AppEgressBytes, EgressAllowanceBytes: row.EgressAllowanceBytes, BilledEgressBytes: row.BilledEgressBytes,
 		}}, true, nil
 }
 
@@ -128,6 +129,7 @@ func (s *PostgresStore) ReserveOverage(ctx context.Context, pending OveragePendi
 		FromMillicents: step.DeliveredMillicents, TargetMillicents: step.TargetMillicents,
 		UsedStorageByteSeconds: step.UsedStorageByteSeconds, StoragePoolBytes: step.StoragePoolBytes, BilledStorageByteSeconds: step.BilledStorageByteSeconds,
 		PreviousMillicents: pending.Previous.Millicents, PreviousLive: pending.Previous.Live,
+		UsedEgressBytes: step.UsedEgressBytes, AppEgressBytes: step.AppEgressBytes, EgressAllowanceBytes: step.EgressAllowanceBytes, BilledEgressBytes: step.BilledEgressBytes,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -157,7 +159,7 @@ func (s *PostgresStore) CompleteOverage(ctx context.Context, pending OveragePend
 			Provider: pending.Provider, SubjectID: subject, PeriodStart: period,
 			Live: delivery.Live, BilledUnitSeconds: delivery.BilledUnitSeconds, DeliveredMillicents: delivery.Millicents,
 			UpdatedAt: pgtype.Timestamptz{Time: delivery.UpdatedAt, Valid: true}, PreviousMillicents: pending.Previous.Millicents,
-			PreviousLive: pending.Previous.Live, BilledStorageByteSeconds: delivery.BilledStorageByteSeconds,
+			PreviousLive: pending.Previous.Live, BilledStorageByteSeconds: delivery.BilledStorageByteSeconds, BilledEgressBytes: delivery.BilledEgressBytes,
 		})
 		switch {
 		case err == nil:
@@ -180,7 +182,7 @@ func pendingDelivery(pending OveragePendingStep) OverageDelivery {
 	step := pending.Step
 	return OverageDelivery{Provider: pending.Provider, SubjectID: step.SubjectID, PeriodStart: step.PeriodStart.UTC(),
 		Live: pending.Live, BilledUnitSeconds: step.BilledUnitSeconds, Millicents: step.TargetMillicents,
-		UpdatedAt: step.At.UTC(), BilledStorageByteSeconds: step.BilledStorageByteSeconds}
+		UpdatedAt: step.At.UTC(), BilledStorageByteSeconds: step.BilledStorageByteSeconds, BilledEgressBytes: step.BilledEgressBytes}
 }
 
 type memoryOverageKey struct {
@@ -209,6 +211,11 @@ func (s *MemoryStore) OverageSubjects(_ context.Context, periodStart time.Time) 
 	for subject, enabled := range s.overage {
 		if enabled {
 			merge(OverageSubject{SubjectID: subject, Overage: true})
+		}
+	}
+	for subject, elected := range s.egressElected {
+		if elected {
+			merge(OverageSubject{SubjectID: subject})
 		}
 	}
 	for key := range s.overageDeliveries {

@@ -75,6 +75,28 @@ func TestAllowResolvedEgressRPC(t *testing.T) {
 	}
 }
 
+type namedRecordingAllower struct {
+	recordingAllower
+	name string
+}
+
+func (r *namedRecordingAllower) AllowResolvedEgressNamed(_ context.Context, source netip.Addr, _ fcvm.ServiceCallerIdentity, name string, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
+	r.name = name
+	r.source, r.addrs, r.ttl, r.databasePort = source, addrs, ttl, databasePort
+	return r.err
+}
+
+// ADR-20261027090013 §6: the answered name reaches a manager that checks it.
+func TestAllowResolvedEgressRPCPassesTheName(t *testing.T) {
+	a := &namedRecordingAllower{recordingAllower: recordingAllower{fakeVMM: &fakeVMM{}}}
+	s := vmmdgrpc.New(a, wire.NewOpsMetrics("vmmd_test_named"), "1.10.0", nil)
+	if ack, err := s.AllowResolvedEgress(context.Background(), &vmmdpb.AllowResolvedEgressRequest{
+		SourceIp: "10.100.0.7", InstanceId: "sandbox-1", NetworkGeneration: "generation", Name: "registry.npmjs.org", Addresses: []string{"198.51.100.10"}, TtlSeconds: 60,
+	}); err != nil || !ack.GetMatched() || a.name != "registry.npmjs.org" || len(a.addrs) != 1 {
+		t.Fatalf("ack = %v, %v; name %q, addrs %v", ack, err, a.name, a.addrs)
+	}
+}
+
 // rc.324 refused every builder's DNS grants without a log line on either
 // side. A refusal is logged with the instance, once per interval.
 func TestAllowResolvedEgressLogsARefusalOncePerInterval(t *testing.T) {

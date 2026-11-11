@@ -281,6 +281,10 @@ inputs. When you deny it or it expires, the agent gets `stop`, with your
 reason, and stops. `gregale_agent_activity` lists the agent's own write
 requests of the last 7 days (`operate` toolset).
 
+When the bridge applies a plan, it sends the plan's reviewable `reason` as
+the `Gregale-Agent-Reason` header, so the review page, notifications and the
+activity log show you why the agent asked.
+
 ## Connect a local agent to Gregale
 
 `gregale mcp serve` exposes Gregale management tools over stdio, with writes

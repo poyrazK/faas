@@ -34,6 +34,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/authz"
+	mailpkg "github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -161,6 +162,10 @@ func (s *server) inviteOrgMember(w http.ResponseWriter, r *http.Request, acct st
 		"org_id": org.ID, "slug": org.Slug, "email": email,
 		"role": string(role), "expires_at": inv.ExpiresAt,
 	})
+	if role == state.OrgRoleAdmin {
+		s.mailOrgSecurityEvent(r.Context(), "org_admin_invited", org.ID,
+			s.orgMemberLabel(r.Context(), acct.ID)+" invited "+mailpkg.MaskEmail(email)+" as an admin", acct.ID)
+	}
 	writeJSON(w, http.StatusCreated, api.OrgInvitationWithToken{
 		OrgInvitationResponse: api.OrgInvitationResponseFromRow(invitationToRow(inv, org.Slug, now)),
 		Token:                 token,
@@ -271,6 +276,8 @@ func (s *server) changeOrgMemberRole(w http.ResponseWriter, r *http.Request, acc
 		"target_account": targetID,
 		"new_role":       string(role),
 	})
+	s.mailOrgSecurityEvent(r.Context(), "org_role_changed", mem.OrgID,
+		s.orgMemberLabel(r.Context(), acct.ID)+" changed the role of "+s.orgMemberLabel(r.Context(), targetID)+" to "+string(role), targetID)
 	// Re-read the row so the response carries the joined account
 	// email / role pair (the store doesn't return the updated
 	// row, so a single-org lookup is the only way to surface it).
@@ -336,6 +343,8 @@ func (s *server) removeOrgMember(w http.ResponseWriter, r *http.Request, acct st
 		"org_id":         mem.OrgID,
 		"target_account": targetID,
 	})
+	s.mailOrgSecurityEvent(r.Context(), "org_member_removed", mem.OrgID,
+		s.orgMemberLabel(r.Context(), acct.ID)+" removed "+s.orgMemberLabel(r.Context(), targetID), targetID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

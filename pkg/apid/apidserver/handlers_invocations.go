@@ -185,8 +185,10 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// MaxAsyncResultRetentionSeconds by sending an out-of-range
 		// value. RetryPolicy is the typed DTO; marshal to JSON for
 		// the JSONB column.
-		DeadlineAt:             deadlineForRequest(req.DeadlineAt, acct),
-		RetryPolicyJSON:        effectiveInvocationRetryPolicy(app, req.RetryPolicy, limits.MaxQueueAttempts),
+		DeadlineAt: deadlineForRequest(req.DeadlineAt, acct),
+		// The caller receives a failure the app returned, so it ends after
+		// one attempt; platform failures still retry (Hunt 32 H32-65).
+		RetryPolicyJSON:        state.MarkSyncInvokeRetryPolicy(effectiveInvocationRetryPolicy(app, req.RetryPolicy, limits.MaxQueueAttempts)),
 		ResultRetentionUntil:   retentionForRequest(req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
@@ -702,9 +704,15 @@ func (s *server) queueAck(w http.ResponseWriter, r *http.Request, acct state.Acc
 		api.WriteProblem(w, api.ErrInvocationNotFound(id))
 		return
 	}
-	// Ack is informational only. The drain has already stamped
-	// completed_at; we just no-op. A future slice can introduce an
-	// `acked_at` column if a billing model needs it.
+	// Ack is informational only for a processed message: the drain has
+	// already stamped completed_at, so this no-ops. A message still pending
+	// is refused instead of reported "acked" while it stays queued (Hunt 32
+	// H32-44: ack printed success and the depth stayed 2).
+	if inv.State == state.InvocationPending || inv.State == state.InvocationDispatching {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "queue_message_not_processed", "Queue message not processed",
+			"this message has not been processed yet; ack confirms a processed message's result (queue receive returns those)"))
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1067,6 +1075,12 @@ func (s *server) listInvocations(w http.ResponseWriter, r *http.Request, acct st
 		}
 	}
 	before := r.URL.Query().Get("before")
+	if _, err := uuid.Parse(before); before != "" && err != nil {
+		// The cursor is an invocation id; a malformed one reached the store
+		// and answered 503 "Briefly at capacity" (Hunt 32 H32-67).
+		api.WriteProblem(w, api.ErrValidation("before must be an invocation id from next_before"))
+		return
+	}
 	rows, nextBefore, err := appaccess.VisiblePage(requestCtx, before, limit,
 		func(cursor string) ([]state.Invocation, error) {
 			return s.store.ListInvocationsForAccount(requestCtx, acct.ID, limit, cursor)

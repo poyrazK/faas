@@ -216,6 +216,9 @@ var routeExclude = map[string]bool{
 	// Mirror across this list AND cmd/sdk-coverage/main.go::routeExclude.
 	"POST /v1/postgres/databases/{id}/upgrade":              true,
 	"GET /v1/postgres/databases/{id}/upgrades/{upgrade_id}": true,
+	// ADR-20261102123523 PR preview databases: behind the preview-databases
+	// capability until launch. Mirror in cmd/sdk-coverage/main.go::routeExclude.
+	"PUT /v1/postgres/databases/{id}/previews": true,
 
 	"POST /integrations/slack/actions":                     true, // ADR-1497 signed managed Slack actions.
 	"POST /integrations/slack/events":                      true, // ADR-1497 signed Slack uninstall/revocation callbacks.
@@ -423,6 +426,22 @@ var routeExclude = map[string]bool{
 	"GET /v1/agent-tools/.well-known/rap-toolset":     true,
 	"POST /v1/agent-tools/invoke":                     true,
 	"POST /v1/agent-tools/close_thread":               true,
+	"POST /v1/sandboxes":                              true,
+	"GET /v1/sandboxes":                               true,
+	"GET /v1/sandboxes/{id}":                          true,
+	"PATCH /v1/sandboxes/{id}":                        true,
+	"DELETE /v1/sandboxes/{id}":                       true,
+	"GET /v1/sandbox-snapshots":                       true,
+	"GET /v1/sandbox-snapshots/{id}":                  true,
+	"DELETE /v1/sandbox-snapshots/{id}":               true,
+	"GET /v1/sandbox-templates":                       true,
+	"GET /v1/sandbox-templates/{name}":                true,
+	"PUT /v1/sandbox-templates/{name}":                true,
+	"DELETE /v1/sandbox-templates/{name}":             true,
+	"POST /v1/sandboxes/{id}/ports":                   true,
+	"GET /v1/sandboxes/{id}/ports":                    true,
+	"GET /v1/sandboxes/{id}/ports/{port}":             true,
+	"DELETE /v1/sandboxes/{id}/ports/{port}":          true,
 	"GET /v1/agents":                                  true,
 	"GET /v1/agents/{agent}":                          true,
 	"DELETE /v1/agents/{agent}":                       true,
@@ -507,6 +526,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/ops/accounts/{id}/restore":                      true, // operator-only tenant lifecycle control
 	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":              true, // operator-only tenant security control
 	"POST /v1/admin/ops/accounts/{id}/reset-mfa":                    true, // operator-only account recovery (ADR-20261108160000)
+	"POST /v1/admin/ops/accounts/{id}/revert-email":                 true, // operator-only account recovery (ADR-20261110100000)
 	"POST /v1/admin/ops/accounts/{id}/object-storage-ceiling":       true, // operator-only support grant (ADR-20261101214152)
 	"POST /v1/admin/ops/nodes/{name}/drain":                         true, // operator-only node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/force-drain":                   true, // operator-only destructive node lifecycle control
@@ -690,6 +710,9 @@ var routeExclude = map[string]bool{
 	"GET /dashboard/apps/{slug}/workflows/stored/live-verifications/{run_id}":     true, // ADR-1293 session-authenticated HTML progress fragment
 	"POST /dashboard/apps/{slug}/workflows/stored/live-verifications/{run_id}":    true, // ADR-1293 CSRF-protected assertion check fragment
 	"POST /dashboard/apps/{slug}/workflows/stored/live-suites/{suite_id}/advance": true, // ADR-1297: session-only HTML continuation with CSRF.
+
+	// ADR-20261110200000: CSRF-protected HTML form on the organization page.
+	"POST /dashboard/orgs/{slug}/github/{installationID}/disconnect": true,
 }
 
 func init() {
@@ -804,6 +827,8 @@ var dtoExclude = map[string]bool{
 	"StatusPage":                        true, // GET /status/slo.json (public status)
 	"SessionsRevokeRequest":             true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
 	"ManagedPostgresPlanLimits":         true, // internal plan policy, not a wire DTO
+	"ManagedPostgresPreviewOwner":       true, // ADR-20261102123523 preview-databases capability; documented at launch
+	"SetManagedPostgresPreviewsRequest": true, // ADR-20261102123523 preview-databases capability; documented at launch
 	"RealtimeLimits":                    true, // internal plan policy, not a wire DTO
 	"ExecutionSnapshotShape":            true, // internal snapshot compatibility key, not a wire DTO
 	"ResolvedExecutionRequest":          true, // sealed scheduler intent, not a public DTO
@@ -1603,10 +1628,12 @@ var previewFieldExclude = map[string]map[string]bool{
 	// ADR-20261031100025: labels on apps, databases, crons and jobs, behind the
 	// resource-labels capability; the PATCH .../labels routes document them
 	// until beta.
-	"AppResponse":             {"labels": true},
-	"CronResponse":            {"labels": true},
-	"JobResponse":             {"labels": true},
-	"ManagedPostgresDatabase": {"labels": true},
+	"AppResponse":  {"labels": true},
+	"CronResponse": {"labels": true},
+	"JobResponse":  {"labels": true},
+	// ADR-20261102123523: PR preview databases, behind the preview-databases
+	// capability until launch.
+	"ManagedPostgresDatabase": {"labels": true, "previews": true, "preview": true},
 }
 
 func testSchemasParity(t *testing.T, root string, spec *specDoc) {

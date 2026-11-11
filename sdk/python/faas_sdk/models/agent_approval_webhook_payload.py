@@ -50,6 +50,8 @@ class AgentApprovalWebhookPayload:
     """When the person approved or denied the request."""
     note: str | Unset = UNSET
     """On agent.approval.denied: the reason the person gave the agent, if any."""
+    reason: str | Unset = UNSET
+    """The agent's own account of what the request is for, if it gave one. Untrusted agent text."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -79,6 +81,8 @@ class AgentApprovalWebhookPayload:
 
         note = self.note
 
+        reason = self.reason
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -100,6 +104,8 @@ class AgentApprovalWebhookPayload:
             field_dict["decided_at"] = decided_at
         if note is not UNSET:
             field_dict["note"] = note
+        if reason is not UNSET:
+            field_dict["reason"] = reason
 
         return field_dict
 
@@ -138,6 +144,8 @@ class AgentApprovalWebhookPayload:
 
         note = d.pop("note", UNSET)
 
+        reason = d.pop("reason", UNSET)
+
         agent_approval_webhook_payload = cls(
             approval_id=approval_id,
             key_id=key_id,
@@ -150,6 +158,7 @@ class AgentApprovalWebhookPayload:
             review_url=review_url,
             decided_at=decided_at,
             note=note,
+            reason=reason,
         )
 
         agent_approval_webhook_payload.additional_properties = d

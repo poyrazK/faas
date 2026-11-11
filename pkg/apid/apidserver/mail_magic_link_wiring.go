@@ -31,6 +31,7 @@ func (s *server) consumeMagicLink(ctx context.Context, hash []byte) (string, *ap
 			if result.Claimed {
 				s.forgetTrustedBrowsers(ctx, result.AccountID, "ownership_claim")
 				s.endPendingGrants(ctx, result.AccountID, "ownership_claim")
+				s.removeForeignProviderLinks(ctx, result.AccountID, "ownership_claim")
 			}
 			if result.RevokedSessions > 0 || result.RevokedAPIKeys > 0 {
 				s.audit.Emit(ctx, "auth.pre_verification_credentials_revoked", &result.AccountID, map[string]any{

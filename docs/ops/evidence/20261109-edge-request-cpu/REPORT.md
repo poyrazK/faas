@@ -119,9 +119,13 @@ the node was 92% busy at 3,500 404s per second.
 ## Left, ranked by expected gain
 
 1. **The second HTTP hop.** The edge decodes HTTP/2, then sends HTTP/1.1 over
-   a unix socket for gatewayd-internal to parse again. Together that is
-   roughly half of all per-request CPU. Removing or cheapening it touches the
-   ADR-070 split, so it needs an ADR.
+   a unix socket for gatewayd-internal to parse again. This report first
+   estimated it at roughly half of all per-request CPU, counting every frame
+   of the edge's proxy and of gatewayd-internal's connection handling. The
+   post-release profile counts the transport alone at 19% of the two
+   daemons' CPU per 404, plus 6% for the edge's `otelhttp` wrapper on it.
+   [ADR-20261110081523](../../../adr/20261110081523-edge-internal-hop-binary-http.md)
+   proposes binary HTTP for that hop.
 2. **Overload shedding at the edge.** Refuse new connections or requests early
    (RST before TLS, or 503) when the node's CPU or in-flight work passes a
    line, instead of letting handshakes from retrying clients collapse

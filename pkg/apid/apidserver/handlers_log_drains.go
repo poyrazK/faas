@@ -229,6 +229,10 @@ func (s *server) createAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.appLogDrainSelfTargetProblem(r.Context(), app, req.TargetURL); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := validateAppLogDrainAuthHeader(req.AuthHeader); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -372,6 +376,10 @@ func (s *server) updateAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 			api.WriteProblem(w, prob)
 			return
 		}
+		if prob := s.appLogDrainSelfTargetProblem(r.Context(), app, targetURL); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
 		if prob := resolveAndCheckEgress(r.Context(), targetURL); prob != nil {
 			api.WriteProblem(w, prob)
 			return
@@ -512,4 +520,39 @@ func appLogDrainHealthResponse(health state.AppLogDrainHealth) api.AppLogDrainHe
 		LastError:             api.SanitizeAppLogDrainHealthError(health.LastError),
 		UpdatedAt:             api.FormatAlertTime(health.UpdatedAt),
 	}
+}
+
+// appLogDrainSelfTargetProblem refuses a drain that delivers to the app it
+// drains: each delivery is a request to the app, whose log lines are drained
+// again, so the app never idles. Hunt 32 H32-52 saw 3,578 deliveries and an
+// instance that never parked until the drain was deleted.
+func (s *server) appLogDrainSelfTargetProblem(ctx context.Context, app state.App, targetURL string) *api.Problem {
+	// An unparsable URL is refused by the target validation; it has no
+	// host to compare here.
+	host := ""
+	if parsed, err := url.Parse(targetURL); err == nil {
+		host = strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	}
+	if host == "" {
+		return nil
+	}
+	domains := hostidentity.Configured()
+	self := host == strings.ToLower(app.Slug)+"."+domains.Apps
+	if canonical, ok := domains.CanonicalAppHost(host); ok && canonical == strings.ToLower(app.Slug)+"."+domains.Apps {
+		self = true
+	}
+	if !self {
+		if custom, err := s.store.ListDomainsForApp(ctx, app.ID); err == nil {
+			for _, d := range custom {
+				if strings.EqualFold(strings.TrimSuffix(d.Domain, "."), host) {
+					self = true
+					break
+				}
+			}
+		}
+	}
+	if !self {
+		return nil
+	}
+	return api.ErrAppLogDrainInvalid("a log drain cannot deliver to the app it drains: each delivery is a request whose log lines would be drained again, so the app would never idle")
 }

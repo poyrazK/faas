@@ -64,8 +64,9 @@ bound by the safe-rollout journey.
 `COVERAGE.md` maps every GA capability in `docs/ga-capability-inventory.md`
 to the journeys and steps that test it, and lists what is not covered.
 `scripts/e2e-journeys.sh --list` prints the journeys; `--github-repo`
-enables `TestGitHubDeploys` against a fixture repository the account's
-GitHub App installation can see (e.g. `poyrazK/gregale-e2e-fixture`).
+enables `TestGitHubDeploys` and `TestPreviewDatabases` against a fixture
+repository the account's GitHub App installation can see (e.g.
+`poyrazK/gregale-e2e-fixture`).
 `--github-functions-repo` enables `TestFunctionsProjectFromGitHub`, which
 deploys a functions project from a second, dedicated fixture repository and
 rewrites its `gregale.yaml` and `functions/` on `main`; it also skips until

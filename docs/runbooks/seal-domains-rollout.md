@@ -1519,8 +1519,43 @@ Rollback: set both back to `false` and converge; the role removes the
 drop-in. Nothing stored changes in this step.
 
 With 4g, 6e, 7e, 9e (for s3-gatewayd on compute) and 11e done, no compute
-unit reads `fleet.age`. Node join still installs it until a later change
-stops that.
+unit reads `fleet.age`.
+
+### 11f. Remove the fleet key from the compute nodes
+
+Go on once every compute host has converged with 4g, 6e, 7e, 11e (and 9e
+when s3-gatewayd runs on compute) and its units have restarted: check
+`/run/credentials/` of `faas-schedd`, `faas-imaged` and
+`faas-gatewayd-internal` on each host, and that every vmmd reports
+`faas_seal_domain_legacy_identities 0`. Add to the compute variables
+(`COMPUTE_ANSIBLE_VARS_B64` in CD):
+
+```yaml
+faas_compute_fleet_key_retired: true
+```
+
+Node join and the compute converge refuse it unless every compute contract
+switch is set. Then:
+
+- node join no longer stages `fleet.age` and removes it (and
+  `fleet.age.previous`) from the node;
+- the join's base pre-stage unit no longer loads it;
+- the join's `fleet-seal verify` gate runs with `--fleet-retired`: it proves
+  the cluster signing key with the control identity alone and keeps writing
+  `faas_fleet_seal_domain_ready` and `faas_fleet_cluster_signing_key_info`;
+- a compute converge without node join removes any copy left on the node.
+
+Check, on each host:
+
+```bash
+sudo ls /etc/faas/secrets/fleet.age*      # only fleet.age.pub
+sudo systemctl is-active faas-schedd faas-imaged faas-gatewayd-internal faas-vmmd
+```
+
+`FaasFleetSealDomainUnverified` stays quiet. Rollback: set the switch back to
+`false` and run node join for the host; it stages `fleet.age` again. The
+`FLEET_AGE_KEY` secret stays in the compute environment until the control
+plane retires the fleet key too.
 
 ## 12. Account seal domain
 

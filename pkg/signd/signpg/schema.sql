@@ -22,7 +22,15 @@ CREATE TABLE deployments (
     app_id   uuid  NOT NULL,
     status     text  NOT NULL,
     sidecars   jsonb,
-    deleted_at timestamptz
+    deleted_at timestamptz,
+    rootfs_key  text NOT NULL DEFAULT '',
+    rootfs_path text
+);
+
+CREATE TABLE deployment_sidecar_layers (
+    deployment_id uuid NOT NULL,
+    sidecar_name  text NOT NULL,
+    storage_key   text NOT NULL
 );
 
 CREATE TABLE deployment_image_preparations (

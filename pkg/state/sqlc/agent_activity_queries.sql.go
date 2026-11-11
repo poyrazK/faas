@@ -35,9 +35,9 @@ func (q *Queries) DeleteAgentActivityBefore(ctx context.Context, db DBTX, arg De
 }
 
 const insertAgentActivity = `-- name: InsertAgentActivity :exec
-INSERT INTO agent_activity (id, key_id, account_id, org_id, method, path, status, approval_id)
+INSERT INTO agent_activity (id, key_id, account_id, org_id, method, path, status, approval_id, reason)
 VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
-        $5, $6, $7::int, $8::uuid)
+        $5, $6, $7::int, $8::uuid, $9)
 `
 
 type InsertAgentActivityParams struct {
@@ -49,6 +49,7 @@ type InsertAgentActivityParams struct {
 	Path       string
 	Status     int32
 	ApprovalID pgtype.UUID
+	Reason     pgtype.Text
 }
 
 // ADR-20261107220000: one write request of an agent key.
@@ -62,12 +63,13 @@ func (q *Queries) InsertAgentActivity(ctx context.Context, db DBTX, arg InsertAg
 		arg.Path,
 		arg.Status,
 		arg.ApprovalID,
+		arg.Reason,
 	)
 	return err
 }
 
 const listAgentActivity = `-- name: ListAgentActivity :many
-SELECT id, key_id, account_id, org_id, method, path, status, approval_id, created_at
+SELECT id, key_id, account_id, org_id, method, path, status, approval_id, created_at, reason
 FROM agent_activity
 WHERE key_id = $1::uuid
   AND created_at >= $2::timestamptz
@@ -111,6 +113,7 @@ func (q *Queries) ListAgentActivity(ctx context.Context, db DBTX, arg ListAgentA
 			&i.Status,
 			&i.ApprovalID,
 			&i.CreatedAt,
+			&i.Reason,
 		); err != nil {
 			return nil, err
 		}

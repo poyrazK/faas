@@ -68,6 +68,21 @@ func (s *Store) RecordSignature(ctx context.Context, r signd.Record) (signd.Reco
 		NodeName: row.NodeName, Format: row.SignatureFormat}, false, nil
 }
 
+var _ signd.ResignStore = (*Store)(nil)
+
+// StoredLayers implements signd.ResignStore.
+func (s *Store) StoredLayers(ctx context.Context) ([]signd.StoredLayer, error) {
+	rows, err := s.q.StoredLayers(ctx, s.db)
+	if err != nil {
+		return nil, fmt.Errorf("signpg: stored layers: %w", err)
+	}
+	out := make([]signd.StoredLayer, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, signd.StoredLayer{DeploymentID: r.DeploymentID, StorageKey: r.StorageKey})
+	}
+	return out, nil
+}
+
 func pgUUID(s string) (pgtype.UUID, error) {
 	u, err := uuid.Parse(s)
 	if err != nil {

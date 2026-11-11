@@ -11,6 +11,42 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const agentApprovalUsedWithin = `-- name: AgentApprovalUsedWithin :one
+SELECT id FROM agent_approval_requests
+WHERE key_id = $1::uuid
+  AND method = $2
+  AND path = $3
+  AND body_sha256 IS NOT DISTINCT FROM $4::bytea
+  AND status = 'consumed'
+  AND consumed_at > now() - $5::int * interval '1 second'
+ORDER BY consumed_at DESC
+LIMIT 1
+`
+
+type AgentApprovalUsedWithinParams struct {
+	KeyID         pgtype.UUID
+	Method        string
+	Path          string
+	BodySha256    []byte
+	WindowSeconds int32
+}
+
+// ADR-20261111150000: the key's approval with the same binding that was first
+// used within the window, newest use first. A windowed rule lets it cover
+// the same request again until the window closes.
+func (q *Queries) AgentApprovalUsedWithin(ctx context.Context, db DBTX, arg AgentApprovalUsedWithinParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, agentApprovalUsedWithin,
+		arg.KeyID,
+		arg.Method,
+		arg.Path,
+		arg.BodySha256,
+		arg.WindowSeconds,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const claimAgentApprovalNotifications = `-- name: ClaimAgentApprovalNotifications :many
 UPDATE agent_approval_notifications n
 SET lease_until = now() + $1::int * interval '1 second'
@@ -128,7 +164,7 @@ SET status = $1, decided_by = $2::uuid, decided_at = now(),
     decision_note = $3
 WHERE id = $4::uuid AND status = 'pending' AND expires_at > now()
 RETURNING id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
-          created_at, decided_at, consumed_at, expires_at, decision_note
+          created_at, decided_at, consumed_at, expires_at, decision_note, reason
 `
 
 type DecideAgentApprovalParams struct {
@@ -165,6 +201,7 @@ func (q *Queries) DecideAgentApproval(ctx context.Context, db DBTX, arg DecideAg
 		&i.ConsumedAt,
 		&i.ExpiresAt,
 		&i.DecisionNote,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -270,7 +307,7 @@ func (q *Queries) GetAPIKeyApprovalCategories(ctx context.Context, db DBTX, keyI
 
 const getAgentApproval = `-- name: GetAgentApproval :one
 SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
-       created_at, decided_at, consumed_at, expires_at, decision_note
+       created_at, decided_at, consumed_at, expires_at, decision_note, reason
 FROM agent_approval_requests WHERE id = $1::uuid
 `
 
@@ -293,6 +330,7 @@ func (q *Queries) GetAgentApproval(ctx context.Context, db DBTX, id pgtype.UUID)
 		&i.ConsumedAt,
 		&i.ExpiresAt,
 		&i.DecisionNote,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -347,9 +385,10 @@ func (q *Queries) InsertAPIKeyApprovalCategories(ctx context.Context, db DBTX, a
 }
 
 const insertAgentApproval = `-- name: InsertAgentApproval :exec
-INSERT INTO agent_approval_requests (id, key_id, account_id, org_id, category, method, path, body_sha256, expires_at)
+INSERT INTO agent_approval_requests (id, key_id, account_id, org_id, category, method, path, body_sha256, expires_at, reason)
 VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
-        $5, $6, $7, $8::bytea, $9)
+        $5, $6, $7, $8::bytea, $9,
+        $10)
 `
 
 type InsertAgentApprovalParams struct {
@@ -362,6 +401,7 @@ type InsertAgentApprovalParams struct {
 	Path       string
 	BodySha256 []byte
 	ExpiresAt  pgtype.Timestamptz
+	Reason     pgtype.Text
 }
 
 func (q *Queries) InsertAgentApproval(ctx context.Context, db DBTX, arg InsertAgentApprovalParams) error {
@@ -375,6 +415,7 @@ func (q *Queries) InsertAgentApproval(ctx context.Context, db DBTX, arg InsertAg
 		arg.Path,
 		arg.BodySha256,
 		arg.ExpiresAt,
+		arg.Reason,
 	)
 	return err
 }
@@ -513,7 +554,7 @@ func (q *Queries) ListAgentApprovalChannelBindings(ctx context.Context, db DBTX,
 
 const listAgentApprovalsForKey = `-- name: ListAgentApprovalsForKey :many
 SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
-       created_at, decided_at, consumed_at, expires_at, decision_note
+       created_at, decided_at, consumed_at, expires_at, decision_note, reason
 FROM agent_approval_requests
 WHERE key_id = $1::uuid
 ORDER BY created_at DESC
@@ -550,6 +591,7 @@ func (q *Queries) ListAgentApprovalsForKey(ctx context.Context, db DBTX, arg Lis
 			&i.ConsumedAt,
 			&i.ExpiresAt,
 			&i.DecisionNote,
+			&i.Reason,
 		); err != nil {
 			return nil, err
 		}
@@ -563,7 +605,7 @@ func (q *Queries) ListAgentApprovalsForKey(ctx context.Context, db DBTX, arg Lis
 
 const listPendingAgentApprovals = `-- name: ListPendingAgentApprovals :many
 SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
-       created_at, decided_at, consumed_at, expires_at, decision_note
+       created_at, decided_at, consumed_at, expires_at, decision_note, reason
 FROM agent_approval_requests
 WHERE status = 'pending' AND expires_at > now()
   AND (account_id = $1::uuid OR org_id = ANY($2::uuid[]))
@@ -604,6 +646,7 @@ func (q *Queries) ListPendingAgentApprovals(ctx context.Context, db DBTX, arg Li
 			&i.ConsumedAt,
 			&i.ExpiresAt,
 			&i.DecisionNote,
+			&i.Reason,
 		); err != nil {
 			return nil, err
 		}
@@ -676,7 +719,7 @@ func (q *Queries) NotificationChannelsForAgentApproval(ctx context.Context, db D
 }
 
 const pendingAgentApprovalNotificationsForKey = `-- name: PendingAgentApprovalNotificationsForKey :many
-SELECT n.approval_id, n.review_url, r.category, r.method, r.path, r.expires_at
+SELECT n.approval_id, n.review_url, r.category, r.method, r.path, r.expires_at, r.reason
 FROM agent_approval_notifications n
 JOIN agent_approval_requests r ON r.id = n.approval_id
 WHERE n.key_id = $1::uuid AND n.state = 'pending'
@@ -691,6 +734,7 @@ type PendingAgentApprovalNotificationsForKeyRow struct {
 	Method     string
 	Path       string
 	ExpiresAt  pgtype.Timestamptz
+	Reason     pgtype.Text
 }
 
 // The key's notifications still waiting whose requests are still pending and
@@ -711,6 +755,7 @@ func (q *Queries) PendingAgentApprovalNotificationsForKey(ctx context.Context, d
 			&i.Method,
 			&i.Path,
 			&i.ExpiresAt,
+			&i.Reason,
 		); err != nil {
 			return nil, err
 		}
@@ -735,9 +780,9 @@ func (q *Queries) PruneAgentApprovals(ctx context.Context, db DBTX, keyID pgtype
 
 const recentAgentApprovalOutcome = `-- name: RecentAgentApprovalOutcome :one
 SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
-       created_at, decided_at, consumed_at, expires_at, decision_note
+       created_at, decided_at, consumed_at, expires_at, decision_note, reason
 FROM (
-    SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by, created_at, decided_at, consumed_at, expires_at, decision_note FROM agent_approval_requests
+    SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by, created_at, decided_at, consumed_at, expires_at, decision_note, reason FROM agent_approval_requests
     WHERE key_id = $1::uuid
       AND method = $2
       AND path = $3
@@ -786,6 +831,7 @@ func (q *Queries) RecentAgentApprovalOutcome(ctx context.Context, db DBTX, arg R
 		&i.ConsumedAt,
 		&i.ExpiresAt,
 		&i.DecisionNote,
+		&i.Reason,
 	)
 	return i, err
 }

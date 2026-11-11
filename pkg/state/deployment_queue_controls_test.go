@@ -169,14 +169,20 @@ func seedDeploymentWithPlan(t *testing.T, store *state.MemStore, source, plan st
 	return build.ID, dep.ID, app.ID
 }
 
-// TestStore_ClearDeployment_Pending_Happy and Live_Refuses pin the
+// TestStore_ClearDeployment_Pending_RefusedUntilCancelled and Live_Refuses pin the
 // memstore ClearDeployment happy + IDOR paths so pkg/state coverage
 // stays above the 70% floor. ADR-124: soft-delete stamps deleted_at +
 // deleted_by_principal; status is intentionally untouched.
-func TestStore_ClearDeployment_Pending_Happy(t *testing.T) {
+func TestStore_ClearDeployment_Pending_RefusedUntilCancelled(t *testing.T) {
 	store := state.NewMemStore()
 	ctx := context.Background()
 	_, depID, _ := seedDeploymentWithPlan(t, store, "/tmp/src.tar.gz", string(api.PlanPro))
+	if err := store.ClearDeployment(ctx, depID, "operator:test"); !errors.Is(err, state.ErrClearInFlightForbidden) {
+		t.Fatalf("ClearDeployment(in flight) = %v, want ErrClearInFlightForbidden", err)
+	}
+	if _, _, err := store.CancelDeploymentTx(ctx, depID, "operator:test", state.CancelReasonUser); err != nil {
+		t.Fatalf("CancelDeploymentTx: %v", err)
+	}
 	if err := store.ClearDeployment(ctx, depID, "operator:test"); err != nil {
 		t.Fatalf("ClearDeployment happy: %v", err)
 	}
@@ -233,6 +239,17 @@ func TestStore_ClearObsoleteDeployments_Happy(t *testing.T) {
 			t.Fatalf("CreateDeployment #%d: %v", i, err)
 		}
 		_ = dep
+	}
+	// Only terminal rows are obsolete; fail all three so the oldest, outside
+	// the two-newest window, is cleared.
+	all, err := store.ListDeploymentsForApp(ctx, appID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListDeploymentsForApp: %v", err)
+	}
+	for _, d := range all {
+		if err := store.UpdateDeploymentStatus(ctx, d.ID, state.DeployFailed, "test"); err != nil {
+			t.Fatalf("fail %s: %v", d.ID, err)
+		}
 	}
 	// olderThan = future (now + 1h) ⇒ all rows qualify
 	count, err := store.ClearObsoleteDeployments(ctx, appID, time.Now().Add(time.Hour))

@@ -14,7 +14,8 @@ import (
 // host-only intent cookie naming the account and starts the provider's
 // OAuth flow. When the provider calls back, the intent links whatever
 // identity it returned to that account, whatever its email, provided the
-// browser is still signed in to it. Without the intent the callback keeps
+// browser is still signed in to it. Starting a link needs a verified email
+// and fresh presence (ADR 20261111090000). Without the intent the callback keeps
 // its sign-in behaviour (match by subject, then by email).
 
 const (
@@ -39,6 +40,18 @@ func (s *server) oauthLinkStart(provider string) (start, callback string, ok boo
 func (s *server) dashboardLinkProvider(w http.ResponseWriter, r *http.Request) {
 	acct, ok := s.accountFormAccount(w, r, dashboardProviderLinkAction, dashboardProviderLinkCookie)
 	if !ok {
+		return
+	}
+	// A linked provider signs in by its own identity, so linking one is a
+	// sign-in method change: the address must be proven (an unverified
+	// account may be a squatter's) and the browser present (account-flow
+	// audit 2026-11-10, ADR 20261111090000).
+	if !acct.EmailVerified() {
+		s.audit.Emit(r.Context(), "account.sign_in_method_link_refused", &acct.ID, map[string]any{"reason": "email_unverified"})
+		redirectAccountError(w, r, "verify_email")
+		return
+	}
+	if !s.accountFormPresence(w, r, acct, "sign_in_method_link") {
 		return
 	}
 	provider := strings.ToLower(r.PathValue("provider"))

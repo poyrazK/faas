@@ -43,7 +43,7 @@
   - An npm package, and plan limits in `pkg/api/limits.go`.
   - Sandbox sessions become eligible for quiet pause between commands, which amends ADR-1151's exclusion of exec sessions.
   - **Root inside the guest.** Root needs a per-netns anti-spoofing rule and a guest kernel that cannot load modules (§10).
-  - **Preview URLs.** Previews need a separate registrable domain, per-port DNAT in each VM's netns, and a gateway route keyed by host name (§11).
+  - **Preview URLs.** Previews need a separate registrable domain, a vsock relay from vmmd to the guest port, and a gateway route keyed by host name (§11).
   - **The shim.** Two packages (TypeScript and Python), and a template import from `e2b.Dockerfile` (§12).
 - **Rejected alternatives:**
   - **Only running whole harnesses (ADR-20261027090010).** Sellers' loops live in their own backends.
@@ -150,7 +150,7 @@ Control-plane routes are served by apid and gated. Data-plane routes are served 
 | `network.mode` | Egress |
 |---|---|
 | `none` | None. The ADR-989 relay is available only if the agent version grants integrations |
-| `registries` (default) | Package registries and git hosts (npm, PyPI, crates.io, GitHub) on TCP 443, through an ADR-031 allowlist under ADR-361 |
+| `registries` (default) | Package registries and git hosts (npm, PyPI, crates.io, GitHub) on TCP 443, through a DNS-pinned name allowlist on ADR-373's DNS-gated egress under ADR-361 (step 6) |
 | `web` | General web, through the agent egress gateway and politeness proxy under the acceptable-use policy (ADR-20261027090014 §4). Tier 1 managed fetch and search is reachable through the relay in every mode |
 
 Model credentials never enter a session. The harness that calls the model runs outside it. Commands inside that need a model use the relay (ADR-20261027090010 §7).
@@ -179,7 +179,7 @@ RAM per session follows `AgentRunRAMMBMax`.
 
 ### 8. `GregaleSandboxClient` (OpenAI Agents SDK, TypeScript)
 
-- **Package.** `@gregale/agents-sandbox`, in the `sdk/node` workspace, with `@openai/agents` as a peer dependency pinned to tested versions. It is not exported or packed until launch (the gating rule).
+- **Package.** `@gregale/agents-sandbox`, in its own package `sdk/agents-sandbox` (amended 2026-11-05; first proposed inside the `sdk/node` workspace), with `@openai/agents-core` as a peer dependency pinned to tested versions. It is not exported or packed until launch (the gating rule).
 - **Interfaces.** It implements `SandboxClient` with `backendId: 'gregale'`, plus `create`, `delete`, `serializeSessionState`, `deserializeSessionState` and `resume`. It also implements `SandboxSession`.
 
 | SDK | Gregale |
@@ -251,8 +251,8 @@ RAM per session follows `AgentRunRAMMBMax`.
   - Guest-init's own ports (the relay on 2774, profiles on 9191, and the metadata, identity and tracing listeners) are refused.
 - **Path.**
   1. The upstream TLS edge sends the request to `gatewayd-public`, still the only public listener (ADR-070).
-  2. `gatewayd-public` passes it to `gatewayd-internal`, which routes by host label `<port>-<id>` to the owning node's vmmd, using the same sandbox-to-node map as the data plane.
-  3. In the VM's netns, a per-port DNAT rule forwards it to the guest at `10.0.0.2:<port>`. This generalizes `appPortDNATRules` (`pkg/netns/config.go`) from `:8080` to each exposed port, and keeps the identical inner network world (ADR-009).
+  2. `gatewayd-public` passes it to `gatewayd-internal`, which routes by host label `<port>-<id>` to the owning node's vmmd.
+  3. vmmd opens a `SandboxCall` `port_connect` to the guest, and guest-init connects to the port on loopback. The connection is carried over vsock as data frames, so no netns rule changes per port and the guest port is never reachable on the host's network. (Amended 2026-11-05 by the owner: this replaces the per-port DNAT first proposed here, and works in every network mode, `none` included.)
 - **Wake and billing.**
   - A request to a quiet-paused or frozen session resumes it, as a forwarded app request does (ADR-1151).
   - The request counts as activity for the idle timers.
@@ -292,10 +292,10 @@ RAM per session follows `AgentRunRAMMBMax`.
 | `betaPause`, `resume` | Not needed for idle time, which ephemeral sessions pause on their own (§5). Explicit long pauses need `persistent` sessions (ADR-20261027090014 §5) and fail with a clear error |
 | `files.watchDir`, Code Interpreter `runCode`, the Desktop SDK | Unsupported in this release. Each fails with an error naming the call and the Gregale alternative |
 
-- **Templates.** `gregale sandbox template build` accepts an `e2b.Dockerfile`, and reads the start and ready commands from `e2b.toml`.
+- **Templates.** `gregale sandbox template publish` accepts an `e2b.Dockerfile`, and reads the start and ready commands from `e2b.toml`.
   - It builds in a builder microVM (ADR-003).
-  - It runs the start command before the warm snapshot (ADR-20261027090015 §1), so sessions start ready.
-  - The result is a per-account seller image (ADR-20261027090010).
+  - It runs the start command before the warm snapshot (ADR-20261027090015 §1), so sessions start ready. *Amended in step 10 part three: the start command runs at each session boot, and the session is ready once the ready command passes.*
+  - The result is a per-account seller image (ADR-20261027090010). *As built, the image is the newest finished build of the template's build app.*
 - **Documented differences:**
   - default egress is `registries`, not open internet;
   - mail ports are always blocked;
@@ -328,7 +328,7 @@ What sandbox users run today, and where it lands on Gregale.
 **Migration path:**
 
 - **Swap the client.** Use `GregaleSandboxClient` (OpenAI Agents SDK) or the E2B shim.
-- **Rebuild the templates** with `gregale sandbox template build`.
+- **Rebuild the templates** with `gregale sandbox template publish`.
 - **Choose a network mode per workload.** Most need `registries` or `web`.
 - **Move persisted workspaces** with `workspace:hydrate`.
 - **Compare before switching.** A pricing calculator reads a provider's usage export (sandbox-hours, vCPU, GB) and shows the Gregale bill, where waiting time is free. A shadow mode runs the same tasks on both providers and compares latency and cost.
@@ -353,15 +353,239 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
 
 1. This ADR. The owner confirmed §5's billing rule (D15); the financial-model update is still owed.
 2. Migrations and the apid `sandboxes` domain: intents, tokens, gating.
+
+   **Built (2026-11-02), on a local branch.**
+   - **`sandbox_sessions`** (migration `20261110153935524`, expand) holds the intent:
+     - §1's states, with CHECKs, and `kind`;
+     - the preset, RAM, network mode, idle timeout, end and labels;
+     - an outcome, `close_requested_at`, and `closed_at` on terminal states only;
+     - lease and placement columns for agentd (step 5).
+   - **Routes** (`pkg/apid/sandboxes`), under `agents`: `POST /v1/sandboxes`, `GET /v1/sandboxes` (filtered by state and by a label selector, newest first), and `GET`, `PATCH` and `DELETE /v1/sandboxes/{id}`.
+     - Create takes a preset, `kind`, `ram_mb`, `tenant`, `network.mode`, `idle_timeout_s`, `lifetime_s` and labels.
+     - The defaults are the preset's RAM within `AgentRunRAMMBMax`, `ephemeral`, `registries`, `SandboxIdleExpirySec` and the plan's `SandboxMaxLifetimeSec`.
+     - These are refused with `sandbox_unsupported`, naming the field: `kind: persistent`; `network.mode: web`, until the egress gateway; and `image`, `manifest`, `snapshot_id`, `env` and `ports`, until their steps.
+     - Free creates none, since its `SandboxMaxLifetimeSec` is 0.
+     - Queued sessions share `AgentRunQueuedPerAccount` with queued runs, counted under the account's agent lock. Concurrency stays agentd's, at claim time.
+     - Closing a queued session closes it. A claimed one gets `close_requested_at`, which agentd acts on (step 5).
+   - **Tokens** (`pkg/sandboxtoken`) are signed and bound to the session, account and tenant. They were HMAC-signed (`sbx1`) as first built; step 5 moved them to Ed25519 (`sbx2`).
+     - A token lives `SandboxTokenTTLSec` (900 s), never past the session's end.
+     - Create and every read of a live session return a fresh one, so reading needs `deploy:write`; the list carries none.
+     - The key derives from apid's session key. The data plane (step 4) verifies tokens without reading Postgres, and treats a session it no longer routes as revoked.
+   - **Limits.** §7's table is in `pkg/api/limits.go`, with `SandboxIdleFreezeSec`, `SandboxIdleExpirySec` and `SandboxTokenTTLSec`.
 3. guest-init sandbox server mode: exec (with `run_as` and background handles), pseudo-terminal, files, archives. The netns anti-spoofing rule and a guest kernel that cannot load modules come with the root metal tests (§10).
+
+   **Built, part one (2026-11-02), on a local branch: the guest server.**
+   - **Protocol** (`pkg/sandboxproto`), vsock port 1035. Each operation is one connection: a request frame, then any data, stdin, resize or kill frames from the host, and stream or data frames back, ending in one result or error frame. The framing is agentrunproto's.
+     - The operations are `exec`, `exec_list`, `exec_output` and `exec_kill`; `file_read`, `file_write`, `file_list`, `file_stat`, `file_remove`, `file_mkdir` and `file_rename`; and `archive_create` and `archive_extract`.
+     - The guest refuses an invalid request before acting on it. Its error codes are stable (`not_found`, `outside_workspace`, `too_large`, …), and it never reports internal details.
+   - **Mode.** `/etc/faas/sandbox.json` (kind `sandbox`) selects sandbox mode, alone. guest-init brings up loopback and the relay and prepares `/workspace` and `/home/app` (uid 1000). It listens before the resume hook, so a preset snapshot can be captured there, and holds the restore-reseed contract like an agent run. It then serves up to 64 operations at once until vmmd stops the VM.
+   - **Commands** run as `app` or, with `run_as: root`, as root, in their own process group, or their own session on a terminal.
+     - A foreground command streams its output within `max_output_bytes`, shared by both streams, and drains the rest.
+     - Its timeout sends SIGTERM, then SIGKILL after 2 s. A kill frame, or the host closing the connection, kills it.
+     - A grandchild that keeps its output open delays the result by at most 500 ms.
+     - A background command returns a handle and keeps the latest `max_output_bytes` of each stream, read by offset. At most 32 are kept, and finished ones are forgotten first.
+     - As PID 1, guest-init runs a single `wait4(-1)` reaper that hands each command its own exit.
+   - **Files and archives** resolve every path inside the workspace with `os.Root`, so an absolute path elsewhere, `..`, or a link that leaves the workspace is `outside_workspace`.
+     - What the files API and extraction create is owned by `app`.
+     - Archives are tar.gz, with links kept as links, never followed. Creation is capped in bytes, and extraction in entries and unpacked bytes.
+   - **Not yet:** the anti-spoofing rule, the module-less guest kernel and the §10 root metal tests (part two), and the workspace scratch drive, which vmmd attaches in step 4.
+
+   **Built, part two (2026-11-05), on a local branch.**
+   - **No kernel code.** Every guest kernel build turns off `CONFIG_MODULES` and `CONFIG_KEXEC_FILE` (`CONFIG_KEXEC` is already off): the release build (`scripts/build-firecracker-kernel.sh`), which checks again after `olddefconfig` and refuses a config that builds anything as a module, as well as the Ansible fallback build and the packer build.
+     - Firecracker's pinned 6.18 config builds nothing as a module, so no driver is lost.
+     - The kernel digest changes, so runtime snapshots taken on the old kernel go stale. Apps re-snapshot lazily through cold boot (ADR-005).
+   - **Anti-spoofing.** With `netns.Config.GuestMAC` set, a `netdev` table (`faas_guard`) hooks `tap0`'s ingress at priority -500, ahead of NAT and every other rule. It accepts only IPv4 from `10.0.0.2` and ARP for `10.0.0.2`, both from that MAC, and counts and drops everything else, IPv6 included (`faas_guest_spoof`).
+     - Sandbox sessions in `registries` mode set the fixed MAC `netns.SandboxGuestMAC` (`06:00:0a:00:00:02`, identical across VMs like the guest IP, ADR-009), which Firecracker gives the guest as `guest_mac`.
+     - `none` sessions have no network interface.
+     - App, job and agent-run VMs get no guard yet. Their MAC is Firecracker's random choice, and restored snapshots carry whichever one they booted with, so a MAC rule would cut off every existing snapshot. Fixing their MAC first is a follow-up.
+   - **Metal test** (`TestMetalSandboxRootStaysInsideTheVM`, run by `scripts/experiments/agent-runs/metal/run_sandbox_root_metal.sh` against a kernel built by the release script for the host's Firecracker). As root, a registries session:
+     - finds `init_module`, `finit_module` and `kexec_file_load` answering `ENOSYS`;
+     - has a spoofed source address and a spoofed MAC dropped and counted by the guard, while its ordinary traffic passes;
+     - cannot connect to metadata, the bridge's SSH, RFC1918 or mail ports, even on an address the registries resolver answered, which stays open on 443;
+     - stays under `memory.max` when it allocates past its RAM: the guest's own OOM killer stops the process at a peak just under the limit, and the session keeps running.
+     - Passed on gregale-internal-test-1 (Firecracker 1.7.0, Linux 6.1.134 built by the release script with these edits; leakcheck clean before and after). Running ordinary traffic through it shows no false drops.
+   - **Not yet:**
+     - `sudo apk add` in registries mode needs gatewayd-internal's registries resolver, so it belongs to the full-stack native lane;
+     - the agent base has no `sudo` for `app` yet (§10), so `run_as: root` is the way to get root.
 4. vmmd `SandboxSession` and gateway routing, on the ADR-1037 transport.
+
+   **Built (2026-11-02), on a local branch.** Nothing is reachable until step 5 boots sessions.
+   - **vmmd `SandboxCall`** is a bidi stream that carries one sandboxproto operation, matching the guest's one connection per operation. §4 named it `SandboxSession`.
+     - The first message names the instance and the session and carries the request. vmmd validates the request before it dials.
+     - vmmd marks the instance active for the whole call, so ADR-1151 cannot quiet-pause it mid-operation, and resumes it if it is quiet-paused. A frozen instance is `Unavailable`.
+     - It dials vsock port 1035 only on a live instance whose fcvm `SandboxID` matches, which step 5's boot path sets. Anything else is `NotFound`.
+     - It relays the host's data, data-end, stdin, resize and kill frames to the guest and drops every other frame type. It relays the guest's frames back until the result or error. It parses nothing in them.
+     - `SandboxCall` is a local data method (ADR-20261030230157). A certificate caller must be gatewayd-internal, by the caller policy of bug hunt H17.
+   - **Placement rides in the token.** A read of a placed session mints a token with its node and instance, plus the plan's command timeout and output caps. Before placement the token routes nowhere: the data plane answers `409 sandbox_not_ready` with `Retry-After: 1`, and the caller reads the session again.
+   - **Routes** (`pkg/gateway/sandboxdata`) are served by gatewayd-internal, ahead of the apid proxy. gatewayd-public treats `api.IsSandboxDataPath` (`exec`, `files`, `stdin` and `workspace` under a session; not `ports`) as compute-owned. The routes:
+     - `POST …/exec` takes a command line, which runs under `/bin/sh -c`, or an argument vector. It answers JSON, or SSE (`stdout`, `stderr`, then `result` or `error`) under `Accept: text/event-stream`, or `202 {handle}` for a background command. The timeout defaults to 60 s within the plan cap. A value above a cap is refused with `agent_limit`, carrying the limit and the observed value. `tty` is `sandbox_unsupported` until the interactive attach.
+     - `GET …/exec`, `GET`/`DELETE …/exec/{handle}`.
+     - `GET`/`PUT …/files?path=`, `…/files:list`, `…/files:stat`, and `POST …/files:remove`, `:mkdir`, `:rename`.
+   - **Credentials.** The token is the only credential. The gateway verifies it with apid's public key (see step 5's token keys), so no call reads Postgres. A missing, forged, expired or other-session token answers `404`, like an absent route.
+   - **Problem codes.** Guest refusals get stable codes of their own: `sandbox_entry_not_found`, `sandbox_path_exists`, `sandbox_path_outside_workspace`, `sandbox_not_a_directory`, `sandbox_is_a_directory`, `sandbox_directory_not_empty`, `sandbox_too_large`, `sandbox_busy` and `sandbox_command_start_failed`. A session no longer on its node is `sandbox_not_found`.
+   - **Not yet:**
+     - the terminal (`stdin`, the WebSocket), which comes with the interactive attach; the archive routes came with step 7;
+     - the workspace scratch drive and setting `SandboxID`, which come with step 5's boot path;
+     - a token check in vmmd as well, like attach's, which comes with step 5: the boot path can hand vmmd a key derived for that session alone;
+     - the memory integral, which comes with step 11;
+     - OpenAPI and SDK entries, which come with step 9.
 5. agentd session lifecycle (idle timers, freezing, expiry) and schedd placement from preset snapshots, with teardown.
+
+   **Built, part one (2026-11-04), on a local branch.** The session lives for exactly one stream: agentd → schedd `RunSandbox` → vmmd `RunSandbox`. A restart of agentd, schedd or vmmd ends the session's VM, and agentd's sweep fails the session with `lease_lost`; ephemeral sessions accept that. Three switches gate it, each off by default: `FAAS_AGENTD_SANDBOXES`, `FAAS_SCHEDD_SANDBOXES` (next to `FAAS_SCHEDD_AGENT_RUNS`) and vmmd's agent-runs switch.
+   - **agentd** (`pkg/agentd/sandboxes.go`) has its own slots, 64 by default.
+     - It claims a queued session under a lease and opens a stream. On placement it sends proceed. On boot it records `node_id` and `instance_id` and marks the session `ready`, so the next read mints a token that reaches the VM.
+     - Each lease renewal (every third of the TTL) also writes the last call vmmd reported to `last_activity_at`, so calls cost no write each. The renewal returns apid's close request and changes to the timeouts.
+     - Timers:
+       - after `SandboxIdleFreezeSec` without calls it asks for a freeze (state `frozen`);
+       - after the session's idle timeout it closes the session as `expired`, outcome `idle`;
+       - at the session's end it closes it as `expired`, outcome `lifetime`;
+       - on a close request it closes it as `closed`.
+     - Failures:
+       - a refusal or broken transport before boot queues the session again;
+       - a plan refusal fails it as `rejected`;
+       - a VM lost after boot fails it as `vm_lost`.
+     - The sweep queues expired `starting` sessions again, fails expired live ones with `lease_lost`, and expires queued sessions past their end.
+   - **Shared limit.** `AccountAgentLoad` counts live sessions (`starting`, `ready`, `frozen`) with live runs, so the two share `AgentRunConcurrentPerAccount` (§7).
+   - **schedd** (`pkg/sched/sandbox_runs.go`) admits a session the way `AgentRunner` admits runs: `KindAgentRun` on the agent pool, instance `sandbox-<id>`, with the plan's agent-run vCPU. It holds the reservation for the call, relays freeze and close, and keeps no session state.
+   - **vmmd** (`pkg/vmmdgrpc/sandbox_run.go`; schedd's certificate only):
+     - `fcvm.WakeSandbox` cold-boots the agent base with the new platform sandbox layer (`base/sandbox-layer-v1-<arch>.ext4`, holding `/etc/faas/sandbox.json`, published by imaged beside the agent layer). It sets `Instance.SandboxID` and returns once the guest's sandbox port answers.
+     - It reports calls at most once a second (`calls_in_flight`, `last_call_ended`). It freezes in place without reclaim when asked; a call in flight refuses the freeze.
+     - It destroys the VM on close and whenever the stream ends.
+     - `SandboxCall` thaws a frozen session in place, waiting out a freeze in progress, and reports `thawed`. A call never waits on schedd or the database.
+     - Session VMs are carved out of the guards that keep execution-only VMs from being quiet-paused (§5, 2 s between calls) and frozen; `ExecuteExecution` and `RunAgent` refuse them.
+   - **Token keys (owner decision, 2026-11-04).** ADR-20261102191500 took the session key off every gateway, and compute nodes had held per-host session keys anyway, so step 4's HMAC tokens would not have verified on another node.
+     - Tokens are now Ed25519-signed (format `sbx2.<key id>.<payload>.<signature>`). apid derives the private key from its session key.
+     - Gateways fetch the public keys over the Auth gRPC (`SandboxTokenKeys`, on the channel `VerifySession` uses). They refetch every 5 minutes, and every 5 s until the first answer.
+     - A gateway verifies tokens and cannot mint one. Until its keys arrive it refuses every token like an absent route.
+     - Rotation follows apid's session key: a token signed under a retired key fails at the next refetch.
+   - **Not yet:**
+     - ~~preset snapshots for sessions (every session cold-boots)~~: built with template warm snapshots (step 10, part five);
+     - the workspace scratch drive (the workspace lives on drive1's 512 MB);
+     - memory reclaim on freeze;
+     - backoff for a session that fails to boot again and again;
+     - metrics.
 6. Network modes `none` and `registries`.
+   - **As built (local branch, no PR yet).** The mode rides the session from its row to the VM: agentd's claim → schedd `SandboxRunStart.network_mode` → vmmd `RunSandboxStart.network_mode` → `fcvm.SandboxWakeRequest.Network`. An empty mode, from a daemon of the previous release, is `none`. `web` is refused at schedd, vmmd and fcvm.
+   - **`none`** boots without a network, as step 5 did.
+   - **`registries`** uses a DNS-pinned allowlist on ADR-373's DNS-gated egress, not an ADR-031 CIDR list: registry CDNs change addresses too often for a CIDR list.
+     - The VM gets the ordinary netns and `tap0` and stays execution-only. `Lease.AgentSized` keeps agent-run CPU sizing for it.
+     - Egress: the DNS gate, new TCP on 443 only, and the plan's connection rates. The VM reaches no bridge service port, private service address, managed-database route or SMTP.
+     - The guest's DNS is pinned to a third bridge resolver on port 5356 (`gateway.SandboxRegistriesDNSPort`, `netns.SandboxRegistriesDNSPort`). It forwards one A or AAAA question for a name in `api.SandboxRegistryDomains` or a subdomain of one, and answers REFUSED to every other query, private service names included.
+     - Only answers to allowed names reach the egress gate. vmmd checks the name again (`AllowResolvedEgressRequest.name`): a registries VM admits no address for any other name, or for an empty one.
+     - vmmd refuses to boot a registries session when DNS-gated egress is switched off.
+   - **Domains.** `api.SandboxRegistryDomains` covers:
+     - npm and Yarn;
+     - PyPI;
+     - crates.io;
+     - the Go module proxy and checksum database;
+     - GitHub, including `githubusercontent.com`;
+     - the Alpine, Debian and Ubuntu mirrors over HTTPS.
+   - **Known gaps:**
+     - An allowed name on a shared CDN opens that CDN address to every host it serves, so domain fronting through it is possible.
+     - Mirrors that serve only port 80 are unreachable. This affects many apt mirrors, so `apt` needs HTTPS sources.
+     - Private registries and custom git hosts are not yet configurable.
 7. Workspace persist and hydrate.
-8. Exposed ports and preview URLs: the preview domain, per-port DNAT, the gateway host route, tokens, and rate limits (§11).
+   - **As built (local branch, no PR yet).** Two switches gate it: agentd's `FAAS_AGENTD_SANDBOX_WORKSPACES` (next to `FAAS_AGENTD_SANDBOXES`), and vmmd's artifact store, which every node has.
+   - **`POST …/workspace:hydrate?path=`** (gatewayd-internal) unpacks the uploaded tar.gz into the workspace through `SandboxCall` `archive_extract`. The unpacked size is capped at the plan's `SandboxWorkspaceMaxMB`, which the session token now carries (`wb`), and the entry count at `SandboxArchiveEntriesMax`. A token minted before the cap was added gets `409 sandbox_not_ready`, so the caller reads the session again.
+   - **`POST …/workspace:persist`** (body `{path?}`) reaches the node's vmmd through `PersistSandboxWorkspace`, a gateway-only local data method. Before writing, vmmd asks agentd for a reservation over the session's `RunSandbox` stream: `persist_requested` → `persist_grant`. schedd relays each message both ways and keeps no state.
+     - **Reservation.** agentd holds the account's agent lock and inserts a pending `sandbox_workspace_snapshots` row (migration `20261110153935557`, expand). The reservation is whatever is left of `SandboxSnapshotBytesPerAccount`, at most `SandboxWorkspaceMaxMB`. Pending rows count their full reservation against the quota, and ready rows count their actual size. A full quota is refused as `agent_limit`.
+     - **Write.** vmmd streams the guest's `archive_create` straight into the artifact store at `agents/workspaces/<account>/<snapshot>.tar.gz`, then reports `persist_done`. agentd marks the row ready with its size and digest, and only for a reservation this session's stream made. agentd answers `persist_recorded`.
+     - **Answer.** vmmd answers `{snapshot_id, bytes, sha256, entries, expires_at}` only after the snapshot is recorded, so every ID a caller holds can be used. If the write fails or the snapshot is not recorded, vmmd deletes the archive and tells agentd to drop the reservation.
+   - **Starting from a snapshot.** `POST /v1/sandboxes` takes `snapshot_id`, which must be the account's own, ready, unexpired and not being deleted; otherwise it is `404 sandbox_snapshot_not_found`.
+     - The claim carries the archive's key (`workspace_key` on both starts). vmmd unpacks it before `booted`.
+     - A snapshot deleted after the create, or an archive that cannot be unpacked, fails the session as `workspace_unavailable`. vmmd returns `sandbox_workspace_unavailable`, which schedd maps to `DataLoss`. The session is never started empty and never requeued. vmmd also refuses a key outside the session account's prefix.
+   - **Snapshots API** (apid, agents capability): `GET /v1/sandbox-snapshots` (newest first, paged with `before`), `GET` and `DELETE /v1/sandbox-snapshots/{id}`. A delete sets `delete_requested_at`, and the snapshot is hidden and unusable from then on.
+   - **Retention.** agentd's sweep deletes the archive first, then the row, for three kinds of snapshot: those past `SandboxSnapshotRetentionDays`, those apid was asked to delete, and pending ones older than `SandboxSnapshotPendingSec` (1 h). The pending timeout outlasts `SandboxPersistTimeoutSec` (30 min). A delete that fails keeps the row, so the next sweep retries it.
+   - **Known gaps:**
+     - vmmd's artifact store is the node's read-through cache, so a persisted or restored archive also lands in that node's cache until LRU eviction.
+     - A 20 GB archive streams for minutes; gatewayd-internal's response timeouts apply to persist and hydrate just as they do to long `exec` calls.
+     - Snapshot bytes are not billed yet (step 11).
+     - `sandbox_workspace_archive_bytes` is not emitted yet.
+8. Exposed ports and preview URLs: the preview domain, the vsock relay, the gateway host route, tokens, and rate limits (§11).
+   - **As built (local branch, no PR yet).** The owner chose three things on 2026-11-05: the preview domain is configuration, the transport is a vsock relay, and routing is a cached lookup.
+   - **Domain.** `FAAS_SANDBOX_PREVIEW_DOMAIN` (apid and gatewayd-internal). While it is unset, previews are off: the port routes answer `503 sandbox_previews_off`, and gatewayd-internal serves no preview hosts. The domain's name is still open question 3. So are its wildcard DNS, the wildcard certificate at the upstream TLS edge, and its Public Suffix List entry.
+   - **Store.** `sandbox_ports(sandbox_id, account_id, port, visibility)` (migration `20261110153935586`, expand). apid is its only writer. A port is added under the live session's row lock, within the plan's `SandboxExposedPortsMax`, and exposing an exposed port again changes its visibility. Rows go when the session row goes.
+   - **API** (apid, agents capability): `POST /v1/sandboxes/{id}/ports {port, visibility}`, `GET …/ports`, `GET` and `DELETE …/ports/{port}`. A port's view carries `url`, and for a private port of a live session a preview token (`SandboxPreviewTokenTTLSec`, 1 h, at most the session's lifetime). The list carries no tokens. Ports in `SandboxReservedPorts` are refused. `public` needs `SandboxPublicPreview`; without it the request gets `402 plan_feature_gated`. `ports` at create is not built.
+   - **Tokens.** A preview token is its own format (`sbxp1`), signed by the same apid Ed25519 key, and grants one port of one session. A data-plane verifier refuses one by its prefix, old gateways included, and the preview handler refuses data tokens.
+   - **Guest.** `port_connect {port}` dials `127.0.0.1`, then `::1`, within 2 s. A port nothing listens on is `port_closed`, which the gateway answers as `502 sandbox_port_closed`. Each connection holds one of guest-init's operation slots.
+   - **Gateway** (`pkg/gateway/sandboxpreview`, carved out ahead of the apid proxy by host):
+     - The route (the session's account, plan, state, node and instance, and its ports) is read from Postgres once per `RouteCacheTTL` (5 s), misses included, with one read per session in flight. A removed port or an ended session stops answering within 5 s.
+     - Unknown hosts, unexposed ports, ended sessions and missing or wrong tokens answer 404. `?gregale_preview_token=` sets the host-only `__Host-gregale_preview` cookie and 303s to the URL without it.
+     - The preview cookie, a bearer preview token and `X-Faas-*`/`X-Gregale-*` headers are stripped. The app's own `Authorization` and cookies pass through. The `Host` header stays the preview host, with `X-Forwarded-Proto: https`.
+     - Each request is its own guest connection, without keep-alive, so no idle pooled connection keeps the session busy. WebSocket and other upgrades are spliced over the same call.
+     - Per session: `SandboxPreviewRequestsPerSec` (burst 2×) and `SandboxPreviewConnsPerSession` (32) open connections.
+   - **Wake.** vmmd's `SandboxCall` already thaws a frozen session and counts the call as activity while it is open, so an open WebSocket keeps the session from idling.
+   - **Known gaps:**
+     - The path through `gatewayd-public` and the upstream TLS edge for a preview domain is not yet tested end to end.
+     - The metal tests listed in §11 are not run yet.
+     - `sandbox_ports_open` and `sandbox_preview_requests_total` are not emitted yet.
+     - The `GregaleSandboxClient` and the shim (steps 9 and 10) do not call the port routes yet.
 9. `GregaleSandboxClient` (with `resolveExposedPort`) and the PR-triage example.
+   - **As built (local branch, no PR yet).** `@gregale/agents-sandbox` lives in its own private package, `sdk/agents-sandbox`, not inside `sdk/node`, so the Node SDK takes no `@openai/agents` peer dependency. It implements `SandboxClient` and `SandboxSession` from `@openai/agents-core/sandbox` 0.21.0, which is pinned as the peer dependency. Its tests run under `make test-agents-sandbox`, which no CI job runs yet.
+   - **Interface.** The Agents SDK's remote-session base class (`@openai/agents-extensions`, used by E2B, Modal and the others) is not exported, so the session implements the public interface directly. The client leaves `supportsDefaultOptions` unset, like the other remote providers: the SDK then passes no default `local` snapshot, and any other core snapshot is refused in favour of `persistSnapshot()` and `snapshotId`.
+   - **Commands.** The shell tool's `execCommand` starts a background command and polls its output for up to `yieldTimeMs` (10 s by default). A command still running keeps an SDK session ID, and `writeStdin` with empty `chars` polls it. `supportsPty()` answers true so the SDK offers `write_stdin` for polling, but input is refused, because Gregale has no stdin route yet. `tty` is refused, and so is `runAs` other than `app` or `root`.
+   - **Manifest.** `file`, `dir`, `local_file` and `local_dir` entries go up in one `workspace:hydrate` tar. A `git_repo` is fetched in the guest (`git fetch --depth 1 origin <ref>`, so `refs/pull/N/head` works) and needs a network mode that reaches its host. The manifest's environment is sent with every command and is never serialized. Mounts, users, groups, path grants, entry groups and a root other than `/workspace` fail before any session is created.
+   - **State and tokens.** `serializeSessionState` is `{sandboxId, apiBase}`. `deserializeSessionState` and `resume` refuse a state for another API origin, so a forged state cannot send the API key elsewhere. The session token is re-minted from the API key near expiry, and once when the data plane rejects it. A private port's preview token is returned in the endpoint's `query` and is never stored in `state.exposedPorts`.
+   - **Workspace.** `persistWorkspace` builds a tar in the guest and downloads it through `…/files`; `hydrateWorkspace` gzips the tar and uploads it. `persistSnapshot()` is Gregale's server-side `workspace:persist`.
+   - **Tested.** There are unit tests against a fake API, a real `SandboxAgent` run through the SDK's runner with `ScriptedModel`, and the PR-triage example (`examples/pr-triage.ts`) run the same way.
+   - **Not tested against a deployed Gregale**, where sandbox sessions are switched off. There is no journey for it yet. A journey needs the switches on in a test environment.
 10. The E2B-compatible shim, template import, and a migration guide with the coverage table (§12, §13).
+   - **As built, part one (local branch, no PR yet).** `@gregale/sandbox-e2b` (TypeScript, private) lives in `sdk/sandbox-e2b` and has no runtime dependencies. Its tests run under `make test-sandbox-e2b`, which no CI job runs yet.
+     - It is written from the E2B SDK's public interface (`e2b` 2.63.0: method names and option shapes) and copies no E2B code. The error classes keep E2B's names, so existing `catch` code still matches.
+     - **Sandbox:** `create` (template = preset, `base` = the default), `connect`, `list`, `kill`, `getInfo`, `setTimeout`, `isRunning` and `createSnapshot` (`workspace:persist`).
+     - **Commands:** `run` in the foreground (JSON, or SSE when `onStdout` or `onStderr` is set, with `CommandExitError` on a non-zero exit) and in the background (a handle polled for output). `list`, `kill` and `connect` work with numeric pids, which the client maps to Gregale handles.
+     - **Files:** the files API inside `/workspace`. Reads, writes, `exists`, `makeDir` and `remove` on paths outside it go through commands and are capped at 256 KB.
+     - **Ports:** `getHost(port)` is synchronous in E2B, so it answers only for ports exposed at `create` (`ports`) or with `await exposePort(port)`, and `previewToken(port)` returns a private port's token.
+     - **Refused with `UnsupportedError`,** naming the call and the alternative: `pause` and `betaPause`, `pty`, stdin, `watchDir`, MCP and custom templates. `envs` go with every command, because create takes no session env yet. `allowInternetAccess: true` asks for `web`, which apid still refuses.
+   - **Migration guide:** `docs/sandbox-migration.md`, holding the coverage table, the E2B call mapping, the Agents SDK move, workspaces and network modes. It is not in `customer-pages.json` until launch.
+   - **Not built yet:**
+     - ~~The Python shim `gregale-sandbox-e2b`~~: built in part four.
+     - ~~Template import~~: built in part three.
+   - **As built, part two: seller-image sessions (local branch, no PR yet).** `POST /v1/sandboxes {"image": "<ref>"}` boots a customer OCI image in place of a preset.
+     - **Amends §2:** the image is cached in ADR-1161's image-run cache, not a separate per-account seller-image store. apid gets or creates the image's runner job (`imagerun.Handler.EnsureSessionImage`), so sessions and image runs share one cache, one `ImageRunCachedImages` limit and one pull. Image sessions need image runs switched on; otherwise `image` is `sandbox_unsupported`.
+     - **Any OCI image** boots as a full rootfs (imaged's job materialization) with guest-init's sandbox server as PID1, like a job image. The session records preset `image` and defaults to `SandboxImageDefaultRAMMB` (1024 MB). `preset` and `image` together are a validation error.
+     - **A cold image queues.** Create answers 201 `queued`. agentd claims the session only once the runner job's image is ready. A queued session whose image failed or whose job was deleted fails with outcome `image_unavailable`, carrying the pull error (`FailImageUnavailableSandboxSessions`, run by the lease sweep).
+     - **Eviction:** the image-run LRU skips a runner job with a queued, starting, ready or frozen session (`sandbox_sessions.image_job_id`), so a full cache answers `image_run_cache_full` instead of pulling a live session's image away.
+     - **Data path:** agentd passes the image's storage key as `image_key` (schedd `SandboxRunStart` 9, vmmd `RunSandboxStart` 13). vmmd accepts only a job image key (`storagekey.IsJobLayer`), boots it as drive1 in place of the platform sandbox layer, and stages `/etc/faas/sandbox.json` on the VM's private copy of drive1, as job VMs get `job.json`. The cached image is never changed.
+     - **Migration** `20261110153935627_sandbox_session_images` (expand): `image_ref` and `image_job_id` on `sandbox_sessions`.
+     - **Metal test:** `TestMetalSandboxFromASellerImage` (pkg/fcvm, run by `scripts/experiments/agent-runs/metal/run_sandbox_root_metal.sh`) boots a Debian image packed as imaged publishes a job image over the Alpine agent base, and checks the image's root, the staged marker, uid 1000, a writable `/workspace`, root, and that the cached image is unchanged afterwards. It passed on internal-test-1 on 2026-11-09 with leakcheck clean.
+     - **Not built:** registry credentials for private images on create (image runs take `registry_auth`; sessions use the runner job's stored credential, if any), and `pull: always`.
+     - The pricing calculator and shadow mode from §13.
+   - **As built, part three: templates (local branch, no PR yet; slices A–E).** `gregale sandbox template publish [dir]` builds a template from `e2b.Dockerfile` and `e2b.toml`; sessions start from it with `{"template": "<name>"}`.
+     - **A hidden build app per template.** `PUT /v1/sandbox-templates/{name}` (`start_cmd`, `ready_cmd`, `ready_timeout_s`: default 60, at most `SandboxTemplateReadyTimeoutSecMax` 600) creates the template and its app: internal, execution mode `job`, slug `sbt-` plus 12 hex (reserved, `api.IsSandboxTemplateAppSlug`), marked `apps.sandbox_template`. The app counts in `SandboxTemplatesMax` (Free 0, Hobby 3, Pro 20, Scale 100) instead of `DeployedApps` and is left out of app listings. `GET` lists or reads templates with their newest build; `DELETE` deletes the app first, so a failure leaves the template whole. Migrations `20261110153935666_sandbox_templates` and `20261110153935695_sandbox_session_templates` (expand).
+     - **Builds are deployments of that app** through the normal deploy path, in a builder microVM (ADR-003). A job-mode app skips the snapshot-prime boot. imaged publishes a template's build as a full rootfs (`publishSandboxTemplateRootfs`); an image with no command gets `/bin/sh`.
+     - **Sessions** boot the newest `live` build's rootfs (`apps/sbt-…/<uuid>.ext4`, `storagekey.IsSandboxTemplateLayer`, which vmmd accepts beside job layers) like a seller image, recording preset `template`, `image_ref` `template:<name>` and `template_id`. Create answers `sandbox_template_not_found` (404) or `sandbox_template_not_ready` (409); a template deleted before the session starts fails it as `image_unavailable`.
+     - **Amends §12: the start command runs at boot, not before a warm snapshot.** agentd passes `start_cmd`, `ready_cmd` and `ready_timeout_ms` (schedd `SandboxRunStart` 10–12, vmmd `RunSandboxStart` 14–16). fcvm stages `sandbox.json` version 2 with them; guest-init runs the start command in the background as uid 1000 (output in `/tmp/gregale-start.log`), polls the ready command each second (10 s per attempt), and listens only once it passes. A ready command that never passes powers the VM off, so the wake fails. Template warm snapshots can follow with ADR-20261027090015.
+     - **CLI:** `gregale sandbox template publish|list|get|rm` (`sandbox-templates`; `build` also works). `publish` reads `template_name`, `dockerfile`, `start_cmd` and `ready_cmd` from `e2b.toml` (flags override; `cpu_count` and `memory_mb` are ignored), saves the template, packs the directory with the chosen Dockerfile at the archive root as `Dockerfile`, deploys it to the template's app, and waits for the build.
+     - **Shim:** `Sandbox.create('<name>')` with a name that is not a preset or `base` creates the session from that template; `getInfo().templateId` is the template's name.
+     - **Tested:** store, apid handler, imaged, agentd, vmmdgrpc, fcvm and CLI unit tests; guest-init tests and the metal tests `TestMetalSandboxFromASellerImage` and `TestMetalSandboxTemplateCommands` passed on internal-test-1 on 2026-11-10 with leakcheck clean. **Not tested** end to end against a deployed Gregale (build to session); that needs sandbox sessions switched on in a test environment.
+     - **Not built:** ~~template warm snapshots~~: built in part five.
+   - **As built, part five: warm session snapshots (local branch, no PR yet).** Presets and templates restore from a warm snapshot instead of cold-booting.
+     - **Capture point.** A session VM is captured once guest-init's sandbox server and resume hook are up (console stage `sandbox-ready`), before any session identity, call, file or template command enters it. So the ADR-171 contract and invariant 5 hold as for agent-run presets. `fcvm.CaptureSandboxSnapshot` couples drive1 (v2 keys).
+     - **Templates are captured before their start command** (owner decision, 2026-11-10). The alternative, a capture after the ready command, would have shared the start process's memory and userspace RNG state between sessions. A restored template session gets its commands by the new host-only sandboxproto op `template_start`. guest-init runs them once and answers when the ready command passes; vmmd's `SandboxCall` refuses the op from callers. A cold boot still runs them from `sandbox.json` version 2.
+     - **Restore.** `RunSandboxStart.snapshot` (17) reaches `fcvm.WakeSandbox`. vmmd restores only a sandbox capture of the session's own kind: `snap/sandbox-preset/…` for a preset session, `snap/sandbox-template-<account>/…` for an image session (`storagekey.IsSandboxSnapshotKey`). So no account restores another's template. The snapshot is networked for `registries` and networkless for `none`. A failed restore cold-boots (ADR-005).
+     - **schedd** (`pkg/sched/sandbox_snapshots.go`, behind `FAAS_SCHEDD_SANDBOX_SNAPSHOTS`, default off) keeps one slot per node, base, drive, machine shape and network mode. A template's slot is its build app (`storagekey.SandboxImageIdentity`) and its account. After a shape's first cold-booted session ends cleanly, schedd asks the node's vmmd to capture it (`CaptureSandboxSnapshot`, schedd's certificate only), under that session's reservation.
+     - **Staleness.** A session restores a slot only when it holds the session's exact drive1, so a rebuilt template cold-boots and recaptures into the same keys. A session that cold-boots despite a snapshot drops it. Slots are bounded by `SandboxWarmSnapshotsMax` (512) and are per schedd process, like agent-run presets.
+     - **Metal** (internal-test-1, FC 1.7.0 / 6.1.134, leakcheck clean): `TestMetalSandboxWarmSnapshot`. Two preset restores are ready in 590–664 ms with distinct RNG streams, stepped clocks and an empty workspace. A template restore runs its start command once, after the restore. Two `registries` restores of one capture each get their own netns, a working network on 10.0.0.2, and the egress rules: 443 only to resolved addresses, with mail, metadata and private ranges closed. They are ready in 539–605 ms, and a `none` session refuses the networked snapshot.
+     - **Restore under host I/O pressure.** One run on the shared test-1 timed out the 5 s resume-hook budget on a restore and fell back to a cold boot, as ADR-005 intends. The rerun passed.
+     - **Not built or not tested:**
+       - deleting a slot's objects when its template is deleted (they stay on the node until replaced);
+       - `preset_residency_mb` for session snapshots (ADR-20261027090015 §1).
+   - **As built, part four: the Python shim (local branch, no PR yet).** `gregale-sandbox-e2b` (import `gregale_sandbox_e2b`, private, Python 3.12+) lives in `sdk/sandbox-e2b-python` and uses only the standard library. Its tests run under `make test-sandbox-e2b-python`, which no CI job runs yet.
+     - It mirrors the TypeScript shim call for call, with the E2B Python SDK's names and arguments: `Sandbox(...)` and `Sandbox.create(...)`, `connect`, `list` (a paginator with `has_next` and `next_items()`), and `kill`, `get_info` and `set_timeout` on the class with an ID or on an instance. A `with` block closes the session. Times are in seconds, as in E2B's Python SDK. Exceptions keep E2B's Python names (`SandboxException`, `CommandExitException`, `NotFoundException`, `TimeoutException` and the rest), plus `UnsupportedException`.
+     - **Synchronous only:** there is no `AsyncSandbox`. A background command's `on_stdout`/`on_stderr` run while the caller waits on the handle or iterates it, because the client starts no threads.
+     - **Transport:** `urllib` with redirects refused, so the bearer never follows a redirect; tests inject a fake transport, and one test drives the real one against a local HTTP server.
 11. Billing, with ADR-20261027090011.
+   - **As built, part one: measurement, not billed (local branch, no PR yet).** Each session VM is measured by ADR-20261027090011's Measurement for its whole life, from boot to close.
+     - **What is measured.** vmmd's `MeterSandbox` (pkg/fcvm) samples private memory (`anon` + `shmem`) every `AgentRunUsageSampleMillis`, as for a run VM, through the same meter. Quiet-paused and frozen seconds are paused time, which is never billable (§5, D15). A freeze first ends any quiet pause, so the two never overlap. fcvm keeps a frozen ledger for this (`Instance.FrozenTotal`, `Manager.FrozenTime`). The record is method 1, with `frozen_ms`, the frozen part of `paused_ms`.
+     - **Reporting.** A session lives for hours, so vmmd sends a cumulative `usage` frame on `RunSandbox` every `SandboxUsageReportSec` (60 s), and a last one marked `final` before the stream ends on close. A vmmd that dies loses at most one interval. schedd relays the frame (`SandboxRunEvent.usage`), reusing `AgentRunUsage` with the new fields 11 (`frozen_ms`) and 12 (`final`).
+     - **Record.** agentd keeps the latest record in `sandbox_session_usage` (migration `20261110153935721`, expand), fenced on the session's lease while it is `ready` or `frozen`. An older record never replaces a newer one, and nothing replaces the final one.
+     - **Metrics:** `sandbox_session_billed_gb_seconds_total` (the billable measure; nothing bills it yet) and `sandbox_session_paused_seconds_total`, on the agent runs dashboard.
+     - **Tested:** fcvm meter and frozen ledger, the vmmd stream (periodic and final frames), the schedd relay at both ends, the store's fence and ordering on scratch PG, and agentd recording the final record at close. **Not tested on metal.** The metal tests owed by ADR-20261027090011 cover the sampling itself.
+   - **Not built yet:**
+     - **meterd's `agent` meter kind and the conversion `k`.** These are shared with agent runs (ADR-20261027090011 rollout step 3), and wait on the financial model setting `k` and the floor.
+     - **Snapshot storage pricing.** Persisted workspace bytes are counted against `SandboxSnapshotBytesPerAccount` but not billed; that needs a price.
+     - Statement and tenant-statement lines.
 
 Long-lived paused sessions (E2B-style memory pause) need their own ADR.
 

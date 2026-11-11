@@ -1,6 +1,6 @@
 # Page fixtures for FaasEdgeCertificateUnexpected (edgednsd Certificate
-# Transparency watch) and FaasObjectStorageInventorySweepStopped (apid's
-# object storage inventory sweep).
+# Transparency watch), and FaasObjectStorageInventorySweepStopped and
+# FaasObjectStorageInventoryBacklog (apid's object storage inventory sweep).
 rule_files:
   - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
 
@@ -49,3 +49,24 @@ tests:
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
               summary: "apid's object storage inventory sweep has not completed for over 10 minutes"
               description: "No inventory sweep has completed without error for 20m 0s. Gateway reads and writes need a bucket inventory under 900 s old, so buckets start answering 503 within minutes."
+
+  - name: an inventory backlog past ten minutes warns after five
+    interval: 1m
+    input_series:
+      - series: faas_object_storage_inventory_oldest_observation_age_seconds{job="apid",instance="cp-1",class="active"}
+        values: 300 400 500 620 680 740 800 860 920 980 1040
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FaasObjectStorageInventoryBacklog
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: FaasObjectStorageInventoryBacklog
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: object_storage
+            exp_annotations:
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+              summary: "apid's object storage inventory sweep is falling behind"
+              description: "The oldest bucket inventory admission still needs is 16m 20s old. At 900 s that bucket's reads and writes answer 503; faas_object_storage_inventory_due_buckets shows the backlog."

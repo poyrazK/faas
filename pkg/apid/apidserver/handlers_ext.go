@@ -1689,7 +1689,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		fallback := api.ErrCapacity("could not update app")
+		fallback := appUpdateUnavailable(err)
 		if problem := deploySettingsUpdateProblem(err); problem != nil {
 			fallback = problem
 		} else if errors.Is(err, state.ErrServiceBindingPlanConflict) {
@@ -8570,4 +8570,17 @@ func (s *server) notifyAppRenamed(ctx context.Context, acct state.Account, updat
 	// both so a future relax of validSlug (or a hostile migration)
 	// cannot smuggle CR/LF into the audit line.
 	s.log.Info("app renamed", "app", updated.ID, "from", logsanitize.Field(oldSlug), "to", logsanitize.Field(newSlug), "account", acct.ID)
+}
+
+// appUpdateUnavailable is the fallback refusal of an app update that failed
+// for a reason the customer cannot fix. A control-plane database that did
+// not answer in time gets its own detail and a Retry-After: Hunt 32 H32-56
+// saw "Briefly at capacity — could not update app" for a deadline exceeded
+// while the CP database was slow, which read like a quota.
+func appUpdateUnavailable(err error) *api.Problem {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return api.ErrCapacity("the control plane did not answer in time; the app was not changed, retry shortly").
+			WithHeader("Retry-After", "5")
+	}
+	return api.ErrCapacity("could not update app")
 }

@@ -1120,6 +1120,7 @@ from .managed_postgres_connection_budget_state import ManagedPostgresConnectionB
 from .managed_postgres_connection_budget_version import ManagedPostgresConnectionBudgetVersion
 from .managed_postgres_database import ManagedPostgresDatabase
 from .managed_postgres_database_availability import ManagedPostgresDatabaseAvailability
+from .managed_postgres_database_hold import ManagedPostgresDatabaseHold
 from .managed_postgres_database_list import ManagedPostgresDatabaseList
 from .managed_postgres_database_plan_excess import ManagedPostgresDatabasePlanExcess
 from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
@@ -1136,7 +1137,9 @@ from .managed_postgres_resize_target_class import ManagedPostgresResizeTargetCla
 from .managed_postgres_restore_range import ManagedPostgresRestoreRange
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_compute_cap_state import ManagedPostgresUsageResponseComputeCapState
+from .managed_postgres_usage_response_egress_state import ManagedPostgresUsageResponseEgressState
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
+from .managed_postgres_usage_response_hold import ManagedPostgresUsageResponseHold
 from .managed_service_probe_spec import ManagedServiceProbeSpec
 from .mcp_policy_convergence_snapshot import MCPPolicyConvergenceSnapshot
 from .mcp_policy_convergence_snapshot_state import MCPPolicyConvergenceSnapshotState
@@ -3778,6 +3781,7 @@ __all__ = (
     "ManagedPostgresConnectionBudgetVersion",
     "ManagedPostgresDatabase",
     "ManagedPostgresDatabaseAvailability",
+    "ManagedPostgresDatabaseHold",
     "ManagedPostgresDatabaseList",
     "ManagedPostgresDatabasePlanExcess",
     "ManagedPostgresDatabaseServiceClass",
@@ -3794,7 +3798,9 @@ __all__ = (
     "ManagedPostgresRestoreRange",
     "ManagedPostgresUsageResponse",
     "ManagedPostgresUsageResponseComputeCapState",
+    "ManagedPostgresUsageResponseEgressState",
     "ManagedPostgresUsageResponseGuardrailState",
+    "ManagedPostgresUsageResponseHold",
     "ManagedServiceProbeSpec",
     "MCPPolicyConvergenceSnapshot",
     "MCPPolicyConvergenceSnapshotState",

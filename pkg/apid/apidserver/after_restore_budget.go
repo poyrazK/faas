@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -29,6 +31,42 @@ func (s *server) afterRestoreBudgetProblem(ctx context.Context, accountID, appID
 		return nil
 	}
 	return unboundAfterRestoreBudgetProblem(hook)
+}
+
+// manifestAfterRestoreBudgetProblem is afterRestoreBudgetProblem for a deploy
+// whose gregale.yaml may declare the binding the hook reconnects to. The
+// manifest's databases and buckets are bound later in the same deploy, so a
+// declaration for this app counts as a binding (ADR-20261110120000); before,
+// a first deploy with a declared database and a longer hook was refused.
+func (s *server) manifestAfterRestoreBudgetProblem(ctx context.Context, accountID string, app state.App, manifest *gregalemanifest.Manifest, hook *api.AfterRestoreHook) *api.Problem {
+	if hook == nil || hook.TimeoutMS <= api.AfterRestoreHookMaxTimeoutMS || manifestDeclaresManagedBinding(manifest, app.Slug) {
+		return nil
+	}
+	return s.afterRestoreBudgetProblem(ctx, accountID, app.ID, hook)
+}
+
+// manifestDeclaresManagedBinding reports whether gregale.yaml declares a
+// managed database or bucket for the app. An entry without `app` targets the
+// deployed app.
+func manifestDeclaresManagedBinding(manifest *gregalemanifest.Manifest, slug string) bool {
+	if manifest == nil {
+		return false
+	}
+	targets := func(app string) bool {
+		app = strings.ToLower(strings.TrimSpace(app))
+		return app == "" || app == strings.ToLower(slug)
+	}
+	for _, dependency := range manifest.Databases {
+		if targets(dependency.App) {
+			return true
+		}
+	}
+	for _, dependency := range manifest.Buckets {
+		if targets(dependency.App) {
+			return true
+		}
+	}
+	return false
 }
 
 // unboundAfterRestoreBudgetProblem is the check for an app known to hold no

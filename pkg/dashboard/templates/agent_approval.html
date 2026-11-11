@@ -8,6 +8,7 @@
 {{else}}
 <p>An agent asked to make a request that needs a person's approval.</p>
 <dl><dt>Agent</dt><dd>{{index .Data "Agent"}}</dd>
+{{with index .Data "Reason"}}<dt>The agent's reason</dt><dd><q>{{.}}</q> (written by the agent; check the request below, which is what you approve)</dd>{{end}}
 <dt>Connected by</dt><dd>{{index .Data "ConnectedBy"}}</dd>
 <dt>Kind of action</dt><dd><strong>{{index .Data "CategoryLabel"}}</strong></dd>
 <dt>Request</dt><dd><code>{{index .Data "Method"}} {{index .Data "Path"}}</code></dd>

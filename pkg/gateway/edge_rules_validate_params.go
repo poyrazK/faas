@@ -36,7 +36,7 @@ func (h *Handler) validateEdgeRuleParameters(w http.ResponseWriter, r *http.Requ
 			if err == nil {
 				digest := loc.schema.Digest
 				res, err = h.validator.Validate(r.Context(), &EdgeValidateIn{
-					Body: instance, ContentType: "application/json", Digest: &digest,
+					Body: instance, ContentType: "application/json", Digest: &digest, Schema: loc.schema.Schema,
 				}, rule)
 			}
 			if err != nil {

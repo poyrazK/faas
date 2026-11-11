@@ -435,6 +435,12 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		log.Warn("restore: processes not covered by the userspace RNG reseed may repeat random values across wakes",
 			"processes", n, "runtimes", timings.ReseedUnregisteredRuntimes)
 	}
+	// ADR-20261110170000: Go ID libraries keep per-process random state that
+	// nothing outside the program can reset.
+	if libs := goIDLibraryModules("/proc", os.Getpid()); len(libs) > 0 {
+		log.Warn("restore: Go ID libraries in this app may generate the same IDs in instances restored from one snapshot",
+			"modules", strings.Join(libs, ","))
+	}
 	stage = time.Now()
 	resumeGuestProfiles()
 	timings.ProfilesUs = time.Since(stage).Microseconds()

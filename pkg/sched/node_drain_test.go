@@ -334,10 +334,9 @@ func TestDrainingNodeDiscardsWarmPoolVMs(t *testing.T) {
 	warm = sched.PublishWarmFixture(t, store, warm)
 	vmm := sched.NewWarmResumeFakeVMM()
 	e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
-	limits := api.MustLimitsFor(api.PlanPro)
 	if err := e.Ledger().Admit(sched.Request{
 		Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: api.PlanPro,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: api.SizeVCPUs(app.RAMMB), MaxConcurrency: app.MaxConcurrency,
 		NodeID: node.ID, Kind: sched.KindWarmPool,
 	}); err != nil {
 		t.Fatal(err)

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -206,10 +207,11 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 		return true
 	}
 
-	statusURL := "/v1/invocations/" + accepted.ID
+	statusPath := "/v1/invocations/" + accepted.ID
 	if authenticatedFrom(r.Context()).PlatformTenantID != "" {
-		statusURL = "/v1/platform-tenant-self/invocations/" + accepted.ID
+		statusPath = "/v1/platform-tenant-self/invocations/" + accepted.ID
 	}
+	statusURL := asyncRouteStatusURL(hostidentity.Configured().Platform, statusPath)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set(api.InvocationIDHeader, accepted.ID)
 	if accepted.ReleaseID != "" {
@@ -308,4 +310,15 @@ func asyncRouteHeaders(in http.Header) map[string]string {
 		out[canonical] = strings.Join(values, ", ")
 	}
 	return out
+}
+
+// asyncRouteStatusURL makes an async route's status_url absolute on the
+// platform API host. The 202 is served on the app's own host, where a
+// relative /v1/invocations/{id} path reaches the app instead of the API
+// (Hunt 32 H32-53). Without a configured platform domain it stays relative.
+func asyncRouteStatusURL(platformDomain, path string) string {
+	if platformDomain == "" {
+		return path
+	}
+	return "https://api." + platformDomain + path
 }

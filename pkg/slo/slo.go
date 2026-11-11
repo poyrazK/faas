@@ -25,6 +25,14 @@ type PromQL interface {
 // range, evaluated at `at` (zero = now). Availability follows ADR-082:
 // 5xx responses are bad, 4xx and 3xx are outside the SLI. Latency counts
 // requests whose duration fell within the threshold bucket.
+//
+// Availability reads the request-duration series by status class, the
+// series the error-rate alert reads. The gateway creates an app's class
+// series at zero on its first request (preInstantiateApp), so increase()
+// counts the first 5xx. Per-code gateway_requests_total series only exist
+// from their first request, so the burst that created a 5xx code's series
+// was invisible: on production (2026-11-09) an app with three 500s and a 504
+// in the hour read an availability burn of 0.00x (ADR-20261110090000).
 func queries(def state.SLO, rng string, at time.Time) (good, total string, err error) {
 	if strings.ContainsAny(def.AppID, "\"\n\\") {
 		return "", "", fmt.Errorf("slo: invalid app id")
@@ -38,7 +46,7 @@ func queries(def state.SLO, rng string, at time.Time) (good, total string, err e
 	}
 	switch def.SLI {
 	case state.SLIAvailability:
-		return sel("gateway_requests_total", `,code=~"2.."`), sel("gateway_requests_total", `,code=~"2..|5.."`), nil
+		return sel("gateway_request_duration_seconds_count", `,class="2xx"`), sel("gateway_request_duration_seconds_count", `,class=~"2xx|5xx"`), nil
 	case state.SLILatency:
 		le := strconv.FormatFloat(float64(def.LatencyThresholdMS)/1000, 'f', -1, 64)
 		return sel("gateway_request_duration_seconds_bucket", fmt.Sprintf(`,le=%q`, le)), sel("gateway_request_duration_seconds_count", ""), nil

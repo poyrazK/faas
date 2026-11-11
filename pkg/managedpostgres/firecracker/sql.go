@@ -102,6 +102,11 @@ DO $gregale$ BEGIN
 END $gregale$;
 COMMENT ON ROLE %[1]s IS 'gregale:credential:v1:%[4]s:%[5]s';
 `, role, verifier, database, scope, access)
+	if access == managedpostgres.CredentialSession {
+		// Session logins hold server connections directly; the role limit
+		// keeps one binding from exhausting the database (ADR-20261110120000).
+		fmt.Fprintf(&b, "ALTER ROLE %[1]s CONNECTION LIMIT %[2]d;\n", role, api.SessionBindingConnectionLimit)
+	}
 	if access == managedpostgres.CredentialDataAPI {
 		// Its only settings, the Data API's statement and lock deadlines: the
 		// Data API starter refuses a login with others.

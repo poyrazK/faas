@@ -34,9 +34,17 @@ export type ManagedPostgresDatabase = {
    */
   restore_slot_until?: string;
   /**
+   * Set on a database restored with ttl_seconds. Its bindings are revoked and it is purged at this time.
+   */
+  expires_at?: string;
+  /**
    * Set while the plan no longer includes this database, for example after a subscription ended, and it is suspended: database_limit when it ranks past the plan's database limit (oldest databases are kept), service_class when the plan does not include its class. Its data is kept. Upgrading, deleting a database or resizing to an included class resumes it.
    */
   plan_excess?: 'database_limit' | 'service_class';
+  /**
+   * Set while the platform stops this database's compute and refuses its connections although its state is ready: compute_ceiling once the account used its monthly compute ceiling; egress once its apps and databases sent the plan's monthly egress allowance; inactive while the account is suspended; plan_excess (see plan_excess); preview for a PR preview database once the account used 80% of its compute. Its data is kept. Omitted while nothing holds it; the platform applies a change within a few minutes.
+   */
+  hold?: 'compute_ceiling' | 'egress' | 'inactive' | 'plan_excess' | 'preview';
   restore_range?: ManagedPostgresRestoreRange;
 };
 

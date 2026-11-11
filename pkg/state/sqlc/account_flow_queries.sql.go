@@ -68,6 +68,22 @@ func (q *Queries) AccountOAuthProviderUnlinked(ctx context.Context, db DBTX, arg
 	return unlinked, err
 }
 
+const clearAccountMailSlot = `-- name: ClearAccountMailSlot :exec
+DELETE FROM account_mail_throttle WHERE account_id=$1 AND kind=$2
+`
+
+type ClearAccountMailSlotParams struct {
+	AccountID pgtype.UUID
+	Kind      string
+}
+
+// A correct authenticator code clears the account's counted attempts
+// (ADR 20261110120000).
+func (q *Queries) ClearAccountMailSlot(ctx context.Context, db DBTX, arg ClearAccountMailSlotParams) error {
+	_, err := db.Exec(ctx, clearAccountMailSlot, arg.AccountID, arg.Kind)
+	return err
+}
+
 const clearAccountOAuthUnlink = `-- name: ClearAccountOAuthUnlink :exec
 DELETE FROM account_oauth_unlinks WHERE account_id=$1 AND provider=$2
 `
@@ -299,6 +315,45 @@ func (q *Queries) ListAccountOAuthLinks(ctx context.Context, db DBTX, accountID 
 	return items, nil
 }
 
+const listExpiredUnverifiedAccounts = `-- name: ListExpiredUnverifiedAccounts :many
+SELECT a.id FROM accounts a
+WHERE a.status='active' AND a.email_verified_at IS NULL
+  AND greatest(a.created_at, $1::timestamptz) < $2::timestamptz
+  AND a.plan='free' AND coalesce(a.provider_customer_id,'')='' AND coalesce(a.stripe_subscription_item,'')=''
+  AND NOT EXISTS (SELECT 1 FROM apps p WHERE p.account_id=a.id)
+ORDER BY a.created_at
+LIMIT $3
+`
+
+type ListExpiredUnverifiedAccountsParams struct {
+	EnforcedFrom pgtype.Timestamptz
+	Cutoff       pgtype.Timestamptz
+	MaxRows      int32
+}
+
+// Accounts never verified long after signup (ADR 20261110120000): still
+// active, no app ever created and no billing customer. The grace clock
+// starts at signup or at enforced_from, whichever is later.
+func (q *Queries) ListExpiredUnverifiedAccounts(ctx context.Context, db DBTX, arg ListExpiredUnverifiedAccountsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, listExpiredUnverifiedAccounts, arg.EnforcedFrom, arg.Cutoff, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMFATrustedBrowsers = `-- name: ListMFATrustedBrowsers :many
 SELECT id, ua_family, created_ip, created_at, expires_at, last_used_at
 FROM mfa_trusted_browsers
@@ -395,6 +450,54 @@ func (q *Queries) ReplaceAccountRecoveryCodes(ctx context.Context, db DBTX, arg 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const revertLastAccountEmailChange = `-- name: RevertLastAccountEmailChange :one
+WITH last_change AS MATERIALIZED (
+    SELECT c.account_id, c.old_email, c.new_email FROM account_email_changes c
+    WHERE c.account_id=$1 AND c.consumed_at IS NOT NULL
+      AND c.consumed_at > clock_timestamp() - make_interval(secs => $2::float8)
+    ORDER BY c.consumed_at DESC LIMIT 1
+), target AS MATERIALIZED (
+    SELECT a.id, l.old_email, l.new_email FROM accounts a JOIN last_change l ON l.account_id=a.id
+    WHERE lower(a.email::text)=l.new_email
+    FOR UPDATE OF a
+), spent_logins AS (
+    UPDATE login_tokens t SET consumed_at=clock_timestamp()
+    FROM target x WHERE t.account_id=x.id AND t.consumed_at IS NULL
+    RETURNING t.account_id
+), spent_mfa_disables AS (
+    UPDATE mfa_disable_requests m SET consumed_at=clock_timestamp()
+    FROM target x WHERE m.account_id=x.id AND m.consumed_at IS NULL
+    RETURNING m.account_id
+)
+UPDATE accounts a SET email=x.old_email, email_verified_at=clock_timestamp()
+FROM target x WHERE a.id=x.id
+RETURNING a.id, x.old_email, x.new_email
+`
+
+type RevertLastAccountEmailChangeParams struct {
+	AccountID  pgtype.UUID
+	WithinSecs float64
+}
+
+type RevertLastAccountEmailChangeRow struct {
+	ID       pgtype.UUID
+	OldEmail string
+	NewEmail string
+}
+
+// Operator revert of the last confirmed email change (ADR 20261110100000).
+// Applies only while the account still has the address that change moved it
+// to, so it cannot run twice or undo a later change. Like the change itself,
+// it spends account-bound links mailed while the account had that address.
+// A unique violation (the old address now belongs to another account) rolls
+// the statement back.
+func (q *Queries) RevertLastAccountEmailChange(ctx context.Context, db DBTX, arg RevertLastAccountEmailChangeParams) (RevertLastAccountEmailChangeRow, error) {
+	row := db.QueryRow(ctx, revertLastAccountEmailChange, arg.AccountID, arg.WithinSecs)
+	var i RevertLastAccountEmailChangeRow
+	err := row.Scan(&i.ID, &i.OldEmail, &i.NewEmail)
+	return i, err
 }
 
 const revokeAllMFATrustedBrowsers = `-- name: RevokeAllMFATrustedBrowsers :execrows

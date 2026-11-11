@@ -812,37 +812,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-1155: on-demand profile capture outcomes, queue waits and the
 	// automatic captures schedd skips, for the capture alerts.
 	engine.WithProfileCaptureMetrics(wire.NewProfileCaptureMetrics(ops.Registry()))
-	// ADR-20261101215228: the values that shape a listed app's CPU, and the
-	// list itself, are runtime config.
-	cpuShape := &cpuShapeConfig{engine: engine}
 	requestConcurrency := &runtimeconfig.RequestConcurrency{}
 	// ADR-20261106214916: after a node takes a release, find the recently
 	// active apps whose snapshots there the release made stale.
 	snapshotRefresher := sched.NewSnapshotRefresher(engine, ops.Registry(), log)
-	// ADR-20261109172421: cpu_admission observe admits on memory alone and
-	// counts what the vCPU and CPU budgets would have refused.
+	// ADR-20261109172421: memory is the only capacity limit; count what the
+	// vCPU and CPU budgets would have refused.
 	engine.WithCPUAdmissionMetrics(ops.Registry())
-	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append(append(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, runtimeconfig.CPUShapeKeys...), runtimeconfig.RequestConcurrencyKeys...), append(snapshotRefreshKeys, runtimeconfig.KeyCPUAdmission)...),
+	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, runtimeconfig.RequestConcurrencyKeys...), snapshotRefreshKeys...),
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			if handled, err := requestConcurrency.Apply(key, value); handled {
 				if err == nil {
 					log.Info("schedd: applied request limit setting (ADR-20261101215228)", "key", key, "value", string(value))
-				}
-				return err
-			}
-			if handled, err := cpuShape.apply(key, value); handled {
-				if err == nil {
-					log.Info("schedd: applied CPU shape setting (ADR-20261101215228)", "key", key, "value", string(value))
-				}
-				return err
-			}
-			if key == runtimeconfig.KeyCPUAdmission {
-				mode, err := runtimeconfig.String(value)
-				if err == nil {
-					err = engine.SetCPUAdmission(mode)
-				}
-				if err == nil {
-					log.Info("schedd: applied CPU admission setting (ADR-20261109172421)", "key", key, "value", string(value))
 				}
 				return err
 			}
@@ -1861,6 +1842,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Info("node memory reports enabled (ADR 20261101091815)",
 				"report_seconds", api.NodeMemoryReportSeconds, "peer_max_age_seconds", api.NodeMemoryPeerMaxAgeSeconds)
 		}
+		// ADR-20261027090015 §3: agent run VMs are charged their measured
+		// memory or their version's peak, which measured admission needs.
+		if strings.TrimSpace(os.Getenv("FAAS_SCHEDD_AGENT_MEASURED_CHARGE")) == "1" {
+			engine.Ledger().EnableAgentMeasuredCharge(func(nodeID string) (map[string]float64, time.Time, bool) {
+				return reader.VMMemory(nodeID, time.Now())
+			})
+			log.Info("agent measured charge enabled (ADR-20261027090015)",
+				"charge_floor_mb", api.AgentChargeFloorMB, "reservation_floor_mb", api.AgentReservationFloorMB)
+		}
 	}
 	if cfg.QuietPauseLedger {
 		ledger := instancestats.NewPauseLedger(store,
@@ -2006,6 +1996,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if agentRunner != nil {
 		grpcHandler.WithAgentRunner(agentRunner)
 		log.Info("agent runs enabled", "nodes", os.Getenv("FAAS_SCHEDD_AGENT_RUN_NODES"))
+		// ADR-20261027090013: sandbox sessions need their own switch too.
+		if agentRunner.SandboxesEnabled() {
+			grpcHandler.WithSandboxRunner(agentRunner)
+			log.Info("sandbox sessions enabled")
+		}
 	}
 	// An empty NodeName is the single-box, Unix-socket posture. Passing a
 	// typed nil *PGNodeVerifier as the resolver still creates a non-nil

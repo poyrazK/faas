@@ -84,7 +84,8 @@ func (q *Queries) ListManagedPostgresOveragePending(ctx context.Context, db DBTX
 }
 
 const managedPostgresOverageDelivered = `-- name: ManagedPostgresOverageDelivered :one
-SELECT d.live, d.billed_unit_seconds, d.delivered_millicents, d.updated_at, d.billed_storage_byte_seconds
+SELECT d.live, d.billed_unit_seconds, d.delivered_millicents, d.updated_at, d.billed_storage_byte_seconds,
+    d.billed_egress_bytes
 FROM managed_postgres_overage_deliveries d
 WHERE d.provider = $1::text AND d.subject_id = $2::uuid
   AND d.period_start = $3::timestamptz
@@ -102,6 +103,7 @@ type ManagedPostgresOverageDeliveredRow struct {
 	DeliveredMillicents      int64
 	UpdatedAt                pgtype.Timestamptz
 	BilledStorageByteSeconds int64
+	BilledEgressBytes        int64
 }
 
 func (q *Queries) ManagedPostgresOverageDelivered(ctx context.Context, db DBTX, arg ManagedPostgresOverageDeliveredParams) (ManagedPostgresOverageDeliveredRow, error) {
@@ -113,6 +115,7 @@ func (q *Queries) ManagedPostgresOverageDelivered(ctx context.Context, db DBTX, 
 		&i.DeliveredMillicents,
 		&i.UpdatedAt,
 		&i.BilledStorageByteSeconds,
+		&i.BilledEgressBytes,
 	)
 	return i, err
 }
@@ -121,7 +124,8 @@ const managedPostgresOveragePending = `-- name: ManagedPostgresOveragePending :o
 
 SELECT p.live, p.step_at, p.used_unit_seconds, p.allowance_unit_seconds, p.billed_unit_seconds,
     p.from_millicents, p.target_millicents, p.used_storage_byte_seconds, p.storage_pool_bytes,
-    p.billed_storage_byte_seconds, p.previous_millicents, p.previous_live
+    p.billed_storage_byte_seconds, p.previous_millicents, p.previous_live,
+    p.used_egress_bytes, p.app_egress_bytes, p.egress_allowance_bytes, p.billed_egress_bytes
 FROM managed_postgres_overage_pending p
 WHERE p.provider = $1::text AND p.subject_id = $2::uuid
   AND p.period_start = $3::timestamptz
@@ -146,6 +150,10 @@ type ManagedPostgresOveragePendingRow struct {
 	BilledStorageByteSeconds int64
 	PreviousMillicents       int64
 	PreviousLive             bool
+	UsedEgressBytes          int64
+	AppEgressBytes           int64
+	EgressAllowanceBytes     int64
+	BilledEgressBytes        int64
 }
 
 // ADR-20261101143527: a step is reserved before apid sends it to the
@@ -167,6 +175,10 @@ func (q *Queries) ManagedPostgresOveragePending(ctx context.Context, db DBTX, ar
 		&i.BilledStorageByteSeconds,
 		&i.PreviousMillicents,
 		&i.PreviousLive,
+		&i.UsedEgressBytes,
+		&i.AppEgressBytes,
+		&i.EgressAllowanceBytes,
+		&i.BilledEgressBytes,
 	)
 	return i, err
 }
@@ -191,6 +203,23 @@ FROM (
     SELECT p.subject_id, 0::bigint, false
     FROM managed_postgres_overage_pending p
     WHERE p.period_start = $1::timestamptz
+    UNION ALL
+    -- ADR-20261110160000 slice 3: subjects with databases whose egress
+    -- overage election was in force during the month may owe database egress.
+    SELECT x.subject_id, 0::bigint, false
+    FROM (
+        SELECT DISTINCT managed_postgres_usage_subject(db.org_id, db.account_id) AS subject_id
+        FROM managed_postgres_databases db
+        WHERE db.state <> 'deleted' OR db.deleted_at >= $1::timestamptz
+    ) x
+    WHERE EXISTS (
+        SELECT 1 FROM accounts a WHERE a.id = x.subject_id
+          AND a.egress_overage_enabled_at < $1::timestamptz + interval '1 month'
+          AND (a.egress_overage_disabled_at IS NULL OR a.egress_overage_disabled_at > $1::timestamptz))
+       OR EXISTS (
+        SELECT 1 FROM orgs o WHERE o.id = x.subject_id
+          AND o.egress_overage_enabled_at < $1::timestamptz + interval '1 month'
+          AND (o.egress_overage_disabled_at IS NULL OR o.egress_overage_disabled_at > $1::timestamptz))
 ) s
 GROUP BY s.subject_id
 ORDER BY s.subject_id
@@ -230,16 +259,18 @@ func (q *Queries) ManagedPostgresOverageSubjects(ctx context.Context, db DBTX, p
 
 const recordManagedPostgresOverageDelivery = `-- name: RecordManagedPostgresOverageDelivery :one
 INSERT INTO managed_postgres_overage_deliveries AS d (provider, subject_id, period_start, live,
-    billed_unit_seconds, delivered_millicents, updated_at, billed_storage_byte_seconds)
+    billed_unit_seconds, delivered_millicents, updated_at, billed_storage_byte_seconds, billed_egress_bytes)
 VALUES ($1::text, $2::uuid, $3::timestamptz,
     $4::boolean, $5::bigint, $6::bigint,
-    $7::timestamptz, $8::bigint)
+    $7::timestamptz, $8::bigint,
+    $9::bigint)
 ON CONFLICT (provider, subject_id, period_start) DO UPDATE
 SET live = EXCLUDED.live, billed_unit_seconds = EXCLUDED.billed_unit_seconds,
     delivered_millicents = EXCLUDED.delivered_millicents, updated_at = EXCLUDED.updated_at,
-    billed_storage_byte_seconds = EXCLUDED.billed_storage_byte_seconds
-WHERE d.delivered_millicents = $9::bigint
-  AND d.live = $10::boolean
+    billed_storage_byte_seconds = EXCLUDED.billed_storage_byte_seconds,
+    billed_egress_bytes = EXCLUDED.billed_egress_bytes
+WHERE d.delivered_millicents = $10::bigint
+  AND d.live = $11::boolean
   AND (EXCLUDED.live OR NOT d.live)
   AND (EXCLUDED.delivered_millicents > d.delivered_millicents OR (EXCLUDED.live AND NOT d.live))
 RETURNING true AS recorded
@@ -254,6 +285,7 @@ type RecordManagedPostgresOverageDeliveryParams struct {
 	DeliveredMillicents      int64
 	UpdatedAt                pgtype.Timestamptz
 	BilledStorageByteSeconds int64
+	BilledEgressBytes        int64
 	PreviousMillicents       int64
 	PreviousLive             bool
 }
@@ -272,6 +304,7 @@ func (q *Queries) RecordManagedPostgresOverageDelivery(ctx context.Context, db D
 		arg.DeliveredMillicents,
 		arg.UpdatedAt,
 		arg.BilledStorageByteSeconds,
+		arg.BilledEgressBytes,
 		arg.PreviousMillicents,
 		arg.PreviousLive,
 	)
@@ -283,14 +316,16 @@ func (q *Queries) RecordManagedPostgresOverageDelivery(ctx context.Context, db D
 const reserveManagedPostgresOverage = `-- name: ReserveManagedPostgresOverage :one
 INSERT INTO managed_postgres_overage_pending (provider, subject_id, period_start, live, step_at,
     used_unit_seconds, allowance_unit_seconds, billed_unit_seconds, from_millicents, target_millicents,
-    used_storage_byte_seconds, storage_pool_bytes, billed_storage_byte_seconds, previous_millicents, previous_live)
+    used_storage_byte_seconds, storage_pool_bytes, billed_storage_byte_seconds, previous_millicents, previous_live,
+    used_egress_bytes, app_egress_bytes, egress_allowance_bytes, billed_egress_bytes)
 VALUES ($1::text, $2::uuid, $3::timestamptz,
     $4::boolean, $5::timestamptz, $6::bigint,
     $7::bigint, $8::bigint,
     $9::bigint, $10::bigint,
     $11::bigint, $12::bigint,
     $13::bigint, $14::bigint,
-    $15::boolean)
+    $15::boolean, $16::bigint, $17::bigint,
+    $18::bigint, $19::bigint)
 ON CONFLICT (provider, subject_id, period_start) DO NOTHING
 RETURNING true AS reserved
 `
@@ -311,6 +346,10 @@ type ReserveManagedPostgresOverageParams struct {
 	BilledStorageByteSeconds int64
 	PreviousMillicents       int64
 	PreviousLive             bool
+	UsedEgressBytes          int64
+	AppEgressBytes           int64
+	EgressAllowanceBytes     int64
+	BilledEgressBytes        int64
 }
 
 // One reservation per provider, subject and month: a replica that finds one
@@ -332,6 +371,10 @@ func (q *Queries) ReserveManagedPostgresOverage(ctx context.Context, db DBTX, ar
 		arg.BilledStorageByteSeconds,
 		arg.PreviousMillicents,
 		arg.PreviousLive,
+		arg.UsedEgressBytes,
+		arg.AppEgressBytes,
+		arg.EgressAllowanceBytes,
+		arg.BilledEgressBytes,
 	)
 	var reserved bool
 	err := row.Scan(&reserved)

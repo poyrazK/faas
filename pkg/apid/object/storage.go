@@ -214,6 +214,8 @@ func BucketProblem(w http.ResponseWriter, err error) {
 		status, code, detail = 503, "object_storage_checkpoint_active", "Bucket writes are temporarily paused for checkpoint capture."
 	case errors.Is(err, state.ErrObjectUsageStale):
 		status, code, detail = 503, "object_storage_usage_stale", "Storage accounting is not configured or usage data is stale; new provider requests and transfer authorizations are blocked."
+	case errors.Is(err, objectstorage.ErrObjectLockPlan):
+		status, code, detail = 403, "object_lock_plan_limit", "The bucket owner's plan does not include this much Object Lock protection: Free includes none, Hobby 90 days, Pro 1 year and Scale 7 years of retention. Choose a shorter retention or upgrade the plan."
 	case errors.Is(err, state.ErrObjectBudget):
 		status, code, detail = 402, "object_storage_budget_reached", "The object storage safety budget has been reached; new provider requests and transfer authorizations are blocked."
 	case errors.Is(err, state.ErrObjectStorageRegionFull):

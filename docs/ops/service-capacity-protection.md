@@ -14,7 +14,7 @@ Inspect `gregalectl obs capacity --json` or the operator capacity API. Its
 - `state`: disabled, protected, degraded, or needs_hardware.
 - `healthy_nodes`: fully active hosts with fresh heartbeats and positive budgets.
 - `desired_replicas` and `reserved_replicas`: customer targets and targets plus rollout overlap.
-- `replica_ram_mb`, `replica_cpu_millicores`, `replica_vcpu`: conservative recovery slot shape.
+- `replica_ram_mb`, `replica_cpu_millicores`, `replica_vcpu`: conservative recovery slot shape. Only `replica_ram_mb` sizes slots; CPU and vCPUs are reported, never a limit (ADR-20261109172421).
 - `fleet_slots` and `failover_slots`: slots now and after the largest slot contributor is lost.
 - `placements_fit`: current service residency fits its host's slots.
 

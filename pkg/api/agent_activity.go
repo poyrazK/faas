@@ -15,7 +15,9 @@ type AgentActivityEntry struct {
 	Status int    `json:"status"`
 	// ApprovalID names the approval request the write went through on.
 	ApprovalID string `json:"approval_id,omitempty"`
-	CreatedAt  string `json:"created_at"`
+	// Reason is what the agent said the request is for, when it said.
+	Reason    string `json:"reason,omitempty"`
+	CreatedAt string `json:"created_at"`
 }
 
 // AgentActivityResponse is one page of an agent's activity, newest first.

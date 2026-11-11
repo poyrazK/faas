@@ -22,6 +22,9 @@ var supportBinaryNames = []string{
 	"init",
 	"mcp-bridged",
 	"edgednsd",
+	// ADR-20261109170000: the control plane's artifact signer, started by
+	// the signd_service role from the active release.
+	"signd",
 	"schedd-brokerq-apply",
 	"s3-gatewayd",
 	"vmmd-jail-helper",

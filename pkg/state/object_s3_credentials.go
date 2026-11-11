@@ -140,6 +140,9 @@ func validateObjectS3CredentialRotationSecrets(req ObjectS3CredentialRotationReq
 type ObjectS3CredentialRotationStore interface {
 	StageObjectS3CredentialRotation(context.Context, ObjectS3CredentialRotationRequest) (ObjectS3Credential, error)
 	PendingObjectS3CredentialRotation(context.Context, string, string, string) (string, error)
+	// PendingObjectS3CredentialRotations maps each binding of one bucket with
+	// a staged rotation to its wake ID, in one read.
+	PendingObjectS3CredentialRotations(ctx context.Context, accountID, bucketID string) (map[string]string, error)
 	StampObjectS3CredentialRotation(context.Context, string, string) error
 	FinalizeObjectS3CredentialRotationsForApp(context.Context, string, string) error
 }

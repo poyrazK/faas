@@ -21,7 +21,9 @@ type AgentActivity struct {
 	Path       string
 	Status     int
 	ApprovalID string // the approval request it went through on, if any
-	CreatedAt  time.Time
+	// Reason is what the agent said the request is for (ADR-20261110182236).
+	Reason    string
+	CreatedAt time.Time
 }
 
 // AgentActivityCursor pages a key's activity: rows strictly older than
@@ -66,7 +68,7 @@ func (s *PgStore) RecordAgentActivity(ctx context.Context, row AgentActivity) er
 	return mapErr(sqlc.New().InsertAgentActivity(ctx, s.pool, sqlc.InsertAgentActivityParams{
 		ID: mustPgUUID(row.ID), KeyID: mustPgUUID(row.KeyID), AccountID: mustPgUUID(row.AccountID),
 		OrgID: mustPgUUID(row.OrgID), Method: row.Method, Path: row.Path, Status: int32(row.Status),
-		ApprovalID: mustPgUUID(row.ApprovalID),
+		ApprovalID: mustPgUUID(row.ApprovalID), Reason: pgText(row.Reason),
 	}))
 }
 
@@ -86,6 +88,7 @@ func (s *PgStore) ListAgentActivity(ctx context.Context, keyID string, since tim
 		out = append(out, AgentActivity{
 			ID: pgUUIDString(r.ID), KeyID: pgUUIDString(r.KeyID), AccountID: pgUUIDString(r.AccountID), OrgID: pgUUIDString(r.OrgID),
 			Method: r.Method, Path: r.Path, Status: int(r.Status), ApprovalID: pgUUIDString(r.ApprovalID), CreatedAt: r.CreatedAt.Time,
+			Reason: r.Reason.String,
 		})
 	}
 	return out, nil
