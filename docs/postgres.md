@@ -307,9 +307,15 @@ gregale postgres branch delete orders pr-42 --yes
 - A branch's name is its database name, so it is unique in your account like
   any database name. With several databases, include the source in it, for
   example `orders-pr-42`.
-- A branch is a restore: it counts toward your plan's database limit and may
-  take the one restore slot past it (see
-  [Restore to a point in time](#restore-to-a-point-in-time)).
+- A branch with a TTL of 7 days or less does not count toward your plan's
+  database limit. Each plan includes short-lived branches at once: Hobby 2,
+  Pro 5, Scale 20. Past that, branch creation is refused with
+  `managed_postgres_branch_limit`; delete a branch or wait for one to expire.
+  The branch's compute and the data written to it count toward your plan's
+  usage like any database.
+- A branch with a longer TTL, or none, is an ordinary restore: it counts
+  toward your plan's database limit and may take the one restore slot past
+  it (see [Restore to a point in time](#restore-to-a-point-in-time)).
 - In the API, a restore without `point_in_time` is a branch from the latest
   point, and `ttl_seconds` sets its expiry.
 

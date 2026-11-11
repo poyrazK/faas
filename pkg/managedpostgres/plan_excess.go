@@ -67,7 +67,9 @@ func PlanExcess(databases []Database, limits api.ManagedPostgresPlanLimits) map[
 	}
 	ranked := make([]Database, 0, len(databases))
 	for _, database := range databases {
-		if !database.RestoreSlotUntil.IsZero() || !capEnforceable(database) {
+		// A short-lived branch is outside the database limit and ends on its
+		// own (ADR-20261106103654 amendment 1).
+		if !database.RestoreSlotUntil.IsZero() || !capEnforceable(database) || database.InBranchAllowance() {
 			continue
 		}
 		ranked = append(ranked, database)
