@@ -11,7 +11,7 @@ import (
 // credential, keyed by its sealed blob (ADR-20261110210000 slice 3h). A
 // store without verifiers (a test double) records nothing; gateways then
 // keep opening the sealed credential.
-func (s *Server) putBasicAuthVerifier(ctx context.Context, sealed []byte, user, pass string) error {
+func (s *server) putBasicAuthVerifier(ctx context.Context, sealed []byte, user, pass string) error {
 	store, ok := s.store.(state.BasicAuthVerifierStore)
 	if !ok {
 		return nil

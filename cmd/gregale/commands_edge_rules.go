@@ -665,7 +665,12 @@ func warnSingleHostProtectiveRule(kind, matchHost, slug string) {
 	if !api.EdgeRuleKindUsesProtectivePathMatch(kind) || api.IsEdgeRuleAppHosts(host) || strings.ContainsAny(host, "*?") {
 		return
 	}
-	PrintWarn(osStderr, "This %s rule covers only %s. App %s is also served at its own platform hostname and any other domains; pass --match-host @app to cover every host it serves.", kind, host, slug)
+	others := "its own platform hostname and any other domains"
+	if strings.EqualFold(host, strings.TrimPrefix(deployedAppURL(slug), "https://")) {
+		// The rule names that platform hostname (Hunt 33 H33-19).
+		others = "any custom domains and companion hostnames"
+	}
+	PrintWarn(osStderr, "This %s rule covers only %s. App %s is also served at %s; pass --match-host @app to cover every host it serves.", kind, host, slug, others)
 }
 
 // warnRootOnlyProtectiveRule flags a gate created without --match-path. The

@@ -83,7 +83,10 @@ func startLocalAppCLI(t *testing.T, dir string, extra ...string) (string, *exec.
 	t.Cleanup(func() {
 		_ = cmd.Process.Signal(os.Interrupt)
 		select {
-		case <-done:
+		case err := <-done:
+			if err != nil {
+				t.Errorf("CLI exited with an error: %v: %s", err, out.String())
+			}
 		case <-time.After(10 * time.Second):
 			_ = cmd.Process.Kill()
 			t.Errorf("CLI did not shut down: %s", out.String())
