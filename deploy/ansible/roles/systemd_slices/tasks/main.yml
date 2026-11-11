@@ -105,6 +105,11 @@
       Description=onebox-faas instance bridges (inside the tenant fence, connection-survival ADR)
 
       [Slice]
+      # Bridges forward every request their instance serves. Once VMs sit
+      # directly under faas-tenant.slice (ADR-20261109172421 step 6.5) they
+      # compete with each instance's cpu.weight (ram_mb / 16), so the slice
+      # gets enough weight to keep forwarding on a saturated host.
+      CPUWeight={{ faas_tenant_ibridge_cpu_weight }}
       MemoryAccounting=yes
       TasksAccounting=yes
   register: ibridge_slice
@@ -267,6 +272,7 @@
       MemoryAccounting=yes
       TasksAccounting=yes
   loop:
+    - faas-tenant
     - faas-tenant-free
     - faas-tenant-hobby
     - faas-tenant-pro
@@ -297,6 +303,7 @@
     name: "{{ item }}-fence.slice"
     state: started
   loop:
+    - faas-tenant
     - faas-tenant-free
     - faas-tenant-hobby
     - faas-tenant-pro

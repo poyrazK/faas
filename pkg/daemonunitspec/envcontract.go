@@ -1158,6 +1158,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_VMMD_CONFIG", Owners: []string{"vmmd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_VMMD_DATABASE_ROUTE_ENABLED", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "ADR-1027 lets app VMs reach managed PostgreSQL through the node's database route; set from the manifest's managed_postgres.app_route"},
 	{Name: "FAAS_VMMD_DBURL", Owners: []string{"vmmd"}, Source: EnvSourceEnvFile},
+	{Name: "FAAS_VMMD_FLAT_TENANT_CGROUPS", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Default: "false", Note: "ADR-20261109172421 step 6.5: true launches new tenant VMs directly under faas-tenant.slice instead of their plan's sub-slice (overrides vmmd.toml flat_tenant_cgroups; not with native_process_recovery); ansible vmmd_flat_tenant_cgroups, default false; turn off and let flat VMs park before rolling vmmd back past the release that added it"},
 	{Name: "FAAS_VMMD_LISTEN_ADDR", Owners: []string{"vmmd"}, Source: EnvSourceDropin},
 	{Name: "FAAS_VMMD_LOCAL_DATA_SOCKET", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional boolean switch (ADR-20261030230157): vmmd also serves /run/faas/vmmd-data.sock to this node's gatewayd-internal, by peer uid and for its forwarding RPCs only; overrides TOML local_data_socket; default off, and off removes the socket"},
 	{Name: "FAAS_VMMD_LOG_ARCHIVE_SPOOL_ROOT", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDefault, Note: "optional compute-side spool override; defaults to /var/log/faas/vmmd-archive so vmmd and apid do not share active files on single-box hosts"},

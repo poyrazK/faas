@@ -149,7 +149,7 @@ func writeLeaseCgroup(l Lease, planMB int) error {
 	if err != nil {
 		return err
 	}
-	return writeCgroupValuesAt(ParentCgroupFor(l.Plan), l.Instance, planMB, cpuMax)
+	return writeCgroupValuesAt(tenantCgroupParent(l), l.Instance, planMB, cpuMax)
 }
 
 // perInstanceControllers are the cgroup v2 controllers a per-VM scope needs.
@@ -319,7 +319,7 @@ func snapshotMemoryLimits(l Lease) (scope string, ordinaryMB, widenedMB int) {
 		return filepath.Join(cgroupRoot, BuilderCgroupParent, PerInstanceScope(l.Instance)),
 			api.BuilderMemoryMaxMB(l.MemoryMaxMiB), api.BuilderSnapshotMemoryMaxMB(l.MemoryMaxMiB)
 	}
-	return filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance)),
+	return filepath.Join(cgroupRoot, tenantCgroupParent(l), PerInstanceScope(l.Instance)),
 		api.BillableRAMMB(l.MemoryMaxMiB), api.SnapshotMemoryMaxMB(l.MemoryMaxMiB)
 }
 

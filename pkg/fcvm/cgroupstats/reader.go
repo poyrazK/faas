@@ -192,6 +192,18 @@ func (r *Reader) Instances() ([]InstanceInfo, error) {
 	}
 	out := make([]InstanceInfo, 0, len(entries))
 	seen := make(map[string]struct{})
+	// A VM launched flat (ADR-20261109172421 step 6.5) is a leaf of the
+	// tenant slice itself. Its plan is not in its path, so it is listed with
+	// none: Sample resolves the empty plan to this same slice. The *.slice
+	// children are the plan sub-slices and pins, not VMs.
+	for _, e := range entries {
+		name := e.Name()
+		if !e.IsDir() || strings.Contains(name, ".") {
+			continue
+		}
+		seen["\x00"+name] = struct{}{}
+		out = append(out, InstanceInfo{Instance: name})
+	}
 	plans := api.Plans
 	for _, plan := range plans {
 		// Walk each per-plan sub-slice and enumerate its leaves.

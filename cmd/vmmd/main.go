@@ -1101,6 +1101,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	mgr.WithFlatTenantCgroups(cfg.FlatTenantCgroups)
 	mgr.WithPrivateNetworkMembers(privateNetworkMemberSource(store, identityNodeID), privateNetworkMemberRelease(store, identityNodeID))
 	mgr.WithPrivateNetworkTransportIdentitySource(func(ctx context.Context, account, network, region string) (uint32, error) {
 		source, ok := store.(state.PrivateNetworkTransportStore)
