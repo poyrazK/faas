@@ -40,3 +40,27 @@ copy. Python ran `python3 -m unittest discover -q` with its pinned
 repository. No database URL or credentials are retained in the manifest.
 
 Required GitHub checks and the MCP contract workflow gate the final merge.
+
+## CI polling-fixture correction
+
+The first MCP contract run's `starter` job failed only the visible-ASCII task
+name test: it observed a queued task after its roughly one-second wait, while
+the worker used its default two-second polling interval. Asynchronous startup
+can complete an empty initial claim before that test queues its task.
+
+The fixture now selects the supported 500 ms polling interval and uses the
+existing bounded eventual-result helper. It still verifies all five tool
+names, their persisted result contents, and rejection after admission is
+disabled. No runtime or lease behavior changes are needed.
+
+The full Node v22.23.4 suite, matching CI's Node 22 major version, passes against
+disposable PostgreSQL: 236 passed, zero failed or skipped, in 33.530 seconds.
+Command from the temporary starter copy:
+
+```sh
+MCP_TASKS_REQUIRE_POSTGRES=1 node --test test/*.test.js
+```
+
+`MCP_TASKS_TEST_DATABASE_URL` pointed to the private disposable database. The
+original CI failure is retained in job
+`130707572358` of run `43073589910`; its other 235 Node tests passed.

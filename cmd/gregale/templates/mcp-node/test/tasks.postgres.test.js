@@ -252,16 +252,15 @@ test('visible ASCII tool names work through admission, worker claims and results
   for (const name of ['BuildReport', 'acme:report/build', '9lookup', '_lookup', 'a'.repeat(128)]) {
     const handlers = { [name]: { version: '1', async execute() { return { content: [{ type: 'text', text: name }] }; } } };
     await store.migrate({ admissionHandlers: [{ name, version: '1' }] });
-    const runtime = createMcpTaskRuntime({ store, handlers });
+    const runtime = createMcpTaskRuntime({ store, handlers, pollIntervalMs: 500 });
     try {
       await runtime.start();
       const task = await runtime.create(name, {}, principal('alice'), 'external-oauth');
-      let result;
-      for (let n = 0; n < 100; n++) {
-        result = await store.get({ taskID: task.taskId, authInfo: principal('alice'), authMode: 'external-oauth' });
-        if (result.status === 'completed') break;
-        await delay(10);
-      }
+      // Startup returns before queue draining; allow multiple worker polls.
+      const result = await eventually(async () => {
+        const value = await store.get({ taskID: task.taskId, authInfo: principal('alice'), authMode: 'external-oauth' });
+        return value.status === 'completed' ? value : null;
+      }, `worker did not complete task for ${name}`);
       assert.equal(result.status, 'completed');
       assert.equal(result.result.content[0].text, name);
       await admission.change('disable', name, '1');
