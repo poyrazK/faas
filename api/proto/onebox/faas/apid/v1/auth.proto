@@ -78,7 +78,57 @@ service Auth {
   // derived from its session key; a gateway verifies with these and cannot
   // mint one (ADR-20261102191500). Unavailable: apid has no session key.
   rpc SandboxTokenKeys(SandboxTokenKeysRequest) returns (SandboxTokenKeysResponse);
+
+  // DecideAgentRequest runs the agent approval gate for a gateway
+  // (ADR-20261111150000): apid is the only writer of approval requests, so
+  // a gateway serving a route that needs a person's approval (the
+  // developer debugger tunnel) asks apid. apid loads the key, classifies
+  // the pattern itself, and uses an approval or records a new request.
+  // Errors are InvalidArgument, NotFound (no such key on the account) and
+  // Unavailable (no gate, or the store failed).
+  rpc DecideAgentRequest(DecideAgentRequestRequest) returns (DecideAgentRequestResponse);
+
+  // RecordAgentActivity writes one agent activity row for a gateway
+  // (ADR-20261111150000); apid is the only writer of the activity log.
+  // Errors are InvalidArgument, NotFound and Unavailable.
+  rpc RecordAgentActivity(RecordAgentActivityRequest) returns (RecordAgentActivityResponse);
 }
+
+message DecideAgentRequestRequest {
+  string account_id = 1;
+  string key_id = 2;
+  // pattern — the request's route pattern, e.g. "GET /v1/apps/{slug}/debug".
+  string pattern = 3;
+  // method, path (escaped, with its query) and body_sha256 bind the
+  // approval to the request, as the HTTP gate binds it.
+  string method = 4;
+  string path = 5;
+  bytes body_sha256 = 6;
+  // reason — the sanitized Gregale-Agent-Reason header.
+  string reason = 7;
+}
+
+message DecideAgentRequestResponse {
+  bool allow = 1;
+  // approval_id — the approval the request went through on, if any.
+  string approval_id = 2;
+  // problem — the RFC 7807 answer as JSON when allow is false.
+  bytes problem = 3;
+}
+
+message RecordAgentActivityRequest {
+  string account_id = 1;
+  string key_id = 2;
+  string method = 3;
+  string path = 4;
+  int32 status = 5;
+  string approval_id = 6;
+  string reason = 7;
+  // created_at_unix_ms — when the gateway answered.
+  int64 created_at_unix_ms = 8;
+}
+
+message RecordAgentActivityResponse {}
 
 message SandboxTokenKeysRequest {}
 

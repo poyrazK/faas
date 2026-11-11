@@ -58,9 +58,28 @@ type serverConn struct {
 	idleAt   time.Time
 	// key reaches the server's backend for cancel requests.
 	key backendKey
+	// events carries what the server's reader (readServer) read; it runs
+	// for the server's whole life, idle in the pool too. ended is set once
+	// the server is gone (its database stopped under it, or a FATAL), so
+	// the pool lends it to nobody. stop ends the reader.
+	events   chan serverEvent
+	ended    atomic.Bool
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
-func (s *serverConn) close() { _ = s.rw.Close() }
+func newServerConn(rw io.ReadWriteCloser, key backendKey) *serverConn {
+	return &serverConn{rw: rw, fe: pgproto3.NewFrontend(rw, rw), prepared: map[string]bool{}, key: key, stop: make(chan struct{})}
+}
+
+func (s *serverConn) close() {
+	s.stopOnce.Do(func() {
+		if s.stop != nil {
+			close(s.stop)
+		}
+	})
+	_ = s.rw.Close()
+}
 
 // maxServerStatements bounds the prepared statements one server keeps; a
 // server past it is closed when released.
@@ -116,14 +135,21 @@ var errPoolFull = errors.New("pgproxy: every pooled connection to the database i
 // acquire returns an idle server of the pool or opens one, waiting up to
 // PoolWait while the database is at its cap. It takes an idle server of
 // another of the database's pools first, so one role cannot starve
-// another.
+// another. An idle server that ended in the pool (a resize, upgrade,
+// restart, eviction or failover stopped its database) is closed, not
+// lent.
 func (pl *pool) acquire(ctx context.Context) (*serverConn, error) {
 	s := pl.set
 	ctx, cancel := context.WithTimeout(ctx, s.p.cfg.PoolWait)
 	defer cancel()
 	for {
 		if srv := pl.popIdle(); srv != nil {
-			return srv, nil
+			if !srv.ended.Load() {
+				return srv, nil
+			}
+			srv.close()
+			s.release(pl.key.databaseID)
+			continue
 		}
 		s.mu.Lock()
 		wait := s.freedLocked(pl.key.databaseID)
@@ -217,7 +243,7 @@ func (pl *pool) open(ctx context.Context) (*serverConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	srv := &serverConn{rw: rw, fe: pgproto3.NewFrontend(rw, rw), prepared: map[string]bool{}, key: backendKey{target: target, databaseID: pl.key.databaseID}}
+	srv := newServerConn(rw, backendKey{target: target, databaseID: pl.key.databaseID})
 	finishSetup := interruptSetup(wakeCtx, rw)
 	defer func() { _ = finishSetup() }()
 	if err := loginBackend(srv.fe, pl.params, pl.clientKey, pl.serverKey); err != nil {
@@ -254,6 +280,8 @@ func (pl *pool) open(ctx context.Context) (*serverConn, error) {
 				pl.status = status
 			}
 			pl.mu.Unlock()
+			srv.events = make(chan serverEvent, 64)
+			go readServer(srv)
 			return srv, nil
 		}
 	}
@@ -297,8 +325,8 @@ func (s *poolSet) maintain(ctx context.Context) {
 	}
 }
 
-// sweep closes idle servers past their time and returns the databases to
-// touch with their egress.
+// sweep closes idle servers past their time or ended, and returns the
+// databases to touch with their egress.
 func (s *poolSet) sweep() map[string]int64 {
 	cutoff := time.Now().Add(-s.p.cfg.PoolServerIdle)
 	s.mu.Lock()
@@ -307,7 +335,7 @@ func (s *poolSet) sweep() map[string]int64 {
 		pl.mu.Lock()
 		kept := pl.idle[:0]
 		for _, srv := range pl.idle {
-			if srv.idleAt.Before(cutoff) {
+			if srv.idleAt.Before(cutoff) || srv.ended.Load() {
 				srv.close()
 				s.servers[key.databaseID]--
 				s.signalLocked(key.databaseID)

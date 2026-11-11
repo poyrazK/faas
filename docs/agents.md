@@ -162,6 +162,12 @@ owner or admin of its organization, can decide, and only from a signed-in
 session, never with an API key. After you approve, the agent repeats exactly
 the same request once. A request expires 30 minutes after it was made.
 
+Attaching a debugger to a developer environment (`gregale dev --debug`) is
+a `credentials` request, because a debugger can run code in the app and read
+its secrets. A debugger opens a new connection for each attach, so one
+approval covers that environment's debugger for an hour from the first
+attach. After that, the next attach asks again.
+
 The CLI prints the review link with the error. Put `--wait-for-approval`
 before the command (or set `GREGALE_WAIT_FOR_APPROVAL=1`) to have it wait
 for your decision and repeat the request once when you approve:
@@ -209,8 +215,9 @@ and, for a new request, its review link. It never includes the request body.
 Gregale keeps each agent's write requests (`POST`, `PUT`, `PATCH` and
 `DELETE`) for 7 days: when, method, path, the response status, and the
 approval request it went through on, if any, and the reason the agent gave
-for it (`Gregale-Agent-Reason`), if any. Reads are not listed, and
-neither are requests waiting for approval. Request bodies are never kept.
+for it (`Gregale-Agent-Reason`), if any. Reads are not listed, except
+debugger attaches (`GET /v1/apps/{slug}/debug`, status `101`). Requests
+waiting for approval are not listed either. Request bodies are never kept.
 
 ```sh
 gregale mcp connection list                 # find the agent's id

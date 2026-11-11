@@ -1339,6 +1339,9 @@ type MemStore struct {
 	// objectStorageOverCeiling mirrors object_storage_over_ceiling by
 	// subject id (ADR-20261111123000); nil until the first clock.
 	objectStorageOverCeiling map[string]ObjectStorageOverCeiling
+	// complimentaryAccounts mirrors complimentary_accounts by account ID
+	// (ADR-20261111140000).
+	complimentaryAccounts map[string]ComplimentaryAccount
 	// gdprRequests is the in-memory mirror of the gdpr_requests ledger
 	// row. MemStore does not auto-cascade on DeleteAccount (the
 	// production pgstore does), but AppendGdprRequest rows here are

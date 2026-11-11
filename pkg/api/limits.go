@@ -761,12 +761,18 @@ const (
 
 // A scan is reused only while the scanner and vulnerability database that
 // made it are still the installed ones (ADR-20261028102540). imaged reads that
-// identity with `grype version` and `grype db status` and keeps it this long;
-// every real scan also refreshes it.
+// identity with `grype version` and `grype db status` and keeps it
+// ScannerIdentityCacheTTL; every real scan also refreshes it. While a stat of
+// the Grype binary and of every file under GRYPE_DB_CACHE_DIR (at most
+// ScannerInstallStampMaxEntries entries) is unchanged it keeps the identity up
+// to ScannerIdentityUnchangedMaxAge: the probe took 3-10 s, and deploys are
+// rarer than one a minute, so every deploy paid it.
 const (
-	ScannerIdentityCacheTTL       = time.Minute
-	ScannerIdentityProbeTimeout   = 30 * time.Second
-	ScannerIdentityMaxOutputBytes = 64 << 10
+	ScannerIdentityCacheTTL        = time.Minute
+	ScannerIdentityUnchangedMaxAge = 6 * time.Hour
+	ScannerInstallStampMaxEntries  = 256
+	ScannerIdentityProbeTimeout    = 30 * time.Second
+	ScannerIdentityMaxOutputBytes  = 64 << 10
 )
 
 // Reused scans no longer run Grype often enough for its own update check to
@@ -2045,6 +2051,7 @@ const EnvironmentGitOpsMaxDeclaredRoutes = 50
 // These intervals do not grant authority to execute enforce-mode intent.
 const EnvironmentGitOpsReportLeaseDuration = time.Minute
 const EnvironmentGitOpsReportCheckInterval = time.Minute
+const EnvironmentGitOpsReportStaleAfter = 3 * EnvironmentGitOpsReportCheckInterval
 const EnvironmentGitOpsReportRetryInterval = 30 * time.Second
 const EnvironmentGitOpsReportIdleInterval = 5 * time.Second
 
@@ -3071,6 +3078,10 @@ const (
 	// deletes cannot starve inventory (ADR-20261025115958).
 	ObjectInventoryDeletionDrain = 10 * time.Second
 	ObjectInventoryDeletionYield = ObjectInventoryDeletionDrain + ObjectCapacityInventoryTimeout
+	// ObjectBucketTransitionRetryAfterSeconds is the Retry-After a deletion
+	// refused by a running versioning or capacity inventory carries: about
+	// half of one inventory scan (ObjectCapacityInventoryTimeout).
+	ObjectBucketTransitionRetryAfterSeconds = 30
 	// A bucket's listing resumes across attempts from its last listed key
 	// (ADR-20261030100835). While it advanced within
 	// ObjectInventoryScanProgressWindow, its bucket stays fresh on an
@@ -3351,6 +3362,11 @@ const (
 	DevDebugIdleTimeout          = 30 * time.Minute
 	DevDebugMaxBytes       int64 = 256 << 20
 	DevDebugWakeTimeout          = 60 * time.Second
+	// DevDebugApprovalWindow is how long one person's approval lets an agent
+	// key open debugger tunnels to one developer app (ADR-20261111150000): a
+	// debugger opens a tunnel per connection, so a per-request approval would
+	// leave agents unable to debug. The window starts at the first attach.
+	DevDebugApprovalWindow = time.Hour
 	// MaxDelayedTaskDelaySeconds bounds how far a one-shot invocation may be
 	// scheduled into the future. A one-year ceiling prevents effectively
 	// immortal pending rows while still covering annual workflows.
