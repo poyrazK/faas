@@ -214,6 +214,8 @@ func BucketProblem(w http.ResponseWriter, err error) {
 		status, code, detail = 503, "object_storage_checkpoint_active", "Bucket writes are temporarily paused for checkpoint capture."
 	case errors.Is(err, state.ErrObjectUsageStale):
 		status, code, detail = 503, "object_storage_usage_stale", "Storage accounting is not configured or usage data is stale; new provider requests and transfer authorizations are blocked."
+	case errors.Is(err, objectstorage.ErrObjectLockPlan):
+		status, code, detail = 403, "object_lock_plan_limit", "The bucket owner's plan does not include this much Object Lock protection: Free includes none, Hobby 90 days, Pro 1 year and Scale 7 years of retention. Choose a shorter retention or upgrade the plan."
 	case errors.Is(err, state.ErrObjectBudget):
 		status, code, detail = 402, "object_storage_budget_reached", "The object storage safety budget has been reached; new provider requests and transfer authorizations are blocked."
 	case errors.Is(err, state.ErrObjectStorageRegionFull):
@@ -236,6 +238,12 @@ func BucketProblem(w http.ResponseWriter, err error) {
 		status, code, detail = 501, "object_storage_unsupported", "This object storage operation is not supported by the selected provider."
 	case errors.Is(err, objectstorage.ErrNotEmpty):
 		status, code, detail = 409, "bucket_not_empty", "Empty the bucket, including any versions, before deleting it."
+	case errors.Is(err, state.ErrObjectBucketTransition):
+		status, code, detail = 503, "object_storage_bucket_transition", "The bucket is finishing a versioning or capacity inventory; retry after the Retry-After delay."
+		w.Header().Set("Retry-After", strconv.Itoa(api.ObjectBucketTransitionRetryAfterSeconds))
+	case errors.Is(err, state.ErrObjectBucketBusy):
+		status, code, detail = 503, "object_storage_busy", "Other work on this object has not settled yet; retry after the Retry-After delay."
+		w.Header().Set("Retry-After", "1")
 	case errors.Is(err, state.ErrConflict), errors.Is(err, objectstorage.ErrConflict):
 		status, code, detail = 409, "object_storage_conflict", "Bucket is busy, conflicts with this request, or the bucket limit was reached."
 	}
@@ -342,6 +350,12 @@ type CreateBucketRequest struct {
 func (s *Service) CreateBucket(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, st, ok := s.bucketStore(w, r, acct)
 	if !ok {
+		return
+	}
+	// A PR preview runs unreviewed code and is torn down with its pull
+	// request; a bucket on it would outlive it (ADR-20261105090226).
+	if state.IsPRPreviewApp(app) {
+		api.WriteProblem(w, api.ErrPRPreviewResourceUnsupported("object storage buckets"))
 		return
 	}
 	var req CreateBucketRequest

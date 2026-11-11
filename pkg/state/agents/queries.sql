@@ -194,6 +194,20 @@ SELECT method, samples, expected_samples, measured_ms, paused_ms, private_mb_ms,
        billable_mb_ms, peak_private_mb, cold_boot
   FROM agent_run_usage WHERE run_id=sqlc.arg(run_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
 
+-- name: AgentVersionPrivatePeak :one
+-- ADR-20261027090015 §3: the p95 private peak of a version's recent measured
+-- runs of one input class, leaving out runs with too many missing samples.
+SELECT count(*)::integer AS runs,
+       coalesce(percentile_disc(0.95) WITHIN GROUP (ORDER BY h.peak_private_mb), 0)::bigint AS peak_mb
+  FROM (SELECT u.peak_private_mb
+          FROM agent_run_usage u JOIN agent_runs r ON r.id = u.run_id
+         WHERE u.account_id = sqlc.arg(account_id)::text::uuid AND r.agent_id = sqlc.arg(agent_id)::text::uuid
+           AND r.agent_version = sqlc.arg(agent_version)::integer
+           AND (r.checkout_repository IS NOT NULL) = sqlc.arg(checkout)::boolean
+           AND u.samples::bigint * 100 >= u.expected_samples::bigint * (100 - sqlc.arg(max_gap_percent)::integer)
+         ORDER BY u.recorded_at DESC
+         LIMIT sqlc.arg(window_runs)::integer) h;
+
 -- name: RenewAgentRunLease :one
 UPDATE agent_runs SET lease_expires_at=now()+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision), updated_at=now()
  WHERE id=sqlc.arg(run_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state IN ('starting','running','delivering')

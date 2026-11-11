@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1225,6 +1226,9 @@ const (
 
 func (h *Handler) providerError(w http.ResponseWriter, r *http.Request, req requestContext, err error, key string) {
 	resource := r.URL.Path
+	if objectLockPlanError(w, r, req, err) {
+		return
+	}
 	if errors.Is(err, objectstorage.ErrPreconditionFailed) {
 		writeS3Error(w, http.StatusPreconditionFailed, "PreconditionFailed", "The destination does not satisfy the write condition.", resource, req.requestID)
 		return
@@ -1241,6 +1245,12 @@ func (h *Handler) providerError(w http.ResponseWriter, r *http.Request, req requ
 	// Contention is the customer's own concurrent work, never a provider
 	// outage: SDKs retry SlowDown with backoff, and 409 tells them waiting
 	// will not help yet.
+	if errors.Is(err, state.ErrObjectBucketTransition) {
+		// A bucket-wide inventory finishes on its own; SDKs retry SlowDown.
+		w.Header().Set("Retry-After", strconv.Itoa(api.ObjectBucketTransitionRetryAfterSeconds))
+		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", objectBusyMessage, resource, req.requestID)
+		return
+	}
 	if errors.Is(err, state.ErrObjectBucketBusy) {
 		w.Header().Set("Retry-After", "1")
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", objectBusyMessage, resource, req.requestID)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/whycopy"
@@ -36,6 +37,7 @@ type devDiagnostic struct {
 	DeploymentID string           `json:"deployment_id,omitempty"`
 	LogsCommand  string           `json:"logs_command,omitempty"`
 	SourceDir    string           `json:"source_dir,omitempty"`
+	App          string           `json:"app,omitempty"`
 	Logs         []api.LogExcerpt `json:"relevant_logs,omitempty"`
 	Catalog      bool             `json:"-"`
 }
@@ -69,10 +71,32 @@ func devDiagnosticFromDeployment(dep api.DeploymentResponse, phase, reason strin
 		Logs:         dep.ErrorRelevantLogs,
 		Catalog:      dep.ErrorCode != "",
 	}
-	if dep.ID != "" {
-		d.LogsCommand = fmt.Sprintf("gregale logs --deployment %s", dep.ID)
-	}
 	return d
+}
+
+// Capture the stable developer target rather than consulting linked production
+// context or the session variable, which is refreshed while logs are followed.
+func newDevDiagnosticReporter(sourceDir, app string) func(devDiagnostic) {
+	var mu sync.Mutex
+	return func(d devDiagnostic) {
+		d.SourceDir, d.App = sourceDir, app
+		if app != "" {
+			d.LogsCommand = fmt.Sprintf("gregale logs --app %s", recoveryArgument(app))
+			if d.DeploymentID != "" {
+				d.LogsCommand += fmt.Sprintf(" --deployment %s", recoveryArgument(d.DeploymentID))
+			}
+			if d.Phase == "runtime" {
+				d.LogsCommand += " --source runtime"
+			}
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if jsonOutput {
+			_ = writeNDJSON([]devDiagnostic{d})
+			return
+		}
+		renderDevDiagnostic(osStderr, d)
+	}
 }
 
 func devDiagnosticFromError(err error, phase string) devDiagnostic {
@@ -149,9 +173,9 @@ func decorateDevDiagnosticProblem(p *api.Problem, code string) {
 		p.Fix = "• add the module to the declared dependency file\n• regenerate and commit the lockfile\n• save again to rebuild the developer environment"
 	case devDiagBindFailure:
 		p.Title = "Application failed to bind its port"
-		p.Hint = "the process could not claim the configured listening port"
-		p.Why = "the runtime reported that the listening address is already in use, so the server never became reachable"
-		p.Fix = "• bind exactly once to process.env.PORT (or the framework equivalent)\n• stop any second development server started by your code\n• save again to retry"
+		p.Hint = "the process could not bind the configured listening address"
+		p.Why = "the runtime could not use the listening address or port, so the server never became reachable"
+		p.Fix = "• bind to the configured port on an available interface\n• stop any second server using that port\n• save again to retry"
 	case devDiagUpstreamFailure:
 		p.Title = "Upstream connection failed"
 		p.Hint = "a dependency connection was refused from the developer environment"
@@ -209,12 +233,12 @@ func inferDevDiagnosticCode(detail, phase, reason string) string {
 		return devDiagSyncFailed
 	case strings.Contains(text, "cannot find module"), strings.Contains(text, "module not found"), strings.Contains(text, "modulenotfounderror"), strings.Contains(text, "no module named"):
 		return devDiagImportFailure
-	case strings.Contains(text, "eaddrinuse"), strings.Contains(text, "address already in use"):
+	case strings.Contains(text, "eaddrinuse"), strings.Contains(text, "address already in use"), strings.Contains(text, "eaddrnotavail"), strings.Contains(text, "cannot assign requested address"):
 		return devDiagBindFailure
-	case strings.Contains(text, "eaddrnotavail"), strings.Contains(text, "loopback"), strings.Contains(text, "127.0.0.1"):
-		return api.CodeAppLoopbackBound
-	case strings.Contains(text, "econnrefused"), strings.Contains(text, "connection refused"), strings.Contains(text, "upstream"):
+	case strings.Contains(text, "econnrefused"), strings.Contains(text, "connection refused"), strings.Contains(text, "upstream connection failed"):
 		return devDiagUpstreamFailure
+	case devLoopbackBindFailure(text):
+		return api.CodeAppLoopbackBound
 	case strings.Contains(text, "exec format"), strings.Contains(text, "enoexec"), strings.Contains(text, "architecture"):
 		return api.CodeAppArchMismatch
 	case strings.Contains(text, "healthz") && (strings.Contains(text, "401") || strings.Contains(text, "403")):
@@ -226,6 +250,15 @@ func inferDevDiagnosticCode(detail, phase, reason string) string {
 	default:
 		return devDiagSyncFailed
 	}
+}
+
+// Development servers can successfully bind loopback behind the watch-mode
+// forwarder. An address or binding announcement alone is not failure evidence.
+func devLoopbackBindFailure(text string) bool {
+	local := strings.Contains(text, "loopback") || strings.Contains(text, "127.0.0.1") || strings.Contains(text, "localhost") || strings.Contains(text, "[::1]")
+	bound := strings.Contains(text, "bound to") || strings.Contains(text, "bound on") || strings.Contains(text, "loopback-bound")
+	failed := strings.Contains(text, "unreachable") || strings.Contains(text, "failed") || strings.Contains(text, "error:") || strings.Contains(text, "loopback-bound")
+	return local && bound && failed
 }
 
 func devDiagnosticPhase(phase string) string {

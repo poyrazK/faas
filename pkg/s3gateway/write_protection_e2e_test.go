@@ -246,6 +246,7 @@ func writeProtectionSDKE2E(t *testing.T, st multipartCopyIntegrationStore, advan
 	if err = st.RecordObjectUsageReport(t.Context(), api.ObjectStorageUsageReport{AccountID: f.bucket.AccountID, BackendID: f.bucket.BackendID, BackendFingerprint: f.bucket.BackendFingerprint, Source: "provider", PeriodStart: state.ObjectStoragePeriod(clock()), ObservedAt: clock()}); err != nil {
 		t.Fatal(err)
 	}
+	assertObjectLockPlanCaps(t, st, f)
 	until := clock().AddDate(0, 0, 7)
 	input := &awss3.PutObjectInput{Bucket: aws.String("assets"), Key: aws.String("source"), Body: strings.NewReader("hello"), ObjectLockMode: types.ObjectLockModeCompliance, ObjectLockRetainUntilDate: &until, ObjectLockLegalHoldStatus: types.ObjectLockLegalHoldStatusOn}
 	if held {
@@ -306,5 +307,47 @@ func writeProtectionSDKE2E(t *testing.T, st multipartCopyIntegrationStore, advan
 	}
 	if native.puts != 3 {
 		t.Fatal("recovery replayed mutation", native.puts)
+	}
+}
+
+// assertObjectLockPlanCaps checks that uploads carry no more Object Lock
+// protection than the bucket owner's plan includes (ADR-20261111123000
+// decision 8, object storage audit OS-6), then restores the fixture's Pro plan.
+func assertObjectLockPlanCaps(t *testing.T, st multipartCopyIntegrationStore, f *multipartCopyIntegration) {
+	t.Helper()
+	plans, ok := st.(interface {
+		UpdateAccountPlan(context.Context, string, api.Plan) error
+	})
+	if !ok {
+		t.Fatal("store cannot change plans")
+	}
+	setPlan := func(p api.Plan) {
+		if err := plans.UpdateAccountPlan(t.Context(), f.bucket.AccountID, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer setPlan(api.PlanPro)
+	put := func(input *awss3.PutObjectInput) error {
+		input.Bucket, input.Body = aws.String("assets"), strings.NewReader("hello")
+		_, err := f.client.PutObject(t.Context(), input)
+		return err
+	}
+	century := time.Now().UTC().AddDate(100, 0, 0)
+	setPlan(api.PlanHobby)
+	err := put(&awss3.PutObjectInput{Key: aws.String("century"), ObjectLockMode: types.ObjectLockModeCompliance, ObjectLockRetainUntilDate: &century})
+	assertSDKErrorCode(t, err, "AccessDenied")
+	if !strings.Contains(err.Error(), "limit 90 days") {
+		t.Fatalf("plan refusal must name the limit: %v", err)
+	}
+	setPlan(api.PlanFree)
+	err = put(&awss3.PutObjectInput{Key: aws.String("held"), ObjectLockLegalHoldStatus: types.ObjectLockLegalHoldStatusOn})
+	assertSDKErrorCode(t, err, "AccessDenied")
+	week := time.Now().UTC().AddDate(0, 0, 7)
+	err = put(&awss3.PutObjectInput{Key: aws.String("week"), ObjectLockMode: types.ObjectLockModeGovernance, ObjectLockRetainUntilDate: &week})
+	assertSDKErrorCode(t, err, "AccessDenied")
+	for _, key := range []string{"century", "held", "week"} {
+		if _, err := f.client.HeadObject(t.Context(), &awss3.HeadObjectInput{Bucket: aws.String("assets"), Key: aws.String(key)}); err == nil {
+			t.Fatalf("refused upload %s was stored", key)
+		}
 	}
 }

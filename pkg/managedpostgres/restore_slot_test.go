@@ -34,7 +34,9 @@ type slotFixture struct {
 	sweeper  *RestoreSlotSweeper
 	clock    *time.Time
 	limit    *int
-	expired  *[]Database
+	// branches is the branch allowance (ADR-20261106103654 amendment 1).
+	branchAllowance *int
+	expired         *[]Database
 	// notified records the notices mailed; notifyErr, when set, fails them.
 	notified  *[]RestoreSlotNotice
 	notifyErr *error
@@ -43,7 +45,7 @@ type slotFixture struct {
 func newSlotFixture(t *testing.T) slotFixture {
 	t.Helper()
 	clock := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
-	limit := 1
+	limit, branches := 1, 5
 	var expired []Database
 	var notified []RestoreSlotNotice
 	var notifyErr error
@@ -57,6 +59,7 @@ func newSlotFixture(t *testing.T) slotFixture {
 		NewID:                  func() string { sequence++; return fmt.Sprintf("database-%d", sequence) },
 		NewLeaseToken:          func() string { sequence++; return fmt.Sprintf("lease-%d", sequence) },
 		MaxDatabasesPerAccount: func(context.Context, string) (int, error) { return limit, nil },
+		MaxBranchesPerAccount:  func(context.Context, string) (int, error) { return branches, nil },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +82,7 @@ func newSlotFixture(t *testing.T) slotFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return slotFixture{service: service, store: store, provider: provider, bindings: bindings, sweeper: sweeper, clock: &clock, limit: &limit, expired: &expired,
+	return slotFixture{service: service, store: store, provider: provider, bindings: bindings, sweeper: sweeper, clock: &clock, limit: &limit, branchAllowance: &branches, expired: &expired,
 		notified: &notified, notifyErr: &notifyErr}
 }
 

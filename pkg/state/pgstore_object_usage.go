@@ -15,6 +15,7 @@ import (
 var _ ObjectStorageAccountingStore = (*PgStore)(nil)
 var _ ObjectStorageBillingStore = (*PgStore)(nil)
 var _ ObjectInventoryReleaser = (*PgStore)(nil)
+var _ ObjectBucketPlanLimitsStore = (*PgStore)(nil)
 
 func objectUsageTime(t time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: t, Valid: true} }
 
@@ -43,6 +44,37 @@ func lockObjectUsageScope(ctx context.Context, tx pgx.Tx, account, bucket pgtype
 	return q.ObjectUsageLockAccount(ctx, tx, account)
 }
 
+// ObjectBucketPlanLimits returns the object-storage limits of the plan that
+// pays for the bucket now (ADR-20261111123000 decision 8).
+func (s *pgCore) ObjectBucketPlanLimits(ctx context.Context, account, bucket string) (api.ObjectStoragePlanLimits, error) {
+	if !validUUID(account) || !validUUID(bucket) {
+		return api.ObjectStoragePlanLimits{}, ErrNotFound
+	}
+	subject, err := sqlc.New().ObjectStorageSubject(ctx, s.pool, sqlc.ObjectStorageSubjectParams{BucketID: mustPgUUID(bucket), AccountID: mustPgUUID(account)})
+	if err != nil {
+		return api.ObjectStoragePlanLimits{}, mapErr(err)
+	}
+	return readObjectPlanLimits(ctx, s.pool, pgUUIDString(subject))
+}
+
+// readObjectPlanLimits returns a billing subject's object-storage plan
+// limits. ADR-1320: checks tighten the operator policy by the plan's
+// ceilings. A missing account keeps the operator policy, as before.
+func readObjectPlanLimits(ctx context.Context, db sqlc.DBTX, subject string) (api.ObjectStoragePlanLimits, error) {
+	owner, err := sqlc.New().ObjectUsageAccountPlanCap(ctx, db, mustPgUUID(subject))
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return api.ObjectStoragePlanLimits{}, err
+	}
+	var capCents, grantBytes *int64
+	if owner.OverageCapCents.Valid {
+		capCents = &owner.OverageCapCents.Int64
+	}
+	if owner.CeilingGrantBytes.Valid {
+		grantBytes = &owner.CeilingGrantBytes.Int64
+	}
+	return objectStoragePlanLimits(api.Plan(owner.Plan), grantBytes, capCents), nil
+}
+
 // Storage namespace selects the bucket; financial ownership selects its quota pool.
 func readObjectBucketUsage(ctx context.Context, db sqlc.DBTX, account, bucket string, now time.Time) (ObjectUsageSnapshot, error) {
 	subject, err := sqlc.New().ObjectStorageSubject(ctx, db, sqlc.ObjectStorageSubjectParams{BucketID: mustPgUUID(bucket), AccountID: mustPgUUID(account)})
@@ -55,20 +87,11 @@ func readObjectBucketUsage(ctx context.Context, db sqlc.DBTX, account, bucket st
 func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string, periodStart time.Time) (ObjectUsageSnapshot, error) {
 	q := sqlc.New()
 	out := ObjectUsageSnapshot{}
-	// ADR-1320: checks tighten the operator policy by the plan's ceilings. A
-	// missing account keeps the operator policy, as before.
-	owner, err := q.ObjectUsageAccountPlanCap(ctx, db, mustPgUUID(account))
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	limits, err := readObjectPlanLimits(ctx, db, account)
+	if err != nil {
 		return out, err
 	}
-	var capCents, grantBytes *int64
-	if owner.OverageCapCents.Valid {
-		capCents = &owner.OverageCapCents.Int64
-	}
-	if owner.CeilingGrantBytes.Valid {
-		grantBytes = &owner.CeilingGrantBytes.Int64
-	}
-	out.PlanLimits = objectStoragePlanLimits(api.Plan(owner.Plan), grantBytes, capCents)
+	out.PlanLimits = limits
 	rows, err := q.ObjectUsageBuckets(ctx, db, sqlc.ObjectUsageBucketsParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(ObjectStoragePeriod(periodStart))})
 	if err != nil {
 		return out, err

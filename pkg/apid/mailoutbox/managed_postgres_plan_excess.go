@@ -145,8 +145,14 @@ func (s *Service) NoticeManagedPostgresPlanExcess(ctx context.Context, accountID
 	if err != nil {
 		return err
 	}
+	// The notice keeps the deletion date this email names: the cap sweep
+	// deletes the database only on a date its owner was mailed.
+	var deleteAt pgtype.Timestamptz
+	if !payload.DeleteAt.IsZero() {
+		deleteAt = pgtype.Timestamptz{Time: payload.DeleteAt, Valid: true}
+	}
 	linked, err := s.queries.LinkManagedPostgresPlanExcessNotice(ctx, tx, q.LinkManagedPostgresPlanExcessNoticeParams{IntentID: intent.ID,
-		DatabaseID: pgID(notice.DatabaseID)})
+		DeleteAt: deleteAt, DatabaseID: pgID(notice.DatabaseID)})
 	if err != nil || linked != 1 {
 		return err // already mailed, or the notice is gone: roll the intent back
 	}

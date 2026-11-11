@@ -207,6 +207,15 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			}
 			return limit, nil
 		},
+		// ADR-20261106103654 amendment 1: short-lived branches sit in their
+		// own allowance, outside the database limit.
+		MaxBranchesPerAccount: func(ctx context.Context, accountID string) (int, error) {
+			account, err := state.BillingResourceAccount(ctx, accountStore, accountID)
+			if err != nil {
+				return 0, err
+			}
+			return api.ManagedPostgresBranchesMax(api.Plan(account.Plan)), nil
+		},
 		FreePlan: func(ctx context.Context, subjectID string) (bool, error) {
 			account, err := state.BillingResourceAccount(ctx, accountStore, subjectID)
 			if err != nil {
@@ -411,6 +420,20 @@ func managedPostgresCapNoticeReady(getenv func(string) string) error {
 		managedpostgres.CapEnforcementEnv, internalmail.ManagedPostgresCapOutboxEnableEnv)
 }
 
+// managedPostgresPlanExcessDeleteReady refuses deleting databases past their
+// plan while the suspension email cannot be sent (ADR-20261110184700): the
+// email is the owner's only notice of the deletion date, and the sweep
+// deletes only on a date an email named, so without it nothing would ever be
+// deleted while the logs claim deletion is on.
+func managedPostgresPlanExcessDeleteReady(mode managedpostgres.CapEnforcementMode, getenv func(string) string) error {
+	if mode != managedpostgres.CapEnforcementOn || internalmail.ManagedPostgresPlanExcessOutboxEnabled(getenv) {
+		return nil
+	}
+	return fmt.Errorf("%s=on deletes databases past their plan, and owners learn the date only from the suspension email: "+
+		"set %s=1 with the internal mail producer outbox enabled, or keep deletion at shadow",
+		managedpostgres.PlanExcessDeleteEnv, internalmail.ManagedPostgresPlanExcessOutboxEnableEnv)
+}
+
 // loadManagedPostgresCapEnforcer builds the compute cap enforcer
 // (ADR-20261025094915). Each subject's ceiling is its plan's monthly compute
 // allowance, or twice it with overage on; the enforcer intersects it with the
@@ -430,6 +453,9 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 	}
 	planExcessDeleteMode, err := managedpostgres.ParsePlanExcessDeleteMode(getenv(managedpostgres.PlanExcessDeleteEnv))
 	if err != nil {
+		return nil, err
+	}
+	if err := managedPostgresPlanExcessDeleteReady(planExcessDeleteMode, getenv); err != nil {
 		return nil, err
 	}
 	options := managedpostgres.CapEnforcerOptions{
@@ -603,13 +629,18 @@ func (s *server) managedPostgresPlanExcessOf(ctx context.Context, acct state.Acc
 	return s.managedPostgresPlanExcess(databases, acct.Plan)[databaseID]
 }
 
-// managedPostgresStoredOverage reads a subject's overage choice when the
-// account may use overage at all.
+// managedPostgresStoredOverage reads a subject's compute overage when the
+// account may use overage at all: its stored choice, else its plan's default
+// (on only for Scale, ADR-20261025094915 amendment 2026-11-11).
 func managedPostgresStoredOverage(ctx context.Context, store managedpostgres.OverageStore, overage managedPostgresOverageGate, account state.Account, subject string) (bool, error) {
 	if overage == nil || !overage(account) {
 		return false, nil
 	}
-	return store.OverageEnabled(ctx, subject)
+	enabled, chosen, err := store.OverageSetting(ctx, subject)
+	if err != nil {
+		return false, err
+	}
+	return api.ManagedPostgresOverageEffective(api.Plan(account.Plan), enabled, chosen), nil
 }
 
 func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits, overage bool) managedpostgres.UsageCeilings {

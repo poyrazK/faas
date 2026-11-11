@@ -565,7 +565,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// "scan-critical" failure rather than the supply-chain
 		// installation gap it actually is.
 		WithGrypeRun(makeGrypeRunner(os.Getenv("FAAS_GRYPE_BIN"))).
-		WithGrypeIdentityProbe(os.Getenv("FAAS_GRYPE_BIN")).
+		WithGrypeIdentityProbe(os.Getenv("FAAS_GRYPE_BIN"), os.Getenv("GRYPE_DB_CACHE_DIR")).
 		WithRuntimeGrypeRun(makeRuntimeGrypeRunner(os.Getenv("FAAS_GRYPE_BIN"))).
 		WithSyftRun(makeSyftRunner(os.Getenv("FAAS_SYFT_BIN"))).
 		WithBaseProvenance(baseProvenance).

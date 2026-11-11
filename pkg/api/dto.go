@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -16,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/pkg/edgevalidate"
 	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 
@@ -9583,32 +9586,6 @@ func (a *EdgeRuleIPAction) Validate() *Problem {
 	return nil
 }
 
-// edgeRuleValidateRefURLPattern matches external `$ref` / `$id` values
-// that we refuse to compile against. The capture group is the URL
-// substring (so the 422 detail can name it); an external reference is
-// any non-empty URL that does NOT resolve to a JSON Pointer (the
-// `#/foo/bar` form). The JWKS-URL defence-in-depth at ADR-091 D10
-// uses the same posture but a different regex shape; this is the
-// JSON Schema analogue.
-//
-// Conservative on purpose: we strip / refuse anything that looks
-// URL-shaped on the right-hand side of `$ref` / `$id`. Internal
-// pointers (`#/definitions/Foo`) pass through. Same posture as the
-// §11 egress firewall — a customer cannot smuggle a request to
-// RFC1918 / metadata ranges through `$ref` resolution at hot-path
-// compile time. pkg/edgevalidate re-strips at compile time as
-// defence-in-depth.
-//
-// PR-C: anchored the key. The previous `\$ref|id` alternation
-// matched the substring `id` anywhere in the schema — including
-// inside `definitions` (so `{"$ref": "#/definitions/Foo"}` was
-// wrongly rejected as if it were an external URL). The new regex
-// requires the key to be a top-level JSON property name ("$ref"
-// or "$id"), followed by an optional-whitespace colon, followed by
-// a URL-shaped value. Verified against 10 cases in this PR-C
-// harness (see plan-file regression-proof walkthrough).
-var edgeRuleValidateRefURLPattern = lazyregexp.New(`"\s*(\$ref|\$id)\s*"\s*:\s*"(https?://|//)[^"]+"`)
-
 // EdgeRuleValidateAction is the wire shape for a kind=validate edge
 // rule. Schema is a JSON Schema 2020-12 document (Draft 2020-12;
 // sanity-bounded to a closed keyword set so a customer cannot ship
@@ -9620,7 +9597,7 @@ var edgeRuleValidateRefURLPattern = lazyregexp.New(`"\s*(\$ref|\$id)\s*"\s*:\s*"
 //
 //   - Schema: required JSON Schema document. Capped at
 //     MaxEdgeRuleValidateSchemaBytes (64 KiB). External `$ref` /
-//     `$id` URLs are rejected — see edgeRuleValidateRefURLPattern.
+//     `$id` URLs are rejected by the shared inline-schema compiler.
 //   - ContentTypes: optional media-type allowlist (e.g.
 //     ["application/json"]). Closed set application/* (the
 //     spec runtime is JSON; non-JSON schemas are out of scope
@@ -9888,7 +9865,7 @@ func (a *EdgeRuleValidateAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("validate action is required")
 	}
-	if len(a.Schema) == 0 {
+	if len(a.Schema) == 0 || bytes.Equal(bytes.TrimSpace(a.Schema), []byte("null")) {
 		if a.Parameters.Empty() {
 			return ErrValidation("validate action: schema or parameters is required")
 		}
@@ -9901,24 +9878,16 @@ func (a *EdgeRuleValidateAction) Validate() *Problem {
 			"validate action: schema exceeds %d bytes (got %d)",
 			MaxEdgeRuleValidateSchemaBytes, len(a.Schema)))
 	}
-	// JSON well-formedness check. The json/v6 compile path runs
-	// this again at gateway compile time, but a fast-fail here keeps
-	// a malformed schema out of the apid create path and out of the
-	// 64 KiB-ish jsonb blob (Postgres jsonb rejects malformed JSON
-	// at insert with a 22P02 — same shape, but earlier).
-	var probe any
-	if err := json.Unmarshal(a.Schema, &probe); err != nil {
-		return ErrValidation(fmt.Sprintf("validate action: schema is not valid JSON: %v", err))
+	// Use the serving compiler before persistence: valid JSON can still be
+	// an invalid schema or exceed the runtime's reference/complexity bounds.
+	if !json.Valid(a.Schema) {
+		return ErrValidation("validate action: schema is not valid JSON")
 	}
-	// External-$ref/$id strip. The JWKS-URL guard at ADR-091 D10
-	// uses the same posture: refuse any URL-shaped value rather
-	// than try to enumerate safe hosts (a regex strip is cheaper
-	// to audit). The gateway side re-strips at compile time as
-	// defence-in-depth.
-	if match := edgeRuleValidateRefURLPattern.FindStringIndex(string(a.Schema)); match != nil {
-		return ErrValidation(fmt.Sprintf(
-			"validate action: schema contains an external $ref or $id URL (around byte %d); inline schemas only",
-			match[0]))
+	if _, err := edgevalidate.Compile(a.Schema, a.RejectOnUnknownFields); err != nil {
+		if errors.Is(err, edgevalidate.ErrSchemaExternalRef) {
+			return ErrValidation("validate action: schema contains an external $ref or $id URL or another external reference; inline schemas only")
+		}
+		return ErrValidation(fmt.Sprintf("validate action: schema cannot be compiled: %v", err))
 	}
 	// ContentTypes: optional; closed set application/* (the spec
 	// runtime is JSON for v1). Empty == match any; non-empty must

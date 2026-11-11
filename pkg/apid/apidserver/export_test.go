@@ -1617,6 +1617,9 @@ func (r *server) VerifyOAuthAccountEmail(p0 context.Context, p1 state.Account, p
 func (r *server) EndOtherAccessAfterMFAEnroll(p0 *http.Request, p1 state.Account) {
 	r.endOtherAccessAfterMFAEnroll(p0, p1)
 }
+func (r *server) KeysLeftAfterReset(p0 context.Context, p1 state.Account) []state.APIKey {
+	return r.keysLeftAfterReset(p0, p1)
+}
 func (r *server) RemoveForeignProviderLinks(p0 context.Context, p1 string, p2 string) {
 	r.removeForeignProviderLinks(p0, p1, p2)
 }
@@ -2135,6 +2138,11 @@ func (r *server) ResetTOTPAttempts(ctx context.Context, accountID string) {
 // TOTPMaxFailures is the per-account TOTP attempt limit.
 const TOTPMaxFailures = totpMaxFailures
 
+// ExpireComplimentaryAccounts runs one complimentary-account expiry sweep at now.
+func (r *server) ExpireComplimentaryAccounts(ctx context.Context, now time.Time) int {
+	return r.expireComplimentaryAccounts(ctx, now)
+}
+
 // ExpireUnverifiedAccounts runs one unverified-account expiry sweep.
 func (r *server) ExpireUnverifiedAccounts(ctx context.Context) int {
 	return r.expireUnverifiedAccounts(ctx)
@@ -2376,6 +2384,10 @@ var CSVSafeCell = csvSafeCell
 // ManagedPostgresCapNoticeReady exposes the H88 startup gate on compute cap
 // enforcement.
 var ManagedPostgresCapNoticeReady = managedPostgresCapNoticeReady
+
+// ManagedPostgresPlanExcessDeleteReady exposes the startup gate on deleting
+// databases past their plan (ADR-20261110184700).
+var ManagedPostgresPlanExcessDeleteReady = managedPostgresPlanExcessDeleteReady
 
 func (s *server) GetEnvironmentRollbackReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	s.getEnvironmentRollbackReceipt(w, r, acct)

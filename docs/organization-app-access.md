@@ -271,6 +271,13 @@ for backfill, rollout and acceptance requirements.
 
 ## Removing a member
 
+Removing a member, changing a member's role, transferring ownership and
+inviting an admin email every owner and the member concerned; changing the
+billing email emails the previous billing address and the owners
+(ADR-20261111130000). An invitation only works while the member who sent it
+is still an owner or admin: invitations an admin sent stop working when the
+admin is demoted or removed.
+
 `DELETE /v1/orgs/{slug}/members/{user_id}` removes the member and revokes their
 organization API keys (including rotation grace keys), deploy tokens for the
 organization's apps (those on apps they created and those they minted on

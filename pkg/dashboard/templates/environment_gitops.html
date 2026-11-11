@@ -37,6 +37,7 @@
             Approved revision: <code>{{if .ApprovedRevisionID}}{{.ApprovedRevisionID}}{{else}}unknown{{end}}</code><br>
             Applied revision: <code>{{if .AppliedRevisionID}}{{.AppliedRevisionID}}{{else}}unknown{{end}}</code><br>
             Serving revision: <code>{{if .ServingRevisionID}}{{.ServingRevisionID}}{{else}}unknown{{end}}</code></p>
+          {{if .ReportFreshness}}<p>Current report: <code>{{if .ReportID}}{{.ReportID}}{{else}}unknown{{end}}</code> · status: {{if .ReportStatus}}{{.ReportStatus}}{{else}}unknown{{end}} · freshness: {{.ReportFreshness}}</p>{{end}}
           {{if .Workloads}}<table><thead><tr><th>Workload</th><th>Artifact/build</th><th>Qualification</th><th>Activation</th><th>Serving</th></tr></thead><tbody>
           {{range .Workloads}}<tr><td><code>{{.Resource}}</code></td><td>{{.Preparation}}{{if .BuildStatus}} · build {{.BuildStatus}}{{end}}{{if .BuildCacheStatus}} · cache {{.BuildCacheStatus}}{{end}}</td><td>{{.Qualification}}</td><td>{{.Activation}}</td><td>{{.Serving}}</td></tr>{{end}}
           </tbody></table>{{end}}

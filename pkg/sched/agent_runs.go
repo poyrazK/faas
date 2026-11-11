@@ -76,6 +76,9 @@ type AgentRunAdmission struct {
 	InputKey string
 	// PauseDuringModelCalls is the version's model-wait pause opt-in.
 	PauseDuringModelCalls bool
+	// HistoryPeakMB is the version's p95 private peak (ADR-20261027090015
+	// §3), 0 until it has history. Only measured charge reads it.
+	HistoryPeakMB int
 }
 
 // AgentRunRelay is the placement data vmmd mints a run's relay assertion
@@ -177,7 +180,7 @@ func (r *AgentRunner) Run(ctx context.Context, a AgentRunAdmission, run agentrun
 		return agentrunproto.Result{}, err
 	}
 	placement, release, err := r.admit(ctx, Request{Instance: AgentRunInstanceID(a.RunID), Plan: a.Plan, RAMMB: a.RAMMB,
-		VCPU: a.VCPU, CPUMillicores: a.CPUMillicores})
+		VCPU: a.VCPU, CPUMillicores: a.CPUMillicores, AgentPeakMB: max(a.HistoryPeakMB, 0)})
 	if err != nil {
 		return agentrunproto.Result{}, err
 	}

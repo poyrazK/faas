@@ -34890,6 +34890,31 @@ CREATE TABLE public.commit_sources (
 
 
 --
+-- Name: complimentary_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.complimentary_accounts (
+    account_id uuid NOT NULL,
+    plan text NOT NULL,
+    reason text NOT NULL,
+    granted_by uuid NOT NULL,
+    granted_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone,
+    CONSTRAINT complimentary_accounts_check CHECK (((expires_at IS NULL) OR (isfinite(expires_at) AND (expires_at > granted_at)))),
+    CONSTRAINT complimentary_accounts_granted_at_check CHECK (isfinite(granted_at)),
+    CONSTRAINT complimentary_accounts_plan_check CHECK ((plan = ANY (ARRAY['hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT complimentary_accounts_reason_check CHECK ((reason ~ '^[a-z0-9_]{1,64}$'::text))
+);
+
+
+--
+-- Name: TABLE complimentary_accounts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.complimentary_accounts IS 'Accounts given a paid plan without a subscription; not billed, held to the plan allowance; written only by apid (ADR-20261111140000).';
+
+
+--
 -- Name: compute_node_heartbeat_hourly; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -36795,6 +36820,9 @@ CREATE TABLE public.database_vms (
     upgrade_result text,
     upgrade_lease_until timestamp with time zone,
     major_history jsonb DEFAULT '[]'::jsonb NOT NULL,
+    held boolean DEFAULT false NOT NULL,
+    compute_quota_unit_seconds bigint,
+    CONSTRAINT database_vms_compute_quota_check CHECK (((compute_quota_unit_seconds IS NULL) OR (compute_quota_unit_seconds > 0))),
     CONSTRAINT database_vms_last_error_check CHECK (((last_error IS NULL) OR (last_error ~ '^[a-z_]{1,64}$'::text))),
     CONSTRAINT database_vms_major_history CHECK ((jsonb_typeof(major_history) = 'array'::text)),
     CONSTRAINT database_vms_mem_mib_check CHECK (((mem_mib >= 128) AND (mem_mib <= 65536))),
@@ -45102,7 +45130,7 @@ CREATE TABLE public.managed_postgres_cap_events (
     CONSTRAINT managed_postgres_cap_events_check CHECK ((isfinite(reached_at) AND (reached_at >= period_start))),
     CONSTRAINT managed_postgres_cap_events_check1 CHECK ((ceiling_unit_seconds >= allowance_unit_seconds)),
     CONSTRAINT managed_postgres_cap_events_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
-    CONSTRAINT managed_postgres_cap_events_threshold_check CHECK ((threshold = ANY (ARRAY['warning'::text, 'allowance'::text, 'ceiling_warning'::text, 'suspended'::text]))),
+    CONSTRAINT managed_postgres_cap_events_threshold_v2_check CHECK ((threshold = ANY (ARRAY['warning'::text, 'allowance'::text, 'ceiling_warning'::text, 'suspended'::text, 'egress_held'::text]))),
     CONSTRAINT managed_postgres_cap_events_used_unit_seconds_check CHECK ((used_unit_seconds >= 0))
 );
 
@@ -45735,6 +45763,7 @@ CREATE TABLE public.managed_postgres_plan_excess_notices (
     reason text NOT NULL,
     recorded_at timestamp with time zone NOT NULL,
     mail_intent_id uuid,
+    delete_at timestamp with time zone,
     CONSTRAINT managed_postgres_plan_excess_notices_reason_check CHECK ((reason = ANY (ARRAY['database_limit'::text, 'service_class'::text]))),
     CONSTRAINT managed_postgres_plan_excess_notices_recorded_at_check CHECK (isfinite(recorded_at))
 );
@@ -62287,6 +62316,14 @@ ALTER TABLE ONLY public.commit_sources
 
 
 --
+-- Name: complimentary_accounts complimentary_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.complimentary_accounts
+    ADD CONSTRAINT complimentary_accounts_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: compute_node_heartbeat_hourly compute_node_heartbeat_hourly_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -66988,6 +67025,14 @@ ALTER TABLE public.managed_postgres_overage_pending
 
 ALTER TABLE ONLY public.managed_postgres_overage_pending
     ADD CONSTRAINT managed_postgres_overage_pending_pkey PRIMARY KEY (provider, subject_id, period_start);
+
+
+--
+-- Name: managed_postgres_plan_excess_notices managed_postgres_plan_excess_notices_delete_at_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_plan_excess_notices
+    ADD CONSTRAINT managed_postgres_plan_excess_notices_delete_at_check CHECK (((delete_at IS NULL) OR (isfinite(delete_at) AND (mail_intent_id IS NOT NULL)))) NOT VALID;
 
 
 --
@@ -75095,6 +75140,13 @@ CREATE UNIQUE INDEX commit_receipts_operation_identity ON public.commit_receipts
 --
 
 CREATE INDEX commit_receipts_source_history ON public.commit_receipts USING btree (account_id, source_id, accepted_at, id);
+
+
+--
+-- Name: complimentary_accounts_expires_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX complimentary_accounts_expires_at_idx ON public.complimentary_accounts USING btree (expires_at) WHERE (expires_at IS NOT NULL);
 
 
 --
@@ -94530,6 +94582,14 @@ ALTER TABLE ONLY public.commit_sources
 
 ALTER TABLE ONLY public.commit_sources
     ADD CONSTRAINT commit_sources_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: complimentary_accounts complimentary_accounts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.complimentary_accounts
+    ADD CONSTRAINT complimentary_accounts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

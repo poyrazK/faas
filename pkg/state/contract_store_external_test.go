@@ -31,6 +31,7 @@ type contractTestStore interface {
 	state.AppPrivateNetworkAttachmentStore
 	state.AppWorkPolicyStore
 	state.ObjectStorageCeilingGrantStore
+	state.ComplimentaryAccountStore
 	state.CreditDiscountStore
 	state.AuditEventOutboxStore
 	state.ComputeNodeCPUUsageBatcher

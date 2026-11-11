@@ -71,8 +71,9 @@ func PlanExcess(databases []Database, limits api.ManagedPostgresPlanLimits) map[
 		// A PR preview database is outside the plan's database limit
 		// (ADR-20261102123523), as CountManagedPostgresLifecycleDatabases
 		// counts it at creation; ranking it would push production databases
-		// created after it past the plan.
-		if !database.RestoreSlotUntil.IsZero() || !database.Preview.IsZero() || !capEnforceable(database) {
+		// created after it past the plan. A short-lived branch is outside it
+		// too and ends on its own (ADR-20261106103654 amendment 1).
+		if !database.RestoreSlotUntil.IsZero() || !database.Preview.IsZero() || !capEnforceable(database) || database.InBranchAllowance() {
 			continue
 		}
 		ranked = append(ranked, database)

@@ -330,6 +330,11 @@ func (m *MemStore) FinishEnvironmentGitOps(_ context.Context, lease EnvironmentG
 	completed := now.UTC()
 	var notificationPlan api.EnvironmentGitOpsPlan
 	_ = json.Unmarshal(plan, &notificationPlan)
+	if notificationPlan.Hash == "" {
+		// A failure before observation belongs to the claimed intent, not to
+		// changes that arrived while this attempt was running.
+		notificationPlan.ObservedVersion = lease.Source.IntentVersion
+	}
 	if memory.source.Spec.Mode == "enforce" && environmentGitRolloutReportCurrent(memory.source, memory.revisions[memory.source.ApprovedRevisionID], notificationPlan) {
 		evidence, err := m.currentEnvironmentGitOpsWorkloadEvidenceLocked(memory.source.AccountID, memory.source.ID)
 		if err != nil {

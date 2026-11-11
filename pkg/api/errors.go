@@ -4581,6 +4581,10 @@ const (
 	// candidate instance of an app has an open instance-health circuit
 	// (ADR-201 §2). It carries Retry-After.
 	CodeCircuitOpen = "circuit_open"
+	// CodeGatewayOverloaded is the 503 gatewayd-internal answers when it
+	// already holds GatewayAwaitingResponseMax app requests waiting for their
+	// response head. It carries Retry-After.
+	CodeGatewayOverloaded = "gateway_overloaded"
 	// Upload admission precedes guest execution, so upload failures have
 	// distinct stable codes and do not masquerade as app timeouts.
 	CodeRequestUploadTimeout  = "request_upload_timeout"

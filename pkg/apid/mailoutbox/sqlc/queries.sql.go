@@ -2458,17 +2458,20 @@ func (q *Queries) LinkManagedPostgresCapEvent(ctx context.Context, db DBTX, arg 
 }
 
 const linkManagedPostgresPlanExcessNotice = `-- name: LinkManagedPostgresPlanExcessNotice :execrows
-UPDATE managed_postgres_plan_excess_notices SET mail_intent_id=$1::uuid
-WHERE database_id=$2::uuid AND mail_intent_id IS NULL
+UPDATE managed_postgres_plan_excess_notices SET mail_intent_id=$1::uuid,delete_at=$2::timestamptz
+WHERE database_id=$3::uuid AND mail_intent_id IS NULL
 `
 
 type LinkManagedPostgresPlanExcessNoticeParams struct {
 	IntentID   pgtype.UUID
+	DeleteAt   pgtype.Timestamptz
 	DatabaseID pgtype.UUID
 }
 
+// delete_at is the deletion date the email names (ADR-20261110184700): the
+// database is deleted only on a date its owner was mailed.
 func (q *Queries) LinkManagedPostgresPlanExcessNotice(ctx context.Context, db DBTX, arg LinkManagedPostgresPlanExcessNoticeParams) (int64, error) {
-	result, err := db.Exec(ctx, linkManagedPostgresPlanExcessNotice, arg.IntentID, arg.DatabaseID)
+	result, err := db.Exec(ctx, linkManagedPostgresPlanExcessNotice, arg.IntentID, arg.DeleteAt, arg.DatabaseID)
 	if err != nil {
 		return 0, err
 	}

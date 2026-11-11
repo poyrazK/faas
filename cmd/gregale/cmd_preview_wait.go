@@ -33,11 +33,12 @@ func cmdPreviewWait(args []string) int {
 	progress := fs.Bool("progress", false, "print workload transitions while waiting (human output only)")
 	openURL := fs.Bool("open", false, "open the preview URL after it becomes ready")
 	timeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, "maximum wait (seconds or a duration such as 10m) for preview readiness")
+	commit := fs.String("commit", "", "wait until the preview serves this commit (a full or abbreviated SHA), such as the pull request's head")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) != 1 || !validCLISlug(pos[0]) || *timeoutSeconds <= 0 || *timeoutSeconds > 24*60*60 {
-		PrintUsage(osStderr, "usage: gregale preview wait <preview-slug> [--progress] [--open] [--timeout SECONDS]", "preview")
+	if len(pos) != 1 || !validCLISlug(pos[0]) || *timeoutSeconds <= 0 || *timeoutSeconds > 24*60*60 || !validPreviewWaitCommit(*commit) {
+		PrintUsage(osStderr, "usage: gregale preview wait <preview-slug> [--commit SHA] [--progress] [--open] [--timeout SECONDS]", "preview")
 		return 1
 	}
 
@@ -65,9 +66,9 @@ func cmdPreviewWait(args []string) int {
 		if getErr != nil {
 			if haveLastState && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				if lastEnvironment != nil {
-					return renderPreviewEnvironmentWaitTimeout(lastState, *lastEnvironment, waitTimeout)
+					return renderPreviewEnvironmentWaitTimeout(lastState, *lastEnvironment, waitTimeout, *commit)
 				}
-				return renderPreviewWaitTimeout(lastState, waitTimeout)
+				return renderPreviewWaitTimeout(lastState, waitTimeout, *commit)
 			}
 			return printErr("Could not load preview", getErr)
 		}
@@ -80,9 +81,9 @@ func cmdPreviewWait(args []string) int {
 		if envErr != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				if lastEnvironment != nil {
-					return renderPreviewEnvironmentWaitTimeout(lastState, *lastEnvironment, waitTimeout)
+					return renderPreviewEnvironmentWaitTimeout(lastState, *lastEnvironment, waitTimeout, *commit)
 				}
-				return renderPreviewWaitTimeout(lastState, waitTimeout)
+				return renderPreviewWaitTimeout(lastState, waitTimeout, *commit)
 			}
 			return printErr("Could not load preview environment", envErr)
 		}
@@ -91,8 +92,12 @@ func cmdPreviewWait(args []string) int {
 			if *progress && !jsonOutput {
 				progressSHA, progressMembers = renderPreviewEnvironmentProgress(*environment, progressSHA, progressMembers)
 			}
-			if environment.Phase == "failed" || environment.Phase == "closed" ||
-				(environment.Phase == "live" && environment.Ready) {
+			// Until the environment records the asked-for commit, its phase
+			// is an older head's: CI started by a push would otherwise pass
+			// on the previous commit (ADR-20261105090226).
+			atCommit := previewCommitMatches(environment.CommitSHA, *commit)
+			if environment.Phase == "closed" ||
+				(atCommit && (environment.Phase == "failed" || (environment.Phase == "live" && environment.Ready))) {
 				return renderPreviewEnvironmentWaitTerminal(state, *environment, client, *openURL)
 			}
 		} else {
@@ -102,7 +107,8 @@ func cmdPreviewWait(args []string) int {
 			if *progress && !jsonOutput && state.LatestDeployment != nil {
 				progressState = renderDeploymentProgress(osStdout, *state.LatestDeployment, progressState)
 			}
-			if state.LatestDeployment != nil && isCompletedDeployment(*state.LatestDeployment) {
+			if state.LatestDeployment != nil && isCompletedDeployment(*state.LatestDeployment) &&
+				previewCommitMatches(state.LatestDeployment.CommitSHA, *commit) {
 				return renderPreviewWaitTerminal(state, client, state.LatestDeployment.Status == statusLive, *openURL)
 			}
 		}
@@ -114,18 +120,18 @@ func cmdPreviewWait(args []string) int {
 				<-timer.C
 			}
 			if lastEnvironment != nil {
-				return renderPreviewEnvironmentWaitTimeout(lastState, *lastEnvironment, waitTimeout)
+				return renderPreviewEnvironmentWaitTimeout(lastState, *lastEnvironment, waitTimeout, *commit)
 			}
-			return renderPreviewWaitTimeout(lastState, waitTimeout)
+			return renderPreviewWaitTimeout(lastState, waitTimeout, *commit)
 		case <-timer.C:
 		}
 	}
 }
 
-func renderPreviewEnvironmentWaitTimeout(state api.PreviewStatusResponse, environment api.PreviewEnvironmentStatusResponse, timeout time.Duration) int {
+func renderPreviewEnvironmentWaitTimeout(state api.PreviewStatusResponse, environment api.PreviewEnvironmentStatusResponse, timeout time.Duration, commit string) int {
 	receipt := newPreviewEnvironmentWaitReceipt(state, environment, false)
 	receipt.TimedOut = true
-	receipt.ResumeCommand = fmt.Sprintf("gregale preview wait %s --timeout %d", state.App.Slug, int(timeout/time.Second))
+	receipt.ResumeCommand = previewWaitResumeCommand(state.App.Slug, commit, timeout)
 	receipt.NextAction = previewEnvironmentNextAction(environment)
 	if jsonOutput {
 		PrintWarn(osStderr, "preview environment did not become ready before the wait deadline; resume with: %s", receipt.ResumeCommand)
@@ -191,10 +197,10 @@ func newPreviewEnvironmentWaitReceipt(state api.PreviewStatusResponse, environme
 	return receipt
 }
 
-func renderPreviewWaitTimeout(state api.PreviewStatusResponse, timeout time.Duration) int {
+func renderPreviewWaitTimeout(state api.PreviewStatusResponse, timeout time.Duration, commit string) int {
 	receipt := newPreviewWaitReceipt(state, false)
 	receipt.TimedOut = true
-	receipt.ResumeCommand = fmt.Sprintf("gregale preview wait %s --timeout %d", state.App.Slug, int(timeout/time.Second))
+	receipt.ResumeCommand = previewWaitResumeCommand(state.App.Slug, commit, timeout)
 	if receipt.Deployment == nil {
 		receipt.NextAction = fmt.Sprintf("gregale preview get %s", state.App.Slug)
 	} else {

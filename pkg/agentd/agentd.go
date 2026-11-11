@@ -12,6 +12,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,7 @@ type Store interface {
 	MarkRunning(ctx context.Context, runID, token, nodeID, instanceID string, aiBudgetMillicents int64) error
 	RecordBoot(ctx context.Context, runID, token string, boot time.Duration) error
 	RecordUsage(ctx context.Context, runID, token string, u agentstore.Usage) error
+	VersionPeak(ctx context.Context, accountID, agentID string, version int, checkout bool) (peakMB, runs int, err error)
 	Renew(ctx context.Context, runID, token string, ttl time.Duration) (bool, error)
 	Requeue(ctx context.Context, runID, token string) error
 	FinishRun(ctx context.Context, accountID, runID, token string, f agentstore.Finish) error
@@ -330,6 +332,7 @@ func (a *Agentd) drive(ctx context.Context, claim agentstore.Claim) {
 			Relay: &scheddpb.AgentRunRelay{LeaseToken: claim.LeaseToken, TenantId: claim.TenantID, AgentId: claim.AgentID,
 				AgentVersion: int32(claim.AgentVersion)},
 			InputKey: inputKey, PauseDuringModelCalls: claim.PauseDuringModelCalls,
+			HistoryPeakPrivateMb: int32(a.versionPeak(ctx, claim)),
 		}}})
 	}
 	if err != nil {
@@ -338,6 +341,22 @@ func (a *Agentd) drive(ctx context.Context, claim agentstore.Claim) {
 	}
 	go r.keepLease(runCtx)
 	r.receive(ctx)
+}
+
+// versionPeak is the run's version p95 private peak for schedd's measured
+// charge (ADR-20261027090015 §3), or 0 while the version has fewer than
+// api.AgentSizeHistoryMinRuns measured runs of the run's input class. A
+// failed read is logged and sends 0, which books the run in full.
+func (a *Agentd) versionPeak(ctx context.Context, claim agentstore.Claim) int {
+	peak, runs, err := a.store.VersionPeak(ctx, claim.AccountID, claim.AgentID, claim.AgentVersion, claim.Checkout != nil)
+	if err != nil {
+		a.log.Warn("agentd: version peak", "run_id", claim.RunID, "err", err)
+		return 0
+	}
+	if runs < api.AgentSizeHistoryMinRuns {
+		return 0
+	}
+	return min(peak, math.MaxInt32)
 }
 
 // errCancelledBeforeBoot is a cancel that arrived while the checkout was

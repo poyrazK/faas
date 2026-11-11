@@ -11,6 +11,42 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const agentApprovalUsedWithin = `-- name: AgentApprovalUsedWithin :one
+SELECT id FROM agent_approval_requests
+WHERE key_id = $1::uuid
+  AND method = $2
+  AND path = $3
+  AND body_sha256 IS NOT DISTINCT FROM $4::bytea
+  AND status = 'consumed'
+  AND consumed_at > now() - $5::int * interval '1 second'
+ORDER BY consumed_at DESC
+LIMIT 1
+`
+
+type AgentApprovalUsedWithinParams struct {
+	KeyID         pgtype.UUID
+	Method        string
+	Path          string
+	BodySha256    []byte
+	WindowSeconds int32
+}
+
+// ADR-20261111150000: the key's approval with the same binding that was first
+// used within the window, newest use first. A windowed rule lets it cover
+// the same request again until the window closes.
+func (q *Queries) AgentApprovalUsedWithin(ctx context.Context, db DBTX, arg AgentApprovalUsedWithinParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, agentApprovalUsedWithin,
+		arg.KeyID,
+		arg.Method,
+		arg.Path,
+		arg.BodySha256,
+		arg.WindowSeconds,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const claimAgentApprovalNotifications = `-- name: ClaimAgentApprovalNotifications :many
 UPDATE agent_approval_notifications n
 SET lease_until = now() + $1::int * interval '1 second'
