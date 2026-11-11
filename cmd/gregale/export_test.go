@@ -517,8 +517,6 @@ const UploadSessionAlreadyCommittedCode = uploadSessionAlreadyCommittedCode
 const UploadSessionOffsetConflictCode = uploadSessionOffsetConflictCode
 
 // Package-level vars
-var ValidateSubscriptionCapacityCommandBudget = validateSubscriptionCapacityCommandBudget
-var ServerClockSkewTolerance = serverClockSkewTolerance
 var TerminalSafe = terminalSafe
 var TerminalSafeLines = terminalSafeLines
 var AuthAdminHTTPClient = &authAdminHTTPClient

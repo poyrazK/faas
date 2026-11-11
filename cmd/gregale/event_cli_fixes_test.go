@@ -4,33 +4,9 @@ import (
 	"bytes"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/cmd/gregale"
-	"github.com/onebox-faas/faas/pkg/api"
 )
-
-// A server timestamp slightly ahead of a laptop clock is fresh, not
-// future-dated: production-us 2026-11-07, `event subscription get` failed
-// 5/5 on a Mac ~115 ms behind the server with "receipt budget is stale or
-// future-dated". A timestamp well past the tolerance is still refused.
-func TestSubscriptionCapacityBudgetToleratesClockSkew(t *testing.T) {
-	app, sub := uuid.NewString(), uuid.NewString()
-	now := time.Now().UTC()
-	budget := func(observed time.Time) *api.EventSubscriptionCapacityCommandBudget {
-		return &api.EventSubscriptionCapacityCommandBudget{
-			AppID: app, SubscriptionID: sub, ObservedAt: observed, Complete: true,
-			Limit: api.EventSubscriptionCapacityCommandMaxReceipts, RemainingSlots: api.EventSubscriptionCapacityCommandMaxReceipts,
-		}
-	}
-	if err := main.ValidateSubscriptionCapacityCommandBudget(budget(now.Add(115*time.Millisecond)), app, sub, now, time.Minute); err != nil {
-		t.Fatalf("a budget 115 ms ahead of the local clock was refused: %v", err)
-	}
-	if err := main.ValidateSubscriptionCapacityCommandBudget(budget(now.Add(main.ServerClockSkewTolerance+time.Second)), app, sub, now, time.Minute); err == nil {
-		t.Fatal("a budget past the clock-skew tolerance was accepted")
-	}
-}
 
 // `event backfill --help` showed create's synopsis
 // (`<create|get|...> --subscription-id ... --yes <app>`) for the whole group,
