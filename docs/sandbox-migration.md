@@ -94,6 +94,7 @@ POST /v1/sandboxes
 ```
 
 - The session answers `queued` until the image is pulled and cached, then starts. If the pull fails, the session ends with outcome `image_unavailable` and the registry's error.
+- A private image takes `registry_auth` (`{"username", "password"}`; prefer a short-lived read-only token). It is stored sealed for the image's registry and never returned. `"pull": "always"` pulls a cached image again, so a moved tag such as `latest` resolves to its new image.
 - Images share the image-run cache and its plan limit. A cached image a live session uses is never evicted; when every cached image is in use, create answers `image_run_cache_full`.
 - Commands run as `app` (uid 1000) in `/workspace`, or as root with `user: 'root'`. The image needs a shell (`/bin/sh`) for commands.
 

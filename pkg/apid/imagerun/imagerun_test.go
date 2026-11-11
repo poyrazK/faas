@@ -318,17 +318,59 @@ func TestCreateOrdinaryRunHasNoAttach(t *testing.T) {
 func TestEnsureSessionImage(t *testing.T) {
 	hs := newHarness(t, api.PlanPro)
 	ctx := context.Background()
-	if _, _, prob := hs.h.EnsureSessionImage(ctx, hs.acct, ""); prob == nil || prob.Code != api.CodeValidation {
+	if _, _, prob := hs.h.EnsureSessionImage(ctx, hs.acct, api.SandboxImageSource{}); prob == nil || prob.Code != api.CodeValidation {
 		t.Fatalf("bad reference = %+v", prob)
 	}
 	if code, _, body := hs.post(map[string]any{"image": "ghcr.io/acme/box", "ram_mb": 256}); code != http.StatusAccepted {
 		t.Fatalf("image run = %d %s", code, body)
 	}
-	job, ref, prob := hs.h.EnsureSessionImage(ctx, hs.acct, " ghcr.io/acme/box ")
+	job, ref, prob := hs.h.EnsureSessionImage(ctx, hs.acct, api.SandboxImageSource{Image: " ghcr.io/acme/box "})
 	if prob != nil || ref != "ghcr.io/acme/box:latest" || job.Name != imagerun.RunnerName(ref) || job.RAMMB != 256 {
 		t.Fatalf("ensure = %+v %q %+v", job, ref, prob)
 	}
 	if n := len(hs.notified); n == 0 || !strings.Contains(hs.notified[n-1], job.ID) {
 		t.Fatalf("imaged not told: %v", hs.notified)
+	}
+}
+
+// A session's pull and registry_auth work as an image run's: "always"
+// re-queues a ready image, and the credential is stored on the runner job
+// for its registry host before imaged is told to pull.
+func TestEnsureSessionImagePullAndRegistryAuth(t *testing.T) {
+	hs := newHarness(t, api.PlanPro)
+	ctx := context.Background()
+	auth := &api.ImageRunRegistryAuth{Username: "ci", Password: "s3cret-token"}
+	if _, _, prob := hs.h.EnsureSessionImage(ctx, hs.acct, api.SandboxImageSource{Image: "ghcr.io/acme/box", Pull: "sometimes"}); prob == nil || prob.Code != api.CodeValidation {
+		t.Fatalf("bad pull = %+v", prob)
+	}
+	if _, _, prob := hs.h.EnsureSessionImage(ctx, hs.acct, api.SandboxImageSource{Image: "ghcr.io/acme/box", RegistryAuth: auth}); prob == nil || prob.Status != http.StatusServiceUnavailable {
+		t.Fatalf("a credential without a store = %+v", prob)
+	}
+	if _, _, prob := hs.h.EnsureSessionImage(ctx, hs.acct, api.SandboxImageSource{Image: "ghcr.io/acme/box", RegistryAuth: &api.ImageRunRegistryAuth{Username: "ci"}}); prob == nil || prob.Status != http.StatusBadRequest {
+		t.Fatalf("a credential without a password = %+v", prob)
+	}
+	var stored []api.PutJobRegistryCredentialRequest
+	var notifiedAtStore []int
+	hs.h.SetRegistryCredential = func(_ context.Context, acct state.Account, job state.Job, cred api.PutJobRegistryCredentialRequest) *api.Problem {
+		if acct.ID != hs.acct.ID || job.Kind != state.JobKindImageRun {
+			t.Fatalf("credential for %s on %+v", acct.ID, job)
+		}
+		stored, notifiedAtStore = append(stored, cred), append(notifiedAtStore, len(hs.notified))
+		return nil
+	}
+	before := len(hs.notified)
+	job, _, prob := hs.h.EnsureSessionImage(ctx, hs.acct, api.SandboxImageSource{Image: "ghcr.io/acme/box", RegistryAuth: auth})
+	if prob != nil || len(stored) != 1 || stored[0].Registry != "ghcr.io" || stored[0].Username != "ci" || stored[0].Password != "s3cret-token" {
+		t.Fatalf("stored %+v, %+v", stored, prob)
+	}
+	if notifiedAtStore[0] != before || len(hs.notified) != before+1 {
+		t.Fatalf("imaged told before the credential landed: %d then %d", notifiedAtStore[0], len(hs.notified))
+	}
+	hs.materialize(job.Name, nil, []string{"sh"})
+	if job, _, _ = hs.h.EnsureSessionImage(ctx, hs.acct, api.SandboxImageSource{Image: "ghcr.io/acme/box"}); job.ImageMaterializationStatus != "ready" {
+		t.Fatalf("a missing pull re-queued a ready image: %q", job.ImageMaterializationStatus)
+	}
+	if job, _, _ = hs.h.EnsureSessionImage(ctx, hs.acct, api.SandboxImageSource{Image: "ghcr.io/acme/box", Pull: api.ImageRunPullAlways}); job.ImageMaterializationStatus == "ready" {
+		t.Fatal("pull always kept the ready image")
 	}
 }

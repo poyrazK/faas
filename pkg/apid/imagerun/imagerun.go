@@ -395,8 +395,8 @@ func encodeEnv(plan api.Plan, env map[string]string) (json.RawMessage, *api.Prob
 // returns the job and the normalized reference; the job may still be
 // pulling, and imaged is told so. A session never runs the job's tasks, so
 // an existing runner keeps its RAM and task timeout.
-func (h *Handler) EnsureSessionImage(ctx context.Context, acct state.Account, image string) (state.Job, string, *api.Problem) {
-	image = strings.TrimSpace(image)
+func (h *Handler) EnsureSessionImage(ctx context.Context, acct state.Account, src api.SandboxImageSource) (state.Job, string, *api.Problem) {
+	image := strings.TrimSpace(src.Image)
 	if image == "" || len(image) > api.ImageRunImageMaxBytes {
 		return state.Job{}, "", api.ErrValidation(fmt.Sprintf("image must be 1-%d bytes", api.ImageRunImageMaxBytes))
 	}
@@ -404,16 +404,34 @@ func (h *Handler) EnsureSessionImage(ctx context.Context, acct state.Account, im
 	if err != nil {
 		return state.Job{}, "", api.ErrValidation("image: " + err.Error())
 	}
+	if src.Pull != "" && src.Pull != api.ImageRunPullMissing && src.Pull != api.ImageRunPullAlways {
+		return state.Job{}, "", api.ErrValidation(`pull must be "missing" or "always"`)
+	}
+	credential, prob := registryCredential(ref, src.RegistryAuth)
+	if prob != nil {
+		return state.Job{}, "", prob
+	}
+	if credential != nil && h.SetRegistryCredential == nil {
+		return state.Job{}, "", api.ErrCapacity("job registry credentials are unavailable")
+	}
 	normalized := ref.String()
 	idx := acct.Plan.PlanIndex()
 	in := state.ImageRunEnsure{AccountID: acct.ID, Name: RunnerName(normalized), ImageRef: normalized,
-		RAMMB: api.JobDefaultRAMMB, TaskTimeoutSec: api.JobTaskTimeoutSec[idx], MaxCached: api.ImageRunCachedImages[idx]}
+		RAMMB: api.JobDefaultRAMMB, TaskTimeoutSec: api.JobTaskTimeoutSec[idx], MaxCached: api.ImageRunCachedImages[idx],
+		PullAlways: src.Pull == api.ImageRunPullAlways}
 	if job, err := h.Store.JobGetByName(ctx, acct.ID, in.Name); err == nil && job.Kind == state.JobKindImageRun {
 		in.RAMMB, in.TaskTimeoutSec = job.RAMMB, job.TaskTimeoutS
 	}
 	res, err := h.Store.JobEnsureImageRun(ctx, in)
 	if err != nil {
 		return state.Job{}, "", h.ensureProblem(acct, in.Name, err)
+	}
+	// As for an image run: the credential lands before imaged is told to
+	// pull, and every session that supplies it refreshes it (ADR-1790).
+	if credential != nil {
+		if prob := h.SetRegistryCredential(ctx, acct, res.Job, *credential); prob != nil {
+			return state.Job{}, "", prob
+		}
 	}
 	h.announce(ctx, acct, res)
 	return res.Job, normalized, nil

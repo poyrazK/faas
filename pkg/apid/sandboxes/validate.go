@@ -62,6 +62,7 @@ func (h *Handler) admission(acct state.Account, body createBody) (agentstore.San
 	checks := []func() *api.Problem{
 		func() *api.Problem { return validKind(&a) },
 		func() *api.Problem { return validPreset(acct.Plan, &a, in.Image, in.Template, in.RAMMB) },
+		func() *api.Problem { return validImageSource(in) },
 		func() *api.Problem { return validTenant(&a, in.Tenant) },
 		func() *api.Problem { return validNetwork(&a, in.Network) },
 		func() *api.Problem { return resourcelabels.Problem(labels.Change{Set: in.Labels}.Validate()) },
@@ -77,6 +78,18 @@ func (h *Handler) admission(acct state.Account, body createBody) (agentstore.San
 	}
 	a.IdleTimeoutSec, a.ExpiresAt = idle, h.now().UTC().Add(time.Duration(lifetime)*time.Second)
 	return a, nil
+}
+
+// validImageSource checks pull and registry_auth, which only an image
+// session takes. imagerun checks the credential's fields.
+func validImageSource(in api.CreateSandboxRequest) *api.Problem {
+	if in.Image == "" && (in.Pull != "" || in.RegistryAuth != nil) {
+		return api.ErrValidation("pull and registry_auth go with image")
+	}
+	if in.Pull != "" && in.Pull != api.ImageRunPullMissing && in.Pull != api.ImageRunPullAlways {
+		return api.ErrValidation(`pull must be "missing" or "always"`)
+	}
+	return nil
 }
 
 func validKind(a *agentstore.SandboxAdmission) *api.Problem {
