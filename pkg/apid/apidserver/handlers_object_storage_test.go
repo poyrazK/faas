@@ -465,8 +465,10 @@ func TestObjectStorageFailuresAndAuthorization(t *testing.T) {
 	}
 	a, b := &fakeObjectProvider{createErr: objectstorage.ErrUnavailable}, &fakeObjectProvider{}
 	e.s.WithObjectStorage(objectRegistry(t, a, b, "external"))
-	if r := e.do(t, "POST", path, map[string]any{"name": "assets"}, nil); r.Code != 503 {
-		t.Fatal(r.Code)
+	// A temporary provider failure is retried, so the bucket is accepted as
+	// provisioning and the client waits for it (Hunt 33 H33-22).
+	if accepted := bucketResponse(t, e.do(t, "POST", path, map[string]any{"name": "assets"}, nil), 202); accepted.State != "provisioning" {
+		t.Fatalf("accepted bucket state = %q, want provisioning", accepted.State)
 	}
 	a.createErr = nil
 	if r := e.do(t, "POST", path, map[string]any{"name": "assets"}, nil); r.Code != 409 {

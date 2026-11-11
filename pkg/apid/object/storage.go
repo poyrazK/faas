@@ -388,10 +388,33 @@ func (s *Service) CreateBucket(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	b, err = s.ProvisionBucket(r.Context(), st, b)
 	if err != nil {
+		if pending, ok := s.provisioningRetry(r.Context(), st, b, err); ok {
+			httpkit.WriteJSON(w, http.StatusAccepted, viewBucket(pending))
+			return
+		}
 		BucketProblem(w, err)
 		return
 	}
 	httpkit.WriteJSON(w, 201, viewBucket(b))
+}
+
+// provisioningRetry reports a bucket whose first provider attempt failed
+// temporarily and is scheduled for retry. The bucket exists and will become
+// ready, so the request is accepted and the client waits for it, as for any
+// provisioning bucket. Answering 503 made `gregale add bucket` exit before
+// attaching its binding, although the bucket was ready 30 s later (Hunt 33
+// H33-22).
+func (s *Service) provisioningRetry(ctx context.Context, st state.ObjectBucketStore, b state.ObjectBucket, cause error) (state.ObjectBucket, bool) {
+	if code, _ := ObjectRetryPolicy(cause, b.AttemptCount); code != "temporary" {
+		return b, false
+	}
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	current, err := st.GetObjectBucket(readCtx, b.AccountID, b.AppID, b.ID)
+	if err != nil || current.State != "provisioning" {
+		return b, false
+	}
+	return current, true
 }
 
 func (s *Service) reserveBucket(ctx context.Context, st state.ObjectBucketStore, account, app string, req CreateBucketRequest) (state.ObjectBucket, error) {

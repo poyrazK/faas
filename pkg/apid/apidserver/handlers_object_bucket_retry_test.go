@@ -22,7 +22,13 @@ func TestBucketListExplainsARetriedCreate(t *testing.T) {
 	*provider.CreateErr() = objectstorage.ErrUnavailable
 	(*e.S()).WithObjectStorage(apidserver.ObjectRegistry(t, provider, &apidserver.FakeObjectProvider{}, "external"))
 	bucketPath := "/v1/apps/retry-app/buckets"
-	e.Do(t, "POST", bucketPath, map[string]any{"name": "assets"}, nil)
+	// Hunt 33 H33-22: the create is accepted, not refused with 503, so
+	// `gregale add bucket` waits for the bucket and attaches its binding.
+	created := e.Do(t, "POST", bucketPath, map[string]any{"name": "assets"}, nil)
+	var accepted api.ObjectBucket
+	if created.Code != 202 || json.Unmarshal(created.Body.Bytes(), &accepted) != nil || accepted.State != "provisioning" || accepted.Retry == nil {
+		t.Fatalf("create = %d %s, want 202 provisioning with its retry", created.Code, created.Body.String())
+	}
 
 	listed := e.Do(t, "GET", bucketPath, nil, nil)
 	var list api.ObjectBucketList
