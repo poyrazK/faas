@@ -262,8 +262,15 @@ func cmdAccountDPA(args []string) int {
 			return printErr("Write failed", err)
 		}
 		abs, _ := filepath.Abs(*out)
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]any{"path": abs, "bytes": len(body), "template": true}))
+		}
 		PrintOK(osStdout, "Wrote %d bytes of DPA text to %s", len(body), abs)
 		return 0
+	}
+	if jsonOutput {
+		// --json printed the plain-text template (Hunt 33 H33-2).
+		return jsonOut(writeJSON(map[string]any{"text": string(body), "template": true}))
 	}
 	if _, err := osStdout.Write(body); err != nil {
 		return printErr("Write failed", err)

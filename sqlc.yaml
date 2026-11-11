@@ -276,6 +276,7 @@ sql:
       - "pkg/state/event_subscription_control_queries.sql"
       - "pkg/state/financial_budget_monitor_queries.sql"
       - "pkg/state/financial_budget_queries.sql"
+      - "pkg/state/cost_control_safety_queries.sql"
       - "pkg/state/financial_budget_stop_queries.sql"
       - "pkg/state/financial_compute_egress_queries.sql"
       - "pkg/state/financial_compute_job_queries.sql"

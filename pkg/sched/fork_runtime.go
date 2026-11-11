@@ -42,6 +42,8 @@ func ForkFailureCode(err error) (code, message string) {
 		return "account_inactive", "the account is suspended; resolve billing to create forks"
 	case errors.Is(err, ErrForkSpendCap):
 		return "spend_cap_reached", "the monthly spend cap is reached; raise the cap to create forks"
+	case errors.Is(err, state.ErrFinancialBudgetHeld):
+		return "financial_budget_held", "a financial budget is holding this preview"
 	case errors.Is(err, ErrForkDeploymentUnavailable):
 		return "deployment_unavailable", "the forked deployment is no longer available"
 	case errors.Is(err, ErrNoCapacity), errors.Is(err, ErrAtCapacity), isCapacityProblem(err):
@@ -74,6 +76,9 @@ func (e *Engine) RestoreFork(ctx context.Context, fork state.AppFork) (ForkResto
 	}
 	if e.spendCapReached(ctx, e.spendCapSubject(ctx, app)) {
 		return ForkRestore{}, ErrForkSpendCap
+	}
+	if err := state.CheckFinancialBudgetAdmissionForScope(ctx, e.store, app, dep.Scope, dep.ID, time.Now().UTC()); err != nil {
+		return ForkRestore{}, err
 	}
 	snap, sealedKey, err := e.forkSnapshot(ctx, fork, dep, string(acct.Plan), app)
 	if err != nil {
@@ -204,6 +209,9 @@ func (e *Engine) bootFork(ctx context.Context, ins state.Instance, app state.App
 	}
 	if err := e.store.SetInstanceRuntime(ctx, ins.ID, out.Netns, out.HostIP, int(out.LeaseUID)); err != nil {
 		return fmt.Errorf("sched: fork runtime identity: %w", err)
+	}
+	if err := state.CheckFinancialBudgetAdmissionForScope(ctx, e.store, app, dep.Scope, dep.ID, time.Now().UTC()); err != nil {
+		return err
 	}
 	ok, err := e.transitionWithKindCAS(ctx, ins.ID, app.ID, state.StateRunning, "fork_restored", "adr_732")
 	if err != nil {
