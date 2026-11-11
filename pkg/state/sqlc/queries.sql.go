@@ -52734,17 +52734,19 @@ func (q *Queries) ListManagedPostgresLifecycleUsageDatabases(ctx context.Context
 }
 
 const listManagedPostgresPlanExcessSince = `-- name: ListManagedPostgresPlanExcessSince :many
-SELECT database_id,recorded_at FROM managed_postgres_plan_excess_notices
+SELECT database_id,recorded_at,delete_at FROM managed_postgres_plan_excess_notices
 WHERE database_id=ANY($1::uuid[])
 `
 
 type ListManagedPostgresPlanExcessSinceRow struct {
 	DatabaseID pgtype.UUID
 	RecordedAt pgtype.Timestamptz
+	DeleteAt   pgtype.Timestamptz
 }
 
 // ADR-20261110184700: when each database was first suspended past its plan,
-// the clock its deletion runs on.
+// and the deletion date its queued email named (NULL until one did). The
+// deletion runs only on that date.
 func (q *Queries) ListManagedPostgresPlanExcessSince(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]ListManagedPostgresPlanExcessSinceRow, error) {
 	rows, err := db.Query(ctx, listManagedPostgresPlanExcessSince, databaseIds)
 	if err != nil {
@@ -52754,7 +52756,7 @@ func (q *Queries) ListManagedPostgresPlanExcessSince(ctx context.Context, db DBT
 	items := []ListManagedPostgresPlanExcessSinceRow{}
 	for rows.Next() {
 		var i ListManagedPostgresPlanExcessSinceRow
-		if err := rows.Scan(&i.DatabaseID, &i.RecordedAt); err != nil {
+		if err := rows.Scan(&i.DatabaseID, &i.RecordedAt, &i.DeleteAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -94378,6 +94380,29 @@ func (q *Queries) ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]Reap
 		return nil, err
 	}
 	return items, nil
+}
+
+const rearmManagedPostgresPlanExcessNotices = `-- name: RearmManagedPostgresPlanExcessNotices :execrows
+UPDATE managed_postgres_plan_excess_notices SET recorded_at=$1::timestamptz,mail_intent_id=NULL
+WHERE database_id=ANY($2::uuid[]) AND delete_at IS NULL
+    AND (mail_intent_id IS NOT NULL OR recorded_at<=$3::timestamptz)
+`
+
+type RearmManagedPostgresPlanExcessNoticesParams struct {
+	Now         pgtype.Timestamptz
+	DatabaseIds []pgtype.UUID
+	StaleBefore pgtype.Timestamptz
+}
+
+// ADR-20261110184700 amendment: while deletion is on, a notice whose email
+// named no deletion date (mailed while deletion was off, or never mailed in
+// its window) starts again, so the next pass mails the date.
+func (q *Queries) RearmManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, arg RearmManagedPostgresPlanExcessNoticesParams) (int64, error) {
+	result, err := db.Exec(ctx, rearmManagedPostgresPlanExcessNotices, arg.Now, arg.DatabaseIds, arg.StaleBefore)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const rearmTenantStoredWorkflowSchedules = `-- name: RearmTenantStoredWorkflowSchedules :exec

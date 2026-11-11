@@ -1212,6 +1212,9 @@ const (
 
 func (h *Handler) providerError(w http.ResponseWriter, r *http.Request, req requestContext, err error, key string) {
 	resource := r.URL.Path
+	if objectLockPlanError(w, r, req, err) {
+		return
+	}
 	if errors.Is(err, objectstorage.ErrPreconditionFailed) {
 		writeS3Error(w, http.StatusPreconditionFailed, "PreconditionFailed", "The destination does not satisfy the write condition.", resource, req.requestID)
 		return

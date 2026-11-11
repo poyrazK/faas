@@ -92,6 +92,13 @@ func (s ObjectUsageSnapshot) planPolicy(p api.ObjectStoragePolicy) api.ObjectSto
 	return s.PlanLimits.Policy(p)
 }
 
+// ObjectBucketPlanLimitsStore reads the object-storage limits of the plan
+// that pays for a bucket: Object Lock checks need them where no usage
+// snapshot is read (ADR-20261111123000 decision 8).
+type ObjectBucketPlanLimitsStore interface {
+	ObjectBucketPlanLimits(ctx context.Context, account, bucket string) (api.ObjectStoragePlanLimits, error)
+}
+
 type ObjectStorageAccountingStore interface {
 	ObjectUsage(context.Context, string, time.Time) (ObjectUsageSnapshot, error)
 	AdmitObjectURL(context.Context, string, string, string, int64, bool, api.ObjectStoragePolicy) error

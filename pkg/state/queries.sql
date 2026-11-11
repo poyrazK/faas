@@ -15959,9 +15959,18 @@ ON CONFLICT (database_id) DO NOTHING;
 
 -- name: ListManagedPostgresPlanExcessSince :many
 -- ADR-20261110184700: when each database was first suspended past its plan,
--- the clock its deletion runs on.
-SELECT database_id,recorded_at FROM managed_postgres_plan_excess_notices
+-- and the deletion date its queued email named (NULL until one did). The
+-- deletion runs only on that date.
+SELECT database_id,recorded_at,delete_at FROM managed_postgres_plan_excess_notices
 WHERE database_id=ANY(sqlc.arg(database_ids)::uuid[]);
+
+-- name: RearmManagedPostgresPlanExcessNotices :execrows
+-- ADR-20261110184700 amendment: while deletion is on, a notice whose email
+-- named no deletion date (mailed while deletion was off, or never mailed in
+-- its window) starts again, so the next pass mails the date.
+UPDATE managed_postgres_plan_excess_notices SET recorded_at=sqlc.arg(now)::timestamptz,mail_intent_id=NULL
+WHERE database_id=ANY(sqlc.arg(database_ids)::uuid[]) AND delete_at IS NULL
+    AND (mail_intent_id IS NOT NULL OR recorded_at<=sqlc.arg(stale_before)::timestamptz);
 
 -- name: ListUnmailedManagedPostgresPlanExcessNotices :many
 -- The notices still to mail: recorded after since, not yet linked to an
