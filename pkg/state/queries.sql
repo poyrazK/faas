@@ -29693,3 +29693,111 @@ WHERE domain=sqlc.arg(domain)::text::citext AND app_id=sqlc.arg(app_id)::text::u
 
 -- name: ClearCustomDomainCertificateAttempt :exec
 UPDATE custom_domains SET cert_retry_at=NULL WHERE domain=sqlc.arg(domain)::text::citext;
+
+-- ADR-20261104120000: manifest HTTP crons staged into a non-production
+-- environment. Production keeps the queries above; an environment's revision
+-- and pending activation are keyed by app and scope.
+
+-- name: ReadEnvironmentDeploymentCronSnapshot :one
+SELECT a.id::text AS app_id,
+ coalesce((SELECT s.revision FROM environment_deployment_cron_states s WHERE s.app_id=a.id AND s.deployment_scope=sqlc.arg(scope)::text),0)::bigint AS revision,
+ coalesce((SELECT d.id::text FROM deployments d WHERE d.app_id=a.id AND d.scope=sqlc.arg(scope)::text ORDER BY d.created_at DESC,d.id DESC LIMIT 1),'')::text AS latest_deployment_id,
+ coalesce((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id) FROM crons c WHERE c.app_id=a.id AND cardinality(c.command)=0 AND c.deployment_scope=sqlc.arg(scope)::text),'[]'::jsonb)::jsonb AS crons
+FROM apps a WHERE a.id=sqlc.arg(app_id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.status <> 'deleted';
+
+-- name: LockEnvironmentDeploymentCronState :one
+INSERT INTO environment_deployment_cron_states(app_id,deployment_scope) VALUES(sqlc.arg(app_id)::text::uuid,sqlc.arg(scope)::text)
+ON CONFLICT(app_id,deployment_scope) DO UPDATE SET revision=environment_deployment_cron_states.revision
+RETURNING revision;
+
+-- name: WriteEnvironmentDeploymentCronState :exec
+UPDATE environment_deployment_cron_states SET revision=sqlc.arg(revision)::bigint
+WHERE app_id=sqlc.arg(app_id)::text::uuid AND deployment_scope=sqlc.arg(scope)::text;
+
+-- name: ReadEnvironmentCronActivation :one
+SELECT session_id,intent,fingerprint,revision,status,coalesce(upload_id::text,'')::text AS upload_id FROM environment_deployment_cron_activations
+WHERE app_id=sqlc.arg(app_id)::text::uuid AND deployment_scope=sqlc.arg(scope)::text FOR UPDATE;
+
+-- name: WriteEnvironmentCronActivation :exec
+INSERT INTO environment_deployment_cron_activations(app_id,deployment_scope,session_id,intent,fingerprint,revision,status)
+VALUES(sqlc.arg(app_id)::text::uuid,sqlc.arg(scope)::text,sqlc.arg(session_id),sqlc.arg(intent)::jsonb,sqlc.arg(fingerprint),sqlc.arg(revision),sqlc.arg(status))
+ON CONFLICT(app_id,deployment_scope) DO UPDATE SET upload_id=NULL,session_id=EXCLUDED.session_id,intent=EXCLUDED.intent,fingerprint=EXCLUDED.fingerprint,revision=EXCLUDED.revision,status=EXCLUDED.status,updated_at=now();
+
+-- name: TrackEnvironmentCronActivationUpload :execrows
+UPDATE environment_deployment_cron_activations c SET upload_id=u.id,updated_at=now()
+FROM upload_sessions u, apps a
+WHERE c.app_id=sqlc.arg(app_id)::text::uuid AND c.deployment_scope=sqlc.arg(scope)::text AND c.session_id=sqlc.arg(session_id)
+ AND c.fingerprint=sqlc.arg(fingerprint) AND c.status='prepared'
+ AND a.id=c.app_id AND u.id=sqlc.arg(upload_id)::text AND u.app_slug=a.slug AND u.account_id=a.account_id
+ AND (c.upload_id IS NULL OR c.upload_id=u.id OR NOT EXISTS(SELECT 1 FROM upload_sessions old WHERE old.id=c.upload_id AND old.status='committed'));
+
+-- name: EnvironmentCronActivationUploadAccepted :one
+SELECT EXISTS(SELECT 1 FROM environment_deployment_cron_activations c JOIN upload_sessions u ON u.id=c.upload_id
+ JOIN deployments d ON d.id::text=u.deployment_id AND d.app_id=c.app_id
+ WHERE c.app_id=sqlc.arg(app_id)::text::uuid AND c.deployment_scope=sqlc.arg(scope)::text AND c.session_id=sqlc.arg(session_id) AND u.status='committed' AND u.deployment_id IS NOT NULL)::boolean;
+
+-- name: ListReadyEnvironmentCronActivations :many
+SELECT c.app_id::text AS app_id,c.deployment_scope FROM environment_deployment_cron_activations c
+JOIN apps a ON a.id=c.app_id
+LEFT JOIN deployment_submission_receipts r ON r.app_id=c.app_id AND r.attempt_id=c.session_id
+LEFT JOIN upload_sessions u ON u.id=c.upload_id AND u.app_slug=a.slug AND u.account_id=a.account_id
+WHERE c.status='prepared' AND (r.deployment_id IS NOT NULL OR u.status='committed' AND u.deployment_id IS NOT NULL) ORDER BY c.updated_at,c.app_id,c.deployment_scope LIMIT 64;
+
+-- name: ReadEnvironmentCronActivationDeployment :one
+SELECT d.id::text AS deployment_id,d.status,d.scope,d.traffic_percent,d.traffic_percent_explicit,
+ d.canary_total_steps,d.rollout_state,
+ coalesce((SELECT n.id::text FROM deployments n WHERE n.app_id=d.app_id AND n.scope=d.scope
+ AND NOT(n.traffic_percent_explicit AND n.traffic_percent=0 AND n.canary_total_steps=0)
+ ORDER BY n.created_at DESC,n.id DESC LIMIT 1),'')::text AS latest_id,
+ EXISTS(SELECT 1 FROM deployments n WHERE n.app_id=d.app_id AND n.id<>d.id
+ AND n.status='live' AND n.scope=d.scope AND n.traffic_percent>0) AS competing_traffic
+FROM deployments d JOIN environment_deployment_cron_activations c ON c.app_id=d.app_id
+JOIN apps a ON a.id=c.app_id
+LEFT JOIN deployment_submission_receipts r ON r.app_id=c.app_id AND r.attempt_id=c.session_id
+LEFT JOIN upload_sessions u ON u.id=c.upload_id AND u.app_slug=a.slug AND u.account_id=a.account_id AND u.status='committed'
+WHERE d.app_id=sqlc.arg(app_id)::text::uuid AND c.deployment_scope=sqlc.arg(scope)::text AND c.session_id=sqlc.arg(session_id)
+AND d.id::text=coalesce(r.deployment_id::text,u.deployment_id)
+FOR SHARE OF d;
+
+-- name: TouchEnvironmentCronActivation :exec
+UPDATE environment_deployment_cron_activations SET status=sqlc.arg(status),updated_at=now()
+WHERE app_id=sqlc.arg(app_id)::text::uuid AND deployment_scope=sqlc.arg(scope)::text;
+
+-- name: RecordEnvironmentDeploymentCronOutcome :exec
+INSERT INTO deployment_cron_outcomes(deployment_id,session_id,revision,status,reason)
+SELECT d.id,c.session_id,c.revision,sqlc.arg(status)::text,sqlc.arg(reason)::text
+FROM environment_deployment_cron_activations c JOIN apps a ON a.id=c.app_id
+LEFT JOIN deployment_submission_receipts r ON r.app_id=c.app_id AND r.attempt_id=c.session_id
+LEFT JOIN upload_sessions u ON u.id=c.upload_id AND u.app_slug=a.slug AND u.account_id=a.account_id AND u.status='committed'
+JOIN deployments d ON d.app_id=c.app_id AND d.id::text=coalesce(r.deployment_id::text,u.deployment_id)
+WHERE c.app_id=sqlc.arg(app_id)::text::uuid AND c.deployment_scope=sqlc.arg(scope)::text
+ON CONFLICT(deployment_id) DO UPDATE SET session_id=EXCLUDED.session_id,revision=EXCLUDED.revision,
+ status=EXCLUDED.status,reason=EXCLUDED.reason,updated_at=now()
+WHERE deployment_cron_outcomes.revision<=EXCLUDED.revision;
+
+-- name: ArchiveEnvironmentDeploymentCronOutcome :exec
+INSERT INTO deployment_cron_outcomes(deployment_id,session_id,revision,status,reason)
+SELECT d.id,c.session_id,c.revision,
+ CASE WHEN c.status IN ('prepared','canceled') THEN 'discarded' ELSE c.status END,
+ CASE WHEN c.status='prepared' THEN 'intent_superseded' WHEN c.status='canceled' THEN 'activation_discarded' WHEN c.status='conflict' THEN coalesce(h.reason,'cron_guard_conflict') ELSE coalesce(h.reason,'') END
+FROM environment_deployment_cron_activations c JOIN apps a ON a.id=c.app_id
+LEFT JOIN deployment_submission_receipts r ON r.app_id=c.app_id AND r.attempt_id=c.session_id
+LEFT JOIN upload_sessions u ON u.id=c.upload_id AND u.app_slug=a.slug AND u.account_id=a.account_id AND u.status='committed'
+JOIN deployments d ON d.app_id=c.app_id AND d.id::text=coalesce(r.deployment_id::text,u.deployment_id)
+LEFT JOIN deployment_cron_outcomes h ON h.deployment_id=d.id AND h.revision=c.revision
+WHERE c.app_id=sqlc.arg(app_id)::text::uuid AND c.deployment_scope=sqlc.arg(scope)::text
+ON CONFLICT(deployment_id) DO UPDATE SET session_id=EXCLUDED.session_id,revision=EXCLUDED.revision,
+ status=EXCLUDED.status,reason=EXCLUDED.reason,updated_at=now()
+WHERE deployment_cron_outcomes.revision<=EXCLUDED.revision;
+
+-- name: DeleteEnvironmentHTTPcrons :exec
+DELETE FROM crons WHERE app_id=sqlc.arg(app_id)::text::uuid AND cardinality(command)=0 AND deployment_scope=sqlc.arg(scope)::text
+ AND id NOT IN (SELECT (value->>'id')::uuid FROM jsonb_array_elements(sqlc.arg(crons)::jsonb));
+
+-- name: StageEnvironmentHTTPcrons :execrows
+INSERT INTO crons(id,app_id,deployment_scope,schedule,path,enabled,timezone,skip_if_running)
+SELECT x.id,sqlc.arg(app_id)::text::uuid,sqlc.arg(scope)::text,x.schedule,x.path,x.enabled,x.timezone,x.skip_if_running
+FROM jsonb_to_recordset(sqlc.arg(crons)::jsonb) AS x(id uuid,schedule text,path text,enabled boolean,timezone text,skip_if_running boolean)
+ON CONFLICT(id) DO UPDATE SET schedule=EXCLUDED.schedule,path=EXCLUDED.path,enabled=EXCLUDED.enabled,
+ timezone=EXCLUDED.timezone,skip_if_running=EXCLUDED.skip_if_running
+WHERE crons.app_id=EXCLUDED.app_id AND cardinality(crons.command)=0 AND crons.deployment_scope=EXCLUDED.deployment_scope;

@@ -5128,6 +5128,30 @@
     ]
   },
   {
+    "table": "environment_deployment_cron_activations",
+    "columns": [
+      "app_id",
+      "deployment_scope",
+      "fingerprint",
+      "intent",
+      "revision",
+      "session_id",
+      "status",
+      "updated_at",
+      "upload_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_deployment_cron_states",
+    "columns": [
+      "app_id",
+      "deployment_scope",
+      "revision"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "deployment_cron_outcomes",
     "kind": "operational",
     "columns": [

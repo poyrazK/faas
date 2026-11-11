@@ -4908,6 +4908,24 @@ type EnvironmentBuildArtifactPin struct {
 	ArtifactID  pgtype.UUID
 }
 
+type EnvironmentDeploymentCronActivation struct {
+	AppID           pgtype.UUID
+	DeploymentScope string
+	UploadID        pgtype.Text
+	SessionID       string
+	Intent          []byte
+	Fingerprint     string
+	Revision        int64
+	Status          string
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type EnvironmentDeploymentCronState struct {
+	AppID           pgtype.UUID
+	DeploymentScope string
+	Revision        int64
+}
+
 type EnvironmentDesiredRevision struct {
 	ID               pgtype.UUID
 	SourceID         pgtype.UUID

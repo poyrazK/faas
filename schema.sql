@@ -38440,6 +38440,42 @@ CREATE TABLE public.environment_build_artifact_pins (
 
 
 --
+-- Name: environment_deployment_cron_activations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_deployment_cron_activations (
+    app_id uuid NOT NULL,
+    deployment_scope text NOT NULL,
+    upload_id text,
+    session_id text NOT NULL,
+    intent jsonb NOT NULL,
+    fingerprint text NOT NULL,
+    revision bigint NOT NULL,
+    status text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT environment_deployment_cron_activations_deployment_scope_check CHECK (((deployment_scope ~ '^[a-z][a-z0-9-]{0,62}$'::text) AND (deployment_scope <> ALL (ARRAY['default'::text, 'production'::text])))),
+    CONSTRAINT environment_deployment_cron_activations_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT environment_deployment_cron_activations_intent_check CHECK ((jsonb_typeof(intent) = 'object'::text)),
+    CONSTRAINT environment_deployment_cron_activations_revision_check CHECK ((revision > 0)),
+    CONSTRAINT environment_deployment_cron_activations_session_id_check CHECK ((session_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT environment_deployment_cron_activations_status_check CHECK ((status = ANY (ARRAY['prepared'::text, 'activated'::text, 'conflict'::text, 'discarded'::text, 'canceled'::text])))
+);
+
+
+--
+-- Name: environment_deployment_cron_states; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_deployment_cron_states (
+    app_id uuid NOT NULL,
+    deployment_scope text NOT NULL,
+    revision bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT environment_deployment_cron_states_deployment_scope_check CHECK (((deployment_scope ~ '^[a-z][a-z0-9-]{0,62}$'::text) AND (deployment_scope <> ALL (ARRAY['default'::text, 'production'::text])))),
+    CONSTRAINT environment_deployment_cron_states_revision_check CHECK ((revision >= 0))
+);
+
+
+--
 -- Name: environment_desired_revisions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -63365,6 +63401,22 @@ ALTER TABLE ONLY public.environment_build_artifact_pins
 
 
 --
+-- Name: environment_deployment_cron_activations environment_deployment_cron_activations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_deployment_cron_activations
+    ADD CONSTRAINT environment_deployment_cron_activations_pkey PRIMARY KEY (app_id, deployment_scope);
+
+
+--
+-- Name: environment_deployment_cron_states environment_deployment_cron_states_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_deployment_cron_states
+    ADD CONSTRAINT environment_deployment_cron_states_pkey PRIMARY KEY (app_id, deployment_scope);
+
+
+--
 -- Name: environment_desired_revisions environment_desired_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -76026,6 +76078,13 @@ CREATE INDEX egress_flow_log_remote_ip_idx ON public.egress_flow_log USING gist 
 --
 
 CREATE INDEX email_verification_tokens_account_idx ON public.email_verification_tokens USING btree (account_id, expires_at);
+
+
+--
+-- Name: environment_deployment_cron_activations_prepared_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_deployment_cron_activations_prepared_idx ON public.environment_deployment_cron_activations USING btree (updated_at, app_id) WHERE (status = 'prepared'::text);
 
 
 --
@@ -95894,6 +95953,30 @@ ALTER TABLE ONLY public.environment_build_artifact_pins
 
 ALTER TABLE ONLY public.environment_build_artifact_pins
     ADD CONSTRAINT environment_build_artifact_pins_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_deployment_cron_activations environment_deployment_cron_activations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_deployment_cron_activations
+    ADD CONSTRAINT environment_deployment_cron_activations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_deployment_cron_activations environment_deployment_cron_activations_upload_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_deployment_cron_activations
+    ADD CONSTRAINT environment_deployment_cron_activations_upload_id_fkey FOREIGN KEY (upload_id) REFERENCES public.upload_sessions(id) ON DELETE SET NULL;
+
+
+--
+-- Name: environment_deployment_cron_states environment_deployment_cron_states_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_deployment_cron_states
+    ADD CONSTRAINT environment_deployment_cron_states_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

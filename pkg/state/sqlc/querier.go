@@ -205,6 +205,7 @@ type Querier interface {
 	// webhook gets its own stable id.
 	ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyRegressionActionParams) (DebugRegressionObservation, error)
 	ArchiveDeploymentCronOutcome(ctx context.Context, db DBTX, appID string) error
+	ArchiveEnvironmentDeploymentCronOutcome(ctx context.Context, db DBTX, arg ArchiveEnvironmentDeploymentCronOutcomeParams) error
 	ArmScenarioWorkerFault(ctx context.Context, db DBTX, arg ArmScenarioWorkerFaultParams) error
 	ArtifactEvidenceStorageTime(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	AssociateEventExecutionRoot(ctx context.Context, db DBTX, arg AssociateEventExecutionRootParams) (AssociateEventExecutionRootRow, error)
@@ -1131,6 +1132,7 @@ type Querier interface {
 	DeleteEnvironmentGitOpsRoutes(ctx context.Context, db DBTX, arg DeleteEnvironmentGitOpsRoutesParams) error
 	DeleteEnvironmentGitOpsSecretReference(ctx context.Context, db DBTX, arg DeleteEnvironmentGitOpsSecretReferenceParams) error
 	DeleteEnvironmentGitOpsVariable(ctx context.Context, db DBTX, arg DeleteEnvironmentGitOpsVariableParams) error
+	DeleteEnvironmentHTTPcrons(ctx context.Context, db DBTX, arg DeleteEnvironmentHTTPcronsParams) error
 	DeleteEnvironmentInvocations(ctx context.Context, db DBTX, environmentID pgtype.UUID) (int64, error)
 	DeleteEnvironmentSecretReferenceSuppression(ctx context.Context, db DBTX, arg DeleteEnvironmentSecretReferenceSuppressionParams) error
 	DeleteEnvironmentWorkDomains(ctx context.Context, db DBTX, environmentID pgtype.UUID) error
@@ -1305,6 +1307,7 @@ type Querier interface {
 	EnvironmentBindingCandidate(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (EnvironmentBindingCandidateRow, error)
 	EnvironmentBindingReleaseRequired(ctx context.Context, db DBTX, arg EnvironmentBindingReleaseRequiredParams) (bool, error)
 	EnvironmentBuildArtifactOrigin(ctx context.Context, db DBTX, arg EnvironmentBuildArtifactOriginParams) (string, error)
+	EnvironmentCronActivationUploadAccepted(ctx context.Context, db DBTX, arg EnvironmentCronActivationUploadAcceptedParams) (bool, error)
 	EnvironmentFieldGitOwned(ctx context.Context, db DBTX, arg EnvironmentFieldGitOwnedParams) (bool, error)
 	EnvironmentFieldOwnershipLegacyApp(ctx context.Context, db DBTX, arg EnvironmentFieldOwnershipLegacyAppParams) (bool, error)
 	EnvironmentGitOpsCandidateByInput(ctx context.Context, db DBTX, arg EnvironmentGitOpsCandidateByInputParams) (pgtype.UUID, error)
@@ -4093,6 +4096,7 @@ type Querier interface {
 	ListReadinessNotifications(ctx context.Context, db DBTX, arg ListReadinessNotificationsParams) ([][]byte, error)
 	ListReadinessSubscriptions(ctx context.Context, db DBTX, arg ListReadinessSubscriptionsParams) ([][]byte, error)
 	ListReadyCronActivations(ctx context.Context, db DBTX) ([]string, error)
+	ListReadyEnvironmentCronActivations(ctx context.Context, db DBTX) ([]ListReadyEnvironmentCronActivationsRow, error)
 	// Admission hints only; callers must still authorize the live claim.
 	ListRecentCustomDomainTLSHosts(ctx context.Context, db DBTX, rowLimit int32) ([]string, error)
 	// ADR-091 §3.7 / PR #3 — per-account events drill-down. Backed by
@@ -4453,6 +4457,7 @@ type Querier interface {
 	LockDueReadinessReminderNotifications(ctx context.Context, db DBTX, arg LockDueReadinessReminderNotificationsParams) ([]CustomerWorkflowReadinessNotification, error)
 	LockEnvBatchOwner(ctx context.Context, db DBTX, arg LockEnvBatchOwnerParams) (pgtype.UUID, error)
 	LockEnvironmentBudgetIdentity(ctx context.Context, db DBTX, arg LockEnvironmentBudgetIdentityParams) (LockEnvironmentBudgetIdentityRow, error)
+	LockEnvironmentDeploymentCronState(ctx context.Context, db DBTX, arg LockEnvironmentDeploymentCronStateParams) (int64, error)
 	LockEnvironmentFieldOwnershipScope(ctx context.Context, db DBTX, environmentID string) error
 	LockEnvironmentGitOpsCandidateApps(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]pgtype.UUID, error)
 	LockEnvironmentGitOpsEnvironment(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsEnvironmentParams) (pgtype.UUID, error)
@@ -6150,6 +6155,12 @@ type Querier interface {
 	ReadEnvironmentBudgetIdentity(ctx context.Context, db DBTX, arg ReadEnvironmentBudgetIdentityParams) (ReadEnvironmentBudgetIdentityRow, error)
 	ReadEnvironmentBudgetReceipt(ctx context.Context, db DBTX, arg ReadEnvironmentBudgetReceiptParams) (ReadEnvironmentBudgetReceiptRow, error)
 	ReadEnvironmentBudgetReceiptForApp(ctx context.Context, db DBTX, arg ReadEnvironmentBudgetReceiptForAppParams) (ReadEnvironmentBudgetReceiptForAppRow, error)
+	ReadEnvironmentCronActivation(ctx context.Context, db DBTX, arg ReadEnvironmentCronActivationParams) (ReadEnvironmentCronActivationRow, error)
+	ReadEnvironmentCronActivationDeployment(ctx context.Context, db DBTX, arg ReadEnvironmentCronActivationDeploymentParams) (ReadEnvironmentCronActivationDeploymentRow, error)
+	// ADR-20261104120000: manifest HTTP crons staged into a non-production
+	// environment. Production keeps the queries above; an environment's revision
+	// and pending activation are keyed by app and scope.
+	ReadEnvironmentDeploymentCronSnapshot(ctx context.Context, db DBTX, arg ReadEnvironmentDeploymentCronSnapshotParams) (ReadEnvironmentDeploymentCronSnapshotRow, error)
 	ReadEnvironmentPromotionReceipt(ctx context.Context, db DBTX, arg ReadEnvironmentPromotionReceiptParams) (ReadEnvironmentPromotionReceiptRow, error)
 	ReadEnvironmentQueueAdmissionProject(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	// ADR-531: private stage transport, independent of the legacy completion inbox.
@@ -6708,6 +6719,7 @@ type Querier interface {
 	// The first acknowledgement wins; later instances applying the same
 	// generation do not move the recorded time and return no row.
 	RecordDevSourcePatchApplied(ctx context.Context, db DBTX, arg RecordDevSourcePatchAppliedParams) (RecordDevSourcePatchAppliedRow, error)
+	RecordEnvironmentDeploymentCronOutcome(ctx context.Context, db DBTX, arg RecordEnvironmentDeploymentCronOutcomeParams) error
 	RecordEnvironmentGitOpsEvent(ctx context.Context, db DBTX, arg RecordEnvironmentGitOpsEventParams) error
 	RecordEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg RecordEnvironmentGitSourcePollParams) error
 	RecordEnvironmentQualificationJobSmokeReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationJobSmokeReceiptParams) (EnvironmentQualificationJobSmokeReceipt, error)
@@ -7775,6 +7787,7 @@ type Querier interface {
 	SnapshotStorageKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
 	SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) error
 	StageDeploymentHTTPcrons(ctx context.Context, db DBTX, arg StageDeploymentHTTPcronsParams) (int64, error)
+	StageEnvironmentHTTPcrons(ctx context.Context, db DBTX, arg StageEnvironmentHTTPcronsParams) (int64, error)
 	StageMigrationContract(ctx context.Context, db DBTX, arg StageMigrationContractParams) (int64, error)
 	StageProjectReleaseCommand(ctx context.Context, db DBTX, arg StageProjectReleaseCommandParams) error
 	StageProjectReleaseConfiguration(ctx context.Context, db DBTX, arg StageProjectReleaseConfigurationParams) error
@@ -7891,6 +7904,7 @@ type Querier interface {
 	TouchCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg TouchCustomerOperationWorkflowStepParams) error
 	TouchDatabaseVM(ctx context.Context, db DBTX, arg TouchDatabaseVMParams) (int64, error)
 	TouchEdgeListenerHeartbeat(ctx context.Context, db DBTX, name string) error
+	TouchEnvironmentCronActivation(ctx context.Context, db DBTX, arg TouchEnvironmentCronActivationParams) error
 	TouchEnvironmentGitOpsIntent(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	// An active, non-admin mcp-login key also slides (ADR-20261028205920): use
 	// extends it to idle_seconds from now, never past max_age_seconds after it was
@@ -7901,6 +7915,7 @@ type Querier interface {
 	// signal only; not authorization). pgx interface returns nothing.
 	TouchSessionLastSeen(ctx context.Context, db DBTX, id pgtype.UUID) error
 	TrackCronActivationUpload(ctx context.Context, db DBTX, arg TrackCronActivationUploadParams) (int64, error)
+	TrackEnvironmentCronActivationUpload(ctx context.Context, db DBTX, arg TrackEnvironmentCronActivationUploadParams) (int64, error)
 	// ADR-091 §3.6 — operator observability backend (PR #2).
 	// Hour-of-day baseline over a rolling 7-day window:
 	//   * baseline is per (account_id, app_id, EXTRACT(HOUR FROM minute))
@@ -8407,6 +8422,8 @@ type Querier interface {
 	WriteEnvBatchReceipt(ctx context.Context, db DBTX, arg WriteEnvBatchReceiptParams) error
 	WriteEnvBatchVariable(ctx context.Context, db DBTX, arg WriteEnvBatchVariableParams) error
 	WriteEnvironmentBudgetReceipt(ctx context.Context, db DBTX, arg WriteEnvironmentBudgetReceiptParams) error
+	WriteEnvironmentCronActivation(ctx context.Context, db DBTX, arg WriteEnvironmentCronActivationParams) error
+	WriteEnvironmentDeploymentCronState(ctx context.Context, db DBTX, arg WriteEnvironmentDeploymentCronStateParams) error
 	WriteEnvironmentGitNotificationState(ctx context.Context, db DBTX, arg WriteEnvironmentGitNotificationStateParams) error
 	WriteEnvironmentRouteBudgets(ctx context.Context, db DBTX, arg WriteEnvironmentRouteBudgetsParams) error
 	WritePreparedRollbackReleaseReview(ctx context.Context, db DBTX, arg WritePreparedRollbackReleaseReviewParams) error
