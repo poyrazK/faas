@@ -10385,6 +10385,16 @@ var (
 // account gets a limit error even when the agents capability is released to
 // it. The surfaces are gated off by default (the internal agents capability)
 // and stay out of docs/plans.md until launch.
+// Sandbox preview bounds (ADR-20261027090013 §11).
+const (
+	// SandboxPreviewTokenTTLSec is a private preview token's life, and the
+	// preview cookie's.
+	SandboxPreviewTokenTTLSec = 3600
+	// SandboxPreviewConnsPerSession bounds a session's open preview
+	// connections, each of which holds one of guest-init's 64 operations.
+	SandboxPreviewConnsPerSession = 32
+)
+
 var (
 	// AgentsPerAccount caps the agents an account defines.
 	AgentsPerAccount = [4]int{0, 10, 50, 200}
@@ -10415,6 +10425,49 @@ var (
 
 	// AgentRunVCPUMax caps a run's vCPUs (ADR-20261027090014 §3).
 	AgentRunVCPUMax = [4]int{0, 1, 2, 2}
+
+	// Sandbox sessions (ADR-20261027090013 §7). Free is 0 everywhere (D9):
+	// a plan whose SandboxMaxLifetimeSec is 0 creates no session. A
+	// session's RAM follows AgentRunRAMMBMax, and sessions count against
+	// AgentRunConcurrentPerAccount and AgentRunQueuedPerAccount together with
+	// runs. SandboxMaxLifetimeSec is a session's longest life.
+	SandboxMaxLifetimeSec = [4]int{0, 3600, 14_400, 86_400}
+	// SandboxExecTimeoutMaxSec and SandboxExecOutputMaxBytes bound one
+	// command.
+	SandboxExecTimeoutMaxSec  = [4]int{0, 300, 1800, 3600}
+	SandboxExecOutputMaxBytes = [4]int{0, 1 << 20, 4 << 20, 16 << 20}
+	// SandboxWorkspaceMaxMB sizes a session's /workspace scratch drive.
+	SandboxWorkspaceMaxMB = [4]int{0, 2048, 8192, 20_480}
+	// SandboxSnapshotBytesPerAccount and SandboxSnapshotRetentionDays bound
+	// persisted workspaces.
+	SandboxSnapshotBytesPerAccount = [4]int64{0, 1 << 30, 10 << 30, 50 << 30}
+	SandboxSnapshotRetentionDays   = [4]int{0, 7, 30, 90}
+	// SandboxArchiveEntriesMax bounds the entries one workspace archive
+	// unpacks (workspace:hydrate, and a session started from a snapshot).
+	SandboxArchiveEntriesMax = 1_000_000
+	// SandboxSnapshotPendingSec is how long agentd waits for a reserved
+	// workspace archive before its sweep drops the reservation and deletes
+	// the archive; it outlasts SandboxPersistTimeoutSec.
+	SandboxSnapshotPendingSec = 3600
+	// SandboxPersistTimeoutSec bounds one workspace:persist call.
+	SandboxPersistTimeoutSec = 1800
+	// SandboxExposedPortsMax, SandboxPreviewRequestsPerSec and
+	// SandboxPublicPreview govern preview URLs (§11): ports per session,
+	// requests per second per session, and whether a port may be public.
+	SandboxExposedPortsMax       = [4]int{0, 2, 5, 10}
+	SandboxPreviewRequestsPerSec = [4]int{0, 20, 50, 200}
+	SandboxPublicPreview         = [4]bool{false, false, true, true}
+	// SandboxReservedPorts are guest-init's own loopback listeners
+	// (workload identity, the outbound relay, tracing, profile health and
+	// profiles); no preview may expose them.
+	SandboxReservedPorts = []int{2773, 2774, 4318, 9160, 9191}
+	// SandboxTemplatesMax caps an account's sandbox templates
+	// (ADR-20261027090013): each is a platform-managed app that builds an
+	// image, counted in this pool instead of DeployedApps.
+	SandboxTemplatesMax = [4]int{0, 3, 20, 100}
+	// SandboxTemplateReadyTimeoutSecMax bounds how long a template's ready
+	// command may hold a new session in starting.
+	SandboxTemplateReadyTimeoutSecMax = 600
 
 	// AgentImageLayerMaxMB caps a custom harness layer (drive1). The shared
 	// agent base (drive0) is not counted. Matches AppLayerMaxMB.
@@ -10502,6 +10555,14 @@ const (
 	// AgentRunUsageSampleMillis is how often vmmd samples an agent run VM's
 	// private memory (ADR-20261027090011 Measurement).
 	AgentRunUsageSampleMillis = 1000
+	// SandboxUsageReportSec is how often vmmd reports a sandbox session
+	// VM's cumulative usage (ADR-20261027090013 step 11). A report lost
+	// with vmmd costs at most this much measurement.
+	SandboxUsageReportSec = 60
+	// SandboxWarmSnapshotsMax bounds the warm session snapshot slots one
+	// schedd keeps across nodes (ADR-20261027090013 §12); a shape past it
+	// cold-boots every session.
+	SandboxWarmSnapshotsMax = 512
 	// AgentModelIntegrationsMax bounds a version's model integrations: one
 	// per model provider a harness may point at the relay.
 	AgentModelIntegrationsMax = 2
@@ -10526,6 +10587,14 @@ const (
 	// at most 30 days ahead. A sleep also counts against the endpoint's
 	// realtime schedules (state.ManagedRealtimeScheduleLimit).
 	AgentSleepMaxSeconds = 2_592_000
+	// SandboxIdleFreezeSec freezes a sandbox session with no calls, and
+	// SandboxIdleExpirySec ends it (ADR-20261027090013 §5). The expiry equals
+	// FrozenTTLSeconds and bounds a session's idle timeout.
+	SandboxIdleFreezeSec = 30
+	SandboxIdleExpirySec = 600
+	// SandboxTokenTTLSec is a session token's life. Reading the session
+	// mints a fresh one (ADR-20261027090013 §3).
+	SandboxTokenTTLSec = 900
 	// AgentRunAIReservationSlackSec keeps a run's spend reservation past the
 	// gateway request's own timeout, so a crashed gateway's reservation
 	// lapses on its own (ADR-20261027090010 §7).

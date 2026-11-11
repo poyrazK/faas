@@ -5837,7 +5837,7 @@ func (m *MemStore) ListApps(_ context.Context, accountID string) ([]App, error) 
 	defer m.mu.Unlock()
 	var out []App
 	for _, a := range m.apps {
-		if (a.AccountID == accountID || a.OrgID == accountID) && a.Status != AppDeleted {
+		if (a.AccountID == accountID || a.OrgID == accountID) && a.Status != AppDeleted && !a.SandboxTemplate {
 			out = append(out, a)
 		}
 	}
@@ -5853,7 +5853,7 @@ func (m *MemStore) ListAppsByOrg(_ context.Context, orgID string) ([]App, error)
 	defer m.mu.Unlock()
 	var out []App
 	for _, app := range m.apps {
-		if app.OrgID == orgID && app.Status != AppDeleted {
+		if app.OrgID == orgID && app.Status != AppDeleted && !app.SandboxTemplate {
 			out = append(out, app)
 		}
 	}

@@ -161,6 +161,14 @@ type Lease struct {
 	// lease still owns a unique slot, uid, cgroup, and vsock identity, but it
 	// deliberately has no tenant netns/veth/tap resources to tear down.
 	Networkless bool
+	// AgentSized sizes the VM's cpu.max in whole vCPUs like an agent run
+	// (ADR-20261027090014 §3) though it has a network: a sandbox session in
+	// registries mode.
+	AgentSized bool
+	// SandboxManifest is /etc/faas/sandbox.json, staged on a seller-image or
+	// template sandbox session's private drive1 before boot
+	// (ADR-20261027090013); nil for every other VM.
+	SandboxManifest string
 	// Quarantine marks a production fork (ADR-732). A restore scrubs the
 	// captured secrets files from the fork's private drive1 copy before the
 	// guest resumes.

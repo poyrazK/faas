@@ -4894,6 +4894,25 @@ var cliCommands = []cliCommand{
 		Positionals: []string{"<id>"},
 	},
 	{
+		Name:    "sandbox-templates",
+		DocSlug: "sandbox-templates",
+		Short:   "Build sandbox templates from an E2B-style Dockerfile directory",
+		Subcommands: []cliSub{
+			{Name: "build", Short: "Build a template from e2b.toml and e2b.Dockerfile", Positionals: []string{"[<dir>]"}, Examples: []string{"gregale sandbox template publish ./my-template"}, Flags: []cliFlag{
+				{Name: "name", Short: "template name (default: e2b.toml template_name, else the directory name)", Value: "NAME"},
+				{Name: "dockerfile", Short: "Dockerfile inside the directory (default: e2b.toml dockerfile, else e2b.Dockerfile, else Dockerfile)", Value: "FILE"},
+				{Name: "start-cmd", Short: "command a session runs in the background at boot (default: e2b.toml start_cmd)", Value: "CMD"},
+				{Name: "ready-cmd", Short: "command polled until it exits 0 before a session is ready (default: e2b.toml ready_cmd)", Value: "CMD"},
+				{Name: "ready-timeout", Short: "seconds the ready command may take (default 60)", Value: "S"},
+				{Name: "no-wait", Short: "queue the build and return", Bool: true},
+				{Name: "wait-timeout", Short: "maximum time to wait for the build", Value: "D"},
+			}},
+			{Name: subList, Short: "List sandbox templates"},
+			{Name: subGet, Short: "Show one template and its newest build", Positionals: []string{"<name>"}},
+			{Name: subRm, Short: "Delete a template; running sessions keep their copy", Positionals: []string{"<name>"}},
+		},
+	},
+	{
 		Name:    "invocations",
 		DocSlug: "invocations",
 		Short:   "List, inspect and wait on invocations across your account",

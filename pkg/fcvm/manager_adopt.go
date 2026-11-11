@@ -520,7 +520,7 @@ func (m *Manager) resumeAdoptedGuest(ctx context.Context, adopter guestAdopter, 
 		// says thawed so the scheduler can settle a FROZEN row.
 		m.setFrozenSwap(inst.Lease, false)
 		m.mu.Lock()
-		inst.Frozen, inst.FrozenSince = false, time.Time{}
+		endFrozenLocked(inst, time.Now())
 		m.mu.Unlock()
 	}
 	if inst.Frozen {

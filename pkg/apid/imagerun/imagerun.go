@@ -38,6 +38,7 @@ func EnabledFromEnv(getenv func(string) string) bool {
 // Store is the state the handler needs.
 type Store interface {
 	state.ImageRunJobStore
+	JobGetByName(ctx context.Context, accountID, name string) (state.Job, error)
 	JobRunCreate(ctx context.Context, jobID, accountID, triggerKind string, parallelism, retryMaxOverride, taskTimeoutOverride *int, envOverrides json.RawMessage, tasks int, options ...state.JobRunOptions) (state.JobRun, []state.JobTask, error)
 }
 
@@ -386,4 +387,34 @@ func encodeEnv(plan api.Plan, env map[string]string) (json.RawMessage, *api.Prob
 		return nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid env", err.Error())
 	}
 	return encoded, nil
+}
+
+// EnsureSessionImage gets or creates the runner job that caches image for a
+// sandbox session (ADR-20261027090013, seller-image sessions), so sessions
+// and image runs share one cache and one ImageRunCachedImages limit. It
+// returns the job and the normalized reference; the job may still be
+// pulling, and imaged is told so. A session never runs the job's tasks, so
+// an existing runner keeps its RAM and task timeout.
+func (h *Handler) EnsureSessionImage(ctx context.Context, acct state.Account, image string) (state.Job, string, *api.Problem) {
+	image = strings.TrimSpace(image)
+	if image == "" || len(image) > api.ImageRunImageMaxBytes {
+		return state.Job{}, "", api.ErrValidation(fmt.Sprintf("image must be 1-%d bytes", api.ImageRunImageMaxBytes))
+	}
+	ref, err := oci.ParseReference(image)
+	if err != nil {
+		return state.Job{}, "", api.ErrValidation("image: " + err.Error())
+	}
+	normalized := ref.String()
+	idx := acct.Plan.PlanIndex()
+	in := state.ImageRunEnsure{AccountID: acct.ID, Name: RunnerName(normalized), ImageRef: normalized,
+		RAMMB: api.JobDefaultRAMMB, TaskTimeoutSec: api.JobTaskTimeoutSec[idx], MaxCached: api.ImageRunCachedImages[idx]}
+	if job, err := h.Store.JobGetByName(ctx, acct.ID, in.Name); err == nil && job.Kind == state.JobKindImageRun {
+		in.RAMMB, in.TaskTimeoutSec = job.RAMMB, job.TaskTimeoutS
+	}
+	res, err := h.Store.JobEnsureImageRun(ctx, in)
+	if err != nil {
+		return state.Job{}, "", h.ensureProblem(acct, in.Name, err)
+	}
+	h.announce(ctx, acct, res)
+	return res.Job, normalized, nil
 }
