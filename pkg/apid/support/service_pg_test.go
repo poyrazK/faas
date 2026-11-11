@@ -419,3 +419,17 @@ func TestSupportEngineeringAcceptsMaximumEscapedUTF8Body(t *testing.T) {
 		t.Fatal("escaped reproduction changed")
 	}
 }
+
+func TestSupportPersonalKeyCannotReachAnotherPersonalScope(t *testing.T) {
+	f := supportDB(t)
+	org := newID()
+	if _, e := f.pool.Exec(t.Context(), `INSERT INTO orgs(id,slug,plan,deleted_pending,personal_org,personal_owner_account_id) VALUES($1,'personal','pro',false,true,$2)`, org, f.customer.ID); e != nil {
+		t.Fatal(e)
+	}
+	a := f.customer
+	a.Session = false
+	a.KeyOrgID = org
+	f.call(t, a, false, "create", "", "", "", api.CreateSupportTicketRequest{Subject: "My case", Category: "account", Body: "Help"}, 202)
+	a.ID = f.other.ID
+	f.call(t, a, false, "list", "", "", "", nil, 403)
+}

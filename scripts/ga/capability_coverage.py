@@ -30,6 +30,7 @@ INVENTORY = os.path.join(ROOT, "docs", "ga-capability-inventory.md")
 # Target: inventory row key (unique substring of the Capability cell), or
 # "INFRA" / "TOOLING" / "TEST" for identifiers that are not customer capabilities.
 RULES = [
+    (r"(^|/|-)support([/-]|$)", "Native customer support"),
     # --- test fixtures and generated noise
     (r"^/(a|b|boom|echo|counter|dial|h1|users|untrusted|not-net-http|etc/faas/uuid\.txt|contract|probe-contract|identity|signal|requests|last-capture|price|seal|token|grpc|api|internal/?|ingest|control|control/ack|push\.v1\.pusherservice/push|openapi\.json|\{\$\}|/?|\+route\+|`\+route\+`)$", "TEST"),
     (r"test|fixture|fake|example|scenario-restart|rehearsal-native|qualif|conformance|smoke|e2e|bench|eval$|dryrun|leakcheck", "TOOLING"),

@@ -302,6 +302,8 @@ internal hosting service and Gregale Agents are already unreachable.
 | 160 | Gregale management MCP server: AI agents manage Gregale over MCP, with an OAuth server | `gregale mcp serve`, `pkg/mcpmanagement`, `/oauth/*`, `/.well-known/oauth-*` | **MISSING** | — | preview |
 | 161 | Docs site and trust pages: DPA, subprocessors, security reporting, security.txt | `docs/customer-pages.json`, `/.well-known/security.txt` | **MISSING** | — | GA |
 
+| 169 | Native customer support: conversations, target policies, routing, reopening and reviewed staff operations | `/v1/support`, `/v1/orgs/{org}/support`, `pkg/apid/support` | `customer-support` preview | `pf: customer_support` | preview |
+
 ## J. Operator and internal systems (not customer-facing today)
 
 | # | Capability | Where it lives | Catalog | Gate today | Tier |

@@ -6,6 +6,11 @@ previous uncommitted support code could not be recovered. Attachments, incoming
 email, knowledge articles, incident linking, dashboard screens and external issue
 creation are not implemented by this change.
 
+Support is cataloged as preview and hidden from customers by default. Use the
+existing `customer_support` platform flag to allow selected account IDs during
+rollout. Staff routes have their own session and roster checks. The published GA/
+beta SDK spec excludes this preview; use the HTTP contract below when enabled.
+
 ## Customer API
 
 Use `/v1/support` for personal cases or `/v1/orgs/{org}/support` for an organization's

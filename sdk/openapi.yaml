@@ -42,6 +42,8 @@ servers:
         default: api.gregale.dev
         description: API hostname.
 tags:
+  - name: support
+    description: Gregale customer assistance, public conversations and resolution episodes.
   - name: operations
     description: Staged customer-owned HTTP work, scoped status and durable progress; production admission is disabled.
   - name: flags

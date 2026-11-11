@@ -353,14 +353,14 @@ paths:
       - name: cursor
         in: query
         required: false
-        description: Last ticket UUID from the preceding page.
+        description: Last ticket UUID from the preceding page. This parameter belongs to personalSupportList.
         schema:
           type: string
           format: uuid
       - name: status
         in: query
         required: false
-        description: Filter case status.
+        description: Filter case status. This parameter belongs to personalSupportList.
         schema:
           type: string
           enum:
@@ -370,65 +370,34 @@ paths:
       - name: search
         in: query
         required: false
-        description: Search subject and currently visible public conversation text.
+        description: Search subject and currently visible public conversation text. This parameter belongs
+          to personalSupportList.
         schema:
           type: string
           maxLength: 200
       responses:
         '200':
-          description: Current scoped support records.
+          description: Current scoped support records. Result of personalSupportList.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupportTicketPage'
         '400':
-          description: Invalid support input.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportInvalid'
         '401':
-          description: Authentication required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnauthenticated'
         '403':
-          description: Current verified scope access required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportForbidden'
         '404':
-          description: Support record unavailable in this scope.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportMissing'
         '409':
-          description: Revision, review, reopening, or idempotency conflict.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportConflict'
         '413':
-          description: Support body limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportTooLarge'
         '429':
-          description: Rolling support admission limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportLimited'
         '503':
-          description: Support storage temporarily unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnavailable'
       security:
       - bearerAuth: []
     post:
@@ -444,65 +413,33 @@ paths:
         in: header
         required: true
         description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
-          request. Reuse it for retries.
+          request. Reuse it for retries. This parameter belongs to personalSupportCreate.
         schema:
           type: string
           format: uuid
       responses:
         '202':
-          description: Support transaction accepted.
+          description: Support transaction accepted. Result of personalSupportCreate.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupportSubmission'
         '400':
-          description: Invalid support input.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportInvalid'
         '401':
-          description: Authentication required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnauthenticated'
         '403':
-          description: Current verified scope access required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportForbidden'
         '404':
-          description: Support record unavailable in this scope.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportMissing'
         '409':
-          description: Revision, review, reopening, or idempotency conflict.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportConflict'
         '413':
-          description: Support body limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportTooLarge'
         '429':
-          description: Rolling support admission limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportLimited'
         '503':
-          description: Support storage temporarily unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnavailable'
       security:
       - bearerAuth: []
       requestBody:
@@ -524,65 +461,33 @@ paths:
       - name: ticket
         in: path
         required: true
-        description: Support case UUID in this scope.
+        description: Support case UUID in this scope. This parameter belongs to personalSupportGet.
         schema:
           type: string
           format: uuid
       responses:
         '200':
-          description: Current scoped support records.
+          description: Current scoped support records. Result of personalSupportGet.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupportTicket'
         '400':
-          description: Invalid support input.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportInvalid'
         '401':
-          description: Authentication required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnauthenticated'
         '403':
-          description: Current verified scope access required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportForbidden'
         '404':
-          description: Support record unavailable in this scope.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportMissing'
         '409':
-          description: Revision, review, reopening, or idempotency conflict.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportConflict'
         '413':
-          description: Support body limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportTooLarge'
         '429':
-          description: Rolling support admission limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportLimited'
         '503':
-          description: Support storage temporarily unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnavailable'
       security:
       - bearerAuth: []
   /v1/support/tickets/{ticket}/messages:
@@ -598,73 +503,41 @@ paths:
       - name: ticket
         in: path
         required: true
-        description: Support case UUID in this scope.
+        description: Support case UUID in this scope. This parameter belongs to personalSupportMessages.
         schema:
           type: string
           format: uuid
       - name: after
         in: query
         required: false
-        description: Return messages after this global message sequence.
+        description: Return messages after this global message sequence. This parameter belongs to personalSupportMessages.
         schema:
           type: integer
           format: int64
           minimum: 0
       responses:
         '200':
-          description: Current scoped support records.
+          description: Current scoped support records. Result of personalSupportMessages.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupportMessagePage'
         '400':
-          description: Invalid support input.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportInvalid'
         '401':
-          description: Authentication required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnauthenticated'
         '403':
-          description: Current verified scope access required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportForbidden'
         '404':
-          description: Support record unavailable in this scope.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportMissing'
         '409':
-          description: Revision, review, reopening, or idempotency conflict.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportConflict'
         '413':
-          description: Support body limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportTooLarge'
         '429':
-          description: Rolling support admission limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportLimited'
         '503':
-          description: Support storage temporarily unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnavailable'
       security:
       - bearerAuth: []
     post:
@@ -679,7 +552,7 @@ paths:
       - name: ticket
         in: path
         required: true
-        description: Support case UUID in this scope.
+        description: Support case UUID in this scope. This parameter belongs to personalSupportReply.
         schema:
           type: string
           format: uuid
@@ -687,65 +560,33 @@ paths:
         in: header
         required: true
         description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
-          request. Reuse it for retries.
+          request. Reuse it for retries. This parameter belongs to personalSupportReply.
         schema:
           type: string
           format: uuid
       responses:
         '202':
-          description: Support transaction accepted.
+          description: Support transaction accepted. Result of personalSupportReply.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupportSubmission'
         '400':
-          description: Invalid support input.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportInvalid'
         '401':
-          description: Authentication required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnauthenticated'
         '403':
-          description: Current verified scope access required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportForbidden'
         '404':
-          description: Support record unavailable in this scope.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportMissing'
         '409':
-          description: Revision, review, reopening, or idempotency conflict.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportConflict'
         '413':
-          description: Support body limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportTooLarge'
         '429':
-          description: Rolling support admission limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportLimited'
         '503':
-          description: Support storage temporarily unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnavailable'
       security:
       - bearerAuth: []
       requestBody:
@@ -767,7 +608,7 @@ paths:
       - name: ticket
         in: path
         required: true
-        description: Support case UUID in this scope.
+        description: Support case UUID in this scope. This parameter belongs to personalSupportClose.
         schema:
           type: string
           format: uuid
@@ -775,65 +616,33 @@ paths:
         in: header
         required: true
         description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
-          request. Reuse it for retries.
+          request. Reuse it for retries. This parameter belongs to personalSupportClose.
         schema:
           type: string
           format: uuid
       responses:
         '202':
-          description: Support transaction accepted.
+          description: Support transaction accepted. Result of personalSupportClose.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupportSubmission'
         '400':
-          description: Invalid support input.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportInvalid'
         '401':
-          description: Authentication required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnauthenticated'
         '403':
-          description: Current verified scope access required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportForbidden'
         '404':
-          description: Support record unavailable in this scope.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportMissing'
         '409':
-          description: Revision, review, reopening, or idempotency conflict.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportConflict'
         '413':
-          description: Support body limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportTooLarge'
         '429':
-          description: Rolling support admission limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportLimited'
         '503':
-          description: Support storage temporarily unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnavailable'
       security:
       - bearerAuth: []
       requestBody:
@@ -855,7 +664,7 @@ paths:
       - name: ticket
         in: path
         required: true
-        description: Support case UUID in this scope.
+        description: Support case UUID in this scope. This parameter belongs to personalSupportReopen.
         schema:
           type: string
           format: uuid
@@ -863,65 +672,33 @@ paths:
         in: header
         required: true
         description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
-          request. Reuse it for retries.
+          request. Reuse it for retries. This parameter belongs to personalSupportReopen.
         schema:
           type: string
           format: uuid
       responses:
         '202':
-          description: Support transaction accepted.
+          description: Support transaction accepted. Result of personalSupportReopen.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupportSubmission'
         '400':
-          description: Invalid support input.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportInvalid'
         '401':
-          description: Authentication required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnauthenticated'
         '403':
-          description: Current verified scope access required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportForbidden'
         '404':
-          description: Support record unavailable in this scope.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportMissing'
         '409':
-          description: Revision, review, reopening, or idempotency conflict.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportConflict'
         '413':
-          description: Support body limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportTooLarge'
         '429':
-          description: Rolling support admission limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportLimited'
         '503':
-          description: Support storage temporarily unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnavailable'
       security:
       - bearerAuth: []
       requestBody:
@@ -943,65 +720,33 @@ paths:
       - name: ticket
         in: path
         required: true
-        description: Support case UUID in this scope.
+        description: Support case UUID in this scope. This parameter belongs to personalSupportSurvey.
         schema:
           type: string
           format: uuid
       responses:
         '200':
-          description: Current scoped support records.
+          description: Current scoped support records. Result of personalSupportSurvey.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupportSatisfaction'
         '400':
-          description: Invalid support input.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportInvalid'
         '401':
-          description: Authentication required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnauthenticated'
         '403':
-          description: Current verified scope access required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportForbidden'
         '404':
-          description: Support record unavailable in this scope.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportMissing'
         '409':
-          description: Revision, review, reopening, or idempotency conflict.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportConflict'
         '413':
-          description: Support body limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportTooLarge'
         '429':
-          description: Rolling support admission limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportLimited'
         '503':
-          description: Support storage temporarily unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnavailable'
       security:
       - bearerAuth: []
     post:
@@ -1016,7 +761,7 @@ paths:
       - name: ticket
         in: path
         required: true
-        description: Support case UUID in this scope.
+        description: Support case UUID in this scope. This parameter belongs to personalSupportRate.
         schema:
           type: string
           format: uuid
@@ -1024,65 +769,33 @@ paths:
         in: header
         required: true
         description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
-          request. Reuse it for retries.
+          request. Reuse it for retries. This parameter belongs to personalSupportRate.
         schema:
           type: string
           format: uuid
       responses:
         '202':
-          description: Support transaction accepted.
+          description: Support transaction accepted. Result of personalSupportRate.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupportSubmission'
         '400':
-          description: Invalid support input.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportInvalid'
         '401':
-          description: Authentication required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnauthenticated'
         '403':
-          description: Current verified scope access required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportForbidden'
         '404':
-          description: Support record unavailable in this scope.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportMissing'
         '409':
-          description: Revision, review, reopening, or idempotency conflict.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportConflict'
         '413':
-          description: Support body limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportTooLarge'
         '429':
-          description: Rolling support admission limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportLimited'
         '503':
-          description: Support storage temporarily unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnavailable'
       security:
       - bearerAuth: []
       requestBody:
@@ -1104,20 +817,21 @@ paths:
       - name: org
         in: path
         required: true
-        description: Organization slug; current owner or administrator membership is required.
+        description: Organization slug; current owner or administrator membership is required. This parameter
+          belongs to organizationSupportList.
         schema:
           type: string
       - name: cursor
         in: query
         required: false
-        description: Last ticket UUID from the preceding page.
+        description: Last ticket UUID from the preceding page. This parameter belongs to organizationSupportList.
         schema:
           type: string
           format: uuid
       - name: status
         in: query
         required: false
-        description: Filter case status.
+        description: Filter case status. This parameter belongs to organizationSupportList.
         schema:
           type: string
           enum:
@@ -1127,65 +841,34 @@ paths:
       - name: search
         in: query
         required: false
-        description: Search subject and currently visible public conversation text.
+        description: Search subject and currently visible public conversation text. This parameter belongs
+          to organizationSupportList.
         schema:
           type: string
           maxLength: 200
       responses:
         '200':
-          description: Current scoped support records.
+          description: Current scoped support records. Result of organizationSupportList.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupportTicketPage'
         '400':
-          description: Invalid support input.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportInvalid'
         '401':
-          description: Authentication required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnauthenticated'
         '403':
-          description: Current verified scope access required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportForbidden'
         '404':
-          description: Support record unavailable in this scope.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportMissing'
         '409':
-          description: Revision, review, reopening, or idempotency conflict.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportConflict'
         '413':
-          description: Support body limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportTooLarge'
         '429':
-          description: Rolling support admission limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportLimited'
         '503':
-          description: Support storage temporarily unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnavailable'
       security:
       - bearerAuth: []
     post:
@@ -1200,72 +883,41 @@ paths:
       - name: org
         in: path
         required: true
-        description: Organization slug; current owner or administrator membership is required.
+        description: Organization slug; current owner or administrator membership is required. This parameter
+          belongs to organizationSupportCreate.
         schema:
           type: string
       - name: Idempotency-Key
         in: header
         required: true
         description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
-          request. Reuse it for retries.
+          request. Reuse it for retries. This parameter belongs to organizationSupportCreate.
         schema:
           type: string
           format: uuid
       responses:
         '202':
-          description: Support transaction accepted.
+          description: Support transaction accepted. Result of organizationSupportCreate.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupportSubmission'
         '400':
-          description: Invalid support input.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportInvalid'
         '401':
-          description: Authentication required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnauthenticated'
         '403':
-          description: Current verified scope access required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportForbidden'
         '404':
-          description: Support record unavailable in this scope.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportMissing'
         '409':
-          description: Revision, review, reopening, or idempotency conflict.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportConflict'
         '413':
-          description: Support body limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportTooLarge'
         '429':
-          description: Rolling support admission limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportLimited'
         '503':
-          description: Support storage temporarily unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnavailable'
       security:
       - bearerAuth: []
       requestBody:
@@ -1287,71 +939,40 @@ paths:
       - name: org
         in: path
         required: true
-        description: Organization slug; current owner or administrator membership is required.
+        description: Organization slug; current owner or administrator membership is required. This parameter
+          belongs to organizationSupportGet.
         schema:
           type: string
       - name: ticket
         in: path
         required: true
-        description: Support case UUID in this scope.
+        description: Support case UUID in this scope. This parameter belongs to organizationSupportGet.
         schema:
           type: string
           format: uuid
       responses:
         '200':
-          description: Current scoped support records.
+          description: Current scoped support records. Result of organizationSupportGet.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupportTicket'
         '400':
-          description: Invalid support input.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportInvalid'
         '401':
-          description: Authentication required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnauthenticated'
         '403':
-          description: Current verified scope access required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportForbidden'
         '404':
-          description: Support record unavailable in this scope.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportMissing'
         '409':
-          description: Revision, review, reopening, or idempotency conflict.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportConflict'
         '413':
-          description: Support body limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportTooLarge'
         '429':
-          description: Rolling support admission limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportLimited'
         '503':
-          description: Support storage temporarily unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnavailable'
       security:
       - bearerAuth: []
   /v1/orgs/{org}/support/tickets/{ticket}/messages:
@@ -1367,79 +988,48 @@ paths:
       - name: org
         in: path
         required: true
-        description: Organization slug; current owner or administrator membership is required.
+        description: Organization slug; current owner or administrator membership is required. This parameter
+          belongs to organizationSupportMessages.
         schema:
           type: string
       - name: ticket
         in: path
         required: true
-        description: Support case UUID in this scope.
+        description: Support case UUID in this scope. This parameter belongs to organizationSupportMessages.
         schema:
           type: string
           format: uuid
       - name: after
         in: query
         required: false
-        description: Return messages after this global message sequence.
+        description: Return messages after this global message sequence. This parameter belongs to organizationSupportMessages.
         schema:
           type: integer
           format: int64
           minimum: 0
       responses:
         '200':
-          description: Current scoped support records.
+          description: Current scoped support records. Result of organizationSupportMessages.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupportMessagePage'
         '400':
-          description: Invalid support input.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportInvalid'
         '401':
-          description: Authentication required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnauthenticated'
         '403':
-          description: Current verified scope access required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportForbidden'
         '404':
-          description: Support record unavailable in this scope.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportMissing'
         '409':
-          description: Revision, review, reopening, or idempotency conflict.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportConflict'
         '413':
-          description: Support body limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportTooLarge'
         '429':
-          description: Rolling support admission limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportLimited'
         '503':
-          description: Support storage temporarily unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnavailable'
       security:
       - bearerAuth: []
     post:
@@ -1454,13 +1044,14 @@ paths:
       - name: org
         in: path
         required: true
-        description: Organization slug; current owner or administrator membership is required.
+        description: Organization slug; current owner or administrator membership is required. This parameter
+          belongs to organizationSupportReply.
         schema:
           type: string
       - name: ticket
         in: path
         required: true
-        description: Support case UUID in this scope.
+        description: Support case UUID in this scope. This parameter belongs to organizationSupportReply.
         schema:
           type: string
           format: uuid
@@ -1468,65 +1059,33 @@ paths:
         in: header
         required: true
         description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
-          request. Reuse it for retries.
+          request. Reuse it for retries. This parameter belongs to organizationSupportReply.
         schema:
           type: string
           format: uuid
       responses:
         '202':
-          description: Support transaction accepted.
+          description: Support transaction accepted. Result of organizationSupportReply.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupportSubmission'
         '400':
-          description: Invalid support input.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportInvalid'
         '401':
-          description: Authentication required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnauthenticated'
         '403':
-          description: Current verified scope access required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportForbidden'
         '404':
-          description: Support record unavailable in this scope.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportMissing'
         '409':
-          description: Revision, review, reopening, or idempotency conflict.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportConflict'
         '413':
-          description: Support body limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportTooLarge'
         '429':
-          description: Rolling support admission limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportLimited'
         '503':
-          description: Support storage temporarily unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnavailable'
       security:
       - bearerAuth: []
       requestBody:
@@ -1548,13 +1107,14 @@ paths:
       - name: org
         in: path
         required: true
-        description: Organization slug; current owner or administrator membership is required.
+        description: Organization slug; current owner or administrator membership is required. This parameter
+          belongs to organizationSupportClose.
         schema:
           type: string
       - name: ticket
         in: path
         required: true
-        description: Support case UUID in this scope.
+        description: Support case UUID in this scope. This parameter belongs to organizationSupportClose.
         schema:
           type: string
           format: uuid
@@ -1562,65 +1122,33 @@ paths:
         in: header
         required: true
         description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
-          request. Reuse it for retries.
+          request. Reuse it for retries. This parameter belongs to organizationSupportClose.
         schema:
           type: string
           format: uuid
       responses:
         '202':
-          description: Support transaction accepted.
+          description: Support transaction accepted. Result of organizationSupportClose.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupportSubmission'
         '400':
-          description: Invalid support input.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportInvalid'
         '401':
-          description: Authentication required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnauthenticated'
         '403':
-          description: Current verified scope access required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportForbidden'
         '404':
-          description: Support record unavailable in this scope.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportMissing'
         '409':
-          description: Revision, review, reopening, or idempotency conflict.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportConflict'
         '413':
-          description: Support body limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportTooLarge'
         '429':
-          description: Rolling support admission limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportLimited'
         '503':
-          description: Support storage temporarily unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnavailable'
       security:
       - bearerAuth: []
       requestBody:
@@ -1642,13 +1170,14 @@ paths:
       - name: org
         in: path
         required: true
-        description: Organization slug; current owner or administrator membership is required.
+        description: Organization slug; current owner or administrator membership is required. This parameter
+          belongs to organizationSupportReopen.
         schema:
           type: string
       - name: ticket
         in: path
         required: true
-        description: Support case UUID in this scope.
+        description: Support case UUID in this scope. This parameter belongs to organizationSupportReopen.
         schema:
           type: string
           format: uuid
@@ -1656,65 +1185,33 @@ paths:
         in: header
         required: true
         description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
-          request. Reuse it for retries.
+          request. Reuse it for retries. This parameter belongs to organizationSupportReopen.
         schema:
           type: string
           format: uuid
       responses:
         '202':
-          description: Support transaction accepted.
+          description: Support transaction accepted. Result of organizationSupportReopen.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupportSubmission'
         '400':
-          description: Invalid support input.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportInvalid'
         '401':
-          description: Authentication required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnauthenticated'
         '403':
-          description: Current verified scope access required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportForbidden'
         '404':
-          description: Support record unavailable in this scope.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportMissing'
         '409':
-          description: Revision, review, reopening, or idempotency conflict.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportConflict'
         '413':
-          description: Support body limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportTooLarge'
         '429':
-          description: Rolling support admission limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportLimited'
         '503':
-          description: Support storage temporarily unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnavailable'
       security:
       - bearerAuth: []
       requestBody:
@@ -1736,71 +1233,40 @@ paths:
       - name: org
         in: path
         required: true
-        description: Organization slug; current owner or administrator membership is required.
+        description: Organization slug; current owner or administrator membership is required. This parameter
+          belongs to organizationSupportSurvey.
         schema:
           type: string
       - name: ticket
         in: path
         required: true
-        description: Support case UUID in this scope.
+        description: Support case UUID in this scope. This parameter belongs to organizationSupportSurvey.
         schema:
           type: string
           format: uuid
       responses:
         '200':
-          description: Current scoped support records.
+          description: Current scoped support records. Result of organizationSupportSurvey.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupportSatisfaction'
         '400':
-          description: Invalid support input.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportInvalid'
         '401':
-          description: Authentication required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnauthenticated'
         '403':
-          description: Current verified scope access required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportForbidden'
         '404':
-          description: Support record unavailable in this scope.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportMissing'
         '409':
-          description: Revision, review, reopening, or idempotency conflict.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportConflict'
         '413':
-          description: Support body limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportTooLarge'
         '429':
-          description: Rolling support admission limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportLimited'
         '503':
-          description: Support storage temporarily unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnavailable'
       security:
       - bearerAuth: []
     post:
@@ -1815,13 +1281,14 @@ paths:
       - name: org
         in: path
         required: true
-        description: Organization slug; current owner or administrator membership is required.
+        description: Organization slug; current owner or administrator membership is required. This parameter
+          belongs to organizationSupportRate.
         schema:
           type: string
       - name: ticket
         in: path
         required: true
-        description: Support case UUID in this scope.
+        description: Support case UUID in this scope. This parameter belongs to organizationSupportRate.
         schema:
           type: string
           format: uuid
@@ -1829,65 +1296,33 @@ paths:
         in: header
         required: true
         description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
-          request. Reuse it for retries.
+          request. Reuse it for retries. This parameter belongs to organizationSupportRate.
         schema:
           type: string
           format: uuid
       responses:
         '202':
-          description: Support transaction accepted.
+          description: Support transaction accepted. Result of organizationSupportRate.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupportSubmission'
         '400':
-          description: Invalid support input.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportInvalid'
         '401':
-          description: Authentication required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnauthenticated'
         '403':
-          description: Current verified scope access required.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportForbidden'
         '404':
-          description: Support record unavailable in this scope.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportMissing'
         '409':
-          description: Revision, review, reopening, or idempotency conflict.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportConflict'
         '413':
-          description: Support body limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportTooLarge'
         '429':
-          description: Rolling support admission limit exceeded.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportLimited'
         '503':
-          description: Support storage temporarily unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/SupportUnavailable'
       security:
       - bearerAuth: []
       requestBody:
@@ -136070,6 +135505,54 @@ components:
             $ref: '#/components/schemas/DataPipeline'
 
   responses:
+    SupportInvalid:
+      description: Support request fields do not satisfy the customer assistance contract.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SupportUnauthenticated:
+      description: Authentication is required to access customer assistance records.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SupportForbidden:
+      description: Current verified account or organization support access is required.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SupportMissing:
+      description: The requested assistance record is unavailable in the current scope.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SupportConflict:
+      description: The assistance revision, reopening allowance or request receipt conflicts with this command.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SupportTooLarge:
+      description: The customer assistance JSON request exceeds its byte limit.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SupportLimited:
+      description: The rolling assistance submission or mutation allowance is exhausted.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SupportUnavailable:
+      description: Customer assistance storage is temporarily unavailable; retry the same request key.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
     EdgeRulesVersionMismatch:
       description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
       content:

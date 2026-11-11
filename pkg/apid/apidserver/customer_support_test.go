@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/apid/support"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 )
 
 func TestCustomerSupportAuthenticatedRoutes(t *testing.T) {
@@ -25,6 +26,19 @@ func TestCustomerSupportAuthenticatedRoutes(t *testing.T) {
 	}
 	env := apidserver.Setup(t, api.PlanPro)
 	acct := *env.Acct()
+	if err := (*env.S()).InstallCapabilityGate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := env.Do(t, http.MethodGet, "/v1/support/tickets", nil, nil); got.Code != 404 {
+		t.Fatalf("preview exposed by default: %d %s", got.Code, got.Body)
+	}
+	flag, ok := platformflags.CapabilityFlag("customer-support")
+	if !ok {
+		t.Fatal("missing support capability flag")
+	}
+	allow := true
+	(*env.S()).SeedPlatformFlag(flag, platformflags.Definition{Enabled: true, Rules: []platformflags.Rule{{ID: "support-preview", Accounts: []string{acct.ID}, Value: &allow}}})
+
 	store := *env.Store()
 	if _, e = pool.Exec(t.Context(), `INSERT INTO accounts VALUES($1,$2,'pro','active',now(),now())`, acct.ID, acct.Email); e != nil {
 		t.Fatal(e)
@@ -33,8 +47,10 @@ func TestCustomerSupportAuthenticatedRoutes(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = pool.Exec(t.Context(), `INSERT INTO orgs(id,slug,plan,deleted_pending,personal_org,personal_owner_account_id) VALUES($1,'personal','pro',false,true,$2)`, key.OrgID, acct.ID); e != nil {
-		t.Fatal(e)
+	if key.OrgID != "" {
+		if _, e = pool.Exec(t.Context(), `INSERT INTO orgs(id,slug,plan,deleted_pending,personal_org,personal_owner_account_id) VALUES($1,'personal','pro',false,true,$2)`, key.OrgID, acct.ID); e != nil {
+			t.Fatal(e)
+		}
 	}
 	(*env.S()).SetCustomerSupportForTest(&support.Service{Pool: pool, Operator: func(id, email string) bool { return id == acct.ID }})
 	headers := map[string]string{"Idempotency-Key": uuid.NewString()}

@@ -1230,6 +1230,25 @@
       ]
     },
     {
+      "id": "customer-support",
+      "name": "Customer support",
+      "category": "account",
+      "description": "Scoped customer conversations, saved support targets, team routing, reopening and reviewed staff operations.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/customer-support",
+      "acceptance_test": "pkg/apid/apidserver/customer_support_test.go::TestCustomerSupportAuthenticatedRoutes",
+      "routes": [
+        "/v1/orgs/{}/support",
+        "/v1/support"
+      ]
+    },
+    {
       "id": "dashboard",
       "name": "Dashboard",
       "category": "developer",

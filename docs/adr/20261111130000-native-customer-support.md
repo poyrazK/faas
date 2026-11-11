@@ -13,6 +13,10 @@ not claim to restore every feature of the missing implementation.
 
 ## Decision
 
+The customer API is a `customer-support` preview, released through the existing
+`customer_support` platform flag for selected accounts. Staff endpoints retain
+their independent private access controls.
+
 Apid owns support intent in `pkg/apid/support`, using PostgreSQL transactions and
 sqlc. Personal cases belong to an account; organization cases require current
 owner/admin membership. Verified, active accounts may use admin-scoped account
@@ -24,7 +28,9 @@ precedence. Private writes require a fresh five-minute step-up and trusted origi
 
 Each mutation carries an actor/resource/request-bound UUID receipt, checked after
 current authorization and before changing revision or relative-time validation.
-Receipts contain identifiers and revisions, never conversation content. A bounded
+Receipts contain identifiers and revisions, never conversation content. Their
+`request_hash` is a non-reversible SHA-256 digest rather than a sealed secret; its
+bytea column is explicitly recorded in the seal-domain checker baseline for review. A bounded
 transaction advisory lock serializes support writes, including staff configuration,
 capacity admission and reviewed applications. This is a deliberate low-volume
 tradeoff; partitioned admission needs equivalent atomic capacity and replay fences.
