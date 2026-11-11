@@ -20,6 +20,11 @@ func ObjectRetryPolicy(err error, attempt int32) (string, time.Duration) {
 	if errors.Is(err, objectstorage.ErrCleanupPending) {
 		return "cleanup_pending", 15 * time.Second
 	}
+	// Cleanup kept protected versions after deleting the rest: run again
+	// once the earliest of them ends (ADR-20261111123000 decision 8).
+	if kept := (*objectstorage.ProtectedUntilError)(nil); errors.As(err, &kept) {
+		return "protected", kept.RetryAfter(time.Now())
+	}
 	if errors.Is(err, objectstorage.ErrObjectProtected) {
 		return "protected", time.Hour
 	}
@@ -64,8 +69,12 @@ func (s *Service) ExecuteBucketOperation(ctx context.Context, st state.ObjectBuc
 		}
 	} else {
 		owned, err = s.ownedBucketCleanupRequired(callCtx, b)
+		var erasure bool
 		if err == nil && owned {
-			err = emptyOwnedObjectBucket(callCtx, backend.Provider, b.PhysicalName)
+			erasure, err = s.accountErasureDue(callCtx, b)
+		}
+		if err == nil && owned {
+			err = emptyOwnedObjectBucket(callCtx, backend.Provider, b.PhysicalName, erasure)
 			if errors.Is(err, objectstorage.ErrNotFound) {
 				err = nil
 			}
@@ -111,14 +120,20 @@ func (s *Service) ExecuteBucketOperation(ctx context.Context, st state.ObjectBuc
 	return err
 }
 
-func (s *Service) ownedBucketCleanupRequired(ctx context.Context, bucket state.ObjectBucket) (bool, error) {
+// accountErasureDue reports a bucket whose owner's deletion grace has ended:
+// its data is erased, and the platform releases the protection it can.
+func (s *Service) accountErasureDue(ctx context.Context, bucket state.ObjectBucket) (bool, error) {
 	account, err := state.ObjectBucketPolicyAccount(ctx, s.Host.Store(), bucket)
 	if err != nil {
 		return false, err
 	}
-	if account.Status == state.AccountDeletedPending && account.DeletionRequestedAt != nil &&
-		!account.DeletionRequestedAt.Add(state.DeletionGraceDuration()).After(time.Now()) {
-		return true, nil
+	return account.Status == state.AccountDeletedPending && account.DeletionRequestedAt != nil &&
+		!account.DeletionRequestedAt.Add(state.DeletionGraceDuration()).After(time.Now()), nil
+}
+
+func (s *Service) ownedBucketCleanupRequired(ctx context.Context, bucket state.ObjectBucket) (bool, error) {
+	if erasure, err := s.accountErasureDue(ctx, bucket); err != nil || erasure {
+		return erasure, err
 	}
 	if bucket.EnvironmentCloneSourceBucketID != "" {
 		return true, nil
@@ -134,8 +149,10 @@ func (s *Service) ownedBucketCleanupRequired(ctx context.Context, bucket state.O
 }
 
 // The claimed bucket stays sealed through retries and final provider deletion.
-func emptyOwnedObjectBucket(ctx context.Context, provider objectstorage.Provider, physicalName string) error {
-	return objectstorage.CleanupOwnedBucketObjects(ctx, provider, physicalName)
+// Account erasure releases legal and event holds and bypasses GOVERNANCE
+// retention; COMPLIANCE versions are kept until their retention ends.
+func emptyOwnedObjectBucket(ctx context.Context, provider objectstorage.Provider, physicalName string, erasure bool) error {
+	return objectstorage.CleanupOwnedBucketObjectsWith(ctx, provider, physicalName, objectstorage.OwnedCleanupOptions{ReleaseProtection: erasure})
 }
 
 func (s *Service) retryBucketOperation(ctx context.Context, st state.ObjectBucketStore, b state.ObjectBucket, cause error) error {
