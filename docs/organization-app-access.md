@@ -150,7 +150,15 @@ sealed configuration and storage paths remain stable after creator erasure.
 | Project/environment deletion | yes | yes | no | no | no |
 
 API-key scopes and human MFA/verification still apply. App-scoped deploy tokens
-cannot administer an entire project. A company key cannot access personal
+cannot administer an entire project. A deploy token acts as the member who
+minted or last rotated it, with that member's current role, so it stops working
+when they leave; tokens minted before 2026-11-10 act as the app's creator
+(ADR-20261110190000). Only a key's holder can rotate an organization key,
+because rotation returns the new key's plaintext; owners and admins can still
+revoke anyone's. An organization key cannot manage its holder's personal
+account, keys or sessions (`/v1/keys`, `/v1/auth/sessions`, account deletion,
+restore, export, email, MFA, sign-in methods, billing and plan); it can still
+read `GET /v1/account`. A company key cannot access personal
 projects or another company's project, even when its human belongs to both.
 The API rechecks current membership before replaying responses; promotion and
 rollback operation keys are partitioned by actor and credential.
@@ -263,7 +271,8 @@ for backfill, rollout and acceptance requirements.
 
 `DELETE /v1/orgs/{slug}/members/{user_id}` removes the member and revokes their
 organization API keys (including rotation grace keys), deploy tokens for the
-organization's apps, and outstanding invitations to their email in the org, in
+organization's apps (those on apps they created and those they minted on
+teammates' apps), and outstanding invitations to their email in the org, in
 one transaction. Personal sessions/credentials and other organizations' keys
 remain valid. Company applications and already accepted workloads keep running.
 

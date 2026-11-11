@@ -619,6 +619,11 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				if m.limitKeyToProjects(w, r, acct, &key) {
 					return
 				}
+				// ADR 20261110190000: a company key cannot manage the
+				// holder's personal account, keys or sessions.
+				if m.refuseOrgKeyOnPersonalRoute(w, r, acct, key) {
+					return
+				}
 				// ADR-20261107220000: an agent's write requests are
 				// recorded once the handler answers; the approval gate
 				// notes the approval a request went through on.

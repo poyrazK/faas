@@ -12,13 +12,14 @@ import (
 )
 
 const deployTokenSelectCols = `id, account_id, app_id, token_sha256, coalesce(label,''), scopes,
-       status, created_at, expires_at, last_used_at, revoked_at, rotated_from_id`
+       status, created_at, expires_at, last_used_at, revoked_at, rotated_from_id,
+       coalesce(created_by_account_id::text,'')`
 
 func scanDeployToken(row pgx.Row) (DeployToken, error) {
 	var t DeployToken
 	if err := row.Scan(&t.ID, &t.AccountID, &t.AppID, &t.Hash, &t.Label,
 		&t.Scopes, &t.Status, &t.CreatedAt, &t.ExpiresAt, &t.LastUsedAt,
-		&t.RevokedAt, &t.RotatedFromID); err != nil {
+		&t.RevokedAt, &t.RotatedFromID, &t.CreatedByAccountID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return DeployToken{}, ErrNotFound
 		}
@@ -39,12 +40,12 @@ func (s *PgStore) CreateDeployToken(ctx context.Context, accountID, appID string
 	}
 	hash = storedCredential(credTagDeployToken, hash)
 	row := s.pool.QueryRow(ctx,
-		`insert into deploy_tokens (account_id, app_id, token_sha256, label, scopes, expires_at)
-		 select $1::uuid, a.id, $3, $4, $5, $6
+		`insert into deploy_tokens (account_id, app_id, token_sha256, label, scopes, expires_at, created_by_account_id)
+		 select $1::uuid, a.id, $3, $4, $5, $6, nullif($7, '')::uuid
 		   from apps a
 		  where a.id = $2::uuid and a.account_id = $1::uuid
 		 returning `+deployTokenSelectCols,
-		accountID, appID, hash, label, scopes, expiresAt.UTC())
+		accountID, appID, hash, label, scopes, expiresAt.UTC(), deployTokenMinter(ctx))
 	t, err := scanDeployToken(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The app does not exist or belongs to another account; the
@@ -77,7 +78,7 @@ func (s *PgStore) ListDeployTokensForApp(ctx context.Context, accountID, appID s
 		var t DeployToken
 		if err := rows.Scan(&t.ID, &t.AccountID, &t.AppID, &t.Hash, &t.Label,
 			&t.Scopes, &t.Status, &t.CreatedAt, &t.ExpiresAt, &t.LastUsedAt,
-			&t.RevokedAt, &t.RotatedFromID); err != nil {
+			&t.RevokedAt, &t.RotatedFromID, &t.CreatedByAccountID); err != nil {
 			return nil, mapErr(err)
 		}
 		out = append(out, t)
@@ -134,10 +135,10 @@ func (s *PgStore) RotateDeployToken(ctx context.Context, accountID, appID, token
 		label = old.Label
 	}
 	newToken, err := scanDeployToken(tx.QueryRow(ctx,
-		`insert into deploy_tokens (account_id, app_id, token_sha256, label, scopes, expires_at, rotated_from_id)
-		 values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::uuid)
+		`insert into deploy_tokens (account_id, app_id, token_sha256, label, scopes, expires_at, rotated_from_id, created_by_account_id)
+		 values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::uuid, nullif($8, '')::uuid)
 		 returning `+deployTokenSelectCols,
-		accountID, appID, hash, label, old.Scopes, expiresAt.UTC(), old.ID))
+		accountID, appID, hash, label, old.Scopes, expiresAt.UTC(), old.ID, deployTokenMinter(ctx)))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -188,11 +189,18 @@ func (s *PgStore) AuthenticateDeployToken(ctx context.Context, hash []byte) (Acc
 		_, _ = s.pool.Exec(ctx, `update deploy_tokens set status = 'revoked', revoked_at = coalesce(revoked_at, now()) where id = $1::uuid and status <> 'revoked'`, t.ID)
 		return Account{}, APIKey{}, ErrAPIKeyExpired
 	}
-	acct, err := s.AccountByID(ctx, t.AccountID)
+	principal, orgID := t.AccountID, ""
+	if t.CreatedByAccountID != "" && t.CreatedByAccountID != t.AccountID {
+		principal = t.CreatedByAccountID
+		if err := s.pool.QueryRow(ctx, `select coalesce(org_id::text,'') from apps where id = $1::uuid`, t.AppID).Scan(&orgID); err != nil {
+			return Account{}, APIKey{}, mapErr(err)
+		}
+	}
+	acct, err := s.AccountByID(ctx, principal)
 	if err != nil {
 		return Account{}, APIKey{}, err
 	}
-	return acct, APIKey{ID: t.ID, AccountID: t.AccountID, AppID: t.AppID,
+	return acct, APIKey{ID: t.ID, AccountID: principal, OrgID: orgID, AppID: t.AppID,
 		Hash: t.Hash, Label: t.Label, Scopes: t.Scopes,
 		CreatedAt: t.CreatedAt, ExpiresAt: t.ExpiresAt, Status: t.Status}, nil
 }
