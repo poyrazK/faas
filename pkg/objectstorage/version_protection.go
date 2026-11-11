@@ -132,6 +132,14 @@ func (s VersionProtectionService) Request(ctx context.Context, b state.ObjectBuc
 	} else if !errors.Is(e, state.ErrNotFound) {
 		return j, e
 	}
+	if err := CheckObjectLockPlan(ctx, s.Store, b, func(l api.ObjectStoragePlanLimits) *api.ObjectLockPlanViolation {
+		if j.Retention != nil {
+			return l.ObjectRetentionViolation(*j.Retention, time.Now())
+		}
+		return l.ObjectLegalHoldViolation(*j.LegalHold)
+	}); err != nil {
+		return j, err
+	}
 	if j.Retention != nil && j.Retention.EventHold != "" {
 		if _, ok := s.Store.(state.ObjectEventHoldProtectionStore); !s.EventHolds || !ok {
 			return j, ErrUnsupported

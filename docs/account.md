@@ -109,7 +109,8 @@ operation still enforces its own authorization and admission checks.
   `gregale account activity list` (`GET /v1/account/security-activity`, a
   full-access key) show sign-ins, API keys, CLI and agent sign-ins, and
   password, email, two-factor and sign-in method changes of the last 90 days.
-- **Credential emails:** creating or rotating an API key, a CLI or agent
+- **Credential emails:** creating or rotating a deploy token (the mail names
+  the app), and creating or rotating an API key, a CLI or agent
   (MCP) sign-in, and a password sign-in through the API each email you, so a
   credential you did not create is noticed.
 - **Rotation grace window:** `gregale key grace-window set --days N` keeps a

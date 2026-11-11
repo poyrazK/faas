@@ -97,6 +97,29 @@ The owner chose the price ("Neon + 5%") and the split ("Apps use it first").
   database egress free.
 - Decision 3 above no longer holds once managed PostgreSQL charges are live.
 
+## Amendment 2026-11-11: the egress hold is mailed
+
+A held customer saw ready databases refuse connections, and only the API said
+why. The sweep now mails the hold once per month:
+
+- **Event.** The first enforced sweep that holds a subject for egress records
+  cap event threshold `egress_held` (migration `20261111160000418` widens the
+  threshold CHECK). Its amounts are bytes: the shared egress apps and
+  databases sent, the plan's allowance, and the hold ceiling. `overage` is
+  set when the ceiling is twice the allowance because database egress is
+  billed.
+- **Email.** It goes through the compute cap email path
+  (`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED`, which cap
+  enforcement `on` already requires), mailed on its own inside the 24-hour
+  window and retried by later sweeps. It never ranks among the compute
+  thresholds, so it neither hides nor is hidden by a compute email. It names
+  the allowance, what was sent, the resume date, and how to resume sooner
+  (upgrade, or turn on egress overage).
+- **Skew.** An apid of the previous release ranks an unknown threshold first
+  when it picks the most severe compute event, and it cannot render this
+  email. Until every apid runs this release, a held subject's compute email
+  can be skipped. Roll apid out in one step.
+
 ## Later slices
 
 - **Slice 2:** meterd's app egress stop counts the databases' egress too, so
@@ -110,7 +133,8 @@ The owner chose the price ("Neon + 5%") and the split ("Apps use it first").
 - A Free account's databases stop after 10 GiB of combined egress a month;
   the sweep interval bounds the overshoot.
 - Egress counts and stops are visible as `managed postgres compute held`
-  logs with reason `egress`; a customer email is a follow-up.
+  logs with reason `egress`, and the owner is mailed once per month (amendment
+  2026-11-11).
 - Rejected: a separate database ceiling (two allowances to explain, and it
   doubles what a plan gives away), and the operator ceiling alone (not
   plan-aware, and never checked while a database runs).

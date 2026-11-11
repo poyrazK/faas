@@ -27979,6 +27979,9 @@ func (m *MemStore) ConsumeOrgInvitation(_ context.Context, hash []byte, acceptin
 	if !strings.EqualFold(inv.Email, acceptingAccount.Email) {
 		return OrgMembership{}, OrgInvitation{}, ErrOrgInvitationInvalid
 	}
+	if err := m.checkInviterLocked(inv); err != nil {
+		return OrgMembership{}, OrgInvitation{}, err
+	}
 	// Status, plan and member admission share this lock with org mutations.
 	org, ok := m.orgs[inv.OrgID]
 	if !ok {

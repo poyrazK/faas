@@ -1,4 +1,4 @@
--- filename: 20261111140000000_complimentary_accounts.sql
+-- filename: 20261111152446578_complimentary_accounts.sql
 -- migration-compat: expand
 -- ADR-20261111140000: an operator can give an account a paid plan without a
 -- subscription. One row per complimentary account. meterd neither bills nor

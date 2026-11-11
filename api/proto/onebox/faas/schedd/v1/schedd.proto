@@ -1389,6 +1389,11 @@ message AgentRunStart {
   // (ADR-20261027090012 §1). false (a version that opted out, or an older
   // agentd) keeps the run's VM running while it waits on the model.
   bool pause_during_model_calls = 10;
+  // history_peak_private_mb is the agent version's p95 private memory peak
+  // over its recent measured runs (ADR-20261027090015 §3), 0 until the
+  // version has AgentSizeHistoryMinRuns of them. schedd's measured charge
+  // books and charges the run from it; an older agentd sends 0.
+  int32 history_peak_private_mb = 11;
 }
 
 // AgentRunRelay is placement data for the run's relay assertion (ADR-20261027090010
