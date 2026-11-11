@@ -44,7 +44,8 @@ The owner decided the policy on 2026-10-25.
 1. **Free stops at its allowance.** A Free account's databases are suspended
    once the account has used its monthly allowance.
 
-2. **Paid plans have an overage setting, off by default.** It is a per-account
+2. **Paid plans have an overage setting, off by default** (on by default on
+   Scale since the 2026-11-11 amendment). It is a per-account
    setting that the customer controls:
    - **Off** (the default): the databases are suspended at the allowance, as on
      Free.
@@ -461,3 +462,25 @@ new class. If Neon refuses the change on the disabled endpoint (409), the resize
 ends on its source spec with code `compute_held` instead of retrying forever.
 Neon's acceptance of the PATCH on a disabled endpoint is verified only against
 a fake so far; a native check against Neon is still owed.
+
+## Amendment 2026-11-11: compute overage is on by default on Scale
+
+An always-busy database spends its plan's monthly compute in days: Hobby in
+about 4, Pro about 12, Scale about 8. With overage off it is then suspended
+until the 1st. The owner decided ("Only overage enabled default on the scale.
+The other plans overage off default."):
+
+- `api.ManagedPostgresPlanLimits.OverageOnByDefault` is true only for Scale.
+- A subject's stored choice always wins. A subject with no stored choice gets
+  its plan's default (`api.ManagedPostgresOverageEffective`), everywhere apid
+  reads overage: the cap sweep's ceiling, admission, the overage biller's
+  allowances, `GET /v1/postgres/overage` and the dashboard.
+- The overage biller lists a subject with databases on a default-on plan that
+  never chose (`ManagedPostgresOverageSubjects`, plans passed from
+  `api.ManagedPostgresOverageDefaultPlans`), so its compute and storage past
+  the allowance are billed like an explicit opt-in.
+- Hobby and Pro keep overage off until the account turns it on.
+- No migration: no stored row means never chose. An existing Scale account
+  that turned overage off keeps it off; one that never chose now runs to twice
+  its allowance and is billed for it. Billing stays behind the managed
+  PostgreSQL charge policy, so nothing is charged while delivery is shadow.

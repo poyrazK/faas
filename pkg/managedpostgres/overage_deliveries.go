@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -25,7 +26,8 @@ func (s *PostgresStore) OverageSubjects(ctx context.Context, periodStart time.Ti
 	if periodStart.IsZero() {
 		return nil, ErrInvalid
 	}
-	rows, err := sqlc.New().ManagedPostgresOverageSubjects(ctx, s.catalog, pgtype.Timestamptz{Time: monthStart(periodStart), Valid: true})
+	rows, err := sqlc.New().ManagedPostgresOverageSubjects(ctx, s.catalog, sqlc.ManagedPostgresOverageSubjectsParams{
+		PeriodStart: pgtype.Timestamptz{Time: monthStart(periodStart), Valid: true}, DefaultOveragePlans: api.ManagedPostgresOverageDefaultPlans()})
 	if err != nil {
 		return nil, mapPostgresError(err)
 	}
