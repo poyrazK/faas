@@ -2432,6 +2432,8 @@ func NewUsageSummaryEgressProvider(mode billing.MeterDeliveryMode) billing.Provi
 // PlanWorkloadPublicAuthMode exposes the plan's public URL auth (H32-30).
 var PlanWorkloadPublicAuthMode = planWorkloadPublicAuthMode
 
+var KeyApprovalCategories = keyApprovalCategories
+
 // ProjectEnvironmentPlanURLs applies the two-service project fixture, adds a
 // staging environment and scans it (Hunt 33 H33-33). It returns the staging
 // environment ID, the apps' IDs by workload name and the staging plan.
