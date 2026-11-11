@@ -41,7 +41,7 @@ func (f *nativeSnapshotMemoryFrame) UnmarshalJSON(data []byte) error {
 }
 
 func nativeSnapshotMemoryPath(owner nativeLaunchRecord) string {
-	return filepath.Join(ParentCgroupFor(owner.Lease.Plan), PerInstanceScope(owner.Lease.Instance))
+	return filepath.Join(tenantCgroupParent(owner.Lease), PerInstanceScope(owner.Lease.Instance))
 }
 
 func nativeSnapshotMemoryLimits(owner nativeLaunchRecord) (uint64, uint64, error) {

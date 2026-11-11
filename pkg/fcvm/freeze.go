@@ -562,10 +562,7 @@ var procMeminfoPath = "/proc/meminfo"
 
 // vmCgroupScope is the VM's per-instance cgroup directory.
 func vmCgroupScope(l Lease) string {
-	parent := ParentCgroupFor(l.Plan)
-	if l.IsBuilder {
-		parent = BuilderCgroupParent
-	}
+	parent := vmCgroupParent(l)
 	return filepath.Join(cgroupRoot, parent, PerInstanceScope(l.Instance))
 }
 

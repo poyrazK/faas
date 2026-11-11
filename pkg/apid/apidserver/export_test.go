@@ -1614,6 +1614,9 @@ func (r *server) ValidateProjectDeploymentEnvironment(p0 context.Context, p1 sta
 func (r *server) VerifyOAuthAccountEmail(p0 context.Context, p1 state.Account, p2 string) (state.Account, error) {
 	return r.verifyOAuthAccountEmail(p0, p1, p2)
 }
+func (r *server) EndOtherAccessAfterMFAEnroll(p0 *http.Request, p1 state.Account) {
+	r.endOtherAccessAfterMFAEnroll(p0, p1)
+}
 func (r *server) RemoveForeignProviderLinks(p0 context.Context, p1 string, p2 string) {
 	r.removeForeignProviderLinks(p0, p1, p2)
 }

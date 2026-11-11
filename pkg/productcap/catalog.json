@@ -1266,7 +1266,6 @@
       "description": "Serve a managed Postgres database over a generated HTTP API.",
       "maturity": "preview",
       "plans": [
-        "free",
         "hobby",
         "pro",
         "scale"
@@ -3168,7 +3167,6 @@
       "description": "Create a managed PostgreSQL database and bind it to an app.",
       "maturity": "ga",
       "plans": [
-        "free",
         "hobby",
         "pro",
         "scale"
@@ -4024,7 +4022,6 @@
       "description": "Bind databases to apps and rotate their credentials.",
       "maturity": "ga",
       "plans": [
-        "free",
         "hobby",
         "pro",
         "scale"
@@ -4129,7 +4126,6 @@
       "description": "Restore a database to an earlier point in time.",
       "maturity": "ga",
       "plans": [
-        "free",
         "hobby",
         "pro",
         "scale"

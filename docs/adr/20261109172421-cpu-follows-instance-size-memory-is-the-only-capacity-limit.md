@@ -243,6 +243,21 @@ schema change ships before its first user.
       current schema.*
    5. The flat hierarchy: app instances directly under `faas-tenant.slice`,
       with vmmd still adopting VMs in the old sub-slices for a release.
+      *Behind the vmmd switch `flat_tenant_cgroups`
+      (`FAAS_VMMD_FLAT_TENANT_CGROUPS`, ansible `vmmd_flat_tenant_cgroups`),
+      default off. With it on, a new tenant VM launches directly under
+      `faas-tenant.slice`. vmmd fences, freezes, adopts and tears down VMs in
+      either place: a VM's lease carries its parent, and a lease rebuilt from
+      a record finds it from the process's cgroup. Deploy adds the
+      `faas-tenant-fence.slice` pin, so `faas-tenant.slice` keeps its
+      controllers once the sub-slices go, and gives
+      `faas-tenant-ibridge.slice` `CPUWeight=1000`, since flat instances'
+      weights (`ram_mb / 16`, about 3,000 on a full host) would otherwise
+      crowd out the bridges. Order: release, a builder-native metal run of
+      it, the switch on per node, and the sub-slices removed only after a
+      release with every node on. An older vmmd knows only the sub-slices:
+      turn the switch off, and let flat VMs park, before rolling vmmd back
+      past that release. Not with `native_process_recovery`.*
    6. The dead `FaasCpuStarvation` alert (nothing feeds its throttle
       ratio) and the spec text.
       *Merged (#6933), unreleased.*

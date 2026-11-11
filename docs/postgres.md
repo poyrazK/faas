@@ -17,11 +17,15 @@ Operators: see the [operator guide](managed-postgres.md).
 
 | Plan | Databases | Pooled storage | Compute per month | Restore window | Classes |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Free | 1 | 0.5 GiB | 5 CU-hours | 7 days | development |
+| Free | — | — | — | — | — |
 | Hobby | 1 | 1 GiB | 25 CU-hours | 7 days | development |
 | Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
 | Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
 
+- The Free plan includes no managed PostgreSQL: create, `gregale dev
+  --postgres`, a Compose `postgres` service and restores answer
+  `403 managed_postgres_not_in_plan` there. Upgrade to Hobby or above for a
+  database.
 - Storage is pooled across your databases: one database may use the whole
   pool.
 - Compute suspends when a database is idle. Always-on compute is not part of
@@ -35,8 +39,7 @@ Operators: see the [operator guide](managed-postgres.md).
   lists the databases to delete and the ones to move to a class the plan
   includes. A database whose delete is scheduled no longer counts.
 - A plan can also drop without that check, for example when a subscription
-  ends. Databases the new plan no longer includes are then suspended, never
-  deleted:
+  ends. Databases the new plan no longer includes are then suspended:
   - your oldest databases are kept, up to the plan's database limit;
   - a newer one shows `plan_excess: database_limit`;
   - one in a class the plan does not include shows
@@ -46,9 +49,11 @@ Operators: see the [operator guide](managed-postgres.md).
   credentials and app bindings are kept, but it does not start until you
   upgrade, delete a database, or resize it to an included class. The next
   usage sweep, within minutes, resumes it.
-- When the platform is near capacity, new databases on the Free plan pause
-  first (`503 managed_postgres_new_databases_paused`); paid plans can still
-  create them.
+  - A database still suspended 30 days later is deleted. The email names the
+    date. Its app bindings are removed, and `gregale postgres recover` brings
+    it back for 7 days after that.
+- A subscription that ends drops the account to Free, which includes no
+  databases, so every database it holds is suspended this way.
 
 ## Create a database
 
