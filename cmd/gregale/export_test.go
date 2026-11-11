@@ -2782,6 +2782,11 @@ var PrintAddPostgresMigrationHint = printAddPostgresMigrationHint
 
 var DebugWatchNextWait = debugWatchNextWait
 
+var (
+	ProfileCapturesVerb     = profileCapturesVerb
+	RenderDebugCompareTable = renderDebugCompareTable
+)
+
 // ADR-20261107180000 `gregale config explain`.
 var (
 	ExplainConfigKey         = explainConfigKey

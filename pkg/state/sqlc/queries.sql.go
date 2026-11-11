@@ -102107,6 +102107,8 @@ SET state = 'resolved',
 WHERE app_id = $1
   AND last_detected_at < $2
   AND state <> 'resolved'
+  AND (deployment_id <> $3::uuid
+       OR route = ANY($4::text[]))
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
@@ -102115,8 +102117,10 @@ RETURNING app_id, deployment_id, route,
 `
 
 type ResolveRegressionObservationsNotSeenSinceParams struct {
-	AppID          pgtype.UUID
-	LastDetectedAt pgtype.Timestamptz
+	AppID               pgtype.UUID
+	LastDetectedAt      pgtype.Timestamptz
+	CurrentDeploymentID pgtype.UUID
+	MeasuredRoutes      []string
 }
 
 // An app's complete detector pass reconfirms every regression it still sees
@@ -102125,8 +102129,19 @@ type ResolveRegressionObservationsNotSeenSinceParams struct {
 // rollback included. Resolving here, rather than 24 hours later through
 // ResolveStaleRegressionObservations, keeps the banner, status and the
 // resolved webhook current. $2 is the pass start (with clock slack).
+// Only what the pass could judge resolves: an observation of a deployment
+// the pass no longer compares (superseded or rolled back), or of a route the
+// current deployment served in this pass's window. A route that merely went
+// quiet stays open (the stale sweep closes it after the lookback): on prod an
+// unfixed 15x slowdown resolved five minutes after it was found, once its
+// traffic aged out of the window.
 func (q *Queries) ResolveRegressionObservationsNotSeenSince(ctx context.Context, db DBTX, arg ResolveRegressionObservationsNotSeenSinceParams) ([]DebugRegressionObservation, error) {
-	rows, err := db.Query(ctx, resolveRegressionObservationsNotSeenSince, arg.AppID, arg.LastDetectedAt)
+	rows, err := db.Query(ctx, resolveRegressionObservationsNotSeenSince,
+		arg.AppID,
+		arg.LastDetectedAt,
+		arg.CurrentDeploymentID,
+		arg.MeasuredRoutes,
+	)
 	if err != nil {
 		return nil, err
 	}

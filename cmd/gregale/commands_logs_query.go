@@ -337,8 +337,13 @@ func renderHTTPLogQueryEvent(w io.Writer, event api.LogQueryEvent) {
 	if requestID == "" {
 		requestID = event.ID
 	}
-	_, _ = fmt.Fprintf(w, "%s http status=%d method=%s route=%q latency=%dms request=%s deployment=%s",
-		event.Timestamp, event.Status, event.Method, event.Route, event.LatencyMS, requestID, event.DeploymentID)
+	// LatencyMS is a pointer: formatting it with %d printed its address.
+	latency := "-"
+	if event.LatencyMS != nil {
+		latency = fmt.Sprintf("%dms", *event.LatencyMS)
+	}
+	_, _ = fmt.Fprintf(w, "%s http status=%d method=%s route=%q latency=%s request=%s deployment=%s",
+		event.Timestamp, event.Status, event.Method, event.Route, latency, requestID, event.DeploymentID)
 	if event.TraceID != "" {
 		_, _ = fmt.Fprintf(w, " trace=%s", event.TraceID)
 	}
