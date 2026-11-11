@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/google/uuid"
-
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -26,7 +24,7 @@ var (
 // PRPreviewSetPeerIDs returns the members of every set that holds appID,
 // appID included, in ID order; none when no set holds it.
 func (s *PgStore) PRPreviewSetPeerIDs(ctx context.Context, appID string) ([]string, error) {
-	if _, err := uuid.Parse(appID); err != nil {
+	if !validUUID(appID) {
 		return nil, nil
 	}
 	ids, err := sqlc.New().ServicePolicyPRPreviewSetMemberIDs(ctx, s.pool, appID)
@@ -38,7 +36,7 @@ func (s *PgStore) PRPreviewSetPeerIDs(ctx context.Context, appID string) ([]stri
 
 // PRPreviewSetPeerIDs reads the peers in the service policy snapshot.
 func (s servicePolicyReader) PRPreviewSetPeerIDs(ctx context.Context, appID string) ([]string, error) {
-	if _, err := uuid.Parse(appID); err != nil {
+	if !validUUID(appID) {
 		return nil, nil
 	}
 	ids, err := sqlc.New().ServicePolicyPRPreviewSetMemberIDs(ctx, s.tx, appID)
