@@ -57,7 +57,7 @@ fi
 work_root=$(mktemp -d "${TMPDIR:-/tmp}/gregale-release.XXXXXX")
 trap 'rm -rf "$work_root"' EXIT
 mkdir -p "$work_root/$git_sha/bin" "$out_dir"
-rm -f "$out_dir/release.tar.gz" "$out_dir/release-manifest.json" "$out_dir/release.cosign.bundle" "$out_dir/release.sbom.json" "$out_dir/SHA256SUMS"
+rm -f "$out_dir/guest-init.json" "$out_dir/release.tar.gz" "$out_dir/release-manifest.json" "$out_dir/release.cosign.bundle" "$out_dir/release.sbom.json" "$out_dir/SHA256SUMS"
 
 make -C "$repo_root" \
   BINDIR="$work_root/$git_sha/bin" \
@@ -69,10 +69,13 @@ make -C "$repo_root" \
 # nothing. When the previous signed release's guest-init runs the same code as
 # the one just built, ship its bytes instead (ADR-20261105150000). Only the
 # release workflow asks for this: it needs gh, cosign and the release history.
+# GUEST_INIT_HOLD_HOURS also holds back changed code for a while (the release
+# train); guest-init.json records where the shipped bytes' code came from.
 if [[ "${REUSE_GUEST_INIT:-}" == "true" ]]; then
   if "$repo_root/scripts/reuse-release-guest-init.sh" \
     --init "$work_root/$git_sha/bin/init" \
-    --git-sha "$git_sha"; then
+    --git-sha "$git_sha" \
+    --provenance-out "$out_dir/guest-init.json"; then
     :
   else
     status=$?

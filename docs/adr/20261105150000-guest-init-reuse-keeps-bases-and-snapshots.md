@@ -229,3 +229,103 @@ own decision:
   releases and `journalctl -u faas-vmmd | grep 'backing images changed'` on a
   compute node: both should be quiet for a release that did not change the
   guest.
+
+## Amendment 2026-11-11: the release train for closure-only changes
+
+### Context
+
+Production-us, 2026-11-08 to 2026-11-11 (read-only: the `snapshots` table on
+the control plane, schedd and vmmd journals on both compute nodes):
+
+- Stale marks equal captures, about 95 a day. Single-deployment apps were
+  re-captured about twice a day, and most snapshots lived less than a day.
+- schedd's post-release refresh (ADR-20261106214916) logged "fcvm: snapshot
+  backing images changed" for most refreshes: the kernel digest stayed the
+  same and the base digest changed about seven times in three days. 74 user
+  wakes cold-booted with `snapshots_stale` over the same window.
+- Twelve of the fourteen release pairs rc.323 → rc.337 changed no Go file
+  under `guest/init`, and eleven of those twelve changed `pkg/api` (1–40
+  files). The base churn this ADR set out to stop is still driven by
+  guest-init's closure, not the guest.
+
+Decision 1 only reuses bytes whose code is equal, and a `pkg/api` change
+usually changes code (a limit constant, an error code, a type descriptor).
+
+### Decision
+
+**4. The release holds back a guest-init whose code changed only through the
+shared tables, for up to 72 hours.** With `GUEST_INIT_HOLD_HOURS=72`
+(`release.yml`), when `guest_init_reuse.py` reports different code,
+`reuse-release-guest-init.sh` still ships the prior signed release's bytes
+unless one of these holds:
+
+- a non-test file changed, between the held code's commit and the release
+  commit, in a package directory guest-init links (`go list -deps` for
+  linux/amd64 at the release commit) other than `pkg/api`, `pkg/api/canary`
+  and `pkg/productcap`. That covers `guest/` itself and every protocol package
+  in the closure (`*proto`, `crashcapturewire`, `dbguest`, `datarepair`,
+  `workloadidentity`, and any package new to the closure). A closure that
+  cannot be listed counts as changed;
+- the held code's commit is 72 hours old or more;
+- a commit in the range carries a `Guest-Init-Ship: now` trailer (for a
+  `pkg/api` change the guest must act on, such as a limit guest-init
+  enforces);
+- the held code's commit is not an ancestor of the release commit.
+
+The hold never applies to a guest-init change: of the 38 commits that touched
+`guest/init` between 2026-10-25 and 2026-11-11, 35 also changed host code in
+`cmd/` or `pkg/` outside `pkg/api`. Holding one would ship the host half of a
+feature without the guest half, and every security-sensitive guest path
+(restore reseeding and clock for invariant 5 and test V6, restored-process
+identity, secrets and environment delivery, vsock listeners, workload
+identity) is in `guest/init` or a protocol package.
+
+**5. The held age travels in a release asset.** The release publishes
+`guest-init.json`, `{format_version, digest, source_sha, source_time}`: the
+digest of the guest-init it shipped and the commit whose code that binary is.
+The next release reads it from the prior release and uses `source_sha` only
+when `digest` equals the cosign-verified `tool_hashes.init`; otherwise (a
+release from before the train, a missing or mismatched asset) the prior
+release's own commit is the source. The asset only decides when held bytes
+age out; it never decides which bytes ship, and `release-manifest.json`, the
+signed manifest and `pkg/releaseinstall` are unchanged.
+
+Replayed over rc.323 → rc.337 with today's closure: of the 13 release pairs
+that changed a closure file, 7 changed only `pkg/api`/`pkg/productcap` and
+would have been held; 6 would have shipped (`guest/init`, `pkg/datarepair`,
+`pkg/dbarchive`, `pkg/sourcecontext`, `pkg/edgevalidate` and others). Over the
+last three days, 3 new guest-inits instead of one for each of the 8 releases
+that changed the closure.
+
+### Why holding is safe
+
+A held release runs host N beside a guest-init whose code is at most 72 hours
+older and differs only in `pkg/api` and `pkg/productcap`. The host-to-guest
+JSON in `pkg/api` is additive-only and checked by gate 1
+(`docs/release-compatibility.md`), and a guest already has to accept a host
+newer than itself: a parked app's snapshot holds the guest-init that captured
+it. The strict decoders in guest-init (`job.json`, `app-task.json`,
+`execution.json`, agent runs, sandboxes, database control, data repair) read
+types declared in `guest/init` or a protocol package, so a change to any of
+them ships. The VM boundary, jailer, seccomp and host nftables do not depend
+on guest-init's version, and the held binary is the prior release's signed and
+digest-verified one.
+
+### Consequences
+
+- A `pkg/api`-only release keeps its bases and snapshots for up to 72 hours;
+  the following release that changes guest code, or the first after 72 hours,
+  ships the newest guest-init and changes the bases once.
+- A `pkg/api` change the guest must enforce now needs the
+  `Guest-Init-Ship: now` trailer in its squash commit; without it the guest
+  enforces the old value for up to 72 hours. Nothing checks for a missing
+  trailer.
+- The release job runs `go list` once more (no compile). `GUEST_INIT_HOLD_HOURS=0`
+  turns the train off and restores decision 1 alone.
+- The release log says why a changed guest-init shipped or was held, and
+  `guest-init.json` on each release names the commit its guest-init came from.
+- Checked with `scripts/reuse-release-guest-init_test.sh` (held, aged out,
+  provenance for other bytes ignored, guest change ships, trailer ships,
+  unlistable closure ships). After the first releases with it: `guest-init.json`
+  `source_sha` should stay put across `pkg/api`-only releases, and the stale
+  marks per day in `snapshots` should fall.
