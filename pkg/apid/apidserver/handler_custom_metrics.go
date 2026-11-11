@@ -104,7 +104,6 @@ func (s *server) putCustomMetric(w http.ResponseWriter, r *http.Request, acct st
 // the aggregate stays the series' maximum instead of being overwritten.
 func (s *server) savePushedCustomMetric(ctx context.Context, appID, name string, value float64, caps customMetricCaps) error {
 	now := time.Now()
-	freshness := time.Duration(api.CustomMetricFreshnessSeconds) * time.Second
 	if series, ok := s.store.(state.CustomMetricSeriesStore); ok && caps.series > 0 {
 		rows, err := s.store.ListCustomMetrics(ctx, appID)
 		if err != nil {
@@ -157,6 +156,7 @@ func (s *server) listCustomMetrics(w http.ResponseWriter, r *http.Request, acct 
 		MaxSeries:  caps.series,
 	}
 	now := time.Now()
+	freshness := time.Duration(api.CustomMetricFreshnessSeconds) * time.Second
 	for _, row := range rows {
 		out.Metrics = append(out.Metrics, api.CustomMetricResponse{
 			Name:       row.Name,
