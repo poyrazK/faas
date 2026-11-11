@@ -7521,6 +7521,15 @@
     "kind": "operational"
   },
   {
+    "table": "execution_event_replay_cursors",
+    "columns": [
+      "execution_id",
+      "pruned_through",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "execution_events",
     "columns": [
       "account_id",
