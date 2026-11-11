@@ -569,7 +569,9 @@ current values are in `GET /v1/account/object-storage-usage` under `policy`.
 - When an account is deleted, or after 21 days of non-payment, a 30-day grace
   period starts. During it, and while an account is suspended, no request can
   read or write its buckets. After the grace period, every bucket it owns is
-  emptied and deleted, except versions still under Object Lock, which are
-  deleted when their protection ends.
+  emptied and deleted. Gregale releases legal and event holds and deletes
+  `GOVERNANCE` versions too; versions under `COMPLIANCE` retention, which no
+  one can remove early, are kept until their retention ends and then deleted
+  ([ADR-20261111123000](adr/20261111123000-object-storage-over-ceiling-retention.md)).
 - A bucket created for an organization belongs to the organization, not to the
   member who created it.
