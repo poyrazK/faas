@@ -40,6 +40,17 @@ sql:
         sql_package: "pgx/v5"
         emit_methods_with_db_argument: true
         emit_empty_slices: true
+  # secretd's peer grants and open audit (ADR-20261110210000).
+  - engine: "postgresql"
+    queries: "pkg/secretd/secretpg/queries.sql"
+    schema: "pkg/secretd/secretpg/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/secretd/secretpg/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
   # Hosted management MCP bridge state and lease (ADR-20261026195952).
   - engine: "postgresql"
     queries: "pkg/mcpmanagement/statepg/queries.sql"

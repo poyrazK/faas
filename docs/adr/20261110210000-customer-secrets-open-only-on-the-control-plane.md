@@ -174,6 +174,32 @@ today. The domains move one at a time, in this order:
 | `control` | schedd on compute (cluster signing keys) | signing moves behind signd (as for artifacts); compute holds no cluster signing key |
 | `edge-tls` | gatewayd-public | **unchanged in this ADR**: it is the platform's apps wildcard key, not a customer secret, and short-lived (ADR-20261108100000, short-lived edge certificates). Keyless TLS is a later decision. |
 
+**Slice 3a (implemented, dark): the server.** `pkg/secretd`, proto
+`onebox.faas.secretd.v1.Secretd`, store `pkg/secretd/secretpg`, and
+migration `20261111124927540_secret_grants_and_open_audit`. No binary or
+deploy yet; that is slice 3b.
+
+- `OpenAppSecrets(app_id, entries)`: the caller is its mTLS certificate's
+  name, resolved to an active `compute_nodes.id` (identity protected since
+  slice 1b). It is answered only as the app's owner (`apps.node_id`,
+  protected since slice 1a) or as a peer holding an unexpired grant. Every
+  envelope must be bound (`secretbox.Binding.Require`) to the app's resource
+  account and hold exactly the selected key. The open is written to
+  `secret_open_audit` before any plaintext is returned; an open that cannot
+  be recorded fails. A node opening more than 1000 distinct apps in a rolling
+  hour is refused (`ResourceExhausted`).
+- `GrantPeer(app_id, node_name, ttl)`: only the app's owner may grant; the
+  TTL is clamped to 1 min–1 h and renewed by the owner while the peer runs
+  the app. `secret_grants` is written only by secretd.
+- Neither table is writable by `faas_runtime` (migration and
+  `runtime-roles.sql`).
+- **Residual:** the request carries ciphertext, and envelopes are bound to an
+  account, not an app. So a node that owns any app of an account could ask
+  secretd to open ciphertext it read from that account's other apps. That
+  stays within one customer and never crosses tenants, and every open is
+  audited. Closing it means secretd loads the ciphertext itself by row
+  reference (a later slice).
+
 When a domain has moved, node join stops staging its identity, deletes
 leftovers (the `faas_compute_fleet_key_retired` pattern), and
 `fleet-seal verify` refuses a compute node that still holds it.

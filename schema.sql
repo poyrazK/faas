@@ -57803,6 +57803,50 @@ COMMENT ON TABLE public.seal_domain_probe IS 'One non-secret secretbox probe per
 
 
 --
+-- Name: secret_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.secret_grants (
+    app_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    granted_by_node_id uuid NOT NULL,
+    granted_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT secret_grants_expiry_check CHECK ((expires_at > granted_at))
+);
+
+
+--
+-- Name: secret_open_audit; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.secret_open_audit (
+    id bigint NOT NULL,
+    node_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    via text NOT NULL,
+    entries integer NOT NULL,
+    opened_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT secret_open_audit_entries_check CHECK ((entries >= 0)),
+    CONSTRAINT secret_open_audit_via_check CHECK ((via = ANY (ARRAY['owner'::text, 'grant'::text])))
+);
+
+
+--
+-- Name: secret_open_audit_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.secret_open_audit ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.secret_open_audit_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: service_caller_key_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -72048,6 +72092,22 @@ ALTER TABLE ONLY public.seal_domain_probe
 
 
 --
+-- Name: secret_grants secret_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.secret_grants
+    ADD CONSTRAINT secret_grants_pkey PRIMARY KEY (app_id, node_id);
+
+
+--
+-- Name: secret_open_audit secret_open_audit_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.secret_open_audit
+    ADD CONSTRAINT secret_open_audit_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: service_caller_key_history service_caller_key_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -82783,6 +82843,27 @@ CREATE INDEX scheduled_releases_due ON public.scheduled_releases USING btree (re
 --
 
 CREATE UNIQUE INDEX scheduled_releases_one_pending ON public.scheduled_releases USING btree (app_id) WHERE (state = 'scheduled'::text);
+
+
+--
+-- Name: secret_grants_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX secret_grants_expires_idx ON public.secret_grants USING btree (expires_at);
+
+
+--
+-- Name: secret_open_audit_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX secret_open_audit_app_idx ON public.secret_open_audit USING btree (app_id, opened_at);
+
+
+--
+-- Name: secret_open_audit_node_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX secret_open_audit_node_idx ON public.secret_open_audit USING btree (node_id, opened_at);
 
 
 --
@@ -106343,6 +106424,22 @@ ALTER TABLE ONLY public.scheduled_releases
 
 ALTER TABLE ONLY public.scheduled_releases
     ADD CONSTRAINT scheduled_releases_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: secret_grants secret_grants_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.secret_grants
+    ADD CONSTRAINT secret_grants_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: secret_grants secret_grants_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.secret_grants
+    ADD CONSTRAINT secret_grants_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
 
 
 --

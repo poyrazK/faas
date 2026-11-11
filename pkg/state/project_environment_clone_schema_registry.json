@@ -19016,6 +19016,29 @@
     "kind": "platform_configuration"
   },
   {
+    "table": "secret_grants",
+    "columns": [
+      "app_id",
+      "expires_at",
+      "granted_at",
+      "granted_by_node_id",
+      "node_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "secret_open_audit",
+    "columns": [
+      "app_id",
+      "entries",
+      "id",
+      "node_id",
+      "opened_at",
+      "via"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "service_caller_key_history",
     "columns": [
       "key_id",

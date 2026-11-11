@@ -103,6 +103,15 @@ BEGIN
 	IF to_regclass('public.app_owner_writes') IS NOT NULL THEN
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.app_owner_writes FROM faas_runtime;
 	END IF;
+	-- ADR-20261110210000 §3: secretd's grants decide which peer node may open
+	-- an app's secrets, and its audit names every open. A compute login that
+	-- could write either would grant itself or erase what it opened.
+	IF to_regclass('public.secret_grants') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.secret_grants FROM faas_runtime;
+	END IF;
+	IF to_regclass('public.secret_open_audit') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.secret_open_audit FROM faas_runtime;
+	END IF;
 END
 $$;
 
