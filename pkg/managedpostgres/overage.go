@@ -86,6 +86,16 @@ func (s *MemoryStore) SetOverage(_ context.Context, subjectID string, enabled bo
 	return nil
 }
 
+// SetEgressOverageElected records whether subjectID elected egress overage,
+// which the Postgres store reads from the account or organization row: the
+// overage biller then lists the subject so its database egress past the
+// shared allowance is billed (ADR-20261110160000 slice 3).
+func (s *MemoryStore) SetEgressOverageElected(subjectID string, elected bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.egressElected[subjectID] = elected
+}
+
 func (s *MemoryStore) UsageSubjects(_ context.Context, databaseIDs []string) (map[string]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

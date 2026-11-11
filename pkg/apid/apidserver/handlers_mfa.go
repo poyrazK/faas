@@ -286,7 +286,22 @@ func (s *server) finishMFAConfirmation(w http.ResponseWriter, r *http.Request, a
 	}
 	s.audit.Emit(r.Context(), "account.mfa_enrolled", &acct.ID, nil)
 	s.audit.Emit(r.Context(), "account.mfa_confirmed", &acct.ID, map[string]any{"method": "totp"})
+	s.endOtherAccessAfterMFAEnroll(r, acct)
 	writeJSON(w, http.StatusOK, api.MFAConfirmResponse{})
+}
+
+// endOtherAccessAfterMFAEnroll signs out every other browser and revokes the
+// CLI and MCP sign-in keys. Turning on two-factor authentication is what a
+// customer does when they suspect someone else is in: sessions and keys
+// issued before it never passed the new factor (account-flow audit
+// 2026-11-10, ADR 20261111110000). The enrolling browser stays signed in.
+func (s *server) endOtherAccessAfterMFAEnroll(r *http.Request, acct state.Account) {
+	keep := ""
+	if sess, ok := sessionFrom(r); ok {
+		keep = sess.ID
+	}
+	s.revokeSessionsAfterPasswordChange(r.Context(), acct.ID, keep)
+	s.revokeInteractiveSignInKeys(r, acct, "mfa_enrolled")
 }
 
 // mfaVerify steps up an mfa_pending session. Same verify path
@@ -613,6 +628,16 @@ func (s *server) mfaDisable(w http.ResponseWriter, r *http.Request, acct state.A
 			"Invalid request", "exactly one of password or recovery_code is required"))
 		return
 	}
+	// The enrolled factor outranks the password: switching it off with the
+	// password alone let a stolen session and password remove the second
+	// factor. The password path also needs a code verified within the
+	// step-up window; without the authenticator, use a recovery code or the
+	// emailed disable link (account-flow audit 2026-11-10, ADR 20261111110000).
+	if hasPassword && !freshStepUp(r) {
+		s.audit.Emit(r.Context(), "account.mfa_disable_failed", &acct.ID, map[string]any{"reason": "step_up_required"})
+		api.WriteProblem(w, api.ErrStepUpRequired())
+		return
+	}
 
 	if s.tryMFADisabledAlert(w, r, acct, req) {
 		return
@@ -656,6 +681,13 @@ func (s *server) completeInlineMFADisable(w http.ResponseWriter, r *http.Request
 	}
 	s.alertMFADisabledInline(r.Context(), acct, method)
 	s.finishMFADisable(w, r, acct, method)
+}
+
+// freshStepUp reports whether the session verified a two-factor code within
+// the account step-up window.
+func freshStepUp(r *http.Request) bool {
+	ts, has := authmw.StepUpFrom(r)
+	return has && !ts.IsZero() && time.Since(ts) <= accountStepUpTTL
 }
 
 // Clear stale pending proof, while preserving an operator or explicit policy.

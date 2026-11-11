@@ -426,6 +426,22 @@ var routeExclude = map[string]bool{
 	"GET /v1/agent-tools/.well-known/rap-toolset":     true,
 	"POST /v1/agent-tools/invoke":                     true,
 	"POST /v1/agent-tools/close_thread":               true,
+	"POST /v1/sandboxes":                              true,
+	"GET /v1/sandboxes":                               true,
+	"GET /v1/sandboxes/{id}":                          true,
+	"PATCH /v1/sandboxes/{id}":                        true,
+	"DELETE /v1/sandboxes/{id}":                       true,
+	"GET /v1/sandbox-snapshots":                       true,
+	"GET /v1/sandbox-snapshots/{id}":                  true,
+	"DELETE /v1/sandbox-snapshots/{id}":               true,
+	"GET /v1/sandbox-templates":                       true,
+	"GET /v1/sandbox-templates/{name}":                true,
+	"PUT /v1/sandbox-templates/{name}":                true,
+	"DELETE /v1/sandbox-templates/{name}":             true,
+	"POST /v1/sandboxes/{id}/ports":                   true,
+	"GET /v1/sandboxes/{id}/ports":                    true,
+	"GET /v1/sandboxes/{id}/ports/{port}":             true,
+	"DELETE /v1/sandboxes/{id}/ports/{port}":          true,
 	"GET /v1/agents":                                  true,
 	"GET /v1/agents/{agent}":                          true,
 	"DELETE /v1/agents/{agent}":                       true,
@@ -694,6 +710,9 @@ var routeExclude = map[string]bool{
 	"GET /dashboard/apps/{slug}/workflows/stored/live-verifications/{run_id}":     true, // ADR-1293 session-authenticated HTML progress fragment
 	"POST /dashboard/apps/{slug}/workflows/stored/live-verifications/{run_id}":    true, // ADR-1293 CSRF-protected assertion check fragment
 	"POST /dashboard/apps/{slug}/workflows/stored/live-suites/{suite_id}/advance": true, // ADR-1297: session-only HTML continuation with CSRF.
+
+	// ADR-20261110200000: CSRF-protected HTML form on the organization page.
+	"POST /dashboard/orgs/{slug}/github/{installationID}/disconnect": true,
 }
 
 func init() {

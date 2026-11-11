@@ -39,6 +39,8 @@ FUNCTION_CONFIG_KEYS = frozenset(
         "entry",
         "bucket_events",
         "webhooks",
+        "before_snapshot_timeout_ms",
+        "after_restore_timeout_ms",
         "queue_bindings",
         "event_triggers",
     }

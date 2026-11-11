@@ -1054,6 +1054,7 @@
           Environment=FAAS_VMMD_ADOPTION_RECORD={{ 'true' if (vmmd_adoption_record | default(false) | bool) else '' }}
           Environment=FAAS_VMMD_ADOPT_RUNNING_VMS={{ 'true' if (vmmd_adopt_running_vms | default(false) | bool) else '' }}
           Environment=FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES={{ 'true' if (vmmd_adopt_admitted_runtimes | default(false) | bool) else '' }}
+          Environment=FAAS_VMMD_FLAT_TENANT_CGROUPS={{ 'true' if (vmmd_flat_tenant_cgroups | default(false) | bool) else '' }}
 
     # Connection survival: the instance bridge switches, rendered the same way.
     # An off switch sets nothing: vmmd's default (off) decides.
@@ -1502,6 +1503,7 @@
         FAAS_VMMD_ADOPTION_RECORD: "{{ 'true' if (vmmd_adoption_record | default(false) | bool) else '' }}"
         FAAS_VMMD_ADOPT_RUNNING_VMS: "{{ 'true' if (vmmd_adopt_running_vms | default(false) | bool) else '' }}"
         FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES: "{{ 'true' if (vmmd_adopt_admitted_runtimes | default(false) | bool) else '' }}"
+        FAAS_VMMD_FLAT_TENANT_CGROUPS: "{{ 'true' if (vmmd_flat_tenant_cgroups | default(false) | bool) else '' }}"
       register: faas_join_adoption_check
       changed_when: false
       failed_when: faas_join_adoption_check.rc not in [0, 3]

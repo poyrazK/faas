@@ -486,10 +486,7 @@ func (v *JailerVMM) nativeInstanceRoots(instance string) ([]string, error) {
 }
 
 func nativeCgroupScope(lease Lease) string {
-	parent := ParentCgroupFor(lease.Plan)
-	if lease.IsBuilder {
-		parent = BuilderCgroupParent
-	}
+	parent := vmCgroupParent(lease)
 	return filepath.Join(cgroupRoot, parent, PerInstanceScope(lease.Instance))
 }
 

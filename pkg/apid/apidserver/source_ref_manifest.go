@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/eventfilter"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/reposcan"
@@ -132,7 +133,7 @@ func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan, agen
 		return nil, prob
 	}
 	if err := m.ValidateForPlan(plan); err != nil {
-		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
+		return nil, manifestValidationProblem(err)
 	}
 	if skip, err := m.RepositoryDeployFunctions(app.Type == state.AppTypeFunction); err != nil {
 		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
@@ -684,7 +685,7 @@ func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Acc
 		}
 		subscription, convertErr := declaration.AsSubscription(acct.ID)
 		if convertErr != nil {
-			return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", convertErr.Error())
+			return manifestValidationProblem(convertErr)
 		}
 		key, keyErr := eventSubscriptionManifestKey(subscription.Source, subscription.Type, subscription.Filter)
 		if keyErr != nil {
@@ -829,7 +830,33 @@ func (s *server) checkSourceRefEventSubscriptionQuota(ctx context.Context, acct 
 	return nil
 }
 
+// manifestValidationProblem maps a manifest validation error to its problem:
+// an event filter over its size or depth cap is a limit problem with the
+// limit and observed value, anything else is app_manifest_invalid.
+func manifestValidationProblem(err error) *api.Problem {
+	if problem := eventFilterBoundProblem(err); problem != nil {
+		return problem
+	}
+	return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
+}
+
+// eventFilterBoundProblem returns the limit problem for an event filter over
+// its cap (events hunt #9), or nil when err is not one.
+func eventFilterBoundProblem(err error) *api.Problem {
+	var bound *eventfilter.BoundError
+	if !errors.As(err, &bound) {
+		return nil
+	}
+	if bound.Bound == eventfilter.BoundDepth {
+		return api.ErrEventSubscriptionFilterTooDeep("event trigger filter", bound.Limit, bound.Observed)
+	}
+	return api.ErrEventSubscriptionFilterTooLarge("event trigger filter", bound.Limit, bound.Observed)
+}
+
 func sourceRefEventSubscriptionProblem(err error) *api.Problem {
+	if problem := eventFilterBoundProblem(err); problem != nil {
+		return problem
+	}
 	if errors.Is(err, state.ErrNotFound) {
 		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
 	}

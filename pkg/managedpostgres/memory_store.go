@@ -33,6 +33,7 @@ type MemoryStore struct {
 	usageImports              map[string]usageImportReceipt
 	accountingReconciliations map[string]accountingReconciliationReceipt
 	overage                   map[string]bool
+	egressElected             map[string]bool
 	capEvents                 map[memoryCapEventKey]CapEvent
 	capEventsMailed           map[memoryCapEventKey]bool
 	restoreSlotNotices        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice
@@ -64,6 +65,7 @@ func NewMemoryStore() *MemoryStore {
 		usageImports:              map[string]usageImportReceipt{},
 		accountingReconciliations: map[string]accountingReconciliationReceipt{},
 		overage:                   map[string]bool{},
+		egressElected:             map[string]bool{},
 		capEvents:                 map[memoryCapEventKey]CapEvent{},
 		capEventsMailed:           map[memoryCapEventKey]bool{},
 		restoreSlotNotices:        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice{},
@@ -99,7 +101,8 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 		}
 		return cloneDatabase(s.databases[id]), false, nil
 	}
-	if database.ID == "" || database.AccountID == "" || !ValidName(database.Name) || database.State != StateProvisioning || database.BackendID == "" || database.BackendFingerprint == "" {
+	if database.ID == "" || database.AccountID == "" || !ValidName(database.Name) || database.State != StateProvisioning || database.BackendID == "" || database.BackendFingerprint == "" ||
+		!validReservationExpiry(database) {
 		return Database{}, false, ErrInvalid
 	}
 	if database.RetryAt.IsZero() {

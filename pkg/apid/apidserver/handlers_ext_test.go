@@ -4653,6 +4653,17 @@ func TestQueueAck_RequiresExistingAppAndQueueSource(t *testing.T) {
 	}
 
 	path := "/v1/apps/myapp/queues/" + queueID + "/ack"
+	// Hunt 32 H32-44: a pending message was "acked" and stayed queued.
+	if rec := e.do(t, "POST", path, nil, nil); rec.Code != http.StatusConflict {
+		t.Fatalf("ack of a pending message status = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	ctx := context.Background()
+	if _, err := e.store.ClaimInvocation(ctx, queueID, "", 300); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.CompleteInvocation(ctx, queueID, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 2; i++ {
 		rec := e.do(t, "POST", path, nil, nil)
 		if rec.Code != http.StatusNoContent {

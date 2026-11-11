@@ -441,10 +441,7 @@ func (j *nativeLaunchJournal) validateLaunchCommand(lease Lease, cmd *exec.Cmd) 
 	parent, parentOK := nativeCommandArgument(args, "--parent-cgroup")
 	executable, executableOK := nativeCommandArgument(args, "--exec-file")
 	version, versionOK := nativeCommandArgument(args, "--cgroup-version")
-	wantParent := ParentCgroupFor(lease.Plan)
-	if lease.IsBuilder {
-		wantParent = BuilderCgroupParent
-	}
+	wantParent := vmCgroupParent(lease)
 	if !uidOK || uid != strconv.Itoa(lease.UID) || !gidOK || gid != strconv.Itoa(lease.GID) || !baseOK || filepath.Clean(base) != filepath.Dir(j.root) || !parentOK || parent != wantParent || !executableOK || !filepath.IsAbs(executable) || !nativeExecutableName(filepath.Base(executable), "firecracker") || !versionOK || version != "2" {
 		return errors.New("native journal: launch command provenance differs from its lease")
 	}

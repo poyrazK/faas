@@ -2384,6 +2384,21 @@ groups:
           description: "Prometheus cannot scrape s3-gatewayd's control listener on {{ $labels.node }}. Its s3 tunnel connector leaves the tunnel once the gateway's unit stops; check faas-s3-gatewayd-compute on that node."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
 
+      # Object storage audit OS-10: the control-plane gateway behind
+      # s3.<domain> had no availability alert of its own.
+      - alert: FaasS3GatewayDown
+        expr: up{job="s3-gatewayd"} == 0
+        for: 2m
+        labels:
+          severity: page
+          component: s3-gatewayd
+          family: object_storage
+          public_status: internal
+        annotations:
+          summary: "The control-plane S3 gateway is not answering"
+          description: "Prometheus cannot scrape s3-gatewayd's control listener on the control plane. While it is down every request to s3.<domain> fails; check faas-s3-gatewayd there."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+
       - alert: FaasComputeObjectGatewayConnectorDisconnected
         expr: (up{job="cloudflared-s3"} == 0) or (cloudflared_tunnel_ha_connections{job="cloudflared-s3"} == 0)
         for: 2m
@@ -7876,6 +7891,22 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
           summary: "apid's object storage inventory sweep has not completed for over 10 minutes"
           description: "No inventory sweep has completed without error for {{ $value | humanizeDuration }}. Gateway reads and writes need a bucket inventory under 900 s old, so buckets start answering 503 within minutes."
+      # ADR-20261110151628 §3: the sweep falling behind shows here before
+      # admission refuses a bucket's transfers at 900 s. Buckets held by a
+      # configuration change or listing within the progress window are left
+      # out of the age.
+      - alert: FaasObjectStorageInventoryBacklog
+        expr: |
+          max(faas_object_storage_inventory_oldest_observation_age_seconds{class="active"}) > 600
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "apid's object storage inventory sweep is falling behind"
+          description: "The oldest bucket inventory admission still needs is {{ $value | humanizeDuration }} old. At 900 s that bucket's reads and writes answer 503; faas_object_storage_inventory_due_buckets shows the backlog."
       # Hunt 14 H14-14: a provider that refuses the credentials (here a closed
       # billing account) withdraws object storage; every bucket create failed
       # for three weeks with nothing paging.

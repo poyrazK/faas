@@ -201,9 +201,9 @@ func newClientTransport() http.RoundTripper {
 	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
 		clone := transport.Clone()
 		clone.ResponseHeaderTimeout = DefaultClientTimeout
-		return clone
+		return agentReasonTransport{next: clone}
 	}
-	return http.DefaultTransport
+	return agentReasonTransport{next: http.DefaultTransport}
 }
 
 // SetCompletionCache wires a (possibly nil) cache. Passing nil

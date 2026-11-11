@@ -302,7 +302,11 @@ func int64ToAuditIDString(id int64) string {
 // guards carries which route guards may hold the recovery.
 func (s *server) recoverRolloutRecordingDecision(r *http.Request, app state.App, req api.RecoverRolloutRequest, guards state.RouteGuardRelease) (state.Deployment, int64, error) {
 	decisions, ok := s.store.(state.RolloutDecisionStore)
-	if !ok || isInternalSafeDeployRequest(r) {
+	if isInternalSafeDeployRequest(r) {
+		ctx := state.WithRolloutRecoveryActor(state.WithRouteGuardRelease(r.Context(), guards), state.RolloutRecoveryActorSafeDeploy)
+		return s.store.RecoverRollout(ctx, app.ID, req.Action, req.Reason)
+	}
+	if !ok {
 		return s.store.RecoverRollout(state.WithRouteGuardRelease(r.Context(), guards), app.ID, req.Action, req.Reason)
 	}
 	var decision json.RawMessage

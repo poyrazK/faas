@@ -101,6 +101,13 @@ type Querier interface {
 	AdvanceCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg AdvanceCustomerOperationWorkflowStepParams) (int64, error)
 	AdvanceEnvironmentGitOpsRuntimeBoundary(ctx context.Context, db DBTX, arg AdvanceEnvironmentGitOpsRuntimeBoundaryParams) (EnvironmentGitopsRuntimeEffect, error)
 	AdvanceEnvironmentWorkloadGraphPreparation(ctx context.Context, db DBTX, arg AdvanceEnvironmentWorkloadGraphPreparationParams) (EnvironmentWorkloadGraph, error)
+	// pending already proved each locked row has no unattributed execution, and
+	// every part of one statement reads the same snapshot, so a second check
+	// could only agree. It used to be a separate CTE, which the planner ran as an
+	// anti-join of every coverage row against all invocations before joining it
+	// to pending: about 0.5 s per call on production with nothing pending
+	// (2026-11-10). Updating from pending reads invocations only for rows it
+	// locked.
 	AdvanceEventExecutionReconciliations(ctx context.Context, db DBTX, batchLimit int32) (int64, error)
 	AdvanceImagePreparation(ctx context.Context, db DBTX, arg AdvanceImagePreparationParams) (int64, error)
 	AdvanceProjectEnvironmentCloneCheckpointIntent(ctx context.Context, db DBTX, arg AdvanceProjectEnvironmentCloneCheckpointIntentParams) (int64, error)
@@ -131,6 +138,11 @@ type Querier interface {
 	AppManagedPostgresBindingInventory(ctx context.Context, db DBTX, arg AppManagedPostgresBindingInventoryParams) ([]AppManagedPostgresBindingInventoryRow, error)
 	AppObjectStorageBindingInventory(ctx context.Context, db DBTX, arg AppObjectStorageBindingInventoryParams) ([]AppObjectStorageBindingInventoryRow, error)
 	AppOpenMonitorIncident(ctx context.Context, db DBTX, arg AppOpenMonitorIncidentParams) (AppOpenMonitorIncidentRow, error)
+	// ADR-20261102123523: the environment keys a PR preview of this app gets from
+	// its own preview databases, mirroring previewdb.Manager.Prepare: the app's
+	// bindings in the scopes production serves on personally owned databases
+	// with previews on.
+	AppPreviewDatabaseEnvKeys(ctx context.Context, db DBTX, arg AppPreviewDatabaseEnvKeysParams) ([]string, error)
 	AppQueueBindingConsumerInventory(ctx context.Context, db DBTX, arg AppQueueBindingConsumerInventoryParams) ([]AppQueueBindingConsumerInventoryRow, error)
 	AppReleaseSecretsPinned(ctx context.Context, db DBTX, arg AppReleaseSecretsPinnedParams) (bool, error)
 	// ADR-20261103222927: counts and offsets see only the immutable app/scope.
@@ -3965,12 +3977,19 @@ type Querier interface {
 	ListManagedPostgresDrainPlanInventory(ctx context.Context, db DBTX, arg ListManagedPostgresDrainPlanInventoryParams) ([]ListManagedPostgresDrainPlanInventoryRow, error)
 	ListManagedPostgresDrainPlanMembers(ctx context.Context, db DBTX, arg ListManagedPostgresDrainPlanMembersParams) ([]ListManagedPostgresDrainPlanMembersRow, error)
 	ListManagedPostgresEgressEndpoints(ctx context.Context, db DBTX) ([]ListManagedPostgresEgressEndpointsRow, error)
+	// ADR-20261106103654: copies whose TTL has ended, soonest first, after a
+	// stable (expires_at, id) cursor. A copy already being purged (deleting with
+	// no undo deadline) is left to that purge.
+	ListManagedPostgresExpiredDatabasePage(ctx context.Context, db DBTX, arg ListManagedPostgresExpiredDatabasePageParams) ([]ManagedPostgresDatabase, error)
 	ListManagedPostgresImportRecords(ctx context.Context, db DBTX, arg ListManagedPostgresImportRecordsParams) ([]ManagedPostgresUsage, error)
 	ListManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ManagedPostgresDatabase, error)
 	ListManagedPostgresLifecycleUsageDatabases(ctx context.Context, db DBTX, arg ListManagedPostgresLifecycleUsageDatabasesParams) ([]ManagedPostgresDatabase, error)
 	// Reservations survive month close and are paged without starving later keys
 	// when an older provider delivery keeps failing.
 	ListManagedPostgresOveragePending(ctx context.Context, db DBTX, arg ListManagedPostgresOveragePendingParams) ([]ListManagedPostgresOveragePendingRow, error)
+	// ADR-20261110184700: when each database was first suspended past its plan,
+	// the clock its deletion runs on.
+	ListManagedPostgresPlanExcessSince(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]ListManagedPostgresPlanExcessSinceRow, error)
 	// ADR-20261102123523: the preview-database sweep's page of undeleted preview
 	// databases across accounts, in ID order after after_id.
 	ListManagedPostgresPreviewDatabasePage(ctx context.Context, db DBTX, arg ListManagedPostgresPreviewDatabasePageParams) ([]ManagedPostgresDatabase, error)
@@ -5110,7 +5129,19 @@ type Querier interface {
 	ObjectDeletionSave(ctx context.Context, db DBTX, arg ObjectDeletionSaveParams) error
 	ObjectGatewayUploadInsert(ctx context.Context, db DBTX, arg ObjectGatewayUploadInsertParams) (ObjectUploadCompletion, error)
 	// A bucket whose listing is unfinished is due at once (ADR-20261030100835).
-	ObjectInventoriesDue(ctx context.Context, db DBTX, arg ObjectInventoriesDueParams) ([]ObjectBucket, error)
+	// The sweep's queue leaves out the buckets it already took (skip) and marks a
+	// long listing: one that continues, or a bucket whose last inventory counted
+	// more than long_keys keys (ADR-20261110151628 §1).
+	ObjectInventoriesDue(ctx context.Context, db DBTX, arg ObjectInventoriesDueParams) ([]ObjectInventoriesDueRow, error)
+	// ADR-20261110151628 §3: how far the inventory sweep is behind. due_buckets
+	// counts what ObjectInventoriesDue would hand out now (same rule).
+	// oldest_age_seconds is the oldest observation admission still holds to the
+	// 900 s window: a bucket held by a versioning, Object Lock or capacity change
+	// (with an observation), or whose listing advanced within progress_window on
+	// an observation under scan_max_age, stays fresh on an older one and does not
+	// count (objectBucketInventoryStale). A bucket never observed counts from its
+	// creation.
+	ObjectInventoryBacklog(ctx context.Context, db DBTX, arg ObjectInventoryBacklogParams) (ObjectInventoryBacklogRow, error)
 	ObjectInventoryClaim(ctx context.Context, db DBTX, arg ObjectInventoryClaimParams) (int64, error)
 	ObjectInventoryFinish(ctx context.Context, db DBTX, arg ObjectInventoryFinishParams) (int64, error)
 	// Give up a claim without publishing; attempt_at keeps the retry cadence.
@@ -5242,6 +5273,7 @@ type Querier interface {
 	ObjectS3CredentialRotationStage(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationStageParams) (ObjectStorageS3Credential, error)
 	ObjectS3CredentialRotationStampApp(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationStampAppParams) error
 	ObjectS3CredentialRotationStampStage(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationStampStageParams) (pgtype.Timestamptz, error)
+	ObjectS3CredentialRotationsPendingForBucket(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationsPendingForBucketParams) ([]ObjectS3CredentialRotationsPendingForBucketRow, error)
 	ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg ObjectS3CredentialTouchParams) (int64, error)
 	ObjectS3MultipartList(ctx context.Context, db DBTX, arg ObjectS3MultipartListParams) ([]ObjectStorageMultipartUpload, error)
 	ObjectStorageCeilingGrant(ctx context.Context, db DBTX, ownerID pgtype.UUID) (ObjectStorageCeilingGrant, error)
@@ -7685,6 +7717,9 @@ type Querier interface {
 	// Durable links follow mfa_revision; the legacy inline requests carry no
 	// revision, so each statement consumes them too (bug hunt 2026-10-28 H98).
 	SetMFASecret(ctx context.Context, db DBTX, arg SetMFASecretParams) (int64, error)
+	// ADR-20261106103654: a restore with a TTL records when it ends, in the
+	// reservation's transaction.
+	SetManagedPostgresDatabaseExpiry(ctx context.Context, db DBTX, arg SetManagedPostgresDatabaseExpiryParams) (ManagedPostgresDatabase, error)
 	// ADR-20261102123523: what a database gives PR preview environments. A
 	// preview database cannot have previews of its own.
 	SetManagedPostgresDatabasePreviews(ctx context.Context, db DBTX, arg SetManagedPostgresDatabasePreviewsParams) (ManagedPostgresDatabase, error)

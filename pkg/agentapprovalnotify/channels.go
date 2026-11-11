@@ -35,10 +35,14 @@ func (n *Notifier) notifyChannels(ctx context.Context, item state.AgentApprovalN
 		if label == "" {
 			label = line.Category
 		}
+		reason := ""
+		if line.Reason != "" {
+			reason = fmt.Sprintf(" The agent's reason (its own words): %q.", line.Reason)
+		}
 		msg := alertchannels.Message{
 			Event: alertchannels.EventFire, RuleName: item.AgentName + " needs approval",
-			Summary: fmt.Sprintf("%s: %s %s, expires %s. Open the link to approve or deny.", label, line.Method, line.Path,
-				line.ExpiresAt.UTC().Format("2006-01-02 15:04 MST")),
+			Summary: fmt.Sprintf("%s: %s %s, expires %s.%s Open the link to approve or deny.", label, line.Method, line.Path,
+				line.ExpiresAt.UTC().Format("2006-01-02 15:04 MST"), reason),
 			DashboardURL: item.ReviewURL, OccurredAt: now, DedupKey: "agent-approval-" + item.ApprovalID,
 			IdempotencyKey: "agent-approval-channel-" + item.ApprovalID, Severity: "warning",
 			Footer: "You receive this because this channel gets approval requests from agents connected to a Gregale account. Change it with `gregale mcp approval-channels`.",
