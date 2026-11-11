@@ -13,6 +13,7 @@ type bucketUploadsClient interface {
 	ListObjectMultipartUploads(context.Context, string, string, int, string) (api.ObjectMultipartUploadList, error)
 	GetObjectMultipartUpload(context.Context, string, string, string) (api.ObjectMultipartUpload, error)
 	ListObjectMultipartParts(context.Context, string, string, string, int, int) (api.ObjectMultipartPartList, error)
+	AbortObjectMultipartUpload(context.Context, string, string, string) error
 }
 
 type bucketUploadsOptions struct {
@@ -30,7 +31,7 @@ func parseBucketUploads(args []string) (bucketUploadsOptions, error) {
 		return o, errors.New("bucket ID required")
 	}
 	pos := 3
-	if o.action == "status" || o.action == "parts" {
+	if o.action == "status" || o.action == "parts" || o.action == "abort" {
 		if len(args) < 4 || args[3] == "" {
 			return o, errors.New("upload ID required")
 		}
@@ -48,7 +49,7 @@ func parseBucketUploads(args []string) (bucketUploadsOptions, error) {
 	}
 	fs := newFlagSet("bucket uploads "+o.action, flag.ContinueOnError)
 	setFlagOutput(fs, osStderr)
-	if o.action != "status" {
+	if o.action != "status" && o.action != "abort" {
 		fs.IntVar(&o.limit, "limit", 100, "page size (1..1000)")
 	}
 	switch o.action {
@@ -60,7 +61,7 @@ func parseBucketUploads(args []string) (bucketUploadsOptions, error) {
 	if err := fs.Parse(args[pos:]); err != nil {
 		return o, err
 	}
-	if fs.NArg() != 0 || o.action != "status" && (o.limit < 1 || o.limit > api.MaxObjectS3ListItems) || o.marker < 0 || o.marker > api.MaxMultipartParts {
+	if fs.NArg() != 0 || o.action != "status" && o.action != "abort" && (o.limit < 1 || o.limit > api.MaxObjectS3ListItems) || o.marker < 0 || o.marker > api.MaxMultipartParts {
 		return o, errors.New("invalid page options")
 	}
 	return o, nil
@@ -69,12 +70,25 @@ func parseBucketUploads(args []string) (bucketUploadsOptions, error) {
 func cmdBucketUploads(args []string) int {
 	o, err := parseBucketUploads(args)
 	if err != nil {
-		PrintUsage(osStderr, "usage: gregale bucket multipart list <app> <bucket-id> [--limit N] [--cursor ID] | gregale bucket multipart <status|parts> <app> <bucket-id> <upload-id>", "bucket")
+		PrintUsage(osStderr, "usage: gregale bucket uploads list <app> <bucket-id> [--limit N] [--cursor ID] | gregale bucket uploads <status|parts|abort> <app> <bucket-id> <upload-id>", "bucket")
 		return 1
 	}
 	c, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	if o.action == "abort" {
+		// Hunt 33 H33-42: an unfinished upload holds its bucket (a versioning
+		// change waits for it with writes fenced) until it expires after 24 h;
+		// the API could abort it, the CLI could not.
+		if err := c.AbortObjectMultipartUpload(context.Background(), o.app, o.bucket, o.upload); err != nil {
+			return printErr("Could not abort multipart upload", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]string{"id": o.upload, "state": "aborted"}))
+		}
+		PrintOK(osStdout, "Aborted multipart upload %s", o.upload)
+		return 0
 	}
 	out, err := runBucketUploads(context.Background(), c, o)
 	if err != nil {

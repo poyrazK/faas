@@ -25,7 +25,7 @@ type FinancialBudgetStop struct {
 }
 
 func financialBudgetStop(p FinancialBudget, e financial.BudgetEvaluation) (FinancialBudgetStop, bool) {
-	if !financial.PreviewStopping(p.Spec) || !e.Fresh || e.KnownMillicents == nil || *e.KnownMillicents < p.Spec.LimitMillicents {
+	if !e.EvaluatedAt.Before(e.PeriodEnd) || !financial.PreviewStopping(p.Spec) || !e.Fresh || e.KnownMillicents == nil || *e.KnownMillicents < p.Spec.LimitMillicents {
 		return FinancialBudgetStop{}, false
 	}
 	key := fmt.Sprintf("financial-budget-stop\n%s\n%s\n%d\n%s", p.AccountID, p.ID, p.Revision, e.PeriodStart.UTC().Format("2006-01"))

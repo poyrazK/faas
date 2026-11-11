@@ -1294,8 +1294,12 @@ WHERE d.id = sqlc.arg(deployment_id)::uuid AND d.app_id = sqlc.arg(app_id)::uuid
     WHERE other.app_id = d.app_id AND other.scope = d.scope AND other.id <> d.id AND other.status = 'live');
 
 -- name: ProjectEnvironmentHasActiveDeployments :one
+-- A deleted app's deployments never serve again, so they do not hold its
+-- environment (Hunt 33 H33-37: staging stayed undeletable after every app
+-- of the project was deleted).
 SELECT EXISTS (SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
  WHERE a.project_id = sqlc.arg(project_id)::uuid AND d.scope = sqlc.arg(scope)::text
+ AND a.status <> 'deleted' AND d.deleted_at IS NULL
  AND d.status NOT IN ('failed', 'superseded', 'cancelled'));
 
 -- name: ProjectEnvironmentCleanupPending :one
