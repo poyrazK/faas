@@ -6,6 +6,7 @@ package agentapproval
 import (
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -33,6 +34,10 @@ const (
 type Rule struct {
 	Category string
 	Target   Target
+	// Window, when positive, lets one approval cover the key's same request
+	// for this long after its first use (ADR-20261111150000); zero allows
+	// exactly one request.
+	Window time.Duration
 }
 
 var wildcard = regexp.MustCompile(`\{[^}]*\}`)
@@ -178,10 +183,28 @@ var billing = map[string]bool{
 
 var billingPath = regexp.MustCompile(`(^|/)(billing|consumer-billing)(/|$)|/billing-[a-z-]+(/|$)|^/v1/billing/`)
 
+// gatedReads are reads that hand an agent something a person should agree
+// to: the developer debugger tunnel evaluates code in, and reads the
+// environment of, a running app (ADR-20261111150000). A debugger opens one
+// tunnel per connection, so one approval covers the tunnel for a window.
+var gatedReads = map[string]Rule{
+	"GET /v1/apps/{}/debug": {Category: api.AgentApprovalCredentials, Window: api.DevDebugApprovalWindow},
+}
+
+// RecordedRead reports whether an agent key's read of the route is written
+// to the agent activity log like a write is.
+func RecordedRead(pattern string) bool {
+	_, ok := gatedReads[Normalize(pattern)]
+	return ok
+}
+
 // Classify returns the rule for a request's route pattern, and false when
 // the request needs no approval.
 func Classify(pattern string) (Rule, bool) {
 	key := Normalize(pattern)
+	if rule, ok := gatedReads[key]; ok {
+		return rule, true
+	}
 	method, path, ok := strings.Cut(key, " ")
 	if !ok || method == "GET" || method == "HEAD" || method == "OPTIONS" || exempt[key] || strings.HasPrefix(path, "/v1/admin/") {
 		return Rule{}, false

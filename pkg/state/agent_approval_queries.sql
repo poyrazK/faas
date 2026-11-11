@@ -77,6 +77,20 @@ WHERE status = 'pending' AND expires_at > now()
 ORDER BY created_at DESC
 LIMIT sqlc.arg(max_rows)::int;
 
+-- name: AgentApprovalUsedWithin :one
+-- ADR-20261111150000: the key's approval with the same binding that was first
+-- used within the window, newest use first. A windowed rule lets it cover
+-- the same request again until the window closes.
+SELECT id FROM agent_approval_requests
+WHERE key_id = sqlc.arg(key_id)::uuid
+  AND method = sqlc.arg(method)
+  AND path = sqlc.arg(path)
+  AND body_sha256 IS NOT DISTINCT FROM sqlc.narg(body_sha256)::bytea
+  AND status = 'consumed'
+  AND consumed_at > now() - sqlc.arg(window_seconds)::int * interval '1 second'
+ORDER BY consumed_at DESC
+LIMIT 1;
+
 -- name: RecentAgentApprovalOutcome :one
 -- ADR-20261107140000 §6: the key's most recent request with the same binding,
 -- when it was denied, or expired undecided or unused, within the window. A
