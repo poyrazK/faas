@@ -32,6 +32,13 @@ func (s *server) appScalingHandler() httpkit.AccountHandler {
 			return app, scope, true
 		},
 		Before: s.appUpdateSettingsProblem,
+		Charge: func(w http.ResponseWriter, r *http.Request, account state.Account, app state.App, req api.UpdateAppRequest) (func(), bool) {
+			ram := app.RAMMB
+			if req.RAMMB != nil {
+				ram = *req.RAMMB
+			}
+			return s.chargeAppUpdate(w, r, account, app, req, ram)
+		},
 		Validate: func(account state.Account, app state.App, req api.UpdateAppRequest) *api.Problem {
 			return validateUpdateApp(&req, account, api.MustLimitsFor(account.Plan), app)
 		},

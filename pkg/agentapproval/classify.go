@@ -178,6 +178,20 @@ var billing = map[string]bool{
 
 var billingPath = regexp.MustCompile(`(^|/)(billing|consumer-billing)(/|$)|/billing-[a-z-]+(/|$)|^/v1/billing/`)
 
+// budgetRoutes change an app's standing capacity, so their handlers charge
+// the agent's budget (ADR-20261111114059 slice 1).
+var budgetRoutes = map[string]bool{
+	"PATCH /v1/apps/{}":        true,
+	"POST /v1/apps/{}/scaling": true,
+	"POST /v1/apps/{}/prewarm": true,
+}
+
+// ChargesBudget reports whether a route's handler charges the agent's
+// budget, so the request must be bound before the handler reads its body.
+func ChargesBudget(pattern string) bool {
+	return budgetRoutes[Normalize(pattern)]
+}
+
 // Classify returns the rule for a request's route pattern, and false when
 // the request needs no approval.
 func Classify(pattern string) (Rule, bool) {

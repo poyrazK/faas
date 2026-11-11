@@ -116,6 +116,16 @@ func (m *Middleware) gateAgentRequest(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeBadRequest, "Unreadable request body", "the request body could not be read"))
 		return true
 	}
+	return m.approveOrAsk(w, r, gate, acct, key, binding, state.AgentApproval{Category: rule.Category}, "")
+}
+
+// approveOrAsk lets the request through on an approval of exactly this
+// request, answers an agent repeating a denied or expired one, or opens an
+// approval request of the given kind and answers 428, saying why in
+// detail (a default when empty). It reports whether it has answered.
+func (m *Middleware) approveOrAsk(w http.ResponseWriter, r *http.Request, gate AgentApprovalGate, acct state.Account, key state.APIKey, binding state.AgentApprovalBinding, kind state.AgentApproval, detail string) bool {
+	ctx := r.Context()
+	rule := agentapproval.Rule{Category: kind.Category}
 	if approvalID, used, err := gate.ConsumeAgentApproval(ctx, binding); err != nil {
 		m.storeUnavailable(w, r, err, "could not check the request's approval; retry shortly")
 		return true
@@ -139,7 +149,8 @@ func (m *Middleware) gateAgentRequest(w http.ResponseWriter, r *http.Request, ac
 		ID: id, KeyID: key.ID, AccountID: key.AccountID, OrgID: key.OrgID, Category: rule.Category,
 		Method: binding.Method, Path: binding.Path, BodySHA256: binding.BodySHA256,
 		ExpiresAt: time.Now().Add(api.AgentApprovalTTL), ReviewURL: m.reviewURL(id), AgentName: key.Label,
-		Reason: api.SanitizeAgentReason(r.Header.Get(api.AgentReasonHeader)),
+		Reason:               api.SanitizeAgentReason(r.Header.Get(api.AgentReasonHeader)),
+		BudgetCostMillicents: kind.BudgetCostMillicents,
 	})
 	if errors.Is(err, state.ErrTooManyAgentApprovals) {
 		limit, observed := int64(api.MaxPendingAgentApprovals), int64(api.MaxPendingAgentApprovals)
@@ -152,8 +163,11 @@ func (m *Middleware) gateAgentRequest(w http.ResponseWriter, r *http.Request, ac
 		return true
 	}
 	reviewURL := m.reviewURL(request.ID)
+	if detail == "" {
+		detail = "this " + rule.Category + " request needs a person's approval"
+	}
 	problem := api.NewProblem(http.StatusPreconditionRequired, api.CodeApprovalRequired, "Approval required",
-		"this "+rule.Category+" request needs a person's approval: ask them to open "+reviewURL+", then repeat the same request").
+		detail+": ask them to open "+reviewURL+", then repeat the same request").
 		WithHint("Show the person the review link and wait; after they approve, repeat exactly the same request once.")
 	problem.AgentApproval = &api.AgentApprovalPendingInfo{ID: request.ID, Category: rule.Category, ReviewURL: reviewURL, ExpiresAt: request.ExpiresAt.UTC().Format(time.RFC3339)}
 	if m.Log != nil {

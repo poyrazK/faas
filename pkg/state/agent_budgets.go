@@ -33,6 +33,43 @@ type AgentBudgetStore interface {
 	AddAgentBudgetSpend(ctx context.Context, keyID string, at time.Time, millicents int64) error
 }
 
+// AgentBudgetView is the budget that applies to an agent key
+// (ADR-20261111114059) and where it comes from.
+type AgentBudgetView struct {
+	Own    AgentKeyBudget
+	OrgMax *int64
+	// Cents is the monthly budget when Limited.
+	Cents   int64
+	Source  string
+	Limited bool
+}
+
+// AgentBudgetFor combines the key's own budget, its organization's ceiling
+// and plan's default. A store without budgets limits nothing.
+func AgentBudgetFor(ctx context.Context, store any, plan api.Plan, key APIKey) (AgentBudgetView, error) {
+	budgets, ok := store.(AgentBudgetStore)
+	if !ok {
+		return AgentBudgetView{Source: api.AgentBudgetSourceUnlimited}, nil
+	}
+	own, err := budgets.AgentKeyBudget(ctx, key.ID)
+	if err != nil {
+		return AgentBudgetView{}, err
+	}
+	view := AgentBudgetView{Own: own}
+	if policies, ok := store.(OrgAgentStore); ok && key.OrgID != "" {
+		policy, err := policies.OrgAgentPolicy(ctx, key.OrgID)
+		if err != nil {
+			return AgentBudgetView{}, err
+		}
+		view.OrgMax = policy.MaxAgentBudgetCents
+	}
+	view.Cents, view.Source, view.Limited = api.EffectiveAgentBudget(plan, own.Set, own.Unlimited, own.MonthlyCents, view.OrgMax)
+	return view, nil
+}
+
+// BudgetMonth is the first day of at's UTC month: the month spend counts in.
+func BudgetMonth(at time.Time) time.Time { return budgetMonth(at) }
+
 // budgetMonth is the first day of at's UTC month.
 func budgetMonth(at time.Time) time.Time {
 	at = at.UTC()

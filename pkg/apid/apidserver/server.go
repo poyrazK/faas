@@ -4393,6 +4393,10 @@ func (s *server) handler() http.Handler {
 	// connected it and for the agent itself.
 	mux.HandleFunc("GET /v1/agent-connections/self/activity", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.SelfActivity(agentConnections))))
 	mux.HandleFunc("GET /v1/agent-connections/{id}/activity", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(agentconnections.Activity(agentConnections)))))
+	// ADR-20261111114059: an agent's monthly budget for committed cost.
+	mux.HandleFunc("GET /v1/agent-connections/self/budget", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.SelfBudget(agentConnections))))
+	mux.HandleFunc("GET /v1/agent-connections/{id}/budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(agentconnections.Budget(agentConnections)))))
+	mux.HandleFunc("PUT /v1/agent-connections/{id}/budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(agentconnections.SetBudget(agentConnections)))))
 	// ADR-20261104140058: an agent polls its approval requests; a person lists
 	// the ones they may decide. Deciding happens only on the review page.
 	mux.HandleFunc("GET /v1/agent-approvals", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.ListApprovals(agentConnections))))

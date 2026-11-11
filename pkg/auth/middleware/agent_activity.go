@@ -21,7 +21,12 @@ const maxAgentActivityPath = 512
 
 // agentActivityNote carries what the approval gate learned about a request
 // to the recorder: the approval it went through on.
-type agentActivityNote struct{ approvalID string }
+type agentActivityNote struct {
+	approvalID string
+	// binding is taken before the handler reads the body on routes that
+	// charge the agent budget (ADR-20261111114059).
+	binding *state.AgentApprovalBinding
+}
 
 type agentActivityNoteKey struct{}
 
