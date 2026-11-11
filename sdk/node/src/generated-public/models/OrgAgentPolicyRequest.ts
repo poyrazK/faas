@@ -22,5 +22,13 @@ export type OrgAgentPolicyRequest = {
    * Names of your own notification channels that get approval requests of agents acting in the organization; omit to keep them, send an empty list to remove them.
    */
   approval_channels?: Array<string>;
+  /**
+   * Ceiling, in cents a month, on the budget of every agent acting in the organization; omit to keep the current ceiling.
+   */
+  max_agent_budget_cents?: number;
+  /**
+   * Remove the ceiling on agents' budgets.
+   */
+  clear_max_agent_budget?: boolean;
 };
 

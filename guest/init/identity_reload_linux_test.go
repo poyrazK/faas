@@ -21,6 +21,11 @@ func TestRestoreIdentityReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	served := runtimeConfigResponse{Env: env, Secrets: &secrets, Digest: digest}
+	// A digest that differs from the real one in its first hex digit.
+	otherDigest := "0" + digest[1:]
+	if digest[0] == '0' {
+		otherDigest = "1" + digest[1:]
+	}
 	for _, tc := range []struct {
 		name    string
 		served  runtimeConfigResponse
@@ -29,9 +34,9 @@ func TestRestoreIdentityReload(t *testing.T) {
 	}{
 		{"acknowledged", served, digest, false},
 		{"hook ignores the identity", served, "", true},
-		{"hook acknowledges another identity", served, "0" + digest[1:], true},
+		{"hook acknowledges another identity", served, otherDigest, true},
 		{"vmmd refused", runtimeConfigResponse{Error: "identity_unavailable"}, digest, true},
-		{"digest does not match the document", runtimeConfigResponse{Env: env, Secrets: &secrets, Digest: "0" + digest[1:]}, digest, true},
+		{"digest does not match the document", runtimeConfigResponse{Env: env, Secrets: &secrets, Digest: otherDigest}, digest, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var written []byte

@@ -2088,6 +2088,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "agent_connections.go"), // ADR-20261030133644: connected agents
 		filepath.Join(root, "pkg", "api", "agent_approvals.go"),   // ADR-20261104140058: approvals for risky agent actions
 		filepath.Join(root, "pkg", "api", "agent_activity.go"),    // ADR-20261107220000: agent activity log
+		filepath.Join(root, "pkg", "api", "agent_budget.go"),      // ADR-20261111114059: agent budgets
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {
