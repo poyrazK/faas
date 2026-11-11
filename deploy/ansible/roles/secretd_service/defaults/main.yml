@@ -15,3 +15,7 @@ faas_secretd_apps_per_node_hour: ""
 # ciphertext instead of naming the app's own row. Turn on once every schedd
 # and vmmd runs a release that sends references.
 faas_secretd_require_references: false
+# Loopback /metrics (faas_secretd_opens_total, faas_secretd_refusals_total),
+# scraped by the prometheus role's secretd job. Refusals are the alertable
+# compromise signal (FaasSecretdRefusedNode and friends).
+faas_secretd_metrics_listen: "127.0.0.1:9114"

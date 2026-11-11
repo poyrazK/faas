@@ -13,6 +13,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
@@ -40,6 +42,7 @@ const grantSweepInterval = 5 * time.Minute
 
 type config struct {
 	listen, certPath, keyPath, caPath, identityPath string
+	metricsAddr                                     string
 	appsPerNodeHour                                 int
 	requireReferences                               bool
 }
@@ -51,6 +54,13 @@ func configFromEnv(getenv func(string) string) (config, error) {
 		keyPath:      getenv("FAAS_SECRETD_TLS_KEY_PATH"),
 		caPath:       getenv("FAAS_SECRETD_TLS_CA_PATH"),
 		identityPath: getenv("FAAS_SECRETD_RUNTIME_IDENTITY"),
+		metricsAddr:  getenv("FAAS_SECRETD_METRICS_ADDR"),
+	}
+	if cfg.metricsAddr != "" {
+		host, _, err := net.SplitHostPort(cfg.metricsAddr)
+		if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsLoopback() {
+			return config{}, fmt.Errorf("secretd: FAAS_SECRETD_METRICS_ADDR=%q: want a loopback host:port", cfg.metricsAddr)
+		}
 	}
 	target, err := wire.ParseTarget(cfg.listen)
 	if err != nil || target.Scheme != wire.SchemeTCP {
@@ -135,8 +145,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("secretd: listen %s: %w", cfg.listen, err)
 	}
+	ops := wire.NewOpsMetrics("secretd")
+	metrics, err := secretd.NewMetrics(ops.Registry())
+	if err != nil {
+		return fmt.Errorf("secretd: register metrics: %w", err)
+	}
+	if cfg.metricsAddr != "" {
+		stopMetrics := serveMetrics(ctx, cfg.metricsAddr, ops.Handler(), log)
+		defer stopMetrics()
+	}
 	srv := grpc.NewServer(wire.ServerCredsOrEmpty(tlsCfg)...)
-	secretdpb.RegisterSecretdServer(srv, secretd.NewServer(store, identities, cfg.appsPerNodeHour, log).RequireReferences(cfg.requireReferences))
+	secretdpb.RegisterSecretdServer(srv, secretd.NewServer(store, identities, cfg.appsPerNodeHour, log).
+		RequireReferences(cfg.requireReferences).WithMetrics(metrics))
 	go func() {
 		<-ctx.Done()
 		srv.GracefulStop()
@@ -146,6 +166,26 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("secretd: serve: %w", err)
 	}
 	return nil
+}
+
+// serveMetrics serves /metrics on addr, a loopback address the control
+// plane's Prometheus scrapes. It carries counts only, never app ids.
+func serveMetrics(ctx context.Context, addr string, h http.Handler, log *slog.Logger) func() {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", h)
+	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 10 * time.Second,
+		WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("secretd: metrics http", "err", err)
+		}
+	}()
+	log.Info("secretd: metrics listening", "addr", addr)
+	return func() {
+		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdown)
+	}
 }
 
 type grantSweeper interface {

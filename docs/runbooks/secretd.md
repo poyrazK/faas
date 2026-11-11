@@ -74,6 +74,28 @@ distinct apps in an hour is refused, and secretd logs
 `secretd: node over its distinct-app budget`. Treat it as a compromised node:
 drain it and rotate the runtime domain.
 
+## Alerts
+
+secretd serves `/metrics` on loopback `faas_secretd_metrics_listen`
+(`127.0.0.1:9114`), scraped as job `secretd`:
+
+- `faas_secretd_opens_total{rpc,via}`: opens answered and audited (`via` is
+  `owner` or `grant`; `GrantPeer` counts grants recorded).
+- `faas_secretd_refusals_total{rpc,reason}`: refusals. Reasons:
+  `unauthenticated`, `unknown_node`, `not_authorized`, `budget_exhausted`,
+  `unreferenced`, `wrong_account`, `other_app`, `envelope`.
+
+Every refusal is also a `secretd: refused ...` log line naming the node and
+app: `journalctl -u faas-secretd --since -1h | grep -E 'refused|budget'`.
+
+| Alert | Means | Do |
+|---|---|---|
+| `FaasSecretdCrossTenantRequest` (page) | A node sent an envelope bound to another account, or asked for another app's capture key. No release does either. | Compromised node: cordon and drain it, rotate the runtime domain, check `secret_open_audit` for what it opened before. |
+| `FaasSecretdBudgetExhausted` (page) | A node passed its distinct-app budget for the hour. | Unless a known mass reschedule explains it, as above. Raise `faas_secretd_apps_per_node_hour` only for a node size that runs more apps. |
+| `FaasSecretdUnauthorizedCaller` (warn) | Repeated refusals for a node that neither owns the app nor holds a grant, or names no active node. | Check that the node's schedd grants (its `faas-schedd` journal, lines mentioning secretd) and that the app's owner is where it runs. Persisting with no schedd fault: treat as compromised. |
+| `FaasSecretdUnreferencedEntry` (warn) | `faas_secretd_require_references` is on but a node still sends ciphertext. | Upgrade that node, or set the switch back to false and converge. |
+| `FaasSecretdDown` (page) | secretd is down; nodes that open through it cannot start apps with secrets. | `systemctl status faas-secretd`, `journalctl -u faas-secretd -n 200`. |
+
 ## Turn it off
 
 Set `faas_secretd_listen: ""` and converge: the role removes the drop-in and

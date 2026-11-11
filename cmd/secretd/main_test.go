@@ -40,6 +40,8 @@ func TestConfigFromEnv(t *testing.T) {
 		wantBudget int
 	}{
 		{name: "complete"},
+		{name: "metrics", edit: map[string]string{"FAAS_SECRETD_METRICS_ADDR": "127.0.0.1:9114"}},
+		{name: "public metrics", edit: map[string]string{"FAAS_SECRETD_METRICS_ADDR": "0.0.0.0:9114"}, want: "loopback"},
 		{name: "budget", edit: map[string]string{"FAAS_SECRETD_APPS_PER_NODE_HOUR": "250"}, wantBudget: 250},
 		{name: "bad budget", edit: map[string]string{"FAAS_SECRETD_APPS_PER_NODE_HOUR": "0"}, want: "positive integer"},
 		{name: "bad reference switch", edit: map[string]string{"FAAS_SECRETD_REQUIRE_REFERENCES": "maybe"}, want: "want true or false"},

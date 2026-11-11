@@ -187,7 +187,12 @@ deploy yet; that is slice 3b.
   account and hold exactly the selected key. The open is written to
   `secret_open_audit` before any plaintext is returned; an open that cannot
   be recorded fails. A node opening more than 1000 distinct apps in a rolling
-  hour is refused (`ResourceExhausted`).
+  hour is refused (`ResourceExhausted`). Every refusal is counted in
+  `faas_secretd_refusals_total{rpc,reason}` (loopback `/metrics`, job
+  `secretd`): a cross-tenant envelope or capture (`wrong_account`,
+  `other_app`) and an exhausted budget page (`FaasSecretdCrossTenantRequest`,
+  `FaasSecretdBudgetExhausted`) as compromise signals; repeated
+  unauthorized callers warn.
 - `GrantPeer(app_id, node_name, ttl)`: only the app's owner may grant; the
   TTL is clamped to 1 min–1 h and renewed by the owner while the peer runs
   the app. `secret_grants` is written only by secretd.

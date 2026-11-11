@@ -101,6 +101,13 @@ type Server struct {
 	// requireReferences refuses app-secret entries that carry ciphertext
 	// instead of naming the app's row (slice 3d-4 contract step).
 	requireReferences bool
+	metrics           *Metrics
+}
+
+// WithMetrics counts opens and refusals on m.
+func (s *Server) WithMetrics(m *Metrics) *Server {
+	s.metrics = m
+	return s
 }
 
 // RequireReferences makes OpenAppSecrets refuse entries that are not
@@ -139,13 +146,15 @@ func (s *Server) WithClock(now func() time.Time) *Server {
 func rpcErr(code codes.Code, msg string) error { return status.Error(code, msg) }
 
 // caller returns the calling node's name and id.
-func (s *Server) caller(ctx context.Context) (string, string, error) {
+func (s *Server) caller(ctx context.Context, rpc string) (string, string, error) {
 	name, err := s.peerNode(ctx)
 	if err != nil || strings.TrimSpace(name) == "" {
+		s.metrics.refuse(rpc, ReasonUnauthenticated)
 		return "", "", rpcErr(codes.Unauthenticated, "secretd refused the caller: no node identity")
 	}
 	id, err := s.store.NodeIDByName(ctx, name)
 	if errors.Is(err, ErrUnknownNode) {
+		s.metrics.refuse(rpc, ReasonUnknownNode)
 		return "", "", rpcErr(codes.PermissionDenied, "secretd refused the caller: not an active compute node")
 	}
 	if err != nil {
@@ -157,7 +166,7 @@ func (s *Server) caller(ctx context.Context) (string, string, error) {
 
 // OpenAppSecrets implements secretdpb.SecretdServer.
 func (s *Server) OpenAppSecrets(ctx context.Context, req *secretdpb.OpenAppSecretsRequest) (*secretdpb.OpenAppSecretsResponse, error) {
-	name, nodeID, err := s.caller(ctx)
+	name, nodeID, err := s.caller(ctx, rpcOpenAppSecrets)
 	if err != nil {
 		return nil, err
 	}
@@ -173,15 +182,18 @@ func (s *Server) OpenAppSecrets(ctx context.Context, req *secretdpb.OpenAppSecre
 	via, err := s.authorize(ctx, appID, nodeID, target)
 	if err != nil {
 		s.log.Warn("secretd: refused open", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+		s.metrics.refuse(rpcOpenAppSecrets, ReasonNotAuthorized)
 		return nil, rpcErr(codes.PermissionDenied, "secretd refused: the caller neither owns the app nor holds a grant for it")
 	}
 	if !s.budget.allow(nodeID, appID, s.now()) {
 		s.log.Error("secretd: node over its distinct-app budget", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID))
+		s.metrics.refuse(rpcOpenAppSecrets, ReasonBudgetExhausted)
 		return nil, rpcErr(codes.ResourceExhausted, "secretd refused: the caller opened too many distinct apps this hour")
 	}
 	values, err := s.open(ctx, appID, req.GetEntries(), target.AccountID)
 	if err != nil {
 		s.log.Warn("secretd: refused envelope", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+		s.metrics.refuse(rpcOpenAppSecrets, envelopeReason(err))
 		return nil, rpcErr(codes.FailedPrecondition, "secretd refused an envelope: "+err.Error())
 	}
 	// The record precedes the plaintext: an open that cannot be recorded
@@ -191,6 +203,7 @@ func (s *Server) OpenAppSecrets(ctx context.Context, req *secretdpb.OpenAppSecre
 		s.log.Error("secretd: record open", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
 		return nil, rpcErr(codes.Unavailable, "secretd could not record the open")
 	}
+	s.metrics.open(rpcOpenAppSecrets, via)
 	return &secretdpb.OpenAppSecretsResponse{Values: values}, nil
 }
 
@@ -242,7 +255,7 @@ func (s *Server) open(ctx context.Context, appID string, entries []*secretdpb.Se
 			ciphertext = row
 		} else if s.requireReferences {
 			clear(values)
-			return nil, fmt.Errorf("entry %s: not a reference, and this secretd opens app secrets only by reference", logsanitize.Field(key))
+			return nil, fmt.Errorf("entry %s: %w", logsanitize.Field(key), errUnreferenced)
 		}
 		inner, binding, err := secretbox.OpenMultiBound(s.identities, ciphertext)
 		if err != nil {
@@ -252,7 +265,10 @@ func (s *Server) open(ctx context.Context, appID string, entries []*secretdpb.Se
 		if err := binding.Require(accountID); err != nil {
 			clear(inner)
 			clear(values)
-			return nil, fmt.Errorf("entry %s: %w", logsanitize.Field(key), err)
+			if errors.Is(err, secretbox.ErrUnbound) {
+				return nil, fmt.Errorf("entry %s: %w", logsanitize.Field(key), err)
+			}
+			return nil, fmt.Errorf("entry %s: %w: %w", logsanitize.Field(key), errWrongAccount, err)
 		}
 		value, ok := inner[source]
 		if !ok || len(inner) != 1 {
@@ -268,7 +284,7 @@ func (s *Server) open(ctx context.Context, appID string, entries []*secretdpb.Se
 
 // GrantPeer implements secretdpb.SecretdServer.
 func (s *Server) GrantPeer(ctx context.Context, req *secretdpb.GrantPeerRequest) (*secretdpb.GrantPeerResponse, error) {
-	name, nodeID, err := s.caller(ctx)
+	name, nodeID, err := s.caller(ctx, rpcGrantPeer)
 	if err != nil {
 		return nil, err
 	}
@@ -282,6 +298,7 @@ func (s *Server) GrantPeer(ctx context.Context, req *secretdpb.GrantPeerRequest)
 	}
 	if target.OwnerNodeID == "" || target.OwnerNodeID != nodeID {
 		s.log.Warn("secretd: refused grant from a non-owner", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID))
+		s.metrics.refuse(rpcGrantPeer, ReasonNotAuthorized)
 		return nil, rpcErr(codes.PermissionDenied, "secretd refused: only the app's owner node may grant")
 	}
 	peerID, err := s.store.NodeIDByName(ctx, req.GetNodeName())
@@ -301,6 +318,7 @@ func (s *Server) GrantPeer(ctx context.Context, req *secretdpb.GrantPeerRequest)
 		s.log.Error("secretd: record grant", "app_id", logsanitize.Field(appID), "err", err)
 		return nil, rpcErr(codes.Unavailable, "secretd could not record the grant")
 	}
+	s.metrics.open(rpcGrantPeer, "owner")
 	return &secretdpb.GrantPeerResponse{ExpiresAt: expires.UTC().Format(time.RFC3339)}, nil
 }
 
@@ -313,7 +331,7 @@ func (s *Server) OpenCaptureKey(ctx context.Context, req *secretdpb.OpenCaptureK
 	if appID == "" || captureID == "" {
 		return nil, rpcErr(codes.InvalidArgument, "secretd needs an app id and a capture id")
 	}
-	name, nodeID, via, err := s.authorizeByReference(ctx, appID)
+	name, nodeID, via, err := s.authorizeByReference(ctx, rpcOpenCaptureKey, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -328,17 +346,20 @@ func (s *Server) OpenCaptureKey(ctx context.Context, req *secretdpb.OpenCaptureK
 	if captureApp != appID {
 		s.log.Warn("secretd: refused capture of another app", "node", logsanitize.Field(name),
 			"app_id", logsanitize.Field(appID), "capture_id", logsanitize.Field(captureID))
+		s.metrics.refuse(rpcOpenCaptureKey, ReasonOtherApp)
 		return nil, rpcErr(codes.PermissionDenied, "secretd refused: the capture belongs to another app")
 	}
 	identity, err := crashcrypt.OpenKey(s.identities, captureID, sealed)
 	if err != nil {
 		s.log.Warn("secretd: capture key does not open", "capture_id", logsanitize.Field(captureID), "err", err)
+		s.metrics.refuse(rpcOpenCaptureKey, ReasonEnvelope)
 		return nil, rpcErr(codes.FailedPrecondition, "secretd could not open the capture key")
 	}
 	if err := s.store.RecordOpen(ctx, nodeID, appID, via, 1); err != nil {
 		s.log.Error("secretd: record open", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
 		return nil, rpcErr(codes.Unavailable, "secretd could not record the open")
 	}
+	s.metrics.open(rpcOpenCaptureKey, via)
 	return &secretdpb.OpenCaptureKeyResponse{Identity: identity.String()}, nil
 }
 
@@ -351,7 +372,7 @@ func (s *Server) OpenSidecarEnv(ctx context.Context, req *secretdpb.OpenSidecarE
 	if appID == "" || deploymentID == "" || sidecar == "" {
 		return nil, rpcErr(codes.InvalidArgument, "secretd needs an app id, a deployment id and a sidecar name")
 	}
-	name, nodeID, via, err := s.authorizeByReference(ctx, appID)
+	name, nodeID, via, err := s.authorizeByReference(ctx, rpcOpenSidecarEnv, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -372,6 +393,7 @@ func (s *Server) OpenSidecarEnv(ctx context.Context, req *secretdpb.OpenSidecarE
 		if err != nil {
 			clear(values)
 			s.log.Warn("secretd: sidecar env does not open", "app_id", logsanitize.Field(appID), "key", logsanitize.Field(key), "err", err)
+			s.metrics.refuse(rpcOpenSidecarEnv, ReasonEnvelope)
 			return nil, rpcErr(codes.FailedPrecondition, "secretd could not open a sidecar env value")
 		}
 		values[key] = string(plaintext)
@@ -381,6 +403,7 @@ func (s *Server) OpenSidecarEnv(ctx context.Context, req *secretdpb.OpenSidecarE
 		s.log.Error("secretd: record open", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
 		return nil, rpcErr(codes.Unavailable, "secretd could not record the open")
 	}
+	s.metrics.open(rpcOpenSidecarEnv, via)
 	return &secretdpb.OpenSidecarEnvResponse{Values: values}, nil
 }
 
@@ -388,8 +411,8 @@ func (s *Server) OpenSidecarEnv(ctx context.Context, req *secretdpb.OpenSidecarE
 // caller is an active node that owns the app or holds a grant for it, within
 // its distinct-app budget, and secretd holds a runtime identity. It returns
 // the caller's name and node id and how it is authorized.
-func (s *Server) authorizeByReference(ctx context.Context, appID string) (name, nodeID, via string, err error) {
-	name, nodeID, err = s.caller(ctx)
+func (s *Server) authorizeByReference(ctx context.Context, rpc, appID string) (name, nodeID, via string, err error) {
+	name, nodeID, err = s.caller(ctx, rpc)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -400,10 +423,12 @@ func (s *Server) authorizeByReference(ctx context.Context, appID string) (name, 
 	via, err = s.authorize(ctx, appID, nodeID, target)
 	if err != nil {
 		s.log.Warn("secretd: refused open by reference", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+		s.metrics.refuse(rpc, ReasonNotAuthorized)
 		return "", "", "", rpcErr(codes.PermissionDenied, "secretd refused: the caller neither owns the app nor holds a grant for it")
 	}
 	if !s.budget.allow(nodeID, appID, s.now()) {
 		s.log.Error("secretd: node over its distinct-app budget", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID))
+		s.metrics.refuse(rpc, ReasonBudgetExhausted)
 		return "", "", "", rpcErr(codes.ResourceExhausted, "secretd refused: the caller opened too many distinct apps this hour")
 	}
 	if len(s.identities) == 0 {
