@@ -79,7 +79,7 @@ func (s *Service) transact(ctx context.Context, a Actor, org string, staff, writ
 	if err != nil {
 		return nil, fmt.Errorf("support begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	x := &session{s: s, ctx: ctx, tx: tx, q: q.New(), actor: a, now: time.Now().UTC().Truncate(time.Microsecond)}
 	if s.Now != nil {
 		x.now = s.Now().UTC().Truncate(time.Microsecond)

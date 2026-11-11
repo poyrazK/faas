@@ -64,6 +64,23 @@ const AppErrorsFlushRPCTimeout = 30 * time.Second
 // controls the additional warning and counter reset.
 const AppErrorsFlushMaxConsecutiveFailures = 5
 
+const (
+	httpIssueRetryQueueLimit = 1024
+	httpIssueRetryAppLimit   = 128
+	httpIssueRetryLifetime   = time.Hour
+)
+
+type httpIssueRetry struct {
+	row     appErrorRow
+	expires time.Time
+	next    time.Time
+	delay   time.Duration
+}
+
+type httpIssueRetryClient interface {
+	RecordHTTPIssue(context.Context, *apidpb.IncrementAppErrorRequest) (*apidpb.IncrementAppErrorResponse, error)
+}
+
 // appErrorsPublisher is the drain loop + RPC owner.
 type appErrorsPublisher struct {
 	rec    *appErrorsRecorder
@@ -75,6 +92,12 @@ type appErrorsPublisher struct {
 	// Read + written under stateMu.
 	stateMu             sync.Mutex
 	consecutiveFailures int
+	issueMu             sync.Mutex
+	issueQueue          []httpIssueRetry
+	issueApps           map[string]int
+	issueKeys           map[string]bool
+	issueRunningApps    map[string]bool
+	issueWake           chan struct{}
 
 	// NotifyEnqueued is called by the recorder after every
 	// enqueue. Used to wake the flush loop early when the
@@ -88,11 +111,15 @@ type appErrorsPublisher struct {
 // newAppErrorsPublisher wires a production publisher.
 func newAppErrorsPublisher(rec *appErrorsRecorder, client apidgrpc.AppErrorsClient, ops *wire.OpsMetrics, log *slog.Logger) *appErrorsPublisher {
 	return &appErrorsPublisher{
-		rec:      rec,
-		client:   client,
-		ops:      ops,
-		log:      log,
-		notifier: make(chan struct{}, 1),
+		rec:              rec,
+		client:           client,
+		ops:              ops,
+		log:              log,
+		notifier:         make(chan struct{}, 1),
+		issueApps:        make(map[string]int),
+		issueKeys:        make(map[string]bool),
+		issueRunningApps: make(map[string]bool),
+		issueWake:        make(chan struct{}, 1),
 	}
 }
 
@@ -118,6 +145,13 @@ func (p *appErrorsPublisher) Run(ctx context.Context) {
 	}
 	t := time.NewTicker(AppErrorsFlushInterval)
 	defer t.Stop()
+	retryCtx, stopRetries := context.WithCancel(ctx)
+	retryDone := make(chan struct{})
+	go func() {
+		defer close(retryDone)
+		p.runHTTPIssueRetries(retryCtx)
+	}()
+	defer func() { stopRetries(); <-retryDone }()
 	for {
 		select {
 		case <-ctx.Done():
@@ -160,6 +194,7 @@ func (p *appErrorsPublisher) tryFlush(parent context.Context) {
 	}
 	if err != nil {
 		p.recordFailure(err, batch)
+		p.queueHTTPIssueRetries(batch)
 		return
 	}
 	p.recordSuccess()
@@ -175,31 +210,7 @@ func (p *appErrorsPublisher) flushBatch(ctx context.Context, batch []appErrorRow
 		return err
 	}
 	for i := range batch {
-		req := &apidpb.IncrementAppErrorRequest{
-			AccountId:           batch[i].AccountID,
-			AppId:               batch[i].AppID,
-			DeploymentId:        batch[i].DeploymentID,
-			RouteTemplate:       batch[i].Route,
-			HttpStatus:          int32(batch[i].HTTPStatus),
-			ErrorClass:          batch[i].ErrorClass,
-			Fingerprint:         batch[i].Fingerprint,
-			SampleMessage:       batch[i].SampleMsg,
-			HeadersSampleJson:   batch[i].HeadersJSON,
-			RedactionsApplied:   batch[i].Redactions,
-			ReceivedAtUnixMs:    batch[i].ReceivedAt.UnixMilli(),
-			InstanceId:          batch[i].InstanceID,
-			NodeId:              batch[i].NodeID,
-			Region:              batch[i].Region,
-			CommitSha:           batch[i].CommitSHA,
-			DeploymentTag:       batch[i].DeploymentTag,
-			DeploymentCreatedAt: batch[i].DeploymentCreatedAt,
-			ImageDigest:         batch[i].ImageDigest,
-			RequestId:           batch[i].RequestID,
-			IssueEventId:        batch[i].IssueEventID,
-			IssueTimeBuckets:    batch[i].IssueTimeBuckets,
-			Count:               batch[i].Count,
-			RequestRowOmitted:   batch[i].RequestRowOmitted,
-		}
+		req := appErrorRequest(batch[i])
 		if err := stream.Send(req); err != nil {
 			return err
 		}
@@ -211,20 +222,45 @@ func (p *appErrorsPublisher) flushBatch(ctx context.Context, batch []appErrorRow
 	// Drain responses to completion (the server commits
 	// each record inside its own tx; the per-record response
 	// is the dedupe-merge / inserted signal).
+	responses := 0
 	for {
 		resp, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
+			if responses != len(batch) {
+				return io.ErrUnexpectedEOF
+			}
 			return nil
 		}
 		if err != nil {
 			return err
 		}
 		if resp == nil {
-			return nil
+			return io.ErrUnexpectedEOF
+		}
+		responses++
+		if responses > len(batch) {
+			return errors.New("app errors stream returned too many responses")
+		}
+		if resp.GetIssueHandoff() == "retry" {
+			p.queueHTTPIssueRetries(batch[responses-1 : responses])
 		}
 		if resp.GetOutcome() == "merged" && p.ops != nil {
 			p.ops.ObserveAppErrorsDedupeMerge()
 		}
+	}
+}
+
+func appErrorRequest(row appErrorRow) *apidpb.IncrementAppErrorRequest {
+	return &apidpb.IncrementAppErrorRequest{
+		AccountId: row.AccountID, AppId: row.AppID, DeploymentId: row.DeploymentID,
+		RouteTemplate: row.Route, HttpStatus: int32(row.HTTPStatus), ErrorClass: row.ErrorClass,
+		Fingerprint: row.Fingerprint, SampleMessage: row.SampleMsg, HeadersSampleJson: row.HeadersJSON,
+		RedactionsApplied: row.Redactions, ReceivedAtUnixMs: row.ReceivedAt.UnixMilli(),
+		InstanceId: row.InstanceID, NodeId: row.NodeID, Region: row.Region,
+		CommitSha: row.CommitSHA, DeploymentTag: row.DeploymentTag,
+		DeploymentCreatedAt: row.DeploymentCreatedAt, ImageDigest: row.ImageDigest,
+		RequestId: row.RequestID, IssueEventId: row.IssueEventID, IssueTimeBuckets: row.IssueTimeBuckets,
+		Count: row.Count, RequestRowOmitted: row.RequestRowOmitted,
 	}
 }
 

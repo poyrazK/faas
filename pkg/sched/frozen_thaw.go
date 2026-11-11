@@ -233,7 +233,7 @@ func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app sta
 		return WakeResult{}, false, nil
 	}
 	bookkeeping := e.publicationBookkeeping(frozen.ID, app.ID, frozen.WakeID, state.StateFrozen, state.StateRunning, "frozen_thaw")
-	publishCtx := e.thawAdmissionContext(ctx, frozen.NodeID, plan.limits.VCPU, effectiveAppCPUMillicores(plan.app))
+	publishCtx := e.thawAdmissionContext(ctx, frozen.NodeID)
 	fresh, publishErr := e.store.PublishOwnedInstanceRuntime(publishCtx, state.RuntimeInstancePublication{
 		AccountID: acct.ID, AppID: app.ID, InstanceID: frozen.ID, NodeID: frozen.NodeID, WakeID: frozen.WakeID,
 		ExpectedState: string(state.StateFrozen), Fence: captured.SecretFence, ConfigFence: captured,
@@ -257,7 +257,7 @@ func (e *Engine) readmitFrozenLocked(ctx context.Context, plan frozenThawPlan) b
 	if err := e.ledger.Admit(Request{
 		Instance: frozen.ID, AppID: plan.app.ID, DeploymentID: plan.dep.ID, DeploymentScope: plan.dep.Scope, Plan: plan.acct.Plan,
 		EnvironmentKey: plan.environmentKey, ProductionEnvironment: plan.production,
-		RAMMB: plan.app.RAMMB, VCPU: plan.limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(plan.app), MaxConcurrency: plan.app.MaxConcurrency,
+		RAMMB: plan.app.RAMMB, VCPU: appVCPUs(plan.app), CPUMillicores: appCPUBookingMillicores(plan.app), MaxConcurrency: plan.app.MaxConcurrency,
 		NodeID: frozen.NodeID, NodeCeilingMB: plan.node.ceilingMB, VCPUBudget: plan.node.vcpuBudget,
 		CPUBudgetMillicores: plan.node.cpuBudgetMillicores,
 	}); err != nil {
@@ -311,14 +311,13 @@ func (e *Engine) abandonThawPublication(ctx context.Context, frozen state.Instan
 
 // thawAdmissionContext binds what a thaw books on its node for the durable
 // reservation its publication runs (ADR 20261102072403): the allowance and
-// CPU discounts this scheduler admits by, and the instance's vCPU and CPU. A
-// frozen row is outside the node's bookings, so without it a thaw put the
-// VM's plan RAM back past the node's cap unchecked.
-func (e *Engine) thawAdmissionContext(ctx context.Context, nodeID string, vcpu, cpuMillicores int) context.Context {
-	discountVCPU, discountCPU := e.ledger.CPUDiscount(nodeID)
+// discount this scheduler admits by. A frozen row is outside the node's
+// bookings, so without it a thaw put the VM's plan RAM back past the node's
+// cap unchecked. Memory is the only limit it checks (ADR-20261109172421).
+func (e *Engine) thawAdmissionContext(ctx context.Context, nodeID string) context.Context {
 	return state.WithThawAdmission(ctx, state.NodeAdmission{
 		NodeID: nodeID, ReservationPercent: e.ledger.ReservationPercent(nodeID),
-		Compute: state.NodeCompute{VCPU: vcpu, CPUMillicores: cpuMillicores, QuietVCPU: discountVCPU, QuietCPUMillicores: discountCPU},
+		ReservationDiscountMB: e.ledger.ReservationDiscountMB(nodeID),
 	})
 }
 

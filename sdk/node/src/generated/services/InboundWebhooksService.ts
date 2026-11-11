@@ -7,10 +7,10 @@ import type { InboundWebhookEndpointResponse } from '../models/InboundWebhookEnd
 import type { InboundWebhookReceiptResponse } from '../models/InboundWebhookReceiptResponse.js';
 import type { OperationWebhookBindingResponse } from '../models/OperationWebhookBindingResponse.js';
 import type { PutOperationWebhookBindingRequest } from '../models/PutOperationWebhookBindingRequest.js';
-import type { PutWebhookAutomationBindingRequest } from '../models/PutWebhookAutomationBindingRequest.js';
+import type { PutWebhookWorkflowBindingRequest } from '../models/PutWebhookWorkflowBindingRequest.js';
 import type { UpdateInboundWebhookEndpointRequest } from '../models/UpdateInboundWebhookEndpointRequest.js';
-import type { WebhookAutomationBindingResponse } from '../models/WebhookAutomationBindingResponse.js';
-import type { WebhookAutomationReceiptResponse } from '../models/WebhookAutomationReceiptResponse.js';
+import type { WebhookWorkflowBindingResponse } from '../models/WebhookWorkflowBindingResponse.js';
+import type { WebhookWorkflowReceiptResponse } from '../models/WebhookWorkflowReceiptResponse.js';
 import type { WorkflowCallbackWebhookReceiptResponse } from '../models/WorkflowCallbackWebhookReceiptResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -213,17 +213,17 @@ export class InboundWebhooksService {
     });
   }
   /**
-   * Route a verified Stripe endpoint to a published automation.
+   * Route a verified Stripe endpoint to a published stored workflow.
    * One binding per endpoint, owned by the same app. expected_version is zero
    * for creation and the returned version for updates. take_over_delivery
-   * must be true: bound endpoints start automations instead of app delivery.
+   * must be true: bound endpoints start stored workflows instead of app delivery.
    * Callback and managed-operation bindings must be removed first.
    * Event types accept edge wildcards; filters use the existing event language.
    *
-   * @returns WebhookAutomationBindingResponse Saved binding with its new revision.
+   * @returns WebhookWorkflowBindingResponse Saved binding with its new revision.
    * @throws ApiError
    */
-  public static putWebhookAutomationBinding({
+  public static putWebhookWorkflowBinding({
     slug,
     id,
     requestBody,
@@ -234,23 +234,23 @@ export class InboundWebhooksService {
      */
     slug: string,
     /**
-     * Endpoint whose future verified events use this automation binding.
+     * Endpoint whose future verified events use this stored workflow binding.
      */
     id: string,
     /**
-     * Explicit delivery takeover and published automation selection.
+     * Explicit delivery takeover and published stored workflow selection.
      */
-    requestBody: PutWebhookAutomationBindingRequest,
+    requestBody: PutWebhookWorkflowBindingRequest,
     /**
      * Idempotency key for the POST. Stored for 24h. On replay the server
      * returns the original response with `Idempotent-Replayed: true`.
      *
      */
     idempotencyKey?: string,
-  }): CancelablePromise<WebhookAutomationBindingResponse> {
+  }): CancelablePromise<WebhookWorkflowBindingResponse> {
     return __request(OpenAPI, {
       method: 'PUT',
-      url: '/v1/apps/{slug}/inbound-webhooks/{id}/automation-binding',
+      url: '/v1/apps/{slug}/inbound-webhooks/{id}/workflow-binding',
       path: {
         'slug': slug,
         'id': id,
@@ -265,7 +265,7 @@ export class InboundWebhooksService {
         401: `code: unauthorized`,
         402: `Plan does not allow workflows.`,
         404: `code: not_found`,
-        409: `Binding revision or routing mode conflict (webhook_automation_conflict).`,
+        409: `Binding revision or routing mode conflict (webhook_workflow_conflict).`,
         413: `Request body exceeds 64 KiB.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -280,12 +280,12 @@ export class InboundWebhooksService {
     });
   }
   /**
-   * Inspect an endpoint automation binding.
+   * Inspect an endpoint stored workflow binding.
    * Returns the current event selection and revision for this endpoint.
-   * @returns WebhookAutomationBindingResponse Current binding.
+   * @returns WebhookWorkflowBindingResponse Current binding.
    * @throws ApiError
    */
-  public static getWebhookAutomationBinding({
+  public static getWebhookWorkflowBinding({
     slug,
     id,
   }: {
@@ -294,13 +294,13 @@ export class InboundWebhooksService {
      */
     slug: string,
     /**
-     * Endpoint whose future verified events use this automation binding.
+     * Endpoint whose future verified events use this stored workflow binding.
      */
     id: string,
-  }): CancelablePromise<WebhookAutomationBindingResponse> {
+  }): CancelablePromise<WebhookWorkflowBindingResponse> {
     return __request(OpenAPI, {
       method: 'GET',
-      url: '/v1/apps/{slug}/inbound-webhooks/{id}/automation-binding',
+      url: '/v1/apps/{slug}/inbound-webhooks/{id}/workflow-binding',
       path: {
         'slug': slug,
         'id': id,
@@ -326,7 +326,7 @@ export class InboundWebhooksService {
    * @returns void
    * @throws ApiError
    */
-  public static deleteWebhookAutomationBinding({
+  public static deleteWebhookWorkflowBinding({
     slug,
     id,
     expectedVersion,
@@ -336,7 +336,7 @@ export class InboundWebhooksService {
      */
     slug: string,
     /**
-     * Endpoint whose future verified events use this automation binding.
+     * Endpoint whose future verified events use this stored workflow binding.
      */
     id: string,
     /**
@@ -346,7 +346,7 @@ export class InboundWebhooksService {
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
       method: 'DELETE',
-      url: '/v1/apps/{slug}/inbound-webhooks/{id}/automation-binding',
+      url: '/v1/apps/{slug}/inbound-webhooks/{id}/workflow-binding',
       path: {
         'slug': slug,
         'id': id,
@@ -358,7 +358,7 @@ export class InboundWebhooksService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        409: `Binding revision conflict (webhook_automation_conflict).`,
+        409: `Binding revision conflict (webhook_workflow_conflict).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -379,7 +379,7 @@ export class InboundWebhooksService {
    * The named operation must exist on the environment's live deployment;
    * every event resolves it again and admission pins it. expected_version is
    * zero for creation and the returned version for updates.
-   * take_over_delivery must be true. Automation and managed exclusive
+   * take_over_delivery must be true. Stored workflow and managed exclusive
    * operation bindings must be removed first. An empty event_types list
    * admits every verified event; other types are acknowledged as ignored.
    *
@@ -543,12 +543,12 @@ export class InboundWebhooksService {
     });
   }
   /**
-   * Inspect a verified provider event and its automation admission.
+   * Inspect a verified provider event and its stored workflow admission.
    * Returns the captured decision and scheduler progress for a retained provider event.
-   * @returns WebhookAutomationReceiptResponse Receipt, routing status and admitted run ID when retained.
+   * @returns WebhookWorkflowReceiptResponse Receipt, routing status and admitted run ID when retained.
    * @throws ApiError
    */
-  public static getWebhookAutomationReceipt({
+  public static getWebhookWorkflowReceipt({
     slug,
     id,
     eventId,
@@ -565,10 +565,10 @@ export class InboundWebhooksService {
      * Stripe event ID returned in the verified provider receipt.
      */
     eventId: string,
-  }): CancelablePromise<WebhookAutomationReceiptResponse> {
+  }): CancelablePromise<WebhookWorkflowReceiptResponse> {
     return __request(OpenAPI, {
       method: 'GET',
-      url: '/v1/apps/{slug}/inbound-webhooks/{id}/automation-receipts/{event_id}',
+      url: '/v1/apps/{slug}/inbound-webhooks/{id}/workflow-receipts/{event_id}',
       path: {
         'slug': slug,
         'id': id,
@@ -601,7 +601,7 @@ export class InboundWebhooksService {
    * durably instead of enqueuing an app invocation. Unmatched events keep
    * the ordinary invocation path.
    * Terminal callbacks are acknowledged as ignored after verification.
-   * An automation-bound endpoint captures its published definition in durable
+   * A stored-workflow-bound endpoint captures its published definition in durable
    * fanout work. Paused, unpublished or type-unmatched events are durably ignored;
    * content filters are evaluated by the scheduler. Provider retries return the
    * original receipt; changed content for the same event ID returns 409.
@@ -648,7 +648,7 @@ export class InboundWebhooksService {
      * Required for generic endpoints; sha256= followed by the lowercase hex HMAC-SHA256 digest.
      */
     xGregaleSignature?: string,
-  }): CancelablePromise<(WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse | InboundWebhookReceiptResponse)> {
+  }): CancelablePromise<(WebhookWorkflowReceiptResponse | WorkflowCallbackWebhookReceiptResponse | InboundWebhookReceiptResponse)> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/hooks/{token}',
@@ -667,7 +667,7 @@ export class InboundWebhooksService {
       errors: {
         400: `code: inbound_webhook_invalid for malformed endpoint configuration/body or a missing Stripe event id; code: inbound_webhook_bad_signature when Stripe-Signature does not verify.`,
         404: `code: not_found`,
-        409: `Changed content for a retained provider event ID (webhook_automation_conflict).`,
+        409: `Changed content for a retained provider event ID (webhook_workflow_conflict).`,
         413: `code: inbound_webhook_too_large — the provider request body exceeds 1 MiB.`,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable

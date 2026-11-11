@@ -12,18 +12,23 @@ import (
 )
 
 const financialComputeAccountActivationSafe = `-- name: FinancialComputeAccountActivationSafe :one
-SELECT NOT EXISTS(SELECT 1 FROM financial_compute_leases WHERE account_id=$1::uuid AND settled_at IS NULL)
+SELECT NOT EXISTS(SELECT 1 FROM financial_compute_leases l LEFT JOIN apps a ON a.id=l.app_id LEFT JOIN orgs o ON o.id=a.org_id
+ WHERE l.account_id=$1::uuid AND l.settled_at IS NULL
+ AND (l.payload->>'account_funded'='true' OR NOT COALESCE(NOT o.personal_org AND o.resource_ownership_enabled,false)))
  AND NOT EXISTS(SELECT 1 FROM job_tasks t JOIN job_runs r ON r.id=t.run_id WHERE r.account_id=$1::uuid AND t.status='claimed')
- AND NOT EXISTS(SELECT 1 FROM instances i LEFT JOIN apps a ON a.id=i.app_id LEFT JOIN jobs j ON j.id=i.job_id
- WHERE (a.account_id=$1::uuid OR j.account_id=$1::uuid)
+ AND NOT EXISTS(SELECT 1 FROM instances i LEFT JOIN apps a ON a.id=i.app_id LEFT JOIN orgs o ON o.id=a.org_id LEFT JOIN jobs j ON j.id=i.job_id
+ WHERE (a.account_id=$1::uuid AND NOT COALESCE(NOT o.personal_org AND o.resource_ownership_enabled,false) OR j.account_id=$1::uuid)
  AND i.state NOT IN ('stopped','parked','failed'))
- AND NOT EXISTS(SELECT 1 FROM app_tasks t JOIN apps a ON a.id=t.app_id WHERE a.account_id=$1::uuid AND t.status IN ('restoring','running'))
+ AND NOT EXISTS(SELECT 1 FROM app_tasks t JOIN apps a ON a.id=t.app_id LEFT JOIN orgs o ON o.id=a.org_id
+ WHERE a.account_id=$1::uuid AND NOT COALESCE(NOT o.personal_org AND o.resource_ownership_enabled,false) AND t.status IN ('restoring','running'))
  AND NOT EXISTS(SELECT 1 FROM instance_billing_intervals b JOIN instances i ON i.id=b.instance_id
- LEFT JOIN apps a ON a.id=i.app_id LEFT JOIN jobs j ON j.id=i.job_id
- WHERE (a.account_id=$1::uuid OR j.account_id=$1::uuid)
+ LEFT JOIN apps a ON a.id=i.app_id LEFT JOIN orgs o ON o.id=a.org_id LEFT JOIN jobs j ON j.id=i.job_id
+ WHERE (a.account_id=$1::uuid AND NOT COALESCE(NOT o.personal_org AND o.resource_ownership_enabled,false) OR j.account_id=$1::uuid)
  AND (b.ended_at IS NULL OR b.ended_at>date_trunc('minute',clock_timestamp())-interval '1 minute')) AS safe
 `
 
+// An account cap covers what the account pays for: apps an organization
+// that owns its resources pays for need not be quiet (ADR-20261107160000).
 func (q *Queries) FinancialComputeAccountActivationSafe(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.Bool, error) {
 	row := db.QueryRow(ctx, financialComputeAccountActivationSafe, accountID)
 	var safe pgtype.Bool
@@ -111,9 +116,14 @@ func (q *Queries) FinancialComputeAccountBookPut(ctx context.Context, db DBTX, a
 }
 
 const financialComputeAccountLeases = `-- name: FinancialComputeAccountLeases :many
-SELECT payload FROM financial_compute_leases WHERE account_id=$1::uuid AND settled_at IS NULL ORDER BY id LIMIT 10001
+SELECT l.payload FROM financial_compute_leases l LEFT JOIN apps a ON a.id=l.app_id LEFT JOIN orgs o ON o.id=a.org_id
+WHERE l.account_id=$1::uuid AND l.settled_at IS NULL
+ AND (l.payload->>'account_funded'='true' OR NOT COALESCE(NOT o.personal_org AND o.resource_ownership_enabled,false))
+ORDER BY l.id LIMIT 10001
 `
 
+// An organization-paid app's attempt joins its creator's account book only
+// when that book funded it (ADR-20261107160000).
 func (q *Queries) FinancialComputeAccountLeases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([][]byte, error) {
 	rows, err := db.Query(ctx, financialComputeAccountLeases, accountID)
 	if err != nil {
@@ -218,19 +228,23 @@ func (q *Queries) FinancialComputeAppLeases(ctx context.Context, db DBTX, arg Fi
 }
 
 const financialComputeAppManaged = `-- name: FinancialComputeAppManaged :one
-SELECT EXISTS(SELECT 1 FROM financial_compute_books WHERE account_id=$1::uuid AND app_id=$2::uuid)
- OR EXISTS(SELECT 1 FROM financial_compute_job_books WHERE account_id=$1::uuid AND job_id=$3::uuid)
- OR EXISTS(SELECT 1 FROM financial_compute_account_books WHERE account_id=$1::uuid) AS managed
+SELECT NOT EXISTS(SELECT 1 FROM apps a JOIN orgs o ON o.id=a.org_id WHERE a.id=$1::uuid AND NOT o.personal_org AND o.resource_ownership_enabled)
+ AND (EXISTS(SELECT 1 FROM financial_compute_books WHERE account_id=$2::uuid AND app_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM financial_compute_job_books WHERE account_id=$2::uuid AND job_id=$3::uuid)
+ OR EXISTS(SELECT 1 FROM financial_compute_account_books WHERE account_id=$2::uuid)) AS managed
 `
 
 type FinancialComputeAppManagedParams struct {
-	AccountID pgtype.UUID
 	AppID     pgtype.UUID
+	AccountID pgtype.UUID
 	JobID     pgtype.UUID
 }
 
+// Strict budgets follow the billing subject: an app an organization that
+// owns its resources pays for is never managed by its creator's books
+// (ADR-20261107160000).
 func (q *Queries) FinancialComputeAppManaged(ctx context.Context, db DBTX, arg FinancialComputeAppManagedParams) (pgtype.Bool, error) {
-	row := db.QueryRow(ctx, financialComputeAppManaged, arg.AccountID, arg.AppID, arg.JobID)
+	row := db.QueryRow(ctx, financialComputeAppManaged, arg.AppID, arg.AccountID, arg.JobID)
 	var managed pgtype.Bool
 	err := row.Scan(&managed)
 	return managed, err
@@ -253,7 +267,8 @@ func (q *Queries) FinancialComputeAppOwned(ctx context.Context, db DBTX, arg Fin
 }
 
 const financialComputeAppPolicies = `-- name: FinancialComputeAppPolicies :many
-SELECT p.id, p.account_id, p.revision, p.spec, p.created_at, p.updated_at, p.deleted_at, COALESCE(a.project_id::text,'')::text AS project_id
+SELECT p.id, p.account_id, p.revision, p.spec, p.created_at, p.updated_at, p.deleted_at, COALESCE(a.project_id::text,'')::text AS project_id,
+ EXISTS(SELECT 1 FROM orgs o WHERE o.id=a.org_id AND NOT o.personal_org AND o.resource_ownership_enabled)::boolean AS org_paid
 FROM financial_budget_policies p
 LEFT JOIN apps a ON a.account_id=p.account_id AND a.id=$1::uuid
 WHERE p.account_id=$2::uuid AND p.deleted_at IS NULL
@@ -269,6 +284,7 @@ type FinancialComputeAppPoliciesParams struct {
 type FinancialComputeAppPoliciesRow struct {
 	FinancialBudgetPolicy FinancialBudgetPolicy
 	ProjectID             string
+	OrgPaid               bool
 }
 
 // The account's budgets with the app's project, the one scope an app's
@@ -292,6 +308,7 @@ func (q *Queries) FinancialComputeAppPolicies(ctx context.Context, db DBTX, arg 
 			&i.FinancialBudgetPolicy.UpdatedAt,
 			&i.FinancialBudgetPolicy.DeletedAt,
 			&i.ProjectID,
+			&i.OrgPaid,
 		); err != nil {
 			return nil, err
 		}
@@ -305,7 +322,8 @@ func (q *Queries) FinancialComputeAppPolicies(ctx context.Context, db DBTX, arg 
 
 const financialComputeAppScopes = `-- name: FinancialComputeAppScopes :one
 SELECT COALESCE(a.project_id::text,'')::text AS project_id, COALESCE(d.id::text,'')::text AS deployment_id,
- COALESCE(financial_compute_deployment_environment(d.id)::text,'')::text AS environment_id
+ COALESCE(financial_compute_deployment_environment(d.id)::text,'')::text AS environment_id,
+ EXISTS(SELECT 1 FROM orgs o WHERE o.id=a.org_id AND NOT o.personal_org AND o.resource_ownership_enabled)::boolean AS org_paid
 FROM apps a
 LEFT JOIN instances i ON i.id=$1::uuid AND i.app_id=a.id
 LEFT JOIN deployments d ON d.app_id=a.id AND d.id=COALESCE(i.deployment_id,$2::uuid)
@@ -323,11 +341,14 @@ type FinancialComputeAppScopesRow struct {
 	ProjectID     string
 	DeploymentID  string
 	EnvironmentID string
+	OrgPaid       bool
 }
 
 // The scopes an app attempt funds: its current project, and the environment
 // of its deployment. The instance's recorded deployment wins over the
 // request's; an app outside any project has neither.
+// org_paid marks an app an organization that owns its resources pays for:
+// its creator's strict budgets never cover it (ADR-20261107160000).
 func (q *Queries) FinancialComputeAppScopes(ctx context.Context, db DBTX, arg FinancialComputeAppScopesParams) (FinancialComputeAppScopesRow, error) {
 	row := db.QueryRow(ctx, financialComputeAppScopes,
 		arg.InstanceID,
@@ -336,7 +357,12 @@ func (q *Queries) FinancialComputeAppScopes(ctx context.Context, db DBTX, arg Fi
 		arg.AppID,
 	)
 	var i FinancialComputeAppScopesRow
-	err := row.Scan(&i.ProjectID, &i.DeploymentID, &i.EnvironmentID)
+	err := row.Scan(
+		&i.ProjectID,
+		&i.DeploymentID,
+		&i.EnvironmentID,
+		&i.OrgPaid,
+	)
 	return i, err
 }
 
@@ -1039,7 +1065,8 @@ const financialComputeProjectManaged = `-- name: FinancialComputeProjectManaged 
 SELECT EXISTS(SELECT 1 FROM apps a JOIN financial_compute_scope_books b ON b.account_id=a.account_id
  AND (b.scope_kind='project' AND b.scope_id=a.project_id
   OR b.scope_kind='environment' AND b.scope_id IN (SELECT e.id FROM project_environments e WHERE e.project_id=a.project_id))
- WHERE a.account_id=$1::uuid AND a.id=$2::uuid) AS managed
+ WHERE a.account_id=$1::uuid AND a.id=$2::uuid
+ AND NOT EXISTS(SELECT 1 FROM orgs o WHERE o.id=a.org_id AND NOT o.personal_org AND o.resource_ownership_enabled)) AS managed
 `
 
 type FinancialComputeProjectManagedParams struct {

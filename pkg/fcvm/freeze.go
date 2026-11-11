@@ -174,13 +174,14 @@ func (m *Manager) Freeze(ctx context.Context, instance string, opts FreezeOption
 // request-driven app VMs whose traffic all passes through vmmd's forward
 // path qualify: private-network peers talk guest to guest, a pending
 // waitUntil task needs the guest running, and warm-pool, execution, job,
-// app-task, qualification and builder VMs have lifecycles of their own. The
-// caller holds m.mu.
+// app-task, qualification and builder VMs have lifecycles of their own. A
+// sandbox session VM's calls all pass through vmmd, so it qualifies
+// (ADR-20261027090013 §5). The caller holds m.mu.
 func freezeRefusal(inst *Instance) string {
 	switch {
 	case inst.Paused:
 		return "warm-pool instance"
-	case inst.ExecutionOnly:
+	case inst.ExecutionOnly && inst.SandboxID == "":
 		return "execution instance"
 	case inst.IsJob:
 		return "job instance"
@@ -358,9 +359,34 @@ func (m *Manager) isFrozen(inst *Instance) bool {
 
 func (m *Manager) clearFrozen(inst *Instance) {
 	m.mu.Lock()
-	inst.Frozen, inst.FrozenSince = false, time.Time{}
+	endFrozenLocked(inst, time.Now())
 	m.mu.Unlock()
 	m.markAdoptionDirty(inst.Lease.Instance)
+}
+
+// endFrozenLocked ends an instance's freeze, adding it to FrozenTotal. The
+// caller holds Manager.mu.
+func endFrozenLocked(inst *Instance, now time.Time) {
+	if inst.Frozen && !inst.FrozenSince.IsZero() && now.After(inst.FrozenSince) {
+		inst.FrozenTotal += now.Sub(inst.FrozenSince)
+	}
+	inst.Frozen, inst.FrozenSince = false, time.Time{}
+}
+
+// FrozenTime is an instance's time frozen so far: its completed freezes and
+// the current one, up to now.
+func (m *Manager) FrozenTime(instance string, now time.Time) time.Duration {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst := m.live[instance]
+	if inst == nil {
+		return 0
+	}
+	total := inst.FrozenTotal
+	if inst.Frozen && !inst.FrozenSince.IsZero() && now.After(inst.FrozenSince) {
+		total += now.Sub(inst.FrozenSince)
+	}
+	return total
 }
 
 // FrozenState reports whether an instance is frozen and since when, for
@@ -536,10 +562,7 @@ var procMeminfoPath = "/proc/meminfo"
 
 // vmCgroupScope is the VM's per-instance cgroup directory.
 func vmCgroupScope(l Lease) string {
-	parent := ParentCgroupFor(l.Plan)
-	if l.IsBuilder {
-		parent = BuilderCgroupParent
-	}
+	parent := vmCgroupParent(l)
 	return filepath.Join(cgroupRoot, parent, PerInstanceScope(l.Instance))
 }
 

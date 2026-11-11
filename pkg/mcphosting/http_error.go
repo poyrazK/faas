@@ -22,6 +22,9 @@ func httpResponseError(response *http.Response) error {
 	}
 	if response.StatusCode == http.StatusUnauthorized {
 		problem.Detail = "MCP authentication required (HTTP 401); supply a client token with --token-env"
+		// The CLI's generic 401 hint said to run `gregale login`, which
+		// does not authenticate an MCP client (Hunt 32 H32-28).
+		problem.Hint = "Pass --token-env NAME, where NAME is an environment variable holding a token the MCP server accepts; gregale login does not sign MCP clients in."
 	}
 	retry := strings.TrimSpace(response.Header.Get("Retry-After"))
 	// Only bounded, valid delta-seconds or HTTP dates are useful retry metadata.

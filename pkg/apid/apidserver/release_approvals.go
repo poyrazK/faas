@@ -117,6 +117,9 @@ func (s *server) putReleaseApprovalPolicy(w http.ResponseWriter, r *http.Request
 // the policy would stay set and stop gating: anyone who may configure the app
 // could release past it.
 func (s *server) executionModeApprovalProblem(ctx context.Context, app state.App, req *api.UpdateAppRequest) *api.Problem {
+	if p := s.immediateReleasePolicyApprovalProblem(ctx, app, req); p != nil {
+		return p
+	}
 	if req.ExecutionMode == nil || !approval.RequestMode(app) {
 		return nil
 	}
@@ -138,6 +141,29 @@ func (s *server) executionModeApprovalProblem(ctx context.Context, app state.App
 		fmt.Sprintf("%s requires release approvals, which wait in a canary stage. A %s has none, so its releases would ship unapproved.",
 			app.Slug, *req.ExecutionMode)).
 		WithHint(fmt.Sprintf("An owner or admin removes the policy first with `gregale release approval disable --app %s`, then the mode can change.", app.Slug))
+}
+
+// immediateReleasePolicyApprovalProblem refuses switching an app that
+// requires release approvals to the immediate release policy
+// (ADR-20261020085706 amendment 14). A policy cannot be set on such an app,
+// and switching after left every default production deploy refused for want
+// of a canary to wait in.
+func (s *server) immediateReleasePolicyApprovalProblem(ctx context.Context, app state.App, req *api.UpdateAppRequest) *api.Problem {
+	if req.ReleasePolicy == nil || *req.ReleasePolicy != api.ReleasePolicyImmediate || app.Manifest.ReleasePolicy == api.ReleasePolicyImmediate {
+		return nil
+	}
+	store, ok := s.store.(state.ReleaseApprovalStore)
+	if !ok {
+		return nil
+	}
+	if _, err := store.ReleaseApprovalPolicy(ctx, app.ID); errors.Is(err, state.ErrNotFound) {
+		return nil
+	} else if err != nil {
+		return api.ErrCapacity("could not read the app's release approval policy")
+	}
+	return api.NewProblem(http.StatusConflict, api.CodeConflict, "App requires release approvals",
+		fmt.Sprintf("%s requires release approvals, which wait in a canary stage; the immediate release policy has none.", app.Slug)).
+		WithHint(fmt.Sprintf("An owner or admin removes the policy first with `gregale release approval disable --app %s`, then the release policy can change.", app.Slug))
 }
 
 // releaseApprovalPolicyEligible refuses a policy the app could never satisfy
@@ -392,6 +418,13 @@ func (s *server) releaseApprovalDecision(r *http.Request, acct state.Account, ap
 	}
 	if d.RolloutAbortedAt != nil {
 		return state.ReleaseApproval{}, api.ErrReleaseApprovalDecided("This release's rollout was aborted; deploy it again to start a new approval.")
+	}
+	// A release that failed, was cancelled or was superseded never ships, so
+	// a decision on it decides nothing and must not announce "approved"
+	// (ADR-20261020085706 amendment 14).
+	switch d.Status {
+	case state.DeployFailed, state.DeployCancelled, state.DeploySuperseded:
+		return state.ReleaseApproval{}, api.ErrReleaseApprovalDecided(fmt.Sprintf("This release is %s; there is nothing left to approve.", d.Status))
 	}
 	// ADR-20261020085706 amendment 4: an approval comes from a person signed
 	// in to the dashboard. A key or token, which skips MFA and is what CI
@@ -729,6 +762,7 @@ func (s *server) abortForApproval(ctx context.Context, app state.App, d state.De
 	// and the rejected release would keep its canary traffic (approvals ADR
 	// amendment 11).
 	var err error
+	ctx = state.WithRolloutRecoveryActor(ctx, state.RolloutRecoveryActorReleaseApproval)
 	if predecessor, ok := s.rolloutPredecessor(ctx, d); ok {
 		_, _, err = decisions.RecoverRolloutForDeploymentWithDecision(ctx, app.ID, d.ID, predecessor.ID, "abort", reason, decision)
 	} else {
@@ -929,11 +963,49 @@ func (s *server) promotionApprovalPolicies(ctx context.Context, plan projectEnvi
 	return out, nil
 }
 
+// releaseGateWatchProblem refuses a production release of an app with release
+// gates that would take traffic without a canary and with the post-release
+// watch turned off: no gate would ever judge it (ADR-20261020085706 amendment
+// 14). Gates are judged by the canary and, after the release completes, by
+// the post-release watch, which needs rollback_on_5xx. Deleting a gate takes
+// an admin; turning both judges off per deploy took only deploy:write. The
+// caller has already seen that the request takes traffic without a canary.
+func (s *server) releaseGateWatchProblem(ctx context.Context, app state.App, req *api.CreateDeploymentRequest) *api.Problem {
+	if req.RollbackOn5xx == nil || *req.RollbackOn5xx {
+		return nil
+	}
+	target := req.Scope
+	if req.Environment != "" {
+		target = req.Environment
+	}
+	if !state.IsProductionScope(target) {
+		return nil
+	}
+	gates, ok := s.store.(state.ReleaseGateStore)
+	if !ok {
+		return nil
+	}
+	rows, err := gates.ListReleaseGates(ctx, app.ID)
+	if err != nil {
+		logCustomerFailure(s.log, "read release gates", err)
+		return api.ErrInternal("Gregale could not read this app's release gates.").WithHint("Retry in a moment.")
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	return api.NewProblem(http.StatusConflict, api.CodeConflict, "Release gates need a judged release",
+		fmt.Sprintf("%s has %d release gate(s). A production release without a canary and with rollback_on_5xx off would never be judged by them.", app.Slug, len(rows))).
+		WithHint("Deploy with a canary (--rollout safe), or leave --rollback-on-5xx on so the post-release watch judges the gates. An admin can remove a gate with `gregale release-gates rm`.")
+}
+
 // releaseApprovalCanaryProblem refuses a production release that would take
 // traffic without a canary while the app requires approvals.
 func (s *server) releaseApprovalCanaryProblem(ctx context.Context, app state.App, req *api.CreateDeploymentRequest) *api.Problem {
 	if !approval.TakesTrafficWithoutCanary(req) {
 		return nil
+	}
+	if p := s.releaseGateWatchProblem(ctx, app, req); p != nil {
+		return p
 	}
 	required, err := approval.CanaryRequired(ctx, s.store, app, req.Scope, req.Environment)
 	if err != nil {

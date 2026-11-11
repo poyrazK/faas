@@ -1,0 +1,4 @@
+[Service]
+# Caddy owns customer certificates in on-demand mode. The internal gateway
+# retries legacy DNS-01 wildcard claims only when that mode is disabled.
+Environment=FAAS_CUSTOM_DOMAIN_TLS={{ 'on_demand' if (faas_custom_domain_tls | default(false) | bool) else '' }}

@@ -53,7 +53,7 @@ func (w *Webhook) send(ctx context.Context, event, ticket, kind string) error {
 	if e != nil {
 		return fmt.Errorf("support webhook request failed")
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, api.SupportRequestMaxBytes))
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return fmt.Errorf("support webhook returned HTTP %d", res.StatusCode)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,11 +24,13 @@ import (
 // ADR-20261028200212). A schedd can start before its
 // release's migrations run; until they do, admission keeps its
 // statement-by-statement transaction. A missing function is probed again
-// after a minute.
+// after a minute. discount records whether the database also has the forms
+// that take the idle ladder's reservation discount (ADR-20261107122928);
+// without them admission calls the previous forms and books no discount.
 type admissionFunctionProbe struct {
-	mu        sync.Mutex
-	known, ok bool
-	checked   time.Time
+	mu                  sync.Mutex
+	known, ok, discount bool
+	checked             time.Time
 }
 
 const admissionFunctionReprobe = time.Minute
@@ -42,17 +45,32 @@ func (s *PgStore) admissionFunctionsUsable(ctx context.Context) bool {
 	if p.known && (p.ok || time.Since(p.checked) < admissionFunctionReprobe) {
 		return p.ok
 	}
-	var ok bool
+	var ok, discount bool
 	err := s.pool.QueryRow(ctx, `select to_regprocedure('admit_wake_instance(uuid,text,text,integer,uuid,text,text,bigint,boolean,integer,boolean,uuid,bigint,integer,integer,integer,integer,integer,integer,integer,uuid)') is not null
 		and to_regprocedure('admission_check_app_owner(uuid,uuid)') is not null
 		and to_regprocedure('admission_reserve_node(uuid,bigint,integer,boolean,integer,integer,integer,integer,integer,integer,integer,integer)') is not null
 		and to_regprocedure('snapshot_restore_pressure_acquire(text)') is not null
-		and to_regprocedure('publish_instance_on_generation(uuid,uuid,uuid,uuid,uuid,text,text,text,inet,integer,text,uuid,text,text,text,jsonb,text,text,boolean,text,timestamptz,jsonb,jsonb,boolean,jsonb,jsonb,bigint)') is not null`).Scan(&ok)
+		and to_regprocedure('publish_instance_on_generation(uuid,uuid,uuid,uuid,uuid,text,text,text,inet,integer,text,uuid,text,text,text,jsonb,text,text,boolean,text,timestamptz,jsonb,jsonb,boolean,jsonb,jsonb,bigint)') is not null,
+		to_regprocedure('admit_wake_instance(uuid,text,text,integer,uuid,text,text,bigint,boolean,integer,boolean,uuid,bigint,integer,integer,integer,integer,integer,integer,integer,uuid,integer)') is not null
+		and to_regprocedure('admission_reserve_node(uuid,bigint,integer,boolean,integer,integer,integer,integer,integer,integer,integer,integer,integer)') is not null`).Scan(&ok, &discount)
 	if err != nil {
 		return false
 	}
-	p.known, p.ok, p.checked = true, ok, time.Now()
+	p.known, p.ok, p.discount, p.checked = true, ok, ok && discount, time.Now()
 	return ok
+}
+
+// admissionDiscountUsable reports whether the last probe found the admission
+// functions that take the idle ladder's reservation discount. Call it after
+// admissionFunctionsUsable.
+func (s *PgStore) admissionDiscountUsable() bool {
+	p := s.admission
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.known && p.discount
 }
 
 func (s *PgStore) markAdmissionFunctionsMissing() {
@@ -66,7 +84,9 @@ func (s *PgStore) markAdmissionFunctionsMissing() {
 // reserveNodeDB is checkNodeAdmissionDB, the per-node advisory lock, the
 // RAM, vCPU and CPU headroom checks and ctx's app owner fence in one
 // statement, inside the caller's transaction.
-func reserveNodeDB(ctx context.Context, tx pgx.Tx, nodeID, newState string, ramMB int) error {
+// discount selects the form that takes ctx's reservation discount
+// (ADR-20261107122928).
+func reserveNodeDB(ctx context.Context, tx pgx.Tx, nodeID, newState string, ramMB int, discount bool) error {
 	expected, bound, err := nodeAdmissionExpectation(ctx, nodeID)
 	if err != nil {
 		return err
@@ -80,12 +100,19 @@ func reserveNodeDB(ctx context.Context, tx pgx.Tx, nodeID, newState string, ramM
 	}
 	compute := nodeComputeAdmission(ctx, nodeID)
 	fenceAppID, fenceOwner := fenceParams(ctx)
-	_, err = tx.Exec(ctx, `select admission_reserve_node($1::uuid, $2::bigint, $3::integer, $4::boolean, $5::integer, $6::integer,
-		$7::integer, $8::integer, $9::integer, $10::integer, $11::integer, $12::integer),
-		admission_check_app_owner($13::uuid, $14::uuid)`,
-		nodeID, expectedGeneration, ramMB, nodeUsageCounts(State(newState)), api.PerVMOverheadMB, nodeReservationPercent(ctx, nodeID),
+	args := []any{nodeID, expectedGeneration, ramMB, nodeUsageCounts(State(newState)), api.PerVMOverheadMB, nodeReservationPercent(ctx, nodeID),
 		compute.VCPU, compute.QuietVCPU, compute.CPUMillicores, compute.QuietCPUMillicores, api.DefaultAppCPUMillicores, api.CPUOvercommit,
-		fenceAppID, fenceOwner)
+		fenceAppID, fenceOwner}
+	query := `select admission_reserve_node($1::uuid, $2::bigint, $3::integer, $4::boolean, $5::integer, $6::integer,
+		$7::integer, $8::integer, $9::integer, $10::integer, $11::integer, $12::integer),
+		admission_check_app_owner($13::uuid, $14::uuid)`
+	if discount {
+		args = append(args, nodeReservationDiscountMB(ctx, nodeID))
+		query = `select admission_reserve_node($1::uuid, $2::bigint, $3::integer, $4::boolean, $5::integer, $6::integer,
+		$7::integer, $8::integer, $9::integer, $10::integer, $11::integer, $12::integer, $15::integer),
+		admission_check_app_owner($13::uuid, $14::uuid)`
+	}
+	_, err = tx.Exec(ctx, query, args...)
 	return admissionFunctionError(err, nodeID)
 }
 
@@ -100,12 +127,19 @@ func (s *PgStore) reserveThawDB(ctx context.Context, tx pgx.Tx, instanceID, node
 	if !validUUID(instanceID) || !validUUID(nodeID) || !s.admissionFunctionsUsable(ctx) {
 		return nil
 	}
-	percent, c := thawAdmission(ctx, nodeID)
-	_, err := tx.Exec(ctx, `select admission_reserve_node(i.node_id, NULL::bigint, i.ram_mb, true, $3::integer, $4::integer,
+	percent, c, discountMB := thawAdmission(ctx, nodeID)
+	args := []any{instanceID, nodeID, api.PerVMOverheadMB, percent,
+		c.VCPU, c.QuietVCPU, c.CPUMillicores, c.QuietCPUMillicores, api.DefaultAppCPUMillicores, api.CPUOvercommit}
+	query := `select admission_reserve_node(i.node_id, NULL::bigint, i.ram_mb, true, $3::integer, $4::integer,
 		$5::integer, $6::integer, $7::integer, $8::integer, $9::integer, $10::integer)
-		  from instances i where i.id = $1::uuid and i.node_id = $2::uuid`,
-		instanceID, nodeID, api.PerVMOverheadMB, percent,
-		c.VCPU, c.QuietVCPU, c.CPUMillicores, c.QuietCPUMillicores, api.DefaultAppCPUMillicores, api.CPUOvercommit)
+		  from instances i where i.id = $1::uuid and i.node_id = $2::uuid`
+	if s.admissionDiscountUsable() {
+		args = append(args, discountMB)
+		query = `select admission_reserve_node(i.node_id, NULL::bigint, i.ram_mb, true, $3::integer, $4::integer,
+		$5::integer, $6::integer, $7::integer, $8::integer, $9::integer, $10::integer, $11::integer)
+		  from instances i where i.id = $1::uuid and i.node_id = $2::uuid`
+	}
+	_, err := tx.Exec(ctx, query, args...)
 	return admissionFunctionError(err, nodeID)
 }
 
@@ -159,26 +193,43 @@ func (s *PgStore) admitWakeInstance(ctx context.Context, appID, deploymentID, ne
 	}
 	compute := nodeComputeAdmission(ctx, nodeID)
 	_, fenceOwner := fenceParams(fenceApp(ctx, appID))
+	booked := nodeBookedCPUMillicores(ctx, nodeID)
+	bookedVCPU := nodeBookedVCPU(ctx, nodeID)
+	// ADR-20261107122928: the form that takes the reservation discount, when
+	// the database has it.
+	admitArgs := []any{appID, deploymentID, newState, ramMB, nodeID, wakeID, mode,
+		expectedGeneration, nodeUsageCounts(State(newState)), api.PerVMOverheadMB, binding, snapshotID, guardGeneration,
+		nodeReservationPercent(ctx, nodeID),
+		compute.VCPU, compute.QuietVCPU, compute.CPUMillicores, compute.QuietCPUMillicores, api.DefaultAppCPUMillicores, api.CPUOvercommit,
+		fenceOwner}
+	admitCall := `admit_wake_instance($1::uuid, $2::text, $3::text, $4::integer, $5::uuid, $6::text, $7::text,
+		                           $8::bigint, $9::boolean, $10::integer, $11::boolean, $12::uuid, $13::bigint, $14::integer,
+		                           $15::integer, $16::integer, $17::integer, $18::integer, $19::integer, $20::integer, $21::uuid)`
+	if s.admissionDiscountUsable() {
+		admitArgs = append(admitArgs, nodeReservationDiscountMB(ctx, nodeID))
+		admitCall = `admit_wake_instance($1::uuid, $2::text, $3::text, $4::integer, $5::uuid, $6::text, $7::text,
+		                           $8::bigint, $9::boolean, $10::integer, $11::boolean, $12::uuid, $13::bigint, $14::integer,
+		                           $15::integer, $16::integer, $17::integer, $18::integer, $19::integer, $20::integer, $21::uuid, $22::integer)`
+	}
 	inst, err := retryRuntimeAdmissionBusy(ctx, func() (Instance, error) {
-		row := s.pool.QueryRow(ctx, `
+		admit := func(queryRow func(context.Context, string, ...any) pgx.Row) (Instance, error) {
+			row := queryRow(ctx, `
 		select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		       coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
-		  from admit_wake_instance($1::uuid, $2::text, $3::text, $4::integer, $5::uuid, $6::text, $7::text,
-		                           $8::bigint, $9::boolean, $10::integer, $11::boolean, $12::uuid, $13::bigint, $14::integer,
-		                           $15::integer, $16::integer, $17::integer, $18::integer, $19::integer, $20::integer, $21::uuid)`,
-			appID, deploymentID, newState, ramMB, nodeID, wakeID, mode,
-			expectedGeneration, nodeUsageCounts(State(newState)), api.PerVMOverheadMB, binding, snapshotID, guardGeneration,
-			nodeReservationPercent(ctx, nodeID),
-			compute.VCPU, compute.QuietVCPU, compute.CPUMillicores, compute.QuietCPUMillicores, api.DefaultAppCPUMillicores, api.CPUOvercommit,
-			fenceOwner)
-		inst, err := scanInstanceCols(row.Scan)
-		if err == nil {
-			return inst, nil
+		  from `+admitCall, admitArgs...)
+			inst, err := scanInstanceCols(row.Scan)
+			if err == nil {
+				return inst, nil
+			}
+			if mapped, ok := mapAdmissionFunctionError(err, nodeID); ok {
+				return Instance{}, mapped
+			}
+			return scanCreatedInstance(errorRow{err}, wakeID, appID)
 		}
-		if mapped, ok := mapAdmissionFunctionError(err, nodeID); ok {
-			return Instance{}, mapped
+		if booked <= 0 && bookedVCPU <= 0 {
+			return admit(s.pool.QueryRow)
 		}
-		return scanCreatedInstance(errorRow{err}, wakeID, appID)
+		return admitWithBookings(ctx, s.pool, booked, bookedVCPU, admit)
 	})
 	if undefinedFunction(err) {
 		s.markAdmissionFunctionsMissing()
@@ -285,4 +336,48 @@ func (s *PgStore) publishOnGenerationFunction(ctx context.Context, p RuntimeInst
 		p.Bookkeeping.SnapshotBackoffRecorded = backoffRecorded
 	}
 	return instance, nil
+}
+
+// admitWithBookings runs a one-statement admission in a transaction that
+// first sets the CPU booking and guest vCPU count capture_instance_capacity
+// stores on the new row (ADR-20261101160231 step 5b, ADR-20261109172421
+// step 5). A non-positive value is left unset.
+func admitWithBookings(ctx context.Context, pool interface {
+	Begin(context.Context) (pgx.Tx, error)
+}, booked, bookedVCPU int,
+	admit func(func(context.Context, string, ...any) pgx.Row) (Instance, error)) (Instance, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return Instance{}, fmt.Errorf("state: admission: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := setInstanceBookings(ctx, tx, booked, bookedVCPU); err != nil {
+		return Instance{}, fmt.Errorf("state: admission: %w", err)
+	}
+	inst, err := admit(tx.QueryRow)
+	if err != nil {
+		return Instance{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Instance{}, fmt.Errorf("state: admission: commit: %w", mapErr(err))
+	}
+	return inst, nil
+}
+
+// setInstanceBookings sets, for the rest of tx, what capture_instance_capacity
+// stores on the instance row tx inserts: the CPU booking and the guest vCPU
+// count. A non-positive value is left unset, keeping the app's and the
+// plan's.
+func setInstanceBookings(ctx context.Context, tx pgx.Tx, bookedCPU, bookedVCPU int) error {
+	if bookedCPU > 0 {
+		if _, err := tx.Exec(ctx, `SELECT set_config('faas.instance_booked_cpu_millicores', $1::text, true)`, strconv.Itoa(bookedCPU)); err != nil {
+			return fmt.Errorf("booked CPU: %w", err)
+		}
+	}
+	if bookedVCPU > 0 {
+		if _, err := tx.Exec(ctx, `SELECT set_config('faas.instance_booked_vcpu', $1::text, true)`, strconv.Itoa(bookedVCPU)); err != nil {
+			return fmt.Errorf("booked vCPU: %w", err)
+		}
+	}
+	return nil
 }

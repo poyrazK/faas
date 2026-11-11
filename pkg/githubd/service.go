@@ -17,8 +17,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -158,6 +160,9 @@ type WritePreviewDestroyComment = WritePreviewDestroyCommentFunc
 // mode="error" / mode="breaker_open" metric labels rather than
 // silently downgrading to full fan-out.
 type Service struct {
+	DeliveryTargets DeliveryTargetStore
+	// eventAccountID is set only on a delivery-local copy during account fan-out.
+	eventAccountID                   string
 	Log                              *slog.Logger
 	IssueCallbacks                   state.IssueTrackerCallbackStore
 	Bindings                         AppBindingStore
@@ -235,6 +240,10 @@ type Service struct {
 	// CapabilityAllowed decides a product capability's platform flag for an
 	// account (ADR-20261023115741). nil releases every capability.
 	CapabilityAllowed func(capability, accountID string) bool
+	// PreviewDatabaseEnvKeys lists the keys an app's PR previews get from
+	// their own databases (ADR-20261102123523). nil reads them from the
+	// store when it is a state.PreviewDatabaseEnvKeyStore.
+	PreviewDatabaseEnvKeys func(ctx context.Context, accountID, appID string) ([]string, error)
 }
 
 // NewService builds a Service. Tests inject fakes for the seams;
@@ -349,6 +358,16 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	if err != nil {
 		return reconcile.Result{}, err
 	}
+	return s.dispatchRepositoryAccounts(ctx, ev.Installation.ID, ev.Repository.FullName, func(ctx context.Context, scoped *Service) (reconcile.Result, error) {
+		return scoped.handleAccountPush(ctx, body)
+	})
+}
+
+func (s *Service) handleAccountPush(ctx context.Context, body []byte) (reconcile.Result, error) {
+	ev, err := DecodePush(body)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
 	if ev.Deleted {
 		// GitHub represents a deleted branch or tag with an all-zero
 		// `after` SHA. Never feed that sentinel into source fetch or
@@ -392,7 +411,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		// repo+production_branch binding index. Resolve the project by
 		// repository and synthesize the same binding shape so branch
 		// routing remains additive and old bindings continue to work.
-		project, projectErr := s.Reconcile.Store.ProjectByRepo(ctx, "", ev.Installation.ID, ev.Repository.FullName)
+		project, projectErr := s.Reconcile.Store.ProjectByRepo(ctx, s.eventAccountID, ev.Installation.ID, ev.Repository.FullName)
 		if projectErr == nil && project.AccountID != "" && project.ProductionBranch != "" {
 			binding = state.GitHubBinding{
 				BindingID:        "project-" + project.ID,
@@ -410,7 +429,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		// (installation, repository, production_branch) mapping, so
 		// use it as a tag fallback when the default-branch binding
 		// lookup cannot match.
-		project, projectErr := s.Reconcile.Store.ProjectByRepo(ctx, "", ev.Installation.ID, ev.Repository.FullName)
+		project, projectErr := s.Reconcile.Store.ProjectByRepo(ctx, s.eventAccountID, ev.Installation.ID, ev.Repository.FullName)
 		if projectErr == nil && project.AccountID != "" && project.ProductionBranch != "" {
 			binding = state.GitHubBinding{
 				BindingID:        "project-" + project.ID,
@@ -444,9 +463,8 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		return reconcile.Result{}, ErrNoBinding
 	}
 
-	// 2. Resolve the install row. The account → install mapping
-	// is one-to-one (every account has at most one GitHub App
-	// install). state.ErrNotFound surfaces as ErrNoBinding so the
+	// 2. Resolve this account's exact authorized installation.
+	// state.ErrNotFound surfaces as ErrNoBinding so the
 	// webhook handler renders the same ignored shape.
 	install, err := installForAccount(ctx, s.Installs, binding.AccountID, binding.InstallID)
 	if err != nil {
@@ -627,6 +645,12 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		// A push never removes a service: an app whose service left the
 		// Compose file (or is hidden by an inactive profile) is excluded
 		// from the reconcile, keeps serving, and waits for a reviewed deploy.
+		// A new service whose app name a deleted (or another) app still
+		// holds is not created; the rest of the push goes ahead.
+		heldSlugs, slugErr := s.pushServicesWithHeldSlugs(ctx, project, &scan)
+		if slugErr != nil {
+			return reconcile.Result{}, slugErr
+		}
 		kept, keptErr := s.pushKeptServices(ctx, project, scan)
 		if keptErr != nil {
 			return reconcile.Result{}, keptErr
@@ -634,7 +658,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		exclude := make([]string, 0, len(kept))
 		for _, app := range kept {
 			exclude = append(exclude, app.WorkloadName)
-			held[app.ID] = fmt.Sprintf("Kept: %s is not in the Compose file at this commit, and a GitHub push does not remove services. It keeps serving its last release. Deploy with `gregale deploy` or from the dashboard to review and remove it.", app.WorkloadName)
+			held[app.ID] = pushKeptMessage(app)
 		}
 		result, err = s.Reconcile.Reconcile(ctx, project, scan, ev.After, reconcileBranch, exclude)
 		if err != nil {
@@ -664,6 +688,17 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		}
 		for id, reason := range waiting {
 			held[id] = reason
+		}
+		// A service held for its slug has no app, so its check is written
+		// by slug here.
+		for _, slug := range slices.Sorted(maps.Keys(heldSlugs)) {
+			s.Log.Info("githubd: push holds service with a held slug", "slug", slug, "detail", heldSlugs[slug])
+			if s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil {
+				if werr := s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
+					slug, deploymentScope, githubdgrpc.CheckPhaseFailed, heldSlugs[slug]); werr != nil {
+					s.Log.Warn("githubd: write held slug check", "slug", slug, "err", werr)
+				}
+			}
 		}
 	}
 
@@ -779,6 +814,12 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		return result, fmt.Errorf("githubd: order dependency admission: %w", err)
 	}
 	selected, accepted := reconcile.ProjectDeploymentSelection(toEnqueue), make(map[string]bool, len(toEnqueue))
+	var siblingAddresses map[string]map[string]string
+	if deployProject {
+		s.holdPushOverDeployRate(ctx, project, toEnqueue, held)
+		siblingAddresses = s.pushSiblingAddresses(ctx, tree.FS(), project, scan)
+		s.reportReviewedOnlyProjectSettings(ctx, tree.FS(), changedFiles, filterMode, install.InstallationID, ev.Repository.FullName, ev.After, project, deploymentScope)
+	}
 	// App-bound apps have no project dependency graph and deploy to their
 	// production scope, whichever scope the branch maps the project's to.
 	toEnqueue = append(toEnqueue, boundToEnqueue...)
@@ -850,6 +891,8 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 			// PRNumber + SenderLogin stay zero — push events don't
 			// carry a pull_request webhook payload.
 			EventKind: githubdpb.EnqueueBuildEventKind_EVENT_KIND_PUSH,
+			// App-bound apps have no project siblings.
+			ComposeServiceAddresses: projectSiblingAddresses(siblingAddresses, app, appBound[app.ID]),
 		})
 		if err != nil {
 			// Direct compatibility callers keep partial-success. Durable
@@ -1112,6 +1155,13 @@ func (s *Service) filterByPath(touched []state.App, changedFiles []string, filte
 	// Shared files can affect every build even when the same push also
 	// changes a file inside one member. Check each path before filtering.
 	for _, path := range changedFiles {
+		// gregale.yaml at the root declares every function of a functions
+		// project (ADR-20261108160000 §3), so a change to it rebuilds every
+		// member even when one is rooted at the repository root.
+		switch path {
+		case "gregale.yaml", "gregale.yml", "gregale.toml":
+			return touched, nil
+		}
 		memberPath := false
 		for _, app := range touched {
 			if app.RootDir == "" || pathIntersectsDir([]string{path}, app.RootDir) {
@@ -1546,6 +1596,19 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	if err != nil {
 		return reconcile.Result{}, err
 	}
+	return s.dispatchRepositoryAccounts(ctx, ev.Installation.ID, ev.Repository.FullName, func(ctx context.Context, scoped *Service) (reconcile.Result, error) {
+		return scoped.handleAccountPullRequest(ctx, body)
+	})
+}
+
+func (s *Service) handleAccountPullRequest(ctx context.Context, body []byte) (reconcile.Result, error) {
+	ev, err := DecodePullRequest(body)
+	if errors.Is(err, ErrPullRequestActionIgnored) {
+		return reconcile.Result{WasIgnored: true}, ErrIgnored
+	}
+	if err != nil {
+		return reconcile.Result{}, err
+	}
 	target, err := s.resolvePullRequestTarget(ctx, ev)
 	if err != nil {
 		return reconcile.Result{WasIgnored: IsIgnored(err)}, err
@@ -1825,7 +1888,7 @@ func (s *Service) retirePullRequestPreviews(ctx context.Context, ev PullRequestE
 func (s *Service) pullRequestBinding(ctx context.Context, ev PullRequestEvent) (state.GitHubBinding, error) {
 	branches := []string{ev.PullRequest.Base.Ref}
 	if s.Reconcile != nil && s.Reconcile.Store != nil && ev.Installation.ID > 0 {
-		project, err := s.Reconcile.Store.ProjectByRepo(ctx, "", ev.Installation.ID, ev.Repository.FullName)
+		project, err := s.Reconcile.Store.ProjectByRepo(ctx, s.eventAccountID, ev.Installation.ID, ev.Repository.FullName)
 		switch {
 		case err == nil:
 			branches = append(branches, project.ProductionBranch)
@@ -1969,6 +2032,7 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	var workloads map[string]reposcan.Workload
 	var available map[string]struct{}
 	var headValues map[string]map[string]string
+	var keep map[string]previewKeep
 	if sourceReady {
 		reopened, reopenErr := s.reopenLivePullRequestPreview(ctx, ev, install.InstallationID, previewLimits,
 			"https://"+previewHostnameForSlug(previewSlugVal), expiresAt)
@@ -2024,6 +2088,23 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			return reconcile.Result{}, previewSetupFailure("the pull request does not fit the %s plan: %s", account.Plan, strings.Join(reasons, "; "))
 		}
 		headValues = prHeadComposeValues(tree.FS(), scan, s.scanOptions(binding.AccountID), previewLimits)
+		// Refuse before reserving anything: a service that would start without
+		// its datastore, or a set whose builds do not all fit the hour's PR
+		// preview deploys, fails the check with the reason (ADR-20261108140000).
+		previewed := append([]state.App{parentApp}, dependencies...)
+		shortfall, shortfallErr := s.previewDatastoreShortfall(ctx, tree.FS(), binding.AccountID, scan, previewed, headValues)
+		if shortfallErr != nil {
+			return reconcile.Result{}, shortfallErr
+		}
+		// A push rebuilds only the services whose files changed; the others
+		// keep serving their build (ADR-20261108150000).
+		keep = s.previewUnchangedServices(ctx, ev, install.InstallationID, policy, previewed, workloads)
+		if shortfall == "" {
+			shortfall = s.previewDeployShortfall(ctx, account, len(previewed)-len(keep))
+		}
+		if shortfall != "" {
+			return reconcile.Result{}, previewSetupFailure("%s", shortfall)
+		}
 	}
 	// Source fetching and scanning can take longer than a PR head update.
 	// Recheck before the first preview mutation or build reservation.
@@ -2239,7 +2320,14 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	// all three and therefore turns every open/synchronize/reopen event into a
 	// real DeploymentKindPreview build.
 	if sourceReady {
-		if parentApp.ProjectID != "" {
+		pinned := s.pinUnchangedPreviews(ctx, state.PRPreviewHead{
+			InstallationID: install.InstallationID,
+			RepoFullName:   ev.Repository.FullName,
+			PRNumber:       ev.Number,
+			CommitSHA:      ev.PullRequest.HeadSHA,
+		}, keep, append([]state.App{created}, siblingPreviews...))
+		// A kept service keeps the configuration of the build it serves.
+		if parentApp.ProjectID != "" && !pinned[created.ID] {
 			created, err = s.applyPRHeadWorkload(ctx, created, workloads[strings.ToLower(parentApp.WorkloadName)], available, policy,
 				headValues[strings.ToLower(parentApp.WorkloadName)], previewPlatformEnv(ev))
 			if err != nil {
@@ -2253,6 +2341,10 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			if refreshErr != nil {
 				return result, fmt.Errorf("githubd: refresh PR dependency %q: %w", dependency.WorkloadName, refreshErr)
 			}
+			if pinned[preview.ID] {
+				result.Added = append(result.Added, preview)
+				continue
+			}
 			if dependency.ProjectID != "" {
 				// An app bound without a project builds as it is, like the root.
 				preview, err = s.applyPRHeadWorkload(ctx, preview, workloads[strings.ToLower(dependency.WorkloadName)], available, policy,
@@ -2264,7 +2356,9 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			toBuild = append(toBuild, preview)
 			result.Added = append(result.Added, preview)
 		}
-		toBuild = append(toBuild, created)
+		if !pinned[created.ID] {
+			toBuild = append(toBuild, created)
+		}
 		project := state.Project{
 			AccountID:        binding.AccountID,
 			RepoFullName:     ev.Repository.FullName,

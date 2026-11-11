@@ -56,7 +56,18 @@ func (s *PgStore) SetProjectEnvironmentSecret(ctx context.Context, secret Projec
 }
 
 func (s *PgStore) DeleteProjectEnvironmentSecret(ctx context.Context, accountID, projectID, environmentSlug, key string) error {
-	deleted, err := sqlc.New().DeleteProjectEnvironmentSecret(ctx, s.pool, sqlc.DeleteProjectEnvironmentSecretParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return mapErr(err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := sqlc.New()
+	if _, err := q.LockProjectEnvironmentForSecrets(ctx, tx, sqlc.LockProjectEnvironmentForSecretsParams{
+		AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), EnvironmentSlug: environmentSlug,
+	}); err != nil {
+		return mapErr(err)
+	}
+	deleted, err := q.DeleteProjectEnvironmentSecret(ctx, tx, sqlc.DeleteProjectEnvironmentSecretParams{
 		AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), EnvironmentSlug: environmentSlug, Key: key,
 	})
 	if err != nil {
@@ -65,7 +76,7 @@ func (s *PgStore) DeleteProjectEnvironmentSecret(ctx context.Context, accountID,
 	if deleted == 0 {
 		return ErrNotFound
 	}
-	return nil
+	return mapErr(tx.Commit(ctx))
 }
 
 func (s *PgStore) ListProjectEnvironmentSecrets(ctx context.Context, accountID, projectID, environmentSlug string) ([]ProjectEnvironmentSecret, error) {

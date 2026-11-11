@@ -2,6 +2,7 @@ package mcpmanagement
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -19,17 +20,22 @@ import (
 // Requests are private journal inputs, not agent-facing plan contents. The
 // encrypted storedPlan explicitly saves them; plans expose only affected keys.
 type operationPlan struct {
-	Changes          json.RawMessage `json:"changes,omitempty"`
-	Kind             string          `json:"kind"`
-	Request          json.RawMessage `json:"-"`
-	Keys             []string        `json:"keys,omitempty"`
-	ResourceID       string          `json:"resource_id,omitempty"`
-	ExpectedRevision int64           `json:"expected_revision,omitempty"`
-	AppHash          string          `json:"app_configuration_hash"`
-	ResourceHash     string          `json:"resource_hash,omitempty"`
+	Changes           json.RawMessage         `json:"changes,omitempty"`
+	Kind              string                  `json:"kind"`
+	Request           json.RawMessage         `json:"-"`
+	Keys              []string                `json:"keys,omitempty"`
+	ResourceID        string                  `json:"resource_id,omitempty"`
+	ExpectedRevision  int64                   `json:"expected_revision,omitempty"`
+	ScalingBefore     *api.AppScalingSnapshot `json:"scaling_before,omitempty"`
+	EnvIdentityPinned bool                    `json:"env_identity_pinned,omitempty"`
+	RollbackGuarded   bool                    `json:"rollback_guarded,omitempty"`
+	CronHistorySafe   bool                    `json:"cron_history_safe,omitempty"`
+	EnvReceiptProof   string                  `json:"-"`
+	AppHash           string                  `json:"app_configuration_hash"`
+	ResourceHash      string                  `json:"resource_hash,omitempty"`
 }
 
-var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "cron_update": true, "cron_delete": true, "domain_delete": true}
+var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "config_rollback_guarded": true, "cron_update": true, "cron_delete": true, "domain_delete": true}
 
 type operationArgs struct {
 	App         string `json:"app" jsonschema:"Existing app slug"`
@@ -78,7 +84,7 @@ func registerOperations(s *mcp.Server, m *management) {
 	register(s, m, "gregale_list_config_history", "List bounded configuration history and guard decisions without values.", m.listConfigHistory)
 	register(s, m, "gregale_plan_restart", "Review a fresh cold restart of the default app scope so current variables and secrets reach running processes. Native restart is app-wide; named-environment-only connections cannot use it.", m.planRestart)
 	register(s, m, "gregale_get_restart", "Inspect native durable restart processing by wake_id. Completion is separate from application health.", m.getRestart)
-	register(s, m, "gregale_plan_scale", "Review RAM, CPU, concurrency or warm-instance changes. Pins configuration and named workload revision; native plan and residency limits apply.", m.planScale)
+	register(s, m, "gregale_plan_scale", "Review RAM, CPU, concurrency or warm-instance changes. Pins a native scaling revision and immutable target. Apply recovers the same request after interruption; native plan and residency limits apply.", m.planScale)
 	if m.hasCapability(api.ScopeEnvWrite) {
 		register(s, m, "gregale_plan_config_rollback", "Review restoring non-secret variables to an exact configuration revision. Secret values cannot be restored. Protected environments require their approved workflow.", m.planConfigRollback)
 		register(s, m, "gregale_plan_env_change", "Review setting non-secret variables in a consented default or named scope. Credential-like inputs are rejected. No secret-write scope is required; apply with gregale_apply_env_change.", m.planNativeEnvChange)
@@ -87,7 +93,7 @@ func registerOperations(s *mcp.Server, m *management) {
 		}
 	}
 	if m.opts.AllowWrites {
-		registerTool(s, m, "gregale_apply_operation", "Apply an unexpired restart, scaling, configuration or resource lifecycle plan. Reuse the plan ID after errors; completed receipts are durable when the connection has a journal.", false, m.applyOperation)
+		registerTool(s, m, "gregale_apply_operation", "Apply an unexpired restart, scaling, configuration or resource lifecycle plan. Follow the returned recovery guidance after errors; ambiguous cron updates and deletions cannot safely be replayed. Completed receipts are durable when the connection has a journal.", false, m.applyOperation)
 	}
 }
 
@@ -164,6 +170,15 @@ func (m *management) planScale(ctx context.Context, a scalePlanArgs) (any, error
 	if err != nil {
 		return nil, err
 	}
+	before, err := m.client.GetAppScaling(ctx, p.App, p.Scope)
+	if err != nil {
+		return nil, err
+	}
+	if before.AppID != p.AppID || before.Scope != p.Scope || before.EnvironmentID != p.EnvironmentID || before.Revision < 1 {
+		return nil, invalid("invalid_response", "native scaling snapshot does not identify a materialized target")
+	}
+	p.Operation.ExpectedRevision = before.Revision
+	p.Operation.ScalingBefore = &before
 	p.TrafficEffect = "Change selected app resource settings. Warm instances and increased resource sizes can increase usage charges; native quotas and residency rules remain enforced."
 	p.Operation.Changes = p.Operation.Request
 	return m.savePlan(p)
@@ -236,6 +251,12 @@ func (m *management) planNativeEnvChange(ctx context.Context, a planEnvChangeArg
 		return nil, err
 	}
 	p.Operation.Keys = slices.Sorted(maps.Keys(a.Values))
+	p.Operation.EnvIdentityPinned = true
+	var proof [32]byte
+	if _, err := rand.Read(proof[:]); err != nil {
+		return nil, err
+	}
+	p.Operation.EnvReceiptProof = hex.EncodeToString(proof[:])
 	p.Operation.ExpectedRevision, err = m.configRevision(ctx, a.App, a.Environment)
 	if err != nil {
 		return nil, err
@@ -248,7 +269,7 @@ func (m *management) planConfigRollback(ctx context.Context, a configRollbackArg
 	if a.Revision < 1 {
 		return nil, invalid("invalid_argument", "revision must be positive")
 	}
-	p, err := m.operationBase(ctx, operationArgs{a.App, a.Project, a.Environment, a.Reason}, "config_rollback", a.Revision)
+	p, err := m.operationBase(ctx, operationArgs{a.App, a.Project, a.Environment, a.Reason}, "config_rollback_guarded", a.Revision)
 	if err != nil {
 		return nil, err
 	}
@@ -260,6 +281,12 @@ func (m *management) planConfigRollback(ctx context.Context, a configRollbackArg
 		return nil, invalid("invalid_response", "configuration revision identity differs from the selection")
 	}
 	p.Operation.Keys = slices.Sorted(maps.Keys(target.Variables))
+	p.Operation.RollbackGuarded = true
+	var proof [32]byte
+	if _, err := rand.Read(proof[:]); err != nil {
+		return nil, err
+	}
+	p.Operation.EnvReceiptProof = hex.EncodeToString(proof[:])
 	p.Operation.ExpectedRevision, err = m.configRevision(ctx, a.App, p.Scope)
 	if err != nil {
 		return nil, err
@@ -285,7 +312,10 @@ func (m *management) applyOperation(ctx context.Context, a applyArgs) (any, erro
 		problem := p.failure.Problem
 		return nil, &api.APIError{Problem: api.Problem{Status: problem.Status, Code: problem.Code, Detail: problem.Message, Hint: problem.Hint}}
 	}
-	if (p.Operation.Kind == "env" || p.Operation.Kind == "config_rollback") && !m.hasCapability(api.ScopeEnvWrite) {
+	if p.attempted && (p.Operation.Kind == "cron_update" || p.Operation.Kind == "cron_delete") {
+		return nil, invalid("outcome_unknown", "this cron attempt has no durable native receipt; inspect the cron and its audit trail before taking further action")
+	}
+	if (p.Operation.Kind == "env" || p.Operation.Kind == "config_rollback" || p.Operation.Kind == "config_rollback_guarded") && !m.hasCapability(api.ScopeEnvWrite) {
 		return nil, invalid("capability_required", "configuration changes require env:write consent")
 	}
 	app, env, err := m.appEnvironment(ctx, p.App, p.Project, namedScope(p.Scope), true)
@@ -327,32 +357,15 @@ func (m *management) runOperation(ctx context.Context, p *releasePlan, retry boo
 	case "restart":
 		return m.client.RestartAppFresh(ctx, p.App)
 	case "scale":
-		var req api.UpdateAppRequest
-		if err := json.Unmarshal(p.Operation.Request, &req); err != nil {
-			return nil, err
-		}
-		if retry {
-			app, _, err := m.appEnvironment(ctx, p.App, p.Project, namedScope(p.Scope), true)
-			if err != nil {
-				return nil, err
-			}
-			matches := (req.RAMMB == nil || app.RAMMB == *req.RAMMB) && (req.CPUMillicores == nil || app.CPUMillicores == *req.CPUMillicores) && (req.MaxConcurrency == nil || app.MaxConcurrency == *req.MaxConcurrency) && (req.MinInstances == nil || app.MinInstances == *req.MinInstances)
-			if !matches {
-				return nil, invalid("outcome_unknown", "inspect scaling settings before replanning; an ambiguous update will not overwrite another writer")
-			}
-			return projectApp(app), nil
-		}
-		var app api.AppResponse
-		var err error
-		if p.EnvironmentID != "" {
-			app, err = m.client.UpdateAppInEnvironmentAtRevision(ctx, p.App, p.Scope, p.WorkloadRevision, req)
-		} else {
-			app, err = m.client.UpdateApp(ctx, p.App, req)
-		}
-		return projectApp(app), err
+		return m.applyNativeScaling(ctx, p, retry)
 	case "env":
 		return m.applyNativeEnv(ctx, p, retry)
 	case "config_rollback":
+		return nil, invalid("legacy_plan", "this older rollback plan has no native revision guard; inspect current configuration before reviewing a new plan")
+	case "config_rollback_guarded":
+		if !p.Operation.RollbackGuarded {
+			return nil, invalid("legacy_plan", "this older rollback plan has no native revision guard; inspect current configuration before reviewing a new plan")
+		}
 		if err := m.checkOperationConfigRevision(ctx, p); err != nil {
 			return nil, err
 		}
@@ -360,7 +373,14 @@ func (m *management) runOperation(ctx context.Context, p *releasePlan, retry boo
 		if err := json.Unmarshal(p.Operation.Request, &revision); err != nil {
 			return nil, err
 		}
-		return m.client.RollbackConfig(ctx, p.App, p.Scope, revision)
+		if !api.ValidEnvBatchReceiptProof(p.Operation.EnvReceiptProof) {
+			return nil, invalid("invalid_plan", "original rollback receipt proof is unavailable")
+		}
+		result, err := m.client.RollbackConfigReviewed(ctx, p.App, p.Scope, api.ConfigRollbackRequest{Revision: revision, ExpectedRevision: &p.Operation.ExpectedRevision, ExpectedAppID: p.AppID, ExpectedEnvironmentID: p.EnvironmentID, RequestID: configRollbackRequestID(p), ReceiptProof: p.Operation.EnvReceiptProof})
+		if err != nil {
+			return nil, redactApprovalError(err, p.Operation.EnvReceiptProof)
+		}
+		return result, nil
 	case "cron_update", "cron_delete", "domain_delete":
 		return m.applyResourceOperation(ctx, p)
 	}
@@ -387,9 +407,17 @@ func (m *management) applyNativeEnv(ctx context.Context, p *releasePlan, retry b
 		return nil, err
 	}
 	requestID := envRequestID(p)
-	result, err := m.client.ApplyEnvBatch(ctx, p.App, p.Scope, api.EnvBatchRequest{RequestID: requestID, ExpectedRevision: &p.Operation.ExpectedRevision, Values: a.Values})
+	request := api.EnvBatchRequest{RequestID: requestID, ExpectedRevision: &p.Operation.ExpectedRevision, Values: a.Values}
+	if p.Operation.EnvIdentityPinned {
+		if !api.ValidEnvBatchReceiptProof(p.Operation.EnvReceiptProof) {
+			return nil, invalid("invalid_plan", "original configuration receipt proof is unavailable")
+		}
+		request.ExpectedAppID, request.ExpectedEnvironmentID = p.AppID, p.EnvironmentID
+		request.ReceiptProof = p.Operation.EnvReceiptProof
+	}
+	result, err := m.client.ApplyEnvBatch(ctx, p.App, p.Scope, request)
 	if err != nil {
-		return nil, err
+		return nil, redactApprovalError(err, p.Operation.EnvReceiptProof)
 	}
 	if !validConfigCheckpoint(p, &result) {
 		return nil, invalid("invalid_response", "configuration receipt identity differs from this plan")
@@ -421,7 +449,7 @@ func envRequestID(p *releasePlan) string {
 }
 
 func validConfigCheckpoint(p *releasePlan, r *api.EnvBatchResponse) bool {
-	return p.Operation != nil && p.Operation.Kind == "env" && r.AppID == p.AppID && r.Scope == p.Scope && r.RequestID == envRequestID(p) && r.ConfigChange.Revision > p.Operation.ExpectedRevision && slices.Equal(r.UpdatedKeys, p.Operation.Keys) && len(r.DeletedKeys) == 0
+	return p.Operation != nil && p.Operation.Kind == "env" && r.AppID == p.AppID && r.Scope == p.Scope && (!p.Operation.EnvIdentityPinned || r.EnvironmentID == p.EnvironmentID) && r.RequestID == envRequestID(p) && r.ConfigChange.Revision > p.Operation.ExpectedRevision && slices.Equal(r.UpdatedKeys, p.Operation.Keys) && len(r.DeletedKeys) == 0
 }
 
 func resourceFingerprint(v any) string {

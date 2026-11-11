@@ -132,6 +132,9 @@ func cmdAddAI(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Next: gregale ai policy %s --daily-cost 25   # cap spend in USD per UTC day\n", result.IntegrationID)
 	if len(result.Env) > 0 {
 		_, _ = fmt.Fprintln(osStdout, "The app sees the new settings on its next deploy or restart")
+		// Previews and staging inherit these settings, but the gateway
+		// serves production deployments only (outbound_stage_not_allowed).
+		_, _ = fmt.Fprintln(osStdout, "Previews and staging environments get 403 outbound_stage_not_allowed: give them their own provider key")
 	}
 	return 0
 }

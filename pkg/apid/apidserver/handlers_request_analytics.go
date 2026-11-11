@@ -26,6 +26,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/analyticsrollup"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
@@ -71,18 +72,47 @@ type requestAnalyticsCompletenessReader interface {
 	RequestTelemetryCompleteness(ctx context.Context, appID string, from, until time.Time) ([]string, error)
 }
 
+type requestAnalyticsRollupCompletenessReader interface {
+	RequestAnalyticsCompleteness(ctx context.Context, appID string, from, until time.Time) ([]string, error)
+}
+
+// rollupCompleteness reads the analytics completeness through the raw
+// reader's shape.
+type rollupCompleteness struct {
+	r requestAnalyticsRollupCompletenessReader
+}
+
+func (c rollupCompleteness) RequestTelemetryCompleteness(ctx context.Context, appID string, from, until time.Time) ([]string, error) {
+	return c.r.RequestAnalyticsCompleteness(ctx, appID, from, until)
+}
+
 // requestAnalyticsCompleteness says whether every gateway delivered the
 // window's telemetry. Losses (a ring overwrite, an exhausted retry, an app
 // over its ingest cap) otherwise only lowered the totals without a trace.
 // The newest RequestAnalyticsSettleLag is still arriving and is not judged;
 // a window entirely inside it is reported as pending. A failed check leaves
 // the verdict unknown rather than failing the read.
+//
+// When the app's rollups answer the window, a gateway counting analytics
+// itself is judged by its analytics gaps, not raw delivery: a raw row it
+// counted and then lost leaves the rollups whole (ADR-20261103113952
+// amendment 6).
 func (s *server) requestAnalyticsCompleteness(ctx context.Context, appID string, window requestAnalyticsWindow) (*bool, []string) {
-	reader, ok := s.store.(requestAnalyticsCompletenessReader)
-	if !ok {
-		return nil, nil
+	var reader requestAnalyticsCompletenessReader
+	if analytics, ok := s.store.(requestAnalyticsRollupCompletenessReader); ok {
+		if _, covered := analyticsrollup.Covers(ctx, s.store, appID, window.From); covered {
+			reader = rollupCompleteness{analytics}
+		}
 	}
-	return requestAnalyticsCompletenessFrom(ctx, reader, s.log, appID, window)
+	if reader == nil {
+		raw, ok := s.store.(requestAnalyticsCompletenessReader)
+		if !ok {
+			return nil, nil
+		}
+		reader = raw
+	}
+	complete, gaps := requestAnalyticsCompletenessFrom(ctx, reader, s.log, appID, window)
+	return analyticsrollup.WithRollupGaps(ctx, s.store, s.log, appID, window.From, window.Until, complete, gaps)
 }
 
 func requestAnalyticsCompletenessFrom(ctx context.Context, reader requestAnalyticsCompletenessReader, log *slog.Logger, appID string, window requestAnalyticsWindow) (*bool, []string) {
@@ -268,6 +298,7 @@ func parseRequestAnalyticsWindow(r *http.Request, now time.Time, retention time.
 			windowClamped = true
 		}
 	}
+	from, until = analyticsrollup.AlignWindow(from, until, now, retention)
 	return requestAnalyticsWindow{
 		From:           from,
 		Until:          until,
@@ -312,7 +343,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		ReceivedAt:   pgtype.Timestamptz{Time: window.From, Valid: true},
 		ReceivedAt_2: pgtype.Timestamptz{Time: window.Until, Valid: true},
 	}
-	summary, groupRows, err := s.requestAnalyticsTotals(ctx, app, acct, window, groupBy, params)
+	summary, groupRows, sampledOK, err := s.requestAnalyticsTotals(ctx, app, acct, window, groupBy, params)
 	if err != nil {
 		return api.RequestAnalyticsResponse{}, err
 	}
@@ -433,17 +464,27 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 			RequestCount:              requestCount,
 		}
 
+		// When rollups answer the window, the deployment splits take their
+		// request counts too, so they add up to the route totals above.
+		split, err := s.requestAnalyticsRollupSplit(ctx, app, acct, window)
+		if err != nil {
+			return api.RequestAnalyticsResponse{}, err
+		}
 		if deploymentStore, ok := s.store.(requestAnalyticsDeploymentReader); ok {
-			deploymentRows, err := deploymentStore.RequestTelemetryAnalyticsByDeployment(ctx, sqlc.RequestTelemetryAnalyticsByDeploymentParams{
-				AppID:        params.AppID,
-				AccountID:    params.AccountID,
-				ReceivedAt:   params.ReceivedAt,
-				ReceivedAt_2: params.ReceivedAt_2,
-				Limit:        requestAnalyticsDeploymentLimit,
+			deploymentRows, ok, err := requestAnalyticsSampledRead(ctx, s, split != nil, "deployments", func(ctx context.Context) ([]sqlc.RequestTelemetryAnalyticsByDeploymentRow, error) {
+				return deploymentStore.RequestTelemetryAnalyticsByDeployment(ctx, sqlc.RequestTelemetryAnalyticsByDeploymentParams{
+					AppID:        params.AppID,
+					AccountID:    params.AccountID,
+					ReceivedAt:   params.ReceivedAt,
+					ReceivedAt_2: params.ReceivedAt_2,
+					Limit:        requestAnalyticsDeploymentLimit,
+				})
 			})
 			if err != nil {
 				return api.RequestAnalyticsResponse{}, err
 			}
+			sampledOK = sampledOK && ok
+			deploymentRows = split.deployments(deploymentRows, summary.Requests)
 			var totalDeploymentRequests int64
 			if len(deploymentRows) > 0 {
 				totalDeploymentRequests = deploymentRows[0].TotalRequests
@@ -502,18 +543,23 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		}
 
 		if routeDeploymentStore, ok := s.store.(requestAnalyticsRouteDeploymentReader); ok && len(routes) > 0 {
-			routeDeploymentRows, err := routeDeploymentStore.RequestTelemetryAnalyticsByRouteDeployment(ctx, sqlc.RequestTelemetryAnalyticsByRouteDeploymentParams{
-				AppID:           params.AppID,
-				AccountID:       params.AccountID,
-				ReceivedAt:      params.ReceivedAt,
-				ReceivedAt_2:    params.ReceivedAt_2,
-				DeploymentLimit: requestAnalyticsRouteDeploymentLimit,
-				RouteLimit:      requestAnalyticsRouteLimit,
+			routeDeploymentRows, ok, err := requestAnalyticsSampledRead(ctx, s, split != nil, "route deployments", func(ctx context.Context) ([]sqlc.RequestTelemetryAnalyticsByRouteDeploymentRow, error) {
+				return routeDeploymentStore.RequestTelemetryAnalyticsByRouteDeployment(ctx, sqlc.RequestTelemetryAnalyticsByRouteDeploymentParams{
+					AppID:           params.AppID,
+					AccountID:       params.AccountID,
+					ReceivedAt:      params.ReceivedAt,
+					ReceivedAt_2:    params.ReceivedAt_2,
+					DeploymentLimit: requestAnalyticsRouteDeploymentLimit,
+					RouteLimit:      requestAnalyticsRouteLimit,
+				})
 			})
 			if err != nil {
 				return api.RequestAnalyticsResponse{}, err
 			}
-			attachRequestAnalyticsRouteDeploymentObservations(routes, routeDeploymentRows, summary.Requests)
+			sampledOK = sampledOK && ok
+			if ok {
+				attachRequestAnalyticsRouteDeploymentObservations(routes, split.routeDeployments(routeDeploymentRows), summary.Requests)
+			}
 		}
 	}
 
@@ -521,6 +567,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 	return api.RequestAnalyticsResponse{
 		TelemetryComplete:     telemetryComplete,
 		TelemetryGaps:         telemetryGaps,
+		SampledMeasures:       requestAnalyticsSampledMeasuresState(sampledOK),
 		Slug:                  app.Slug,
 		Since:                 echoDebugSince(window.RequestedSince, window.Since),
 		From:                  window.From.Format(time.RFC3339Nano),
@@ -545,6 +592,15 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		DeploymentCosts:       deploymentCosts,
 		AsOf:                  window.AsOf.Format(time.RFC3339Nano),
 	}, nil
+}
+
+// requestAnalyticsSampledMeasuresState names whether the response carries
+// the detail only raw sampled rows hold (api.RequestAnalyticsSampledMeasures*).
+func requestAnalyticsSampledMeasuresState(ok bool) string {
+	if ok {
+		return api.RequestAnalyticsSampledMeasuresIncluded
+	}
+	return api.RequestAnalyticsSampledMeasuresOmitted
 }
 
 // annotateDeploymentCPURegressions compares the mean measured guest CPU time

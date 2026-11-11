@@ -248,6 +248,39 @@ type appFreeze struct {
 	frozen  App
 	limits  []byte      // the JSON of api.LimitsFor(frozen.Plan)
 	prefix  hash.Cloner // sha256 over the effective policy up to its App member
+
+	// revisions memoizes the effective revision by the rest of the digested
+	// document (the pinned host revisions and the declared-route revision),
+	// so a request does not hash the plan's whole Limits again.
+	revisionsMu sync.Mutex
+	revisions   map[string]string
+}
+
+// An app freeze remembers at most appFreezeRevisionMemoEntries revisions, each
+// keyed by at most appFreezeRevisionMemoKeyBytes; cost counts the most they
+// can hold.
+const (
+	appFreezeRevisionMemoEntries  = 8
+	appFreezeRevisionMemoKeyBytes = 1024
+)
+
+func (f *appFreeze) memoizedRevision(key string) (string, bool) {
+	f.revisionsMu.Lock()
+	defer f.revisionsMu.Unlock()
+	revision, ok := f.revisions[key]
+	return revision, ok
+}
+
+func (f *appFreeze) rememberRevision(key, revision string) {
+	if len(key) > appFreezeRevisionMemoKeyBytes {
+		return
+	}
+	f.revisionsMu.Lock()
+	defer f.revisionsMu.Unlock()
+	if f.revisions == nil || len(f.revisions) >= appFreezeRevisionMemoEntries {
+		f.revisions = make(map[string]string, appFreezeRevisionMemoEntries)
+	}
+	f.revisions[key] = revision
 }
 
 func newAppFreezes() *appFreezes {
@@ -272,6 +305,13 @@ func (c *appFreezes) freeze(ctx context.Context, app App) (App, string, error) {
 	if err != nil {
 		return App{}, "", fmt.Errorf("encode effective policy: %w", err)
 	}
+	declared := declaredRoutePolicyRevision(ctx)
+	// The revision is a function of the sealed app (its encoding and plan
+	// limits), the pinned host revisions and the declared-route revision.
+	memoKey := string(encodedHosts) + "\x00" + declared
+	if revision, ok := sealed.memoizedRevision(memoKey); ok {
+		return sealed.frozen, revision, nil
+	}
 	digest, err := sealed.prefix.Clone()
 	if err != nil {
 		return App{}, "", fmt.Errorf("encode effective policy: %w", err)
@@ -283,7 +323,7 @@ func (c *appFreezes) freeze(ctx context.Context, app App) (App, string, error) {
 	_, _ = digest.Write(encodedHosts)
 	_, _ = digest.Write([]byte(`,"Limits":`))
 	_, _ = digest.Write(sealed.limits)
-	if declared := declaredRoutePolicyRevision(ctx); declared != "" {
+	if declared != "" {
 		encodedDeclared, err := json.Marshal(declared)
 		if err != nil {
 			return App{}, "", fmt.Errorf("encode effective policy: %w", err)
@@ -292,7 +332,9 @@ func (c *appFreezes) freeze(ctx context.Context, app App) (App, string, error) {
 		_, _ = digest.Write(encodedDeclared)
 	}
 	_, _ = digest.Write([]byte(`}`))
-	return sealed.frozen, policyDigestPrefix + hex.EncodeToString(digest.Sum(nil)), nil
+	revision := policyDigestPrefix + hex.EncodeToString(digest.Sum(nil))
+	sealed.rememberRevision(memoKey, revision)
+	return sealed.frozen, revision, nil
 }
 
 // seal returns the sealed policy for an app encoding, from the cache when an
@@ -367,7 +409,7 @@ func (c *appFreezes) removeLocked(element *list.Element) {
 }
 
 func (f *appFreeze) cost() int {
-	return 2*len(f.encoded) + len(f.limits) + 512
+	return 2*len(f.encoded) + len(f.limits) + 512 + appFreezeRevisionMemoEntries*(appFreezeRevisionMemoKeyBytes+128)
 }
 
 func (h *Handler) pinAppTrafficPolicy(w http.ResponseWriter, r *http.Request, app *App) bool {

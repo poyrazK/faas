@@ -12,20 +12,63 @@ import (
 // application arguments retain their meaning. run restores state on return.
 var nonInteractive bool
 
+// approvalWaitEnabled makes a request that needs a person's approval wait for
+// the decision and retry once (ADR-20261104140058 §6). Set by the
+// --wait-for-approval prefix or GREGALE_WAIT_FOR_APPROVAL=1.
+var approvalWaitEnabled bool
+
+// projectOrganization sends project commands to a company's projects. Set by
+// the --org prefix (`gregale --org acme deploy --project`); a command's own
+// --org option keeps its meaning (apps/projects review 2026-11-10, P3).
+var projectOrganization string
+
+// agentReason is what the agent says its write requests are for, sent as
+// Gregale-Agent-Reason (ADR-20261110182236). Set by the --agent-reason
+// prefix or GREGALE_AGENT_REASON. It is not --reason, which several
+// commands already take with their own meaning.
+var agentReason string
+
 func extractAutomationFlag(args []string) ([]string, error) {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		if arg == "--non-interactive" || strings.HasPrefix(arg, "--non-interactive=") {
-			enabled := true
-			if arg != "--non-interactive" {
-				value := strings.TrimPrefix(arg, "--non-interactive=")
-				if value != "true" && value != "false" {
-					return args, errors.New("--non-interactive accepts true or false")
+		if arg == "--agent-reason" || strings.HasPrefix(arg, "--agent-reason=") {
+			value := strings.TrimPrefix(arg, "--agent-reason=")
+			if arg == "--agent-reason" {
+				rest := args[i+1:]
+				if len(rest) == 0 {
+					return args, errors.New("--agent-reason requires the text of the reason")
 				}
-				enabled, _ = strconv.ParseBool(value)
+				value = rest[0]
+				i++
 			}
-			nonInteractive = enabled
+			agentReason = value
+			continue
+		}
+		if arg == "--org" || strings.HasPrefix(arg, "--org=") {
+			value := strings.TrimPrefix(arg, "--org=")
+			if arg == "--org" {
+				rest := args[i+1:]
+				if len(rest) == 0 {
+					return args, errors.New("--org requires an organization slug")
+				}
+				value = rest[0]
+				i++
+			}
+			if strings.TrimSpace(value) == "" || strings.HasPrefix(value, "-") {
+				return args, errors.New("--org requires an organization slug")
+			}
+			projectOrganization = value
+			continue
+		}
+		handled, err := extractBoolPrefixFlag(arg, "non-interactive", &nonInteractive)
+		if !handled && err == nil {
+			handled, err = extractBoolPrefixFlag(arg, "wait-for-approval", &approvalWaitEnabled)
+		}
+		if err != nil {
+			return args, err
+		}
+		if handled {
 			continue
 		}
 		out = append(out, arg)
@@ -42,6 +85,24 @@ func extractAutomationFlag(args []string) ([]string, error) {
 		return append(out, args[i+1:]...), nil
 	}
 	return out, nil
+}
+
+// extractBoolPrefixFlag sets *dst from --name or --name=true|false.
+func extractBoolPrefixFlag(arg, name string, dst *bool) (bool, error) {
+	flag := "--" + name
+	if arg != flag && !strings.HasPrefix(arg, flag+"=") {
+		return false, nil
+	}
+	enabled := true
+	if arg != flag {
+		value := strings.TrimPrefix(arg, flag+"=")
+		if value != "true" && value != "false" {
+			return true, errors.New(flag + " accepts true or false")
+		}
+		enabled, _ = strconv.ParseBool(value)
+	}
+	*dst = enabled
+	return true, nil
 }
 
 func requireAutomationConfirmation(approved bool, flag string) int {

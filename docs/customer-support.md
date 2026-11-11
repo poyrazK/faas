@@ -91,7 +91,8 @@ and `holidays` (`YYYY-MM-DD`). An empty weekday list means continuous service.
 A working calendar has one local daily window; overnight shifts require a future
 extension. Targets range from one minute to thirty working days' worth of seconds;
 reopening is elapsed time up to thirty days and at most ten reopenings. Calendar
-search is bounded to 3,660 dates and 128 holidays. Policy edits and priority triage
+search is bounded to 3,660 dates and 128 holidays; policies whose targets cannot
+fit within that horizon are rejected when saved. Policy edits and priority triage
 never silently reset an existing clock. Reopened episodes use the original policy
 revision and fresh budgets, even if the global policy has changed or been disabled.
 

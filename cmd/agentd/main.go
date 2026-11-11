@@ -71,6 +71,23 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	defer closeDeps()
+	// ADR-20261027090013: sandbox sessions, off unless their own switch is on.
+	if strings.TrimSpace(os.Getenv("FAAS_AGENTD_SANDBOXES")) == "1" {
+		var scfg agentd.SandboxConfig
+		// Step 7: persisted workspaces, off unless their own switch is on.
+		if strings.TrimSpace(os.Getenv("FAAS_AGENTD_SANDBOX_WORKSPACES")) == "1" {
+			if scfg.Workspaces, err = storage.BackendFromEnvContext(ctx); err != nil {
+				return fmt.Errorf("agentd: artifact store for sandbox workspaces: %w", err)
+			}
+		}
+		sandboxes := replica.NewSandboxes(store, scheddpb.NewScheddClient(conn), scfg)
+		go func() {
+			if err := sandboxes.Run(ctx); err != nil {
+				log.Error("agentd: sandbox sessions stopped", "err", err)
+			}
+		}()
+		log.Info("agentd: running sandbox sessions", "owner", cfg.Owner, "workspaces", scfg.Workspaces != nil)
+	}
 	log.Info("agentd: running agent runs", "owner", cfg.Owner, "schedd", target, "concurrency", cfg.Concurrency)
 	return replica.Run(ctx)
 }

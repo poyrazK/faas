@@ -37,17 +37,17 @@ func addWorkflowRecoveryAttention(out *api.WorkflowRecoveryExecutionAttention, p
 			item.DeadlineAt = &at
 		}
 		switch wait {
-		case api.AutomationQueueAppCapacity, api.AutomationQueueTenantCapacity, api.AutomationQueueWorkflowCapacity:
+		case api.StoredWorkflowQueueAppCapacity, api.StoredWorkflowQueueTenantCapacity, api.StoredWorkflowQueueWorkflowCapacity:
 			item.Status = "capacity_wait"
 			out.CapacityWaitingCount++
-		case api.AutomationQueueScheduled, api.AutomationQueueParkedWait, api.AutomationQueueRetryBackoff:
+		case api.StoredWorkflowQueueScheduled, api.StoredWorkflowQueueParkedWait, api.StoredWorkflowQueueRetryBackoff:
 			item.Status = "scheduled_wait"
 			out.ScheduledWaitingCount++
 		}
 		if item.DeadlineAt != nil && !item.DeadlineAt.After(out.ObservedAt) {
 			item.Status = "deadline_exceeded"
 			out.DeadlineExceededCount++
-		} else if wait == "" || wait == api.AutomationQueueReady {
+		} else if wait == "" || wait == api.StoredWorkflowQueueReady {
 			if out.ObservedAt.Sub(progress) >= time.Duration(out.StallSeconds)*time.Second {
 				item.Status = "stalled"
 				out.StalledCount++
@@ -61,7 +61,7 @@ func addWorkflowRecoveryAttention(out *api.WorkflowRecoveryExecutionAttention, p
 }
 func workflowRecoveryAttentionRead(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, account string, job api.EventRecoveryJob, now time.Time) (api.WorkflowRecoveryExecutionAttention, error) {
 	out := newWorkflowRecoveryAttention(job.Selection.WorkflowRuns, now)
-	rows, err := q.WorkflowRecoveryExecutionObservations(ctx, db, sqlc.WorkflowRecoveryExecutionObservationsParams{AccountID: mustPgUUID(account), JobID: mustPgUUID(job.ID), ThroughPosition: api.AutomationRecoveryBatchMaxRuns, NowAt: pgtypeFromTime(now)})
+	rows, err := q.WorkflowRecoveryExecutionObservations(ctx, db, sqlc.WorkflowRecoveryExecutionObservationsParams{AccountID: mustPgUUID(account), JobID: mustPgUUID(job.ID), ThroughPosition: api.StoredWorkflowRecoveryBatchMaxRuns, NowAt: pgtypeFromTime(now)})
 	if err != nil {
 		return out, err
 	}
@@ -255,8 +255,8 @@ func workflowRecoveryAttentionWait(d api.WorkflowRunDiagnosticsResponse, now tim
 	reason := d.StateReason
 	if d.NextWakeAt != nil {
 		at, err := time.Parse(time.RFC3339Nano, *d.NextWakeAt)
-		if err == nil && !at.After(now) && (reason == api.AutomationQueueScheduled || reason == api.AutomationQueueParkedWait || reason == api.AutomationQueueRetryBackoff) {
-			return api.AutomationQueueReady
+		if err == nil && !at.After(now) && (reason == api.StoredWorkflowQueueScheduled || reason == api.StoredWorkflowQueueParkedWait || reason == api.StoredWorkflowQueueRetryBackoff) {
+			return api.StoredWorkflowQueueReady
 		}
 	}
 	return reason

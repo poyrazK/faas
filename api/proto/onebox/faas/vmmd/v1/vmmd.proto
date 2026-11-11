@@ -102,6 +102,11 @@ service Vmmd {
   // waits for guest-init, and captures a preset snapshot for its machine
   // shape (ADR-20261027090010 §2, rollout step 9). The VM is destroyed afterwards.
   rpc CaptureAgentSnapshot(CaptureAgentSnapshotRequest) returns (CaptureAgentSnapshotResponse);
+  // CaptureSandboxSnapshot captures a sandbox session VM's warm snapshot
+  // (ADR-20261027090013 §12): booted with no session data and no template
+  // command, snapshotted once guest-init is ready, then destroyed. schedd's
+  // certificate only.
+  rpc CaptureSandboxSnapshot(CaptureSandboxSnapshotRequest) returns (CaptureAgentSnapshotResponse);
 
   // RestoreAppTask creates a fresh deployment-attached VM without carrying
   // command data. The command crosses the trust boundary only after schedd
@@ -130,6 +135,29 @@ service Vmmd {
   // ExecuteAppTaskStream, then relays stdin/resize frames to the guest and
   // output plus one terminal result back.
   rpc AttachAppTask(stream AttachAppTaskRequest) returns (stream AttachAppTaskEvent);
+
+  // SandboxCall runs one sandbox session operation (ADR-20261027090013 §4).
+  // The first frame names the instance, the sandbox it must be and the
+  // sandboxproto request; vmmd resumes a quiet-paused guest, dials its
+  // sandbox port and relays sandboxproto frames both ways until the guest
+  // answers. An instance that is not that sandbox's VM is NotFound.
+  rpc SandboxCall(stream SandboxCallRequest) returns (stream SandboxCallEvent);
+
+  // RunSandbox boots one sandbox session VM and keeps it for the stream's
+  // life (ADR-20261027090013 §4, §5). The first frame is start; booted
+  // follows once the guest's sandbox server listens. The caller may then ask
+  // to freeze the VM or close it; vmmd reports call activity, and a call
+  // that finds the VM frozen thaws it in place and reports thawed. The VM is
+  // destroyed on close and whenever the stream ends.
+  rpc RunSandbox(stream RunSandboxRequest) returns (stream RunSandboxEvent);
+
+  // PersistSandboxWorkspace archives a session's workspace to the artifact
+  // store (ADR-20261027090013 step 7). vmmd asks agentd, on the session's
+  // RunSandbox stream, for a reservation within the account's snapshot
+  // quota, streams the guest's archive to the reserved key, and answers once
+  // agentd has recorded the snapshot. A refused reservation is
+  // FailedPrecondition carrying the limit problem.
+  rpc PersistSandboxWorkspace(PersistSandboxWorkspaceRequest) returns (PersistSandboxWorkspaceResponse);
 
   // WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
   // The caller supplies the deadline on the gRPC context.
@@ -213,6 +241,13 @@ service Vmmd {
   // DeleteWarmSnapshot removes the two storage objects created by a builder
   // warm capture. Missing objects are treated as an idempotent success.
   rpc DeleteWarmSnapshot(DeleteWarmSnapshotRequest) returns (DeleteWarmSnapshotResponse);
+
+  // SnapshotBackingCurrent answers, without starting a VM, whether a parked
+  // capture would restore on this node: the Firecracker version pin and the
+  // ADR-510 backing check a wake runs before it loads a snapshot. schedd asks
+  // after a release to find captures the release made stale and refresh them
+  // before a customer request wakes the app (ADR-20261106214916).
+  rpc SnapshotBackingCurrent(SnapshotBackingCurrentRequest) returns (SnapshotBackingCurrentResponse);
 
   // RetireNativeRuntimeSnapshotObject removes one object of a native runtime
   // capture from the tree only vmmd writes (ADR 20261022184951 amendment 1).
@@ -425,6 +460,7 @@ service Vmmd {
   // Atomically replaces the complete account/region L3 peering policy.
   // Callers must prepare every listed fabric before publishing app routes.
   rpc ReconcilePrivateNetworkPeerings(ReconcilePrivateNetworkPeeringsRequest) returns (ReconcilePrivateNetworkPeeringsAck);
+  rpc RestrictPrivateNetworkPeerings(ReconcilePrivateNetworkPeeringsRequest) returns (ReconcilePrivateNetworkPeeringsAck);
 
   // RemovePrivateNetworkFabric tears down the node-local bridge and optional
   // regional VXLAN link for a deleted Gregale-owned network. The operation is
@@ -913,6 +949,13 @@ message AppSpec {
   // forbidden ports again before rendering the per-instance egress_ports
   // set. Empty = base ports only.
   repeated uint32 egress_ports = 29;
+  // egress_revision is apps.egress_allowlist_revision for the
+  // egress_allowlist and egress_ports above, read in the same row. vmmd keeps
+  // the last policy schedd pushed per app and lays it over wake requests;
+  // when this revision is newer than that cached policy the request's own
+  // policy wins (a wake right after an egress change while the app was
+  // parked). 0 = unknown (older schedd): the cache wins as before.
+  int64 egress_revision = 40;
   // liveness_probe_json is the deployment's validated primary-app
   // liveness_probe override (ADR-078), carried like readiness_probe_json.
   // Empty keeps the plan defaults. production-us hunt #8: without this field
@@ -934,6 +977,35 @@ message AppSpec {
   // Non-production deployments keep shared egress even when their app has a pin.
   // False preserves production eligibility for older callers.
   bool static_egress_excluded = 36;
+  // ADR-20261101215228: requests vmmd's HTTP admission lets through to this
+  // instance at once. schedd sends it once runtime config sets the request
+  // limits: the app's declared per_instance_concurrency, or else
+  // app_request_concurrency_max. 0 (an older schedd, or nothing set) keeps the
+  // plan's concurrency_per_vm. vmmd clamps it to api.AppRequestConcurrencyBound.
+  int32 request_concurrency = 37;
+  // ADR-20261107122928 (idle ladder, proposed): the instance is a
+  // request-serving workload the pause tiers may pause, whatever its declared
+  // pause (schedd's pauseTierWorkload). vmmd's idle_ladder observe mode
+  // measures how long such instances sit idle and which ladder level each
+  // would reach; nothing is paused because of it. False (an older schedd)
+  // leaves the instance out unless quiet_pause_after_ms is set.
+  bool idle_ladder_eligible = 38;
+  // ADR-20261107122928 §6: the instance is a request-serving app that
+  // declared no pause and is not a function, so vmmd may quiet-pause it
+  // between requests behind the idle ladder's activity guard when its
+  // idle_ladder_apps switch is on. An app that declared when_idle or never
+  // keeps what it declared. False (an older schedd) never pauses it.
+  bool idle_ladder_guarded_pause = 39;
+  // ADR-20261109172421: the instance's cgroup cpu.weight, its share of a busy
+  // host (schedd sends max(1, ram_mb / 16)). 0 (an older schedd) gets that
+  // weight from mem_size_mib. vmmd refuses a value above 10000.
+  int32 cpu_weight = 41;
+  // ADR-20261109172421: the instance runs with host cpu.max = max and no
+  // startup boost, so it may use any idle host CPU up to its vCPUs.
+  // cpu_millicores still sizes guest workload partitions. vmmd runs every
+  // app instance this way whatever the field says (ADR-20261109172421 step
+  // 6.3); it stays for an older schedd.
+  bool cpu_uncapped = 42;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -1855,6 +1927,13 @@ message InstanceStats {
   // ADR-570: authoritative node-owned HTTP/Upgrade admission. Absent means
   // the node does not report this guarantee; the plan cap is for this VM.
   HTTPAdmissionEnforcement http_admission_enforcement = 29;
+  // ADR-20261107122928: the idle ladder level vmmd holds the instance at
+  // while its idle_ladder is on: 1 quiet-paused, 2 quiet-paused and quiet for
+  // at least the ladder's freeze delay (10 s). Measured admission charges a
+  // level-2 instance's memory with the frozen floor (FrozenChargeFloorMB).
+  // 0 when the ladder is off, the instance is running, or it is not on the
+  // ladder.
+  int32 idle_ladder_level = 30;
 }
 
 message HTTPAdmissionEnforcement {
@@ -2711,6 +2790,31 @@ message DeleteWarmSnapshotResponse {
   bool deleted = 1;
 }
 
+message SnapshotBackingCurrentRequest {
+  // The capture to check. storage_key is required; fc_version, when set, is
+  // compared with the Firecracker version this node runs.
+  SnapshotRef snapshot = 1;
+  // The drive0 base a wake of this app would attach, as in BootRequest.
+  string base_key = 2;
+}
+
+enum SnapshotBackingVerdict {
+  SNAPSHOT_BACKING_VERDICT_UNSPECIFIED = 0;
+  // A wake on this node would restore the capture.
+  SNAPSHOT_BACKING_CURRENT = 1;
+  // A wake on this node would refuse the capture and cold-boot.
+  SNAPSHOT_BACKING_STALE = 2;
+  // This node could not tell (its images or the capture's identity could not
+  // be read). Callers leave the capture alone; a wake decides.
+  SNAPSHOT_BACKING_UNKNOWN = 3;
+}
+
+message SnapshotBackingCurrentResponse {
+  SnapshotBackingVerdict verdict = 1;
+  // Why the capture is stale or unknown, for logs. Empty when current.
+  string detail = 2;
+}
+
 message RetireNativeRuntimeSnapshotObjectRequest {
   // One of a v2 capture's memory, device state, drive or backing keys.
   string storage_key = 1;
@@ -2904,6 +3008,11 @@ message AgentRunUsage {
   int64 peak_private_mb = 9;
   // cold_boot is true when the VM booted its image, not a snapshot.
   bool cold_boot = 10;
+  // frozen_ms is the part of paused_ms a sandbox session VM spent frozen
+  // (ADR-20261027090013 §5); a run is never frozen.
+  int64 frozen_ms = 11;
+  // final marks a sandbox session's last record, sent at close.
+  bool final = 12;
 }
 
 message RunAgentBooted {
@@ -3262,6 +3371,201 @@ message AttachAppTaskEvent {
 
 message AttachAppTaskAttached {}
 
+message RunSandboxRequest {
+  oneof frame {
+    RunSandboxStart start = 1;
+    RunSandboxFreeze freeze = 2;
+    RunSandboxClose close = 3;
+    RunSandboxPersistGrant persist_grant = 4;
+    RunSandboxPersistRecorded persist_recorded = 5;
+  }
+}
+
+message RunSandboxStart {
+  string instance = 1;
+  string sandbox_id = 2;
+  string account_id = 3;
+  string plan = 4;
+  // base_key is the agent base (drive0); layer_key the platform sandbox
+  // layer (drive1) holding /etc/faas/sandbox.json.
+  string base_key = 5;
+  string layer_key = 6;
+  int32 vcpu_count = 7;
+  int32 mem_size_mib = 8;
+  int32 cpu_millicores = 9;
+  // quiet_pause_after_ms pauses the VM between calls; zero keeps it
+  // running.
+  int64 quiet_pause_after_ms = 10;
+  // network_mode is "none" or "registries" (ADR-20261027090013 §6):
+  // registries boots the VM with DNS-gated egress to package registries
+  // and git hosts on TCP 443.
+  string network_mode = 11;
+  // workspace_key is a persisted workspace's archive in the artifact store
+  // (ADR-20261027090013 step 7), unpacked into /workspace before booted; a
+  // failure to unpack it is FailedPrecondition with the problem code
+  // sandbox_workspace_unavailable.
+  string workspace_key = 12;
+  // image_key is a seller image's full-rootfs artifact (jobs/<job>.ext4 or
+  // jobs/<job>__<artifact>.ext4). When set, vmmd boots it as drive1 in
+  // place of layer_key and stages /etc/faas/sandbox.json on the VM's
+  // private copy.
+  string image_key = 13;
+  // start_cmd, ready_cmd and ready_timeout_ms are a template session's
+  // commands, staged into sandbox.json with image_key; vmmd waits for the
+  // sandbox port up to ready_timeout_ms longer.
+  string start_cmd = 14;
+  string ready_cmd = 15;
+  int64 ready_timeout_ms = 16;
+  // snapshot restores the session from a warm snapshot
+  // CaptureSandboxSnapshot made of the same drives, machine and network
+  // mode; a failed restore cold-boots (ADR-005), and booted reports which.
+  // An older vmmd ignores it and cold-boots.
+  AgentRunSnapshot snapshot = 17;
+}
+
+// CaptureSandboxSnapshotRequest is the session machine to capture, without
+// its session or template commands; namespace and capture_id name its
+// storage keys.
+message CaptureSandboxSnapshotRequest {
+  string instance = 1;
+  string account_id = 2;
+  string plan = 3;
+  string base_key = 4;
+  string layer_key = 5;
+  string image_key = 6;
+  int32 vcpu_count = 7;
+  int32 mem_size_mib = 8;
+  int32 cpu_millicores = 9;
+  string network_mode = 10;
+  string namespace = 11;
+  string capture_id = 12;
+}
+
+// RunSandboxFreeze asks vmmd to freeze the idle VM in place (ADR-1151),
+// returning its reclaimable memory to the host.
+message RunSandboxFreeze {}
+
+message RunSandboxClose {}
+
+// RunSandboxEvent is a server frame on the RunSandbox stream: booted once,
+// then activity, frozen, freeze_refused and thawed as they happen.
+message RunSandboxEvent {
+  oneof frame {
+    RunSandboxBooted booted = 1;
+    RunSandboxActivity activity = 2;
+    RunSandboxFrozen frozen = 3;
+    RunSandboxFreezeRefused freeze_refused = 4;
+    RunSandboxThawed thawed = 5;
+    RunSandboxPersistRequested persist_requested = 6;
+    RunSandboxPersistDone persist_done = 7;
+    // usage is the session VM's measured memory so far (ADR-20261027090011
+    // Measurement, with frozen seconds paused), sent each
+    // SandboxUsageReportSec and once more before the stream ends on close.
+    // Each frame is cumulative and supersedes the last.
+    AgentRunUsage usage = 8;
+  }
+}
+
+message RunSandboxBooted {
+  WakeMethod method = 1;
+  int64 boot_ms = 2;
+}
+
+// RunSandboxActivity reports the session's calls, at most once a second
+// while they change: how many are in flight and when the last one ended.
+message RunSandboxActivity {
+  int32 calls_in_flight = 1;
+  int64 last_call_ended_unix_ms = 2;
+}
+
+message RunSandboxFrozen {}
+
+// RunSandboxFreezeRefused: a call was in flight, or the VM could not be
+// frozen; it keeps running.
+message RunSandboxFreezeRefused {
+  string reason = 1;
+}
+
+message RunSandboxThawed {}
+
+// RunSandboxPersistRequested asks agentd for room for one workspace
+// archive; request_id pairs it with the grant.
+message RunSandboxPersistRequested {
+  string request_id = 1;
+}
+
+// RunSandboxPersistGrant is agentd's answer: a snapshot reserved under
+// storage_key for at most max_bytes, or refusal, an RFC 7807 problem as
+// JSON.
+message RunSandboxPersistGrant {
+  string request_id = 1;
+  string snapshot_id = 2;
+  string storage_key = 3;
+  int64 max_bytes = 4;
+  int64 expires_at_unix_ms = 5;
+  bytes refusal = 6;
+}
+
+// RunSandboxPersistDone reports the archive written, or failed when it was
+// not; agentd then records or drops the snapshot.
+message RunSandboxPersistDone {
+  string request_id = 1;
+  string snapshot_id = 2;
+  int64 bytes = 3;
+  string sha256 = 4;
+  bool failed = 5;
+}
+
+// RunSandboxPersistRecorded: agentd recorded the snapshot as ready, or
+// could not, in which case vmmd deletes the archive.
+message RunSandboxPersistRecorded {
+  string request_id = 1;
+  bool recorded = 2;
+}
+
+message PersistSandboxWorkspaceRequest {
+  string instance = 1;
+  string sandbox_id = 2;
+  // path is the directory to archive, relative to /workspace; empty is the
+  // whole workspace.
+  string path = 3;
+}
+
+message PersistSandboxWorkspaceResponse {
+  string snapshot_id = 1;
+  int64 bytes = 2;
+  string sha256 = 3;
+  int64 entries = 4;
+  int64 expires_at_unix_ms = 5;
+}
+
+message SandboxCallRequest {
+  oneof message {
+    SandboxCallStart start = 1;
+    // frame is a sandboxproto frame after the request: data, data-end,
+    // stdin, stdin-eof, resize or kill.
+    SandboxFrame frame = 2;
+  }
+}
+
+message SandboxCallStart {
+  string instance = 1;
+  string sandbox_id = 2;
+  // request is the sandboxproto request as JSON.
+  bytes request = 3;
+}
+
+message SandboxFrame {
+  uint32 type = 1;
+  bytes body = 2;
+}
+
+message SandboxCallEvent {
+  // frame is a sandboxproto frame from the guest: stdout, stderr, data,
+  // and finally one result or error.
+  SandboxFrame frame = 1;
+}
+
 message AllowResolvedEgressRequest {
   string source_ip = 1;
   repeated string addresses = 2;
@@ -3270,6 +3574,14 @@ message AllowResolvedEgressRequest {
   // app's bound managed databases (ADR 20261026150000): vmmd also opens that
   // TCP port to the addresses. An older resolver leaves it zero.
   uint32 database_port = 4;
+  // Captured from ResolveServiceCaller before starting the DNS lookup.
+  // Both fields fence a grant against slot reuse and daemon/VM replacement.
+  string instance_id = 5;
+  string network_generation = 6;
+  // name is the answered name. vmmd admits a registries-mode sandbox
+  // session's addresses only for names it allows (ADR-20261027090013 §6);
+  // an older resolver leaves it empty, which admits none for such a VM.
+  string name = 7;
 }
 
 message AllowResolvedEgressAck {
@@ -3857,6 +4169,9 @@ message ResolveServiceCallerResponse {
   string deployment_id = 5;
   bool app_task = 6;
   bool job_task = 7;
+  // Opaque lifetime of this manager's current network owner, including
+  // occupied builder/job slots that have no service-caller app identity.
+  string network_generation = 8;
 }
 
 message DataRepairRehearsalIdentityRequest {}

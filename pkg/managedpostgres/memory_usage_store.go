@@ -173,6 +173,7 @@ func (s *MemoryStore) UsageSnapshot(_ context.Context, accountID string, periodS
 				snapshot.ReadyDatabases++
 			}
 			progress := s.accountingCoverageLocked(database).Progress
+			progress.DatabaseID = database.ID
 			snapshot.Databases = append(snapshot.Databases, progress)
 		}
 	}
@@ -200,11 +201,7 @@ func (s *MemoryStore) UsageSnapshot(_ context.Context, accountID string, periodS
 			return UsageSnapshot{}, err
 		}
 	}
-	for i, progress := range snapshot.Databases {
-		if i == 0 || progress.ObservedAt.Before(snapshot.LastObservedAt) {
-			snapshot.LastObservedAt = progress.ObservedAt
-		}
-	}
+	snapshot.LastObservedAt = lastObservedAt(snapshot.Databases)
 	return snapshot, nil
 }
 

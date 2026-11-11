@@ -132,7 +132,8 @@ func (x *session) mutate(key, ticket, op string, in Change) (any, error) {
 	if in.ExpectedRevision != t.Revision {
 		return nil, conflict("ticket revision changed; reload before applying this action")
 	}
-	if x.role != "" && x.role != "manager" && id(t.AssigneeID) != x.actor.ID && !(op == "triage" && !t.AssigneeID.Valid && in.AssigneeID == x.actor.ID) {
+	claim := op == "triage" && !t.AssigneeID.Valid && in.AssigneeID == x.actor.ID
+	if x.role != "" && x.role != "manager" && id(t.AssigneeID) != x.actor.ID && !claim {
 		return nil, forbidden()
 	}
 	if e = x.admission(t.ScopeKey, false); e != nil {
@@ -159,9 +160,10 @@ func (x *session) mutate(key, ticket, op string, in Change) (any, error) {
 		if e = x.message(t, author, in.Body); e != nil {
 			return nil, e
 		}
-		if author == "staff" {
+		switch author {
+		case "staff":
 			st.Episode.reply(x.now)
-		} else if author == "customer" {
+		case "customer":
 			if e = st.Episode.customerReply(x.now); e != nil {
 				return nil, e
 			}

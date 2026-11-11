@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}} — Gregale</title>
+<style nonce="{{.Nonce}}">:root{color-scheme:light dark}body{font:16px/1.5 system-ui,sans-serif;margin:2rem auto;padding:0 1rem;max-width: 60rem}main{max-width: 60rem}code{overflow-wrap:anywhere}button{font:inherit;padding:.6rem 1rem;margin-right:.5rem}small{display:block}dt{font-weight:600}dd{margin:0 0 1rem}form{display:inline}</style></head>
+<body><main><p>Gregale</p><h1>{{.Title}}</h1>
+{{if index .Data "Error"}}<p role="alert">{{index .Data "Error"}}</p><p>Nothing was approved.</p>
+{{else if index .Data "Approved"}}<p>You approved this request. The agent can now repeat it once, until {{index .Data "ExpiresAt"}}.</p>
+{{else if index .Data "Denied"}}<p>You denied this request. The agent cannot make it without a new approval.</p>
+{{else}}
+<p>An agent asked to make a request that needs a person's approval.</p>
+<dl><dt>Agent</dt><dd>{{index .Data "Agent"}}</dd>
+{{with index .Data "Reason"}}<dt>The agent's reason</dt><dd><q>{{.}}</q> (written by the agent; check the request below, which is what you approve)</dd>{{end}}
+<dt>Connected by</dt><dd>{{index .Data "ConnectedBy"}}</dd>
+<dt>Kind of action</dt><dd><strong>{{index .Data "CategoryLabel"}}</strong></dd>
+<dt>Request</dt><dd><code>{{index .Data "Method"}} {{index .Data "Path"}}</code></dd>
+<dt>Request body</dt><dd>{{if index .Data "BodyBound"}}Bound: the approval allows only the request with this exact body.{{else}}Not bound: the approval allows one request to this path with any body (uploads and large bodies).{{end}}</dd>
+<dt>Request expires</dt><dd>{{index .Data "ExpiresAt"}}</dd></dl>
+<p>Approving lets the agent make this request once. You are signed in as {{index .Data "Account"}}.</p>
+<form method="post" action="/cli-auth"><input type="hidden" name="agent_approval" value="{{index .Data "ID"}}"><input type="hidden" name="csrf_token" value="{{index .Data "CSRFToken"}}"><input type="hidden" name="decision" value="approve"><button type="submit">Approve</button></form>
+<form method="post" action="/cli-auth"><input type="hidden" name="agent_approval" value="{{index .Data "ID"}}"><input type="hidden" name="csrf_token" value="{{index .Data "CSRFToken"}}"><input type="hidden" name="decision" value="deny"><label>Reason for the agent (optional) <input type="text" name="note" maxlength="280" autocomplete="off"></label> <button type="submit">Deny</button></form>
+{{end}}</main></body></html>

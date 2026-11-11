@@ -127,12 +127,12 @@ var AllowedAppWebhookEvents = []string{
 	"routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered",
 	"routes.insight.detected", "routes.insight.resolved",
 	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.frequency_threshold_reached", "issue.compound_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered",
-	"workflow.finished", "automation.paused",
+	"workflow.finished", "stored_workflow.paused",
 	"event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished",
 	"event_recovery.execution_attention",
-	"automation.recovery_review_ready", "automation.recovery_review_finished",
-	"automation.recovery_polling_status", "automation.recovery_policy_paused", "automation.recovery_queue_blocked",
-	"automation.recovery_health_alert", "automation.recovery_health_recovered",
+	"stored_workflow.recovery_review_ready", "stored_workflow.recovery_review_finished",
+	"stored_workflow.recovery_polling_status", "stored_workflow.recovery_policy_paused", "stored_workflow.recovery_queue_blocked",
+	"stored_workflow.recovery_health_alert", "stored_workflow.recovery_health_recovered",
 }
 
 // Account receivers intentionally cannot use the app-level all-events
@@ -141,6 +141,36 @@ var AllowedAppWebhookEvents = []string{
 var AllowedAccountReleaseWebhookEvents = []string{
 	"deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted",
 	"environment.gitops.changed",
+	AgentApprovalRequestedWebhookEvent, AgentApprovalApprovedWebhookEvent, AgentApprovalDeniedWebhookEvent,
+}
+
+// Agent approval events (ADR-20261107140000 §4): an agent key's request waits
+// for a person, and a person approved or denied it. Expiry is not an event.
+const (
+	AgentApprovalRequestedWebhookEvent = "agent.approval.requested"
+	AgentApprovalApprovedWebhookEvent  = "agent.approval.approved"
+	AgentApprovalDeniedWebhookEvent    = "agent.approval.denied"
+)
+
+// AgentApprovalWebhookPayload is the payload of an agent.approval.* delivery.
+// It never carries the request body.
+type AgentApprovalWebhookPayload struct {
+	ApprovalID string `json:"approval_id"`
+	KeyID      string `json:"key_id"`
+	OrgID      string `json:"org_id,omitempty"`
+	Category   string `json:"category"`
+	Method     string `json:"method"`
+	Path       string `json:"path"`
+	Status     string `json:"status"`
+	ExpiresAt  string `json:"expires_at"`
+	// ReviewURL is set on agent.approval.requested.
+	ReviewURL string `json:"review_url,omitempty"`
+	DecidedAt string `json:"decided_at,omitempty"`
+	// Note is the person's reason on agent.approval.denied, when given.
+	Note string `json:"note,omitempty"`
+	// Reason is what the agent said the request is for, when it said
+	// (ADR-20261110182236). Untrusted agent text.
+	Reason string `json:"reason,omitempty"`
 }
 
 // AgentRunFinishedWebhookEvent reaches account receivers when an agent run

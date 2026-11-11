@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	mp "github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/credentialdelivery"
@@ -151,8 +152,29 @@ type Provider struct {
 	roles                 []string
 }
 
+// Capabilities covers what every plan's defaults ask for, so a database
+// created through the API or a gregale.yaml `create:` (which fill the plan's
+// storage limit and restore window) is admitted on the fixture. Retention is
+// only recorded: Restore itself stays unsupported and fails loudly.
 func (p *Provider) Capabilities() mp.Capabilities {
-	return mp.Capabilities{PostgresMajors: []int{p.major}, ServiceClasses: []mp.ServiceClass{mp.ClassDevelopment}, Availability: []mp.Availability{mp.AvailabilitySingleZone}, CredentialAccess: []mp.CredentialAccess{mp.CredentialReadWrite, mp.CredentialReadOnly, mp.CredentialMigration}, ScaleToZero: true, PooledConnections: true, MaxStorageBytes: 1 << 30, UsageMeters: []mp.Meter{mp.MeterComputeUnitSeconds}}
+	storage, restoreWindow := planDefaultCeilings()
+	return mp.Capabilities{PostgresMajors: []int{p.major}, ServiceClasses: []mp.ServiceClass{mp.ClassDevelopment}, Availability: []mp.Availability{mp.AvailabilitySingleZone}, CredentialAccess: []mp.CredentialAccess{mp.CredentialReadWrite, mp.CredentialReadOnly, mp.CredentialMigration}, ScaleToZero: true, PointInTimeRestore: true, MaxRestoreWindowSeconds: restoreWindow, PooledConnections: true, MaxStorageBytes: storage, UsageMeters: []mp.Meter{mp.MeterComputeUnitSeconds}}
+}
+
+// planDefaultCeilings returns the largest storage limit and restore window
+// any plan grants (pkg/api/limits.go), never less than the fixture's own
+// 1 GiB databases.
+func planDefaultCeilings() (storage, restoreWindow int64) {
+	storage = 1 << 30
+	for _, plan := range api.Plans {
+		limits, ok := api.ManagedPostgresLimitsFor(plan)
+		if !ok {
+			continue
+		}
+		storage = max(storage, limits.StorageLimitBytes)
+		restoreWindow = max(restoreWindow, limits.RestoreWindowSeconds)
+	}
+	return storage, restoreWindow
 }
 func (p *Provider) observed() mp.ObservedDatabase {
 	return mp.ObservedDatabase{ProviderResourceID: p.resource, DataResourceID: p.resource + "/dataset", Status: mp.ProviderStatusReady, Spec: p.spec}

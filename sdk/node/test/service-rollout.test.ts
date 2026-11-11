@@ -41,3 +41,24 @@ test('exact service abort returns acceptance and reads routing status', async (t
  assert.equal(status.service_rollout_handoff?.phase, 'routing');
  assert.equal(status.service_rollout_handoff?.bindings_check?.audit_id, '43');
 });
+
+// adr: 20261025090000
+test('promotion receipt lookup is a separate read of historical acceptance', async (t) => {
+ const attempt = 'a'.repeat(32);
+ const receipt = { attempt_id: attempt, request_hash: 'b'.repeat(64), app_id: 'app', deployment_id: 'candidate', expected_serving_deployment_id: 'previous', scope: 'default', accepted_at: '2026-10-25T09:00:00Z' };
+ const server = createServer((req, res) => {
+  assert.equal(req.method, 'GET');
+  assert.equal(req.url, `/v1/apps/api/deployment-promotions/${attempt}`);
+  assert.equal(req.headers['idempotency-key'], undefined);
+  assert.equal(req.headers['deployment-promotion-attempt-id'], undefined);
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(receipt));
+ });
+ server.listen(0, '127.0.0.1');
+ await once(server, 'listening');
+ t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+ const address = server.address();
+ assert.ok(address && typeof address !== 'string');
+ new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'read-token', retry: { maxAttempts: 1, backoffMs: 0 } });
+ assert.deepEqual(await DeploymentsService.getDeploymentPromotionReceipt({ slug: 'api', attemptId: attempt }), receipt);
+});

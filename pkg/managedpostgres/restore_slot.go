@@ -20,6 +20,9 @@ type RestoreSlotStore interface {
 	// RestoreSlots lists undeleted databases holding the restore slot,
 	// soonest end first, with the usage subject whose limit they are over.
 	RestoreSlots(ctx context.Context, limit int) ([]RestoreSlotHolder, error)
+	// RestoreSlotsPage advances past a stable (slot deadline, database ID)
+	// cursor, including when earlier holders are still waiting for deletion.
+	RestoreSlotsPage(ctx context.Context, after RestoreSlotCursor, limit int) ([]RestoreSlotHolder, error)
 	// CountSubjectDatabases counts what a reservation for subjectID counts:
 	// its undeleted databases and pending clone restores.
 	CountSubjectDatabases(ctx context.Context, subjectID string) (int64, error)
@@ -32,6 +35,11 @@ type RestoreSlotStore interface {
 type RestoreSlotHolder struct {
 	Database  Database
 	SubjectID string
+}
+
+type RestoreSlotCursor struct {
+	Until time.Time
+	ID    string
 }
 
 // RestoreSlotBindings revokes an expired copy's bindings before its delete is
@@ -110,28 +118,39 @@ func NewRestoreSlotSweeper(service *Service, bindings RestoreSlotBindings, optio
 func (w *RestoreSlotSweeper) Sweep(ctx context.Context) (RestoreSlotSummary, error) {
 	var summary RestoreSlotSummary
 	store := w.service.store.(RestoreSlotStore)
-	holders, err := store.RestoreSlots(ctx, w.batchSize)
-	if err != nil {
-		return summary, err
-	}
-	summary.Holders = len(holders)
 	var failures []error
-	for _, holder := range holders {
+	var after RestoreSlotCursor
+	for {
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
-		outcome, err := w.visit(ctx, store, holder, &summary)
-		switch {
-		case err != nil:
-			summary.Failed++
-			failures = append(failures, fmt.Errorf("restore slot %s: %w", holder.Database.ID, err))
-		case outcome == restoreSlotReleased:
-			summary.Released++
-		case outcome == restoreSlotExpired:
-			summary.Expired++
-		case outcome == restoreSlotWaiting:
-			summary.Waiting++
+		holders, err := store.RestoreSlotsPage(ctx, after, w.batchSize)
+		if err != nil {
+			return summary, errors.Join(append(failures, err)...)
 		}
+		summary.Holders += len(holders)
+		for _, holder := range holders {
+			if err := ctx.Err(); err != nil {
+				return summary, err
+			}
+			outcome, err := w.visit(ctx, store, holder, &summary)
+			switch {
+			case err != nil:
+				summary.Failed++
+				failures = append(failures, fmt.Errorf("restore slot %s: %w", holder.Database.ID, err))
+			case outcome == restoreSlotReleased:
+				summary.Released++
+			case outcome == restoreSlotExpired:
+				summary.Expired++
+			case outcome == restoreSlotWaiting:
+				summary.Waiting++
+			}
+		}
+		if len(holders) < w.batchSize {
+			break
+		}
+		last := holders[len(holders)-1].Database
+		after = RestoreSlotCursor{Until: last.RestoreSlotUntil, ID: last.ID}
 	}
 	w.mailNotices(ctx, &summary)
 	return summary, errors.Join(failures...)
@@ -148,11 +167,22 @@ const (
 
 func (w *RestoreSlotSweeper) visit(ctx context.Context, store RestoreSlotStore, holder RestoreSlotHolder, summary *RestoreSlotSummary) (restoreSlotOutcome, error) {
 	database := holder.Database
-	room, err := w.service.restoreSlotRoom(ctx, store, holder.SubjectID)
+	now := w.now()
+	// Repair expiries scheduled by an older worker before releasing a slot
+	// or skipping an already deleting copy. New claims record this atomically.
+	if notice, expired := restoreSlotExpiryNotice(database, now); expired {
+		if err := w.recordNotice(ctx, notice, summary); err != nil {
+			return restoreSlotHeld, err
+		}
+	}
+	replaced, err := w.service.restoreSlotSourceReplaced(ctx, database)
 	if err != nil {
 		return restoreSlotHeld, err
 	}
-	now := w.now()
+	room, err := w.service.restoreSlotRoomExcluding(ctx, store, holder.SubjectID, replaced)
+	if err != nil {
+		return restoreSlotHeld, err
+	}
 	if room {
 		if _, err := store.ClearRestoreSlot(ctx, database.ID, now); err != nil {
 			return restoreSlotHeld, err
@@ -166,8 +196,10 @@ func (w *RestoreSlotSweeper) visit(ctx context.Context, store RestoreSlotStore, 
 	}
 	if now.Before(database.RestoreSlotUntil) {
 		if !now.Before(database.RestoreSlotUntil.Add(-api.ManagedPostgresRestoreSlotNoticeLead)) {
-			w.recordNotice(ctx, RestoreSlotNotice{DatabaseID: database.ID, Kind: RestoreSlotNoticeEnding,
-				SlotUntil: database.RestoreSlotUntil, RecordedAt: now}, summary)
+			if err := w.recordNotice(ctx, RestoreSlotNotice{DatabaseID: database.ID, Kind: RestoreSlotNoticeEnding,
+				SlotUntil: database.RestoreSlotUntil, RecordedAt: now}, summary); err != nil {
+				return restoreSlotHeld, err
+			}
 		}
 		return restoreSlotHeld, nil
 	}
@@ -189,27 +221,29 @@ func (w *RestoreSlotSweeper) visit(ctx context.Context, store RestoreSlotStore, 
 	if w.expired != nil {
 		w.expired(ctx, scheduled)
 	}
-	w.recordNotice(ctx, RestoreSlotNotice{DatabaseID: database.ID, Kind: RestoreSlotNoticeExpired,
-		SlotUntil: database.RestoreSlotUntil, RestorableUntil: scheduled.PurgeAfter, RecordedAt: now}, summary)
+	// ClaimScheduledDelete recorded the expiry notice with the schedule.
+	if _, expired := restoreSlotExpiryNotice(scheduled, now); expired {
+		summary.Noticed++
+	}
 	return restoreSlotExpired, nil
 }
 
-// recordNotice records a notice once. A failure is logged and does not undo
-// the slot decision: an 'ending' notice is retried by the next sweep, while an
-// 'expired' one is lost with its email, since the copy no longer expires.
-func (w *RestoreSlotSweeper) recordNotice(ctx context.Context, notice RestoreSlotNotice, summary *RestoreSlotSummary) {
+// recordNotice records a notice once. Returning a failed write keeps the
+// holder available for retry before its slot can be cleared.
+func (w *RestoreSlotSweeper) recordNotice(ctx context.Context, notice RestoreSlotNotice, summary *RestoreSlotSummary) error {
 	store, ok := w.service.store.(RestoreSlotNoticeStore)
 	if !ok {
-		return
+		return nil
 	}
 	recorded, err := store.RecordRestoreSlotNotice(ctx, notice)
 	if err != nil {
 		w.logger.Warn("managed postgres restore slot notice not recorded", "database", notice.DatabaseID, "kind", notice.Kind, "error", err)
-		return
+		return err
 	}
 	if recorded {
 		summary.Noticed++
 	}
+	return nil
 }
 
 // mailNotices queues the email for each notice still unmailed and under a
@@ -237,7 +271,13 @@ func (w *RestoreSlotSweeper) mailNotices(ctx context.Context, summary *RestoreSl
 // revokeBindings deletes the copy's live bindings. It reports whether any are
 // still on their way out.
 func (w *RestoreSlotSweeper) revokeBindings(ctx context.Context, database Database) (bool, error) {
-	bindings, err := w.bindings.List(ctx, database.AccountID, database.ID)
+	return revokeDatabaseBindings(ctx, w.bindings, database)
+}
+
+// revokeDatabaseBindings deletes a database's live bindings before an
+// automatic delete. It reports whether any are still on their way out.
+func revokeDatabaseBindings(ctx context.Context, service RestoreSlotBindings, database Database) (bool, error) {
+	bindings, err := service.List(ctx, database.AccountID, database.ID)
 	if err != nil {
 		return false, err
 	}
@@ -250,7 +290,7 @@ func (w *RestoreSlotSweeper) revokeBindings(ctx context.Context, database Databa
 			pending = true
 			continue
 		}
-		if _, err := w.bindings.Delete(ctx, database.AccountID, binding.ID); err != nil {
+		if _, err := service.Delete(ctx, database.AccountID, binding.ID); err != nil {
 			return true, err
 		}
 		pending = true
@@ -261,6 +301,12 @@ func (w *RestoreSlotSweeper) revokeBindings(ctx context.Context, database Databa
 // restoreSlotRoom reports whether a slot holder fits inside its subject's
 // database limit: the subject's other databases leave room for it.
 func (s *Service) restoreSlotRoom(ctx context.Context, store RestoreSlotStore, subjectID string) (bool, error) {
+	return s.restoreSlotRoomExcluding(ctx, store, subjectID, false)
+}
+
+// restoreSlotRoomExcluding is restoreSlotRoom with the copy's own source left
+// out of the count when replaced is set (restoreSlotSourceReplaced).
+func (s *Service) restoreSlotRoomExcluding(ctx context.Context, store RestoreSlotStore, subjectID string, replaced bool) (bool, error) {
 	limit, err := s.maxDatabasesPerAccount(ctx, subjectID)
 	if errors.Is(err, ErrQuotaExceeded) {
 		// A plan without managed PostgreSQL has no room.
@@ -273,7 +319,34 @@ func (s *Service) restoreSlotRoom(ctx context.Context, store RestoreSlotStore, s
 	if err != nil {
 		return false, err
 	}
+	if replaced {
+		count--
+	}
 	return count <= int64(limit), nil
+}
+
+// restoreSlotSourceReplaced reports whether a slot holder's own source has its
+// delete scheduled (ADR-20261031123259 amendment 2026-11-10). Restoring,
+// pointing the app at the copy and deleting the original is how a one-database
+// plan recovers from a bad migration; the original's 7-day undo must not cost
+// the copy its slot. The copy then takes the source's place under the limit,
+// and the source can come back only once there is room for it again
+// (undeleteNeedsRoom).
+func (s *Service) restoreSlotSourceReplaced(ctx context.Context, copy Database) (bool, error) {
+	if copy.RestoreSourceDatabaseID == "" || copy.State == StateDeleting {
+		return false, nil
+	}
+	source, err := s.DatabaseOwnership(ctx, copy.RestoreSourceDatabaseID)
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	// A copy is restored inside its source's owner; anything else is not the
+	// database it replaces under this owner's limit.
+	return source.State == StateDeleting && !source.PurgeAfter.IsZero() && source.CountsTowardLimit() &&
+		source.AccountID == copy.AccountID && source.OrgID == copy.OrgID, nil
 }
 
 // A database switch's copy becomes the app's database, so it must fit inside
@@ -324,6 +397,19 @@ func (s *Service) undeleteNeedsRoom(ctx context.Context, accountID, databaseID s
 	database, err := s.Get(ctx, accountID, databaseID)
 	if err != nil {
 		return err
+	}
+	if database.RestoreSlotUntil.IsZero() && database.State == StateDeleting {
+		// A database recovered from its undo window must fit under the
+		// limit: a restore copy that replaced it (restoreSlotSourceReplaced)
+		// may already hold its place. Its own count includes it.
+		room, err := s.restoreSlotRoom(ctx, store, PolicySubject(ctx, accountID))
+		if err != nil {
+			return err
+		}
+		if !room {
+			return ErrQuotaExceeded
+		}
+		return nil
 	}
 	if database.RestoreSlotUntil.IsZero() || now.Before(database.RestoreSlotUntil) {
 		return nil

@@ -138,7 +138,8 @@ subscription example.
   parks (its idle timeout).
 - Retrying failed events republishes them after newer events of the same row.
 - Pending and failed counts are visible only in the outbox table for now;
-  reporting them to the dashboard is a follow-up.
+  reporting them to the dashboard is a follow-up. (Amendment 1 reports them
+  to the platform.)
 
 ## Rejected alternatives
 
@@ -154,3 +155,133 @@ subscription example.
 - **Account API keys stored as app secrets.** Long-lived, MFA-exempt
   credentials inside a workload; the workload identity is short-lived and
   bound to the app.
+
+## Amendment 1 (2026-11-03): delivery status, drain schedules, runtime report availability
+
+**Context.** Three gaps showed up once hooks merged. Owners could not see
+delivery: waiting and rejected changes lived only in the outbox table, which
+only the relay may read. Changes written while the Data API was parked (by
+other apps, migrations or SQL jobs) waited for the next request to wake it,
+which can take hours. And an installation without workload identity
+(ADR-1141) accepted `hooks enable` while every publication failed silently.
+
+**Decision.**
+
+- *Delivery reports.* After a cycle the relay reads two counts from the
+  outbox through loopback PostgREST, under the same `hooks` claim: waiting
+  changes with the oldest `captured_at`, and rejected changes with the latest
+  `failure_code`. The head's `available_at` in the future means publications
+  keep failing (`publishing: retrying`). It sends `{version, pending, failed,
+  oldest_pending_at, last_published_at, last_failure_code, publishing}` to
+  the private `POST /v1/runtime/data-api/change-status` under its
+  `gregale:data-api:events` identity. It reports at start and after a
+  restore, when publications start or stop failing, when changes are
+  rejected, when delivery changed (at most once a minute) and every ten
+  minutes while awake. The report never carries change data. apid keeps the
+  latest report per app in `data_api_change_hook_reports` (counts and codes
+  only, deleted with the app). A platform answering 404 (an older release) is
+  not asked again until the runtime restarts.
+- *Owner status.* `GET /v1/apps/{slug}/data-api/status` answers without
+  waking the API. It returns the runtime version the control plane serves
+  (so `data-api health` no longer downloads the runtime archive),
+  `runtime_reports: available|unavailable` (whether this installation has
+  workload trust), and the last delivery report. `gregale data-api hooks
+  status` prints them.
+- *Drain schedules.* `gregale data-api hooks enable NAME --drain-every 5m`
+  creates one platform cron on the app that POSTs
+  `/__gregale/hooks/drain`. The runtime answers that path only when the
+  request carries `x-faas-cron: true`, which only platform-dispatched
+  invocations can carry because the gateway strips inbound `x-faas-*`
+  headers. A drain kicks the relay, waits up to 45 s until it has nothing
+  more to do, reports delivery and answers with the counts: 200, or 503 while
+  publications are failing, so the cron's run history shows it. Accepted
+  intervals are minutes that divide an hour, hours that divide a day, or
+  24h. The cron counts against the plan's cron limits (none on Free), and
+  each run is billed app time. `--drain-every off` and `hooks disable` remove
+  it.
+- *Runtime report availability.* `hooks enable` warns when the installation
+  accepts no runtime reports: changes keep waiting in the outbox and publish
+  once workload identity is configured.
+
+**Consequences.** Delivery is visible within a minute while the API is awake
+and stays readable while it is parked. Bounded delivery latency for other
+writers costs the owner one wake per interval. Without a drain schedule,
+changes from other writers still wait for the next request, as before.
+
+**Rejected.** A platform poller reading customer databases (it would hold
+customer credentials outside the Data API and wake Neon computes). LISTEN/
+NOTIFY from the database (it cannot wake a parked VM). Waking on every
+recorded change (needs a database-to-platform channel, the same problem).
+
+## Amendment 2 (2026-11-05): production only, a backlog bound, refusals before storing
+
+**Production only, finally.** Publication and delivery reports already took
+only production workloads, but refused a stage with the same `401` as a bad
+token, so its relay retried forever. A valid token from a non-production
+workload now gets `403 workload_not_production`. The relay returns its claim
+untouched and stops; writes no longer wake it, delivery reports stop, and a
+drain request answers `409 data_api_change_hooks_not_production`.
+
+**A backlog bound.** When nothing publishes (a stage, an installation without
+workload identity) or publishing keeps failing, the trigger kept recording
+every write, growing `gregale_change_events` until it filled the customer's
+database. `capture()` now records nothing while
+`DataAPIChangeHooksBacklogMax` (100,000) changes wait: it compares the
+identity sequence's last value with the oldest waiting (not rejected) change,
+through a new partial index `gregale_change_events_pending (id) WHERE
+failed_at IS NULL`. Counting identifiers errs early (rolled-back writes burn
+some) and costs one index lookup per hooked write, with no shared counter row
+for writers to contend on. Changes past the bound are lost, not queued:
+consumers that need every change must keep publishing healthy, and
+`hooks status` warns from 90% of the bound. Installations made before this
+amendment keep working unbounded; `gregale data-api hooks export --upgrade`
+prints the index and the bounded `capture()` from the same template, and the
+runtime logs `data_api_change_hooks_unbounded` at boot until it is applied.
+
+**Refuse before storing.** `hooks enable` now refuses, changing nothing, on a
+platform that takes no runtime reports (publishing needs the same workload
+identity) and on a non-production scope. With `--drain-every`, the drain cron
+is created first, so a plan that allows no crons (Free) refuses the schedule
+before hooks turn on, instead of leaving hooks on without it.
+
+## Amendment 3 (2026-11-07): changes left out are visible; retries take new identifiers; discard what waits
+
+**Left-out changes are reported.** Amendment 2 drops changes past the bound
+without a trace: identifiers stay contiguous and nothing counts them. The
+bounded `capture()` now notes the time in a one-row table,
+`<schema>.gregale_change_drops`, when it leaves a change out. It writes at most
+once a second and skips the note when another writer holds it
+(`FOR UPDATE SKIP LOCKED`), so a full backlog never makes writers wait on each
+other. Like the event table, the note has RLS and a read policy for the relay's
+`hooks` claim only. The gateway answers `404` for it, and the contract,
+OpenAPI document and types leave it out. The relay sends it as
+`last_dropped_at` in its delivery report. apid keeps the latest one in
+`data_api_change_hook_reports.last_dropped_at`, and `hooks status` warns when
+changes were left out. The note is a table, not a function in the exposed
+schema, because a managed binding's credential checks refuse any
+`SECURITY DEFINER` function the serving login can run there.
+
+**Retries take new identifiers.** `retry_failed()` used to queue rejected
+events again under their original identifiers. The bound counts identifiers
+from the oldest waiting event, so retrying an event rejected long ago tripped
+it at once, and new changes were dropped until that event settled. Retried
+events are now moved to new identifiers in their old order. Each keeps its
+event id (the platform still deduplicates it), its capture time and its
+transaction; `data.sequence` is the new identifier.
+
+**Discard what waits.** The full-backlog warning pointed at
+`discard_failed()`, which removes only rejected events. The bound counts
+waiting events, so that freed nothing. `gregale_hooks.discard_waiting()`
+deletes every event still waiting and clears the drop note. The warning now
+names it.
+
+**Disabling says what keeps happening.** `hooks disable` stops publishing, not
+recording. It now says that hooked tables keep recording until the bound and
+then leave changes out, and how to unhook tables or discard what waits.
+
+**Upgrade.** The template's replayable part (the note, `capture()`,
+`retry_failed()`, `discard_failed()` and `discard_waiting()`) sits between
+`gregale:upgrade-begin` and `gregale:upgrade-end` markers.
+`gregale data-api hooks export --upgrade` prints the pending index and that
+section, which can be applied more than once. Installations that lack the
+note still report delivery, just without `last_dropped_at`.

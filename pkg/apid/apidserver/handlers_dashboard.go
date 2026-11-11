@@ -1948,6 +1948,11 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
 	})
 	data.PlanConfirmToken = planTok
+	if err := s.fillAccountProfileForms(w, r, acct, &data); err != nil {
+		log.Error("dashboard renderAccount: account forms", "err", err, "account_id", view.ID)
+		renderProblem(w, log, err)
+		return
+	}
 	// Wire to .Data.ConnectGithubConfirmToken in account.html; the
 	// form action is /dashboard/install/connect (handlers_oauth_code_callback.go).
 	data.ConnectGithubConfirmToken = connectGithubTok
@@ -1994,6 +1999,9 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		if acct.Plan != api.PlanFree {
 			data.FlashSurface += " " + restoreSubscriptionNotice
 		}
+	}
+	if flash := accountFlowFlash(r); flash != "" {
+		data.FlashSurface = flash
 	}
 	switch r.URL.Query().Get("key_revoked") {
 	case "1":
@@ -2103,7 +2111,7 @@ func dashboardAccountView(acct state.Account, appCount int) *dashboard.AccountVi
 		Plan:                       string(acct.Plan),
 		AppCount:                   n,
 		EmailVerified:              acct.EmailVerified(),
-		EmailVerificationGraceEnds: acct.CreatedAt.Add(emailVerificationGrace).UTC().Format("2006-01-02"),
+		EmailVerificationGraceEnds: verificationDeadline(acct).UTC().Format("2006-01-02"),
 	}
 }
 
@@ -2796,6 +2804,7 @@ func (s *server) renderOrgDetail(w http.ResponseWriter, r *http.Request, log *sl
 	}
 	populateOrgApps(r.Context(), log, s.store, org, &data)
 	populateOrgActivity(r.Context(), r, log, s.store, org, &data)
+	s.populateOrgGitHub(w, r.Context(), log, acct, org, callerRole, &data)
 
 	page := dashboard.Page{
 		Title:   org.Name,

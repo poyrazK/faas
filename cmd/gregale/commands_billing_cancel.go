@@ -69,10 +69,17 @@ func cmdBillingCancel(args []string) int {
 		// Map Problem codes to friendly CLI hints. apid returns
 		// 409 with code=billing_already_cancelled when the
 		// account has no active subscription; render the hint
-		// instead of the SDK error verbatim.
+		// instead of the SDK error verbatim. An apid from before
+		// the code was fixed sends code=conflict with that name as
+		// the title (release N-1 compatibility).
+		// printErr shows an API error's own title, so the hint and the
+		// stable code are set on the problem itself.
 		var apiErr *api.APIError
-		if errors.As(err, &apiErr) && apiErr.Problem.Code == "billing_already_cancelled" {
-			return printErr("No active subscription to cancel", err)
+		if errors.As(err, &apiErr) && (apiErr.Problem.Code == api.CodeBillingAlreadyCancelled ||
+			(apiErr.Problem.Code == api.CodeConflict && apiErr.Problem.Title == api.CodeBillingAlreadyCancelled)) {
+			problem := apiErr.Problem
+			problem.Code, problem.Title = api.CodeBillingAlreadyCancelled, "No active subscription to cancel"
+			return printErr("No active subscription to cancel", &api.APIError{Problem: problem})
 		}
 		return printErr("Cancel failed", err)
 	}

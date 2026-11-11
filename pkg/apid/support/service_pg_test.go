@@ -433,3 +433,20 @@ func TestSupportPersonalKeyCannotReachAnotherPersonalScope(t *testing.T) {
 	a.ID = f.other.ID
 	f.call(t, a, false, "list", "", "", "", nil, 403)
 }
+
+func TestSupportRejectsPolicyWhoseCalendarCannotFitItsTarget(t *testing.T) {
+	f := supportDB(t)
+	p := defaultPolicy()
+	p.ID = newID()
+	p.Revision = 0
+	p.FirstResponseSeconds = 60
+	p.NextReplySeconds = 60
+	p.ResolutionSeconds = int64(api.SupportTargetMax / time.Second)
+	p.Calendar = Calendar{Timezone: "UTC", Weekdays: []int{0}, StartMinute: 0, EndMinute: 1}
+	f.call(t, f.manager, true, "policy_save", "", "", "", p, 400)
+	ticket := f.create(t, "Default policy remains available")
+	got := unpack[StaffTicket](t, f.call(t, f.manager, true, "get", ticket, "", "", nil, 200))
+	if got.Episode.Policy.ID != "default" {
+		t.Fatal("rejected policy affected ticket intake")
+	}
+}

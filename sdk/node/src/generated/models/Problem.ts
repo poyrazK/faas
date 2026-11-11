@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AgentApprovalPendingInfo } from './AgentApprovalPendingInfo.js';
 import type { BindingCheckReport } from './BindingCheckReport.js';
 import type { FieldError } from './FieldError.js';
 import type { LogExcerpt } from './LogExcerpt.js';
@@ -36,6 +37,7 @@ export type Problem = {
    * Observed channel head on realtime_sequence_conflict.
    */
   current_sequence?: number;
+  agent_approval?: AgentApprovalPendingInfo;
   condition_field?: string;
   condition_index?: number;
   field_exists?: boolean;

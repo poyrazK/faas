@@ -241,6 +241,13 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrCapacity("account lookup failed"))
 		return
 	}
+	// The approval page can be phished (device-code phishing), so the
+	// owner learns about every credential it hands out.
+	what := credentialCLISignIn
+	if isMCPAuthCode(req.Code) {
+		what = credentialAgentSignIn
+	}
+	h.srv.noticeCredentialCreated(r, acct, what, label)
 	writeJSON(w, http.StatusOK, api.CliAuthExchangeResponse{
 		Plaintext: plaintext,
 		KeyID:     k.ID,
@@ -321,6 +328,10 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 		h.renderPromotionApprovalPage(w, r)
 		return
 	}
+	if r.URL.Query().Has("agent_approval") {
+		h.renderAgentApprovalPage(w, r)
+		return
+	}
 	if r.URL.Query().Has("secret") {
 		h.renderSecretEntryPage(w, r)
 		return
@@ -345,6 +356,9 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 	// the POST handler can hash it. normalizeCliAuthCode strips the
 	// dash and uppercases; we put the hex back together.
 	raw := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(r.URL.Query().Get("code")), "-", ""))
+	if h.cliApprovalRefused(w, r, acct, raw) {
+		return
+	}
 
 	// Mint the CSRF token + authenticated cookie bound to this account.
 	token, err := middleware.IssueForAuthenticated(h.srv.sessions, "cli-auth", acct.ID)
@@ -421,6 +435,10 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 		h.postPromotionApprovalPage(w, r)
 		return
 	}
+	if r.PostForm.Has("agent_approval") {
+		h.postAgentApprovalPage(w, r)
+		return
+	}
 	if r.PostForm.Has("secret") {
 		h.postSecretEntryPage(w, r)
 		return
@@ -442,6 +460,9 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	// the code claim.
 	if err := middleware.VerifyAuthenticated(h.srv.sessions, r, "cli-auth", acct.ID); err != nil {
 		h.renderCliAuthError(w, r, "Invalid form", "Please reload the page and try again.")
+		return
+	}
+	if h.cliApprovalRefused(w, r, acct, rawCode) {
 		return
 	}
 

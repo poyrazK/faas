@@ -68,4 +68,6 @@ func queueSendBodyLimit(acct state.Account) int64 {
 	return int64(api.MustLimitsFor(acct.Plan).MaxSourceBytesPerInvocation)
 }
 
+func queueSendBatchBodyLimit(state.Account) int64 { return api.QueueSendBatchMaxBytes }
+
 func defaultJSONBodyLimit(state.Account) int64 { return httpkit.DefaultJSONBodyMaxBytes }

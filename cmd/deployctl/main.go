@@ -191,6 +191,7 @@ var defaultTargets = []target{
 	{dir: "deploy/ansible/roles/livequeryd_service/files", skip: only("livequeryd")},
 	{dir: "deploy/ansible/roles/agentd_service/files", skip: only("agentd")},
 	{dir: "deploy/ansible/roles/edgednsd_service/files", skip: only("edgednsd")},
+	{dir: "deploy/ansible/roles/signd_service/files", skip: only("signd")},
 }
 
 // ansibleRoleSkips: the control_plane_service role ships apid, meterd
@@ -215,6 +216,7 @@ func ansibleRoleSkips() map[string]bool {
 		"dbbackupd":            true, // database nodes only (ADR-1027)
 		"agentd":               true,
 		"edgednsd":             true,
+		"signd":                true,
 	}
 }
 
@@ -249,6 +251,7 @@ func legacySkips() map[string]bool {
 		"mcp-bridge":           true,
 		"agentd":               true,
 		"edgednsd":             true,
+		"signd":                true,
 	}
 }
 

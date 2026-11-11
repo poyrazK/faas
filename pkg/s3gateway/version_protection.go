@@ -32,7 +32,7 @@ func (h *Handler) versionProtectionService(req requestContext) objectstorage.Ver
 	st, _ := h.store.(state.ObjectVersionProtectionStore)
 	refs, _ := h.store.(state.ObjectVersionReferenceStore)
 	lock, _ := h.store.(state.ObjectBucketObjectLockStore)
-	return objectstorage.VersionProtectionService{Store: st, References: refs, BucketLock: lock, Provider: req.provider, EventHolds: req.objectLockConfig.PublicCapabilities(req.provider).VersionEventHold, BeforeRequest: objectstorage.VersioningRequestRecorder(h.requestMetrics, req.bucket.ID)}
+	return objectstorage.VersionProtectionService{Store: st, References: refs, BucketLock: lock, Provider: req.provider, EventHolds: req.objectLockConfig.PublicCapabilities(req.provider).VersionEventHold, BeforeRequest: h.configurationRequestRecorder(req.bucket)}
 }
 func (h *Handler) objectVersionProtection(w http.ResponseWriter, r *http.Request, req requestContext, key, kind string) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPut {
@@ -119,6 +119,7 @@ func (h *Handler) putVersionProtection(w http.ResponseWriter, r *http.Request, r
 		j, err = svc.Request(r.Context(), req.bucket, j)
 	}
 	if err == nil {
+		svc.BeforeRequest = objectstorage.VersioningRequestRecorder(h.requestMetrics, req.bucket.ID)
 		j, err = svc.Reconcile(r.Context(), req.bucket, j.ID)
 	}
 	if j.AccountID == req.bucket.AccountID && j.BucketID == req.bucket.ID && !j.CreatedAt.IsZero() {
@@ -164,6 +165,9 @@ func decodeProtectionIntent(body []byte, id, key, version, kind string) (state.O
 	return j, err
 }
 func (h *Handler) protectionError(w http.ResponseWriter, r *http.Request, req requestContext, err error) {
+	if h.configurationAdmissionError(w, r, req, err) {
+		return
+	}
 	if h.writeAWSChunkedError(w, r, req.requestID, err) {
 		return
 	}

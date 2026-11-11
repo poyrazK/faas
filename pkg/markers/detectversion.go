@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
@@ -346,29 +347,63 @@ func versionFromPackageJSONNode(body string) string {
 // string after the equals sign, with quotes stripped.
 var pyprojectRequiresRe = regexp.MustCompile(`(?i)requires-python\s*=\s*["']([^"']+)["']`)
 
-// versionFromPyprojectRequires parses the bare string version.
-// We do NOT parse the full PEP 508 spec — a strict "==3.13" pin
-// is reported as a best-effort because the build pipeline never
-// reads this value.
+// PythonBuildDefault is the Python minor the build installs when a source
+// pins no version (sharedruntime's python313 default; a sharedruntime test
+// keeps the two in step).
+const PythonBuildDefault = "3.13"
+
+// versionFromPyprojectRequires reports the Python a requires-python
+// constraint will run: an exact pin's version, or the build default when a
+// lower bound allows it. The build never reads requires-python, so reporting
+// the lower bound named a Python the app does not get: ">=3.12" printed 3.12
+// while the app ran 3.13 (Hunt 32 H32-9). Upper bounds and exclusions alone
+// name no version.
 func versionFromPyprojectRequires(body string) string {
 	m := pyprojectRequiresRe.FindStringSubmatch(body)
 	if m == nil {
 		return ""
 	}
 	val := strings.TrimSpace(m[1])
-	for _, op := range []string{">=", "<=", "==", "!=", ">", "<", "~=", "^", "="} {
-		if strings.HasPrefix(val, op) {
-			val = strings.TrimPrefix(val, op)
-			break
-		}
-	}
-	val = strings.TrimSpace(val)
 	// PEP 508 allows things like "3.11.0,<3.13" — we take the
 	// first comma-separated token, then normalize.
 	if comma := strings.Index(val, ","); comma >= 0 {
 		val = strings.TrimSpace(val[:comma])
 	}
-	return normalizePythonVersion(val)
+	op := ""
+	for _, candidate := range []string{">=", "<=", "==", "!=", "~=", ">", "<", "^", "="} {
+		if strings.HasPrefix(val, candidate) {
+			op, val = candidate, strings.TrimSpace(strings.TrimPrefix(val, candidate))
+			break
+		}
+	}
+	version := normalizePythonVersion(val)
+	switch op {
+	case "", "==", "=":
+		return version
+	case ">=", ">", "~=", "^":
+		if version != "" && pythonMinorAtMost(version, PythonBuildDefault) {
+			return PythonBuildDefault
+		}
+	}
+	return ""
+}
+
+// pythonMinorAtMost reports whether version's major.minor is at most
+// limit's.
+func pythonMinorAtMost(version, limit string) bool {
+	vMajor, vMinor, ok1 := pythonMajorMinor(version)
+	lMajor, lMinor, ok2 := pythonMajorMinor(limit)
+	return ok1 && ok2 && (vMajor < lMajor || vMajor == lMajor && vMinor <= lMinor)
+}
+
+func pythonMajorMinor(version string) (int, int, bool) {
+	parts := strings.SplitN(version, ".", 3)
+	if len(parts) < 2 {
+		return 0, 0, false
+	}
+	major, err1 := strconv.Atoi(parts[0])
+	minor, err2 := strconv.Atoi(parts[1])
+	return major, minor, err1 == nil && err2 == nil
 }
 
 // goModDirectiveRe matches the leading "go X.Y" or "go X.Y.Z"

@@ -17,6 +17,7 @@ def _get_kwargs(
     name: str,
     *,
     range_: GetCustomMetricSeriesRange | Unset = "24h",
+    labels: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -26,6 +27,8 @@ def _get_kwargs(
         json_range_ = range_
 
     params["range"] = json_range_
+
+    params["labels"] = labels
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -87,6 +90,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     range_: GetCustomMetricSeriesRange | Unset = "24h",
+    labels: str | Unset = UNSET,
 ) -> Response[CustomMetricSeriesResponse | Problem]:
     r"""Read a custom metric's history
 
@@ -102,6 +106,7 @@ def sync_detailed(
         slug (str):
         name (str):
         range_ (GetCustomMetricSeriesRange | Unset):  Default: '24h'.
+        labels (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -115,6 +120,7 @@ def sync_detailed(
         slug=slug,
         name=name,
         range_=range_,
+        labels=labels,
     )
 
     response = client.get_httpx_client().request(
@@ -130,6 +136,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     range_: GetCustomMetricSeriesRange | Unset = "24h",
+    labels: str | Unset = UNSET,
 ) -> CustomMetricSeriesResponse | Problem | None:
     r"""Read a custom metric's history
 
@@ -145,6 +152,7 @@ def sync(
         slug (str):
         name (str):
         range_ (GetCustomMetricSeriesRange | Unset):  Default: '24h'.
+        labels (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -159,6 +167,7 @@ def sync(
         name=name,
         client=client,
         range_=range_,
+        labels=labels,
     ).parsed
 
 
@@ -168,6 +177,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     range_: GetCustomMetricSeriesRange | Unset = "24h",
+    labels: str | Unset = UNSET,
 ) -> Response[CustomMetricSeriesResponse | Problem]:
     r"""Read a custom metric's history
 
@@ -183,6 +193,7 @@ async def asyncio_detailed(
         slug (str):
         name (str):
         range_ (GetCustomMetricSeriesRange | Unset):  Default: '24h'.
+        labels (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -196,6 +207,7 @@ async def asyncio_detailed(
         slug=slug,
         name=name,
         range_=range_,
+        labels=labels,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -209,6 +221,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     range_: GetCustomMetricSeriesRange | Unset = "24h",
+    labels: str | Unset = UNSET,
 ) -> CustomMetricSeriesResponse | Problem | None:
     r"""Read a custom metric's history
 
@@ -224,6 +237,7 @@ async def asyncio(
         slug (str):
         name (str):
         range_ (GetCustomMetricSeriesRange | Unset):  Default: '24h'.
+        labels (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -239,5 +253,6 @@ async def asyncio(
             name=name,
             client=client,
             range_=range_,
+            labels=labels,
         )
     ).parsed

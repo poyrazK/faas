@@ -134,6 +134,7 @@
     seedMathRandom(crypto.randomBytes(16));
     stale.uuid = true;
     stale.int = true;
+    if (typeof resetIdLibraries === 'function') resetIdLibraries();
   }
   exposed.adoptRestore = adoptRestore;
   const nodeRandomUUID = crypto.randomUUID;
@@ -174,6 +175,64 @@
     // No webcrypto in this build: nothing else reads the batch.
   }
 
+  // ID libraries (ADR-20261110170000). Some keep random state at module
+  // scope: npm uuid's 256-byte rng pool and its v1/v6/v7 node, clock and
+  // sequence state, nanoid's pool, and bson's per-process ObjectId value and
+  // counter. A restore replays it, so sibling instances return the same IDs.
+  // When Node compiles one of those files, append a function that clears the
+  // state the way the module first had it; every restore runs them after
+  // Math.random is reseeded. Best effort: a version whose variables differ
+  // is left alone (the reset throws and is ignored).
+  const idResets = [];
+  globalThis[Symbol.for('gregale.reseed.idResets')] = idResets;
+  const idLibraryPatches = [
+    { file: /[\\/]uuid[\\/]dist[\\/](?:cjs[\\/]|esm[\\/]|esm-node[\\/]|commonjs-node[\\/])?rng\.js$/, needs: 'rnds8Pool', reset: 'poolPtr = rnds8Pool.length;' },
+    { file: /[\\/]uuid[\\/]dist[\\/](?:cjs[\\/]|esm[\\/]|esm-node[\\/]|commonjs-node[\\/])?v[167]\.js$/, needs: '_', reset: "if (typeof _state === 'object' && _state) for (const k of Object.keys(_state)) delete _state[k]; if (typeof _nodeId !== 'undefined') { _nodeId = undefined; _clockseq = undefined; }" },
+    { file: /[\\/]nanoid[\\/]index\.c?js$/, needs: 'poolOffset', reset: 'pool = undefined; poolOffset = 0;' },
+    { file: /[\\/]bson[\\/]lib[\\/](?:bson(?:\.node|\.rn|\.bundle)?\.(?:c?js|mjs)|objectid\.js)$/, needs: 'PROCESS_UNIQUE', reset: "PROCESS_UNIQUE = null; if (typeof ObjectId === 'function') ObjectId.index = Math.floor(Math.random() * 0xffffff);" },
+  ];
+  function idLibraryReset(filename, source) {
+    for (const patch of idLibraryPatches) {
+      if (patch.file.test(filename) && source.includes(patch.needs)) {
+        return `\n;try { globalThis[Symbol.for('gregale.reseed.idResets')].push(function gregaleIdReset() { ${patch.reset} }); } catch (_) {}\n`;
+      }
+    }
+    return '';
+  }
+  try {
+    const Module = require('node:module');
+    const compile = Module.prototype._compile;
+    Module.prototype._compile = function gregaleCompile(content, filename) {
+      if (typeof content === 'string' && typeof filename === 'string') content += idLibraryReset(filename, content);
+      return Reflect.apply(compile, this, [content, filename, ...Array.prototype.slice.call(arguments, 2)]);
+    };
+    // ES modules (Node 22.15+): the in-thread hooks see their source too.
+    if (typeof Module.registerHooks === 'function') {
+      Module.registerHooks({
+        load(url, context, nextLoad) {
+          const result = nextLoad(url, context);
+          if (result && result.format === 'module' && result.source != null && String(url).startsWith('file:')) {
+            const source = typeof result.source === 'string' ? result.source : Buffer.from(result.source).toString('utf8');
+            const extra = idLibraryReset(decodeURIComponent(new URL(url).pathname), source);
+            if (extra) return { ...result, source: source + extra };
+          }
+          return result;
+        },
+      });
+    }
+  } catch (_) {
+    // A runtime without these hooks keeps the libraries' documented gap.
+  }
+  function resetIdLibraries() {
+    for (const reset of idResets) {
+      try {
+        reset();
+      } catch (_) {
+        // A version this table does not know: leave it as it was.
+      }
+    }
+  }
+
   function reseed(nonceHex) {
     const nonce = Buffer.from(nonceHex, 'hex');
     if (nonce.length < 16) return 'err bad_nonce';
@@ -182,6 +241,7 @@
     seedMathRandom(freshBytes(nonce));
     stale.uuid = true;
     stale.int = true;
+    resetIdLibraries();
     return 'ok';
   }
 

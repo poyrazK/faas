@@ -889,6 +889,12 @@ func renderAPIError(w io.Writer, e *APIError) {
 	} else if p.BillingPortalURL != "" {
 		_, _ = fmt.Fprintf(w, "  Billing portal: %s\n", p.BillingPortalURL)
 	}
+	// An agent key's request that needs a person's approval names the page
+	// where they decide it (ADR-20261104140058 §6).
+	if a := p.AgentApproval; a != nil && a.ReviewURL != "" && p.Code == api.CodeApprovalRequired {
+		_, _ = fmt.Fprintf(w, "  Review: %s\n", a.ReviewURL)
+		_, _ = fmt.Fprintln(w, "  Run the command again with 'gregale --wait-for-approval ...' to wait for the decision.")
+	}
 	// Error-explanations cluster (spec §6.4 amendment 1): surface
 	// the customer-facing hint / why / fix / relevant_logs block
 	// in the same order the whycopy catalog row lists them. Each

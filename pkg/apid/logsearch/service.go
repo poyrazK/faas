@@ -29,6 +29,9 @@ type Host interface {
 	LogEvents() state.LogEventStore
 	SavedSearches() state.LogSavedSearchStore
 	Logger() *slog.Logger
+	// Audit records a saved search change in the account's audit log
+	// (ADR-20261031144636).
+	Audit(ctx context.Context, kind string, accountID string, data map[string]any)
 }
 
 // Service serves the search. Enabled is the FAAS_LOG_SEARCH_ENABLED operator
@@ -261,9 +264,13 @@ func DecodeCursor(raw string) (time.Time, string, error) {
 
 // QueryEvent is the customer shape of one ledger row.
 func QueryEvent(app string, event state.LogEvent) api.LogQueryEvent {
-	latencyMS := 0
+	var latencyMS *int
 	if event.LatencyMS != nil {
-		latencyMS = *event.LatencyMS
+		v := *event.LatencyMS
+		latencyMS = &v
+	} else if event.Source == state.LogEventSourceHTTP {
+		zero := 0
+		latencyMS = &zero
 	}
 	return api.LogQueryEvent{
 		ID: event.ID, App: app, Timestamp: event.OccurredAt.UTC().Format(time.RFC3339Nano),

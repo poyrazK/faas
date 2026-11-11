@@ -154,6 +154,10 @@ func (x *session) savePolicy(key string, p Policy) (any, error) {
 	if e := p.validate(); e != nil {
 		return nil, e
 	}
+	budget := max(p.FirstResponseSeconds, p.NextReplySeconds, p.ResolutionSeconds)
+	if _, err := p.Calendar.deadline(x.now, time.Duration(budget)*time.Second); err != nil {
+		return nil, invalid("policy targets do not fit within the calendar search horizon")
+	}
 	if e := x.resourceRevision(p.ID, "policy", p.Revision, api.SupportPoliciesMax); e != nil {
 		return nil, e
 	}

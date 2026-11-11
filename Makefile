@@ -8,7 +8,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd edgednsd hostage-gen
+DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd edgednsd signd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -31,6 +31,14 @@ GO_BUILD_FLAGS := -trimpath -buildvcs=false
 # serves the pages or sets grpc.EnableTracing
 # (docs/adr/20261020160744-daemon-blast-radius.md). Comma-separated.
 DAEMON_TAGS := metal,grpcnotrace
+# Build tags of the release's guest-init (PID 1 of every microVM). Every
+# runtime base embeds it and ADR-510 refuses a snapshot whose base changed, so
+# its code should change only when it must. guest/init links gRPC, whose trace
+# package keeps every exported method of every type it converts to an
+# interface (all of pkg/api's), so a change to the body of any of their methods
+# changed PID 1. Comma-separated; scripts/ci/daemon_deps.json forbids the
+# template packages (docs/adr/20261105150000-guest-init-reuse-keeps-bases-and-snapshots.md).
+GUEST_TAGS := grpcnotrace
 # Keep the build target's cgo setting separate from the test environment.
 # `make test` needs the host default for race-enabled tests, while release
 # binaries are always static.
@@ -175,7 +183,7 @@ build: guest-runners ## Build every daemon + CLIs + guest init + function runner
 	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$$c ./cmd/$$c || exit 1; \
 	done
 	@echo "building init (guest PID 1)"
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -o $(BINDIR)/init ./guest/init
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags $(GUEST_TAGS) -o $(BINDIR)/init ./guest/init
 	@install -m 0755 scripts/schedd-brokerq-apply $(BINDIR)/schedd-brokerq-apply
 
 # Function-runner shims live in the guest at /usr/local/bin/faas-runner and
@@ -214,7 +222,7 @@ build-release-batch: ## Build the complete static release binary set in batched 
 	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/ $(addprefix ./cmd/,$(CLIS))
 	@echo "building init (guest PID 1)"
 	@GOOS=linux GOARCH=amd64 CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build \
-	  $(GO_BUILD_FLAGS) -o $(BINDIR)/init ./guest/init
+	  $(GO_BUILD_FLAGS) -tags $(GUEST_TAGS) -o $(BINDIR)/init ./guest/init
 	@echo "building function runners (batched)"
 	@runner_out=$$(mktemp -d); \
 	  trap 'rm -rf "$$runner_out"' EXIT; \
@@ -405,6 +413,10 @@ coverage-checker-test: ## Exercise coverage block union and exact-package gates 
 .PHONY: daemon-deps-check
 daemon-deps-check: ## Fail when a release binary links a package scripts/ci/daemon_deps.json forbids (ADR-1650 unit blast radius)
 	python3 scripts/ci/check_daemon_deps.py
+
+.PHONY: guest-init-stability-check
+guest-init-stability-check: ## Build guest-init at HEAD with and without an unreferenced pkg/api file; fail if its code differs (ADR-20261105150000; two builds)
+	python3 scripts/ci/guest_init_stability.py
 
 .PHONY: memstore-stubs-check
 memstore-stubs-check: ## Fail pure nil-return MemStore methods that can make tests vacuous (issue #1529 / PR-2b)
@@ -641,6 +653,15 @@ hobby-route-audit: ## Tier A (ADR-093): Hobby-tier app audit. Read-only harness 
 test-load: ## Hot-path load test (1k rps, //go:build load) — spec §14 M4 row 2. Needs ≥ 2 vCPU.
 	$(GO) test -tags=load -race -count=1 -v -timeout=10m ./pkg/gateway/...
 
+.PHONY: test-outbound-resilience
+test-outbound-resilience: ## Deadline, pool saturation/recovery and retry regressions; optional DATABASE_URL for Postgres
+	$(GO_TEST) -race -p=1 -count=1 -timeout=10m -run 'Test(Arch_ApidWarmsPoolBeforeBgBefore|BoundedPool|PoolConfig|PoolCollector|DaemonMinConnections|ConnectionWarmup|CanceledAcquires|OutboundRedisPool|ClientDeadline|RemoteCompilerDeadline|AMQPCallInterruptsStalledBroker|Delay|Cancellation|AcquireDeadline|QueryDeadline)' ./pkg/db ./pkg/pgpoolbounds ./pkg/gateway ./pkg/outbound ./pkg/livequery ./pkg/retry ./pkg/sched
+
+.PHONY: test-outbound-resilience-load
+test-outbound-resilience-load: ## Explicit Postgres/Redis fixtures: concurrency, latency, pool recovery and retry accounting
+	@test -n "$$FAAS_RESILIENCE_DATABASE_URL" -a -n "$$FAAS_RESILIENCE_REDIS_URL" || (echo 'Set FAAS_RESILIENCE_DATABASE_URL and FAAS_RESILIENCE_REDIS_URL to isolated test services'; exit 1)
+	$(GO_TEST) -race -p=1 -tags=load -count=1 -timeout=3m -v ./tests/outboundresilience
+
 .PHONY: gateway-bench
 gateway-bench: ## Bench gatewayd-internal cold/hot/concurrent paths with -race; emits ns/op + allocs/op
 	$(GO) test -race -bench=. -benchmem -run=^$ ./pkg/gateway/
@@ -799,6 +820,7 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/cloudflare-app-edge-tunnel_test.sh
 	bash deploy/scripts/cloudflare-s3-tunnel_test.sh
 	bash tests/load/s3-gateway/run_test.sh
+	bash tests/load/edge/run_test.sh
 	bash deploy/scripts/cloudflare-app-dns_test.sh
 	bash deploy/scripts/cloudflare-origin-pull_test.sh
 	bash deploy/scripts/gcp-compute-edge-address_test.sh
@@ -1092,6 +1114,10 @@ systemd-hardening-check: ## Static release gate for production systemd isolation
 .PHONY: canary-artifact-retention-test
 canary-artifact-retention-test: ## Test bounded validation-artifact inventory, safety proofs, and cleanup
 	python3 scripts/ops/faas_canary_artifacts_test.py
+
+.PHONY: go-cache-retention-test
+go-cache-retention-test: ## Test the acceptance-host Go build cache trim (disk high/low water, lock, entry guards)
+	python3 scripts/ops/faas_go_cache_trim_test.py
 
 .PHONY: serving-probe-test
 serving-probe-test: ## Test the compute-node serving probe (ADR-20261023124955 §5)
@@ -1432,7 +1458,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  cp pkg/mcpmanagement/statepg/queries.sql pkg/mcpmanagement/statepg/schema.sql "$$tmp/pkg/mcpmanagement/statepg/"; \
 	  mkdir -p "$$tmp/pkg/ci/db"; \
 	  cp pkg/ci/db/*.sql "$$tmp/pkg/ci/db/"; \
-	  for source_package in pkg/apid/support pkg/edgecert/certpg pkg/releasehistory pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/agents pkg/state/dataapiusage pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/applabels pkg/state/resourcelabels pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
+	  for source_package in pkg/apid/support pkg/edgecert/certpg pkg/signd/signpg pkg/releasehistory pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/agents pkg/state/dataapiusage pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/applabels pkg/state/resourcelabels pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
 	    mkdir -p "$$tmp/$$source_package"; \
 	    cp "$$source_package/queries.sql" "$$source_package/schema.sql" "$$tmp/$$source_package/"; \
 	  done; \
@@ -1451,7 +1477,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  mkdir -p "$$tmp/pkg/managedpostgres/connectioncapacity"; \
 	  cp pkg/managedpostgres/connectioncapacity/queries.sql pkg/managedpostgres/connectioncapacity/schema.sql "$$tmp/pkg/managedpostgres/connectioncapacity/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
-	  for package in pkg/apid/support/sqlc pkg/edgecert/certpg/sqlc pkg/apid/mailoutbox/sqlc pkg/releasehistory/sqlc pkg/internalmail/sqlc pkg/productemail/sqlc pkg/mcpmanagement/statepg/sqlc pkg/ci/db/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/livekeys/sqlc pkg/state/agents/sqlc pkg/state/orgaccess/sqlc pkg/state/resourceownership/sqlc pkg/state/appquota/sqlc pkg/state/scenariopg/sqlc pkg/state/scenariopgfault/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/managedpostgres/credentialprobe/sqlc pkg/managedpostgres/connectioncapacity/sqlc pkg/connectioncapacity/sqlc pkg/datapipeline/sqlc pkg/e2etest/migrationprobe/sqlc; do \
+	  for package in pkg/apid/support/sqlc pkg/edgecert/certpg/sqlc pkg/signd/signpg/sqlc pkg/apid/mailoutbox/sqlc pkg/releasehistory/sqlc pkg/internalmail/sqlc pkg/productemail/sqlc pkg/mcpmanagement/statepg/sqlc pkg/ci/db/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/livekeys/sqlc pkg/state/agents/sqlc pkg/state/orgaccess/sqlc pkg/state/resourceownership/sqlc pkg/state/appquota/sqlc pkg/state/scenariopg/sqlc pkg/state/scenariopgfault/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/managedpostgres/credentialprobe/sqlc pkg/managedpostgres/connectioncapacity/sqlc pkg/connectioncapacity/sqlc pkg/datapipeline/sqlc pkg/e2etest/migrationprobe/sqlc; do \
 	    diff -r "$$package" "$$tmp/$$package" || \
 	      { echo "sqlc-check: generated $$package is out of sync; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
 	  done
@@ -1745,6 +1771,18 @@ test-auth-app: ## Application Auth template and @gregale/auth SDK unit tests (AD
 	@scratch="$$(mktemp -d)" && trap 'rm -rf "$$scratch"' EXIT && \
 	  cp -R cmd/gregale/templates/auth "$$scratch/template" && (cd "$$scratch/template" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test) && \
 	  cp -R sdk/auth "$$scratch/sdk" && rm -rf "$$scratch/sdk/dist" "$$scratch/sdk/node_modules" && (cd "$$scratch/sdk" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test)
+
+.PHONY: test-agents-sandbox
+test-agents-sandbox: ## @gregale/agents-sandbox (OpenAI Agents SDK backend, ADR-20261027090013 §8) unit tests; needs Node 22+ and npm
+	@cd sdk/agents-sandbox && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test
+
+.PHONY: test-sandbox-e2b
+test-sandbox-e2b: ## @gregale/sandbox-e2b (E2B-compatible client, ADR-20261027090013 §12) unit tests; needs Node 22+ and npm
+	@cd sdk/sandbox-e2b && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test
+
+.PHONY: test-sandbox-e2b-python
+test-sandbox-e2b-python: ## gregale-sandbox-e2b (E2B-compatible Python client, ADR-20261027090013 §12) unit tests; needs Python 3.12+, no packages
+	@cd sdk/sandbox-e2b-python && PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests
 
 .PHONY: auth-staging-check auth-staging-canary
 auth-staging-check: ## Application Auth canary harness contracts without provider calls (ADR-1190)

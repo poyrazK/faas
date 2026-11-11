@@ -142,6 +142,10 @@ type requestTelemetryPublisher struct {
 	// Only the actor owns pending, including its final flush. A canceled RPC
 	// retains the exact collapsed payload and event IDs for receiver deduplication.
 	pending []RequestTelemetryRow
+	// receiverAnswered is true when the receiver accepted or rejected rows of
+	// the current pending batch, so a later drop of its remainder is that
+	// app's loss, not a platform gap.
+	receiverAnswered bool
 	// minutes is non-nil when MinuteCollapse is on; the actor owns it too.
 	minutes *requestTelemetryMinutes
 
@@ -232,8 +236,9 @@ func (p *requestTelemetryPublisher) run(ctx context.Context) {
 	}
 }
 
-// tick drains one batch from the recorder, collapses it by
-// (app, deployment, route, status, minute), and ships via ShipFn.
+// tick drains batches from the recorder while a full one is waiting,
+// collapses each by (app, deployment, route, status, minute), and ships it
+// via ShipFn.
 // Errors are logged + retried with exponential backoff up to
 // MaxRetries; final failure increments droppedTotal.
 func (p *requestTelemetryPublisher) tick(ctx context.Context) {
@@ -241,25 +246,43 @@ func (p *requestTelemetryPublisher) tick(ctx context.Context) {
 		return
 	}
 	defer p.reportCoverage(ctx)
+	p.recorder.analytics.tick(ctx, false)
 	if p.minutes != nil {
 		p.tickMinutes(ctx, false)
 		return
 	}
+	// Keep draining while a full batch is waiting. The recorder's wake hook
+	// re-arms only when a drain leaves it under half full, so one batch per
+	// tick under a backlog fell back to the FlushInterval ticker: 256 rows
+	// per 5 s, whatever apid could take. The bound is one pass over the ring.
+	for range p.recorder.cfg.RingSize/p.cfg.FlushBatchSize + 1 {
+		if !p.tickBatch(ctx) || p.recorder.PendingCount() < p.cfg.FlushBatchSize {
+			return
+		}
+	}
+}
+
+// tickBatch ships one batch: the pending retry or a fresh drain. It reports
+// whether the batch was delivered, so the caller may drain another.
+func (p *requestTelemetryPublisher) tickBatch(ctx context.Context) bool {
 	if len(p.pending) == 0 {
 		p.pending = collapseRequestTelemetry(p.recorder.DrainBatch(p.cfg.FlushBatchSize))
 	}
 	if len(p.pending) == 0 {
-		return
+		return false
 	}
 	if p.ship == nil {
 		p.dropPending("request telemetry ship unavailable; dropping batch")
-		return
+		return false
 	}
 	if p.shipPending(ctx) {
 		p.pending = nil
-	} else if ctx.Err() == nil {
+		return ctx.Err() == nil
+	}
+	if ctx.Err() == nil {
 		p.dropPending("request telemetry ship exhausted retries; dropping batch")
 	}
+	return false
 }
 
 // tickMinutes drains everything queued into the open minutes, readies the
@@ -288,7 +311,7 @@ func (p *requestTelemetryPublisher) tickMinutes(ctx context.Context, final bool)
 	}
 	if dropped := p.minutes.trimReady(api.GatewayRequestTelemetryOpenBucketsMax); len(dropped) != 0 {
 		p.log.Warn("request telemetry backlog full; dropping oldest rows", slog.Int("rows", len(dropped)))
-		p.recordDroppedRows(dropped)
+		p.recordPlatformDroppedRows(dropped)
 	}
 	for {
 		if len(p.pending) == 0 {
@@ -315,6 +338,7 @@ func (p *requestTelemetryPublisher) tickMinutes(ctx context.Context, final bool)
 // shipPending records every acknowledged row as shipped. A partial response
 // keeps only the rejected rows pending, with their original event IDs.
 func (p *requestTelemetryPublisher) shipPending(ctx context.Context) bool {
+	p.receiverAnswered = false
 	for attempt := 0; attempt < p.cfg.MaxRetries; attempt++ {
 		if attempt > 0 {
 			select {
@@ -333,6 +357,7 @@ func (p *requestTelemetryPublisher) shipPending(ctx context.Context) bool {
 		}
 		var partial *RequestTelemetryDeliveryError
 		if errors.As(err, &partial) {
+			p.receiverAnswered = p.receiverAnswered || len(partial.Accepted) != 0 || len(partial.Rejected) != 0
 			p.acceptPartialDelivery(partial)
 			if len(p.pending) == 0 {
 				return true
@@ -392,6 +417,24 @@ func (p *requestTelemetryPublisher) recordDroppedRows(rows []RequestTelemetryRow
 	p.recordDropped(requestTelemetryCount(rows))
 }
 
+// recordPlatformDroppedRows records rows lost because the gateway could not
+// deliver them (receiver unreachable, retries exhausted, backlog full). That
+// is a platform gap, not one app's: it ends the node's healthy coverage so
+// route health, the monitor and route removal treat the windows as
+// incomplete. Attributing it to the apps in the batch left those windows
+// "complete" with rows missing (prod 2026-11-09 19:20:16, 534 requests;
+// ADR-20261028110044 amendment 8).
+func (p *requestTelemetryPublisher) recordPlatformDroppedRows(rows []RequestTelemetryRow) {
+	count := requestTelemetryCount(rows)
+	if count <= 0 {
+		return
+	}
+	p.recorder.ringMu.Lock()
+	p.recorder.unattributedLosses += count
+	p.recorder.ringMu.Unlock()
+	p.recordDropped(count)
+}
+
 // requestTelemetryCount returns the number of original requests represented
 // by rows. A row from an older caller may have Count=0; treat it as one so
 // loss accounting never under-reports.
@@ -428,6 +471,21 @@ func (p *requestTelemetryPublisher) recordShipped(n int64) {
 	if p.cfg.OnShipped != nil {
 		p.cfg.OnShipped(n)
 	}
+}
+
+// requestTelemetryExactPerBucket bounds the exact samples kept per collapse
+// bucket: per drained batch on the per-batch path (at most 60 a minute with
+// the default 5 s flush), per minute with MinuteCollapse. The receiver's
+// per-account row budget (DebugTelemetryRequestsPerMinute) still bounds the
+// total.
+const requestTelemetryExactPerBucket = 5
+
+// exactTelemetryRow is an exact sample as it ships: the request's own trace,
+// time and latency, with the event ID and count bucketed gave it.
+func exactTelemetryRow(original, bucketed RequestTelemetryRow) RequestTelemetryRow {
+	original.EventID = bucketed.EventID
+	original.Count = bucketed.Count
+	return original
 }
 
 // collapseRequestTelemetry collapses burst traffic into one row per
@@ -473,6 +531,13 @@ func (p *requestTelemetryPublisher) recordShipped(n int64) {
 //     the bucket, so the apid receiver doesn't have to
 //     re-truncate; lets the query plan match the (received_at
 //     DESC) index ordering exactly.
+//   - Exact samples (ADR-127 amendment 2026-10-31): the first
+//     requestTelemetryExactPerBucket rows marked exactSample (server
+//     errors, apps with in-guest tracing) in a bucket are shipped as
+//     their own rows with their own trace ID, exact time and exact
+//     latency, so a request ID resolves to that request and its guest
+//     spans have a row to merge into. Later ones fold into the bucket as
+//     before; Count totals are unchanged.
 //
 // Output ordering: insertion-order of the FIRST row per bucket.
 // Stable so tests can assert against the output slice without
@@ -488,11 +553,20 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 	// the output slice. Pre-size the map so the common case
 	// (single bucket dominating) avoids rehash.
 	bucketIdx := make(map[string]int, len(rows)/4+1)
+	var exactKept map[string]int
 	out := make([]RequestTelemetryRow, 0, len(rows)/4+1)
-	for _, row := range rows {
-		row, key := requestTelemetryBucketed(row)
+	for _, original := range rows {
+		row, key := requestTelemetryBucketed(original)
 		if key == "" {
 			out = append(out, row)
+			continue
+		}
+		if original.exactSample && exactKept[key] < exactSamplesPerBucket(original) {
+			if exactKept == nil {
+				exactKept = make(map[string]int)
+			}
+			exactKept[key]++
+			out = append(out, exactTelemetryRow(original, row))
 			continue
 		}
 		idx, ok := bucketIdx[key]
@@ -504,6 +578,17 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 		mergeRequestTelemetry(&out[idx], row)
 	}
 	return out
+}
+
+// exactSamplesPerBucket is how many exact rows row's bucket keeps in a minute.
+// Status is part of the bucket key, so a 5xx bucket keeps the server-error
+// sample and a non-5xx bucket's exact rows are traced requests, whose guest
+// spans need their own row (ADR-127 amendment 2026-11-10).
+func exactSamplesPerBucket(row RequestTelemetryRow) int {
+	if row.Status >= 500 {
+		return requestTelemetryExactPerBucket
+	}
+	return api.GatewayRequestTelemetryTracedExactPerBucket
 }
 
 // requestTelemetryBucketed gives row an event ID and a count, quantizes it
@@ -559,6 +644,7 @@ func requestTelemetryBucketed(row RequestTelemetryRow) (RequestTelemetryRow, str
 		ColdBoot:                             row.ColdBoot,
 		LatencyBucket:                        row.LatencyMS,
 		ContentOutcome:                       row.ContentOutcome,
+		AnalyticsCounted:                     row.AnalyticsCounted,
 		bucket:                               bucket,
 	}.String()
 	row.ReceivedAt = bucket
@@ -620,6 +706,7 @@ type bucketKey struct {
 	ColdBoot                             bool
 	LatencyBucket                        int
 	ContentOutcome                       string
+	AnalyticsCounted                     bool
 	bucket                               time.Time
 }
 
@@ -709,6 +796,20 @@ type RequestTelemetryAppGap struct {
 	AppID        uuid.UUID
 	DroppedCount int64
 	PendingCount int
+	// AnalyticsDroppedCount and AnalyticsPendingCount are the analytics
+	// part (ADR-20261103113952 amendment 6): requests lost to analytics
+	// since the last acknowledged heartbeat, and requests whose analytics
+	// are late: rollups past their send time and raw rows the gateway did
+	// not count still waiting to ship.
+	AnalyticsDroppedCount int64
+	AnalyticsPendingCount int
+}
+
+// RequestTelemetryAnalyticsCoverage is a heartbeat's analytics part, set
+// only by a gateway that counts its own analytics.
+type RequestTelemetryAnalyticsCoverage struct {
+	Counting                 bool
+	UnattributedDroppedTotal int64
 }
 
 // RequestTelemetryCoverage describes completed-request delivery, not client migration.
@@ -721,6 +822,7 @@ type RequestTelemetryCoverage struct {
 	AppScoped                bool
 	UnattributedDroppedTotal int64
 	AppGaps                  []RequestTelemetryAppGap
+	Analytics                *RequestTelemetryAnalyticsCoverage
 }
 
 func (p *requestTelemetryPublisher) reportCoverage(ctx context.Context) {
@@ -735,6 +837,7 @@ func (p *requestTelemetryPublisher) reportCoverage(ctx context.Context) {
 	for app, n := range p.recorder.appLosses {
 		gaps[app] = RequestTelemetryAppGap{AppID: app, DroppedCount: n}
 	}
+	analytics := p.recorder.analytics
 	for i := 0; i < p.recorder.len; i++ {
 		row := p.recorder.ring[(p.recorder.head+i)%len(p.recorder.ring)]
 		if row.AppID == uuid.Nil {
@@ -743,6 +846,9 @@ func (p *requestTelemetryPublisher) reportCoverage(ctx context.Context) {
 		gap := gaps[row.AppID]
 		gap.AppID = row.AppID
 		gap.PendingCount++
+		if analytics != nil && !row.AnalyticsCounted {
+			gap.AnalyticsPendingCount += normalizedRequestTelemetryCount(row.Count)
+		}
 		gaps[row.AppID] = gap
 	}
 	if p.minutes != nil {
@@ -757,6 +863,34 @@ func (p *requestTelemetryPublisher) reportCoverage(ctx context.Context) {
 			gap := gaps[app]
 			gap.AppID = app
 			gap.PendingCount += n
+			gaps[app] = gap
+		}
+	}
+	if analytics != nil {
+		// The analytics part (ADR-20261103113952 amendment 6). Rollups
+		// late past their send time, and raw rows the gateway did not
+		// count, are pending for analytics; raw delivery does not wait on
+		// rollups.
+		coverage.Analytics = &RequestTelemetryAnalyticsCoverage{Counting: analytics.active.Load(), UnattributedDroppedTotal: p.recorder.analyticsUnattributed}
+		late := analytics.undelivered()
+		if p.minutes != nil {
+			for app, n := range p.minutes.undeliveredWhere(func(row RequestTelemetryRow) bool { return !row.AnalyticsCounted }) {
+				late[app] += int64(n)
+			}
+		}
+		for app, n := range late {
+			if app == uuid.Nil || n == 0 {
+				continue
+			}
+			gap := gaps[app]
+			gap.AppID = app
+			gap.AnalyticsPendingCount += int(n)
+			gaps[app] = gap
+		}
+		for app, n := range p.recorder.analyticsLosses {
+			gap := gaps[app]
+			gap.AppID = app
+			gap.AnalyticsDroppedCount = n
 			gaps[app] = gap
 		}
 	}
@@ -776,6 +910,11 @@ func (p *requestTelemetryPublisher) reportCoverage(ctx context.Context) {
 			p.recorder.appLosses[gap.AppID] = n
 		} else {
 			delete(p.recorder.appLosses, gap.AppID)
+		}
+		if n := p.recorder.analyticsLosses[gap.AppID] - gap.AnalyticsDroppedCount; n > 0 {
+			p.recorder.analyticsLosses[gap.AppID] = n
+		} else {
+			delete(p.recorder.analyticsLosses, gap.AppID)
 		}
 	}
 	p.recorder.ringMu.Unlock()

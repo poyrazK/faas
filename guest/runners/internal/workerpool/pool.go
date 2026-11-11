@@ -90,6 +90,16 @@ type Lines struct {
 	released   chan struct{}
 	completion bool
 	completed  atomic.Bool
+	// pending is an exclusive worker's response read still in flight when
+	// the invocation ran out of time. A debugged worker is drained through it
+	// instead of being killed (devdebug.go).
+	pending <-chan lineRead
+}
+
+// lineRead is one stdout line read from an exclusive worker.
+type lineRead struct {
+	line []byte
+	err  error
 }
 
 // Next returns the worker's next stdout line, or ctx's error once the
@@ -117,17 +127,14 @@ func (l *Lines) next(ctx context.Context) ([]byte, error) {
 	if l.s != nil {
 		return l.s.next(ctx)
 	}
-	type readResult struct {
-		line []byte
-		err  error
-	}
-	result := make(chan readResult, 1)
+	result := make(chan lineRead, 1)
 	go func() {
 		line, readErr := l.w.stdout.ReadBytes('\n')
-		result <- readResult{line: line, err: readErr}
+		result <- lineRead{line: line, err: readErr}
 	}()
 	select {
 	case <-ctx.Done():
+		l.pending = result
 		return nil, ctx.Err()
 	case got := <-result:
 		return got.line, got.err
@@ -145,6 +152,18 @@ func (l *Lines) Close(healthy bool) {
 	l.once.Do(func() {
 		healthy = healthy && (!l.completion || l.completed.Load())
 		if l.s == nil {
+			if !healthy && l.pending != nil && debuggerHolds() {
+				// The invocation ran out of time while its response was
+				// still owed, the way a breakpoint looks. With a debugger
+				// attached, wait for that response and keep the inspected
+				// worker; the pool holds new requests until it is back.
+				go func() {
+					defer close(l.released)
+					got := <-l.pending
+					l.pool.release(l.w, got.err == nil)
+				}()
+				return
+			}
 			l.pool.release(l.w, healthy)
 			close(l.released)
 			return
@@ -187,9 +206,12 @@ func PrewarmIfSupported(ctx context.Context, spec Spec) (handled bool, err error
 }
 
 func poolFor(spec Spec) *pool {
-	key := fmt.Sprintf("%t\x00%s", spec.RequireResourceLifecycle, strings.Join(append([]string{spec.Executable}, spec.Args...), "\x00"))
-	value, _ := pools.LoadOrStore(key, newPool(spec))
+	value, _ := pools.LoadOrStore(poolKey(spec), newPool(spec))
 	return value.(*pool)
+}
+
+func poolKey(spec Spec) string {
+	return fmt.Sprintf("%t\x00%s", spec.RequireResourceLifecycle, strings.Join(append([]string{spec.Executable}, spec.Args...), "\x00"))
 }
 
 func supportsPersistentProtocol(spec Spec) bool {
@@ -274,6 +296,19 @@ func Recycle() int {
 	return closed
 }
 
+// RecycleSpec closes the workers of one command, as Recycle does for all of
+// them, and forgets the handler's cached protocol check. `gregale dev
+// --local` calls it when a function's source changes so the next request
+// loads the new code (ADR-20261107210000).
+func RecycleSpec(spec Spec) int {
+	supportCache.Delete(spec.HandlerPath)
+	value, ok := pools.Load(poolKey(spec))
+	if !ok {
+		return 0
+	}
+	return value.(*pool).recycle()
+}
+
 func (p *pool) recycle() int {
 	p.mu.Lock()
 	p.generation++
@@ -320,7 +355,7 @@ func (p *pool) acquire(ctx context.Context) (*worker, error) {
 			p.mu.Unlock()
 			return w, nil
 		}
-		if p.live < maxWorkers && (p.slots <= 1 || p.starting == 0) {
+		if p.live < workerLimit() && (p.slots <= 1 || p.starting == 0) {
 			p.live++ // Reserve before starting: concurrent misses cannot oversubscribe.
 			p.starting++
 			generation := p.generation
@@ -522,6 +557,10 @@ type worker struct {
 	// completion version 1 separates a response from execution completion and
 	// uses request IDs even on a one-slot worker.
 	completion bool
+	// functionHooks is set when the adapter runs a function's snapshot hooks
+	// for an envelope's function_hook (ADR-20261110190000); an older adapter
+	// would pass that envelope to the handler instead.
+	functionHooks bool
 	// mux is set when slots > 1 or execution completion uses request IDs.
 	// The pool's mutex guards active, gone and removed.
 	mux     *mux
@@ -563,6 +602,7 @@ func startWorker(ctx context.Context, spec Spec) (*worker, error) {
 			Concurrency              int  `json:"concurrency"`
 			CompletionVersion        int  `json:"completion_version"`
 			ResourceLifecycleVersion int  `json:"resource_lifecycle_version"`
+			FunctionHooksVersion     int  `json:"function_hooks_version"`
 		}
 		if err := json.Unmarshal(line, &handshake); err != nil {
 			ready <- fmt.Errorf("decode ready handshake: %w", err)
@@ -578,6 +618,7 @@ func startWorker(ctx context.Context, spec Spec) (*worker, error) {
 		}
 		w.slots = min(max(handshake.Concurrency, 1), maxWorkerSlots)
 		w.completion = handshake.CompletionVersion == 1
+		w.functionHooks = handshake.FunctionHooksVersion == 1
 		ready <- nil
 	}()
 	select {

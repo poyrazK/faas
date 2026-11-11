@@ -252,6 +252,7 @@ func TestRouteHealthPostgresObservationsAndAtomicAdvance(t *testing.T) {
 					t.Fatalf("advance %+v %+v %v", updated, decision, err)
 				}
 				audits, err := s.ListDeploymentAudit(t.Context(), d.ID, 10)
+				audits = advanceAudits(audits)
 				if err != nil || len(audits) != 1 || !strings.Contains(string(audits[0].Data), "route_health") || strings.Contains(string(audits[0].Data), "/checkout") {
 					t.Fatal("audit missing or route details leaked")
 				}
@@ -269,7 +270,7 @@ func TestRouteHealthPostgresObservationsAndAtomicAdvance(t *testing.T) {
 					t.Fatal("blocked transition wrote traffic")
 				}
 				audits, err := s.ListDeploymentAudit(t.Context(), d.ID, 10)
-				if err != nil || len(audits) != 0 {
+				if err != nil || len(advanceAudits(audits)) != 0 {
 					t.Fatal("blocked transition wrote audit")
 				}
 			}

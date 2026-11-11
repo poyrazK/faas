@@ -50,3 +50,47 @@ required RLS tables or security-invoker views; signed-in access did not.
 - `tests/data-api/row-security.test.mjs` covers RLS tables, security-invoker and
   owner-rights views, materialized views, embeddings, writes and exemptions
   against PostgreSQL and the pinned engine.
+
+## Amendment 1 (2026-11-05): the gate is reread while serving
+
+The gate read the catalog once, at boot, and every wake restored that read
+from the snapshot, while PostgREST's schema channel is off. A migration that
+disabled RLS on a served table, or dropped and recreated it without RLS, left
+the gate allowing every signed-in user until the next `data-api refresh`; a
+public relation or public RPC made unsafe stayed open to anonymous callers.
+
+The runtime now rereads the gate: which exposed relations are row-secured,
+and which public relations and public RPCs fail the boot checks. It rereads at
+most every `DataAPIAccessRecheckInterval` (one minute) while requests arrive,
+without holding them, and after every snapshot restore, where requests wait
+for it within their deadline like they wait for the engine. A relation that
+lost RLS answers `403 rls_required`; an unsafe public relation or function
+answers anonymous callers `503 data_api_public_read_unsafe` or
+`data_api_public_rpc_unsafe` until the owner fixes it. A failed reread keeps
+the last state and is retried by the next request (the engine cannot reach the
+database then either) and is logged as `data_api_access_recheck_unavailable`.
+Each reread is one short catalog connection, like the boot checks, inside the
+control headroom of the connection budget. The window between a migration and
+the gate is now at most a minute, not until a refresh.
+
+## Amendment 2 (2026-11-07): live reads apply the gate
+
+Live reads (ADR-20261016151947) compile a Data API read in the database's hub
+and run it as the binding login. They had no row-security gate, so a table
+without RLS was fully readable to every signed-in user over a live
+subscription, while REST answered `403 rls_required`. The hub now resolves
+whether each relation a live read reaches is row-secured, using the same rule
+as the runtime: a table with RLS on, or a view with `security_invoker`. It
+checks the target and every embedding, and refuses with a `forbidden` error
+naming `rls_required`:
+
+- a signed-in read reaches only row-secured relations, or ones listed in
+  `allow_without_rls`;
+- an anonymous read reaches only row-secured relations, as the public-read rule
+  requires, even if a relation is exempt;
+- server keys are not checked, as in REST.
+
+The runtime adds `allow_without_rls` to the access settings it reports, and
+realtimed puts that list on every RLS-mode frame it sends the hub, replacing
+whatever a client sent. A hub reached by an older realtimed gets no list, so it
+refuses exempt relations: the check fails closed.

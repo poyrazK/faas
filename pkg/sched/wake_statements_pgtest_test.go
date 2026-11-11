@@ -261,9 +261,8 @@ func seedPostgresFrozen(t *testing.T) postgresFrozen {
 	}
 	vmm := &frozenFakeVMM{fakeVMM: &fakeVMM{}}
 	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd")).WithNotifyInPublication()
-	limits := api.MustLimitsFor(api.PlanPro)
 	if err := e.Ledger().Admit(Request{Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: api.PlanPro,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: 1000, MaxConcurrency: app.MaxConcurrency, NodeID: node.ID}); err != nil {
+		RAMMB: app.RAMMB, VCPU: api.SizeVCPUs(app.RAMMB), CPUMillicores: 1000, MaxConcurrency: app.MaxConcurrency, NodeID: node.ID}); err != nil {
 		t.Fatal(err)
 	}
 	e.EnableFrozenTier()
@@ -348,7 +347,9 @@ func TestPostgresThawStatements(t *testing.T) {
 // ADR-1740: a ticketed thaw is one guarded statement; none of the ordinary
 // path's reads. The gateway's coordinated wake (EnsureWake) first selects the
 // production deployment from fresh reads, and then thaws the same way
-// (ADR-1740 amendment 2026-10-21).
+// (ADR-1740 amendment 2026-10-21). Since ADR 20261102072403 the guarded
+// statement shares a transaction with the durable node reservation: begin,
+// admission_reserve_node, ThawFrozenInstance, commit.
 func TestPostgresTicketedThawStatements(t *testing.T) {
 	// The ordinary thaw path's statements, and the gate the ticket stands in
 	// for; a ticketed thaw runs none of them.
@@ -357,12 +358,13 @@ func TestPostgresTicketedThawStatements(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		wake func(ctx context.Context, e *Engine, appID string) (string, error)
-		// maxRoundTrips bounds the sequential round trips before the answer.
+		// maxRoundTrips bounds the sequential round trips before the answer:
+		// the reads that run at once, then the thaw's four-statement transaction.
 		maxRoundTrips int
 	}{
 		// The scheduler's Wake RPC checks the budget and the standards rule
 		// before the resume, at once, then thaws.
-		{name: "wake", maxRoundTrips: 2, wake: func(ctx context.Context, e *Engine, appID string) (string, error) {
+		{name: "wake", maxRoundTrips: 6, wake: func(ctx context.Context, e *Engine, appID string) (string, error) {
 			result, err := e.Wake(ctx, appID, "", "", "")
 			return result.InstanceID, err
 		}},
@@ -370,7 +372,7 @@ func TestPostgresTicketedThawStatements(t *testing.T) {
 		// 2026-10-22): the app read, the budget check and the standards
 		// rule at once, then the thaw. It read ten rows one after another
 		// before.
-		{name: "coordinated wake", maxRoundTrips: 2, wake: func(ctx context.Context, e *Engine, appID string) (string, error) {
+		{name: "coordinated wake", maxRoundTrips: 6, wake: func(ctx context.Context, e *Engine, appID string) (string, error) {
 			out, err := e.EnsureWake(ctx, appID, TriggerGateway)
 			if err != nil || out.Instance == nil {
 				return "", err
@@ -454,11 +456,16 @@ func TestPostgresBootStatements(t *testing.T) {
 		// ownerCache wakes once with schedd's owner cache on (ADR-1741),
 		// parks, and traces the next wake, which finds the entry cached.
 		ownerCache bool
+		// explicit names the app's deployment, as the gateway's AdmitInstance
+		// and the drain's invocations do; ADR-1741 amendment 2026-11-05.
+		explicit bool
 	}{
 		{name: "cold boot"},
 		{name: "snapshot restore", snapshot: true},
 		{name: "cold boot, owner cache warm", ownerCache: true},
 		{name: "snapshot restore, owner cache warm", snapshot: true, ownerCache: true},
+		{name: "snapshot restore, deployment named", snapshot: true, explicit: true},
+		{name: "snapshot restore, deployment named, owner cache warm", snapshot: true, explicit: true, ownerCache: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, _, tracer := tracedPgStore(t)
@@ -517,9 +524,13 @@ func TestPostgresBootStatements(t *testing.T) {
 			for _, n := range nodes {
 				e.CapacityTable().Replace(CapacityReport{NodeID: n.ID, SampledAt: time.Now(), RAMHeadroomMB: int32(n.MemMB)})
 			}
+			wakeDeployment, wakeTrigger := "", ""
+			if tc.explicit {
+				wakeDeployment, wakeTrigger = dep.ID, TriggerInvocation
+			}
 			if tc.ownerCache {
 				e.WithOwnerCache()
-				first, err := e.Wake(ctx, app.ID, "", "", "")
+				first, err := e.Wake(ctx, app.ID, wakeDeployment, "", wakeTrigger)
 				if err != nil {
 					t.Fatalf("first Wake: %v", err)
 				}
@@ -535,7 +546,7 @@ func TestPostgresBootStatements(t *testing.T) {
 			vmm.coldBootHook = vmm.restoreHook
 			tracer.armed.Store(true)
 			wakeStarted := time.Now()
-			result, err := e.Wake(ctx, app.ID, "", "", "")
+			result, err := e.Wake(ctx, app.ID, wakeDeployment, "", wakeTrigger)
 			answered := time.Now()
 			tracer.armed.Store(false)
 			if err != nil || result.InstanceID == "" {

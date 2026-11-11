@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -132,5 +133,39 @@ func TestPoolConfigMigratorTimeouts(t *testing.T) {
 	}
 	if _, set := pooled.ConnConfig.RuntimeParams["statement_timeout"]; set {
 		t.Error("a pgbouncer pool got a startup statement_timeout")
+	}
+}
+
+// TestPoolConfigPacesDials: a pool may open its whole budget at once, then
+// dials at connectionDialsPerSecond, so a pool emptied by a stall does not
+// redial everything into the database at once (2026-11-05 17:29).
+func TestPoolConfigPacesDials(t *testing.T) {
+	t.Setenv(NotifyHubEnv, "")
+	t.Setenv(DirectDSNEnv, "")
+	t.Setenv(RuntimeRoleEnv, "")
+	cfg, err := poolConfig("postgres://faas@127.0.0.1:5432/faas", "faas-gatewayd-internal", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BeforeConnect == nil {
+		t.Fatal("no dial pacing")
+	}
+	for i := range cfg.MaxConns {
+		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+		err := cfg.BeforeConnect(ctx, cfg.ConnConfig)
+		cancel()
+		if err != nil {
+			t.Fatalf("dial %d of a %d-connection budget waited: %v", i+1, cfg.MaxConns, err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	if err := cfg.BeforeConnect(ctx, cfg.ConnConfig); err == nil {
+		t.Fatal("a dial past the budget's burst was not paced")
+	}
+	ctx, cancel = context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := cfg.BeforeConnect(ctx, cfg.ConnConfig); err != nil {
+		t.Fatalf("a paced dial never went ahead: %v", err)
 	}
 }

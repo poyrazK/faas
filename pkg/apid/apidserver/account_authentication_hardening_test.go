@@ -162,7 +162,7 @@ func TestAccountOwnershipClaimUsesFreshMFAState(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				claimed, err := srv.VerifyOAuthAccountEmail(t.Context(), acct)
+				claimed, err := srv.VerifyOAuthAccountEmail(t.Context(), acct, acct.Email)
 				if err != nil || !claimed.EmailVerified() || claimed.MFAEnrolled() || len(claimed.MFASecretEncrypted) != 0 {
 					t.Fatalf("stale OAuth claim: %+v %v", claimed, err)
 				}
@@ -172,7 +172,10 @@ func TestAccountOwnershipClaimUsesFreshMFAState(t *testing.T) {
 			if err = st.IssueLoginToken(t.Context(), api.HashToken(raw), acct.ID, time.Now().Add(time.Minute)); err != nil {
 				t.Fatal(err)
 			}
-			rec := accountSecurityJSON(t, srv.Handler(), nil, "GET", "/auth/verify?token="+base64.RawURLEncoding.EncodeToString(raw), nil)
+			open := httptest.NewRequest(http.MethodGet, "/auth/verify?token="+base64.RawURLEncoding.EncodeToString(raw), nil)
+			open.Header.Set("Sec-Fetch-Site", "none")
+			rec := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rec, open)
 			c := accountSecurityCookie(rec)
 			if rec.Code != 302 || c == nil {
 				t.Fatalf("claim: %d", rec.Code)

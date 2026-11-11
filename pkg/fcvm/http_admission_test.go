@@ -320,3 +320,34 @@ func TestHTTPAdmissionKillSwitchLiftsCapButKeepsPermits(t *testing.T) {
 		t.Fatal("malformed FAAS_HTTP_ADMISSION accepted")
 	}
 }
+
+// adr: 20261101215228 — vmmd admits what schedd sent with the wake, up to
+// api.AppRequestConcurrencyBound, and the plan bound without one.
+func TestHTTPAdmissionTakesTheWakesRequestLimit(t *testing.T) {
+	for _, tc := range []struct {
+		sent, want int
+	}{
+		{0, api.PlanFree.ConcurrencyPerVMBound()},
+		{12, 12},
+		{api.AppRequestConcurrencyBound + 1, api.AppRequestConcurrencyBound},
+	} {
+		m := newTestManager(&fakeRunner{}, &fakeVMM{})
+		m.live["vm"] = &Instance{Lease: Lease{Instance: "vm", Slot: 1, Plan: api.PlanFree}, Plan: api.PlanFree, RequestConcurrency: tc.sent}
+		status, ok := m.HTTPAdmissionStatus("vm")
+		if !ok || status.Limit != tc.want {
+			t.Errorf("sent %d: limit = %d (found %v), want %d", tc.sent, status.Limit, ok, tc.want)
+		}
+		if tc.want > 100 {
+			continue
+		}
+		admitted := 0
+		for range tc.want + 1 {
+			if _, _, err := m.AcquireHTTPForward(context.Background(), "vm"); err == nil {
+				admitted++
+			}
+		}
+		if admitted != tc.want {
+			t.Errorf("sent %d: admitted %d requests, want %d", tc.sent, admitted, tc.want)
+		}
+	}
+}

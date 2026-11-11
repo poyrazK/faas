@@ -300,7 +300,7 @@ func (s *Service) Cleanup(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	queries := q.New()
 	if e = queries.Lock(ctx, tx, "gregale-native-support"); e != nil {
 		return e

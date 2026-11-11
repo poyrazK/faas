@@ -24,8 +24,8 @@ func (r EventRecoveryRequest) validateWorkflowRuns() error {
 	if r.WorkflowRouting != nil || r.ProtectReceipts || r.Mode != "" && r.Mode != "workflow" || r.Outcome != "" || r.SubscriptionID != "" || r.EventSource != "" || r.EventType != "" || r.FailureCode != "" || r.MinAgeSeconds != 0 || r.IncludeNonRetryable {
 		return fmt.Errorf("workflow_runs cannot be combined with event recovery selections or receipt protection")
 	}
-	if r.RequestID == "" || strings.TrimSpace(p.Name) == "" || len(p.Name) > EventBacklogFilterMaxBytes || len(p.Runs) < 1 || len(p.Runs) > AutomationRecoveryBatchMaxRuns {
-		return fmt.Errorf("workflow_runs requires name, request_id and 1..%d runs", AutomationRecoveryBatchMaxRuns)
+	if r.RequestID == "" || strings.TrimSpace(p.Name) == "" || len(p.Name) > EventBacklogFilterMaxBytes || len(p.Runs) < 1 || len(p.Runs) > StoredWorkflowRecoveryBatchMaxRuns {
+		return fmt.Errorf("workflow_runs requires name, request_id and 1..%d runs", StoredWorkflowRecoveryBatchMaxRuns)
 	}
 	for _, seconds := range []int{p.ExecutionDeadlineSeconds, p.ExecutionStallSeconds} {
 		if seconds != 0 && (seconds < WorkflowRecoveryExecutionMonitorMinSeconds || seconds > WorkflowRecoveryExecutionMonitorMaxSeconds) {
@@ -45,7 +45,7 @@ func (r EventRecoveryRequest) validateWorkflowRuns() error {
 				return fmt.Errorf("failure evidence requires an initial run target without a recovery parent")
 			}
 		}
-		if t.ParentPosition < 0 || (r.ParentJobID == "") != (t.ParentPosition == 0) || t.ParentPosition > AutomationRecoveryBatchMaxRuns || positions[t.ParentPosition] && t.ParentPosition != 0 || r.ParentJobID != "" && t.ExpectedResumeCount < 1 {
+		if t.ParentPosition < 0 || (r.ParentJobID == "") != (t.ParentPosition == 0) || t.ParentPosition > StoredWorkflowRecoveryBatchMaxRuns || positions[t.ParentPosition] && t.ParentPosition != 0 || r.ParentJobID != "" && t.ExpectedResumeCount < 1 {
 			return fmt.Errorf("workflow retry targets require unique parent positions and an admitted resume count")
 		}
 		positions[t.ParentPosition] = true

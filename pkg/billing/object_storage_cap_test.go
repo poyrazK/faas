@@ -45,7 +45,9 @@ func TestFinalizeObjectStoragePeriodsHoldsChargeUnderOverageCap(t *testing.T) {
 	lateEgress := liveEgress
 	lateEgress.EffectiveFrom = period.AddDate(0, 0, 10)
 	// Usage is Hobby's included storage (ADR-1430) plus 9 GiB-months, which
-	// the record prices at 1000 millicents each: 9000 millicents.
+	// the record prices at 1000 millicents each: 9000 millicents. Four
+	// GB-hours of compute overage are 20000 millicents at $0.05/GB-h
+	// (ADR-20261107192333), so a 26-cent cap leaves 6000 for storage.
 	hobbyIncluded := api.MustLimitsFor(api.PlanHobby).ObjectStorage.Allowance().StoredByteHours
 	for _, tc := range []struct {
 		name     string
@@ -53,17 +55,21 @@ func TestFinalizeObjectStoragePeriodsHoldsChargeUnderOverageCap(t *testing.T) {
 		capCents int64
 		usage    []state.Usage
 		egress   MeterUsagePolicy
-		want     int64
+		// unelected leaves the subject without an egress overage
+		// election, so its egress is never billed (ADR-20261104204500).
+		unelected bool
+		want      int64
 	}{
 		{name: "uncapped bills in full", usage: []state.Usage{computeOver(40)}, want: 9000},
 		{name: "cap above every meter bills in full", capped: true, capCents: 100, usage: []state.Usage{computeOver(4)}, want: 9000},
-		{name: "billable compute keeps its place", capped: true, capCents: 10, usage: []state.Usage{computeOver(4)}, want: 6000},
-		{name: "live egress keeps its place", capped: true, capCents: 10, usage: []state.Usage{computeOver(4), egressRow}, egress: liveEgress, want: 4000},
-		{name: "shadow egress reserves nothing", capped: true, capCents: 10, usage: []state.Usage{computeOver(4), egressRow}, egress: shadowEgress, want: 6000},
-		{name: "egress before its activation reserves nothing", capped: true, capCents: 10, usage: []state.Usage{computeOver(4), egressRow}, egress: lateEgress, want: 6000},
-		{name: "compute over the cap leaves nothing", capped: true, capCents: 10, usage: []state.Usage{computeOver(20)}, want: 0},
+		{name: "billable compute keeps its place", capped: true, capCents: 26, usage: []state.Usage{computeOver(4)}, want: 6000},
+		{name: "live egress keeps its place", capped: true, capCents: 26, usage: []state.Usage{computeOver(4), egressRow}, egress: liveEgress, want: 4000},
+		{name: "unelected live egress reserves nothing", capped: true, capCents: 26, usage: []state.Usage{computeOver(4), egressRow}, egress: liveEgress, unelected: true, want: 6000},
+		{name: "shadow egress reserves nothing", capped: true, capCents: 26, usage: []state.Usage{computeOver(4), egressRow}, egress: shadowEgress, want: 6000},
+		{name: "egress before its activation reserves nothing", capped: true, capCents: 26, usage: []state.Usage{computeOver(4), egressRow}, egress: lateEgress, want: 6000},
+		{name: "compute over the cap leaves nothing", capped: true, capCents: 26, usage: []state.Usage{computeOver(20)}, want: 0},
 		{name: "zero cap bills nothing", capped: true, want: 0},
-		{name: "next month's usage reserves nothing", capped: true, capCents: 10, usage: []state.Usage{{Month: period.AddDate(0, 1, 0), MBSeconds: 1 << 50}}, want: 9000},
+		{name: "next month's usage reserves nothing", capped: true, capCents: 26, usage: []state.Usage{{Month: period.AddDate(0, 1, 0), MBSeconds: 1 << 50}}, want: 9000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			snapshot := objectStorageBillingSnapshot("acct", "backend", period)
@@ -74,6 +80,9 @@ func TestFinalizeObjectStoragePeriodsHoldsChargeUnderOverageCap(t *testing.T) {
 			}
 			if tc.capped {
 				store.caps = map[string]int64{"acct": tc.capCents}
+			}
+			if !tc.unelected {
+				store.elections = map[string]state.EgressOverageElection{"acct": {EnabledAt: &period}}
 			}
 			recorder := &objectStorageLineItemRecorder{}
 			accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "acct", Plan: api.PlanHobby}}}
@@ -111,13 +120,14 @@ func TestFinalizeObjectStoragePeriodsFailsClosedWithoutCapReads(t *testing.T) {
 
 func TestCapRemainingMillicentsReservesEveryMeter(t *testing.T) {
 	egress := &MeterUsagePolicy{UnitQuantity: 3, MillicentsPerUnit: 1}
-	remaining, ok := CapRemainingMillicents(1, api.SecondsPerGBHour/2, 1, egress, 0)
-	// 1000 millicents less half a GB-hour (500) and a third of a millicent.
+	remaining, ok := CapRemainingMillicents(1, api.SecondsPerGBHour/10, 1, egress, 0)
+	// 1000 millicents less a tenth of a GB-hour (500 at $0.05/GB-h) and a
+	// third of a millicent.
 	if !ok || FloorCapQuantity(remaining, 1, 1) != 499 {
 		t.Fatalf("remaining = %v, %v; want 499 whole millicents", remaining, ok)
 	}
 	// ADR-20261027093220: object storage billed during the month is reserved.
-	remaining, ok = CapRemainingMillicents(1, api.SecondsPerGBHour/2, 1, egress, 200)
+	remaining, ok = CapRemainingMillicents(1, api.SecondsPerGBHour/10, 1, egress, 200)
 	if !ok || FloorCapQuantity(remaining, 1, 1) != 299 {
 		t.Fatalf("remaining with object storage = %v, %v; want 299 whole millicents", remaining, ok)
 	}

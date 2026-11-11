@@ -102,6 +102,18 @@ func testQueueBindingEnvironmentIdentity(t *testing.T, fx *Fixture) {
 			}
 		}
 	}
+	// The app-wide status read agrees with QueueState and stops at its limit.
+	whole, err := fx.Store.QueueState(fx.Ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, limit := range []int{10, 1} {
+		got, err := fx.Store.QueueAppTelemetry(fx.Ctx, app.ID, limit)
+		if err != nil || got.Depth != min(whole.Depth, limit) || got.InFlight != min(whole.InFlight, limit) ||
+			got.DeadLetter != min(whole.DeadLetter, limit) || got.OldestPendingAt.Sub(whole.OldestPendingAt).Abs() > time.Millisecond {
+			t.Fatalf("app telemetry limit %d = %+v, %v; queue state %+v", limit, got, err, whole)
+		}
+	}
 	bind("staging", "payments") // Multiple named consumers are independent in one environment.
 	if got := enqueue("staging", ""); got.QueueBindingID != "" {
 		t.Fatal("ambiguous unnamed work selected a scoped consumer")

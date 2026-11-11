@@ -68,6 +68,10 @@ func TestSavedSearchLifecycle(t *testing.T) {
 	if w := serveSaved(t, svc.DeleteSaved, acct, http.MethodDelete, "checkout-5xx", ""); w.Code != http.StatusNotFound {
 		t.Fatalf("second delete = %d, want 404", w.Code)
 	}
+	// adr: 20261031144636 — saves and deletes are audited; refused ones are not.
+	if got, want := strings.Join(*svc.Host.(fakeHost).audits, ","), "log_saved_search.saved checkout-5xx,log_saved_search.deleted checkout-5xx"; got != want {
+		t.Fatalf("audits = %s, want %s", got, want)
+	}
 }
 
 func TestSavedSearchQuotaAndGate(t *testing.T) {
@@ -83,7 +87,7 @@ func TestSavedSearchQuotaAndGate(t *testing.T) {
 		t.Fatalf("past the cap = %d %s, want 409 log_saved_search_quota_exceeded", w.Code, w.Body.String())
 	}
 	off, acct := newService(t, false)
-	if w := serveSaved(t, off.PutSaved, acct, http.MethodPut, "x", `{"query":"level=error"}`); w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("disabled put = %d, want 503", w.Code)
+	if w := serveSaved(t, off.PutSaved, acct, http.MethodPut, "x", `{"query":"level=error"}`); w.Code != http.StatusForbidden {
+		t.Fatalf("disabled put = %d, want 403", w.Code)
 	}
 }
