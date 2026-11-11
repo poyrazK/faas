@@ -8398,6 +8398,19 @@
     "kind": "account_identity"
   },
   {
+    "table": "object_storage_over_ceiling",
+    "columns": [
+      "ceiling_bytes",
+      "deletion_scheduled_at",
+      "notices_sent",
+      "observed_at",
+      "over_ceiling_since",
+      "stored_bytes",
+      "subject_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "quiet_pause_watermarks",
     "columns": [
       "covered_until",
