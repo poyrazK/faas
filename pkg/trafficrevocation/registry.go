@@ -145,6 +145,7 @@ func (r *Registry) admit(ctx context.Context, scopes []Scope, expected map[Scope
 	}
 	scopes, err := normalize(scopes)
 	if err != nil {
+		r.logRefusal(err)
 		return nil, nil, err
 	}
 	states, fromStore := r.cached(scopes, expected), false
@@ -177,6 +178,7 @@ func (r *Registry) admit(ctx context.Context, scopes []Scope, expected map[Scope
 		r.apply(states)
 	}
 	if admissionErr != nil {
+		r.logRefusal(admissionErr)
 		return nil, nil, admissionErr
 	}
 	now := r.now()
@@ -258,7 +260,7 @@ func verifyBaseline(states, expected map[Scope]State) error {
 	for scope, before := range expected {
 		after := states[scope]
 		if after.Revision < before.Revision || after.Revision == before.Revision && after != before {
-			return ErrUnavailable
+			return fmt.Errorf("%w: %s %s generation %d differs from the preceding hop's %d", ErrUnavailable, scope.Kind, scope.ID, after.Revision, before.Revision)
 		}
 		if after != before {
 			return ErrRevoked
@@ -269,7 +271,7 @@ func verifyBaseline(states, expected map[Scope]State) error {
 
 func (r *Registry) validateAdmission(scopes []Scope, states map[Scope]State) error {
 	if r.closed {
-		return ErrUnavailable
+		return fmt.Errorf("%w: registry closed", ErrUnavailable)
 	}
 	if len(r.active) >= api.TrafficSecurityMaxExchanges {
 		return &CapacityError{Resource: "exchanges", Limit: api.TrafficSecurityMaxExchanges, Observed: len(r.active) + 1}
@@ -279,7 +281,7 @@ func (r *Registry) validateAdmission(scopes []Scope, states map[Scope]State) err
 		state := states[scope]
 		if prior, ok := r.latest[scope]; ok {
 			if state.Revision < prior.Revision || state.Revision == prior.Revision && state != prior {
-				return ErrUnavailable
+				return fmt.Errorf("%w: %s %s read generation %d is behind the registry's %d", ErrUnavailable, scope.Kind, scope.ID, state.Revision, prior.Revision)
 			}
 		}
 		if len(r.members[scope]) == 0 {
@@ -295,14 +297,27 @@ func (r *Registry) validateAdmission(scopes []Scope, states map[Scope]State) err
 	return nil
 }
 
+// logRefusal names why an admission was refused as unavailable, at most
+// once a second. Hunt 33 H33-25: a workflow run 40 s after a release got
+// traffic_revocation_unavailable with no log line on any host, because only
+// the store read failure was logged. Revocations are expected and stay quiet.
+func (r *Registry) logRefusal(err error) {
+	if !errors.Is(err, ErrUnavailable) {
+		return
+	}
+	r.unavailableLog.Do(func() {
+		slog.Default().Warn("traffic security: admission refused as unavailable", "err", err)
+	})
+}
+
 func normalize(scopes []Scope) ([]Scope, error) {
 	if len(scopes) == 0 || len(scopes) > api.TrafficSecurityMaxRequestScopes {
-		return nil, ErrUnavailable
+		return nil, fmt.Errorf("%w: %d scopes", ErrUnavailable, len(scopes))
 	}
 	unique := make(map[Scope]struct{}, len(scopes))
 	for _, scope := range scopes {
 		if strings.TrimSpace(scope.ID) == "" || (scope.Kind != "account" && scope.Kind != "app" && scope.Kind != "deployment") {
-			return nil, ErrUnavailable
+			return nil, fmt.Errorf("%w: invalid scope %q with id %q", ErrUnavailable, scope.Kind, scope.ID)
 		}
 		unique[scope] = struct{}{}
 	}
