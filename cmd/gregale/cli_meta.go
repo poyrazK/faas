@@ -304,9 +304,11 @@ func (s cliSub) subcommandChoice() string {
 // subcommandSynopsis renders the child-verb slot of a usage line. A verb
 // that also runs on its own (`postgres resize --class ... <database>` beside
 // `postgres resize status`) shows the child as optional; `<status>` read as a
-// required argument of the resize itself (ChronoLake finding 22).
+// required argument of the resize itself (ChronoLake finding 22). Flags alone
+// mark such a verb too: `release list [alias] [flags]` lists without the
+// child (Hunt 33 H33-4).
 func (s cliSub) subcommandSynopsis() string {
-	if len(s.Flags) > 0 && len(s.Positionals) > 0 {
+	if len(s.Flags) > 0 {
 		return "[" + s.subcommandChoice() + "]"
 	}
 	return "<" + s.subcommandChoice() + ">"
@@ -792,13 +794,13 @@ var cliCommands = []cliCommand{
 				{Name: "revoke", Short: "Prevent new copy dispatch from a source", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>", "<source-bucket-id>"}},
 			}}, {Name: "encryption-keys", Short: "List owned encryption capabilities and key references", Positionals: []string{"<app>", "<bucket-id>"}},
 			{Name: "encryption", Short: "Inspect or configure verified bucket encryption defaults", Subcommands: []cliSub{
-				{Name: "status", Short: "Show durable encryption progress", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "status", Aliases: []string{"get"}, Short: "Show durable encryption progress", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "clear", Short: "Remove the default for new writes", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "AES256", Short: "Set provider AES256 encryption", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "aws:kms", Short: "Set owned KMS encryption", Positionals: []string{"<app>", "<bucket-id>", "<owned-key-ref>", "[bucket-key-enabled]"}},
 				{Name: "aws:kms:dsse", Short: "Set owned dual-layer KMS encryption", Positionals: []string{"<app>", "<bucket-id>", "<owned-key-ref>"}},
 			}}, {Name: "object-lock", Short: "Inspect permanent Object Lock and configure retention defaults", Subcommands: []cliSub{
-				{Name: "status", Short: "Show durable Object Lock progress", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "status", Aliases: []string{"get"}, Short: "Show durable Object Lock progress", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "capabilities", Short: "Show enrolled bucket lock capabilities", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "enable", Short: "Permanently enable Object Lock without defaults", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "clear-default", Short: "Clear future defaults while keeping Object Lock enabled", Positionals: []string{"<app>", "<bucket-id>"}},
