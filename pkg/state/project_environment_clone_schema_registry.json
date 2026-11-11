@@ -12630,6 +12630,17 @@
     "kind": "operational"
   },
   {
+    "table": "object_inventory_schedule",
+    "columns": [
+      "attempt_at",
+      "bucket_id",
+      "mutated_at",
+      "observed_at",
+      "quiet_after"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "object_bucket_cors",
     "columns": [
       "bucket_id",

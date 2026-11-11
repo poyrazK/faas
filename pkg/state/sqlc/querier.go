@@ -5192,6 +5192,14 @@ type Querier interface {
 	// it is to quiet_max_age, as an active bucket's last attempt sorts by how
 	// close it is to 900 s (§2): a backlog of daily verifications never delays an
 	// active bucket that is nearer its limit.
+	//
+	// The rules apply to candidates only (ADR-20261111152144): from
+	// object_inventory_schedule, the first row_limit due buckets by attempt, the
+	// first row_limit due active buckets by attempt and the first row_limit due
+	// quiet buckets by observation, each in its own due order, plus every
+	// unfinished listing. Every due bucket is in one of those classes, so the
+	// candidates hold the first row_limit due buckets in either mode.
+	// Probe the candidates by key: a join on c may hash every bucket instead.
 	ObjectInventoriesDue(ctx context.Context, db DBTX, arg ObjectInventoriesDueParams) ([]ObjectInventoriesDueRow, error)
 	// ADR-20261110151628 §3: how far the inventory sweep is behind. due_buckets
 	// counts what ObjectInventoriesDue would hand out now (same rule).

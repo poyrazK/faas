@@ -20,6 +20,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -59,6 +62,7 @@ func TestInventorySweepCapacity(t *testing.T) {
 		{name: "steady-200ms", latency: 200 * time.Millisecond, small: 2000, large: 16, largePages: 500, sweeps: 2, listed: true},
 	}
 	t.Run("quiet-200ms", testInventorySweepQuietCapacity)
+	t.Run("due-query", testInventoryDueQueryScale)
 	for _, sc := range scenarios {
 		t.Run(sc.name, func(t *testing.T) {
 			pool := pgtest.OpenMigrated(t)
@@ -352,4 +356,127 @@ VALUES (gen_random_uuid(), $1, 'global', '', '"on"', '"on"', 1, 'hot', 'applied'
 	if byClass["quiet"] != 0 || byClass["active"] != active || byClass["verify"] != verify {
 		t.Fatalf("listed %v, want every active and verifying bucket and no quiet one", byClass)
 	}
+}
+
+// testInventoryDueQueryScale measures the sweep's due query alone
+// (ADR-20261111152144) at 22,000 and 200,000 buckets in quiet-200ms's mix:
+// one in 22 active (written after its listing ten minutes ago), one in 22
+// due for its daily verification, the rest quiet. It logs the median of
+// several runs with object_inventory_quiet on and off and the plan, and fails
+// if the plan reads a whole bucket, usage, activity or schedule table.
+func testInventoryDueQueryScale(t *testing.T) {
+	for _, n := range []int{22000, 200000} {
+		t.Run(strconv.Itoa(n), func(t *testing.T) {
+			pool := pgtest.OpenMigrated(t)
+			st := state.NewPgStore(pool)
+			ctx := t.Context()
+			if _, err := seedInventoryCapacity(t, st, &latencyLister{keys: map[string]int{}}, 1, 0, 0, true); err != nil {
+				t.Fatal(err)
+			}
+			start := time.Now()
+			if _, err := pool.Exec(ctx, `INSERT INTO object_buckets (id, account_id, app_id, org_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state)
+SELECT gen_random_uuid(), t.account_id, t.app_id, t.org_id, 'scale' || g, t.scope, t.region, t.backend_id, t.backend_fingerprint, 'physical-' || gen_random_uuid(), 'ready'
+FROM (SELECT * FROM object_buckets LIMIT 1) t CROSS JOIN generate_series(1, $1::int) g`, n-1); err != nil {
+				t.Fatal(err)
+			}
+			part := n / 22
+			if _, err := pool.Exec(ctx, `INSERT INTO object_storage_bucket_usage (bucket_id, baseline_bytes, baseline_keys, observed_bytes, observed_keys, observed_at, attempt_at)
+SELECT b.id, 3, 3, 3, 3, now() - a.age, now() - a.age FROM (SELECT id, row_number() OVER (ORDER BY id) AS r FROM object_buckets) b
+CROSS JOIN LATERAL (SELECT CASE WHEN b.r <= $1 THEN interval '10 minutes' WHEN b.r <= 2 * $1 THEN interval '23 hours 30 minutes' ELSE interval '2 hours' END AS age) a`, part); err != nil {
+				t.Fatal(err)
+			}
+			// Every bucket has an activity row in production (the step 3
+			// fill); a quiet one was last written before its listing.
+			if _, err := pool.Exec(ctx, `INSERT INTO object_bucket_activity (bucket_id, mutated_at, active_since)
+SELECT id, now() - m.ago, now() - m.ago FROM (SELECT id, row_number() OVER (ORDER BY id) AS r FROM object_buckets) b
+CROSS JOIN LATERAL (SELECT CASE WHEN b.r <= $1 THEN interval '1 minute' ELSE interval '30 hours' END AS ago) m`, part); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, `INSERT INTO runtime_config_entries (id, config_key, scope, scope_id, desired_value, effective_value, version, apply_mode, status)
+VALUES (gen_random_uuid(), $1, 'global', '', '"on"', '"on"', 1, 'hot', 'applied')`, api.ObjectInventoryQuietConfigKey); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, `ANALYZE`); err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("seeded %d buckets in %s", n, time.Since(start).Round(time.Millisecond))
+			// Each schedule row was rewritten once by the seed, so the first
+			// pass also skips its dead index entries; then autovacuum's state.
+			for _, vacuumed := range []bool{false, true} {
+				if vacuumed {
+					if _, err := pool.Exec(ctx, `VACUUM ANALYZE object_inventory_schedule`); err != nil {
+						t.Fatal(err)
+					}
+				}
+				measureInventoryDue(t, pool, st, n, vacuumed)
+			}
+		})
+	}
+}
+
+// measureInventoryDue logs the due query's median of seven runs and its plan
+// with object_inventory_quiet on and off.
+func measureInventoryDue(t *testing.T, pool *pgxpool.Pool, st *state.PgStore, n int, vacuumed bool) {
+	t.Helper()
+	ctx := t.Context()
+	for _, quiet := range []bool{true, false} {
+		var took []time.Duration
+		var rows int
+		for range 7 {
+			start := time.Now()
+			due, err := st.DueObjectInventoryQueue(ctx, 100, nil, quiet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			took, rows = append(took, time.Since(start)), len(due)
+		}
+		slices.Sort(took)
+		t.Logf("due query over %d buckets, quiet %v, vacuumed %v: median %s, max %s (%d rows)", n, quiet, vacuumed, took[len(took)/2].Round(time.Microsecond), took[len(took)-1].Round(time.Microsecond), rows)
+		if want := 100; rows != want {
+			t.Fatalf("%d due rows, want %d", rows, want)
+		}
+		plan := explainInventoryDue(t, pool, quiet)
+		t.Logf("plan, quiet %v, vacuumed %v:\n%s", quiet, vacuumed, plan)
+		for _, table := range []string{"object_buckets", "object_storage_bucket_usage", "object_bucket_activity", "object_inventory_schedule"} {
+			if strings.Contains(plan, "Seq Scan on "+table+" ") {
+				t.Errorf("the due query reads all of %s", table)
+			}
+		}
+	}
+}
+
+// explainInventoryDue runs the due query once through a one-connection pool
+// whose session has auto_explain send each plan back as a notice.
+func explainInventoryDue(t *testing.T, pool *pgxpool.Pool, quiet bool) string {
+	t.Helper()
+	ctx := t.Context()
+	var mu sync.Mutex
+	var plan strings.Builder
+	config := pool.Config().Copy()
+	config.MaxConns, config.MinConns = 1, 0
+	config.ConnConfig.OnNotice = func(_ *pgconn.PgConn, n *pgconn.Notice) {
+		mu.Lock()
+		defer mu.Unlock()
+		plan.WriteString(n.Message)
+	}
+	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		for _, set := range []string{`LOAD 'auto_explain'`, `SET auto_explain.log_min_duration = 0`, `SET auto_explain.log_analyze = on`,
+			`SET auto_explain.log_buffers = on`, `SET auto_explain.log_level = notice`, `SET client_min_messages = notice`} {
+			if _, err := conn.Exec(ctx, set); err != nil {
+				return fmt.Errorf("%s: %w", set, err)
+			}
+		}
+		return nil
+	}
+	explain, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer explain.Close()
+	if _, err = state.NewPgStore(explain).DueObjectInventoryQueue(ctx, 100, nil, quiet); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	return plan.String()
 }

@@ -157,7 +157,45 @@ quiet bucket to a daily verification. Same harness, new scenario
   with quiet on, cannot use an index for its filter or order: 96 ms for
   22,000 buckets, linear in the bucket count. The sweep runs it each time its
   queue refills. Near a few hundred thousand buckets it takes about a second
-  per refill. A due-time column with a partial index should come before then.
+  per refill. A due-time column with a partial index should come before then
+  (done: see below).
+
+## After ADR-20261111152144 (2026-11-11)
+
+[ADR-20261111152144](../../../adr/20261111152144-object-inventory-due-schedule.md)
+reads the due query's candidates from an indexed per-bucket schedule. New
+harness scenario (`due-query`): the due query alone, 100 rows, at 22,000 and
+200,000 buckets in `quiet-200ms`'s mix (1 in 22 active, 1 in 22 due for
+verification, the rest quiet; every bucket has an activity row, as after
+the step 3 fill). Median of 7 runs, measured once right after the seed,
+when every schedule row has one dead index entry from the seed, and once
+after `VACUUM ANALYZE`.
+
+| Buckets | Quiet on | Quiet off | Quiet on, vacuumed | Quiet off, vacuumed |
+|---|---|---|---|---|
+| 22,000 (before: full scan) | 96 ms | 23 ms | | |
+| 22,000 | 10.7 ms | 5.7 ms | 7.8 ms | 4.0 ms |
+| 200,000 | 8.7 ms | 5.6 ms | 6.4 ms | 4.0 ms |
+
+- **The cost no longer grows with buckets.** At 200,000 buckets a refill
+  reads about 300 schedule rows from three index ranges plus their key
+  lookups ([plan](due-query-plan-200000.txt), 4.2 ms executing with quiet
+  on). The full scan was linear: about 0.9 s at 200,000 by extrapolation.
+- **No table is read whole.** The harness fails if a plan has a sequential
+  scan of the bucket, usage, activity or schedule table. The candidate list
+  was first joined with `IN`; at 22,000 buckets the planner hashed it
+  against all of `object_buckets`, at 200,000 it did not. The query now
+  looks candidates up by key from an array, which leaves no such choice.
+- **Equivalence.** `TestObjectInventoryScheduleMatchesFullScanPG` compares
+  the indexed query with the full-scan query in one transaction over
+  randomized buckets (never listed, leased, held, listing, all-versions,
+  quiet and active on both sides of each boundary), both modes, limits
+  1/3/7/100 and random skip lists, and checks every schedule row against
+  its sources: identical in all 192 comparisons.
+- Machine load varied between runs (shared host): one earlier unvacuumed
+  run at 200,000 measured 24 ms / 13 ms. Every run stayed index-driven.
+- `ObjectInventoryBacklog` still reads every bucket. It runs once a minute
+  for gauges, not on the sweep's path.
 
 ## Limits of this measurement
 

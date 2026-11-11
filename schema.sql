@@ -22370,6 +22370,73 @@ $$;
 
 
 --
+-- Name: object_inventory_schedule_activity(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_inventory_schedule_activity() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP = 'DELETE' THEN
+  UPDATE object_inventory_schedule SET mutated_at = '-infinity' WHERE bucket_id = OLD.bucket_id;
+  RETURN OLD;
+ END IF;
+ UPDATE object_inventory_schedule SET mutated_at = NEW.mutated_at WHERE bucket_id = NEW.bucket_id;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: object_inventory_schedule_bucket(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_inventory_schedule_bucket() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.state = 'deleted' THEN
+  DELETE FROM object_inventory_schedule WHERE bucket_id = NEW.id;
+  RETURN NEW;
+ END IF;
+ -- A new bucket has no usage or activity yet. A bucket that leaves deleted
+ -- is taken as mutated now, like the fill below.
+ INSERT INTO object_inventory_schedule (bucket_id, mutated_at)
+ VALUES (NEW.id, CASE WHEN TG_OP = 'INSERT' THEN '-infinity'::timestamptz ELSE now() END)
+ ON CONFLICT (bucket_id) DO NOTHING;
+ IF FOUND AND TG_OP = 'UPDATE' THEN
+  UPDATE object_inventory_schedule s SET attempt_at = COALESCE(u.attempt_at, '-infinity'),
+   observed_at = COALESCE(u.observed_at, '-infinity'),
+   quiet_after = CASE WHEN u.observed_at IS NOT NULL AND u.inventory_scope = 'current'
+    THEN u.observed_at - interval '30 seconds' ELSE '-infinity' END
+  FROM object_storage_bucket_usage u WHERE u.bucket_id = NEW.id AND s.bucket_id = NEW.id;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: object_inventory_schedule_usage(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_inventory_schedule_usage() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP = 'DELETE' THEN
+  UPDATE object_inventory_schedule SET attempt_at = '-infinity', observed_at = '-infinity', quiet_after = '-infinity'
+  WHERE bucket_id = OLD.bucket_id;
+  RETURN OLD;
+ END IF;
+ UPDATE object_inventory_schedule SET attempt_at = COALESCE(NEW.attempt_at, '-infinity'),
+  observed_at = COALESCE(NEW.observed_at, '-infinity'),
+  quiet_after = CASE WHEN NEW.observed_at IS NOT NULL AND NEW.inventory_scope = 'current'
+   THEN NEW.observed_at - interval '30 seconds' ELSE '-infinity' END
+ WHERE bucket_id = NEW.bucket_id;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: object_lock_drained(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -48505,6 +48572,20 @@ CREATE TABLE public.object_deletions (
 
 
 --
+-- Name: object_inventory_schedule; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_inventory_schedule (
+    bucket_id uuid NOT NULL,
+    attempt_at timestamp with time zone DEFAULT '-infinity'::timestamp with time zone NOT NULL,
+    observed_at timestamp with time zone DEFAULT '-infinity'::timestamp with time zone NOT NULL,
+    quiet_after timestamp with time zone DEFAULT '-infinity'::timestamp with time zone NOT NULL,
+    mutated_at timestamp with time zone DEFAULT '-infinity'::timestamp with time zone NOT NULL,
+    CONSTRAINT object_inventory_schedule_check CHECK ((quiet_after <= observed_at))
+);
+
+
+--
 -- Name: object_lifecycle_scans; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -68084,6 +68165,14 @@ ALTER TABLE ONLY public.object_deletions
 
 
 --
+-- Name: object_inventory_schedule object_inventory_schedule_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_inventory_schedule
+    ADD CONSTRAINT object_inventory_schedule_pkey PRIMARY KEY (bucket_id);
+
+
+--
 -- Name: object_lifecycle_scans object_lifecycle_scans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -80138,6 +80227,27 @@ CREATE INDEX object_deletions_due ON public.object_deletions USING btree (retry_
 
 
 --
+-- Name: object_inventory_schedule_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_inventory_schedule_active ON public.object_inventory_schedule USING btree (attempt_at, bucket_id) WHERE (mutated_at >= quiet_after);
+
+
+--
+-- Name: object_inventory_schedule_attempt; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_inventory_schedule_attempt ON public.object_inventory_schedule USING btree (attempt_at, bucket_id);
+
+
+--
+-- Name: object_inventory_schedule_quiet; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_inventory_schedule_quiet ON public.object_inventory_schedule USING btree (observed_at, bucket_id) WHERE (mutated_at < quiet_after);
+
+
+--
 -- Name: object_lifecycle_active_scan; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -80219,6 +80329,13 @@ CREATE INDEX object_storage_billing_progress_account_period_idx ON public.object
 --
 
 CREATE INDEX object_storage_gateway_storage_period_idx ON public.object_storage_gateway_storage USING btree (period_start, bucket_id);
+
+
+--
+-- Name: object_storage_inventory_scans_open; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_inventory_scans_open ON public.object_storage_inventory_scans USING btree (started_at) WHERE ((pages > 0) AND (NOT complete));
 
 
 --
@@ -89053,6 +89170,34 @@ CREATE TRIGGER object_grant_write_key_fence BEFORE INSERT OR UPDATE ON public.ob
 --
 
 CREATE TRIGGER object_immutable_deletion_fence BEFORE INSERT ON public.object_deletions FOR EACH ROW EXECUTE FUNCTION public.fence_immutable_object_deletion();
+
+
+--
+-- Name: object_bucket_activity object_inventory_schedule_copy; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_inventory_schedule_copy AFTER INSERT OR DELETE OR UPDATE OF mutated_at ON public.object_bucket_activity FOR EACH ROW EXECUTE FUNCTION public.object_inventory_schedule_activity();
+
+
+--
+-- Name: object_storage_bucket_usage object_inventory_schedule_copy; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_inventory_schedule_copy AFTER INSERT OR DELETE OR UPDATE OF attempt_at, observed_at, inventory_scope ON public.object_storage_bucket_usage FOR EACH ROW EXECUTE FUNCTION public.object_inventory_schedule_usage();
+
+
+--
+-- Name: object_buckets object_inventory_schedule_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_inventory_schedule_insert AFTER INSERT ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.object_inventory_schedule_bucket();
+
+
+--
+-- Name: object_buckets object_inventory_schedule_state; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_inventory_schedule_state AFTER UPDATE OF state ON public.object_buckets FOR EACH ROW WHEN (((old.state = 'deleted'::text) IS DISTINCT FROM (new.state = 'deleted'::text))) EXECUTE FUNCTION public.object_inventory_schedule_bucket();
 
 
 --
@@ -101300,6 +101445,14 @@ ALTER TABLE ONLY public.object_deletions
 
 ALTER TABLE ONLY public.object_deletions
     ADD CONSTRAINT object_deletions_lifecycle_scan_id_fkey FOREIGN KEY (lifecycle_scan_id) REFERENCES public.object_lifecycle_scans(id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: object_inventory_schedule object_inventory_schedule_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_inventory_schedule
+    ADD CONSTRAINT object_inventory_schedule_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
 
 
 --

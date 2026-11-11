@@ -3107,7 +3107,8 @@ const (
 	// ObjectInventoryMutationStampGranularity (object_bucket_mark_mutated, a
 	// literal there), so a burst of writes rewrites its activity row once. A
 	// bucket is quiet only when mutated_at is older than its listing's start by
-	// more than this (ADR-20261110151628 §2).
+	// more than this (ADR-20261110151628 §2); object_inventory_schedule's
+	// quiet_after holds the same literal (ADR-20261111152144).
 	ObjectInventoryMutationStampGranularity = 30 * time.Second
 	// Under gateway-safety accounting with object_inventory_quiet on, a quiet
 	// bucket's inventory stays fresh for ObjectInventoryQuietMaxAge, and the
