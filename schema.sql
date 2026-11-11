@@ -40613,6 +40613,19 @@ CREATE TABLE public.execution_artifact_grants (
 
 
 --
+-- Name: execution_event_replay_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.execution_event_replay_cursors (
+    execution_id uuid NOT NULL,
+    pruned_through bigint NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT execution_event_replay_cursors_pruned_through_check CHECK ((pruned_through > 0)),
+    CONSTRAINT execution_event_replay_cursors_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
 -- Name: execution_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -64484,6 +64497,14 @@ ALTER TABLE ONLY public.execution_artifact_grants
 
 ALTER TABLE ONLY public.execution_artifact_grants
     ADD CONSTRAINT execution_artifact_grants_token_hash_key UNIQUE (token_hash);
+
+
+--
+-- Name: execution_event_replay_cursors execution_event_replay_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.execution_event_replay_cursors
+    ADD CONSTRAINT execution_event_replay_cursors_pkey PRIMARY KEY (execution_id);
 
 
 --
@@ -97348,6 +97369,14 @@ ALTER TABLE ONLY public.execution_artifact_grants
 
 
 --
+-- Name: execution_event_replay_cursors execution_event_replay_cursors_execution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.execution_event_replay_cursors
+    ADD CONSTRAINT execution_event_replay_cursors_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES public.executions(id) ON DELETE CASCADE;
+
+
+--
 -- Name: execution_events execution_events_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -107042,12 +107071,6 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 ALTER TABLE ONLY public.workflow_webhook_receipts
     ADD CONSTRAINT workflow_webhook_receipts_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
 
-
-CREATE TABLE public.execution_event_replay_cursors (
-    execution_id uuid PRIMARY KEY REFERENCES public.executions(id) ON DELETE CASCADE,
-    pruned_through bigint NOT NULL CHECK (pruned_through > 0),
-    updated_at timestamp with time zone NOT NULL CHECK (isfinite(updated_at))
-);
 
 --
 --
