@@ -63,6 +63,7 @@ func (s *server) finishOperatorEmailRevert(r *http.Request, target state.Account
 	ctx := r.Context()
 	s.forgetTrustedBrowsers(ctx, target.ID, "operator_email_revert")
 	s.endPendingGrants(ctx, target.ID, "operator_email_revert")
+	s.removeForeignProviderLinks(ctx, target.ID, "operator_email_revert")
 	revoked, err := s.store.RevokeAllSessions(ctx, target.ID, uuid.Nil.String())
 	if err != nil {
 		s.log.Warn("email revert: revoke sessions failed", "account", target.ID, "err", err)

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/netip"
 	"os"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -29,7 +28,6 @@ func cmdAppEgressAllowlist(slug string, args []string) int {
 		return printErr("Could not load app", err)
 	}
 	current := append([]string(nil), app.EgressAllowlist...)
-	before := append([]string(nil), current...)
 	switch action {
 	case "show":
 		if jsonOutput {
@@ -90,34 +88,9 @@ func cmdAppEgressAllowlist(slug string, args []string) int {
 	} else {
 		PrintOK(osStdout, "App %s egress allowlist updated.", slug)
 	}
-	if egressAllowlistChangeNeedsRestart(before, current) {
-		_, _ = fmt.Fprintf(osStdout, "Running instances keep their current egress rules until they next start; apply it now with `gregale app restart %s`.\n", slug)
-	}
+	// vmmd applies every allowlist edit to running instances, replacing the
+	// firewall policy when the chain changes shape; the restart advice this
+	// printed for a first entry or a clear was stale (Hunt 32 H32-29).
+	_, _ = fmt.Fprintln(osStdout, "Running instances apply it within seconds.")
 	return 0
-}
-
-// egressAllowlistChangeNeedsRestart mirrors vmmd's live-patch rule
-// (pkg/fcvm egressAllowlistNeedsRestart): adding the first entry, clearing
-// the list, or an address family gaining its first entry changes the
-// instance's firewall chain shape, so running instances apply it when they
-// next start (H10-36). Other edits apply to running instances in place.
-func egressAllowlistChangeNeedsRestart(before, after []string) bool {
-	if (len(before) == 0) != (len(after) == 0) {
-		return true
-	}
-	families := func(list []string) (v4, v6 bool) {
-		for _, raw := range list {
-			if p, err := netip.ParsePrefix(raw); err == nil {
-				if p.Addr().Is4() {
-					v4 = true
-				} else {
-					v6 = true
-				}
-			}
-		}
-		return v4, v6
-	}
-	b4, b6 := families(before)
-	a4, a6 := families(after)
-	return a4 && !b4 || a6 && !b6
 }

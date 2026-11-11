@@ -7686,8 +7686,11 @@ type SourceTarballDeployRequest struct {
 // existing app, and which existing app row the update targets. ID is
 // empty when Action == "create".
 type PlanWorkload struct {
-	AppSlug          string              `json:"app_slug,omitempty"`
-	PublicURL        string              `json:"public_url,omitempty"`
+	AppSlug   string `json:"app_slug,omitempty"`
+	PublicURL string `json:"public_url,omitempty"`
+	// PublicAuthMode is the public URL's auth after apply ("bearer",
+	// "basic", ...); omitted when the URL is open to anonymous requests.
+	PublicAuthMode   string              `json:"public_auth_mode,omitempty"`
 	Name             string              `json:"name"`
 	RootDir          string              `json:"root_dir"`
 	Dockerfile       string              `json:"dockerfile,omitempty"`

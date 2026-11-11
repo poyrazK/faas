@@ -7876,6 +7876,22 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
           summary: "apid's object storage inventory sweep has not completed for over 10 minutes"
           description: "No inventory sweep has completed without error for {{ $value | humanizeDuration }}. Gateway reads and writes need a bucket inventory under 900 s old, so buckets start answering 503 within minutes."
+      # ADR-20261110151628 §3: the sweep falling behind shows here before
+      # admission refuses a bucket's transfers at 900 s. Buckets held by a
+      # configuration change or listing within the progress window are left
+      # out of the age.
+      - alert: FaasObjectStorageInventoryBacklog
+        expr: |
+          max(faas_object_storage_inventory_oldest_observation_age_seconds{class="active"}) > 600
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "apid's object storage inventory sweep is falling behind"
+          description: "The oldest bucket inventory admission still needs is {{ $value | humanizeDuration }} old. At 900 s that bucket's reads and writes answer 503; faas_object_storage_inventory_due_buckets shows the backlog."
       # Hunt 14 H14-14: a provider that refuses the credentials (here a closed
       # billing account) withdraws object storage; every bucket create failed
       # for three weeks with nothing paging.

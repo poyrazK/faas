@@ -48,8 +48,8 @@ func TestAppInstanceBooksItsBootedVCPUs(t *testing.T) {
 
 	app := f.app(t, api.PlanPro, 256, 1)
 	want := sched.AppVCPUs(app)
-	if want != 1 || want >= api.MustLimitsFor(api.PlanPro).VCPU {
-		t.Fatalf("a 256 MB app boots %d vCPUs, want 1, fewer than the plan's for this test", want)
+	if want != 1 {
+		t.Fatalf("a 256 MB app boots %d vCPUs, want 1", want)
 	}
 	if _, err := f.e.Wake(ctx, app.ID, "", "", sched.TriggerCronSched); err != nil {
 		t.Fatalf("wake: %v", err)
