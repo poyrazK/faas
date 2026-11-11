@@ -528,6 +528,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/ops/accounts/{id}/reset-mfa":                    true, // operator-only account recovery (ADR-20261108160000)
 	"POST /v1/admin/ops/accounts/{id}/revert-email":                 true, // operator-only account recovery (ADR-20261110100000)
 	"POST /v1/admin/ops/accounts/{id}/object-storage-ceiling":       true, // operator-only support grant (ADR-20261101214152)
+	"POST /v1/admin/ops/accounts/{id}/complimentary":                true, // operator-only complimentary plan (ADR-20261111140000)
 	"POST /v1/admin/ops/nodes/{name}/drain":                         true, // operator-only node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/force-drain":                   true, // operator-only destructive node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/activate":                      true, // operator-only node lifecycle control
@@ -981,6 +982,7 @@ var dtoExclude = map[string]bool{
 	// every other Obs* DTO stays admin-only and is excluded here.
 	"ObsAccountMutationResponse":      true,
 	"ObsObjectStorageCeilingResponse": true, // operator-only support grant view (ADR-20261101214152)
+	"ObsComplimentaryResponse":        true, // operator-only complimentary plan view (ADR-20261111140000)
 	"ObsAppDetail":                    true,
 	"ObsAppDetailResponse":            true,
 	"ObsAppHealth":                    true,
