@@ -12,7 +12,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/canary"
-	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/safedeploy"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -639,6 +638,7 @@ type AlertsEvaluator = alerts.Evaluator
 // account's usage read, spend-cap hold or enforcement failed: the rest still
 // run, and the tick is recorded as failed (ADR-20261104211412).
 func (l *Loop) runQuotaOnce(ctx context.Context) error {
+	defer l.deliverSpendCapNotices(ctx)
 	accounts, err := state.ListBillingResourceAccounts(ctx, l.store)
 	if err != nil {
 		l.log.Warn("meter: quota list_accounts", "err", err)
@@ -757,36 +757,14 @@ func (l *Loop) recordSpendCapHold(ctx context.Context, acct state.Account, now t
 	}
 	at := now.UTC()
 	hold := state.SpendCapHold{AccountID: acct.ID, Month: time.Date(at.Year(), at.Month(), 1, 0, 0, 0, 0, time.UTC),
-		CapCents: capCents, ObservedCents: observed}
-	// The hold engages when none is recorded for this month and cap; that is
-	// when the customer is told (ADR-20261030093512). A failed read sends
-	// nothing rather than mailing on every tick.
-	prior, held, readErr := holds.GetSpendCapHold(ctx, acct.ID)
-	engaged := readErr == nil && (!held || !prior.Month.Equal(hold.Month) || prior.CapCents != capCents)
+		CapCents: capCents, ObservedCents: observed, ReachedAt: now.UTC()}
+	// The store atomically records the hold and its deduplicated notice.
+	// Mail delivery is independent, so a crash or provider failure retries.
 	if err := holds.PutSpendCapHold(ctx, hold); err != nil {
 		l.log.Warn("meter: record spend cap hold failed", "account", acct.ID, "err", err)
 		return err
 	}
-	if engaged {
-		l.sendSpendCapMail(ctx, acct, hold, now)
-	}
 	return nil
-}
-
-func (l *Loop) sendSpendCapMail(ctx context.Context, acct state.Account, hold state.SpendCapHold, now time.Time) {
-	if acct.Email == "" {
-		return
-	}
-	subject, body := mail.SpendCapReachedBody(acct.Email, string(acct.Plan), hold.CapCents, hold.ObservedCents, now)
-	msg := mail.Message{
-		To: []string{acct.Email}, Subject: subject, TextBody: body,
-		// One notice per account, month and cap: a second meterd that saw
-		// the same transition dedupes at the provider.
-		MessageID: fmt.Sprintf("%s:spend_cap_reached:%s:%d", acct.ID, hold.Month.Format("2006-01"), hold.CapCents),
-	}
-	if err := l.mailer.Send(ctx, msg); err != nil {
-		l.log.Warn("meter: spend cap mail", "account", acct.ID, "err", err)
-	}
 }
 
 // liveMeterOverageCents is the month's live overage on meter for the spend

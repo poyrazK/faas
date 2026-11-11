@@ -17,6 +17,18 @@ FROM (
     FROM managed_postgres_account_overage o
     WHERE o.enabled
     UNION ALL
+    -- ADR-20261025094915 amendment 2026-11-11: a subject with databases on a
+    -- plan whose overage is on by default, that never chose, has it on.
+    SELECT y.subject_id, 0::bigint, true
+    FROM (
+        SELECT DISTINCT managed_postgres_usage_subject(db.org_id, db.account_id) AS subject_id
+        FROM managed_postgres_databases db
+        WHERE db.state <> 'deleted' OR db.deleted_at >= sqlc.arg(period_start)::timestamptz
+    ) y
+    WHERE NOT EXISTS (SELECT 1 FROM managed_postgres_account_overage o WHERE o.subject_id = y.subject_id)
+      AND (EXISTS (SELECT 1 FROM accounts a WHERE a.id = y.subject_id AND a.plan = ANY(sqlc.arg(default_overage_plans)::text[]))
+        OR EXISTS (SELECT 1 FROM orgs og WHERE og.id = y.subject_id AND og.plan = ANY(sqlc.arg(default_overage_plans)::text[])))
+    UNION ALL
     SELECT d.subject_id, 0::bigint, false
     FROM managed_postgres_overage_deliveries d
     WHERE d.period_start = sqlc.arg(period_start)::timestamptz
