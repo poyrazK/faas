@@ -1059,8 +1059,9 @@ type MemStore struct {
 	executionUsageLedger map[string]executionUsageLedgerRow
 	// executionEvents is the bounded control-plane replay log for the agent
 	// runtime stream. It is deliberately separate from guest scratch storage.
-	executionEvents      map[string][]ExecutionEvent
-	nextExecutionEventID int64
+	executionEvents             map[string][]ExecutionEvent
+	executionEventPrunedThrough map[string]int64
+	nextExecutionEventID        int64
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask

@@ -6311,7 +6311,7 @@ func (s *server) idempotentWithInEnvironment(environmentID string, next accountH
 		// Partition receipts by the actual caller and credential so another
 		// member cannot replay an earlier member's response under that account.
 		key = postgresaccess.IdempotencyKey(r, projectaccess.IdempotencyKey(r, appaccess.IdempotencyKey(r, key)))
-		if strings.HasPrefix(r.URL.Path, "/v1/executions") || strings.HasPrefix(r.URL.Path, "/v1/execution-artifact-grants/") {
+		if strings.HasPrefix(r.URL.Path, "/v1/executions") || strings.HasPrefix(r.URL.Path, "/v1/execution-workflows") || strings.HasPrefix(r.URL.Path, "/v1/execution-artifact-grants/") {
 			access, problem := executionAccessForRequest(r)
 			if problem != nil {
 				writeExecutionAccessError(w, problem)
@@ -6394,7 +6394,7 @@ func idempotencyResponseReplayable(status int, body []byte) bool {
 		return problem.Code != api.CodeReleasePhaseUnavailable
 	}
 	switch problem.Code {
-	case "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged, api.CodeRouteRemovalRequired, api.CodeRouteRemovalPolicyChanged,
+	case api.CodeImageRunCacheFull, "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged, api.CodeRouteRemovalRequired, api.CodeRouteRemovalPolicyChanged,
 		api.CodeFullEnvironmentCloneUnavailable:
 		return false
 	default:

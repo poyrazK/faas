@@ -113,6 +113,7 @@ func init() {
 }
 
 func run(args []string) (status int) {
+	args = protectImageRunCommandArgs(args)
 	resetCapabilityView()
 	previousJSON, previousUsageHelp, previousPath := jsonOutput, jsonUsageHelp, invokedCommandPath
 	defer func() {

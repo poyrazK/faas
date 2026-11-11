@@ -6656,9 +6656,48 @@ WHERE executions.status = 'queued'
   AND executions.cancel_requested_at IS NULL
   AND executions.created_at <= sqlc.arg(at)::timestamptz
   AND executions.deadline_at > sqlc.arg(at)::timestamptz
+  AND (sqlc.narg(after_account_id)::uuid IS NULL OR executions.account_id > sqlc.narg(after_account_id)::uuid)
 GROUP BY executions.account_id
 ORDER BY executions.account_id
 LIMIT sqlc.arg(page_limit)::int;
+
+-- name: ImageRunHasActiveWork :one
+SELECT EXISTS (
+    SELECT 1 FROM job_runs r JOIN job_tasks t ON t.run_id = r.id
+    WHERE r.job_id = sqlc.arg(job_id)::uuid AND t.status IN ('queued', 'claimed')
+) OR EXISTS (
+    SELECT 1 FROM instances i WHERE i.job_id = sqlc.arg(job_id)::uuid
+    AND i.kind = 'job_task' AND i.state IN ('waking', 'cold_booting', 'running')
+) AS busy;
+
+-- name: ExecutionPruneReplayEvents :exec
+WITH removed AS (
+    DELETE FROM execution_events
+    WHERE execution_id = sqlc.arg(execution_id)::uuid
+      AND id < coalesce((SELECT id FROM execution_events
+          WHERE execution_id = sqlc.arg(execution_id)::uuid
+          ORDER BY id DESC OFFSET sqlc.arg(keep_offset)::int LIMIT 1), 0)
+    RETURNING id
+)
+INSERT INTO execution_event_replay_cursors (execution_id, pruned_through, updated_at)
+SELECT sqlc.arg(execution_id)::uuid, max(id), sqlc.arg(pruned_at)::timestamptz
+FROM removed HAVING count(*) > 0
+ON CONFLICT (execution_id) DO UPDATE SET
+    pruned_through = greatest(execution_event_replay_cursors.pruned_through, EXCLUDED.pruned_through),
+    updated_at = EXCLUDED.updated_at;
+
+-- name: ExecutionReplayEvents :many
+SELECT id, execution_id::text AS execution_id, account_id::text AS account_id, event_type, payload, created_at
+FROM execution_events
+WHERE account_id = sqlc.arg(account_id)::uuid AND execution_id = sqlc.arg(execution_id)::uuid AND id > sqlc.arg(after_sequence)::bigint
+UNION ALL
+SELECT c.pruned_through AS id, e.id::text AS execution_id, e.account_id::text AS account_id,
+    'gap'::text AS event_type,
+    jsonb_build_object('execution_id', e.id::text, 'through_sequence', c.pruned_through) AS payload,
+    c.updated_at AS created_at
+FROM execution_event_replay_cursors c JOIN executions e ON e.id = c.execution_id
+WHERE e.account_id = sqlc.arg(account_id)::uuid AND e.id = sqlc.arg(execution_id)::uuid AND c.pruned_through > sqlc.arg(after_sequence)::bigint
+ORDER BY id LIMIT sqlc.arg(page_limit)::int;
 
 -- name: ExecutionPayloadForLease :one
 SELECT payload.execution_id, payload.sealed_payload, payload.kid, payload.created_at

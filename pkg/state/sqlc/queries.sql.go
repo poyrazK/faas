@@ -21462,6 +21462,34 @@ func (q *Queries) ExecutionPinRuntime(ctx context.Context, db DBTX, arg Executio
 	return i, err
 }
 
+const executionPruneReplayEvents = `-- name: ExecutionPruneReplayEvents :exec
+WITH removed AS (
+    DELETE FROM execution_events
+    WHERE execution_id = $1::uuid
+      AND id < coalesce((SELECT id FROM execution_events
+          WHERE execution_id = $1::uuid
+          ORDER BY id DESC OFFSET $3::int LIMIT 1), 0)
+    RETURNING id
+)
+INSERT INTO execution_event_replay_cursors (execution_id, pruned_through, updated_at)
+SELECT $1::uuid, max(id), $2::timestamptz
+FROM removed HAVING count(*) > 0
+ON CONFLICT (execution_id) DO UPDATE SET
+    pruned_through = greatest(execution_event_replay_cursors.pruned_through, EXCLUDED.pruned_through),
+    updated_at = EXCLUDED.updated_at
+`
+
+type ExecutionPruneReplayEventsParams struct {
+	ExecutionID pgtype.UUID
+	PrunedAt    pgtype.Timestamptz
+	KeepOffset  int32
+}
+
+func (q *Queries) ExecutionPruneReplayEvents(ctx context.Context, db DBTX, arg ExecutionPruneReplayEventsParams) error {
+	_, err := db.Exec(ctx, executionPruneReplayEvents, arg.ExecutionID, arg.PrunedAt, arg.KeepOffset)
+	return err
+}
+
 const executionQueueAccounts = `-- name: ExecutionQueueAccounts :many
 SELECT executions.account_id, count(*)::bigint AS queued_count, min(executions.created_at) AS oldest_created_at
 FROM executions
@@ -21469,14 +21497,16 @@ WHERE executions.status = 'queued'
   AND executions.cancel_requested_at IS NULL
   AND executions.created_at <= $1::timestamptz
   AND executions.deadline_at > $1::timestamptz
+  AND ($2::uuid IS NULL OR executions.account_id > $2::uuid)
 GROUP BY executions.account_id
 ORDER BY executions.account_id
-LIMIT $2::int
+LIMIT $3::int
 `
 
 type ExecutionQueueAccountsParams struct {
-	At        pgtype.Timestamptz
-	PageLimit int32
+	At             pgtype.Timestamptz
+	AfterAccountID pgtype.UUID
+	PageLimit      int32
 }
 
 type ExecutionQueueAccountsRow struct {
@@ -21486,7 +21516,7 @@ type ExecutionQueueAccountsRow struct {
 }
 
 func (q *Queries) ExecutionQueueAccounts(ctx context.Context, db DBTX, arg ExecutionQueueAccountsParams) ([]ExecutionQueueAccountsRow, error) {
-	rows, err := db.Query(ctx, executionQueueAccounts, arg.At, arg.PageLimit)
+	rows, err := db.Query(ctx, executionQueueAccounts, arg.At, arg.AfterAccountID, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -21556,6 +21586,68 @@ func (q *Queries) ExecutionRenewLease(ctx context.Context, db DBTX, arg Executio
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const executionReplayEvents = `-- name: ExecutionReplayEvents :many
+SELECT id, execution_id::text AS execution_id, account_id::text AS account_id, event_type, payload, created_at
+FROM execution_events
+WHERE account_id = $2::uuid AND execution_id = $3::uuid AND id > $4::bigint
+UNION ALL
+SELECT c.pruned_through AS id, e.id::text AS execution_id, e.account_id::text AS account_id,
+    'gap'::text AS event_type,
+    jsonb_build_object('execution_id', e.id::text, 'through_sequence', c.pruned_through) AS payload,
+    c.updated_at AS created_at
+FROM execution_event_replay_cursors c JOIN executions e ON e.id = c.execution_id
+WHERE e.account_id = $2::uuid AND e.id = $3::uuid AND c.pruned_through > $4::bigint
+ORDER BY id LIMIT $1::int
+`
+
+type ExecutionReplayEventsParams struct {
+	PageLimit     int32
+	AccountID     pgtype.UUID
+	ExecutionID   pgtype.UUID
+	AfterSequence int64
+}
+
+type ExecutionReplayEventsRow struct {
+	ID          int64
+	ExecutionID string
+	AccountID   string
+	EventType   string
+	Payload     []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ExecutionReplayEvents(ctx context.Context, db DBTX, arg ExecutionReplayEventsParams) ([]ExecutionReplayEventsRow, error) {
+	rows, err := db.Query(ctx, executionReplayEvents,
+		arg.PageLimit,
+		arg.AccountID,
+		arg.ExecutionID,
+		arg.AfterSequence,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExecutionReplayEventsRow{}
+	for rows.Next() {
+		var i ExecutionReplayEventsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ExecutionID,
+			&i.AccountID,
+			&i.EventType,
+			&i.Payload,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const executionRequestCancel = `-- name: ExecutionRequestCancel :one
@@ -31072,6 +31164,23 @@ func (q *Queries) IdempotencyReceipt(ctx context.Context, db DBTX, arg Idempoten
 	var i IdempotencyReceiptRow
 	err := row.Scan(&i.ResponseStatus, &i.ResponseBody, &i.RequestDigest)
 	return i, err
+}
+
+const imageRunHasActiveWork = `-- name: ImageRunHasActiveWork :one
+SELECT EXISTS (
+    SELECT 1 FROM job_runs r JOIN job_tasks t ON t.run_id = r.id
+    WHERE r.job_id = $1::uuid AND t.status IN ('queued', 'claimed')
+) OR EXISTS (
+    SELECT 1 FROM instances i WHERE i.job_id = $1::uuid
+    AND i.kind = 'job_task' AND i.state IN ('waking', 'cold_booting', 'running')
+) AS busy
+`
+
+func (q *Queries) ImageRunHasActiveWork(ctx context.Context, db DBTX, jobID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, imageRunHasActiveWork, jobID)
+	var busy pgtype.Bool
+	err := row.Scan(&busy)
+	return busy, err
 }
 
 const incrementAppError = `-- name: IncrementAppError :one

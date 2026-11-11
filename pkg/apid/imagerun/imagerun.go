@@ -108,6 +108,12 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 	}
 	res, err := h.Store.JobEnsureImageRun(r.Context(), req.ensure)
 	if err != nil {
+		if errors.Is(err, state.ErrImageRunBusy) {
+			w.Header().Set("Retry-After", "2")
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"Image is in use", "wait for this image's queued and running tasks to finish before refreshing it"))
+			return
+		}
 		api.WriteProblem(w, h.ensureProblem(acct, req.ensure.Name, err))
 		return
 	}
@@ -122,6 +128,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 	}
 	h.announce(r.Context(), acct, res)
 	if res.Job.ImageMaterializationStatus != "ready" {
+		// Pulling is preparation, not an accepted run. The same logical
+		// idempotency key must be able to advance once the image is ready.
+		httpkit.SkipIdempotentReplay(w)
 		httpkit.WriteJSON(w, http.StatusAccepted, response(res.Job, api.ImageRunStatusPulling))
 		return
 	}
@@ -139,7 +148,8 @@ func (h *Handler) startRun(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Invalid command", fmt.Sprintf("the resolved command has %d entries; at most %d are allowed", len(argv), api.ImageRunArgvMax)))
 		return
 	}
-	opts := state.JobRunOptions{CommandArgs: &argv, ProcessUser: req.raw.User, ProcessWorkdir: req.raw.Workdir}
+	opts := state.JobRunOptions{CommandArgs: &argv, RAMMB: &req.ensure.RAMMB, ExpectedImageStorageKey: job.ImageStorageKey,
+		ProcessUser: req.raw.User, ProcessWorkdir: req.raw.Workdir}
 	token := ""
 	if req.raw.Interactive {
 		var prob *api.Problem
@@ -155,6 +165,7 @@ func (h *Handler) startRun(w http.ResponseWriter, r *http.Request, acct state.Ac
 		req.env, 1, opts)
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
+			w.Header().Set("Retry-After", "2")
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Image unavailable", "the image could not be prepared; run again to retry the pull"))
 			return

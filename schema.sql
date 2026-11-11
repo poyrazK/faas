@@ -107040,5 +107040,11 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
     ADD CONSTRAINT workflow_webhook_receipts_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
 
 
+CREATE TABLE public.execution_event_replay_cursors (
+    execution_id uuid PRIMARY KEY REFERENCES public.executions(id) ON DELETE CASCADE,
+    pruned_through bigint NOT NULL CHECK (pruned_through > 0),
+    updated_at timestamp with time zone NOT NULL CHECK (isfinite(updated_at))
+);
+
 --
 --

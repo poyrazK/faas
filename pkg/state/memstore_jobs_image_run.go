@@ -20,6 +20,9 @@ func (m *MemStore) JobEnsureImageRun(_ context.Context, in ImageRunEnsure) (Imag
 			return ImageRunEnsureResult{}, fmt.Errorf("%w: job name %q is taken", ErrConflict, in.Name)
 		}
 		requeue := imageRunNeedsRequeue(job, in.PullAlways)
+		if requeue && m.jobHasActiveTasksLocked(job.ID) {
+			return ImageRunEnsureResult{}, ErrImageRunBusy
+		}
 		job.RAMMB, job.TaskTimeoutS, job.UpdatedAt = in.RAMMB, in.TaskTimeoutSec, time.Now().UTC()
 		if requeue {
 			job.ImageResolvedDigest, job.ImageStorageKey = "", ""
@@ -72,6 +75,16 @@ func (m *MemStore) JobEnsureImageRun(_ context.Context, in ImageRunEnsure) (Imag
 	}
 	res.Job, res.Created = created, true
 	return res, nil
+}
+
+func (m *MemStore) JobGetByIDForRunHistory(_ context.Context, id string) (Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	job, ok := m.jobs[id]
+	if !ok || (job.Status == "deleted" && job.Kind != JobKindImageRun) {
+		return Job{}, ErrNotFound
+	}
+	return job, nil
 }
 
 // jobHasActiveTasksLocked mirrors JobSoftDelete's active-work predicate:
