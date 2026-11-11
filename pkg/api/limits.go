@@ -3696,6 +3696,12 @@ func ValidSnapshotRefresh(v string) bool {
 	return v == SnapshotRefreshOff || v == SnapshotRefreshShadow || v == SnapshotRefreshOn
 }
 
+// ValidGatewayAwaitingResponseMax reports whether v is a valid
+// `gateway_awaiting_response_max`.
+func ValidGatewayAwaitingResponseMax(v int) bool {
+	return v >= GatewayAwaitingResponseMaxMin && v <= GatewayAwaitingResponseMaxMax
+}
+
 // ValidSnapshotRefreshWindowHours reports whether v is a valid
 // `snapshot_refresh_window_hours`.
 func ValidSnapshotRefreshWindowHours(v int) bool {
@@ -8374,6 +8380,28 @@ const (
 	// for a gateway admission slot. Per-app waiter caps are enforced by
 	// WakeAdmissionPolicyForPlan in pkg/gateway; this is the cross-app bound.
 	GatewayWakeAdmissionQueueCap = 128
+
+	// GatewayAwaitingResponseMax bounds the app requests one gatewayd-internal
+	// process holds before their response head is written: waiting for a
+	// wake, a concurrency slot or the guest's first byte. Past it the gateway
+	// answers 503 gateway_overloaded at once instead of holding another one
+	// (pkg/gateway/backlog). A node saturated on CPU otherwise holds requests
+	// until the process passes its MemoryMax: on 2026-11-11 1,400 req/s at one
+	// node grew gatewayd-internal from ~120 MB to ~500 MB and the kernel
+	// killed it, taking the node's entry down. A waiting request held about
+	// 100 KB there, so 2,048 keeps the backlog near 200 MB, under the unit's
+	// GOMEMLIMIT of 384 MiB. A healthy node holds tens: 1,000 req/s at 60 ms.
+	// The gateway_awaiting_response_max runtime-config key changes it without
+	// a restart, between GatewayAwaitingResponseMaxMin and
+	// GatewayAwaitingResponseMaxMax; raise MemoryMax and GOMEMLIMIT with it.
+	GatewayAwaitingResponseMax    = 2048
+	GatewayAwaitingResponseMaxMin = 64
+	GatewayAwaitingResponseMaxMax = 65536
+	// A gateway_overloaded answer's Retry-After is drawn from
+	// GatewayOverloadedRetryAfterMin to GatewayOverloadedRetryAfterMax seconds,
+	// so refused clients don't return together.
+	GatewayOverloadedRetryAfterMin = 1
+	GatewayOverloadedRetryAfterMax = 3
 
 	// Gateway wake admission defaults are plan policy, kept here with the
 	// rest of the platform's quotas so gateway and scheduler-facing code do
