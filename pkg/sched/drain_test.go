@@ -45,6 +45,7 @@ type drainSynth struct {
 	transient      atomic.Bool  // if true, return a transient error
 	refused        atomic.Bool  // if true, the gateway refuses the dispatch before the app
 	appStatus      atomic.Int64 // if set, the app's own code returned this status
+	appAnswered    atomic.Int64 // if set, the app answered this ordinary (retryable) 5xx
 	responseStatus int
 	outcomeCode    string
 	hold           time.Duration
@@ -79,6 +80,9 @@ func (d *drainSynth) Invoke(_ context.Context, appID string, inv state.Invocatio
 	}
 	if status := int(d.appStatus.Load()); status > 0 {
 		return inv, applicationStatusError{status: status, err: fmt.Errorf("%w: application returned HTTP %d", ErrPermanentInvoke, status)}
+	}
+	if status := int(d.appAnswered.Load()); status > 0 {
+		return inv, appAnsweredError{err: fmt.Errorf("application or gateway returned retryable HTTP %d", status)}
 	}
 	if trans {
 		return inv, errors.New("drain synth: transient")

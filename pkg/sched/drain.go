@@ -1615,6 +1615,13 @@ const financialHoldDeferral = time.Minute
 // received 202 never sent the event again. Cron runs and exclusive operations
 // keep the gateway's verdict, as does a failure the app's code did not return.
 func (d *Drain) applicationFailure(ctx context.Context, inv state.Invocation, err error, retryAfter time.Duration, budget int) (time.Duration, int) {
+	if state.IsSyncInvoke(inv) && errors.Is(err, ErrAppAnswered) {
+		// A sync invoke's caller is answered with what the app returned, a
+		// 5xx included, so the row ends on it. Retrying an app's 502 ran up
+		// to 25 attempts after the CLI had given up, re-running the handler
+		// each time (Hunt 33 H33-30). Platform failures still retry.
+		return 0, budget
+	}
 	var appErr applicationStatusError
 	if !state.RetriesApplicationFailures(inv) || !errors.As(err, &appErr) {
 		return retryAfter, budget

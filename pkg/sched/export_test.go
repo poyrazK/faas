@@ -701,6 +701,8 @@ func (r *drainSynth) Refused() *atomic.Bool   { return &r.refused }
 // that status (ADR-20261031100001).
 func (r *drainSynth) AppStatus() *atomic.Int64 { return &r.appStatus }
 
+func (r *drainSynth) AppAnswered() *atomic.Int64 { return &r.appAnswered }
+
 // XHTTPGatewaySynth is the drain's real gateway client pointed at base.
 func XHTTPGatewaySynth(client *http.Client, base string) interface {
 	InvokeWithWake(context.Context, string, state.Invocation, WakeResult) (state.Invocation, error)
