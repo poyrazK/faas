@@ -26465,7 +26465,7 @@ components:
         idle_timeout_s: {type: [integer, "null"]}
         request_timeout_s: {type: integer, minimum: 0, maximum: 30, description: "Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default."}
         function_concurrency: {type: integer, minimum: 0, maximum: 80, description: "Requests one Node or Python function worker serves at once. 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy."}
-        function_callables: {type: object, additionalProperties: {type: string}, description: "Names this function's typed client may call and their app slugs (ADR-20261111150000), set by functions-project deploys. Stamped into the guest as GREGALE_FUNCTIONS on the next deploy."}
+        function_callables: {type: object, additionalProperties: {type: string}, description: "Names this function's typed client may call and their app slugs, set by functions-project deploys. Stamped into the guest as GREGALE_FUNCTIONS on the next deploy."}
         min_instances: {type: integer}
         status:
           type: string
@@ -27708,7 +27708,7 @@ components:
         function_callables:
           type: [object, "null"]
           additionalProperties: {type: string}
-          description: "Replaces the names a function's typed client may call and their app slugs (ADR-20261111150000); {} clears them. Takes effect on the next deploy as GREGALE_FUNCTIONS. Function apps only."
+          description: "Replaces the names a function's typed client may call and their app slugs; {} clears them. Takes effect on the next deploy as GREGALE_FUNCTIONS. Function apps only."
         request_rate_limit_rps:
           type: [integer, "null"]
           minimum: 0

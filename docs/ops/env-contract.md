@@ -398,7 +398,6 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_FROZEN_TIER_APPS` | schedd | `default` |  |  | `` | optional boolean switch extending the ADR-1151 frozen tier to request-mode apps; needs FAAS_FROZEN_TIER; default on since the ADR-1151 amendment of 2026-10-27, false keeps the tier to functions |
 | `FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S` | schedd | `default` |  |  | `` | optional seconds (0 or 2-300) after which a quiet between_requests instance is frozen instead of waiting for its idle timeout (ADR-20261021215353); needs FAAS_FROZEN_TIER; default 0 (off); the manifest sets it per fleet with daemons.schedd.frozen_tier_early_freeze_after_s |
 | `FAAS_FROZEN_TIER_WORKERS` | schedd | `default` |  |  | `` | optional boolean switch letting worker pools freeze surplus workers and thaw them before booting new ones (ADR-20261019103000); needs FAAS_FROZEN_TIER; production default is off |
-| `GREGALE_FUNCTIONS` | guest, shared | `guest` |  |  | `` | stamped by imaged on function deployments with function_callables: callable name -> app slug for the SDK functions clients (ADR-20261111150000) |
 | `FAAS_FUNCTION_CONCURRENCY` | guest, shared | `guest` |  |  | `` | stamped by imaged on function deployments whose function_concurrency is above one (ADR-1342) |
 | `FAAS_FUNCTION_RUNNER_GO124` | imaged | `unit` | yes |  | `path-exists` |  |
 | `FAAS_FUNCTION_RUNNER_GO124_ALPINE` | imaged | `unit` | yes |  | `path-exists` |  |

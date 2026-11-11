@@ -112,7 +112,7 @@ export type UpdateAppRequest = {
    */
   function_concurrency?: number | null;
   /**
-   * Replaces the names a function's typed client may call and their app slugs (ADR-20261111150000); {} clears them. Takes effect on the next deploy as GREGALE_FUNCTIONS. Function apps only.
+   * Replaces the names a function's typed client may call and their app slugs; {} clears them. Takes effect on the next deploy as GREGALE_FUNCTIONS. Function apps only.
    */
   function_callables?: any | null;
   /**

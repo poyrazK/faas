@@ -68,7 +68,7 @@ export type AppResponse = {
    */
   function_concurrency?: number;
   /**
-   * Names this function's typed client may call and their app slugs (ADR-20261111150000), set by functions-project deploys. Stamped into the guest as GREGALE_FUNCTIONS on the next deploy.
+   * Names this function's typed client may call and their app slugs, set by functions-project deploys. Stamped into the guest as GREGALE_FUNCTIONS on the next deploy.
    */
   function_callables?: Record<string, string>;
   min_instances: number;

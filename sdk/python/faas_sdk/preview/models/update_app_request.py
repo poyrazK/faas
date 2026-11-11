@@ -269,7 +269,7 @@ class UpdateAppRequest:
     """Changes how many requests one Node or Python function worker serves at once. 0 or 1 restores one request per
     worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next deploy."""
     function_callables: None | Unset | UpdateAppRequestFunctionCallablesType0 = UNSET
-    """Replaces the names a function's typed client may call and their app slugs (ADR-20261111150000); {} clears
+    """Replaces the names a function's typed client may call and their app slugs; {} clears
     them. Takes effect on the next deploy as GREGALE_FUNCTIONS. Function apps only."""
     request_rate_limit_rps: int | None | Unset = UNSET
     """Runtime override for the app-wide edge rate-limit refill rate. 0 restores the plan default; positive values

@@ -11,7 +11,7 @@ T = TypeVar("T", bound="UpdateAppRequestFunctionCallablesType0")
 
 @_attrs_define
 class UpdateAppRequestFunctionCallablesType0:
-    """Replaces the names a function's typed client may call and their app slugs (ADR-20261111150000); {} clears them.
+    """Replaces the names a function's typed client may call and their app slugs; {} clears them.
     Takes effect on the next deploy as GREGALE_FUNCTIONS. Function apps only.
 
     """
