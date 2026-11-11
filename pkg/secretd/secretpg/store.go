@@ -139,6 +139,33 @@ func (s *Store) CaptureKey(ctx context.Context, captureID string) (string, []byt
 	return uuid.UUID(row.AppID.Bytes).String(), row.SealedKey, nil
 }
 
+// SidecarEnv implements secretd.Store: the deployment must be appID's.
+func (s *Store) SidecarEnv(ctx context.Context, appID, deploymentID, sidecarName string) (map[string][]byte, error) {
+	if _, err := uuid.Parse(deploymentID); err != nil {
+		return nil, secretd.ErrUnknownSidecar
+	}
+	dep, err := s.state.DeploymentByID(ctx, deploymentID)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil, secretd.ErrUnknownSidecar
+	}
+	if err != nil {
+		return nil, fmt.Errorf("secretpg: deployment: %w", err)
+	}
+	if dep.AppID != appID {
+		return nil, secretd.ErrUnknownSidecar
+	}
+	rows, err := s.state.ListDeploymentSidecarEnvReseals(ctx, deploymentID)
+	if err != nil {
+		return nil, fmt.Errorf("secretpg: sidecar env reseals: %w", err)
+	}
+	reseals := make([]secretd.SidecarEnvReseal, 0, len(rows))
+	for _, r := range rows {
+		reseals = append(reseals, secretd.SidecarEnvReseal{SidecarName: r.SidecarName, Key: r.Key,
+			SourceSHA256: r.SourceSHA256, Ciphertext: r.Ciphertext})
+	}
+	return secretd.SidecarCiphertexts(dep.Sidecars, sidecarName, reseals)
+}
+
 // DeleteExpiredGrants removes grants that expired before before.
 func (s *Store) DeleteExpiredGrants(ctx context.Context, before time.Time) (int64, error) {
 	return s.q.DeleteExpiredSecretGrants(ctx, s.db, pgTime(before))

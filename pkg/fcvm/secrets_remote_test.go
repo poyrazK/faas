@@ -132,3 +132,57 @@ func TestSealedCaptureKeyFromRuntimeOpener(t *testing.T) {
 		t.Fatalf("local without identity = %v, want ErrNoCaptureKey", err)
 	}
 }
+
+type fakeSidecarOpener struct {
+	fakeOpener
+	env   map[string]string
+	calls []string
+}
+
+func (f *fakeSidecarOpener) OpenSidecarEnv(_ context.Context, appID, deploymentID, sidecar string) (map[string]string, error) {
+	f.calls = append(f.calls, appID+"/"+deploymentID+"/"+sidecar)
+	out := map[string]string{}
+	for k, v := range f.env {
+		out[k] = v
+	}
+	return out, nil
+}
+
+// Slice 3d: sidecar direct env opens by reference, with exactly the keys
+// schedd delivered, and app secrets still go through the opener.
+func TestSidecarEnvFromRuntimeOpener(t *testing.T) {
+	newReq := func() *WakeRequest {
+		return &WakeRequest{AppID: "app-1", DeploymentID: "dep-1", AccountID: "acct", Sidecars: []WorkloadSpec{{
+			Name:          "proxy",
+			SealedEnv:     []SealedEnvEntry{{Key: "TOKEN", Ciphertext: []byte("declared")}},
+			SealedSecrets: []SealedEnvEntry{{Key: "DB_URL", Ciphertext: []byte("c")}},
+		}}}
+	}
+	m := newTestManager(&fakeRunner{}, &fakeVMM{})
+	opener := &fakeSidecarOpener{fakeOpener: fakeOpener{values: map[string]string{"DB_URL": "postgres://x"}}, env: map[string]string{"TOKEN": "s3cret"}}
+	m.SetRuntimeSecretOpener(opener)
+	req := newReq()
+	if err := m.prepareSidecarEnvFiles(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	got := string(req.Sidecars[0].preparedEnvJSON)
+	if !strings.Contains(got, `"TOKEN":"s3cret"`) || !strings.Contains(got, `"DB_URL":"postgres://x"`) {
+		t.Fatalf("prepared env = %s", got)
+	}
+	if strings.Join(opener.calls, ",") != "app-1/dep-1/proxy" {
+		t.Fatalf("sidecar calls = %v", opener.calls)
+	}
+
+	// The deployment now declares another key than schedd delivered.
+	opener.env = map[string]string{"OTHER": "x"}
+	if err := m.prepareSidecarEnvFiles(context.Background(), newReq()); err == nil || !strings.Contains(err.Error(), "no value for") {
+		t.Fatalf("mismatched keys = %v", err)
+	}
+	// An opener that cannot open sidecar env by reference leaves direct env
+	// to this node's identity, which it lacks.
+	plain := newTestManager(&fakeRunner{}, &fakeVMM{})
+	plain.SetRuntimeSecretOpener(&fakeOpener{values: map[string]string{"DB_URL": "x"}})
+	if err := plain.prepareSidecarEnvFiles(context.Background(), newReq()); !errors.Is(err, ErrNoHostKey) {
+		t.Fatalf("no sidecar opener, no identity = %v, want ErrNoHostKey", err)
+	}
+}

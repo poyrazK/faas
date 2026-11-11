@@ -25,6 +25,7 @@ const (
 	Secretd_OpenAppSecrets_FullMethodName = "/onebox.faas.secretd.v1.Secretd/OpenAppSecrets"
 	Secretd_GrantPeer_FullMethodName      = "/onebox.faas.secretd.v1.Secretd/GrantPeer"
 	Secretd_OpenCaptureKey_FullMethodName = "/onebox.faas.secretd.v1.Secretd/OpenCaptureKey"
+	Secretd_OpenSidecarEnv_FullMethodName = "/onebox.faas.secretd.v1.Secretd/OpenSidecarEnv"
 )
 
 // SecretdClient is the client API for Secretd service.
@@ -42,6 +43,10 @@ type SecretdClient interface {
 	// and answers only when the capture belongs to app_id (ADR-20261110210000
 	// slice 3d).
 	OpenCaptureKey(ctx context.Context, in *OpenCaptureKeyRequest, opts ...grpc.CallOption) (*OpenCaptureKeyResponse, error)
+	// OpenSidecarEnv opens one sidecar's direct env by reference: secretd reads
+	// the deployment's persisted sidecars itself, for a deployment of app_id
+	// (ADR-20261110210000 slice 3d).
+	OpenSidecarEnv(ctx context.Context, in *OpenSidecarEnvRequest, opts ...grpc.CallOption) (*OpenSidecarEnvResponse, error)
 }
 
 type secretdClient struct {
@@ -82,6 +87,16 @@ func (c *secretdClient) OpenCaptureKey(ctx context.Context, in *OpenCaptureKeyRe
 	return out, nil
 }
 
+func (c *secretdClient) OpenSidecarEnv(ctx context.Context, in *OpenSidecarEnvRequest, opts ...grpc.CallOption) (*OpenSidecarEnvResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OpenSidecarEnvResponse)
+	err := c.cc.Invoke(ctx, Secretd_OpenSidecarEnv_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SecretdServer is the server API for Secretd service.
 // All implementations must embed UnimplementedSecretdServer
 // for forward compatibility.
@@ -97,6 +112,10 @@ type SecretdServer interface {
 	// and answers only when the capture belongs to app_id (ADR-20261110210000
 	// slice 3d).
 	OpenCaptureKey(context.Context, *OpenCaptureKeyRequest) (*OpenCaptureKeyResponse, error)
+	// OpenSidecarEnv opens one sidecar's direct env by reference: secretd reads
+	// the deployment's persisted sidecars itself, for a deployment of app_id
+	// (ADR-20261110210000 slice 3d).
+	OpenSidecarEnv(context.Context, *OpenSidecarEnvRequest) (*OpenSidecarEnvResponse, error)
 	mustEmbedUnimplementedSecretdServer()
 }
 
@@ -115,6 +134,9 @@ func (UnimplementedSecretdServer) GrantPeer(context.Context, *GrantPeerRequest) 
 }
 func (UnimplementedSecretdServer) OpenCaptureKey(context.Context, *OpenCaptureKeyRequest) (*OpenCaptureKeyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method OpenCaptureKey not implemented")
+}
+func (UnimplementedSecretdServer) OpenSidecarEnv(context.Context, *OpenSidecarEnvRequest) (*OpenSidecarEnvResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method OpenSidecarEnv not implemented")
 }
 func (UnimplementedSecretdServer) mustEmbedUnimplementedSecretdServer() {}
 func (UnimplementedSecretdServer) testEmbeddedByValue()                 {}
@@ -191,6 +213,24 @@ func _Secretd_OpenCaptureKey_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Secretd_OpenSidecarEnv_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OpenSidecarEnvRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SecretdServer).OpenSidecarEnv(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Secretd_OpenSidecarEnv_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SecretdServer).OpenSidecarEnv(ctx, req.(*OpenSidecarEnvRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Secretd_ServiceDesc is the grpc.ServiceDesc for Secretd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -209,6 +249,10 @@ var Secretd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "OpenCaptureKey",
 			Handler:    _Secretd_OpenCaptureKey_Handler,
+		},
+		{
+			MethodName: "OpenSidecarEnv",
+			Handler:    _Secretd_OpenSidecarEnv_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

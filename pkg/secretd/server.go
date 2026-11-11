@@ -55,6 +55,10 @@ type Store interface {
 	// CaptureKey returns a live sealed crash capture's app id and sealed
 	// key, or ErrUnknownCapture.
 	CaptureKey(ctx context.Context, captureID string) (appID string, sealed []byte, err error)
+	// SidecarEnv returns the sealed direct env of sidecarName in
+	// deploymentID, a deployment of appID (SidecarCiphertexts), or
+	// ErrUnknownSidecar.
+	SidecarEnv(ctx context.Context, appID, deploymentID, sidecarName string) (map[string][]byte, error)
 }
 
 // ErrUnknownNode is returned by Store.NodeIDByName.
@@ -273,22 +277,13 @@ func (s *Server) GrantPeer(ctx context.Context, req *secretdpb.GrantPeerRequest)
 // reads the sealed key and answers only when the capture belongs to the app
 // the caller owns or holds a grant for.
 func (s *Server) OpenCaptureKey(ctx context.Context, req *secretdpb.OpenCaptureKeyRequest) (*secretdpb.OpenCaptureKeyResponse, error) {
-	name, nodeID, err := s.caller(ctx)
-	if err != nil {
-		return nil, err
-	}
 	appID, captureID := req.GetAppId(), req.GetCaptureId()
 	if appID == "" || captureID == "" {
 		return nil, rpcErr(codes.InvalidArgument, "secretd needs an app id and a capture id")
 	}
-	target, err := s.store.AppTarget(ctx, appID)
+	name, nodeID, via, err := s.authorizeByReference(ctx, appID)
 	if err != nil {
-		return nil, rpcErr(codes.NotFound, "secretd found no such app")
-	}
-	via, err := s.authorize(ctx, appID, nodeID, target)
-	if err != nil {
-		s.log.Warn("secretd: refused capture key", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
-		return nil, rpcErr(codes.PermissionDenied, "secretd refused: the caller neither owns the app nor holds a grant for it")
+		return nil, err
 	}
 	captureApp, sealed, err := s.store.CaptureKey(ctx, captureID)
 	if errors.Is(err, ErrUnknownCapture) {
@@ -303,13 +298,6 @@ func (s *Server) OpenCaptureKey(ctx context.Context, req *secretdpb.OpenCaptureK
 			"app_id", logsanitize.Field(appID), "capture_id", logsanitize.Field(captureID))
 		return nil, rpcErr(codes.PermissionDenied, "secretd refused: the capture belongs to another app")
 	}
-	if !s.budget.allow(nodeID, appID, s.now()) {
-		s.log.Error("secretd: node over its distinct-app budget", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID))
-		return nil, rpcErr(codes.ResourceExhausted, "secretd refused: the caller opened too many distinct apps this hour")
-	}
-	if len(s.identities) == 0 {
-		return nil, rpcErr(codes.FailedPrecondition, "secretd holds no runtime identity")
-	}
 	identity, err := crashcrypt.OpenKey(s.identities, captureID, sealed)
 	if err != nil {
 		s.log.Warn("secretd: capture key does not open", "capture_id", logsanitize.Field(captureID), "err", err)
@@ -320,6 +308,76 @@ func (s *Server) OpenCaptureKey(ctx context.Context, req *secretdpb.OpenCaptureK
 		return nil, rpcErr(codes.Unavailable, "secretd could not record the open")
 	}
 	return &secretdpb.OpenCaptureKeyResponse{Identity: identity.String()}, nil
+}
+
+// OpenSidecarEnv implements secretdpb.SecretdServer (ADR-20261110210000
+// slice 3d): the caller names a deployment and a sidecar; secretd reads the
+// sealed values from that deployment, which must be the app's, and opens
+// them.
+func (s *Server) OpenSidecarEnv(ctx context.Context, req *secretdpb.OpenSidecarEnvRequest) (*secretdpb.OpenSidecarEnvResponse, error) {
+	appID, deploymentID, sidecar := req.GetAppId(), req.GetDeploymentId(), req.GetSidecarName()
+	if appID == "" || deploymentID == "" || sidecar == "" {
+		return nil, rpcErr(codes.InvalidArgument, "secretd needs an app id, a deployment id and a sidecar name")
+	}
+	name, nodeID, via, err := s.authorizeByReference(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	sealed, err := s.store.SidecarEnv(ctx, appID, deploymentID, sidecar)
+	if errors.Is(err, ErrUnknownSidecar) {
+		return nil, rpcErr(codes.NotFound, "secretd found no such sidecar in a deployment of the app")
+	}
+	if err != nil {
+		s.log.Error("secretd: sidecar lookup", "app_id", logsanitize.Field(appID), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not look up the sidecar")
+	}
+	values := make(map[string]string, len(sealed))
+	for key, ct := range sealed {
+		namespace, plaintext, err := secretbox.OpenBytesMulti(s.identities, ct)
+		if err == nil && namespace != SidecarEnvNamespace {
+			err = fmt.Errorf("namespace %q, want %s", namespace, SidecarEnvNamespace)
+		}
+		if err != nil {
+			clear(values)
+			s.log.Warn("secretd: sidecar env does not open", "app_id", logsanitize.Field(appID), "key", logsanitize.Field(key), "err", err)
+			return nil, rpcErr(codes.FailedPrecondition, "secretd could not open a sidecar env value")
+		}
+		values[key] = string(plaintext)
+	}
+	if err := s.store.RecordOpen(ctx, nodeID, appID, via, len(values)); err != nil {
+		clear(values)
+		s.log.Error("secretd: record open", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not record the open")
+	}
+	return &secretdpb.OpenSidecarEnvResponse{Values: values}, nil
+}
+
+// authorizeByReference checks a by-reference open of appID's material: the
+// caller is an active node that owns the app or holds a grant for it, within
+// its distinct-app budget, and secretd holds a runtime identity. It returns
+// the caller's name and node id and how it is authorized.
+func (s *Server) authorizeByReference(ctx context.Context, appID string) (name, nodeID, via string, err error) {
+	name, nodeID, err = s.caller(ctx)
+	if err != nil {
+		return "", "", "", err
+	}
+	target, err := s.store.AppTarget(ctx, appID)
+	if err != nil {
+		return "", "", "", rpcErr(codes.NotFound, "secretd found no such app")
+	}
+	via, err = s.authorize(ctx, appID, nodeID, target)
+	if err != nil {
+		s.log.Warn("secretd: refused open by reference", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+		return "", "", "", rpcErr(codes.PermissionDenied, "secretd refused: the caller neither owns the app nor holds a grant for it")
+	}
+	if !s.budget.allow(nodeID, appID, s.now()) {
+		s.log.Error("secretd: node over its distinct-app budget", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID))
+		return "", "", "", rpcErr(codes.ResourceExhausted, "secretd refused: the caller opened too many distinct apps this hour")
+	}
+	if len(s.identities) == 0 {
+		return "", "", "", rpcErr(codes.FailedPrecondition, "secretd holds no runtime identity")
+	}
+	return name, nodeID, via, nil
 }
 
 // appBudget counts the distinct apps each node opened in a rolling window.

@@ -3769,6 +3769,38 @@ func selectedSealedValue(entry SealedEnvEntry, inner secretbox.Envelope) (string
 // by apid and keeps plaintext only in the wake request until the concrete VMM
 // writes it to that sidecar's workload-specific env file in the instance's
 // writable main upper. It never modifies the shared sidecar image.
+// SidecarEnvOpener opens one sidecar's direct env by reference
+// (ADR-20261110210000 slice 3d): the remote opener reads the sealed values
+// from the deployment itself. A RuntimeSecretOpener that also implements it
+// opens sidecar env too.
+type SidecarEnvOpener interface {
+	OpenSidecarEnv(ctx context.Context, appID, deploymentID, sidecarName string) (map[string]string, error)
+}
+
+// openSidecarEnvRemote asks the remote opener for a sidecar's direct env and
+// requires exactly the keys schedd delivered: a deployment that changed
+// between them fails the wake instead of running with other values.
+func (m *Manager) openSidecarEnvRemote(ctx context.Context, remote SidecarEnvOpener, req *WakeRequest, sidecar string, entries []SealedEnvEntry) (map[string]string, error) {
+	if req.AppID == "" || req.DeploymentID == "" || sidecar == "" {
+		return nil, errors.New("open sidecar env: remote open needs the app, deployment and sidecar")
+	}
+	values, err := remote.OpenSidecarEnv(ctx, req.AppID, req.DeploymentID, sidecar)
+	if err != nil {
+		return nil, fmt.Errorf("open sidecar env: %w", err)
+	}
+	if got := len(values); got != len(entries) {
+		clear(values)
+		return nil, fmt.Errorf("open sidecar env: remote opener returned %d values for %d entries", got, len(entries))
+	}
+	for _, entry := range entries {
+		if _, ok := values[entry.Key]; !ok {
+			clear(values)
+			return nil, fmt.Errorf("open sidecar env: remote opener returned no value for %s", logsanitize.Field(entry.Key))
+		}
+	}
+	return values, nil
+}
+
 func (m *Manager) prepareSidecarEnvFiles(ctx context.Context, req *WakeRequest) error {
 	for i := range req.Sidecars {
 		entries := req.Sidecars[i].SealedEnv
@@ -3787,12 +3819,23 @@ func (m *Manager) prepareSidecarEnvFiles(ctx context.Context, req *WakeRequest) 
 		if len(entries) == 0 && len(secretEntries) == 0 {
 			continue
 		}
-		// Direct sidecar env still opens on this node; app secrets go
-		// through the runtime opener when one is set.
-		if len(m.hostIdentities) == 0 && (len(entries) > 0 || m.runtimeOpener == nil) {
+		// With a runtime opener that opens sidecar env by reference, both the
+		// direct env and the app secrets come from it; otherwise this node
+		// opens them with its runtime identity.
+		remote, byReference := m.runtimeOpener.(SidecarEnvOpener)
+		byReference = byReference && m.runtimeOpener != nil
+		if len(m.hostIdentities) == 0 && ((len(entries) > 0 && !byReference) || m.runtimeOpener == nil) {
 			return ErrNoHostKey
 		}
 		merged := make(map[string]string)
+		if len(entries) > 0 && byReference {
+			values, err := m.openSidecarEnvRemote(ctx, remote, req, req.Sidecars[i].Name, entries)
+			if err != nil {
+				return err
+			}
+			merged = values
+			entries = nil
+		}
 		for _, entry := range entries {
 			namespace, plaintext, err := secretbox.OpenBytesMulti(m.hostIdentities, entry.Ciphertext)
 			if err != nil {

@@ -110,4 +110,19 @@ func (o secretdOpener) OpenCaptureKey(ctx context.Context, appID, captureID stri
 	return id, nil
 }
 
-var _ fcvm.CaptureKeyOpener = secretdOpener{}
+// OpenSidecarEnv implements fcvm.SidecarEnvOpener: secretd reads the
+// sidecar's sealed env from the deployment (ADR-20261110210000 slice 3d).
+func (o secretdOpener) OpenSidecarEnv(ctx context.Context, appID, deploymentID, sidecarName string) (map[string]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, secretdOpenTimeout)
+	defer cancel()
+	resp, err := o.rpc.OpenSidecarEnv(ctx, &secretdpb.OpenSidecarEnvRequest{AppId: appID, DeploymentId: deploymentID, SidecarName: sidecarName})
+	if err != nil {
+		return nil, fmt.Errorf("secretd: %w", err)
+	}
+	return resp.GetValues(), nil
+}
+
+var (
+	_ fcvm.CaptureKeyOpener = secretdOpener{}
+	_ fcvm.SidecarEnvOpener = secretdOpener{}
+)

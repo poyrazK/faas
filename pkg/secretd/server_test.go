@@ -22,17 +22,31 @@ import (
 type grantKey struct{ app, node string }
 
 type fakeStore struct {
-	nodes    map[string]string // name -> id (active only)
-	apps     map[string]secretd.AppTarget
-	grants   map[grantKey]time.Time
-	opens    []string
-	failRec  bool
-	captures map[string]fakeCapture
+	nodes       map[string]string // name -> id (active only)
+	apps        map[string]secretd.AppTarget
+	grants      map[grantKey]time.Time
+	opens       []string
+	failRec     bool
+	captures    map[string]fakeCapture
+	deployments map[string]fakeDeployment
 }
 
 type fakeCapture struct {
 	app    string
 	sealed []byte
+}
+
+func (f *fakeStore) SidecarEnv(_ context.Context, appID, deploymentID, sidecar string) (map[string][]byte, error) {
+	d, ok := f.deployments[deploymentID]
+	if !ok || d.app != appID {
+		return nil, secretd.ErrUnknownSidecar
+	}
+	return secretd.SidecarCiphertexts(d.sidecars, sidecar, nil)
+}
+
+type fakeDeployment struct {
+	app      string
+	sidecars []byte
 }
 
 func (f *fakeStore) CaptureKey(_ context.Context, id string) (string, []byte, error) {
