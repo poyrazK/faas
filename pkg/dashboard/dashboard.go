@@ -4168,6 +4168,25 @@ type OrgDetailData struct {
 	ActivityError      string
 	CallersRole        string
 	Error              string
+	// GitHub is the company's own GitHub installations (ADR-20261110200000).
+	GitHub *OrgGitHubSection
+}
+
+// OrgGitHubSection is the organization page's GitHub panel.
+type OrgGitHubSection struct {
+	Installations   []OrgGitHubInstallItem
+	CanManage       bool   // owner or admin: connect and disconnect
+	Unavailable     string // why the organization cannot own an installation
+	Error           string
+	ConnectToken    string
+	DisconnectToken string
+}
+
+// OrgGitHubInstallItem is one installation the company owns.
+type OrgGitHubInstallItem struct {
+	ID          int64
+	ConnectedBy string
+	ConnectedAt string
 }
 
 // OrgActivityItem is one safe, display-ready row in the organization

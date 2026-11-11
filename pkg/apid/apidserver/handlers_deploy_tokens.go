@@ -135,6 +135,7 @@ func (s *server) createDeployToken(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("could not create deploy token"))
 		return
 	}
+	s.noticeCredentialCreated(r, actor, credentialDeployToken, deployTokenNoticeLabel(app, token.Label))
 	resp := deployTokenResponse(token)
 	resp.Plaintext = plaintext
 	s.audit.Emit(r.Context(), "deploy_token.created", &actor.ID, map[string]any{
@@ -225,5 +226,16 @@ func (s *server) rotateDeployToken(w http.ResponseWriter, r *http.Request, acct 
 	s.audit.Emit(r.Context(), "deploy_token.rotated", &actor.ID, map[string]any{
 		"token_id": newToken.ID, "old_token_id": oldToken.ID, "app_id": app.ID, "app_account_id": acct.ID,
 	})
+	s.noticeCredentialCreated(r, actor, credentialRotatedToken, deployTokenNoticeLabel(app, newToken.Label))
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+// deployTokenNoticeLabel names a deploy token in its credential notice: a
+// token deploys to one app for up to a year, so the mail says which
+// (account-flow audit 2026-11-10, ADR 20261111130000).
+func deployTokenNoticeLabel(app state.App, label string) string {
+	if label == "" {
+		return "for app " + app.Slug
+	}
+	return label + " (app " + app.Slug + ")"
 }

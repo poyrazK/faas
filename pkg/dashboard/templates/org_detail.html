@@ -132,6 +132,49 @@
         <p class="muted">No activity matches these filters.</p>
       {{end}}
 
+      {{with $d.GitHub}}
+      <h2>GitHub</h2>
+      <p class="muted">Company projects link repositories only through installations the company owns, never a member's personal one.</p>
+      {{if .Unavailable}}
+        <p class="muted">{{.Unavailable}}</p>
+      {{else}}
+        {{if .Error}}<p class="muted">{{.Error}}</p>{{end}}
+        {{if .Installations}}
+          <table>
+            <thead><tr><th>Installation</th><th>Connected by</th><th>Connected</th>{{if .CanManage}}<th></th>{{end}}</tr></thead>
+            <tbody>
+              {{$panel := .}}
+              {{range .Installations}}
+                <tr>
+                  <td><code>{{.ID}}</code></td>
+                  <td>{{.ConnectedBy}}</td>
+                  <td>{{.ConnectedAt}}</td>
+                  {{if $panel.CanManage}}
+                  <td>
+                    <form method="POST" action="/dashboard/orgs/{{$d.Org.Slug}}/github/{{.ID}}/disconnect">
+                      <input type="hidden" name="csrf_token" value="{{$panel.DisconnectToken}}">
+                      <button type="submit">Disconnect</button>
+                    </form>
+                  </td>
+                  {{end}}
+                </tr>
+              {{end}}
+            </tbody>
+          </table>
+        {{else}}
+          <p class="muted">No GitHub installation is connected for this organization.</p>
+        {{end}}
+        {{if .CanManage}}
+          <form method="POST" action="/dashboard/install/connect">
+            <input type="hidden" name="csrf_token" value="{{.ConnectToken}}">
+            <input type="hidden" name="organization" value="{{$d.Org.Slug}}">
+            <input type="hidden" name="return_to" value="/dashboard/orgs/{{$d.Org.Slug}}">
+            <button type="submit" class="btn-cta">Connect GitHub for {{$d.Org.Name}}</button>
+          </form>
+        {{end}}
+      {{end}}
+      {{end}}
+
       <h2>Members</h2>
       {{if $d.Members}}
         <table>

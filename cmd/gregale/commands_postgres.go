@@ -380,7 +380,7 @@ func cmdPostgresList(args []string) int {
 		if database.RestorableUntil != "" {
 			_, _ = fmt.Fprintf(osStdout, "%s is scheduled for deletion; undo before %s with: gregale postgres recover %s\n", database.Name, database.RestorableUntil, database.Name)
 		} else if database.RestoreSlotUntil != "" {
-			_, _ = fmt.Fprintf(osStdout, "%s is a restored copy past your plan's database limit; its delete is scheduled at %s unless you purge a database or upgrade first\n", database.Name, database.RestoreSlotUntil)
+			_, _ = fmt.Fprintf(osStdout, "%s is a restored copy past your plan's database limit; its delete is scheduled at %s unless you delete its source, purge another database or upgrade first\n", database.Name, database.RestoreSlotUntil)
 		} else if note := postgresPlanExcessNote(database); note != "" {
 			_, _ = fmt.Fprintf(osStdout, "%s is %s\n", database.Name, note)
 		} else if note := postgresHoldNote(database.Hold); note != "" {
@@ -862,7 +862,7 @@ func renderPostgresDatabase(w io.Writer, database api.ManagedPostgresDatabase) {
 		_, _ = fmt.Fprintf(w, "  restore_range:    %s to %s\n", database.RestoreRange.Earliest, database.RestoreRange.Latest)
 	}
 	if database.RestoreSlotUntil != "" {
-		_, _ = fmt.Fprintf(w, "  restore_slot_until: %s (a temporary copy past your plan's database limit; purge a database or upgrade to keep it)\n", database.RestoreSlotUntil)
+		_, _ = fmt.Fprintf(w, "  restore_slot_until: %s (a temporary copy past your plan's database limit; delete its source, purge another database or upgrade to keep it)\n", database.RestoreSlotUntil)
 	}
 	if database.RestoreSourceDatabaseID != "" {
 		_, _ = fmt.Fprintf(w, "  restored_from:    %s at %s\n", database.RestoreSourceDatabaseID, database.RestorePointInTime)

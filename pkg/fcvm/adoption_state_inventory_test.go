@@ -124,6 +124,7 @@ var adoptionInstanceInventory = map[string]string{
 	"runtimeAdmissionEgress":          "rebuilt",
 	"admissionHeldFrom":               "rebuilt",
 	"ExecutionOnly":                   "refused", // execution kind
+	"SandboxID":                       "refused", // sandbox sessions are execution-only
 	"ExecutionID":                     "refused",
 	"ExecutionLeaseToken":             "refused",
 	"ExecutionOutboundIntegrationIDs": "refused",
@@ -138,6 +139,7 @@ var adoptionInstanceInventory = map[string]string{
 	"IdleLadderGuardedPause":          "rebuilt",
 	"Frozen":                          "rebuilt",
 	"FrozenSince":                     "rebuilt",
+	"FrozenTotal":                     "reset",   // read only by a sandbox session's usage meter; sessions are not adopted
 	"freezing":                        "reset",   // no freeze is in flight at startup
 	"parking":                         "reset",   // no park is in flight at startup
 	"parkHeld":                        "reset",   // nor a forward held on one

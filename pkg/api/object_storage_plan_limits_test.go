@@ -18,14 +18,15 @@ func TestObjectStoragePlanLimitsZeroChangesNothing(t *testing.T) {
 // Free also stops at its allowance. ADR-20261031122757 caps each plan's
 // monthly egress at ten times its included storage. ADR-20261101214152 stops
 // Hobby at twice its included storage, Pro and Scale at five times.
-// ADR-20261104145353 caps each plan's monthly requests.
+// ADR-20261104145353 caps each plan's monthly requests. ADR-20261111123000
+// caps Object Lock retention: Free none, Hobby 90 days, Pro 1 and Scale 7 years.
 func TestObjectStoragePlanLimitsFollowCOGSReport(t *testing.T) {
 	const gib = int64(1 << 30)
 	want := map[Plan]ObjectStoragePlanLimits{
 		PlanFree:  {MaxAccountBytes: gib, MaxMonthlyRequests: 50_000, MaxMonthlyEgressBytes: 10 * gib, IncludedBytes: gib},
-		PlanHobby: {MaxAccountBytes: 20 * gib, MaxMonthlyRequests: 500_000, MaxMonthlyEgressBytes: 100 * gib, IncludedBytes: 10 * gib},
-		PlanPro:   {MaxAccountBytes: 250 * gib, MaxMonthlyRequests: 2_500_000, MaxMonthlyEgressBytes: 500 * gib, IncludedBytes: 50 * gib},
-		PlanScale: {MaxAccountBytes: 1_000 * gib, MaxMonthlyRequests: 10_000_000, MaxMonthlyEgressBytes: 2_000 * gib, IncludedBytes: 200 * gib},
+		PlanHobby: {MaxAccountBytes: 20 * gib, MaxMonthlyRequests: 500_000, MaxMonthlyEgressBytes: 100 * gib, IncludedBytes: 10 * gib, MaxLockRetentionDays: 90},
+		PlanPro:   {MaxAccountBytes: 250 * gib, MaxMonthlyRequests: 2_500_000, MaxMonthlyEgressBytes: 500 * gib, IncludedBytes: 50 * gib, MaxLockRetentionDays: 366},
+		PlanScale: {MaxAccountBytes: 1_000 * gib, MaxMonthlyRequests: 10_000_000, MaxMonthlyEgressBytes: 2_000 * gib, IncludedBytes: 200 * gib, MaxLockRetentionDays: 2557},
 	}
 	for plan, limits := range want {
 		if got := MustLimitsFor(plan).ObjectStorage; got != limits {

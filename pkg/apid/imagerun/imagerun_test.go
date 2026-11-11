@@ -311,3 +311,24 @@ func TestCreateOrdinaryRunHasNoAttach(t *testing.T) {
 		t.Fatalf("ordinary run has a session: %v", err)
 	}
 }
+
+// A sandbox session's image shares the image-run cache: one runner job per
+// normalized image, announced to imaged, keeping an existing runner's
+// resources.
+func TestEnsureSessionImage(t *testing.T) {
+	hs := newHarness(t, api.PlanPro)
+	ctx := context.Background()
+	if _, _, prob := hs.h.EnsureSessionImage(ctx, hs.acct, ""); prob == nil || prob.Code != api.CodeValidation {
+		t.Fatalf("bad reference = %+v", prob)
+	}
+	if code, _, body := hs.post(map[string]any{"image": "ghcr.io/acme/box", "ram_mb": 256}); code != http.StatusAccepted {
+		t.Fatalf("image run = %d %s", code, body)
+	}
+	job, ref, prob := hs.h.EnsureSessionImage(ctx, hs.acct, " ghcr.io/acme/box ")
+	if prob != nil || ref != "ghcr.io/acme/box:latest" || job.Name != imagerun.RunnerName(ref) || job.RAMMB != 256 {
+		t.Fatalf("ensure = %+v %q %+v", job, ref, prob)
+	}
+	if n := len(hs.notified); n == 0 || !strings.Contains(hs.notified[n-1], job.ID) {
+		t.Fatalf("imaged not told: %v", hs.notified)
+	}
+}

@@ -904,6 +904,12 @@ const ManagedPostgresProductionApprovalMaxWindow = 90 * 24 * time.Hour
 // (ADR-20261029174950). Usage in the window is not billed.
 const ManagedPostgresDeleteGracePeriod = 7 * 24 * time.Hour
 
+// ManagedPostgresPlanExcessDeleteAfter is how long a managed PostgreSQL
+// database stays suspended past its subject's plan before its delete is
+// scheduled, with ManagedPostgresDeleteGracePeriod still to undo it
+// (ADR-20261110184700).
+const ManagedPostgresPlanExcessDeleteAfter = 30 * 24 * time.Hour
+
 // ManagedPostgresUsageWaiverPeriod bounds the usage waiver of a scheduled
 // delete (ADR-20261029174950 decision 6, amendment 1): a database's waiver
 // counts only when no earlier one for it began within this period. Deleting
@@ -937,6 +943,39 @@ func ManagedPostgresPreviewDatabasesMax(p Plan) int {
 	}
 	return limits.PreviewApps * databases.DatabasesMax
 }
+
+// ManagedPostgresAllowanceBranchTTLMax is the longest TTL a branch may carry
+// and still sit in the plan's branch allowance instead of its database limit
+// (ADR-20261106103654 amendment 1). A branch with a longer TTL, or none,
+// counts toward DatabasesMax like any restore.
+const ManagedPostgresAllowanceBranchTTLMax = 7 * 24 * time.Hour
+
+// managedPostgresBranchesMax is how many short-lived branches (a TTL of at
+// most ManagedPostgresAllowanceBranchTTLMax) an account may hold at once
+// outside its database limit (ADR-20261106103654 amendment 1). On Neon a
+// branch lives in its source's project, which includes 25 branches, so the
+// allowance costs only the branch's compute and the data written to it,
+// both metered like any database.
+var managedPostgresBranchesMax = map[Plan]int{
+	PlanFree:  0,
+	PlanHobby: 2,
+	PlanPro:   5,
+	PlanScale: 20,
+}
+
+// ManagedPostgresBranchesMax returns the plan's branch allowance. Unknown
+// plans fail closed.
+func ManagedPostgresBranchesMax(p Plan) int {
+	return managedPostgresBranchesMax[p]
+}
+
+// ManagedPostgresPreviewFleetSharePercent caps one account's PR preview
+// databases at this share of the operator's fleet database cap
+// (max_databases), at least one (ADR-20261102123523 amendment 2026-11-10).
+// An empty preview is its own provider project, so without it a few Scale
+// accounts (up to 200 previews each) could fill a fleet of about 1,000 and
+// pause every customer's new databases.
+const ManagedPostgresPreviewFleetSharePercent = 5
 
 // ManagedPostgresRestoreSlotNoticeLead is how long before a restore slot ends
 // without room the restoring account is emailed (ADR-20261031123259).
@@ -2006,6 +2045,7 @@ const EnvironmentGitOpsMaxDeclaredRoutes = 50
 // These intervals do not grant authority to execute enforce-mode intent.
 const EnvironmentGitOpsReportLeaseDuration = time.Minute
 const EnvironmentGitOpsReportCheckInterval = time.Minute
+const EnvironmentGitOpsReportStaleAfter = 3 * EnvironmentGitOpsReportCheckInterval
 const EnvironmentGitOpsReportRetryInterval = 30 * time.Second
 const EnvironmentGitOpsReportIdleInterval = 5 * time.Second
 
@@ -3312,6 +3352,11 @@ const (
 	DevDebugIdleTimeout          = 30 * time.Minute
 	DevDebugMaxBytes       int64 = 256 << 20
 	DevDebugWakeTimeout          = 60 * time.Second
+	// DevDebugApprovalWindow is how long one person's approval lets an agent
+	// key open debugger tunnels to one developer app (ADR-20261111150000): a
+	// debugger opens a tunnel per connection, so a per-request approval would
+	// leave agents unable to debug. The window starts at the first attach.
+	DevDebugApprovalWindow = time.Hour
 	// MaxDelayedTaskDelaySeconds bounds how far a one-shot invocation may be
 	// scheduled into the future. A one-year ceiling prevents effectively
 	// immortal pending rows while still covering annual workflows.
@@ -3680,6 +3725,12 @@ const (
 // ValidSnapshotRefresh reports whether v is a valid `snapshot_refresh`.
 func ValidSnapshotRefresh(v string) bool {
 	return v == SnapshotRefreshOff || v == SnapshotRefreshShadow || v == SnapshotRefreshOn
+}
+
+// ValidGatewayAwaitingResponseMax reports whether v is a valid
+// `gateway_awaiting_response_max`.
+func ValidGatewayAwaitingResponseMax(v int) bool {
+	return v >= GatewayAwaitingResponseMaxMin && v <= GatewayAwaitingResponseMaxMax
 }
 
 // ValidSnapshotRefreshWindowHours reports whether v is a valid
@@ -4091,6 +4142,14 @@ type ObjectStoragePlanLimits struct {
 	IncludedBytes       int64
 	IncludedRequests    int64
 	IncludedEgressBytes int64
+	// MaxLockRetentionDays bounds Object Lock retention, in either mode, on
+	// the plan (ADR-20261111123000 decision 8): Free 0 (Object Lock and legal
+	// holds not included), Hobby 90, Pro 366 and Scale 2557 days (one and
+	// seven years, leap days included). Unlike the ceilings above, zero is a
+	// limit, not "no plan value". A retention date, event-hold duration,
+	// default retention or bucket lock configuration beyond it is refused at
+	// write; longer retention set before the cap is reported, not shortened.
+	MaxLockRetentionDays int32
 }
 
 // Anonymous reads of public bucket mounts (H9-S137, ADR-20261023223000).
@@ -6459,7 +6518,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       200,
 		// ADR-1430: 10 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyRequests: 500_000, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyRequests: 500_000, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30, MaxLockRetentionDays: 90},
 		PriceMillicents: 1_000_000, // $10.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
@@ -6906,7 +6965,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       1000,
 		// ADR-1430: 50 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyRequests: 2_500_000, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyRequests: 2_500_000, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30, MaxLockRetentionDays: 366},
 		PriceMillicents: 3_000_000, // $30.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
@@ -7318,7 +7377,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       3000,
 		// ADR-1430: 200 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyRequests: 10_000_000, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyRequests: 10_000_000, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30, MaxLockRetentionDays: 2557},
 		PriceMillicents: 9_900_000, // $99.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
@@ -8220,13 +8279,20 @@ const (
 	// biggest-over-quota accounts first). Matches spec §12. NaN lv-fc
 	// readings (lvs missing on dev/macOS) short-circuit the pressure branch.
 	SnapshotBudgetAlarmPct = 90.0
-	// SnapshotStaleRetention is how long a snapshot lives in stale state
-	// after the F2 FC-version sweep marks it before imaged evicts it
-	// (F-07). Spec §4.4 + ADR-005: stale snapshots must remain
-	// restore-able for a brief window so an operator rollback across a
-	// firecracker upgrade doesn't pay an extra cold boot. 7 days is the
-	// v1 box's typical reset cycle.
-	SnapshotStaleRetention = 7 * 24 * time.Hour
+	// SnapshotStaleRetention is how long a stale snapshot is kept, from its
+	// stale_at, before imaged deletes its row and files (F-07).
+	//
+	// It was 7 days, so that an operator rollback across a Firecracker
+	// upgrade would not pay a cold boot. But a snapshot only restores while
+	// stale=false (spec §6), and nothing ever clears stale, so a stale
+	// snapshot is never restored again. The window only held dead files: on
+	// 2026-11-11 production kept 361 stale snapshots, 47 GB, none of them
+	// Firecracker-version marks; 325 belonged to deployments still live.
+	//
+	// The hour covers a restore or replica fetch that read the row just
+	// before it was marked. imaged evicts on its GC tick, so files go
+	// within a tick of the hour passing.
+	SnapshotStaleRetention = time.Hour
 	// FcVolumeRoot is where the spec §8 lv-fc volume (app layers +
 	// snapshots) is mounted. Schedd statfs-es it to populate
 	// `fcvm_lv_fc_used_pct`; the gauge reports no data where the path is
@@ -8352,6 +8418,28 @@ const (
 	// for a gateway admission slot. Per-app waiter caps are enforced by
 	// WakeAdmissionPolicyForPlan in pkg/gateway; this is the cross-app bound.
 	GatewayWakeAdmissionQueueCap = 128
+
+	// GatewayAwaitingResponseMax bounds the app requests one gatewayd-internal
+	// process holds before their response head is written: waiting for a
+	// wake, a concurrency slot or the guest's first byte. Past it the gateway
+	// answers 503 gateway_overloaded at once instead of holding another one
+	// (pkg/gateway/backlog). A node saturated on CPU otherwise holds requests
+	// until the process passes its MemoryMax: on 2026-11-11 1,400 req/s at one
+	// node grew gatewayd-internal from ~120 MB to ~500 MB and the kernel
+	// killed it, taking the node's entry down. A waiting request held about
+	// 100 KB there, so 2,048 keeps the backlog near 200 MB, under the unit's
+	// GOMEMLIMIT of 384 MiB. A healthy node holds tens: 1,000 req/s at 60 ms.
+	// The gateway_awaiting_response_max runtime-config key changes it without
+	// a restart, between GatewayAwaitingResponseMaxMin and
+	// GatewayAwaitingResponseMaxMax; raise MemoryMax and GOMEMLIMIT with it.
+	GatewayAwaitingResponseMax    = 2048
+	GatewayAwaitingResponseMaxMin = 64
+	GatewayAwaitingResponseMaxMax = 65536
+	// A gateway_overloaded answer's Retry-After is drawn from
+	// GatewayOverloadedRetryAfterMin to GatewayOverloadedRetryAfterMax seconds,
+	// so refused clients don't return together.
+	GatewayOverloadedRetryAfterMin = 1
+	GatewayOverloadedRetryAfterMax = 3
 
 	// Gateway wake admission defaults are plan policy, kept here with the
 	// rest of the platform's quotas so gateway and scheduler-facing code do
@@ -8569,6 +8657,11 @@ const (
 	// MaxRequestBodyBytes (which bounds inbound request bodies, not
 	// schema documents).
 	MaxEdgeRuleValidateSchemaBytes = 64 * 1024 // 64 KiB
+	// Exact validation arithmetic has a separate per-number work bound
+	// (ADR-20261111140000), independent of the request/schema byte ceiling.
+	MaxEdgeRuleValidateNumberBytes     = 4096
+	MaxEdgeRuleValidateNumberExponent  = 4096
+	MaxEdgeRuleValidateNumberWorkBytes = MaxRequestBodyBytes
 
 	// MaxEdgeRuleRespondBodyBytes bounds the JSON body stored in a
 	// preview-only kind=respond rule. Keeping this bounded protects both
@@ -10385,6 +10478,16 @@ var (
 // account gets a limit error even when the agents capability is released to
 // it. The surfaces are gated off by default (the internal agents capability)
 // and stay out of docs/plans.md until launch.
+// Sandbox preview bounds (ADR-20261027090013 §11).
+const (
+	// SandboxPreviewTokenTTLSec is a private preview token's life, and the
+	// preview cookie's.
+	SandboxPreviewTokenTTLSec = 3600
+	// SandboxPreviewConnsPerSession bounds a session's open preview
+	// connections, each of which holds one of guest-init's 64 operations.
+	SandboxPreviewConnsPerSession = 32
+)
+
 var (
 	// AgentsPerAccount caps the agents an account defines.
 	AgentsPerAccount = [4]int{0, 10, 50, 200}
@@ -10415,6 +10518,49 @@ var (
 
 	// AgentRunVCPUMax caps a run's vCPUs (ADR-20261027090014 §3).
 	AgentRunVCPUMax = [4]int{0, 1, 2, 2}
+
+	// Sandbox sessions (ADR-20261027090013 §7). Free is 0 everywhere (D9):
+	// a plan whose SandboxMaxLifetimeSec is 0 creates no session. A
+	// session's RAM follows AgentRunRAMMBMax, and sessions count against
+	// AgentRunConcurrentPerAccount and AgentRunQueuedPerAccount together with
+	// runs. SandboxMaxLifetimeSec is a session's longest life.
+	SandboxMaxLifetimeSec = [4]int{0, 3600, 14_400, 86_400}
+	// SandboxExecTimeoutMaxSec and SandboxExecOutputMaxBytes bound one
+	// command.
+	SandboxExecTimeoutMaxSec  = [4]int{0, 300, 1800, 3600}
+	SandboxExecOutputMaxBytes = [4]int{0, 1 << 20, 4 << 20, 16 << 20}
+	// SandboxWorkspaceMaxMB sizes a session's /workspace scratch drive.
+	SandboxWorkspaceMaxMB = [4]int{0, 2048, 8192, 20_480}
+	// SandboxSnapshotBytesPerAccount and SandboxSnapshotRetentionDays bound
+	// persisted workspaces.
+	SandboxSnapshotBytesPerAccount = [4]int64{0, 1 << 30, 10 << 30, 50 << 30}
+	SandboxSnapshotRetentionDays   = [4]int{0, 7, 30, 90}
+	// SandboxArchiveEntriesMax bounds the entries one workspace archive
+	// unpacks (workspace:hydrate, and a session started from a snapshot).
+	SandboxArchiveEntriesMax = 1_000_000
+	// SandboxSnapshotPendingSec is how long agentd waits for a reserved
+	// workspace archive before its sweep drops the reservation and deletes
+	// the archive; it outlasts SandboxPersistTimeoutSec.
+	SandboxSnapshotPendingSec = 3600
+	// SandboxPersistTimeoutSec bounds one workspace:persist call.
+	SandboxPersistTimeoutSec = 1800
+	// SandboxExposedPortsMax, SandboxPreviewRequestsPerSec and
+	// SandboxPublicPreview govern preview URLs (§11): ports per session,
+	// requests per second per session, and whether a port may be public.
+	SandboxExposedPortsMax       = [4]int{0, 2, 5, 10}
+	SandboxPreviewRequestsPerSec = [4]int{0, 20, 50, 200}
+	SandboxPublicPreview         = [4]bool{false, false, true, true}
+	// SandboxReservedPorts are guest-init's own loopback listeners
+	// (workload identity, the outbound relay, tracing, profile health and
+	// profiles); no preview may expose them.
+	SandboxReservedPorts = []int{2773, 2774, 4318, 9160, 9191}
+	// SandboxTemplatesMax caps an account's sandbox templates
+	// (ADR-20261027090013): each is a platform-managed app that builds an
+	// image, counted in this pool instead of DeployedApps.
+	SandboxTemplatesMax = [4]int{0, 3, 20, 100}
+	// SandboxTemplateReadyTimeoutSecMax bounds how long a template's ready
+	// command may hold a new session in starting.
+	SandboxTemplateReadyTimeoutSecMax = 600
 
 	// AgentImageLayerMaxMB caps a custom harness layer (drive1). The shared
 	// agent base (drive0) is not counted. Matches AppLayerMaxMB.
@@ -10502,6 +10648,29 @@ const (
 	// AgentRunUsageSampleMillis is how often vmmd samples an agent run VM's
 	// private memory (ADR-20261027090011 Measurement).
 	AgentRunUsageSampleMillis = 1000
+	// SandboxUsageReportSec is how often vmmd reports a sandbox session
+	// VM's cumulative usage (ADR-20261027090013 step 11). A report lost
+	// with vmmd costs at most this much measurement.
+	SandboxUsageReportSec = 60
+	// SandboxWarmSnapshotsMax bounds the warm session snapshot slots one
+	// schedd keeps across nodes (ADR-20261027090013 §12); a shape past it
+	// cold-boots every session.
+	SandboxWarmSnapshotsMax = 512
+	// Measured charge and reservation of agent run VMs on agent nodes
+	// (ADR-20261027090015 §3, proposed; schedd agent_measured_charge). A run
+	// is charged max(memory, its version's p95 private peak,
+	// AgentChargeFloorMB) + 8 MB and books min(ram_mb,
+	// max(AgentReservationFloorMB, AgentReservationPeakFactorPercent of the
+	// peak)) + 8 MB against the overcommit bound. A version has a peak once
+	// AgentSizeHistoryMinRuns of its last AgentSizeHistoryWindowRuns runs
+	// were measured with at most AgentSizeHistoryMaxGapPercent of their
+	// samples missing; until then its runs book and are charged ram_mb.
+	AgentChargeFloorMB                = 64
+	AgentReservationFloorMB           = 128
+	AgentReservationPeakFactorPercent = 150
+	AgentSizeHistoryMinRuns           = 20
+	AgentSizeHistoryWindowRuns        = 100
+	AgentSizeHistoryMaxGapPercent     = 20
 	// AgentModelIntegrationsMax bounds a version's model integrations: one
 	// per model provider a harness may point at the relay.
 	AgentModelIntegrationsMax = 2
@@ -10526,6 +10695,14 @@ const (
 	// at most 30 days ahead. A sleep also counts against the endpoint's
 	// realtime schedules (state.ManagedRealtimeScheduleLimit).
 	AgentSleepMaxSeconds = 2_592_000
+	// SandboxIdleFreezeSec freezes a sandbox session with no calls, and
+	// SandboxIdleExpirySec ends it (ADR-20261027090013 §5). The expiry equals
+	// FrozenTTLSeconds and bounds a session's idle timeout.
+	SandboxIdleFreezeSec = 30
+	SandboxIdleExpirySec = 600
+	// SandboxTokenTTLSec is a session token's life. Reading the session
+	// mints a fresh one (ADR-20261027090013 §3).
+	SandboxTokenTTLSec = 900
 	// AgentRunAIReservationSlackSec keeps a run's spend reservation past the
 	// gateway request's own timeout, so a crashed gateway's reservation
 	// lapses on its own (ADR-20261027090010 §7).

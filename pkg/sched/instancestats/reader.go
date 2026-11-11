@@ -228,7 +228,10 @@ type Reader struct {
 	snap atomic.Pointer[[]InstanceStat]
 	// shadow is the latest per-node ADR-909 measurement (memory_shadow.go).
 	shadow atomic.Pointer[memoryShadowSnapshot]
-	quiet  atomic.Pointer[quietPausedSnapshot]
+	// vmMemory is every VM's latest memory sample by node, agent run VMs
+	// included (memory_shadow.go).
+	vmMemory atomic.Pointer[vmMemorySnapshot]
+	quiet    atomic.Pointer[quietPausedSnapshot]
 	// cpu is the latest per-instance measured CPU (measured_cpu.go).
 	cpu atomic.Pointer[measuredCPUSnapshot]
 	// pressure is the latest per-node CPU pressure readings

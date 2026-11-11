@@ -115,8 +115,10 @@ func (m *MemStore) gitOpsGuardConfigurationLocked(config ProjectEnvironmentConfi
 
 func (m *MemStore) gitOpsSnapshotLocked(memory *environmentGitOpsMemory) gitOpsIntentSnapshot {
 	source := memory.source
+	project := m.projects[source.ProjectID]
+	owner, _ := m.appResourceAccountLocked(App{AccountID: source.AccountID, OrgID: project.OrgID})
 	snapshot := gitOpsIntentSnapshot{Version: source.IntentVersion, Project: m.projects[source.ProjectID].Slug, Environment: source.EnvironmentSlug, EnvironmentID: source.EnvironmentID,
-		GitSource: source.Spec, Repository: source.Spec.Repository, Plan: m.accounts[source.AccountID].Plan, SourceID: source.ID, Prune: source.Spec.Prune}
+		GitSource: source.Spec, Repository: source.Spec.Repository, Plan: owner.Plan, SourceID: source.ID, Prune: source.Spec.Prune}
 	config := m.projectEnvironmentConfigLatestLocked(source.ProjectID, source.EnvironmentSlug)
 	_ = json.Unmarshal(config.Values, &snapshot.Configuration)
 	for resource, appID := range memory.resources {

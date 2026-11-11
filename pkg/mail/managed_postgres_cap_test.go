@@ -63,3 +63,24 @@ func TestManagedPostgresCapBodyV1(t *testing.T) {
 		}
 	}
 }
+
+// ADR-20261110160000: the egress hold email names the shared allowance, what
+// apps and databases sent, and how to resume sooner.
+func TestManagedPostgresCapBodyV1EgressHeld(t *testing.T) {
+	reached := time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)
+	n := mail.ManagedPostgresCapNotice{Threshold: mail.ManagedPostgresCapEgressHeld, UsedSeconds: 500 << 30, Allowance: 500 << 30, Ceiling: 500 << 30, ReachedAt: reached}
+	subject, body, ok := mail.ManagedPostgresCapBodyV1("one@example.net", n)
+	if !ok || !strings.Contains(subject, "paused until next month") {
+		t.Fatalf("subject %q, ok %v", subject, ok)
+	}
+	for _, want := range []string{"500.0 GiB monthly egress allowance", "sent 500.0 GiB by 2026-11-20 08:00 UTC", "resume on 2026-12-01", "gregale billing egress-overage on"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+	n.Overage, n.Ceiling, n.UsedSeconds = true, 1000<<30, 1000<<30
+	_, body, ok = mail.ManagedPostgresCapBodyV1("one@example.net", n)
+	if !ok || !strings.Contains(body, "1000.0 GiB, twice the 500.0 GiB monthly egress allowance") || strings.Contains(body, "egress-overage on") {
+		t.Fatalf("overage body:\n%s", body)
+	}
+}

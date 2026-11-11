@@ -198,10 +198,7 @@ func (m *Manager) cleanupOwned(ctx context.Context, retained *instanceCleanup, f
 		}
 	}
 	if len(retained.workloadNames) > 0 {
-		parent := ParentCgroupFor(lease.Plan)
-		if lease.IsBuilder {
-			parent = BuilderCgroupParent
-		}
+		parent := vmCgroupParent(lease)
 		removeWorkloadCgroups(filepath.Join(cgroupRoot, parent, PerInstanceScope(lease.Instance)), retained.workloadNames)
 	}
 	if !lease.Networkless {

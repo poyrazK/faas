@@ -49,6 +49,15 @@ var (
 // DevLocalEnvForTest layers the local session's environment.
 var DevLocalEnvForTest = devLocalEnv
 
+// PlanDevLocalWorkloadForTest reports the selected local execution contract.
+func PlanDevLocalWorkloadForTest(root, command string) (string, string, bool, error) {
+	fns, app, err := planDevLocalWorkload(root, command)
+	if err != nil || app == nil {
+		return "", "", len(fns) > 0, err
+	}
+	return app.command, app.framework, false, nil
+}
+
 // DevLocalServerForTest plans and prepares the project's functions and
 // returns the local server's handler and its trigger token.
 func DevLocalServerForTest(t *testing.T, projectDir string) (http.Handler, string, error) {

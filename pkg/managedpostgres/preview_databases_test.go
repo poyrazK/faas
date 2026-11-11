@@ -26,12 +26,19 @@ type previewFixture struct {
 
 func newPreviewFixture(t *testing.T) previewFixture {
 	t.Helper()
+	return newPreviewFixtureWith(t, nil)
+}
+
+// newPreviewFixtureWith is newPreviewFixture with the registry configuration
+// changed by mutate, such as a fleet policy.
+func newPreviewFixtureWith(t *testing.T, mutate func(*Config)) previewFixture {
+	t.Helper()
 	clock := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
 	limit := 1
 	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady, inspectStatus: ProviderStatusReady, deleteDone: true}
 	store := NewMemoryStore()
 	sequence := 0
-	service, err := NewService(testRegistry(t, provider, nil), store, ServiceOptions{
+	service, err := NewService(testRegistry(t, provider, mutate), store, ServiceOptions{
 		PollInterval:           time.Second,
 		ProvisioningEnabled:    func() bool { return true },
 		Now:                    func() time.Time { return clock },
@@ -249,6 +256,55 @@ func TestEnsurePreviewDatabaseRefusals(t *testing.T) {
 		if _, err := f.service.EnsurePreviewDatabase(ctx, request); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("EnsurePreviewDatabase(%+v) = %v, want ErrInvalid", request, err)
 		}
+	}
+}
+
+// ADR-20261102123523 amendment 2026-11-10: one account's preview databases
+// stop at its share of the fleet cap even when its plan allows more, so a
+// few accounts cannot fill the fleet with disposable databases.
+func TestPreviewDatabasesStopAtTheAccountsFleetShare(t *testing.T) {
+	noReserve := 0
+	f := newPreviewFixtureWith(t, func(c *Config) {
+		c.Fleet = FleetConfig{MaxDatabases: 40, MaxMonthlyCostMillicents: 1_000_000, PaidReserveDatabases: &noReserve}
+	})
+	ctx := context.Background()
+	source := f.source(t, "orders")
+	if share := f.service.registry.Fleet().PreviewShare(); share != 2 {
+		t.Fatalf("PreviewShare = %d, want 5%% of 40", share)
+	}
+	for pr := 1; pr <= 2; pr++ {
+		if _, err := f.service.EnsurePreviewDatabase(ctx, previewRequest(source, "project-a", pr)); err != nil {
+			t.Fatalf("preview %d inside the share: %v", pr, err)
+		}
+	}
+	_, err := f.service.EnsurePreviewDatabase(ctx, previewRequest(source, "project-a", 3))
+	if !errors.Is(err, ErrPreviewDatabaseLimit) {
+		t.Fatalf("preview past the fleet share with a plan allowance of 10 = %v, want ErrPreviewDatabaseLimit", err)
+	}
+	if (FleetPolicy{}).PreviewShare() != 0 || (FleetPolicy{MaxDatabases: 3}).PreviewShare() != 1 {
+		t.Fatal("PreviewShare: no cap means no share, and a small fleet still allows one")
+	}
+}
+
+// Previews never take the paid reserve: inside it they are refused while a
+// paid customer's production database is still admitted.
+func TestPreviewDatabasesStayOutOfThePaidReserve(t *testing.T) {
+	reserve := 38
+	f := newPreviewFixtureWith(t, func(c *Config) {
+		c.Fleet = FleetConfig{MaxDatabases: 40, MaxMonthlyCostMillicents: 1_000_000, PaidReserveDatabases: &reserve}
+	})
+	*f.limit = 2
+	ctx := context.Background()
+	source := f.source(t, "orders")
+	if _, err := f.service.EnsurePreviewDatabase(ctx, previewRequest(source, "project-a", 1)); err != nil {
+		t.Fatalf("preview outside the reserve: %v", err)
+	}
+	_, err := f.service.EnsurePreviewDatabase(ctx, previewRequest(source, "project-a", 2))
+	if !errors.Is(err, ErrFleetPaused) || errors.Is(err, ErrPreviewDatabaseLimit) {
+		t.Fatalf("preview inside the paid reserve = %v, want ErrFleetPaused", err)
+	}
+	if _, err := f.service.Create(ctx, CreateRequest{AccountID: "account-a", Name: "invoices", Spec: testSpec()}); err != nil {
+		t.Fatalf("a paid production create inside the reserve = %v, want it admitted", err)
 	}
 }
 

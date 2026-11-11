@@ -1786,6 +1786,47 @@ func (q *Queries) AppOpenMonitorIncident(ctx context.Context, db DBTX, arg AppOp
 	return i, err
 }
 
+const appPreviewDatabaseEnvKeys = `-- name: AppPreviewDatabaseEnvKeys :many
+SELECT DISTINCT b.environment_key
+FROM managed_postgres_bindings b
+JOIN managed_postgres_databases d ON d.id = b.database_id AND d.account_id = b.database_account_id
+JOIN orgs o ON o.id = d.org_id AND o.personal_org AND o.personal_owner_account_id = b.account_id
+WHERE b.account_id = $1 AND b.app_id = $2
+  AND b.scope IN ('default', 'production') AND b.state IN ('provisioning', 'ready')
+  AND d.previews IN ('empty', 'copy') AND d.preview_pr_number IS NULL
+  AND d.state NOT IN ('deleting', 'deleted')
+ORDER BY b.environment_key
+`
+
+type AppPreviewDatabaseEnvKeysParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// ADR-20261102123523: the environment keys a PR preview of this app gets from
+// its own preview databases, mirroring previewdb.Manager.Prepare: the app's
+// bindings in the scopes production serves on personally owned databases
+// with previews on.
+func (q *Queries) AppPreviewDatabaseEnvKeys(ctx context.Context, db DBTX, arg AppPreviewDatabaseEnvKeysParams) ([]string, error) {
+	rows, err := db.Query(ctx, appPreviewDatabaseEnvKeys, arg.AccountID, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var environment_key string
+		if err := rows.Scan(&environment_key); err != nil {
+			return nil, err
+		}
+		items = append(items, environment_key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const appQueueBindingConsumerInventory = `-- name: AppQueueBindingConsumerInventory :many
 SELECT b.id AS binding_id, COALESCE(consumer.id::text, '') AS consumer_id,
        COALESCE(consumer.enabled, false) AS consumer_enabled,
@@ -8392,6 +8433,15 @@ func (q *Queries) ClearApplicationStandardControlBindings(ctx context.Context, d
 	return err
 }
 
+const clearComplimentaryAccount = `-- name: ClearComplimentaryAccount :exec
+DELETE FROM complimentary_accounts WHERE account_id=$1
+`
+
+func (q *Queries) ClearComplimentaryAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearComplimentaryAccount, accountID)
+	return err
+}
+
 const clearComputeNodeVMMDRestartNotice = `-- name: ClearComputeNodeVMMDRestartNotice :execrows
 UPDATE compute_nodes SET vmmd_restart_notice_until=NULL
 WHERE id=$1::uuid AND vmmd_restart_notice_until IS NOT NULL
@@ -10758,6 +10808,25 @@ func (q *Queries) CompleteWorkflowJoin(ctx context.Context, db DBTX, arg Complet
 	return err
 }
 
+const complimentaryAccount = `-- name: ComplimentaryAccount :one
+SELECT account_id, plan, reason, granted_by, granted_at, expires_at FROM complimentary_accounts WHERE account_id=$1
+`
+
+// ADR-20261111140000: an account given a paid plan without a subscription.
+func (q *Queries) ComplimentaryAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (ComplimentaryAccount, error) {
+	row := db.QueryRow(ctx, complimentaryAccount, accountID)
+	var i ComplimentaryAccount
+	err := row.Scan(
+		&i.AccountID,
+		&i.Plan,
+		&i.Reason,
+		&i.GrantedBy,
+		&i.GrantedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const computeNodeVMMDEpoch = `-- name: ComputeNodeVMMDEpoch :one
 SELECT vmmd_epoch, vmmd_epoch_incarnation, vmmd_predecessor_incarnation
 FROM compute_nodes WHERE id=$1::uuid
@@ -11477,6 +11546,30 @@ func (q *Queries) CountMCPPagerDutyAcknowledgementEvents(ctx context.Context, db
 	return count, err
 }
 
+const countManagedPostgresAllowanceBranches = `-- name: CountManagedPostgresAllowanceBranches :one
+SELECT count(*)::bigint AS count FROM managed_postgres_databases d
+WHERE d.preview_source_database_id IS NULL AND (d.environment_clone_operation_id IS NULL AND d.restore_source_database_id IS NOT NULL AND d.expires_at IS NOT NULL AND d.expires_at<=d.created_at+interval '7 days')
+ AND d.state<>'deleted' AND NOT (d.state='deleting' AND d.purge_after IS NULL)
+ AND CASE WHEN $1::uuid IS NOT NULL THEN d.org_id=$1::uuid
+     ELSE managed_postgres_usage_subject(d.org_id,d.account_id)=$2::uuid END
+`
+
+type CountManagedPostgresAllowanceBranchesParams struct {
+	OrgID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+// ADR-20261106103654 amendment 1: the reservation owner's short-lived
+// branches (a TTL of at most 7 days), read under its reservation lock and
+// counted as the database limit counts, with the owner chosen as
+// CountManagedPostgresPreviewDatabases chooses it.
+func (q *Queries) CountManagedPostgresAllowanceBranches(ctx context.Context, db DBTX, arg CountManagedPostgresAllowanceBranchesParams) (int64, error) {
+	row := db.QueryRow(ctx, countManagedPostgresAllowanceBranches, arg.OrgID, arg.AccountID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countManagedPostgresCutoverTargetBindings = `-- name: CountManagedPostgresCutoverTargetBindings :one
 SELECT count(*) FROM managed_postgres_bindings WHERE database_id=$1::text::uuid AND state<>'deleted'
 `
@@ -11534,7 +11627,7 @@ func (q *Queries) CountManagedPostgresHealth(ctx context.Context, db DBTX, arg C
 const countManagedPostgresLifecycleDatabases = `-- name: CountManagedPostgresLifecycleDatabases :one
 SELECT ((SELECT count(*) FROM managed_postgres_databases d
  WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=$1::uuid AND d.state<>'deleted' AND NOT (d.state='deleting' AND d.purge_after IS NULL)
- AND d.preview_source_database_id IS NULL)
+ AND d.preview_source_database_id IS NULL AND NOT (d.environment_clone_operation_id IS NULL AND d.restore_source_database_id IS NOT NULL AND d.expires_at IS NOT NULL AND d.expires_at<=d.created_at+interval '7 days'))
  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r
  JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
  WHERE managed_postgres_usage_subject(p.org_id,r.account_id)=$1::uuid
@@ -11545,6 +11638,9 @@ SELECT ((SELECT count(*) FROM managed_postgres_databases d
 // kept for its restore copies (ADR-20261103091657).
 // A PR preview environment's database is outside the plan's database limit
 // (ADR-20261102123523) and is counted by CountManagedPostgresPreviewDatabases.
+// So is a short-lived branch, a restore with a TTL of at most 7 days
+// (api.ManagedPostgresAllowanceBranchTTLMax; ADR-20261106103654 amendment 1),
+// counted by CountManagedPostgresAllowanceBranches.
 func (q *Queries) CountManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
 	row := db.QueryRow(ctx, countManagedPostgresLifecycleDatabases, accountID)
 	var count int64
@@ -11554,7 +11650,7 @@ func (q *Queries) CountManagedPostgresLifecycleDatabases(ctx context.Context, db
 
 const countManagedPostgresOrgDatabases = `-- name: CountManagedPostgresOrgDatabases :one
 SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.org_id=$1::uuid AND state<>'deleted' AND NOT (state='deleting' AND purge_after IS NULL)
- AND d.preview_source_database_id IS NULL)
+ AND d.preview_source_database_id IS NULL AND NOT (d.environment_clone_operation_id IS NULL AND d.restore_source_database_id IS NOT NULL AND d.expires_at IS NOT NULL AND d.expires_at<=d.created_at+interval '7 days'))
  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
  WHERE p.org_id=$1::uuid AND r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS count
 `
@@ -17613,7 +17709,13 @@ func (q *Queries) EnvironmentGitOpsJobHasActiveTasks(ctx context.Context, db DBT
 const environmentGitOpsLifecyclePending = `-- name: EnvironmentGitOpsLifecyclePending :one
 SELECT EXISTS(SELECT 1 FROM environment_gitops_effects WHERE source_id=$1::uuid AND completed_at IS NULL)
  OR EXISTS(SELECT 1 FROM environment_gitops_runtime_effects WHERE source_id=$1::uuid AND completed_at IS NULL)
- OR EXISTS(SELECT 1 FROM environment_workload_graphs WHERE source_id=$1::uuid AND phase='preparing')
+ OR EXISTS(SELECT 1 FROM environment_workload_graphs g JOIN environment_git_sources s ON s.id=g.source_id
+   WHERE g.source_id=$1::uuid AND g.phase='preparing'
+     AND ((g.generation=s.generation AND g.intent_version=s.intent_version AND g.revision_id=s.approved_revision_id)
+       OR EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) member
+         JOIN deployments d ON d.id=(member->>'candidate_deployment_id')::uuid
+         WHERE d.status NOT IN ('failed','superseded','cancelled')
+           AND NOT (d.status IN ('snapshotting','live') AND (coalesce(d.rootfs_path,'')<>'' OR coalesce(d.rootfs_key,'')<>'')))))
  OR EXISTS(SELECT 1 FROM environment_qualification_executions e
    LEFT JOIN instances i ON i.id=e.instance_id
    WHERE e.frame->>'source_id'=$1::uuid::text
@@ -25778,12 +25880,12 @@ func (q *Queries) GetApplicationStandardAssignmentInventory(ctx context.Context,
 const getApplicationStandardConsumerRoster = `-- name: GetApplicationStandardConsumerRoster :one
 WITH read_clock AS MATERIALIZED (SELECT clock_timestamp() AS read_at),
  app_scope AS MATERIALIZED (
- SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at, a.service_address_index, a.deployment_policy_revision, a.deployment_policy_owner, a.deployment_policy_fingerprint, a.deployment_cron_revision, a.deployment_cron_owner, a.deployment_cron_fingerprint, a.deployment_cron_before, a.deployment_mail_revision, a.labels, a.github_production_trigger, a.github_preview_enabled, a.scaling_revision,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
+ SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at, a.service_address_index, a.deployment_policy_revision, a.deployment_policy_owner, a.deployment_policy_fingerprint, a.deployment_cron_revision, a.deployment_cron_owner, a.deployment_cron_fingerprint, a.deployment_cron_before, a.deployment_mail_revision, a.labels, a.github_production_trigger, a.github_preview_enabled, a.scaling_revision, a.sandbox_template,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
  FROM apps a LEFT JOIN app_application_standards e ON e.app_id=a.id
  WHERE a.id=$1::uuid AND a.org_id=$2::uuid AND a.status<>'deleted'
  ), live AS MATERIALIZED (
  SELECT i.id,i.node_id,i.deployment_id,i.state FROM instances i JOIN app_scope a ON a.id=i.app_id
- WHERE i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining')
+ WHERE i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','frozen','draining')
  ), members AS (
  SELECT n.id AS node_id FROM compute_nodes n LEFT JOIN application_standard_log_consumers c ON c.node_id=n.id
  WHERE n.role IS DISTINCT FROM 'control-plane' OR c.node_id IS NOT NULL
@@ -46181,7 +46283,7 @@ const listApplicationStandardObservationArtifacts = `-- name: ListApplicationSta
 SELECT d.id,application_standard_native_runtime_snapshot(d.app_id,d.id)::jsonb AS input
  FROM deployments d WHERE d.app_id=$1::uuid
  AND (d.status NOT IN ('failed','superseded','cancelled')
-  OR EXISTS(SELECT 1 FROM instances i WHERE i.deployment_id=d.id AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining'))
+  OR EXISTS(SELECT 1 FROM instances i WHERE i.deployment_id=d.id AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','frozen','draining'))
   OR EXISTS(SELECT 1 FROM snapshots s WHERE s.deployment_id=d.id AND NOT s.stale AND NOT s.delete_pending))
  ORDER BY d.id
 `
@@ -46924,6 +47026,31 @@ func (q *Queries) ListCommitPublications(ctx context.Context, db DBTX, arg ListC
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listComplimentaryAccountIDs = `-- name: ListComplimentaryAccountIDs :many
+SELECT account_id FROM complimentary_accounts ORDER BY account_id
+`
+
+// Every complimentary account, for meterd's push pass.
+func (q *Queries) ListComplimentaryAccountIDs(ctx context.Context, db DBTX) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, listComplimentaryAccountIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var account_id pgtype.UUID
+		if err := rows.Scan(&account_id); err != nil {
+			return nil, err
+		}
+		items = append(items, account_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -51051,6 +51178,45 @@ func (q *Queries) ListExclusiveWorkPolicies(ctx context.Context, db DBTX, accoun
 	return items, nil
 }
 
+const listExpiredComplimentaryAccounts = `-- name: ListExpiredComplimentaryAccounts :many
+SELECT account_id, plan, reason, granted_by, granted_at, expires_at FROM complimentary_accounts
+WHERE expires_at IS NOT NULL AND expires_at <= $1::timestamptz
+ORDER BY expires_at, account_id LIMIT $2
+`
+
+type ListExpiredComplimentaryAccountsParams struct {
+	Now       pgtype.Timestamptz
+	BatchSize int32
+}
+
+// Complimentary accounts whose end date has passed, oldest first.
+func (q *Queries) ListExpiredComplimentaryAccounts(ctx context.Context, db DBTX, arg ListExpiredComplimentaryAccountsParams) ([]ComplimentaryAccount, error) {
+	rows, err := db.Query(ctx, listExpiredComplimentaryAccounts, arg.Now, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ComplimentaryAccount{}
+	for rows.Next() {
+		var i ComplimentaryAccount
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.Plan,
+			&i.Reason,
+			&i.GrantedBy,
+			&i.GrantedAt,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listExpiredCrashCaptures = `-- name: ListExpiredCrashCaptures :many
 SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason FROM crash_captures
 WHERE status = 'ready' AND expires_at <= $1::timestamptz
@@ -52747,6 +52913,40 @@ func (q *Queries) ListManagedPostgresLifecycleUsageDatabases(ctx context.Context
 	return items, nil
 }
 
+const listManagedPostgresPlanExcessSince = `-- name: ListManagedPostgresPlanExcessSince :many
+SELECT database_id,recorded_at,delete_at FROM managed_postgres_plan_excess_notices
+WHERE database_id=ANY($1::uuid[])
+`
+
+type ListManagedPostgresPlanExcessSinceRow struct {
+	DatabaseID pgtype.UUID
+	RecordedAt pgtype.Timestamptz
+	DeleteAt   pgtype.Timestamptz
+}
+
+// ADR-20261110184700: when each database was first suspended past its plan,
+// and the deletion date its queued email named (NULL until one did). The
+// deletion runs only on that date.
+func (q *Queries) ListManagedPostgresPlanExcessSince(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]ListManagedPostgresPlanExcessSinceRow, error) {
+	rows, err := db.Query(ctx, listManagedPostgresPlanExcessSince, databaseIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListManagedPostgresPlanExcessSinceRow{}
+	for rows.Next() {
+		var i ListManagedPostgresPlanExcessSinceRow
+		if err := rows.Scan(&i.DatabaseID, &i.RecordedAt, &i.DeleteAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listManagedPostgresPreviewDatabasePage = `-- name: ListManagedPostgresPreviewDatabasePage :many
 SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases
 WHERE preview_source_database_id IS NOT NULL AND deleted_at IS NULL AND id>$1::uuid
@@ -53698,7 +53898,7 @@ func (q *Queries) ListPendingAlertRollbacks(ctx context.Context, db DBTX, batchS
 const listPendingApplicationStandardEgress = `-- name: ListPendingApplicationStandardEgress :many
 WITH serving AS (
  SELECT DISTINCT i.app_id,i.node_id FROM instances i WHERE i.node_id IS NOT NULL
- AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining')
+ AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','frozen','draining')
  AND ($3::text='' OR i.app_id::text=$3::text)
 ), targets AS (
  SELECT s.app_id, s.node_id,application_standard_egress_target(s.app_id,s.node_id) AS target FROM serving s
@@ -76359,7 +76559,9 @@ func (q *Queries) ObjectWriteSettle(ctx context.Context, db DBTX, arg ObjectWrit
 
 const observeEnvironmentGitOpsIntent = `-- name: ObserveEnvironmentGitOpsIntent :one
 SELECT jsonb_build_object(
-    'version', s.intent_version, 'project', p.slug, 'environment', e.slug, 'environment_id', e.id, 'plan', acct.plan, 'source_id', s.id, 'prune', s.prune,
+    'version', s.intent_version, 'project', p.slug, 'environment', e.slug, 'environment_id', e.id,
+    'plan', CASE WHEN NOT org.personal_org AND org.resource_ownership_enabled THEN org.plan ELSE acct.plan END,
+    'source_id', s.id, 'prune', s.prune,
     'configuration', coalesce((SELECT config_json FROM project_environment_config_versions c
         WHERE c.project_id = s.project_id AND c.environment_slug = e.slug ORDER BY version DESC LIMIT 1), '{}'::jsonb),
     'resources', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', r.logical_name, 'app_id', r.app_id))
@@ -76411,6 +76613,7 @@ SELECT jsonb_build_object(
 FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
 JOIN projects p ON p.id = s.project_id
 JOIN accounts acct ON acct.id = s.account_id
+LEFT JOIN orgs org ON org.id = p.org_id
 WHERE s.id = $1::uuid AND s.account_id = $2::uuid
 `
 
@@ -81903,7 +82106,7 @@ SELECT application_standard_log_inventory($1::uuid)::jsonb AS inventory,
   FROM compute_nodes n LEFT JOIN application_standard_log_consumers c ON c.node_id=n.id
   WHERE (n.role IS DISTINCT FROM 'control-plane' AND c.stopped_at IS NULL)
    OR EXISTS(SELECT 1 FROM instances i WHERE i.app_id=$1::uuid AND i.node_id=n.id
-     AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining')))::timestamptz AS heartbeat_until
+     AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','frozen','draining')))::timestamptz AS heartbeat_until
 `
 
 type ReadApplicationStandardObservationLoggingParams struct {
@@ -94535,6 +94738,29 @@ func (q *Queries) ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]Reap
 	return items, nil
 }
 
+const rearmManagedPostgresPlanExcessNotices = `-- name: RearmManagedPostgresPlanExcessNotices :execrows
+UPDATE managed_postgres_plan_excess_notices SET recorded_at=$1::timestamptz,mail_intent_id=NULL
+WHERE database_id=ANY($2::uuid[]) AND delete_at IS NULL
+    AND (mail_intent_id IS NOT NULL OR recorded_at<=$3::timestamptz)
+`
+
+type RearmManagedPostgresPlanExcessNoticesParams struct {
+	Now         pgtype.Timestamptz
+	DatabaseIds []pgtype.UUID
+	StaleBefore pgtype.Timestamptz
+}
+
+// ADR-20261110184700 amendment: while deletion is on, a notice whose email
+// named no deletion date (mailed while deletion was off, or never mailed in
+// its window) starts again, so the next pass mails the date.
+func (q *Queries) RearmManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, arg RearmManagedPostgresPlanExcessNoticesParams) (int64, error) {
+	result, err := db.Exec(ctx, rearmManagedPostgresPlanExcessNotices, arg.Now, arg.DatabaseIds, arg.StaleBefore)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const rearmTenantStoredWorkflowSchedules = `-- name: RearmTenantStoredWorkflowSchedules :exec
 UPDATE platform_tenant_workflow_schedule_cursors
 SET deployment_id=NULL,scheduled_for=NULL,status='armed',last_run_id=NULL
@@ -106671,6 +106897,34 @@ type SetCommitSourceEnabledParams struct {
 
 func (q *Queries) SetCommitSourceEnabled(ctx context.Context, db DBTX, arg SetCommitSourceEnabledParams) error {
 	_, err := db.Exec(ctx, setCommitSourceEnabled, arg.Enabled, arg.AccountID, arg.SourceID)
+	return err
+}
+
+const setComplimentaryAccount = `-- name: SetComplimentaryAccount :exec
+INSERT INTO complimentary_accounts (account_id, plan, reason, granted_by, granted_at, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (account_id) DO UPDATE SET plan = EXCLUDED.plan, reason = EXCLUDED.reason,
+  granted_by = EXCLUDED.granted_by, granted_at = EXCLUDED.granted_at, expires_at = EXCLUDED.expires_at
+`
+
+type SetComplimentaryAccountParams struct {
+	AccountID pgtype.UUID
+	Plan      string
+	Reason    string
+	GrantedBy pgtype.UUID
+	GrantedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) SetComplimentaryAccount(ctx context.Context, db DBTX, arg SetComplimentaryAccountParams) error {
+	_, err := db.Exec(ctx, setComplimentaryAccount,
+		arg.AccountID,
+		arg.Plan,
+		arg.Reason,
+		arg.GrantedBy,
+		arg.GrantedAt,
+		arg.ExpiresAt,
+	)
 	return err
 }
 

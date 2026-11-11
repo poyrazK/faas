@@ -59,7 +59,7 @@ func seedInvitationForPrincipal(t *testing.T, store *state.MemStore, org *state.
 		Role:               role,
 		TokenHash:          sum[:],
 		ExpiresAt:          time.Now().Add(time.Hour),
-		InvitedByAccountID: &ownerID,
+		InvitedByAccountID: seedInviter(store, org.ID, ownerID),
 	})
 	if err != nil {
 		t.Fatalf("CreateOrgInvitation: %v", err)
@@ -86,10 +86,30 @@ func seedInvitationNonce(t *testing.T, store *state.MemStore, org *state.Org, ow
 		Role:               role,
 		TokenHash:          sum[:],
 		ExpiresAt:          time.Now().Add(time.Hour),
-		InvitedByAccountID: &ownerID,
+		InvitedByAccountID: seedInviter(store, org.ID, ownerID),
 	}); err != nil {
 		t.Fatalf("CreateOrgInvitation: %v", err)
 	}
+}
+
+// seedInviter names who sent a seeded invitation. Accepting needs the
+// inviter to be an active owner or admin (ADR-20261111130000), so when the
+// given id is not one (tests often pass the invitee) it falls back to an
+// owner of the org, or to the given id when the org has none.
+func seedInviter(store *state.MemStore, orgID, preferred string) *string {
+	ctx := context.Background()
+	if m, err := store.OrgMemberByAccount(ctx, orgID, preferred); err == nil && m.RemovedAt == nil &&
+		(m.Role == state.OrgRoleOwner || m.Role == state.OrgRoleAdmin) {
+		return &preferred
+	}
+	members, _ := store.ListOrgMembers(ctx, orgID)
+	for _, m := range members {
+		if m.RemovedAt == nil && m.Role == state.OrgRoleOwner {
+			id := m.AccountID
+			return &id
+		}
+	}
+	return &preferred
 }
 
 // seedSharedOrgWithOwner creates a shared org on the given plan and

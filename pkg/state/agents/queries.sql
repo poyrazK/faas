@@ -145,8 +145,11 @@ SELECT count(*)::integer AS queued,
 SELECT pg_try_advisory_xact_lock(hashtextextended('agent-runs:' || sqlc.arg(account_id)::text, 0))::boolean;
 
 -- name: AccountAgentLoad :one
+-- Live sandbox sessions share the account's concurrency with live runs
+-- (ADR-20261027090013 §7).
 SELECT a.plan,
-  (SELECT count(*) FROM agent_runs r WHERE r.account_id=a.id AND r.state IN ('starting','running','delivering'))::integer AS live
+  ((SELECT count(*) FROM agent_runs r WHERE r.account_id=a.id AND r.state IN ('starting','running','delivering'))
+   + (SELECT count(*) FROM sandbox_sessions sb WHERE sb.account_id=a.id AND sb.state IN ('starting','ready','frozen')))::integer AS live
  FROM accounts a WHERE a.id=sqlc.arg(account_id)::text::uuid;
 
 -- name: StartAgentRun :execrows
@@ -190,6 +193,20 @@ ON CONFLICT (run_id) DO NOTHING;
 SELECT method, samples, expected_samples, measured_ms, paused_ms, private_mb_ms, unpaused_private_mb_ms,
        billable_mb_ms, peak_private_mb, cold_boot
   FROM agent_run_usage WHERE run_id=sqlc.arg(run_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: AgentVersionPrivatePeak :one
+-- ADR-20261027090015 §3: the p95 private peak of a version's recent measured
+-- runs of one input class, leaving out runs with too many missing samples.
+SELECT count(*)::integer AS runs,
+       coalesce(percentile_disc(0.95) WITHIN GROUP (ORDER BY h.peak_private_mb), 0)::bigint AS peak_mb
+  FROM (SELECT u.peak_private_mb
+          FROM agent_run_usage u JOIN agent_runs r ON r.id = u.run_id
+         WHERE u.account_id = sqlc.arg(account_id)::text::uuid AND r.agent_id = sqlc.arg(agent_id)::text::uuid
+           AND r.agent_version = sqlc.arg(agent_version)::integer
+           AND (r.checkout_repository IS NOT NULL) = sqlc.arg(checkout)::boolean
+           AND u.samples::bigint * 100 >= u.expected_samples::bigint * (100 - sqlc.arg(max_gap_percent)::integer)
+         ORDER BY u.recorded_at DESC
+         LIMIT sqlc.arg(window_runs)::integer) h;
 
 -- name: RenewAgentRunLease :one
 UPDATE agent_runs SET lease_expires_at=now()+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision), updated_at=now()
@@ -416,3 +433,297 @@ UPDATE agent_run_callbacks SET delivered_at = now() WHERE run_id = sqlc.arg(run_
 -- ADR-20261030125501 §3: the clock RevokeAgentCallbacks records, read when a
 -- callback URL is issued so issue and revocation compare on one clock.
 SELECT clock_timestamp()::timestamptz AS now;
+
+-- name: CountQueuedSandboxSessions :one
+-- ADR-20261027090013 §7: queued sessions share AgentRunQueuedPerAccount with queued runs.
+SELECT count(*)::integer FROM sandbox_sessions WHERE account_id=sqlc.arg(account_id)::text::uuid AND state='queued';
+
+-- name: InsertSandboxSession :one
+INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,workspace_snapshot_id,
+  image_ref,image_job_id,template_id)
+VALUES (sqlc.arg(account_id)::text::uuid,sqlc.narg(tenant_id)::text::uuid,sqlc.arg(kind)::text,sqlc.arg(preset)::text,
+  sqlc.arg(ram_mb)::integer,sqlc.arg(network_mode)::text,sqlc.arg(idle_timeout_sec)::integer,sqlc.arg(expires_at)::timestamptz,
+  sqlc.arg(labels)::jsonb,sqlc.narg(workspace_snapshot_id)::text::uuid,sqlc.narg(image_ref)::text,sqlc.narg(image_job_id)::text::uuid,
+  sqlc.narg(template_id)::text::uuid)
+RETURNING id::text AS id;
+
+-- name: GetSandboxSession :one
+SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
+  idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
+  coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref
+ FROM sandbox_sessions WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: ListSandboxSessions :many
+-- Newest first; a page continues before the (created_at, id) of the last row.
+SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
+  idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
+  coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref
+ FROM sandbox_sessions
+ WHERE account_id=sqlc.arg(account_id)::text::uuid
+ AND (sqlc.narg(state)::text IS NULL OR state=sqlc.narg(state)::text)
+ AND (sqlc.narg(before_created_at)::timestamptz IS NULL OR (created_at, id) < (sqlc.narg(before_created_at)::timestamptz, sqlc.narg(before_id)::text::uuid))
+ ORDER BY created_at DESC, id DESC LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: UpdateSandboxSessionTimeouts :execrows
+-- A live session's idle timeout and end; a terminal one is unchanged.
+UPDATE sandbox_sessions SET idle_timeout_sec=sqlc.arg(idle_timeout_sec)::integer, expires_at=sqlc.arg(expires_at)::timestamptz, updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+ AND state IN ('queued','starting','ready','frozen');
+
+-- name: CloseQueuedSandboxSession :execrows
+-- No VM exists yet, so apid closes a queued session itself.
+UPDATE sandbox_sessions SET state='closed', outcome_code='closed', closed_at=now(), updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND state='queued';
+
+-- name: RequestSandboxSessionClose :execrows
+-- A claimed session is agentd's: apid records the request, and agentd tears
+-- the VM down and closes it.
+UPDATE sandbox_sessions SET close_requested_at=coalesce(close_requested_at, now()), updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+ AND state IN ('starting','ready','frozen');
+
+-- name: ListClaimableSandboxSessions :many
+-- Oldest first; rows another replica holds are skipped, not waited on.
+-- A session from a seller image waits until the image-run runner job has
+-- its image ready, and one from a template until it has a finished build
+-- (ADR-20261027090013).
+SELECT sb.id::text AS id, sb.account_id::text AS account_id FROM sandbox_sessions sb
+ WHERE sb.state='queued' AND sb.expires_at > now()
+ AND (sb.image_ref IS NULL OR EXISTS (SELECT 1 FROM jobs j WHERE j.id=sb.image_job_id AND j.account_id=sb.account_id
+   AND j.status <> 'deleted' AND j.image_materialization_status='ready' AND j.image_storage_key IS NOT NULL)
+   OR EXISTS (SELECT 1 FROM sandbox_templates t JOIN deployments d ON d.app_id=t.app_id
+   WHERE t.id=sb.template_id AND t.account_id=sb.account_id AND d.status='live' AND d.rootfs_key <> ''))
+ ORDER BY sb.created_at, sb.id LIMIT sqlc.arg(max_rows)::integer FOR UPDATE OF sb SKIP LOCKED;
+
+-- name: StartSandboxSession :execrows
+UPDATE sandbox_sessions SET state='starting', lease_token=sqlc.arg(lease_token)::text, lease_owner=sqlc.arg(lease_owner)::text,
+  lease_expires_at=now()+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision), updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND state='queued';
+
+-- name: GetSandboxSessionClaim :one
+-- A session that starts from a persisted workspace carries its archive's
+-- key; workspace_missing marks one whose snapshot is gone or deleted.
+SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, sb.network_mode, sb.idle_timeout_sec, sb.expires_at,
+  (sb.close_requested_at IS NOT NULL)::boolean AS close_requested,
+  coalesce(ws.storage_key, '')::text AS workspace_key,
+  (sb.workspace_snapshot_id IS NOT NULL AND (ws.id IS NULL OR ws.state <> 'ready' OR ws.delete_requested_at IS NOT NULL))::boolean AS workspace_missing,
+  coalesce(CASE WHEN j.status <> 'deleted' AND j.image_materialization_status='ready' THEN j.image_storage_key END,
+    tpl.rootfs_key, '')::text AS image_key,
+  (sb.image_ref IS NOT NULL)::boolean AS from_image,
+  coalesce(st.start_cmd, '')::text AS start_cmd, coalesce(st.ready_cmd, '')::text AS ready_cmd,
+  coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s
+ FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
+ LEFT JOIN sandbox_templates st ON st.id=sb.template_id AND st.account_id=sb.account_id
+ LEFT JOIN sandbox_workspace_snapshots ws ON ws.id=sb.workspace_snapshot_id AND ws.account_id=sb.account_id
+ LEFT JOIN jobs j ON j.id=sb.image_job_id AND j.account_id=sb.account_id
+ LEFT JOIN LATERAL (SELECT d.rootfs_key FROM sandbox_templates t JOIN deployments d ON d.app_id=t.app_id
+   WHERE t.id=sb.template_id AND t.account_id=sb.account_id AND d.status='live' AND d.rootfs_key <> ''
+   ORDER BY d.created_at DESC, d.id DESC LIMIT 1) tpl ON true
+ WHERE sb.id=sqlc.arg(session_id)::text::uuid;
+
+-- name: MarkSandboxSessionReady :execrows
+-- The VM is up: record where it runs, so a read mints a token that reaches it.
+UPDATE sandbox_sessions SET state='ready', node_id=sqlc.arg(node_id)::text, instance_id=sqlc.arg(instance_id)::text,
+  last_activity_at=now(), updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='starting';
+
+-- name: RenewSandboxSessionLease :one
+-- Renewing also records the last call agentd has seen, so last_activity_at
+-- costs no write per call. It returns what apid may have changed.
+UPDATE sandbox_sessions SET lease_expires_at=now()+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision),
+  last_activity_at=greatest(last_activity_at, sqlc.arg(last_activity_at)::timestamptz), updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state IN ('starting','ready','frozen')
+ RETURNING (close_requested_at IS NOT NULL)::boolean AS close_requested, idle_timeout_sec, expires_at;
+
+-- name: SetSandboxSessionFrozen :execrows
+UPDATE sandbox_sessions SET state=CASE WHEN sqlc.arg(frozen)::boolean THEN 'frozen' ELSE 'ready' END, updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state IN ('ready','frozen');
+
+-- name: RecordSandboxSessionUsage :execrows
+-- ADR-20261027090013 step 11: vmmd's cumulative usage of the session VM,
+-- while the lease is held and the session has a VM. A record never replaces
+-- a later one (a reordered or replayed frame), nor a final one.
+INSERT INTO sandbox_session_usage AS u (sandbox_id, account_id, method, samples, expected_samples, measured_ms, paused_ms,
+    frozen_ms, private_mb_ms, unpaused_private_mb_ms, billable_mb_ms, peak_private_mb, cold_boot, final)
+SELECT s.id, s.account_id, sqlc.arg(method)::smallint, sqlc.arg(samples)::integer, sqlc.arg(expected_samples)::integer,
+       sqlc.arg(measured_ms)::bigint, sqlc.arg(paused_ms)::bigint, sqlc.arg(frozen_ms)::bigint, sqlc.arg(private_mb_ms)::bigint,
+       sqlc.arg(unpaused_private_mb_ms)::bigint, sqlc.arg(billable_mb_ms)::bigint, sqlc.arg(peak_private_mb)::bigint,
+       sqlc.arg(cold_boot)::boolean, sqlc.arg(final)::boolean
+  FROM sandbox_sessions s
+ WHERE s.id=sqlc.arg(session_id)::text::uuid AND s.lease_token=sqlc.arg(lease_token)::text AND s.state IN ('ready','frozen')
+ON CONFLICT (sandbox_id) DO UPDATE SET method=excluded.method, samples=excluded.samples, expected_samples=excluded.expected_samples,
+       measured_ms=excluded.measured_ms, paused_ms=excluded.paused_ms, frozen_ms=excluded.frozen_ms,
+       private_mb_ms=excluded.private_mb_ms, unpaused_private_mb_ms=excluded.unpaused_private_mb_ms,
+       billable_mb_ms=excluded.billable_mb_ms, peak_private_mb=excluded.peak_private_mb, cold_boot=excluded.cold_boot,
+       final=excluded.final, updated_at=now()
+ WHERE NOT u.final AND excluded.measured_ms >= u.measured_ms;
+
+-- name: GetSandboxSessionUsage :one
+SELECT method, samples, expected_samples, measured_ms, paused_ms, frozen_ms, private_mb_ms, unpaused_private_mb_ms,
+       billable_mb_ms, peak_private_mb, cold_boot, final
+  FROM sandbox_session_usage WHERE sandbox_id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: RequeueSandboxSession :execrows
+-- Only a starting session, which has no VM, goes back to the queue.
+UPDATE sandbox_sessions SET state='queued', lease_token=NULL, lease_expires_at=NULL, lease_owner=NULL, updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='starting';
+
+-- name: FinishSandboxSession :execrows
+UPDATE sandbox_sessions SET state=sqlc.arg(state)::text, outcome_code=sqlc.arg(outcome_code)::text,
+  outcome_message=sqlc.narg(outcome_message)::text, lease_token=NULL, lease_expires_at=NULL, closed_at=now(), updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state IN ('starting','ready','frozen')
+ AND sqlc.arg(state)::text IN ('closed','expired','failed');
+
+-- name: RequeueExpiredStartingSandboxSessions :execrows
+UPDATE sandbox_sessions SET state='queued', lease_token=NULL, lease_expires_at=NULL, lease_owner=NULL, updated_at=now()
+ WHERE state='starting' AND lease_expires_at < now();
+
+-- name: FailExpiredLiveSandboxSessions :execrows
+-- A live session whose replica stopped renewing has lost its VM with the
+-- replica's stream; it is never booted again.
+UPDATE sandbox_sessions SET state='failed', outcome_code='lease_lost',
+  outcome_message='agentd lost the session; its VM ended with it', lease_token=NULL, lease_expires_at=NULL, closed_at=now(), updated_at=now()
+ WHERE state IN ('ready','frozen') AND lease_expires_at < now();
+
+-- name: ExpireQueuedSandboxSessions :execrows
+-- A session still queued at its end never starts.
+UPDATE sandbox_sessions SET state='expired', outcome_code='lifetime', outcome_message='the session ended before it started',
+  closed_at=now(), updated_at=now()
+ WHERE state='queued' AND expires_at <= now();
+
+-- name: FailImageUnavailableSandboxSessions :execrows
+-- A queued session whose image cannot be had never starts: its runner job
+-- was evicted or deleted, its image failed to pull, or its template was
+-- deleted.
+UPDATE sandbox_sessions sb SET state='failed', outcome_code='image_unavailable',
+  outcome_message=left(CASE WHEN sb.image_ref LIKE 'template:%'
+    THEN 'the template ' || substr(sb.image_ref, 10) || ' was deleted before the session started'
+    ELSE 'the image ' || sb.image_ref || ' could not be prepared' ||
+      coalesce(': ' || (SELECT j.image_materialization_error FROM jobs j WHERE j.id=sb.image_job_id), '') END, 2048),
+  closed_at=now(), updated_at=now()
+ WHERE sb.state='queued' AND sb.image_ref IS NOT NULL
+ AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.id=sb.image_job_id AND j.account_id=sb.account_id AND j.status <> 'deleted'
+   AND j.image_materialization_status <> 'failed')
+ AND NOT EXISTS (SELECT 1 FROM sandbox_templates t JOIN deployments d ON d.app_id=t.app_id
+   WHERE t.id=sb.template_id AND t.account_id=sb.account_id AND d.status='live' AND d.rootfs_key <> '');
+
+-- name: SandboxSnapshotBytesUsed :one
+-- ADR-20261027090013 step 7: an account's persisted workspaces count their
+-- size once ready and their reservation while pending, until agentd deletes
+-- them.
+SELECT coalesce(sum(coalesce(bytes, reserved_bytes)), 0)::bigint FROM sandbox_workspace_snapshots
+ WHERE account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: InsertSandboxSnapshot :exec
+INSERT INTO sandbox_workspace_snapshots (id,account_id,sandbox_id,storage_key,reserved_bytes,expires_at)
+VALUES (sqlc.arg(snapshot_id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(sandbox_id)::text::uuid,sqlc.arg(storage_key)::text,
+  sqlc.arg(reserved_bytes)::bigint,sqlc.arg(expires_at)::timestamptz);
+
+-- name: CompleteSandboxSnapshot :execrows
+UPDATE sandbox_workspace_snapshots SET state='ready', bytes=sqlc.arg(bytes)::bigint, sha256=sqlc.arg(sha256)::text, ready_at=now()
+ WHERE id=sqlc.arg(snapshot_id)::text::uuid AND state='pending' AND delete_requested_at IS NULL
+ AND sqlc.arg(bytes)::bigint <= reserved_bytes;
+
+-- name: DeleteSandboxSnapshot :execrows
+DELETE FROM sandbox_workspace_snapshots WHERE id=sqlc.arg(snapshot_id)::text::uuid;
+
+-- name: GetSandboxSnapshot :one
+SELECT id::text AS id,account_id::text AS account_id,sandbox_id::text AS sandbox_id,state,storage_key,reserved_bytes,
+  coalesce(bytes, 0)::bigint AS bytes,coalesce(sha256, '')::text AS sha256,expires_at,delete_requested_at,created_at,ready_at
+ FROM sandbox_workspace_snapshots WHERE id=sqlc.arg(snapshot_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: ListSandboxSnapshots :many
+-- Newest first, without the ones apid asked to delete; a page continues
+-- before the (created_at, id) of the last row.
+SELECT id::text AS id,account_id::text AS account_id,sandbox_id::text AS sandbox_id,state,storage_key,reserved_bytes,
+  coalesce(bytes, 0)::bigint AS bytes,coalesce(sha256, '')::text AS sha256,expires_at,delete_requested_at,created_at,ready_at
+ FROM sandbox_workspace_snapshots
+ WHERE account_id=sqlc.arg(account_id)::text::uuid AND delete_requested_at IS NULL
+ AND (sqlc.narg(before_created_at)::timestamptz IS NULL OR (created_at, id) < (sqlc.narg(before_created_at)::timestamptz, sqlc.narg(before_id)::text::uuid))
+ ORDER BY created_at DESC, id DESC LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: RequestSandboxSnapshotDelete :execrows
+-- apid's delete is a request; agentd's sweep deletes the archive and the row.
+UPDATE sandbox_workspace_snapshots SET delete_requested_at=coalesce(delete_requested_at, now())
+ WHERE id=sqlc.arg(snapshot_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: ListSweepableSandboxSnapshots :many
+-- What agentd's sweep deletes: archives past their retention, ones apid
+-- asked to delete, and reservations never completed within pending_ttl.
+SELECT id::text AS id, storage_key FROM sandbox_workspace_snapshots
+ WHERE expires_at <= now() OR delete_requested_at IS NOT NULL
+  OR (state='pending' AND created_at < now()-make_interval(secs=>sqlc.arg(pending_ttl_seconds)::double precision))
+ ORDER BY created_at LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: CountSandboxPorts :one
+-- ADR-20261027090013 §11: a session's other exposed ports, against SandboxExposedPortsMax.
+SELECT count(*)::integer FROM sandbox_ports WHERE sandbox_id=sqlc.arg(sandbox_id)::text::uuid AND port <> sqlc.arg(port)::integer;
+
+-- name: LockLiveSandboxSession :one
+-- Holds a live session's row while its ports change, so a port is never
+-- added to a session as it ends.
+SELECT state FROM sandbox_sessions WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+ AND state IN ('queued','starting','ready','frozen') AND close_requested_at IS NULL FOR UPDATE;
+
+-- name: UpsertSandboxPort :one
+-- Exposing an exposed port again changes its visibility.
+INSERT INTO sandbox_ports (sandbox_id, account_id, port, visibility)
+VALUES (sqlc.arg(sandbox_id)::text::uuid, sqlc.arg(account_id)::text::uuid, sqlc.arg(port)::integer, sqlc.arg(visibility)::text)
+ON CONFLICT (sandbox_id, port) DO UPDATE SET visibility=EXCLUDED.visibility
+RETURNING port, visibility, created_at;
+
+-- name: ListSandboxPorts :many
+SELECT p.port, p.visibility, p.created_at FROM sandbox_ports p
+ WHERE p.sandbox_id=sqlc.arg(sandbox_id)::text::uuid AND p.account_id=sqlc.arg(account_id)::text::uuid ORDER BY p.port;
+
+-- name: DeleteSandboxPort :execrows
+DELETE FROM sandbox_ports WHERE sandbox_id=sqlc.arg(sandbox_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+ AND port=sqlc.arg(port)::integer;
+
+-- name: GetSandboxPreviewRoute :one
+-- What gatewayd-internal caches to route a preview host: the session's
+-- placement, its plan, and its exposed ports as port:visibility pairs.
+SELECT sb.account_id::text AS account_id, a.plan, sb.state, coalesce(sb.node_id, '')::text AS node_id,
+  coalesce(sb.instance_id, '')::text AS instance_id,
+  coalesce((SELECT string_agg(p.port::text || ':' || p.visibility, ',' ORDER BY p.port) FROM sandbox_ports p WHERE p.sandbox_id=sb.id), '')::text AS ports
+ FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id WHERE sb.id=sqlc.arg(session_id)::text::uuid;
+
+-- name: InsertSandboxTemplate :one
+-- ADR-20261027090013 templates: apid creates the build app first, then the
+-- template that owns it.
+INSERT INTO sandbox_templates (account_id, name, app_id, start_cmd, ready_cmd, ready_timeout_s)
+VALUES (sqlc.arg(account_id)::text::uuid, sqlc.arg(name)::text, sqlc.arg(app_id)::text::uuid,
+  sqlc.narg(start_cmd)::text, sqlc.narg(ready_cmd)::text, sqlc.arg(ready_timeout_s)::integer)
+ON CONFLICT (account_id, name) DO NOTHING
+RETURNING id::text AS id;
+
+-- name: UpdateSandboxTemplateCommands :execrows
+UPDATE sandbox_templates SET start_cmd=sqlc.narg(start_cmd)::text, ready_cmd=sqlc.narg(ready_cmd)::text,
+  ready_timeout_s=sqlc.arg(ready_timeout_s)::integer, updated_at=now()
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND name=sqlc.arg(name)::text;
+
+-- name: DeleteSandboxTemplate :one
+DELETE FROM sandbox_templates WHERE account_id=sqlc.arg(account_id)::text::uuid AND name=sqlc.arg(name)::text
+RETURNING app_id::text AS app_id;
+
+-- name: ListSandboxTemplates :many
+-- A template with its build app and that app's newest deployment (the build
+-- in progress or last finished) and newest live one (what sessions boot).
+SELECT t.id::text AS id, t.name, t.app_id::text AS app_id, a.slug AS app_slug,
+  coalesce(t.start_cmd,'')::text AS start_cmd, coalesce(t.ready_cmd,'')::text AS ready_cmd, t.ready_timeout_s,
+  t.created_at, t.updated_at,
+  coalesce(latest.id::text,'')::text AS build_id, coalesce(latest.status,'')::text AS build_status,
+  coalesce(latest.error,'')::text AS build_error,
+  coalesce(live.id::text,'')::text AS live_deployment_id, coalesce(live.rootfs_key,'')::text AS live_rootfs_key,
+  live.created_at AS live_built_at
+FROM sandbox_templates t
+JOIN apps a ON a.id = t.app_id
+LEFT JOIN LATERAL (SELECT d.id, d.status, d.error FROM deployments d WHERE d.app_id = t.app_id
+  ORDER BY d.created_at DESC, d.id DESC LIMIT 1) latest ON true
+LEFT JOIN LATERAL (SELECT d.id, d.rootfs_key, d.created_at FROM deployments d WHERE d.app_id = t.app_id
+  AND d.status = 'live' AND d.rootfs_key <> '' ORDER BY d.created_at DESC, d.id DESC LIMIT 1) live ON true
+WHERE t.account_id = sqlc.arg(account_id)::text::uuid
+  AND (sqlc.arg(name)::text = '' OR t.name = sqlc.arg(name)::text)
+ORDER BY t.name;

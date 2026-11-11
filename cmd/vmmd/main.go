@@ -1101,6 +1101,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	mgr.WithFlatTenantCgroups(cfg.FlatTenantCgroups)
 	mgr.WithPrivateNetworkMembers(privateNetworkMemberSource(store, identityNodeID), privateNetworkMemberRelease(store, identityNodeID))
 	mgr.WithPrivateNetworkTransportIdentitySource(func(ctx context.Context, account, network, region string) (uint32, error) {
 		source, ok := store.(state.PrivateNetworkTransportStore)
@@ -2030,7 +2031,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithBridgeStreamHeadroom(cfg.BridgeStreamHeadroom).
 		WithStreamBridgeGoRuntime(cfg.StreamBridgeGOMAXPROCS, cfg.StreamBridgeGOGC).
 		// ADR-20261027090010 §1: agent runs stay off unless this node opts in.
-		WithAgentRuns(strings.TrimSpace(os.Getenv("FAAS_VMMD_AGENT_RUNS")) == "1")
+		WithAgentRuns(strings.TrimSpace(os.Getenv("FAAS_VMMD_AGENT_RUNS")) == "1").
+		// ADR-20261027090013 step 7: sandbox workspaces persist to, and
+		// sessions start from, this node's artifact store.
+		WithSandboxWorkspaces(storageBackend)
 	// ADR-20261022184531: Ping tells schedd whether this vmmd can adopt each
 	// configured base generation, so a node that cannot is marked degraded.
 	impl.WithBaseGenerationReadiness(vmmdgrpc.NewCachedBaseGenerationReadiness(

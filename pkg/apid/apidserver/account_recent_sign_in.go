@@ -48,6 +48,20 @@ func (s *server) requireRecentSignIn(w http.ResponseWriter, r *http.Request, acc
 	return false
 }
 
+// sessionPresenceForIrreversible holds an irreversible change made from a
+// browser session on an account without two-factor authentication to a
+// recent sign-in. requireStepUp only asks enrolled accounts for a code, so
+// without one a copied cookie could delete the account or hand an
+// organization away (account-flow audit 2026-11-10, ADR 20261111110000).
+// Enrolled accounts keep the step-up gate their route already mounts; API
+// keys keep their scope gate.
+func (s *server) sessionPresenceForIrreversible(w http.ResponseWriter, r *http.Request, acct state.Account, action string) bool {
+	if _, isSession := sessionFrom(r); !isSession || actorAccount(r, acct).MFAEnrolled() {
+		return true
+	}
+	return s.requireRecentSignIn(w, r, actorAccount(r, acct), action)
+}
+
 // mfaEnrollFirstFactorReady holds an enrollment on an account without a
 // password to a recent sign-in. An account with a password proves it at
 // confirm instead.

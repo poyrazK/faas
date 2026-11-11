@@ -116,6 +116,10 @@ type Querier interface {
 	AdvanceRuntimeUpgradeOperation(ctx context.Context, db DBTX, arg AdvanceRuntimeUpgradeOperationParams) (RuntimeUpgradeOperation, error)
 	AdvanceSecretKeyRetirementFence(ctx context.Context, db DBTX) error
 	AdvanceSnapshotRecoveryGeneration(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (int64, error)
+	// ADR-20261111150000: the key's approval with the same binding that was first
+	// used within the window, newest use first. A windowed rule lets it cover
+	// the same request again until the window closes.
+	AgentApprovalUsedWithin(ctx context.Context, db DBTX, arg AgentApprovalUsedWithinParams) (pgtype.UUID, error)
 	AlertRuleEpisodeOpen(ctx context.Context, db DBTX, ruleID pgtype.UUID) (bool, error)
 	AppBindingRefreshInventory(ctx context.Context, db DBTX, arg AppBindingRefreshInventoryParams) ([]AppBindingRefreshInventoryRow, error)
 	AppBindingRuntimeInventory(ctx context.Context, db DBTX, arg AppBindingRuntimeInventoryParams) ([]AppBindingRuntimeInventoryRow, error)
@@ -138,6 +142,11 @@ type Querier interface {
 	AppManagedPostgresBindingInventory(ctx context.Context, db DBTX, arg AppManagedPostgresBindingInventoryParams) ([]AppManagedPostgresBindingInventoryRow, error)
 	AppObjectStorageBindingInventory(ctx context.Context, db DBTX, arg AppObjectStorageBindingInventoryParams) ([]AppObjectStorageBindingInventoryRow, error)
 	AppOpenMonitorIncident(ctx context.Context, db DBTX, arg AppOpenMonitorIncidentParams) (AppOpenMonitorIncidentRow, error)
+	// ADR-20261102123523: the environment keys a PR preview of this app gets from
+	// its own preview databases, mirroring previewdb.Manager.Prepare: the app's
+	// bindings in the scopes production serves on personally owned databases
+	// with previews on.
+	AppPreviewDatabaseEnvKeys(ctx context.Context, db DBTX, arg AppPreviewDatabaseEnvKeysParams) ([]string, error)
 	AppQueueBindingConsumerInventory(ctx context.Context, db DBTX, arg AppQueueBindingConsumerInventoryParams) ([]AppQueueBindingConsumerInventoryRow, error)
 	AppReleaseSecretsPinned(ctx context.Context, db DBTX, arg AppReleaseSecretsPinnedParams) (bool, error)
 	// ADR-20261103222927: counts and offsets see only the immutable app/scope.
@@ -552,6 +561,7 @@ type Querier interface {
 	ClearAlertChannelStandDowns(ctx context.Context, db DBTX, ruleID pgtype.UUID) error
 	ClearAppSecretRuntimeProcessAck(ctx context.Context, db DBTX, arg ClearAppSecretRuntimeProcessAckParams) (int64, error)
 	ClearApplicationStandardControlBindings(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	ClearComplimentaryAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	ClearComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX, nodeID pgtype.UUID) (int64, error)
 	ClearCustomDomainCertificateAttempt(ctx context.Context, db DBTX, domain string) error
 	ClearCustomDomainProbeObservation(ctx context.Context, db DBTX, domain string) error
@@ -696,6 +706,8 @@ type Querier interface {
 	CompleteWorkerRecovery(ctx context.Context, db DBTX, arg CompleteWorkerRecoveryParams) (int64, error)
 	CompleteWorkflowForEach(ctx context.Context, db DBTX, arg CompleteWorkflowForEachParams) error
 	CompleteWorkflowJoin(ctx context.Context, db DBTX, arg CompleteWorkflowJoinParams) error
+	// ADR-20261111140000: an account given a paid plan without a subscription.
+	ComplimentaryAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (ComplimentaryAccount, error)
 	// vmmd restart adoption ADR §3: the node's current ownership epoch.
 	ComputeNodeVMMDEpoch(ctx context.Context, db DBTX, nodeID pgtype.UUID) (ComputeNodeVMMDEpochRow, error)
 	// This metadata query has a high planner cost despite small bounded output.
@@ -788,6 +800,11 @@ type Querier interface {
 	CountLiveOperationSchedules(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountMCPOAuthRetirements(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountMCPPagerDutyAcknowledgementEvents(ctx context.Context, db DBTX, incidentID pgtype.UUID) (int64, error)
+	// ADR-20261106103654 amendment 1: the reservation owner's short-lived
+	// branches (a TTL of at most 7 days), read under its reservation lock and
+	// counted as the database limit counts, with the owner chosen as
+	// CountManagedPostgresPreviewDatabases chooses it.
+	CountManagedPostgresAllowanceBranches(ctx context.Context, db DBTX, arg CountManagedPostgresAllowanceBranchesParams) (int64, error)
 	CountManagedPostgresCutoverSourceBindings(ctx context.Context, db DBTX, id string) (int64, error)
 	CountManagedPostgresCutoverTargetBindings(ctx context.Context, db DBTX, id string) (int64, error)
 	CountManagedPostgresHealth(ctx context.Context, db DBTX, arg CountManagedPostgresHealthParams) (CountManagedPostgresHealthRow, error)
@@ -795,6 +812,9 @@ type Querier interface {
 	// kept for its restore copies (ADR-20261103091657).
 	// A PR preview environment's database is outside the plan's database limit
 	// (ADR-20261102123523) and is counted by CountManagedPostgresPreviewDatabases.
+	// So is a short-lived branch, a restore with a TTL of at most 7 days
+	// (api.ManagedPostgresAllowanceBranchTTLMax; ADR-20261106103654 amendment 1),
+	// counted by CountManagedPostgresAllowanceBranches.
 	CountManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	// Counts as CountManagedPostgresLifecycleDatabases does.
 	CountManagedPostgresOrgDatabases(ctx context.Context, db DBTX, orgID pgtype.UUID) (int64, error)
@@ -3705,6 +3725,8 @@ type Querier interface {
 	ListCloneCheckpointWakeDispatchesForRetirement(ctx context.Context, db DBTX, arg ListCloneCheckpointWakeDispatchesForRetirementParams) ([]ProjectEnvironmentCloneWakeDispatch, error)
 	ListClonePostgresWriteFences(ctx context.Context, db DBTX, operationID pgtype.UUID) ([]ProjectEnvironmentClonePostgresWriteFence, error)
 	ListCommitPublications(ctx context.Context, db DBTX, arg ListCommitPublicationsParams) ([]ListCommitPublicationsRow, error)
+	// Every complimentary account, for meterd's push pass.
+	ListComplimentaryAccountIDs(ctx context.Context, db DBTX) ([]pgtype.UUID, error)
 	// CP-1: read heartbeat history for one node, newest first. The
 	// $2 parameter is nullable: passing pgtype.Timestamptz{} (the Go
 	// zero value, mapped to SQL NULL by sqlc) means "no lower bound,
@@ -3924,6 +3946,8 @@ type Querier interface {
 	ListExclusiveWorkActive(ctx context.Context, db DBTX, keyID string) ([]ExclusiveWorkOperation, error)
 	ListExclusiveWorkEffects(ctx context.Context, db DBTX, arg ListExclusiveWorkEffectsParams) ([]ListExclusiveWorkEffectsRow, error)
 	ListExclusiveWorkPolicies(ctx context.Context, db DBTX, accountID string) ([]ExclusiveWorkPolicy, error)
+	// Complimentary accounts whose end date has passed, oldest first.
+	ListExpiredComplimentaryAccounts(ctx context.Context, db DBTX, arg ListExpiredComplimentaryAccountsParams) ([]ComplimentaryAccount, error)
 	ListExpiredCrashCaptures(ctx context.Context, db DBTX, arg ListExpiredCrashCapturesParams) ([]CrashCapture, error)
 	ListExpiredCustomerOperationExecutions(ctx context.Context, db DBTX, arg ListExpiredCustomerOperationExecutionsParams) ([]string, error)
 	ListExpiredFunctionMigrationSources(ctx context.Context, db DBTX, arg ListExpiredFunctionMigrationSourcesParams) ([]FunctionMigrationSource, error)
@@ -3985,6 +4009,10 @@ type Querier interface {
 	// Reservations survive month close and are paged without starving later keys
 	// when an older provider delivery keeps failing.
 	ListManagedPostgresOveragePending(ctx context.Context, db DBTX, arg ListManagedPostgresOveragePendingParams) ([]ListManagedPostgresOveragePendingRow, error)
+	// ADR-20261110184700: when each database was first suspended past its plan,
+	// and the deletion date its queued email named (NULL until one did). The
+	// deletion runs only on that date.
+	ListManagedPostgresPlanExcessSince(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]ListManagedPostgresPlanExcessSinceRow, error)
 	// ADR-20261102123523: the preview-database sweep's page of undeleted preview
 	// databases across accounts, in ID order after after_id.
 	ListManagedPostgresPreviewDatabasePage(ctx context.Context, db DBTX, arg ListManagedPostgresPreviewDatabasePageParams) ([]ManagedPostgresDatabase, error)
@@ -4815,6 +4843,9 @@ type Querier interface {
 	ManagedPostgresActivationLiveDeployments(ctx context.Context, db DBTX, arg ManagedPostgresActivationLiveDeploymentsParams) ([]ManagedPostgresActivationLiveDeploymentsRow, error)
 	ManagedPostgresAdmissionFenced(ctx context.Context, db DBTX, appID string) (bool, error)
 	ManagedPostgresBindingDatabaseID(ctx context.Context, db DBTX, arg ManagedPostgresBindingDatabaseIDParams) (ManagedPostgresBindingDatabaseIDRow, error)
+	// ADR-20261110160000: one threshold's event of the month; the egress hold is
+	// mailed through it, apart from the compute thresholds ranked above.
+	ManagedPostgresCapEvent(ctx context.Context, db DBTX, arg ManagedPostgresCapEventParams) (ManagedPostgresCapEventRow, error)
 	ManagedPostgresCapSuspendedAt(ctx context.Context, db DBTX, arg ManagedPostgresCapSuspendedAtParams) (pgtype.Timestamptz, error)
 	// ADR-20261023181931: a rollback database switch activates its cutover.
 	// Every query runs inside the activation or resume transaction, after the
@@ -6670,6 +6701,10 @@ type Querier interface {
 	// may queue for hours) and for the 24h source-retention window that
 	// `deploys retry` relies on. Cancelled and expired parts keep the 1h grace.
 	ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]ReapStaleUploadPartFilesRow, error)
+	// ADR-20261110184700 amendment: while deletion is on, a notice whose email
+	// named no deletion date (mailed while deletion was off, or never mailed in
+	// its window) starts again, so the next pass mails the date.
+	RearmManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, arg RearmManagedPostgresPlanExcessNoticesParams) (int64, error)
 	// Preserve tenant cadence, version and admission priority, but invalidate the
 	// evaluated deployment so publish/pause/resume cannot replay the paused interval.
 	RearmTenantStoredWorkflowSchedules(ctx context.Context, db DBTX, arg RearmTenantStoredWorkflowSchedulesParams) error
@@ -7659,6 +7694,7 @@ type Querier interface {
 	SetCliAuthCodeProjects(ctx context.Context, db DBTX, arg SetCliAuthCodeProjectsParams) (int64, error)
 	SetCommitSourceConnection(ctx context.Context, db DBTX, arg SetCommitSourceConnectionParams) (int64, error)
 	SetCommitSourceEnabled(ctx context.Context, db DBTX, arg SetCommitSourceEnabledParams) error
+	SetComplimentaryAccount(ctx context.Context, db DBTX, arg SetComplimentaryAccountParams) error
 	// vmmd restart adoption ADR §3: a vmmd stopping for a planned restart tells
 	// schedd so it retries wakes and counts no heartbeat failures meanwhile.
 	SetComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX, arg SetComputeNodeVMMDRestartNoticeParams) (int64, error)

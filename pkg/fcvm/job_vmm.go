@@ -413,6 +413,50 @@ func (v *JailerVMM) stageJobManifestForOwner(ctx context.Context, owner nativeLa
 	return v.stageDriveFile(ctx, owner, instance, drive1Img, driveFile{what: "vmm: stageJobManifest", path: jobManifestPath, want: blob, mode: 0o600})
 }
 
+// stageSandboxManifestForOwner writes /etc/faas/sandbox.json to a
+// seller-image sandbox session's private drive1 (ADR-20261027090013), the
+// marker the platform sandbox layer carries, so guest-init serves the
+// session from the customer's rootfs.
+func (v *JailerVMM) stageSandboxManifestForOwner(ctx context.Context, owner nativeLaunchRecord, instance string, manifest []byte) error {
+	if v.chrootBase == "" {
+		return fmt.Errorf("vmm: stageSandboxManifest: chrootBase not configured")
+	}
+	drive1Img := filepath.Join(v.chrootRoot(instance), layerImageName)
+	if _, err := os.Stat(drive1Img); err != nil {
+		return fmt.Errorf("vmm: stageSandboxManifest: %s missing at %s: %w", layerImageName, drive1Img, err)
+	}
+	return v.stageDriveFile(ctx, owner, instance, drive1Img, driveFile{what: "vmm: stageSandboxManifest", path: sandboxManifestPath,
+		want: manifest, mode: 0o644})
+}
+
+// sandboxManifestPath is sandbox.json in the optimized layout; a full-rootfs
+// drive maps it to the ext4 root.
+const sandboxManifestPath = "upper/etc/faas/sandbox.json"
+
+// sandboxManifestFile is guest-init's sandbox.json: version 1, the marker
+// imaged's platform sandbox layer carries, or version 2 with a template's
+// start and ready commands (guest/init parseSandboxManifest).
+type sandboxManifestFile struct {
+	Kind           string `json:"kind"`
+	Version        int    `json:"version"`
+	StartCmd       string `json:"start_cmd,omitempty"`
+	ReadyCmd       string `json:"ready_cmd,omitempty"`
+	ReadyTimeoutMs int64  `json:"ready_timeout_ms,omitempty"`
+}
+
+// sandboxManifest encodes the sandbox.json a session from an image boots
+// with.
+func sandboxManifest(startCmd, readyCmd string, readyTimeout time.Duration) ([]byte, error) {
+	m := sandboxManifestFile{Kind: "sandbox", Version: 1}
+	if startCmd != "" || readyCmd != "" {
+		m.Version, m.StartCmd, m.ReadyCmd = 2, startCmd, readyCmd
+		if readyCmd != "" {
+			m.ReadyTimeoutMs = readyTimeout.Milliseconds()
+		}
+	}
+	return json.Marshal(m)
+}
+
 // jobManifestPath is job.json in the optimized layout.
 const jobManifestPath = "upper/etc/faas/job.json"
 

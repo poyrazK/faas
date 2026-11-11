@@ -22,7 +22,7 @@ type OrgByIDResolver interface {
 // must not reach them: otherwise a leaked company CI key (or one obtained
 // through the organization) mints unrestricted personal keys, exports the
 // personal account or deletes it (account-flow audit 2026-11-10, ADR
-// 20261110190000).
+// 20261110190500).
 var personalIdentityPrefixes = []string{
 	"/v1/keys",
 	"/v1/auth/sessions",

@@ -23,6 +23,73 @@ const (
 	MaxBranchTTL = api.ManagedPostgresBranchTTLMaxSeconds * time.Second
 )
 
+// InBranchAllowance reports a branch that sits in the plan's branch
+// allowance instead of its database limit (ADR-20261106103654 amendment 1):
+// a customer restore whose TTL is at most
+// api.ManagedPostgresAllowanceBranchTTLMax. The SQL counts spell the same
+// rule.
+func (d Database) InBranchAllowance() bool {
+	return d.Preview.IsZero() && d.EnvironmentCloneOperationID == "" && d.RestoreSourceDatabaseID != "" &&
+		!d.ExpiresAt.IsZero() && !d.ExpiresAt.After(d.CreatedAt.Add(api.ManagedPostgresAllowanceBranchTTLMax))
+}
+
+// countsTowardDatabaseLimit reports a database the plan's database limit
+// counts: neither a PR preview database nor a branch in the allowance.
+func (d Database) countsTowardDatabaseLimit() bool {
+	return d.CountsTowardLimit() && d.Preview.IsZero() && !d.InBranchAllowance()
+}
+
+type branchLimitKey struct{}
+
+// reserveAsBranch marks a reservation that takes a place in the branch
+// allowance; limit is the owner's allowance.
+func reserveAsBranch(ctx context.Context, limit int) context.Context {
+	return context.WithValue(ctx, branchLimitKey{}, limit)
+}
+
+// branchLimit returns the allowance a reservation was marked with. A branch
+// reserved without one is refused: the allowance fails closed.
+func branchLimit(ctx context.Context) int {
+	limit, _ := ctx.Value(branchLimitKey{}).(int)
+	return limit
+}
+
+// ErrBranchLimit refuses a short-lived branch past the plan's branch
+// allowance. It is an ErrQuotaExceeded.
+var ErrBranchLimit error = branchLimitError{}
+
+type branchLimitError struct{}
+
+func (branchLimitError) Error() string {
+	return "the account holds as many short-lived branches as its plan includes; delete one, wait for one to expire, or give the new branch a TTL over 7 days so it counts toward the database limit"
+}
+
+func (branchLimitError) Unwrap() error { return ErrQuotaExceeded }
+
+// inBranchAllowanceTTL reports a TTL that puts a branch in the allowance.
+func inBranchAllowanceTTL(ttl time.Duration) bool {
+	return ttl > 0 && ttl <= api.ManagedPostgresAllowanceBranchTTLMax
+}
+
+// branchAllowance is the usage subject's branch allowance. Without the hook,
+// or for a plan without one, it refuses the branch before anything changes.
+func (s *Service) branchAllowance(ctx context.Context, accountID string) (int, error) {
+	if s.maxBranchesPerAccount == nil {
+		return 0, ErrBranchLimit
+	}
+	limit, err := s.maxBranchesPerAccount(ctx, PolicySubject(ctx, accountID))
+	if err != nil {
+		return 0, err
+	}
+	if limit < 1 {
+		return 0, ErrBranchLimit
+	}
+	if limit > 100 {
+		return 0, ErrInvalid
+	}
+	return limit, nil
+}
+
 func validBranchTTL(ttl time.Duration) bool {
 	return ttl == 0 || ttl >= MinBranchTTL && ttl <= MaxBranchTTL
 }

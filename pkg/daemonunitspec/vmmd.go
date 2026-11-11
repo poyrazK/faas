@@ -51,6 +51,7 @@ func UnitVmmd() daemonunit.Unit {
 			"faas-tenant-pro.slice", "faas-tenant-scale.slice",
 			// Spec §11 fence pins: keep the per-VM cgroup controllers
 			// enabled across systemd reloads (roles/systemd_slices).
+			"faas-tenant-fence.slice",
 			"faas-tenant-free-fence.slice", "faas-tenant-hobby-fence.slice",
 			"faas-tenant-pro-fence.slice", "faas-tenant-scale-fence.slice",
 			"faas-cp-build-fence.slice",
@@ -62,6 +63,7 @@ func UnitVmmd() daemonunit.Unit {
 			"faas-tenant-pro.slice", "faas-tenant-scale.slice",
 			// Spec §11 fence pins: keep the per-VM cgroup controllers
 			// enabled across systemd reloads (roles/systemd_slices).
+			"faas-tenant-fence.slice",
 			"faas-tenant-free-fence.slice", "faas-tenant-hobby-fence.slice",
 			"faas-tenant-pro-fence.slice", "faas-tenant-scale-fence.slice",
 			"faas-cp-build-fence.slice",

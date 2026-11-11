@@ -136,10 +136,12 @@ func EdgeRuleMethodOverride(method string, header http.Header, rawQuery string) 
 	for _, name := range edgeRuleMethodOverrideHeaders {
 		candidates = append(candidates, header.Values(name)...)
 	}
-	if strings.Contains(rawQuery, "_method") {
-		if q, err := url.ParseQuery(rawQuery); err == nil {
-			candidates = append(candidates, q["_method"]...)
-		}
+	// ParseQuery returns the valid parameters even when another parameter is
+	// malformed. Inspect decoded names so encoded underscores/letters cannot
+	// hide an override that the application will honor.
+	if rawQuery != "" {
+		q, _ := url.ParseQuery(rawQuery)
+		candidates = append(candidates, q["_method"]...)
 	}
 	for _, c := range candidates {
 		if m := strings.ToUpper(strings.TrimSpace(c)); m != method && slices.Contains(edgeRuleMatchMethods, m) {
@@ -295,6 +297,15 @@ func MatchEdgeRuleKindPath(kind, glob, requestPath string) (bool, error) {
 	return MatchEdgeRulePath(glob, requestPath)
 }
 
+// ValidateEdgeRuleMatchPath checks glob syntax before a rule is persisted.
+// Probe the entire pattern even when its prefix cannot match the empty path.
+func ValidateEdgeRuleMatchPath(glob string) *Problem {
+	if _, err := path.Match(glob, ""); err != nil {
+		return ErrValidation(fmt.Sprintf("match_path is not a valid glob: %v", err))
+	}
+	return nil
+}
+
 // EdgeRuleAppHosts is the reserved match_host that covers every hostname
 // the rule's own app serves: its platform host and its custom domains,
 // including ones added later (ADR-1191). It is not a host pattern; the
@@ -333,8 +344,8 @@ func IsEdgeRuleAppHosts(pattern string) bool {
 }
 
 // EdgeRuleHostMatches reports whether a rule's match_host pattern ("*",
-// "*.example.com", an exact host, or another path.Match glob) covers host,
-// case-insensitively. It mirrors the store's LIKE translation; the gateway
+// "*.example.com", an exact host, or a store-compatible wildcard) covers host,
+// case-insensitively. It mirrors the store's exact-or-LIKE translation; the gateway
 // cache invalidation and the trace simulator share it. The app-wide pattern
 // (EdgeRuleAppHosts) reports true for every host: callers that see one have
 // already scoped the rule to the request's app (the gateway merges only the
@@ -349,6 +360,5 @@ func EdgeRuleHostMatches(pattern, host string) bool {
 	if pattern == EdgeRuleAppHosts {
 		return true
 	}
-	ok, err := path.Match(pattern, host)
-	return err == nil && ok
+	return pattern == host || matchEdgeRuleHostLike(pattern, host)
 }

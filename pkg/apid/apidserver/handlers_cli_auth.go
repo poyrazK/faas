@@ -356,6 +356,9 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 	// the POST handler can hash it. normalizeCliAuthCode strips the
 	// dash and uppercases; we put the hex back together.
 	raw := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(r.URL.Query().Get("code")), "-", ""))
+	if h.cliApprovalRefused(w, r, acct, raw) {
+		return
+	}
 
 	// Mint the CSRF token + authenticated cookie bound to this account.
 	token, err := middleware.IssueForAuthenticated(h.srv.sessions, "cli-auth", acct.ID)
@@ -457,6 +460,9 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	// the code claim.
 	if err := middleware.VerifyAuthenticated(h.srv.sessions, r, "cli-auth", acct.ID); err != nil {
 		h.renderCliAuthError(w, r, "Invalid form", "Please reload the page and try again.")
+		return
+	}
+	if h.cliApprovalRefused(w, r, acct, rawCode) {
 		return
 	}
 

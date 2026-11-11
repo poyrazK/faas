@@ -82,18 +82,23 @@ func (m *Manager) CaptureAgentRunSnapshot(ctx context.Context, c AgentRunCapture
 // WaitAgentRunReady waits for guest-init's ready marker on the VM's console,
 // which vmmd owns, as WaitBuilderReady does for builders.
 func (v *JailerVMM) WaitAgentRunReady(ctx context.Context, instance string, deadline time.Duration) error {
+	return v.waitConsoleMarker(ctx, instance, agentRunReadyMarker, deadline)
+}
+
+// waitConsoleMarker waits until the VM's console holds marker.
+func (v *JailerVMM) waitConsoleMarker(ctx context.Context, instance, marker string, deadline time.Duration) error {
 	v.mu.Lock()
 	rec := v.recs[instance]
 	v.mu.Unlock()
 	if rec == nil {
-		return fmt.Errorf("vmm: wait agent run ready: instance %s not found", instance)
+		return fmt.Errorf("vmm: wait for %q: instance %s not found", marker, instance)
 	}
 	timer := time.NewTimer(deadline)
 	defer timer.Stop()
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if consoleContains(rec.consolePath, agentRunReadyMarker) {
+		if consoleContains(rec.consolePath, marker) {
 			return nil
 		}
 		select {
@@ -102,10 +107,10 @@ func (v *JailerVMM) WaitAgentRunReady(ctx context.Context, instance string, dead
 		case <-timer.C:
 			return context.DeadlineExceeded
 		case <-rec.done:
-			if consoleContains(rec.consolePath, agentRunReadyMarker) {
+			if consoleContains(rec.consolePath, marker) {
 				return nil
 			}
-			return errors.New("vmm: wait agent run ready: the guest exited")
+			return fmt.Errorf("vmm: wait for %q: the guest exited", marker)
 		case <-ticker.C:
 		}
 	}

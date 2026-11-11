@@ -528,6 +528,7 @@ var AuthRestartRetryPause = &authRestartRetryPause
 var AuthRestartRetryWindow = &authRestartRetryWindow
 var AuthSigningKeyName = &authSigningKeyName
 var BillingRunPollInterval = &billingRunPollInterval
+var SandboxTemplatePoll = &sandboxTemplatePoll
 var CampaignTrendTemplate = &campaignTrendTemplate
 var CliCommands = &cliCommands
 var CorsDefaultMethods = &corsDefaultMethods
@@ -1551,6 +1552,15 @@ var ParseCustomerOperationSignal = parseCustomerOperationSignal
 // (ADR-20261017100853), whose fields are unexported.
 func NewTenantCustomerOperationSignalClient(client *api.Client, definition string) tenantCustomerOperationSignalClient {
 	return tenantCustomerOperationSignalClient{client: client, definition: definition}
+}
+
+// DialDevDebugTunnel dials one debugger tunnel (ADR-20261111150000).
+func DialDevDebugTunnel(ctx context.Context, tunnelURL, token string) error {
+	conn, err := newDevDebugDialer(tunnelURL, token)(ctx)
+	if conn != nil {
+		_ = conn.Close()
+	}
+	return err
 }
 
 // NewEnvironmentAppClient builds a stage app client whose revision pin starts unset.
