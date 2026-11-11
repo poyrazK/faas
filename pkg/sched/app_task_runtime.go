@@ -26,6 +26,8 @@ const (
 	accountInactiveFailureMessage = "the account is suspended; resolve billing to run work again"
 	appTaskCutoverFailureCode     = "database_cutover_fenced"
 	appTaskCutoverFailureMessage  = "the app task was stopped before command dispatch because a database cutover is in progress"
+	appTaskCapacityFailureCode    = "capacity_unavailable"
+	appTaskCapacityFailureMessage = "no compute node had room for the app task environment"
 )
 
 // ResolveAppTaskRuntime resolves the immutable deployment pin captured when
