@@ -88,6 +88,7 @@ when parallel changes pick the next number.
 
 ## Consequences
 
+- PR preview databases are not ranked against the plan's database limit, as they are not counted at creation (ADR-20261102123523). Before 2026-11-11 the ranking included them: on a Pro account a preview copy made before a production database pushed that production database past the plan, so it was suspended and, with deletion on, scheduled for deletion.
 - No Free account holds a Neon project. The project count tracks paid
   accounts, plus databases past their plan for at most 37 days.
 - A Free account sees managed PostgreSQL as an upgrade. Hobby is the
