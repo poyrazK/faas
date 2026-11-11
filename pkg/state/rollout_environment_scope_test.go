@@ -89,6 +89,34 @@ func runRolloutEnvironmentScope(t *testing.T, ctx context.Context, s state.Store
 		}
 	})
 
+	// Hunt 33 H33-43: a deploy-time canary carries an implicit weight, so the
+	// promoted candidate and the stable sibling both fall under
+	// deployments_app_scope_live_uniq until the sibling is zeroed.
+	t.Run("promote completes a canary whose weight is not explicit", func(t *testing.T) {
+		appID := newApp("scope-promote-implicit")
+		production := scopedLive(t, ctx, s, appID, state.DefaultEnvScope, "p1")
+		canary := scopedDeployment(t, ctx, s, state.Deployment{AppID: appID, Scope: state.DefaultEnvScope, Status: state.DeployBuilding,
+			TrafficPercent: 1, CanaryPreset: "balanced", CanaryTotalSteps: 4, RolloutState: "pending"}, "c1")
+		if err := s.MarkDeploymentLive(ctx, canary.ID); err != nil {
+			t.Fatalf("MarkDeploymentLive canary: %v", err)
+		}
+		if d, err := s.DeploymentByID(ctx, canary.ID); err != nil || d.TrafficPercentExplicit || d.TrafficPercent == 0 || d.TrafficPercent == 100 {
+			t.Fatalf("canary before promote = %+v err=%v, want a partial implicit weight", d, err)
+		}
+		if _, _, err := s.RecoverRollout(ctx, appID, "promote", "test promote"); err != nil {
+			t.Fatalf("RecoverRollout promote: %v", err)
+		}
+		for id, want := range map[string]int{canary.ID: 100, production.ID: 0} {
+			d, err := s.DeploymentByID(ctx, id)
+			if err != nil || d.Status != state.DeployLive || d.TrafficPercent != want {
+				t.Fatalf("%s after promote = %s at %d%% (err %v), want live at %d%%", id, d.Status, d.TrafficPercent, err, want)
+			}
+		}
+		if d, err := s.DeploymentByID(ctx, canary.ID); err != nil || d.RolloutState != "complete" {
+			t.Fatalf("promoted canary = %+v err=%v, want rollout complete", d, err)
+		}
+	})
+
 	t.Run("a failure in one environment leaves the other's weights", func(t *testing.T) {
 		appID := newApp("scope-failure")
 		production := scopedLive(t, ctx, s, appID, state.DefaultEnvScope, "p1")

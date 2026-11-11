@@ -10541,7 +10541,17 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		}
 
 		// Short-circuit: step = total, traffic_percent = 100,
-		// siblings zeroed, rollout_state = 'complete'.
+		// siblings zeroed, rollout_state = 'complete'. Siblings go first:
+		// a completed candidate at 100% and a stable sibling still carrying
+		// traffic both fall under deployments_app_scope_live_uniq, so the
+		// candidate stamp failed with 23505 whenever the canary's weight was
+		// not explicit (Hunt 33 H33-43).
+		if _, err := tx.Exec(ctx,
+			`update deployments set traffic_percent = 0
+			  where app_id = $1 and scope = $3 and status = 'live' and id != $2`,
+			appID, dep.ID, normalizedDeploymentScope(dep.Scope)); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: recover_rollout zero siblings: %w", err)
+		}
 		if _, err := tx.Exec(ctx,
 			`update deployments set
 				canary_step = $2,
@@ -10553,12 +10563,6 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 			 where id = $1`,
 			dep.ID, dep.CanaryTotalSteps, now, nullableJSON(decision)); err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: recover_rollout stamp promote: %w", err)
-		}
-		if _, err := tx.Exec(ctx,
-			`update deployments set traffic_percent = 0
-			  where app_id = $1 and scope = $3 and status = 'live' and id != $2`,
-			appID, dep.ID, normalizedDeploymentScope(dep.Scope)); err != nil {
-			return Deployment{}, 0, fmt.Errorf("state: recover_rollout zero siblings: %w", err)
 		}
 
 		auditKind = DeployTrafficChanged
