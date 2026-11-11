@@ -20,6 +20,8 @@ const (
 	credentialCLISignIn    = "A CLI sign-in"
 	credentialAgentSignIn  = "An agent (MCP) sign-in"
 	credentialAPISignIn    = "A password sign-in through the API"
+	credentialDeployToken  = "A deploy token"
+	credentialRotatedToken = "A rotated deploy token"
 	credentialNoticeKind   = "credential_created"
 	credentialNoticeAction = "auth.credential_created_notice"
 	// credentialNoticeSignupQuiet skips the notice for the key a signup

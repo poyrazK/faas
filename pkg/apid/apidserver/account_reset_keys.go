@@ -30,6 +30,30 @@ func (s *server) keysLeftAfterReset(ctx context.Context, acct state.Account) []s
 		}
 		out = append(out, k)
 	}
+	return append(out, s.deployTokensLeftAfterReset(ctx, acct)...)
+}
+
+// deployTokensLeftAfterReset lists the deploy tokens the account holds as
+// review entries: a reset keeps them, like hand-made keys, so the review
+// names them too (account-flow audit 2026-11-10, ADR 20261111130000).
+func (s *server) deployTokensLeftAfterReset(ctx context.Context, acct state.Account) []state.APIKey {
+	lister, ok := s.store.(state.DeployTokenHolderLister)
+	if !ok {
+		return nil
+	}
+	tokens, err := lister.ListLiveDeployTokensHeldBy(ctx, acct.ID)
+	if err != nil {
+		s.log.Warn("reset.list_deploy_tokens", "account_id", acct.ID, "err", err)
+		return nil
+	}
+	out := make([]state.APIKey, 0, len(tokens))
+	for _, t := range tokens {
+		label := "deploy token " + t.ID
+		if t.Label != "" {
+			label = "deploy token " + t.Label
+		}
+		out = append(out, state.APIKey{ID: t.ID, AccountID: acct.ID, AppID: t.AppID, Label: label, CreatedAt: t.CreatedAt, ExpiresAt: t.ExpiresAt, Status: t.Status})
+	}
 	return out
 }
 
