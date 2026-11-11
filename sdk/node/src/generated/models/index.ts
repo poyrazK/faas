@@ -1590,6 +1590,7 @@ export type { ObjectStorageComputeBinding } from './ObjectStorageComputeBinding.
 export type { ObjectStorageComputeBindingList } from './ObjectStorageComputeBindingList.js';
 export type { ObjectStorageComputeBindingSecretKeys } from './ObjectStorageComputeBindingSecretKeys.js';
 export type { ObjectStorageComputeTrigger } from './ObjectStorageComputeTrigger.js';
+export type { ObjectStorageOverCeilingDeletion } from './ObjectStorageOverCeilingDeletion.js';
 export type { ObjectStoragePolicy } from './ObjectStoragePolicy.js';
 export type { ObjectStoragePricing } from './ObjectStoragePricing.js';
 export type { ObjectStorageReleaseRequirements } from './ObjectStorageReleaseRequirements.js';

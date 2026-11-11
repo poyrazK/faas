@@ -1183,6 +1183,7 @@ from .object_signed_request import ObjectSignedRequest
 from .object_signed_request_headers import ObjectSignedRequestHeaders
 from .object_signed_request_method import ObjectSignedRequestMethod
 from .object_storage_charge import ObjectStorageCharge
+from .object_storage_over_ceiling_deletion import ObjectStorageOverCeilingDeletion
 from .object_storage_policy import ObjectStoragePolicy
 from .object_storage_policy_accounting_mode import ObjectStoragePolicyAccountingMode
 from .object_storage_pricing import ObjectStoragePricing
@@ -3844,6 +3845,7 @@ __all__ = (
     "ObjectSignedRequestHeaders",
     "ObjectSignedRequestMethod",
     "ObjectStorageCharge",
+    "ObjectStorageOverCeilingDeletion",
     "ObjectStoragePolicy",
     "ObjectStoragePolicyAccountingMode",
     "ObjectStoragePricing",

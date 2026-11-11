@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.object_storage_charge import ObjectStorageCharge
+    from ..models.object_storage_over_ceiling_deletion import ObjectStorageOverCeilingDeletion
     from ..models.object_storage_policy import ObjectStoragePolicy
     from ..models.object_storage_usage import ObjectStorageUsage
 
@@ -42,6 +43,9 @@ class ObjectStorageUsageResponse:
     item."""
     billing_from: datetime.datetime | Unset = UNSET
     """UTC month boundary at which shadow/live handling starts. Periods before it are never charged."""
+    over_ceiling: ObjectStorageOverCeilingDeletion | Unset = UNSET
+    """Present while the account stores more than its object-storage ceiling. Unless the account gets back under
+    the ceiling first, Gregale deletes the excess on deletion_scheduled_at (ADR-20261111123000)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -59,6 +63,10 @@ class ObjectStorageUsageResponse:
         if not isinstance(self.billing_from, Unset):
             billing_from = self.billing_from.isoformat()
 
+        over_ceiling: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.over_ceiling, Unset):
+            over_ceiling = self.over_ceiling.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -72,12 +80,15 @@ class ObjectStorageUsageResponse:
             field_dict["charges"] = charges
         if billing_from is not UNSET:
             field_dict["billing_from"] = billing_from
+        if over_ceiling is not UNSET:
+            field_dict["over_ceiling"] = over_ceiling
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.object_storage_charge import ObjectStorageCharge
+        from ..models.object_storage_over_ceiling_deletion import ObjectStorageOverCeilingDeletion
         from ..models.object_storage_policy import ObjectStoragePolicy
         from ..models.object_storage_usage import ObjectStorageUsage
 
@@ -102,12 +113,20 @@ class ObjectStorageUsageResponse:
         else:
             billing_from = datetime.datetime.fromisoformat(_billing_from)
 
+        _over_ceiling = d.pop("over_ceiling", UNSET)
+        over_ceiling: ObjectStorageOverCeilingDeletion | Unset
+        if isinstance(_over_ceiling, Unset):
+            over_ceiling = UNSET
+        else:
+            over_ceiling = ObjectStorageOverCeilingDeletion.from_dict(_over_ceiling)
+
         object_storage_usage_response = cls(
             usage=usage,
             policy=policy,
             billing_mode=billing_mode,
             charges=charges,
             billing_from=billing_from,
+            over_ceiling=over_ceiling,
         )
 
         object_storage_usage_response.additional_properties = d

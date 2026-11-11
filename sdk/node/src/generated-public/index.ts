@@ -559,6 +559,7 @@ export type { OAuthTokenExchangeRequest } from './models/OAuthTokenExchangeReque
 export type { OAuthTokenExchangeResponse } from './models/OAuthTokenExchangeResponse.js';
 export type { ObjectSignedRequest } from './models/ObjectSignedRequest.js';
 export type { ObjectStorageCharge } from './models/ObjectStorageCharge.js';
+export type { ObjectStorageOverCeilingDeletion } from './models/ObjectStorageOverCeilingDeletion.js';
 export type { ObjectStoragePolicy } from './models/ObjectStoragePolicy.js';
 export type { ObjectStoragePricing } from './models/ObjectStoragePricing.js';
 export type { ObjectStorageReleaseRequirements } from './models/ObjectStorageReleaseRequirements.js';
