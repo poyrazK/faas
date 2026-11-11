@@ -3,6 +3,7 @@ package apidserver
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,7 +18,7 @@ func (s *server) configureCustomerSupport(ctx context.Context, pool *pgxpool.Poo
 	if e != nil {
 		return e
 	}
-	s.customerSupport = &support.Service{Pool: pool, Webhook: hook, Operator: func(id, email string) bool { return s.isOperator(state.Account{ID: id, Email: email}) }}
+	s.customerSupport = &support.Service{Pool: pool, Webhook: hook, Operator: s.supportBootstrapManager}
 	if pool != nil {
 		go s.customerSupport.Run(ctx)
 	}
@@ -82,4 +83,14 @@ func (s *server) registerSupportStaffRoutes(mux *http.ServeMux) {
 		}
 		mux.HandleFunc(route.method+" /v1/admin/support"+route.path, s.authLimited(s.requireSessionPrincipal(h)))
 	}
+}
+
+// supportBootstrapManager receives the current database email only after the
+// support transaction verifies active status, email verification and MFA.
+func (s *server) supportBootstrapManager(_ string, email string) bool {
+	if s.adminAllowlist == nil {
+		return false
+	}
+	_, allowed := s.adminAllowlist.emails[strings.ToLower(email)]
+	return allowed
 }

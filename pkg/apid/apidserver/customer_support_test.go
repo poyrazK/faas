@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
-	"github.com/onebox-faas/faas/pkg/apid/support"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 )
@@ -52,7 +51,10 @@ func TestCustomerSupportAuthenticatedRoutes(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
-	(*env.S()).SetCustomerSupportForTest(&support.Service{Pool: pool, Operator: func(id, email string) bool { return id == acct.ID }})
+	(*env.S()).WithAdminAllowlist(acct.Email)
+	if e = (*env.S()).ConfigureCustomerSupportForTest(t.Context(), pool); e != nil {
+		t.Fatal(e)
+	}
 	headers := map[string]string{"Idempotency-Key": uuid.NewString()}
 	response := env.Do(t, http.MethodPost, "/v1/support/tickets", api.CreateSupportTicketRequest{Subject: "Deployment issue", Category: "deployment", Body: "Please help"}, headers)
 	if response.Code != 202 {
