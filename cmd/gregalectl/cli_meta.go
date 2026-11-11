@@ -773,6 +773,18 @@ var cliCommands = []cliCommand{
 				Short: "Move a customer back to the email address their last confirmed change replaced",
 				Flags: accountMutationCLIFlags(),
 			},
+			{
+				Name:  "complimentary",
+				Short: "Give an account a paid plan without a subscription, or end it",
+				Flags: []cliFlag{
+					{Name: "account-id", Short: "account id (uuid)", Req: true},
+					{Name: "plan", Short: "the complimentary plan; none returns the account to Free", Req: true, ClosedSet: []string{"hobby", "pro", "scale", "none"}},
+					{Name: "until", Short: "RFC 3339 time the account returns to Free"},
+					{Name: "reason", Short: "audit reason slug ([a-z0-9_]{1,64})", Req: true},
+					{Name: "trace-id", Short: "OTel 32-char-hex trace id"},
+					{Name: "yes", Short: "acknowledge the plan change", Req: true},
+				},
+			},
 		},
 	},
 	{

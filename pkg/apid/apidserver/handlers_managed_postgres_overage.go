@@ -96,6 +96,12 @@ func (s *server) putManagedPostgresOverage(w http.ResponseWriter, r *http.Reques
 		managedPostgresPlanDenied(w, acct.Plan, "compute overage needs a paid plan; the monthly compute allowance is a hard limit on this plan")
 		return
 	}
+	if *req.Enabled {
+		if problem := s.complimentaryRefusal(r.Context(), acct.ID); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
 	subject := acct.ResourceOwnerID()
 	if err := s.managedPostgres.SetOverage(r.Context(), subject, *req.Enabled); err != nil {
 		managedPostgresProblem(w, err)

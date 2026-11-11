@@ -2045,6 +2045,7 @@ const EnvironmentGitOpsMaxDeclaredRoutes = 50
 // These intervals do not grant authority to execute enforce-mode intent.
 const EnvironmentGitOpsReportLeaseDuration = time.Minute
 const EnvironmentGitOpsReportCheckInterval = time.Minute
+const EnvironmentGitOpsReportStaleAfter = 3 * EnvironmentGitOpsReportCheckInterval
 const EnvironmentGitOpsReportRetryInterval = 30 * time.Second
 const EnvironmentGitOpsReportIdleInterval = 5 * time.Second
 
@@ -3351,6 +3352,11 @@ const (
 	DevDebugIdleTimeout          = 30 * time.Minute
 	DevDebugMaxBytes       int64 = 256 << 20
 	DevDebugWakeTimeout          = 60 * time.Second
+	// DevDebugApprovalWindow is how long one person's approval lets an agent
+	// key open debugger tunnels to one developer app (ADR-20261111150000): a
+	// debugger opens a tunnel per connection, so a per-request approval would
+	// leave agents unable to debug. The window starts at the first attach.
+	DevDebugApprovalWindow = time.Hour
 	// MaxDelayedTaskDelaySeconds bounds how far a one-shot invocation may be
 	// scheduled into the future. A one-year ceiling prevents effectively
 	// immortal pending rows while still covering annual workflows.
