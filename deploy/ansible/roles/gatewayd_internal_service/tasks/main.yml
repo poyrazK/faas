@@ -489,6 +489,37 @@
     mode: "0644"
   notify: restart faas-gatewayd-internal
 
+# ADR-20261110210000 slice 3f: with faas_gateway_secretd_log_drains (and
+# vmmd_service's faas_secretd_target, which issues the node's client leaf),
+# drain headers open through secretd for the app's owner node only.
+- name: gatewayd_internal_service — require secretd for secretd log drains
+  ansible.builtin.assert:
+    that:
+      - (faas_box_role | default('single-box')) == 'compute-only'
+      - faas_secretd_target | default('') | length > 0
+    fail_msg: >-
+      faas_gateway_secretd_log_drains is for compute-only nodes and needs
+      faas_secretd_target (vmmd_service), which issues the node's secretd
+      client leaf.
+  when: faas_gateway_secretd_log_drains | bool
+
+- name: gatewayd_internal_service — install the secretd log drain drop-in
+  ansible.builtin.template:
+    src: 99-faas-gatewayd-secretd.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-gatewayd-secretd.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-gatewayd-internal
+  when: faas_gateway_secretd_log_drains | bool
+
+- name: gatewayd_internal_service — remove the secretd log drain drop-in while off
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-gatewayd-secretd.conf
+    state: absent
+  notify: restart faas-gatewayd-internal
+  when: not (faas_gateway_secretd_log_drains | bool)
+
 - name: gatewayd_internal_service — install realtimed FAAS_NODE_NAME drop-in
   ansible.builtin.template:
     src: ../../_shared/templates/99-faas-node-name.conf.j2

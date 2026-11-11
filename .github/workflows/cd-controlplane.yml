@@ -180,6 +180,9 @@ jobs:
       # ADR-20261110210000 §3: true stages the runtime identity on the control
       # plane too, for secretd (scripts/ci/seal_domain_vars.sh).
       SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE: ${{ vars.SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE }}
+      # ADR-20261110210000 slice 3f: true stages the edge identity on the
+      # control plane too, for secretd's log drain headers.
+      SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE: ${{ vars.SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE }}
       # The canary app the activation observer gates on. Unset, it defaults
       # to an always-deployed app in scripts/ci/observe_remote_rollout.sh.
       ROLLOUT_APP_PROBE_URL: ${{ vars.ROLLOUT_APP_PROBE_URL }}
@@ -1770,6 +1773,9 @@ jobs:
       # ADR-20261110210000 §3: true stages the runtime identity on the control
       # plane too, for secretd (scripts/ci/seal_domain_vars.sh).
       SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE: ${{ vars.SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE }}
+      # ADR-20261110210000 slice 3f: true stages the edge identity on the
+      # control plane too, for secretd's log drain headers.
+      SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE: ${{ vars.SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE }}
     steps:
       - name: Install pinned cosign verifier
         env:

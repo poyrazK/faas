@@ -3848,6 +3848,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			deps.metrics,
 			log,
 		)
+		// ADR-20261110210000 slice 3f: with FAAS_GATEWAY_LOG_DRAIN_OPENER=secretd
+		// drain headers open on the control plane, for the owner node only.
+		openHeader, closeOpener, openerErr := logDrainHeaderOpenerFromEnv(ctx, osGetenv, cfg.NodeName, log)
+		if openerErr != nil {
+			return openerErr
+		}
+		defer closeOpener()
+		manager.openHeader = openHeader
 		manager.standardNode = newLocalNodeID(deps.pgStore, cfg.NodeName)
 		manager.capabilityAllowed = deps.capabilityAllowed
 		manager.edgeEgress = egressSink.RecordEdgeBytes

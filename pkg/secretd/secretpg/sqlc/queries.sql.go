@@ -82,6 +82,24 @@ func (q *Queries) InsertSecretOpenAudit(ctx context.Context, db DBTX, arg Insert
 	return err
 }
 
+const logDrainHeaderSealed = `-- name: LogDrainHeaderSealed :one
+SELECT auth_header_sealed FROM app_log_drains
+ WHERE id = $1::uuid AND app_id = $2::uuid
+`
+
+type LogDrainHeaderSealedParams struct {
+	ID    pgtype.UUID
+	AppID pgtype.UUID
+}
+
+// A drain of the named app only (ADR-20261110210000 slice 3f).
+func (q *Queries) LogDrainHeaderSealed(ctx context.Context, db DBTX, arg LogDrainHeaderSealedParams) ([]byte, error) {
+	row := db.QueryRow(ctx, logDrainHeaderSealed, arg.ID, arg.AppID)
+	var auth_header_sealed []byte
+	err := row.Scan(&auth_header_sealed)
+	return auth_header_sealed, err
+}
+
 const secretGrantValid = `-- name: SecretGrantValid :one
 SELECT EXISTS (
     SELECT 1 FROM secret_grants

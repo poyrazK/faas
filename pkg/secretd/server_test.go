@@ -30,6 +30,15 @@ type fakeStore struct {
 	captures    map[string]fakeCapture
 	deployments map[string]fakeDeployment
 	rows        map[rowKey][]byte
+	drains      map[[2]string][]byte // {app, drain} -> sealed header
+}
+
+func (f *fakeStore) LogDrainHeader(_ context.Context, appID, drainID string) ([]byte, error) {
+	sealed, ok := f.drains[[2]string{appID, drainID}]
+	if !ok {
+		return nil, secretd.ErrUnknownDrain
+	}
+	return sealed, nil
 }
 
 type fakeCapture struct {

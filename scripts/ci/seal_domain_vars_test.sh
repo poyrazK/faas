@@ -95,6 +95,15 @@ grep -qxF runtime <<<"$listed" || fail "--identities control-plane omits runtime
 listed="$(env -i PATH="$PATH" "${all[@]}" bash "$script" --identities control-plane)"
 ! grep -qxF runtime <<<"$listed" || fail "--identities control-plane lists runtime without secretd: $listed"
 
+# ADR-20261110210000 slice 3f: the edge identity reaches the control plane
+# only with SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE, for secretd's log drain headers.
+run control-plane edgecp "${all[@]}" SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE=true || fail "control-plane edge staging failed"
+grep -qxF "faas_seal_domain_edge_identity_src: \"$work/edgecp/out/edge.age\"" "$work/edgecp/vars.yml" || fail "control plane is missing the edge identity for secretd"
+grep -qxF "faas_seal_domain_edge_recipient_src: \"$work/edgecp/out/edge.age.pub\"" "$work/edgecp/vars.yml" || fail "control plane lost the edge recipient"
+listed="$(env -i PATH="$PATH" "${all[@]}" SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE=true bash "$script" --identities control-plane)"
+grep -qxF edge <<<"$listed" || fail "--identities control-plane omits edge with secretd: $listed"
+! grep -qxF edge <<<"$(env -i PATH="$PATH" "${all[@]}" bash "$script" --identities control-plane)" || fail "--identities control-plane lists edge without secretd"
+
 # ADR-20261110210000 slice 3e: retired compute nodes get the runtime
 # recipient alone, CD is not handed the runtime key, and the escrow list
 # leaves runtime out.

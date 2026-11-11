@@ -140,6 +140,10 @@ func (ownedBy) AppSecretCiphertext(context.Context, string, string, string) ([]b
 	return nil, secretd.ErrUnknownSecret
 }
 
+func (ownedBy) LogDrainHeader(context.Context, string, string) ([]byte, error) {
+	return nil, secretd.ErrUnknownDrain
+}
+
 // adr: 20261110210000 — the secret-opener feature leaves work end to end:
 // vmmd's client leaf, issued for its node, reaches secretd over mutual TLS;
 // secretd opens for the app's owner node, refuses another registered node,

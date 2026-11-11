@@ -161,6 +161,22 @@ func TestReferenceLookupsOnPostgres(t *testing.T) {
 		t.Fatalf("unknown deployment = %v", err)
 	}
 
+	// Log drains (slice 3f): a drain of the named app, with a header.
+	drain, err := st.CreateAppLogDrain(ctx, state.AppLogDrain{AppID: appA.ID, AccountID: account.ID,
+		Kind: state.AppLogDrainKindHTTPJSON, TargetURL: "https://logs.example.com/in", AuthHeaderSealed: []byte("sealed-header"), Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sealed, err := store.LogDrainHeader(ctx, appA.ID, drain.ID); err != nil || string(sealed) != "sealed-header" {
+		t.Fatalf("own drain header = %q, %v", sealed, err)
+	}
+	if _, err := store.LogDrainHeader(ctx, appB.ID, drain.ID); !errors.Is(err, secretd.ErrUnknownDrain) {
+		t.Fatalf("another app's drain = %v", err)
+	}
+	if _, err := store.LogDrainHeader(ctx, appA.ID, "not-a-uuid"); !errors.Is(err, secretd.ErrUnknownDrain) {
+		t.Fatalf("bad drain id = %v", err)
+	}
+
 	// Crash captures: a live sealed capture's app and key. The fixture row
 	// skips foreign keys and the status-transition trigger.
 	captureID := uuid.NewString()

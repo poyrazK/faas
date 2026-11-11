@@ -353,6 +353,38 @@ When a domain has moved, node join stops staging its identity, deletes
 leftovers (the `faas_compute_fleet_key_retired` pattern), and
 `fleet-seal verify` refuses a compute node that still holds it.
 
+**The other compute-read domains (owner decisions 2026-11-11).** After the
+runtime domain, compute still holds `build` (customer registry passwords),
+`edge` (basic-auth credentials, log drain headers, secret edge-rule request
+headers) and `delivery` (execution payloads, app webhook secrets, commit
+source connections). Each moves as follows:
+
+- **3f, log drain headers:** drains already ship only from the app's owner
+  node (`newAppLogDrainOwnership`), so gatewayd-internal opens a drain's
+  header by reference through secretd, authorized like runtime secrets
+  (owner or grant).
+- **3g, delivery:** compute schedd opens delivery values by row reference
+  through secretd with owner or grant authorization; the delivery identity
+  then leaves compute.
+- **3h, basic auth:** any node's edge checks basic auth for any app, so
+  ownership cannot narrow it. The check becomes verify-only: apid stores an
+  argon2id verifier beside the sealed value, gateways compare against it
+  (with an in-memory cache of passing credentials keyed by a hash of the
+  presented header), and never open the credential.
+- **3i, secret edge-rule request headers:** for requests to the app's own
+  instances, the header is added on the instance's node by vmmd's forward
+  path, which opens it through secretd with owner or grant authorization.
+  Only `route` rules to an external origin need the value at the receiving
+  edge; those open through secretd by reference, cached, budgeted and
+  audited. The edge identity then leaves compute.
+- **3j, registry passwords:** builder VMs pull private images through a
+  control-plane registry proxy that adds the app's credentials per build
+  token, scoped to the app's registries. No compute node or builder VM sees
+  the password; the build identity then leaves compute.
+- **1c, placement inputs:** each compute node gets its own Postgres login,
+  and row security lets it write only its own `compute_nodes` and capacity
+  rows.
+
 ### 4. Placement grants are issued by the control plane
 
 A rooted node can write `instances`, so secretd cannot authorize from it.
@@ -535,6 +567,8 @@ Operations:
 | 3 | `secretd` + `OpenWorkloadSecrets` (owner by protected `apps.node_id`, peers by owner-requested `secret_grants`) + audit + alerts; move `runtime`, then `build`, `edge`, `delivery`; `control` behind signd; node join stops staging, verify refuses leftovers | 1 |
 | 3d | Everything by reference: crash-capture keys, sidecar env, per-snapshot encryption with keys from secretd (latency-measured), app secrets; then the runtime identity leaves compute | 3 |
 | 3e | The runtime identity leaves compute (code in #7003): per node `faas_seal_domain_runtime_retired_on_compute` (needs contracted + `faas_vmmd_secretd_open`) removes `runtime.age`/`.previous`, stages `runtime.age.pub`; vmmd `FAAS_SEAL_DOMAIN_RUNTIME_RETIRED` refuses to start with a leftover identity or without secretd, and seals crash-capture keys to the recipient; fleet-wide `SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE` stops CD handing compute the key, so joining nodes never get it. Until 3d-3, park snapshots in the shared store still hold plaintext process memory | 3d (except 3d-3) |
+| 3f | Log drain headers by reference: secretd `OpenLogDrainHeader` (edge identity on the control plane with `SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE`), gatewayd-internal `FAAS_GATEWAY_LOG_DRAIN_OPENER=secretd` per node (`faas_gateway_secretd_log_drains`) (code in #7003) | 3c |
+| 3g–3j | Delivery by reference, basic-auth verifiers, edge-rule headers injected on the instance's node, CP registry pull proxy (decided above) | 3f |
 | 4 | HSM hardware, ceremony runbook, Tier A wrapped identities for every control-plane reader, measurements | — |
 | 5 | Tier B envelope v3 + re-seal of every sealed column | 4 |
 

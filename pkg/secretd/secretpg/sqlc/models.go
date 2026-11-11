@@ -8,6 +8,12 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AppLogDrain struct {
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	AuthHeaderSealed []byte
+}
+
 type AppSecret struct {
 	AppID      pgtype.UUID
 	Scope      string

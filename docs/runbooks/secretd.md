@@ -74,6 +74,28 @@ Back out a node by setting the switch to false and converging: the role
 stages the identity again and vmmd opens with it after a restart. With step 4
 on, unset the GitHub variable first.
 
+## Log drain headers through secretd (slice 3f)
+
+Drains ship only from the app's owner node, so secretd opens a drain's
+authentication header for that node (or a granted peer) by reference.
+
+1. **Edge identity on the control plane.** Set the GitHub environment
+   variable `SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE=true` and converge the control
+   plane: the seal_domains role installs `edge.age` there and secretd
+   restarts with `FAAS_SECRETD_EDGE_IDENTITY`. Check: secretd's journal shows
+   `edge_identities=1`.
+2. **One node at a time.** With `faas_secretd_target` already set, set
+   `faas_gateway_secretd_log_drains: true` for a node and converge it.
+   gatewayd-internal restarts with `FAAS_GATEWAY_LOG_DRAIN_OPENER=secretd`.
+   Check: its journal shows `log drain headers opened by secretd`, drains
+   with a header keep delivering (drain health), and
+   `faas_secretd_opens_total{rpc="OpenLogDrainHeader"}` rises as drain
+   workers start.
+
+Back out a node with `faas_gateway_secretd_log_drains: false`. The edge
+identity stays on compute until basic auth (3h) and edge-rule headers (3i)
+move too.
+
 ## Rotation
 
 The runtime domain rotates as before (`docs/runbooks/seal-domain-key-escrow.md`).

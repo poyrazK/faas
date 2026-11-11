@@ -37,6 +37,8 @@ const (
 	rpcGrantPeer      = "GrantPeer"
 	rpcOpenCaptureKey = "OpenCaptureKey"
 	rpcOpenSidecarEnv = "OpenSidecarEnv"
+	// rpcOpenLogDrainHeader is slice 3f.
+	rpcOpenLogDrainHeader = "OpenLogDrainHeader"
 )
 
 var (
@@ -72,7 +74,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 	}
 	// Pre-create the series alerts read, so increase() sees the first
 	// refusal instead of a series appearing at 1.
-	for _, rpc := range []string{rpcOpenAppSecrets, rpcGrantPeer, rpcOpenCaptureKey, rpcOpenSidecarEnv} {
+	for _, rpc := range []string{rpcOpenAppSecrets, rpcGrantPeer, rpcOpenCaptureKey, rpcOpenSidecarEnv, rpcOpenLogDrainHeader} {
 		for _, reason := range []string{ReasonUnauthenticated, ReasonUnknownNode, ReasonNotAuthorized,
 			ReasonBudgetExhausted, ReasonUnreferenced, ReasonWrongAccount, ReasonOtherApp, ReasonEnvelope} {
 			m.refusals.WithLabelValues(rpc, reason)

@@ -62,7 +62,21 @@ type Store interface {
 	// AppSecretCiphertext returns the ciphertext of appID's app_secrets row
 	// (scope, key), or ErrUnknownSecret.
 	AppSecretCiphertext(ctx context.Context, appID, scope, key string) ([]byte, error)
+	// LogDrainHeader returns the sealed authentication header of drainID, a
+	// log drain of appID, or ErrUnknownDrain.
+	LogDrainHeader(ctx context.Context, appID, drainID string) ([]byte, error)
 }
+
+// ErrUnknownDrain is returned by Store.LogDrainHeader.
+var ErrUnknownDrain = errors.New("secretd: the app has no log drain with a header of that id")
+
+// LogDrainHeaderNamespace is the secretbox namespace apid seals log drain
+// headers under (gatewayd-internal's appLogDrainSecretSealLabel).
+const LogDrainHeaderNamespace = "APP_LOG_DRAIN_AUTH_HEADER"
+
+// MaxLogDrainHeaderBytes bounds an opened drain header, as gatewayd-internal
+// does.
+const MaxLogDrainHeaderBytes = 4096
 
 // ErrUnknownSecret is returned by Store.AppSecretCiphertext.
 var ErrUnknownSecret = errors.New("secretd: the app has no secret of that scope and key")
@@ -102,6 +116,16 @@ type Server struct {
 	// instead of naming the app's row (slice 3d-4 contract step).
 	requireReferences bool
 	metrics           *Metrics
+	// edgeIdentities open the edge seal domain (slice 3f): log drain
+	// headers. Empty refuses OpenLogDrainHeader.
+	edgeIdentities []*age.X25519Identity
+}
+
+// WithEdgeIdentities lets secretd open edge seal-domain values (current
+// first, then previous) for OpenLogDrainHeader (ADR-20261110210000 slice 3f).
+func (s *Server) WithEdgeIdentities(ids []*age.X25519Identity) *Server {
+	s.edgeIdentities = ids
+	return s
 }
 
 // WithMetrics counts opens and refusals on m.
@@ -331,6 +355,9 @@ func (s *Server) OpenCaptureKey(ctx context.Context, req *secretdpb.OpenCaptureK
 	if appID == "" || captureID == "" {
 		return nil, rpcErr(codes.InvalidArgument, "secretd needs an app id and a capture id")
 	}
+	if len(s.identities) == 0 {
+		return nil, rpcErr(codes.FailedPrecondition, "secretd holds no runtime identity")
+	}
 	name, nodeID, via, err := s.authorizeByReference(ctx, rpcOpenCaptureKey, appID)
 	if err != nil {
 		return nil, err
@@ -372,6 +399,9 @@ func (s *Server) OpenSidecarEnv(ctx context.Context, req *secretdpb.OpenSidecarE
 	if appID == "" || deploymentID == "" || sidecar == "" {
 		return nil, rpcErr(codes.InvalidArgument, "secretd needs an app id, a deployment id and a sidecar name")
 	}
+	if len(s.identities) == 0 {
+		return nil, rpcErr(codes.FailedPrecondition, "secretd holds no runtime identity")
+	}
 	name, nodeID, via, err := s.authorizeByReference(ctx, rpcOpenSidecarEnv, appID)
 	if err != nil {
 		return nil, err
@@ -407,6 +437,53 @@ func (s *Server) OpenSidecarEnv(ctx context.Context, req *secretdpb.OpenSidecarE
 	return &secretdpb.OpenSidecarEnvResponse{Values: values}, nil
 }
 
+// OpenLogDrainHeader implements secretdpb.SecretdServer (ADR-20261110210000
+// slice 3f): the caller names a drain; secretd reads its sealed header from
+// the drain row, which must be the app's, and opens it with the edge domain.
+// Drains ship only from the app's owner node, so owner or grant authorizes.
+func (s *Server) OpenLogDrainHeader(ctx context.Context, req *secretdpb.OpenLogDrainHeaderRequest) (*secretdpb.OpenLogDrainHeaderResponse, error) {
+	appID, drainID := req.GetAppId(), req.GetDrainId()
+	if appID == "" || drainID == "" {
+		return nil, rpcErr(codes.InvalidArgument, "secretd needs an app id and a drain id")
+	}
+	if len(s.edgeIdentities) == 0 {
+		return nil, rpcErr(codes.FailedPrecondition, "secretd holds no edge identity")
+	}
+	name, nodeID, via, err := s.authorizeByReference(ctx, rpcOpenLogDrainHeader, appID)
+	if err != nil {
+		return nil, err
+	}
+	sealed, err := s.store.LogDrainHeader(ctx, appID, drainID)
+	if errors.Is(err, ErrUnknownDrain) {
+		return nil, rpcErr(codes.NotFound, "secretd found no such log drain of the app")
+	}
+	if err != nil {
+		s.log.Error("secretd: log drain lookup", "app_id", logsanitize.Field(appID), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not look up the log drain")
+	}
+	namespace, plaintext, err := secretbox.OpenBytesMulti(s.edgeIdentities, sealed)
+	if err == nil && namespace != LogDrainHeaderNamespace {
+		err = fmt.Errorf("namespace %q, want %s", namespace, LogDrainHeaderNamespace)
+	}
+	if err == nil && len(plaintext) > MaxLogDrainHeaderBytes {
+		err = errors.New("header exceeds the size limit")
+	}
+	if err != nil {
+		clear(plaintext)
+		s.log.Warn("secretd: log drain header does not open", "app_id", logsanitize.Field(appID),
+			"drain_id", logsanitize.Field(drainID), "err", err)
+		s.metrics.refuse(rpcOpenLogDrainHeader, ReasonEnvelope)
+		return nil, rpcErr(codes.FailedPrecondition, "secretd could not open the log drain header")
+	}
+	if err := s.store.RecordOpen(ctx, nodeID, appID, via, 1); err != nil {
+		clear(plaintext)
+		s.log.Error("secretd: record open", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not record the open")
+	}
+	s.metrics.open(rpcOpenLogDrainHeader, via)
+	return &secretdpb.OpenLogDrainHeaderResponse{Header: string(plaintext)}, nil
+}
+
 // authorizeByReference checks a by-reference open of appID's material: the
 // caller is an active node that owns the app or holds a grant for it, within
 // its distinct-app budget, and secretd holds a runtime identity. It returns
@@ -430,9 +507,6 @@ func (s *Server) authorizeByReference(ctx context.Context, rpc, appID string) (n
 		s.log.Error("secretd: node over its distinct-app budget", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID))
 		s.metrics.refuse(rpc, ReasonBudgetExhausted)
 		return "", "", "", rpcErr(codes.ResourceExhausted, "secretd refused: the caller opened too many distinct apps this hour")
-	}
-	if len(s.identities) == 0 {
-		return "", "", "", rpcErr(codes.FailedPrecondition, "secretd holds no runtime identity")
 	}
 	return name, nodeID, via, nil
 }

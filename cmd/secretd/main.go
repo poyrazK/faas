@@ -43,6 +43,9 @@ const grantSweepInterval = 5 * time.Minute
 type config struct {
 	listen, certPath, keyPath, caPath, identityPath string
 	metricsAddr                                     string
+	// edgeIdentityPath is optional (slice 3f): set, secretd also opens log
+	// drain headers with the edge seal domain.
+	edgeIdentityPath string
 	appsPerNodeHour                                 int
 	requireReferences                               bool
 }
@@ -55,6 +58,9 @@ func configFromEnv(getenv func(string) string) (config, error) {
 		caPath:       getenv("FAAS_SECRETD_TLS_CA_PATH"),
 		identityPath: getenv("FAAS_SECRETD_RUNTIME_IDENTITY"),
 		metricsAddr:  getenv("FAAS_SECRETD_METRICS_ADDR"),
+		// The edge identity is optional: without it OpenLogDrainHeader
+		// refuses and gatewayd-internal keeps opening drains locally.
+		edgeIdentityPath: getenv("FAAS_SECRETD_EDGE_IDENTITY"),
 	}
 	if cfg.metricsAddr != "" {
 		host, _, err := net.SplitHostPort(cfg.metricsAddr)
@@ -112,6 +118,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	var edgeIdentities []*age.X25519Identity
+	if cfg.edgeIdentityPath != "" {
+		if edgeIdentities, err = sealdomain.LoadReaderIdentities(cfg.edgeIdentityPath); err != nil {
+			return fmt.Errorf("secretd: edge identity: %w", err)
+		}
+	}
 	pool, err := db.OpenWithAppName(ctx, "", "faas-secretd")
 	if err != nil {
 		return fmt.Errorf("secretd: open database: %w", err)
@@ -156,12 +168,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	srv := grpc.NewServer(wire.ServerCredsOrEmpty(tlsCfg)...)
 	secretdpb.RegisterSecretdServer(srv, secretd.NewServer(store, identities, cfg.appsPerNodeHour, log).
-		RequireReferences(cfg.requireReferences).WithMetrics(metrics))
+		RequireReferences(cfg.requireReferences).WithMetrics(metrics).WithEdgeIdentities(edgeIdentities))
 	go func() {
 		<-ctx.Done()
 		srv.GracefulStop()
 	}()
-	log.Info("secretd: serving", "listen", cfg.listen, "identities", len(identities))
+	log.Info("secretd: serving", "listen", cfg.listen, "identities", len(identities), "edge_identities", len(edgeIdentities))
 	if err := srv.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 		return fmt.Errorf("secretd: serve: %w", err)
 	}

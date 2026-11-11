@@ -45,6 +45,17 @@
   register: faas_secretd_runtime_previous
   when: faas_secretd_listen | length > 0
 
+# ADR-20261110210000 slice 3f: with the edge identity staged here (CD's
+# SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE), secretd also opens log drain headers.
+- name: secretd_service — inspect the edge domain identities
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /etc/faas/secrets/domains/edge.age
+    - /etc/faas/secrets/domains/edge.age.previous
+  register: faas_secretd_edge_identities
+  when: faas_secretd_listen | length > 0
+
 # The user exists everywhere the role runs so pg_ident's faas-secretd line
 # maps a real user; it has no shell, no home and no password.
 - name: secretd_service — create the faas-secretd user

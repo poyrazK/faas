@@ -127,3 +127,9 @@ faas_gateway_edge_local_first: false
 faas_request_id_journal_local: false
 faas_request_telemetry_minute_collapse: false
 faas_gateway_local_vmmd_socket: false
+
+# ADR-20261110210000 slice 3f, per compute node after faas_secretd_target and
+# secretd's edge identity (SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE) are on: true
+# opens customer log drain headers through secretd, for the app's owner node
+# only, instead of with this node's edge identity.
+faas_gateway_secretd_log_drains: false

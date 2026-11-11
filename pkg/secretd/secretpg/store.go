@@ -182,6 +182,27 @@ func (s *Store) AppSecretCiphertext(ctx context.Context, appID, scope, key strin
 	return ct, nil
 }
 
+// LogDrainHeader implements secretd.Store: a drain of appID only. A drain
+// with no header is ErrUnknownDrain too: there is nothing to open.
+func (s *Store) LogDrainHeader(ctx context.Context, appID, drainID string) ([]byte, error) {
+	app, err := pgUUID(appID)
+	if err != nil {
+		return nil, secretd.ErrUnknownDrain
+	}
+	drain, err := pgUUID(drainID)
+	if err != nil {
+		return nil, secretd.ErrUnknownDrain
+	}
+	sealed, err := s.q.LogDrainHeaderSealed(ctx, s.db, sqlc.LogDrainHeaderSealedParams{ID: drain, AppID: app})
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && len(sealed) == 0) {
+		return nil, secretd.ErrUnknownDrain
+	}
+	if err != nil {
+		return nil, fmt.Errorf("secretpg: log drain header: %w", err)
+	}
+	return sealed, nil
+}
+
 // DeleteExpiredGrants removes grants that expired before before.
 func (s *Store) DeleteExpiredGrants(ctx context.Context, before time.Time) (int64, error) {
 	return s.q.DeleteExpiredSecretGrants(ctx, s.db, pgTime(before))

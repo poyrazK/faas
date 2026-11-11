@@ -114,7 +114,11 @@ staged() { # ROLE DOMAIN
       # ADR-20261110210000 §3: secretd opens runtime secrets on the control
       # plane once SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE is true.
       if [[ "${SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE:-}" == true ]]; then echo both; else echo recipient; fi ;;
-    control-plane/build | control-plane/edge | control-plane/edge_tls)
+    control-plane/edge)
+      # ADR-20261110210000 slice 3f: secretd opens log drain headers on the
+      # control plane once SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE is true.
+      if [[ "${SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE:-}" == true ]]; then echo both; else echo recipient; fi ;;
+    control-plane/build | control-plane/edge_tls)
       echo recipient ;;
     compute/runtime)
       # ADR-20261110210000 slice 3e: retired compute nodes seal capture keys

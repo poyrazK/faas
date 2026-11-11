@@ -22,10 +22,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Secretd_OpenAppSecrets_FullMethodName = "/onebox.faas.secretd.v1.Secretd/OpenAppSecrets"
-	Secretd_GrantPeer_FullMethodName      = "/onebox.faas.secretd.v1.Secretd/GrantPeer"
-	Secretd_OpenCaptureKey_FullMethodName = "/onebox.faas.secretd.v1.Secretd/OpenCaptureKey"
-	Secretd_OpenSidecarEnv_FullMethodName = "/onebox.faas.secretd.v1.Secretd/OpenSidecarEnv"
+	Secretd_OpenAppSecrets_FullMethodName     = "/onebox.faas.secretd.v1.Secretd/OpenAppSecrets"
+	Secretd_GrantPeer_FullMethodName          = "/onebox.faas.secretd.v1.Secretd/GrantPeer"
+	Secretd_OpenCaptureKey_FullMethodName     = "/onebox.faas.secretd.v1.Secretd/OpenCaptureKey"
+	Secretd_OpenSidecarEnv_FullMethodName     = "/onebox.faas.secretd.v1.Secretd/OpenSidecarEnv"
+	Secretd_OpenLogDrainHeader_FullMethodName = "/onebox.faas.secretd.v1.Secretd/OpenLogDrainHeader"
 )
 
 // SecretdClient is the client API for Secretd service.
@@ -47,6 +48,12 @@ type SecretdClient interface {
 	// the deployment's persisted sidecars itself, for a deployment of app_id
 	// (ADR-20261110210000 slice 3d).
 	OpenSidecarEnv(ctx context.Context, in *OpenSidecarEnvRequest, opts ...grpc.CallOption) (*OpenSidecarEnvResponse, error)
+	// OpenLogDrainHeader opens a customer log drain's authentication header by
+	// reference: secretd reads app_log_drains.auth_header_sealed itself, for a
+	// drain of app_id, and opens it with the edge seal domain
+	// (ADR-20261110210000 slice 3f). Drains ship only from the app's owner
+	// node, so the owner-or-grant rule applies.
+	OpenLogDrainHeader(ctx context.Context, in *OpenLogDrainHeaderRequest, opts ...grpc.CallOption) (*OpenLogDrainHeaderResponse, error)
 }
 
 type secretdClient struct {
@@ -97,6 +104,16 @@ func (c *secretdClient) OpenSidecarEnv(ctx context.Context, in *OpenSidecarEnvRe
 	return out, nil
 }
 
+func (c *secretdClient) OpenLogDrainHeader(ctx context.Context, in *OpenLogDrainHeaderRequest, opts ...grpc.CallOption) (*OpenLogDrainHeaderResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OpenLogDrainHeaderResponse)
+	err := c.cc.Invoke(ctx, Secretd_OpenLogDrainHeader_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SecretdServer is the server API for Secretd service.
 // All implementations must embed UnimplementedSecretdServer
 // for forward compatibility.
@@ -116,6 +133,12 @@ type SecretdServer interface {
 	// the deployment's persisted sidecars itself, for a deployment of app_id
 	// (ADR-20261110210000 slice 3d).
 	OpenSidecarEnv(context.Context, *OpenSidecarEnvRequest) (*OpenSidecarEnvResponse, error)
+	// OpenLogDrainHeader opens a customer log drain's authentication header by
+	// reference: secretd reads app_log_drains.auth_header_sealed itself, for a
+	// drain of app_id, and opens it with the edge seal domain
+	// (ADR-20261110210000 slice 3f). Drains ship only from the app's owner
+	// node, so the owner-or-grant rule applies.
+	OpenLogDrainHeader(context.Context, *OpenLogDrainHeaderRequest) (*OpenLogDrainHeaderResponse, error)
 	mustEmbedUnimplementedSecretdServer()
 }
 
@@ -137,6 +160,9 @@ func (UnimplementedSecretdServer) OpenCaptureKey(context.Context, *OpenCaptureKe
 }
 func (UnimplementedSecretdServer) OpenSidecarEnv(context.Context, *OpenSidecarEnvRequest) (*OpenSidecarEnvResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method OpenSidecarEnv not implemented")
+}
+func (UnimplementedSecretdServer) OpenLogDrainHeader(context.Context, *OpenLogDrainHeaderRequest) (*OpenLogDrainHeaderResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method OpenLogDrainHeader not implemented")
 }
 func (UnimplementedSecretdServer) mustEmbedUnimplementedSecretdServer() {}
 func (UnimplementedSecretdServer) testEmbeddedByValue()                 {}
@@ -231,6 +257,24 @@ func _Secretd_OpenSidecarEnv_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Secretd_OpenLogDrainHeader_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OpenLogDrainHeaderRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SecretdServer).OpenLogDrainHeader(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Secretd_OpenLogDrainHeader_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SecretdServer).OpenLogDrainHeader(ctx, req.(*OpenLogDrainHeaderRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Secretd_ServiceDesc is the grpc.ServiceDesc for Secretd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -253,6 +297,10 @@ var Secretd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "OpenSidecarEnv",
 			Handler:    _Secretd_OpenSidecarEnv_Handler,
+		},
+		{
+			MethodName: "OpenLogDrainHeader",
+			Handler:    _Secretd_OpenLogDrainHeader_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

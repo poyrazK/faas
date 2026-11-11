@@ -31,3 +31,8 @@ SELECT app_id, sealed_key FROM crash_captures
 -- The app's own row (ADR-20261110210000 slice 3d-4).
 SELECT ciphertext FROM app_secrets
  WHERE app_id = sqlc.arg(app_id)::uuid AND scope = sqlc.arg(scope)::text AND key = sqlc.arg(key)::text;
+
+-- name: LogDrainHeaderSealed :one
+-- A drain of the named app only (ADR-20261110210000 slice 3f).
+SELECT auth_header_sealed FROM app_log_drains
+ WHERE id = sqlc.arg(id)::uuid AND app_id = sqlc.arg(app_id)::uuid;

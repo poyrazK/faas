@@ -36,3 +36,11 @@ CREATE TABLE app_secrets (
     ciphertext bytea NOT NULL,
     PRIMARY KEY (app_id, scope, key)
 );
+
+-- Projection of app_log_drains: the sealed header OpenLogDrainHeader reads by
+-- reference (ADR-20261110210000 slice 3f).
+CREATE TABLE app_log_drains (
+    id                 uuid  NOT NULL PRIMARY KEY,
+    app_id             uuid  NOT NULL,
+    auth_header_sealed bytea
+);
