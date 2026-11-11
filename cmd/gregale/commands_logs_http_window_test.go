@@ -28,18 +28,21 @@ func TestHTTPLogRowMarksMinuteWindow(t *testing.T) {
 	}
 }
 
-// Found on prod 2026-11-11: the HTTP row printed the latency pointer's
-// address ("latency=88979542362600ms") instead of its value.
+// Hunt 33 H33-6: latency is a pointer on the wire, and the row printed its
+// address (latency=44358373218936ms) instead of the value.
 func TestHTTPLogRowPrintsLatencyValue(t *testing.T) {
-	latency := 1194
-	var out bytes.Buffer
-	main.RenderHTTPLogQueryEvent(&out, api.LogQueryEvent{Timestamp: "2026-11-11T11:50:09.061Z", Status: 503, Method: "GET", Route: "GET /", ID: "r1", LatencyMS: &latency})
-	if !strings.Contains(out.String(), " latency=1194ms ") {
-		t.Fatalf("row = %q, want latency=1194ms", out.String())
-	}
-	out.Reset()
-	main.RenderHTTPLogQueryEvent(&out, api.LogQueryEvent{Timestamp: "2026-11-11T11:50:09.061Z", Status: 503, Method: "GET", Route: "GET /", ID: "r1"})
-	if !strings.Contains(out.String(), " latency=- ") {
-		t.Fatalf("row without latency = %q, want latency=-", out.String())
+	latency := 42
+	for _, tc := range []struct {
+		event api.LogQueryEvent
+		want  string
+	}{
+		{api.LogQueryEvent{Timestamp: "2026-11-11T10:00:01Z", Status: 200, Method: "GET", Route: "GET /", ID: "r1", LatencyMS: &latency}, " latency=42ms "},
+		{api.LogQueryEvent{Timestamp: "2026-11-11T10:00:01Z", Status: 200, Method: "GET", Route: "GET /", ID: "r2"}, " latency=0ms "},
+	} {
+		var out bytes.Buffer
+		main.RenderHTTPLogQueryEvent(&out, tc.event)
+		if !strings.Contains(out.String(), tc.want) {
+			t.Errorf("row %q does not contain %q", out.String(), tc.want)
+		}
 	}
 }

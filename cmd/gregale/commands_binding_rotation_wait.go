@@ -8,8 +8,12 @@ import (
 )
 
 const (
-	bindingRotationWaitTimeoutDefault  = 5 * time.Minute
-	bindingRotationPollIntervalDefault = time.Second
+	bindingRotationWaitTimeoutDefault = 5 * time.Minute
+	// A managed PostgreSQL rotation retires the old credential only after
+	// every instance has moved to the new one; on production that took about
+	// 9 minutes, past the 5 minute default (Hunt 33 H33-59).
+	postgresBindingRotationWaitTimeoutDefault = 15 * time.Minute
+	bindingRotationPollIntervalDefault        = time.Second
 )
 
 type bindingRotationWaitOptions struct {
@@ -18,10 +22,10 @@ type bindingRotationWaitOptions struct {
 	PollInterval time.Duration
 }
 
-func parseBindingRotationWaitArgs(args []string, command string, positionalCount int) ([]string, bindingRotationWaitOptions, bool) {
+func parseBindingRotationWaitArgs(args []string, command string, positionalCount int, defaultTimeout time.Duration) ([]string, bindingRotationWaitOptions, bool) {
 	fs := newFlagSet(command, flag.ContinueOnError)
 	wait := fs.Bool("wait", false, "wait for the previous credential to retire")
-	waitTimeout := fs.Duration("wait-timeout", bindingRotationWaitTimeoutDefault, "maximum time to wait for rotation")
+	waitTimeout := fs.Duration("wait-timeout", defaultTimeout, "maximum time to wait for rotation")
 	pollInterval := fs.Duration("poll-interval", bindingRotationPollIntervalDefault, "status polling interval while waiting")
 	flagArgs, positionals := splitArgsForFlags(args, "wait")
 	if err := fs.Parse(flagArgs); err != nil || fs.NArg() != 0 || len(positionals) != positionalCount ||

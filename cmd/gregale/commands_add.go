@@ -349,8 +349,10 @@ func cmdAddPostgres(args []string) int {
 	if invalidPostgresChoice("add postgres", "class", *serviceClass, "availability", *availability, "access", *access) {
 		return 1
 	}
+	// A standalone app defaults --env to the default scope once the app is
+	// known, as add bucket does (Hunt 33 H33-55).
 	if fs.NArg() > 1 || strings.TrimSpace(*appSlug) == "" || !api.ValidAppSlug(strings.TrimSpace(*appSlug)) ||
-		strings.TrimSpace(*scope) == "" || api.ValidateScope(strings.TrimSpace(*scope)) != nil ||
+		(strings.TrimSpace(*scope) != "" && api.ValidateScope(strings.TrimSpace(*scope)) != nil) ||
 		api.ValidateEnvKey(strings.TrimSpace(*environmentKey)) != nil || !postgresAccessOK(*access) ||
 		!postgresServiceClassOK(*serviceClass) || !postgresAvailabilityOK(*availability) ||
 		*major < 12 || *storage < 0 || *restoreWindow < 0 || *waitTimeout < 0 ||
@@ -367,6 +369,13 @@ func cmdAddPostgres(args []string) int {
 	app, err := client.GetApp(ctx, strings.TrimSpace(*appSlug))
 	if err != nil {
 		return printErr("Could not find app", err)
+	}
+	if strings.TrimSpace(*scope) == "" {
+		if app.ProjectID != "" {
+			PrintFail(os.Stderr, "--env is required outside a linked project: a project app's database binding goes to one of its environments' scopes")
+			return 1
+		}
+		*scope = "default"
 	}
 	appName := strings.TrimSpace(app.Slug)
 	if appName == "" {

@@ -4,6 +4,7 @@ package main
 // functions the project has, and the process that runs each one.
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/onebox-faas/faas/guest/runners/local"
 	"github.com/onebox-faas/faas/pkg/fnadapter"
@@ -33,7 +35,20 @@ type localFunction struct {
 	Env         map[string]string
 	TimeoutS    int
 	Crons       []string
+	procMu      sync.RWMutex
 	proc        local.Function
+}
+
+func (fn *localFunction) process() local.Function {
+	fn.procMu.RLock()
+	defer fn.procMu.RUnlock()
+	return fn.proc
+}
+
+func (fn *localFunction) setProcess(proc local.Function) {
+	fn.procMu.Lock()
+	defer fn.procMu.Unlock()
+	fn.proc = proc
 }
 
 func runtimeFamily(runtime string) string {
@@ -167,10 +182,6 @@ func localCacheDir(projectDir string) (string, error) {
 // prepare writes the adapter or builds the Go handler, and sets the process
 // the runner core starts.
 func (fn *localFunction) prepare(ctx context.Context, cacheDir string, baseEnv []string) error {
-	dir := filepath.Join(cacheDir, fn.Name)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
 	env := append(append([]string(nil), baseEnv...), "FAAS_RUNTIME="+fn.Runtime, "GREGALE_LOCAL=1")
 	keys := make([]string, 0, len(fn.Env))
 	for k := range fn.Env {
@@ -179,6 +190,14 @@ func (fn *localFunction) prepare(ctx context.Context, cacheDir string, baseEnv [
 	sort.Strings(keys)
 	for _, k := range keys {
 		env = append(env, k+"="+fn.Env[k])
+	}
+	// Runner pools key commands by executable and arguments, and retain their
+	// initial environment. Distinct private paths give changed environments a
+	// new pool; source-only reloads keep using the existing path.
+	digest := sha256.Sum256([]byte(strings.Join(env, "\x00")))
+	dir := filepath.Join(cacheDir, fn.Name, hex.EncodeToString(digest[:]))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
 	}
 	switch fn.Family {
 	case "node":
@@ -190,7 +209,7 @@ func (fn *localFunction) prepare(ctx context.Context, cacheDir string, baseEnv [
 	if err != nil {
 		return err
 	}
-	fn.proc = local.Function{Runtime: fn.Runtime, Executable: bin, Env: env, HandlerPath: bin, Compiled: true}
+	fn.setProcess(local.Function{Runtime: fn.Runtime, Executable: bin, Env: env, HandlerPath: bin, Compiled: true})
 	return nil
 }
 
@@ -204,10 +223,13 @@ func (fn *localFunction) prepareAdapter(dir, name, interpreter string, env []str
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(adapter, []byte(adapterFor(filepath.ToSlash(rel))), 0o600); err != nil {
-		return err
+	content := []byte(adapterFor(filepath.ToSlash(rel)))
+	if old, err := os.ReadFile(adapter); err != nil || !bytes.Equal(old, content) {
+		if err := os.WriteFile(adapter, content, 0o600); err != nil {
+			return err
+		}
 	}
-	fn.proc = local.Function{Runtime: fn.Runtime, Executable: exe, Args: []string{adapter}, Env: env, HandlerPath: adapter}
+	fn.setProcess(local.Function{Runtime: fn.Runtime, Executable: exe, Args: []string{adapter}, Env: env, HandlerPath: adapter})
 	return nil
 }
 
@@ -227,7 +249,7 @@ func buildLocalGo(ctx context.Context, root, dir string) (string, error) {
 			return "", err
 		}
 	}
-	cmd := exec.CommandContext(ctx, goExe, "build", "-o", bin, ".")
+	cmd := exec.CommandContext(ctx, goExe, "build", "-buildvcs=false", "-o", bin, ".")
 	cmd.Dir = buildDir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("go build failed:\n%s", strings.TrimSpace(string(out)))

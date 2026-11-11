@@ -604,7 +604,7 @@ func cmdDev(args []string) int {
 	}
 	if !jsonOutput {
 		PrintOK(osStdout, "Developer environment: %s", canonicalAppURL(session.App))
-		PrintProgress(osStdout, "lease %s after the latest sync (expires %s unless renewed)", formatDevLease(lease), session.ExpiresAt.Local().Format(time.RFC822))
+		PrintProgress(osStdout, "lease %s after the latest sync (expires %s unless renewed)", formatDevLease(lease), session.ExpiresAt.UTC().Format("2006-01-02 15:04 MST"))
 		if session.Postgres != nil {
 			PrintProgress(osStdout, "PostgreSQL: %s (%s); %s is injected when the binding is ready", session.Postgres.Name, session.Postgres.BindingState, session.Postgres.EnvironmentKey)
 		}
@@ -621,8 +621,8 @@ func cmdDev(args []string) int {
 
 	ctx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stopSignal()
-	runtimeLogCtx, cancelRuntimeLogs := context.WithCancel(ctx)
-	defer cancelRuntimeLogs()
+	stopRuntimeLogs := func() {}
+	defer func() { stopRuntimeLogs() }()
 	runtimeLogsStarted := false
 	debugProxyStarted := false
 	devBrowserOpened := false
@@ -634,14 +634,7 @@ func cmdDev(args []string) int {
 	}
 	seedPending := *postgresSeed != ""
 	forceReseed := *reseed
-	reportDevDiagnostic := func(d devDiagnostic) {
-		d.SourceDir = sourceDir
-		if jsonOutput {
-			_ = writeJSON(d)
-			return
-		}
-		renderDevDiagnostic(osStderr, d)
-	}
+	reportDevDiagnostic := newDevDiagnosticReporter(sourceDir, session.App.Slug)
 	openDevBrowser := func() {
 		if !*open || jsonOutput || devBrowserOpened {
 			return
@@ -798,12 +791,11 @@ func cmdDev(args []string) int {
 				debugProxyStarted = true
 				startDevDebugSession(ctx, session.App.Slug, *debugPort)
 			}
-			if *once || *noLogs || jsonOutput || runtimeLogsStarted {
+			if runtimeLogsStarted {
 				return
 			}
 			runtimeLogsStarted = true
-			PrintProgress(osStdout, "runtime logs attached (Ctrl-C to stop watching)")
-			go followDevRuntimeLogsWithDiagnostics(runtimeLogCtx, client, session.App.Slug, reportDevDiagnostic)
+			stopRuntimeLogs = startDevRuntimeLogs(ctx, client, session.App.Slug, *once, *noLogs, reportDevDiagnostic)
 		},
 		cancelDeploy: func(cancelCtx context.Context, deploymentID string) error {
 			cancelCtx, cancel := context.WithTimeout(cancelCtx, 15*time.Second)
@@ -976,7 +968,7 @@ func cmdDevHistory(args []string) int {
 		if !item.WithinSLO {
 			mark = "slow"
 		}
-		_, _ = fmt.Fprintf(osStdout, "  %s %s  %s  %s%s\n", mark, item.CreatedAt.Local().Format("2006-01-02 15:04"), formatDevDuration(item.EditToLiveMS), item.DeploymentID, devHistoryPatchNote(item.Phases))
+		_, _ = fmt.Fprintf(osStdout, "  %s %s  %s  %s%s\n", mark, item.CreatedAt.UTC().Format("2006-01-02 15:04Z"), formatDevDuration(item.EditToLiveMS), item.DeploymentID, devHistoryPatchNote(item.Phases))
 	}
 	return 0
 }
