@@ -412,7 +412,7 @@ export class AccountService {
   }
   /**
    * Restore a `deleted_pending` account.
-   * Cancels a staged deletion. Returns 409 `account_not_restorable` if the 30-day grace has elapsed.
+   * Cancels a staged deletion and emails the account. Needs a full-access (`admin`) key or a browser session, and two-factor authentication when it is required. Returns 409 `account_not_restorable` if the 30-day grace has elapsed.
    * @returns AccountResponse Restored.
    * @throws ApiError
    */

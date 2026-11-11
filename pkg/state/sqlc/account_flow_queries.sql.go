@@ -397,6 +397,28 @@ func (q *Queries) ListMFATrustedBrowsers(ctx context.Context, db DBTX, accountID
 	return items, nil
 }
 
+const loginFailureRetryAfter = `-- name: LoginFailureRetryAfter :one
+SELECT EXTRACT(EPOCH FROM (window_started_at + make_interval(secs => $1::double precision) - now()))::double precision AS wait_seconds
+FROM login_failure_budgets
+WHERE email_hash = $2::text
+  AND failures >= $3::int
+  AND window_started_at > now() - make_interval(secs => $1::double precision)
+`
+
+type LoginFailureRetryAfterParams struct {
+	WindowSeconds float64
+	EmailHash     string
+	MaxFailures   int32
+}
+
+// Seconds until the address may try a password again; no row when it may.
+func (q *Queries) LoginFailureRetryAfter(ctx context.Context, db DBTX, arg LoginFailureRetryAfterParams) (float64, error) {
+	row := db.QueryRow(ctx, loginFailureRetryAfter, arg.WindowSeconds, arg.EmailHash, arg.MaxFailures)
+	var wait_seconds float64
+	err := row.Scan(&wait_seconds)
+	return wait_seconds, err
+}
+
 const recentAccountSessions = `-- name: RecentAccountSessions :many
 SELECT coalesce(host(issued_ip),'')::text AS issued_ip, coalesce(issued_ua,'')::text AS issued_ua, issued_at
 FROM sessions WHERE account_id=$1 AND issued_at>=$2
@@ -434,6 +456,38 @@ func (q *Queries) RecentAccountSessions(ctx context.Context, db DBTX, arg Recent
 	return items, nil
 }
 
+const recordLoginFailure = `-- name: RecordLoginFailure :one
+INSERT INTO login_failure_budgets AS b (email_hash, window_started_at, failures, notified_at)
+VALUES ($1::text, now(), 1,
+        CASE WHEN $2::int <= 1 THEN now() END)
+ON CONFLICT (email_hash) DO UPDATE SET
+    window_started_at = CASE WHEN b.window_started_at <= now() - make_interval(secs => $3::double precision)
+        THEN now() ELSE b.window_started_at END,
+    failures = CASE WHEN b.window_started_at <= now() - make_interval(secs => $3::double precision)
+        THEN 1 ELSE LEAST(b.failures + 1, 1000000) END,
+    notified_at = CASE WHEN (CASE WHEN b.window_started_at <= now() - make_interval(secs => $3::double precision)
+            THEN 1 ELSE b.failures + 1 END) >= $2::int
+        AND (b.notified_at IS NULL OR b.notified_at <= now() - make_interval(secs => $3::double precision))
+        THEN now() ELSE b.notified_at END
+RETURNING (b.notified_at IS NOT DISTINCT FROM now())::boolean AS notify
+`
+
+type RecordLoginFailureParams struct {
+	EmailHash     string
+	MaxFailures   int32
+	WindowSeconds float64
+}
+
+// Failed password checks per keyed email hash, shared by every apid (ADR
+// 20261111150000). One fixed window per address; notify is true when this
+// failure used up the budget and the owner was not told within the window.
+func (q *Queries) RecordLoginFailure(ctx context.Context, db DBTX, arg RecordLoginFailureParams) (bool, error) {
+	row := db.QueryRow(ctx, recordLoginFailure, arg.EmailHash, arg.MaxFailures, arg.WindowSeconds)
+	var notify bool
+	err := row.Scan(&notify)
+	return notify, err
+}
+
 const replaceAccountRecoveryCodes = `-- name: ReplaceAccountRecoveryCodes :execrows
 UPDATE accounts SET mfa_recovery_codes_hash=$1::bytea[]
 WHERE id=$2 AND mfa_enrolled_at IS NOT NULL
@@ -450,6 +504,15 @@ func (q *Queries) ReplaceAccountRecoveryCodes(ctx context.Context, db DBTX, arg 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const resetLoginFailures = `-- name: ResetLoginFailures :exec
+DELETE FROM login_failure_budgets WHERE email_hash = $1
+`
+
+func (q *Queries) ResetLoginFailures(ctx context.Context, db DBTX, emailHash string) error {
+	_, err := db.Exec(ctx, resetLoginFailures, emailHash)
+	return err
 }
 
 const revertLastAccountEmailChange = `-- name: RevertLastAccountEmailChange :one
@@ -542,6 +605,22 @@ type SetAccountDisplayNameParams struct {
 
 func (q *Queries) SetAccountDisplayName(ctx context.Context, db DBTX, arg SetAccountDisplayNameParams) (int64, error) {
 	result, err := db.Exec(ctx, setAccountDisplayName, arg.DisplayName, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepLoginFailures = `-- name: SweepLoginFailures :execrows
+DELETE FROM login_failure_budgets WHERE email_hash IN (
+    SELECT email_hash FROM login_failure_budgets
+    WHERE window_started_at <= now() - make_interval(secs => $1::double precision)
+    ORDER BY window_started_at LIMIT 200)
+`
+
+// Bounded sweep of windows that ended; run after each recorded failure.
+func (q *Queries) SweepLoginFailures(ctx context.Context, db DBTX, windowSeconds float64) (int64, error) {
+	result, err := db.Exec(ctx, sweepLoginFailures, windowSeconds)
 	if err != nil {
 		return 0, err
 	}

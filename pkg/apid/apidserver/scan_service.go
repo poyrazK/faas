@@ -2092,6 +2092,13 @@ func (s *server) scanService(
 	if composePostgresErr != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not plan the project's managed databases")
 	}
+	// A non-production deploy is served at the environment's own hosts, not
+	// at the production hostname (Hunt 33 H33-33).
+	nonProductionEnvironment := !reconcileProductionEnvironment(req.Environment)
+	planEnvironmentID := ""
+	if nonProductionEnvironment {
+		planEnvironmentID = s.projectEnvironmentID(r.Context(), acct, req.ProjectSlug, req.Environment)
+	}
 	respWorkloads := make([]api.PlanWorkload, len(filteredW))
 	for i, w := range filteredW {
 		pw := toPlanWorkload(w)
@@ -2124,6 +2131,13 @@ func (s *server) scanService(
 			}
 			pw.PublicURL = "https://" + slug + "." + strings.TrimPrefix(s.domain, ".")
 			pw.PublicAuthMode = planWorkloadPublicAuthMode(existing, acct.Plan)
+			if nonProductionEnvironment {
+				// A new app's environment host is known only once it exists.
+				pw.PublicURL = ""
+				if planEnvironmentID != "" && existing != nil {
+					pw.PublicURL = projectEnvironmentWorkloadURL(planEnvironmentID, existing.ID)
+				}
+			}
 		}
 		required, err := projectsetup.RequiredNames(os.DirFS(req.ScanDir), w.RootDir)
 		if err != nil {

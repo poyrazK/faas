@@ -2,23 +2,26 @@
 // after its first clean cold boot on a node, under that session's
 // reservation; later sessions of the shape restore it, one that cold-boots
 // instead drops it, a template rebuilt since its capture cold-boots and
-// recaptures into the same slot, and no other account restores a template's
-// snapshot.
+// recaptures into the same slot, no other account restores a template's
+// snapshot, and a deleted template's snapshot is dropped and its objects
+// deleted on the node.
 package sched_test
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type capture struct {
-	spec                 sched.SandboxSpec
-	namespace, captureID string
+	spec                       sched.SandboxSpec
+	node, namespace, captureID string
 }
 
 // snapRouter ends each session at once. A session with a snapshot restores
@@ -30,6 +33,14 @@ type snapRouter struct {
 	specs       []sched.SandboxSpec
 	captured    []capture
 	resident    []bool
+	deleted     []string
+}
+
+func (r *snapRouter) DeleteSandboxSnapshot(_ context.Context, nodeID string, snap *sched.AgentRunSnapshot) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.deleted = append(r.deleted, nodeID+" "+snap.StorageKey+" "+snap.VMStateStorageKey)
+	return nil
 }
 
 func (r *snapRouter) RunSandbox(ctx context.Context, _ string, spec sched.SandboxSpec, hooks sched.SandboxHooks, _ <-chan sched.SandboxControl) error {
@@ -43,10 +54,10 @@ func (r *snapRouter) RunSandbox(ctx context.Context, _ string, spec sched.Sandbo
 	return hooks.Booted(ctx, method, 5)
 }
 
-func (r *snapRouter) CaptureSandboxSnapshot(_ context.Context, _ string, spec sched.SandboxSpec, namespace, captureID string) (*sched.AgentRunSnapshot, error) {
+func (r *snapRouter) CaptureSandboxSnapshot(_ context.Context, nodeID string, spec sched.SandboxSpec, namespace, captureID string) (*sched.AgentRunSnapshot, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.captured = append(r.captured, capture{spec: spec, namespace: namespace, captureID: captureID})
+	r.captured = append(r.captured, capture{spec: spec, node: nodeID, namespace: namespace, captureID: captureID})
 	r.resident = append(r.resident, r.ledger.ResidentFor(spec.Instance))
 	key := "snap/" + namespace + "/captures/" + captureID + "/v2/mem"
 	return &sched.AgentRunSnapshot{StorageKey: key, VMStateStorageKey: key + "-state", FCVersion: "1.7.0", MemBytes: 1 << 30}, nil
@@ -66,6 +77,12 @@ func (r *snapRouter) captures() []capture {
 
 func snapshotFixture(t *testing.T, on bool) (*sched.AgentRunner, *snapRouter, *sched.NodeLedger) {
 	t.Helper()
+	runner, router, ledger, _ := snapshotFixtureWithStore(t, on)
+	return runner, router, ledger
+}
+
+func snapshotFixtureWithStore(t *testing.T, on bool) (*sched.AgentRunner, *snapRouter, *sched.NodeLedger, *state.MemStore) {
+	t.Helper()
 	ctx := context.Background()
 	store := state.NewMemStore()
 	if _, err := store.UpsertComputeNode(ctx, state.ComputeNode{Name: "agents-1", TargetURL: "tcp://agents-1:50051",
@@ -83,7 +100,7 @@ func snapshotFixture(t *testing.T, on bool) (*sched.AgentRunner, *snapRouter, *s
 	if err != nil {
 		t.Fatal(err)
 	}
-	return runner, router, ledger
+	return runner, router, ledger, store
 }
 
 const (
@@ -188,5 +205,76 @@ func TestSandboxWarmSnapshotsOff(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if len(router.captures()) != 0 {
 		t.Fatal("captured with snapshots off")
+	}
+}
+
+func TestSandboxTemplateSnapshotSweep(t *testing.T) {
+	runner, router, ledger, store := snapshotFixtureWithStore(t, true)
+	ctx := context.Background()
+	account, err := store.CreateAccount(ctx, "sweep@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "sbt-0123456789ab", RAMMB: 256, SandboxTemplate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	session := func(image string) sched.SandboxSpec {
+		t.Helper()
+		n++
+		a := sandboxAdmission()
+		a.SandboxID = "22222222-3333-4444-5555-00000000000" + string(rune('0'+n))
+		a.AccountID, a.ImageKey = account.ID, image
+		if err := runner.RunSandbox(ctx, a, nil, sched.SandboxHooks{}, make(chan sched.SandboxControl)); err != nil {
+			t.Fatal(err)
+		}
+		return router.lastSpec()
+	}
+	captured := func(want int) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for len(router.captures()) < want && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		got := router.captures()
+		if len(got) != want {
+			t.Fatalf("%d captures, want %d", len(got), want)
+		}
+		for ledger.ResidentFor(got[want-1].spec.Instance) && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	session("")
+	captured(1)
+	session(build1)
+	captured(2)
+	tplNode := router.captures()[1].node
+
+	if dropped := runner.SweepSandboxTemplateSnapshots(ctx); dropped != 0 || len(router.deleted) != 0 {
+		t.Fatalf("a live template's snapshot was swept: %d dropped, %v deleted", dropped, router.deleted)
+	}
+	if s := session(build1); s.Snapshot == nil {
+		t.Fatal("the live template's session did not restore")
+	}
+	if _, err := store.ScheduleAppDeletion(ctx, app.ID, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if dropped := runner.SweepSandboxTemplateSnapshots(ctx); dropped != 1 {
+		t.Fatalf("%d slots dropped, want the deleted template's", dropped)
+	}
+	key := "snap/sandbox-template-" + account.ID + "/captures/"
+	if len(router.deleted) != 1 {
+		t.Fatalf("deleted %v, want the template's objects", router.deleted)
+	}
+	node, keys, _ := strings.Cut(router.deleted[0], " ")
+	if node != tplNode || !strings.HasPrefix(keys, key) || !strings.HasSuffix(keys, "/v2/mem-state") {
+		t.Fatalf("deleted %q, want the template's objects on its node %s", router.deleted[0], tplNode)
+	}
+	if s := session(""); s.Snapshot == nil {
+		t.Fatal("the sweep dropped the preset snapshot")
+	}
+	if dropped := runner.SweepSandboxTemplateSnapshots(ctx); dropped != 0 || len(router.deleted) != 1 {
+		t.Fatalf("a second sweep dropped %d, deleted %v", dropped, router.deleted)
 	}
 }
