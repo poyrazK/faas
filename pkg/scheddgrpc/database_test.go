@@ -114,6 +114,18 @@ func (f *fakeDatabases) SetAlwaysOn(_ context.Context, _ string, alwaysOn bool) 
 	return vm, f.err
 }
 
+func (f *fakeDatabases) SetHold(_ context.Context, _ string, held bool) (dbsched.VM, error) {
+	vm := f.vm
+	vm.Held = held
+	return vm, f.err
+}
+
+func (f *fakeDatabases) SetComputeQuota(_ context.Context, _ string, quota int64) (dbsched.VM, error) {
+	vm := f.vm
+	vm.ComputeQuotaUnitSeconds = quota
+	return vm, f.err
+}
+
 // asCaller attaches an mTLS peer whose certificate names cn; an empty cn
 // models a unix-socket caller without TLS.
 func asCaller(cn string) context.Context {

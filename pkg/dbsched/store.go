@@ -50,6 +50,11 @@ var (
 	ErrNodeUnavailable = errors.New("dbsched: database node unavailable")
 	// ErrInvalid reports a request that cannot be carried out as asked.
 	ErrInvalid = errors.New("dbsched: invalid request")
+	// ErrHeld refuses to wake a held database, and ErrComputeQuota one
+	// whose compute this month reached its quota (ADR-1027 amendment
+	// 2026-11-10).
+	ErrHeld         = errors.New("dbsched: database is held")
+	ErrComputeQuota = errors.New("dbsched: database reached its compute quota")
 )
 
 // Node is one database node.
@@ -88,6 +93,14 @@ type VM struct {
 	// AlwaysOn databases are never parked for idleness; the keep-warm sweep
 	// wakes them when found parked (scale_to_zero = false).
 	AlwaysOn bool
+	// Held databases run nothing: apid holds one in its delete grace period
+	// or when its account's compute cap suspends it (ADR-1027 amendment
+	// 2026-11-10). A held database is parked and its wakes are refused.
+	Held bool
+	// ComputeQuotaUnitSeconds is the database's compute quota for the UTC
+	// month (zero: none). Once its compute this month reaches it, it is
+	// parked and its wakes are refused, as if held.
+	ComputeQuotaUnitSeconds int64
 	// LastBackupAt is the last successful base backup (zero: none).
 	LastBackupAt time.Time
 	// RestoreWindowSeconds is how far back the database may be restored.
@@ -217,6 +230,11 @@ type Store interface {
 	// SetAlwaysOn changes whether idle parking applies. A deleting
 	// database is ErrConflict.
 	SetAlwaysOn(ctx context.Context, id string, alwaysOn bool) error
+	// SetHeld holds or releases a database, and SetComputeQuota sets its
+	// monthly compute quota (zero clears it). A deleting database is
+	// ErrConflict.
+	SetHeld(ctx context.Context, id string, held bool) error
+	SetComputeQuota(ctx context.Context, id string, quotaUnitSeconds int64) error
 	// RecordBackup stamps a successful base backup.
 	RecordBackup(ctx context.Context, id string, at time.Time) error
 	// ClaimRestore takes the lease on a provisioning restore (held zero)

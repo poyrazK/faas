@@ -28,6 +28,7 @@ import (
 	"github.com/jackc/pgx/v5/pgproto3"
 
 	"github.com/onebox-faas/faas/pkg/dbcreds"
+	"github.com/onebox-faas/faas/pkg/dbrefusal"
 	"github.com/onebox-faas/faas/pkg/pgscram"
 )
 
@@ -232,6 +233,19 @@ type fatal struct {
 }
 
 func (f *fatal) Error() string { return f.code + ": " + f.msg }
+
+// wakeRefused is what the client is told when schedd refuses to wake its
+// database (ADR-1027 amendment 2026-11-10), or nil for any other failure.
+// Neither is worth retrying soon.
+func wakeRefused(err error) *fatal {
+	switch dbrefusal.Reason(err) {
+	case dbrefusal.Held:
+		return &fatal{"08004", "the database is suspended; its status in Gregale says why"}
+	case dbrefusal.ComputeQuota:
+		return &fatal{"53400", "the database's account reached its compute limit for this month"}
+	}
+	return nil
+}
 
 func (p *Proxy) handle(ctx context.Context, raw net.Conn) {
 	defer func() { _ = raw.Close() }()
@@ -445,6 +459,9 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 	target, err := p.waker.Wake(wakeCtx, databaseID)
 	p.cfg.Metrics.woke(time.Since(wakeStarted))
 	if err != nil {
+		if f := wakeRefused(err); f != nil {
+			return none, f
+		}
 		return none, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
 	}
 	session, err := p.dialer.Dial(wakeCtx, target, databaseID)

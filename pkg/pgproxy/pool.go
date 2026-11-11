@@ -211,6 +211,9 @@ func (pl *pool) open(ctx context.Context) (*serverConn, error) {
 	target, err := p.waker.Wake(wakeCtx, pl.key.databaseID)
 	p.cfg.Metrics.woke(time.Since(started))
 	if err != nil {
+		if f := wakeRefused(err); f != nil {
+			return nil, f
+		}
 		return nil, err
 	}
 	rw, err := p.dialer.Dial(wakeCtx, target, pl.key.databaseID)

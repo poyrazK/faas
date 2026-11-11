@@ -391,6 +391,18 @@ service Schedd {
   // DeleteDatabaseSnapshot releases a snapshot; a missing one is success.
   // apid only.
   rpc DeleteDatabaseSnapshot(DatabaseSnapshotRef) returns (DeleteDatabaseSnapshotResponse);
+  // HoldDatabase holds or releases a database (ADR-1027 amendment
+  // 2026-11-10): apid's delete grace period and its compute cap sweep. A
+  // held database is parked and its wakes are refused with
+  // FAILED_PRECONDITION and an ErrorInfo reason "database_held". apid only.
+  rpc HoldDatabase(HoldDatabaseRequest) returns (DatabaseRuntime);
+  // SetDatabaseComputeQuota sets a database's compute quota for the UTC
+  // month in compute-unit seconds (zero clears it), the compute cap's
+  // backstop between sweeps. Once the month's compute reaches it the
+  // database is parked and its wakes are refused (reason
+  // "database_compute_quota"). DatabaseUsage reads the month's compute.
+  // apid only.
+  rpc SetDatabaseComputeQuota(SetDatabaseComputeQuotaRequest) returns (DatabaseRuntime);
 }
 
 message LivenessFailedReport {
@@ -1439,6 +1451,16 @@ message SetDatabaseAlwaysOnRequest {
   bool always_on = 2;
 }
 
+message HoldDatabaseRequest {
+  string database_id = 1;
+  bool held = 2;
+}
+
+message SetDatabaseComputeQuotaRequest {
+  string database_id = 1;
+  int64 quota_unit_seconds = 2;
+}
+
 message DatabaseRuntime {
   string database_id = 1;
   string node_id = 2;
@@ -1482,6 +1504,10 @@ message DatabaseRuntime {
   // cannot safely resolve historical restore specifications through them.
   repeated DatabaseMajorSpan major_history = 22;
   bool major_history_complete = 23;
+  // A held database runs nothing; compute_quota_unit_seconds is its quota
+  // for the UTC month (zero: none). Older schedulers report neither.
+  bool held = 24;
+  int64 compute_quota_unit_seconds = 25;
 }
 
 message DatabaseMajorSpan {

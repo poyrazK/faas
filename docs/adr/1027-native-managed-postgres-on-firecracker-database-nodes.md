@@ -2205,6 +2205,50 @@ schedd stop the VM and mark the database `failed` for good.
   batch lands. A new apid facing an old schedd gets a parked database from
   `ProvisionDatabase` and runs the init batch at once, as before.
 
+### Compute caps and holds (amendment 2026-11-10)
+
+ADR-20261025094915's compute cap stops a database through its provider: the
+sweep gives each provider object a monthly quota and holds the databases it
+suspends, and the delete grace period holds a database the same way. The
+native driver had neither, so the sweep skipped every account with a native
+database, Neon databases included, and a native database in its grace
+period kept serving.
+
+- **Hold.** schedd keeps `database_vms.held`. `HoldDatabase` (apid only)
+  sets or clears it; holding a running database parks it. While held, every
+  wake is refused, pgproxyd's and `DatabaseAdmin`'s alike, and keep-warm
+  skips the database, always-on or not. Nothing is deleted, and releasing
+  the hold lets the next connection wake it.
+- **Quota.** `database_vms.compute_quota_unit_seconds` is the database's
+  quota for the UTC month (`SetDatabaseComputeQuota`, apid only; NULL means
+  none). Once the month's `compute_unit_seconds` from the usage ledger,
+  open interval and standby included, reaches it, the database is refused
+  and parked as if held. The next month's use starts at zero, so the quota
+  lifts itself, as Neon's does. A quota whose use cannot be read refuses
+  nothing: the hold is what stops a database, and the quota is the backstop
+  between sweeps.
+- **Enforcement.** Every wake checks the hold after taking the database's
+  lock, so this replica's wakes stop at once. The quota reads the usage
+  ledger, so only a wake that would boot a parked database checks it; a
+  connection to a running database costs no ledger read. A running
+  database that is held or past its quota is parked by the idle loop's
+  `ParkHeld` sweep (the 30-second interval), which also catches a wake
+  another replica admitted just before the hold landed.
+- **Refusal.** schedd answers a refused wake with `FAILED_PRECONDITION` and
+  an `ErrorInfo` reason (`pkg/dbrefusal`): `database_held` or
+  `database_compute_quota`. pgproxyd tells the client `08004` "the database
+  is suspended" or `53400` "the database's account reached its compute
+  limit for this month", not the `57P03` "retry shortly" of a wake that
+  failed.
+- **Driver.** The native driver is a `ComputeCapProvider` and a
+  `ComputeHoldProvider`. `ObserveComputeCap` reads `GetDatabase` for the
+  quota and `DatabaseUsage` from the month's start for the use. Each
+  database is its own scope, since a restore has its own ledger. The ledger
+  is current, so the driver is not a `ComputeUseReporter`, and the sweep
+  takes its counters as they are. Writes are read back from schedd's answer.
+- An older schedd answers the new RPCs `UNIMPLEMENTED` and reports neither
+  field; the driver then fails the write, which the sweep retries.
+
 ## Phasing
 
 1. Walking skeleton on one internal database node: create, connect through

@@ -62,6 +62,8 @@ const (
 	Schedd_CaptureDatabaseSnapshot_FullMethodName = "/onebox.faas.schedd.v1.Schedd/CaptureDatabaseSnapshot"
 	Schedd_GetDatabaseSnapshot_FullMethodName     = "/onebox.faas.schedd.v1.Schedd/GetDatabaseSnapshot"
 	Schedd_DeleteDatabaseSnapshot_FullMethodName  = "/onebox.faas.schedd.v1.Schedd/DeleteDatabaseSnapshot"
+	Schedd_HoldDatabase_FullMethodName            = "/onebox.faas.schedd.v1.Schedd/HoldDatabase"
+	Schedd_SetDatabaseComputeQuota_FullMethodName = "/onebox.faas.schedd.v1.Schedd/SetDatabaseComputeQuota"
 )
 
 // ScheddClient is the client API for Schedd service.
@@ -426,6 +428,18 @@ type ScheddClient interface {
 	// DeleteDatabaseSnapshot releases a snapshot; a missing one is success.
 	// apid only.
 	DeleteDatabaseSnapshot(ctx context.Context, in *DatabaseSnapshotRef, opts ...grpc.CallOption) (*DeleteDatabaseSnapshotResponse, error)
+	// HoldDatabase holds or releases a database (ADR-1027 amendment
+	// 2026-11-10): apid's delete grace period and its compute cap sweep. A
+	// held database is parked and its wakes are refused with
+	// FAILED_PRECONDITION and an ErrorInfo reason "database_held". apid only.
+	HoldDatabase(ctx context.Context, in *HoldDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
+	// SetDatabaseComputeQuota sets a database's compute quota for the UTC
+	// month in compute-unit seconds (zero clears it), the compute cap's
+	// backstop between sweeps. Once the month's compute reaches it the
+	// database is parked and its wakes are refused (reason
+	// "database_compute_quota"). DatabaseUsage reads the month's compute.
+	// apid only.
+	SetDatabaseComputeQuota(ctx context.Context, in *SetDatabaseComputeQuotaRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
 }
 
 type scheddClient struct {
@@ -800,6 +814,26 @@ func (c *scheddClient) DeleteDatabaseSnapshot(ctx context.Context, in *DatabaseS
 	return out, nil
 }
 
+func (c *scheddClient) HoldDatabase(ctx context.Context, in *HoldDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_HoldDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) SetDatabaseComputeQuota(ctx context.Context, in *SetDatabaseComputeQuotaRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_SetDatabaseComputeQuota_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ScheddServer is the server API for Schedd service.
 // All implementations must embed UnimplementedScheddServer
 // for forward compatibility.
@@ -1162,6 +1196,18 @@ type ScheddServer interface {
 	// DeleteDatabaseSnapshot releases a snapshot; a missing one is success.
 	// apid only.
 	DeleteDatabaseSnapshot(context.Context, *DatabaseSnapshotRef) (*DeleteDatabaseSnapshotResponse, error)
+	// HoldDatabase holds or releases a database (ADR-1027 amendment
+	// 2026-11-10): apid's delete grace period and its compute cap sweep. A
+	// held database is parked and its wakes are refused with
+	// FAILED_PRECONDITION and an ErrorInfo reason "database_held". apid only.
+	HoldDatabase(context.Context, *HoldDatabaseRequest) (*DatabaseRuntime, error)
+	// SetDatabaseComputeQuota sets a database's compute quota for the UTC
+	// month in compute-unit seconds (zero clears it), the compute cap's
+	// backstop between sweeps. Once the month's compute reaches it the
+	// database is parked and its wakes are refused (reason
+	// "database_compute_quota"). DatabaseUsage reads the month's compute.
+	// apid only.
+	SetDatabaseComputeQuota(context.Context, *SetDatabaseComputeQuotaRequest) (*DatabaseRuntime, error)
 	mustEmbedUnimplementedScheddServer()
 }
 
@@ -1273,6 +1319,12 @@ func (UnimplementedScheddServer) GetDatabaseSnapshot(context.Context, *DatabaseS
 }
 func (UnimplementedScheddServer) DeleteDatabaseSnapshot(context.Context, *DatabaseSnapshotRef) (*DeleteDatabaseSnapshotResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteDatabaseSnapshot not implemented")
+}
+func (UnimplementedScheddServer) HoldDatabase(context.Context, *HoldDatabaseRequest) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method HoldDatabase not implemented")
+}
+func (UnimplementedScheddServer) SetDatabaseComputeQuota(context.Context, *SetDatabaseComputeQuotaRequest) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetDatabaseComputeQuota not implemented")
 }
 func (UnimplementedScheddServer) mustEmbedUnimplementedScheddServer() {}
 func (UnimplementedScheddServer) testEmbeddedByValue()                {}
@@ -1871,6 +1923,42 @@ func _Schedd_DeleteDatabaseSnapshot_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Schedd_HoldDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HoldDatabaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).HoldDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_HoldDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).HoldDatabase(ctx, req.(*HoldDatabaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Schedd_SetDatabaseComputeQuota_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetDatabaseComputeQuotaRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).SetDatabaseComputeQuota(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_SetDatabaseComputeQuota_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).SetDatabaseComputeQuota(ctx, req.(*SetDatabaseComputeQuotaRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Schedd_ServiceDesc is the grpc.ServiceDesc for Schedd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1997,6 +2085,14 @@ var Schedd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteDatabaseSnapshot",
 			Handler:    _Schedd_DeleteDatabaseSnapshot_Handler,
+		},
+		{
+			MethodName: "HoldDatabase",
+			Handler:    _Schedd_HoldDatabase_Handler,
+		},
+		{
+			MethodName: "SetDatabaseComputeQuota",
+			Handler:    _Schedd_SetDatabaseComputeQuota_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
