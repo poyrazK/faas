@@ -287,6 +287,44 @@ Every key-by-reference RPC follows one rule: **the caller sends ids, never
 ciphertext; secretd reads the row, checks that it belongs to the app the
 caller owns or holds a grant for, and audits before answering.**
 
+**3d-3 implementation map (VM lifecycle: needs `test-metal`, `leakcheck`
+and the restore measurement on a native KVM host).** Reuse ADR-733's
+mechanism end to end, so the restore side is already there:
+
+- *Seal id.* The snapshot row does not exist at capture (imaged writes it
+  from schedd's `snapshot_written` payload), so the seal id is the capture
+  token in the memory key (`state.SnapshotCaptureToken`). The key is sealed
+  with crashcrypt's namespace bound to that id, as for crash captures.
+- *Capture.* `pkg/sched/application_standard_snapshot_admission.go`
+  `captureSnapshotWithStandards` is the one entry for park and warm
+  (`engine.go` park and warm, `snapshot_publication.go`); behind a schedd
+  flag it passes the token as `seal_capture_id`. `WarmSnapshotRequest`
+  already has it; `PauseAndSnapshotRequest` and the native
+  `CaptureAdmittedRuntime` grant gain it, and `pkg/vmmdgrpc` sets
+  `spec.Storage` from `SealCaptureStorage` as WarmSnapshot does. Sealing
+  needs only the runtime recipient, which nodes keep.
+- *Record.* `snapshots.sealed_key bytea` and `snapshots.sealed_capture_id
+  uuid` (CHECK both or neither), written by imaged's row writer from the
+  payload (`snapshotWrittenPayload`). The `.age` twins are what the shared
+  store holds.
+- *Restore.* Every `SnapshotRef` construction sets `CaptureID`/`SealedKey`
+  from the row: `engine.go` wake restore, `warm_pool.go`,
+  `execution_claim_resolver.go`, `fork_runtime.go` (already),
+  `vmmclient_runtime_admission.go` (builds the proto itself) and
+  `vmmclient_snapshot_backing.go`. vmmd's `openSealedSnapshot` then takes
+  the key from secretd (`OpenCaptureKey`, extended to resolve
+  `snapshots.sealed_capture_id` through its deployment's app).
+- *Everything else that touches snapshot objects* must handle the `.age`
+  twin: imaged `deleteSnapshotPair` / `cleanupSnapshotCaptures` (delete
+  twins), `captureInitOrReuse` (reuse a sealed row's key), ADR-165 memory
+  compression, snapshot memory sharing (#6131: encrypted pages do not
+  dedupe across snapshots, so measure the size cost), and the snapshot
+  scans.
+- *Latency.* A per-node in-memory cache of opened snapshot keys (dropped at
+  park and on grant expiry) keeps secretd off repeat restores; the decrypt
+  is streaming. Turn the flag on only after the reference node's restore
+  p95 stays under 350 ms with it.
+
 Order: 3d-1 crash-capture keys (already sealed today), 3d-2 sidecar env by
 reference, 3d-3 snapshot sealing at the source + key by reference (behind a
 flag until the restore measurement), 3d-4 app secrets by reference, then
