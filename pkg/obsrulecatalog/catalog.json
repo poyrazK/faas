@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "9ea3f7f45048bdd1ce42c67ce88c8ef0af2ea13b1caeb718a3225da364d2cc85",
+      "revision": "6255c3053692a769753328938e3545f72e650b8d369f25d7c3e1a1c54c14d62f",
       "files": [
         "faas.rules.yml"
       ],
@@ -4443,6 +4443,19 @@
           }
         },
         {
+          "id": "9d52405d79bc6d4c838aaf4308a6b881471df227d168bd21398b483138743e12",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageInventoryBacklog",
+          "definition": {
+            "expression_hash": "5dd83aae3ded71e55e00f929feaa626a57ee6b7a2e8cc95b5030678e31f21e91",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "258e7485386692bd4cd46e97169fc9e2856f824fa725e78e338682c387682dde"
+          }
+        },
+        {
           "id": "9d8d744f3206c924cc415e537fa5b875e6598e21db55ef14529a8ff8777c35f5",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
@@ -7072,7 +7085,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "051fbc497eccb0c5ae6fea1e3361e4e0b3c1048c7de981100aab1f0d064b0303",
+      "revision": "f357abd0c39d3884331c88eae7f2b121894f5559cf308465a7d0d35e6ccd4b58",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -11707,6 +11720,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "c3f547beeb26a1d0996f8fdcd8f5de986877df8bb1384e4446a986a61639fd1f"
+          }
+        },
+        {
+          "id": "9d52405d79bc6d4c838aaf4308a6b881471df227d168bd21398b483138743e12",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageInventoryBacklog",
+          "definition": {
+            "expression_hash": "5dd83aae3ded71e55e00f929feaa626a57ee6b7a2e8cc95b5030678e31f21e91",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "258e7485386692bd4cd46e97169fc9e2856f824fa725e78e338682c387682dde"
           }
         },
         {

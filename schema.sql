@@ -6982,6 +6982,18 @@ BEGIN
         IF NOT FOUND THEN
             RAISE EXCEPTION 'organization access revoked' USING ERRCODE = '42501';
         END IF;
+        -- Nested: plpgsql resolves NEW.created_by_account_id even when an
+        -- AND's first operand is false, and api_keys has no such column.
+        IF TG_TABLE_NAME = 'deploy_tokens' THEN
+            IF NEW.created_by_account_id IS NOT NULL THEN
+                PERFORM 1 FROM org_memberships
+                WHERE org_id = target_org AND account_id = NEW.created_by_account_id AND removed_at IS NULL
+                FOR SHARE;
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'organization access revoked' USING ERRCODE = '42501';
+                END IF;
+            END IF;
+        END IF;
     END IF;
     RETURN NEW;
 END;
@@ -14135,7 +14147,9 @@ BEGIN
   RAISE EXCEPTION 'migration target is not sized and active' USING ERRCODE='23514',CONSTRAINT='function_migration_destination_capacity';
  END IF;
  SELECT ram,cpu,vcpu INTO used_ram,used_cpu,used_vcpu FROM migration_admission_node_usage(node,exclude_id);
- IF used_ram+extra_ram>n.admission_ceiling_mb OR used_cpu+extra_cpu>n.vpcpus::bigint*1000*p.cpu_overcommit OR used_vcpu+extra_vcpu>n.vcpu_budget THEN
+ -- ADR-20261109172421: memory is the only capacity limit; CPU and vCPUs
+ -- are measured (used_cpu, used_vcpu), never refused.
+ IF used_ram+extra_ram>n.admission_ceiling_mb THEN
   RAISE EXCEPTION 'migration destination capacity is reserved' USING ERRCODE='23514',CONSTRAINT='function_migration_destination_capacity';
  END IF;
 END;
@@ -17310,9 +17324,8 @@ BEGIN
  SELECT * INTO n FROM compute_nodes WHERE id=NEW.node_id FOR SHARE;
  PERFORM pg_advisory_xact_lock(1852793957,hashtext(NEW.node_id::text));
  SELECT * INTO used FROM migration_admission_node_usage(NEW.node_id,NEW.id);
- IF (n.admission_ceiling_mb>0 AND used.ram+greatest(NEW.capacity_ram_mb,NEW.ram_mb+(SELECT overhead_mb FROM service_capacity_policy WHERE singleton))>n.admission_ceiling_mb)
-  OR (n.vpcpus>0 AND used.cpu+NEW.capacity_cpu_millicores>n.vpcpus::bigint*1000)
-  OR (n.vcpu_budget>0 AND used.vcpu+NEW.capacity_vcpu>n.vcpu_budget) THEN
+ -- ADR-20261109172421: memory is the only capacity limit.
+ IF (n.admission_ceiling_mb>0 AND used.ram+greatest(NEW.capacity_ram_mb,NEW.ram_mb+(SELECT overhead_mb FROM service_capacity_policy WHERE singleton))>n.admission_ceiling_mb) THEN
   RAISE EXCEPTION 'capacity reserved for incoming migration' USING ERRCODE='23514',CONSTRAINT='migration_admission_capacity';
  END IF;
  RETURN NEW;
@@ -18113,9 +18126,8 @@ BEGIN
   PERFORM 1 FROM migration_sources WHERE lease_token=NEW.lease_token AND instance_id=NEW.instance_id AND source_node_id=NEW.source_node_id AND source_wake_id=NEW.source_wake_id AND phase='bound' FOR SHARE;
   IF NOT FOUND THEN RAISE EXCEPTION 'migration source physical binding is unavailable' USING ERRCODE='23514',CONSTRAINT='migration_source_current'; END IF;
   SELECT * INTO used FROM migration_admission_node_usage(NEW.destination_node_id);
-  IF (n.admission_ceiling_mb>0 AND used.ram+NEW.ram_mb>n.admission_ceiling_mb) OR
-     (n.vpcpus>0 AND used.cpu+NEW.cpu_millicores>n.vpcpus::bigint*1000) OR
-     (n.vcpu_budget>0 AND used.vcpu+NEW.vcpu>n.vcpu_budget) THEN
+  -- ADR-20261109172421: memory is the only capacity limit.
+  IF (n.admission_ceiling_mb>0 AND used.ram+NEW.ram_mb>n.admission_ceiling_mb) THEN
    RAISE EXCEPTION 'migration destination capacity exhausted' USING ERRCODE='23514',CONSTRAINT='migration_admission_capacity';
   END IF;
   RETURN NEW;
@@ -26468,7 +26480,8 @@ BEGIN
         WHERE org_id = NEW.org_id AND account_id = NEW.account_id AND status <> 'revoked';
         UPDATE deploy_tokens t SET status = 'revoked', revoked_at = coalesce(t.revoked_at, now())
         FROM apps a WHERE t.app_id = a.id AND a.org_id = NEW.org_id
-          AND t.account_id = NEW.account_id AND t.status <> 'revoked';
+          AND (t.account_id = NEW.account_id OR t.created_by_account_id = NEW.account_id)
+          AND t.status <> 'revoked';
         UPDATE org_invitations SET revoked_at = coalesce(revoked_at, now())
         WHERE org_id = NEW.org_id AND consumed_at IS NULL AND revoked_at IS NULL
           AND lower(email::text) = (SELECT lower(email::text) FROM accounts WHERE id = NEW.account_id);
@@ -29959,6 +29972,7 @@ CREATE TABLE public.agent_activity (
     status integer NOT NULL,
     approval_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    reason text,
     CONSTRAINT agent_activity_method_check CHECK ((method = ANY (ARRAY['POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text]))),
     CONSTRAINT agent_activity_path_check CHECK (((char_length(path) >= 1) AND (char_length(path) <= 512))),
     CONSTRAINT agent_activity_status_check CHECK (((status >= 100) AND (status <= 599)))
@@ -30057,6 +30071,7 @@ CREATE TABLE public.agent_approval_requests (
     consumed_at timestamp with time zone,
     expires_at timestamp with time zone NOT NULL,
     decision_note text,
+    reason text,
     CONSTRAINT agent_approval_requests_body_sha256_check CHECK (((body_sha256 IS NULL) OR (length(body_sha256) = 32))),
     CONSTRAINT agent_approval_requests_category_check CHECK ((category = ANY (ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text]))),
     CONSTRAINT agent_approval_requests_check CHECK (((status = 'pending'::text) = (decided_at IS NULL))),
@@ -36878,6 +36893,7 @@ CREATE TABLE public.deploy_tokens (
     last_used_at timestamp with time zone,
     revoked_at timestamp with time zone,
     rotated_from_id uuid,
+    created_by_account_id uuid,
     CONSTRAINT deploy_tokens_agent_usage_scopes_chk CHECK (((cardinality(scopes) > 0) AND (((NOT ('agent'::text = ANY (scopes))) AND (scopes <@ ARRAY['deploy:write'::text])) OR (('agent'::text = ANY (scopes)) AND ('apps:read'::text = ANY (scopes)) AND (scopes <@ ARRAY['agent'::text, 'apps:read'::text, 'deploy:write'::text, 'env:write'::text, 'secrets:request'::text, 'storage:manage'::text, 'usage:read'::text]))))),
     CONSTRAINT deploy_tokens_expiry_chk CHECK ((expires_at > created_at)),
     CONSTRAINT deploy_tokens_hash_credhash_chk CHECK ((octet_length(token_sha256) = ANY (ARRAY[32, 33]))),
@@ -45432,6 +45448,7 @@ CREATE TABLE public.managed_postgres_databases (
     preview_source_database_id uuid,
     preview_environment_id text,
     preview_pr_number integer,
+    expires_at timestamp with time zone,
     CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
     CONSTRAINT managed_postgres_clone_is_independent CHECK (((environment_clone_operation_id IS NULL) OR ((id <> restore_source_database_id) AND ((provider_resource_id IS NULL) OR (provider_resource_id <> restore_source_resource_id))))),
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
@@ -45587,6 +45604,7 @@ CREATE TABLE public.managed_postgres_overage_deliveries (
     delivered_millicents bigint NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     billed_storage_byte_seconds bigint DEFAULT 0 NOT NULL,
+    billed_egress_bytes bigint DEFAULT 0 NOT NULL,
     CONSTRAINT managed_postgres_overage_deliveries_billed_unit_seconds_check CHECK ((billed_unit_seconds >= 0)),
     CONSTRAINT managed_postgres_overage_deliveries_check CHECK ((isfinite(updated_at) AND (updated_at >= period_start))),
     CONSTRAINT managed_postgres_overage_deliveries_delivered_millicents_check CHECK ((delivered_millicents > 0)),
@@ -45622,6 +45640,10 @@ CREATE TABLE public.managed_postgres_overage_pending (
     billed_storage_byte_seconds bigint NOT NULL,
     previous_millicents bigint NOT NULL,
     previous_live boolean NOT NULL,
+    used_egress_bytes bigint DEFAULT 0 NOT NULL,
+    app_egress_bytes bigint DEFAULT 0 NOT NULL,
+    egress_allowance_bytes bigint DEFAULT 0 NOT NULL,
+    billed_egress_bytes bigint DEFAULT 0 NOT NULL,
     CONSTRAINT managed_postgres_overage_pending_allowance_unit_seconds_check CHECK ((allowance_unit_seconds >= 0)),
     CONSTRAINT managed_postgres_overage_pending_billed_storage_check CHECK ((billed_storage_byte_seconds >= 0)),
     CONSTRAINT managed_postgres_overage_pending_billed_unit_seconds_check CHECK ((billed_unit_seconds >= 0)),
@@ -59502,6 +59524,14 @@ ALTER TABLE ONLY public.agent_activity
 
 
 --
+-- Name: agent_activity agent_activity_reason_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.agent_activity
+    ADD CONSTRAINT agent_activity_reason_check CHECK (((reason IS NULL) OR ((char_length(reason) >= 1) AND (char_length(reason) <= 280)))) NOT VALID;
+
+
+--
 -- Name: agent_approval_email_log agent_approval_email_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -59531,6 +59561,14 @@ ALTER TABLE public.agent_approval_requests
 
 ALTER TABLE ONLY public.agent_approval_requests
     ADD CONSTRAINT agent_approval_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_approval_requests agent_approval_requests_reason_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.agent_approval_requests
+    ADD CONSTRAINT agent_approval_requests_reason_check CHECK (((reason IS NULL) OR ((char_length(reason) >= 1) AND (char_length(reason) <= 280)))) NOT VALID;
 
 
 --
@@ -64070,6 +64108,14 @@ ALTER TABLE ONLY public.event_subscription_work_bindings
 
 
 --
+-- Name: event_subscriptions event_subscriptions_filter_size_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.event_subscriptions
+    ADD CONSTRAINT event_subscriptions_filter_size_chk CHECK ((octet_length((filter)::text) <= 16384)) NOT VALID;
+
+
+--
 -- Name: event_subscriptions event_subscriptions_id_app_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -66470,6 +66516,14 @@ ALTER TABLE ONLY public.managed_postgres_live_logins
 
 
 --
+-- Name: managed_postgres_overage_deliveries managed_postgres_overage_deliveries_billed_egress_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_overage_deliveries
+    ADD CONSTRAINT managed_postgres_overage_deliveries_billed_egress_check CHECK ((billed_egress_bytes >= 0)) NOT VALID;
+
+
+--
 -- Name: managed_postgres_overage_deliveries managed_postgres_overage_deliveries_billed_storage_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -66483,6 +66537,14 @@ ALTER TABLE public.managed_postgres_overage_deliveries
 
 ALTER TABLE ONLY public.managed_postgres_overage_deliveries
     ADD CONSTRAINT managed_postgres_overage_deliveries_pkey PRIMARY KEY (provider, subject_id, period_start);
+
+
+--
+-- Name: managed_postgres_overage_pending managed_postgres_overage_pending_egress_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_overage_pending
+    ADD CONSTRAINT managed_postgres_overage_pending_egress_check CHECK (((used_egress_bytes >= 0) AND (app_egress_bytes >= 0) AND (egress_allowance_bytes >= 0) AND (billed_egress_bytes >= 0))) NOT VALID;
 
 
 --
@@ -78573,6 +78635,13 @@ CREATE INDEX managed_postgres_databases_backend_idx ON public.managed_postgres_d
 
 
 --
+-- Name: managed_postgres_databases_expires_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_databases_expires_at_idx ON public.managed_postgres_databases USING btree (expires_at, id) WHERE (expires_at IS NOT NULL);
+
+
+--
 -- Name: managed_postgres_databases_name_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -88733,7 +88802,7 @@ CREATE TRIGGER org_billing_identity AFTER INSERT OR UPDATE OF customer_id, subsc
 -- Name: deploy_tokens org_deploy_token_membership; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER org_deploy_token_membership BEFORE INSERT OR UPDATE OF status, app_id, account_id ON public.deploy_tokens FOR EACH ROW EXECUTE FUNCTION public.check_org_credential_membership();
+CREATE TRIGGER org_deploy_token_membership BEFORE INSERT OR UPDATE OF status, app_id, account_id, created_by_account_id ON public.deploy_tokens FOR EACH ROW EXECUTE FUNCTION public.check_org_credential_membership();
 
 
 --
@@ -94838,6 +94907,14 @@ ALTER TABLE ONLY public.deploy_tokens
 
 
 --
+-- Name: deploy_tokens deploy_tokens_created_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deploy_tokens
+    ADD CONSTRAINT deploy_tokens_created_by_account_id_fkey FOREIGN KEY (created_by_account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: deploy_tokens deploy_tokens_rotated_from_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -97334,11 +97411,11 @@ ALTER TABLE ONLY public.github_deployments
 
 
 --
--- Name: github_installations github_installations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: github_installations github_installations_namespace_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.github_installations
-    ADD CONSTRAINT github_installations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT github_installations_namespace_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --

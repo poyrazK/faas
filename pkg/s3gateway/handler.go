@@ -1314,6 +1314,7 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 	if response.StatusCode == http.StatusNotModified || response.StatusCode == http.StatusPreconditionFailed {
 		copyObjectHeaders(w.Header(), response.Header)
 		setURLDownloadHeaders(w.Header(), r, req)
+		sandboxObjectResponse(w.Header())
 		keepEdgeFromRewritingHTML(w.Header(), h.registry.Transfer.Profile)
 		w.Header().Del("Content-Length")
 		w.WriteHeader(response.StatusCode)
@@ -1342,6 +1343,7 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 	}
 	copyObjectHeaders(w.Header(), response.Header)
 	setURLDownloadHeaders(w.Header(), r, req)
+	sandboxObjectResponse(w.Header())
 	keepEdgeFromRewritingHTML(w.Header(), h.registry.Transfer.Profile)
 	writeEncryptionHeaders(w.Header(), encryption)
 	w.WriteHeader(response.StatusCode)

@@ -2,6 +2,7 @@ package imaged
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,10 +69,57 @@ func TestReleaseTaskFailureNamesWhoFailed(t *testing.T) {
 			if hasHint := candidate.ErrorHint != ""; hasHint != tc.wantHint {
 				t.Fatalf("candidate hint = %q, want present=%v", candidate.ErrorHint, tc.wantHint)
 			}
+			// Hunt 32 H32-12: a failed command names its exit code and the
+			// task receipt that holds its output.
+			if tc.exitCode != nil && (!strings.Contains(candidate.Error, "exit code 1") || !strings.Contains(candidate.Error, "/tasks/"+task.ID)) {
+				t.Fatalf("candidate error = %q, want the exit code and the task receipt", candidate.Error)
+			}
 			previous, _ := fx.store.DeploymentByID(ctx, fx.previous.ID)
 			if previous.Status != state.DeployLive {
 				t.Fatalf("previous deployment status = %q, want live", previous.Status)
 			}
 		})
+	}
+}
+
+// A release task whose worker lease expired after its command started has an
+// unknown outcome (ADR-1448 amendment 1). It is the platform's failure, not
+// the command's, and the guidance names `gregale release resolve`, because
+// the next release command waits for that check.
+func TestReleaseTaskLeaseExpiredIsUncertainNotCommandFailure(t *testing.T) {
+	fx := seedReleaseGate(t, true)
+	ctx := context.Background()
+	if err := fx.handler.handoffSnapshotPrime(ctx, fx.app, fx.candidate); err != nil {
+		t.Fatalf("handoffSnapshotPrime: %v", err)
+	}
+	task, _ := fx.store.ReleaseAppTaskByDeployment(ctx, fx.candidate.ID)
+	claimedAt := time.Now().UTC().Add(time.Second)
+	claimed, err := fx.store.ClaimNextAppTask(ctx, "schedd", claimedAt, time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimNextAppTask: %v", err)
+	}
+	if _, err := fx.store.MarkAppTaskRunning(ctx, task.ID, *claimed.LeaseToken, claimedAt.Add(time.Second)); err != nil {
+		t.Fatalf("MarkAppTaskRunning: %v", err)
+	}
+	if _, err := fx.store.SweepExpiredAppTasks(ctx, claimedAt.Add(2*time.Minute)); err != nil {
+		t.Fatalf("SweepExpiredAppTasks: %v", err)
+	}
+	task, _ = fx.store.ReleaseAppTaskByDeployment(ctx, fx.candidate.ID)
+	if task.Status != state.AppTaskFailed || task.FailureCode == nil || *task.FailureCode != "lease_expired" {
+		t.Fatalf("swept task = %s/%v, want failed/lease_expired", task.Status, task.FailureCode)
+	}
+	if err := fx.handler.HandleNotification(ctx, fx.terminalNotification(t, task)); err != nil {
+		t.Fatalf("HandleNotification(app_task_changed): %v", err)
+	}
+	candidate, _ := fx.store.DeploymentByID(ctx, fx.candidate.ID)
+	if candidate.Status != state.DeployFailed || candidate.ErrorCode != api.CodeReleaseInfrastructure {
+		t.Fatalf("candidate = %s/%q, want failed/%q", candidate.Status, candidate.ErrorCode, api.CodeReleaseInfrastructure)
+	}
+	if !strings.Contains(candidate.ErrorWhy, "unknown") || !strings.Contains(candidate.ErrorFix, "gregale release resolve") {
+		t.Fatalf("candidate why/fix = %q / %q, want the unknown outcome and the resolve command", candidate.ErrorWhy, candidate.ErrorFix)
+	}
+	previous, _ := fx.store.DeploymentByID(ctx, fx.previous.ID)
+	if previous.Status != state.DeployLive {
+		t.Fatalf("previous deployment status = %q, want live", previous.Status)
 	}
 }

@@ -274,6 +274,10 @@ const (
 	AgentApprovalBodyBindBytes = 1 << 20
 )
 
+// MaxAgentReasonChars bounds the reason an agent gives for a request
+// (Gregale-Agent-Reason, ADR-20261110182236), in characters.
+const MaxAgentReasonChars = 280
+
 // Agent activity (ADR-20261107220000): an agent key's write requests are
 // kept AgentActivityRetention; a page holds DefaultAgentActivityPage rows
 // unless ?limit asks for up to MaxAgentActivityPage.
@@ -872,6 +876,18 @@ const ManagedPostgresOverageMillicentsPerComputeUnitHour = ManagedPostgresNeonSc
 // keeps delivering that month's overage while late provider usage windows
 // arrive (ADR-20261031110037).
 const ManagedPostgresOverageCloseWindow = 7 * 24 * time.Hour
+
+// ManagedPostgresNeonMillicentsPerEgressGB is what Neon charges Gregale per GB
+// (10^9 bytes, Neon's unit) of data transfer past its plan's organization
+// allowance ($0.10, neon.com/pricing on 2026-11-02, ADR-20261102072425).
+const ManagedPostgresNeonMillicentsPerEgressGB = 10_000
+
+// ManagedPostgresEgressOverageMillicentsPerGB prices database egress past the
+// plan's shared egress allowance for a subject that elected egress overage:
+// Neon's price plus the markup, $0.105 per GB (ADR-20261110160000 slice 3).
+// Apps use the allowance first; at most one more allowance is billed, as the
+// 2x ceiling allows.
+const ManagedPostgresEgressOverageMillicentsPerGB = ManagedPostgresNeonMillicentsPerEgressGB * (100 + ManagedPostgresOverageMarkupPercent) / 100
 
 // ManagedPostgresStorageOverageMillicentsPerGiBMonth prices storage a subject
 // with overage on holds past its plan's pool: $0.50 per GiB-month, averaged
@@ -2989,6 +3005,15 @@ const (
 	ObjectStorageInventorySweepBatch       = 50
 	ObjectStorageInventorySweepConcurrency = 8
 	ObjectStorageInventorySweepBudget      = 40 * time.Second
+	// Each worker takes the next due bucket as soon as it finishes, so one
+	// long listing no longer idles the rest (ADR-20261110151628 §1). At most
+	// ObjectStorageInventoryLongListingWorkers of them list a long bucket at
+	// once: one continuing an unfinished listing, or one whose last inventory
+	// counted more than ObjectStorageInventoryLongListingKeys keys (100 pages,
+	// 10–30 s of a worker at 100–300 ms a page). One-page buckets keep the
+	// other workers.
+	ObjectStorageInventoryLongListingWorkers = 4
+	ObjectStorageInventoryLongListingKeys    = 100_000
 	// The inventory sweep runs on its own loop, apart from billing: gateway
 	// reads and writes need an inventory no older than 900 s, so a slow month
 	// close or progress delivery must not delay it. Each billing step stops
@@ -3472,26 +3497,10 @@ func CustomDomainLimitsFor(p Plan) (perApp, perAccount int, ok bool) {
 	}
 }
 
-// VCPUPerPlan is the guest vCPU count a function execution boots with. App
-// instances follow their size instead (ADR-20261109172421); this goes with
-// the Limits table's VCPU once executions do too. Keep the two in lock-step.
-var VCPUPerPlan = map[Plan]int{
-	PlanFree:  2,
-	PlanHobby: 2,
-	PlanPro:   2,
-	PlanScale: 4,
-}
-
 // GuestVCPUMillicores is the sustained CPU quota one guest vCPU stands for
 // when an app's topology follows its quota instead of its plan
 // (ADR-20261101160231).
 const GuestVCPUMillicores = 1000
-
-// GuestVCPUsForCPUMillicores is the guest vCPU count for a sustained CPU
-// quota: one per GuestVCPUMillicores, at least one (ADR-20261101160231).
-func GuestVCPUsForCPUMillicores(millicores int) int {
-	return max(1, (millicores+GuestVCPUMillicores-1)/GuestVCPUMillicores)
-}
 
 // AppCPUBaselineMillicoresPerGB is the CPU an app instance books, and its
 // share when the node is busy, per GB of plan RAM: 250 m on Free … 2,000 m
@@ -3677,74 +3686,6 @@ func ValidSnapshotRefresh(v string) bool {
 // `snapshot_refresh_window_hours`.
 func ValidSnapshotRefreshWindowHours(v int) bool {
 	return v >= SnapshotRefreshWindowHoursMin && v <= SnapshotRefreshWindowHoursMax
-}
-
-// CPUShape holds the runtime-config values that shape the CPU of an app on
-// schedd's `guest_vcpu_from_cpu_apps` list (ADR-20261101215228). A zero field
-// takes the compiled value, so the zero CPUShape is ADR-20261101160231 as
-// compiled.
-//
-// A ceiling is never above the plan's compiled ceiling
-// (AppCPUCeilingMillicores), which vmmd and guest-init of this release
-// accept, and vCPUs never above the plan's compiled count. Config can lower a
-// plan's CPU or move its booking; raising a ceiling past the compiled one
-// needs a release whose vmmd accepts it.
-type CPUShape struct {
-	BaselineMillicoresPerGB int
-	CeilingFloorMillicores  int
-	VCPUMillicores          int
-}
-
-func (s CPUShape) baselinePerGB() int {
-	if s.BaselineMillicoresPerGB > 0 {
-		return s.BaselineMillicoresPerGB
-	}
-	return AppCPUBaselineMillicoresPerGB
-}
-
-func (s CPUShape) ceilingFloor() int {
-	if s.CeilingFloorMillicores > 0 {
-		return s.CeilingFloorMillicores
-	}
-	return AppCPUCeilingFloorMillicores
-}
-
-func (s CPUShape) vcpuMillicores() int {
-	if s.VCPUMillicores > 0 {
-		return s.VCPUMillicores
-	}
-	return GuestVCPUMillicores
-}
-
-// BaselineForPlanRAM is the CPU an instance of a plan with planRAMMB books.
-func (s CPUShape) BaselineForPlanRAM(planRAMMB int) int {
-	return planRAMMB * s.baselinePerGB() / 1024
-}
-
-// CeilingForPlanRAM is the burst ceiling (cpu.max) of a plan with planRAMMB:
-// max(floor, baseline), rounded up to a value the cgroups enforce and capped
-// at the plan's compiled ceiling.
-func (s CPUShape) CeilingForPlanRAM(planRAMMB int) int {
-	want := roundUpAppCPUCeiling(max(s.ceilingFloor(), s.BaselineForPlanRAM(planRAMMB)))
-	return min(want, AppCPUCeilingMillicoresForPlanRAM(planRAMMB))
-}
-
-// VCPUs is the guest vCPU count for a ceiling: one per VCPUMillicores, at
-// least one and at most planVCPUs.
-func (s CPUShape) VCPUs(ceilingMillicores, planVCPUs int) int {
-	per := s.vcpuMillicores()
-	return max(1, min(planVCPUs, (ceilingMillicores+per-1)/per))
-}
-
-// roundUpAppCPUCeiling rounds v up to the next customer shape, or past one
-// core to whole cores.
-func roundUpAppCPUCeiling(v int) int {
-	for _, shape := range []int{250, 500, DefaultAppCPUMillicores} {
-		if v <= shape {
-			return shape
-		}
-	}
-	return (v + 999) / 1000 * 1000
 }
 
 // BlockRateLimit is a VM's sustained limit on its writable app-layer drive
@@ -4163,6 +4104,15 @@ const (
 	PublicObjectReadRatePerBucket  = 100
 	PublicObjectReadBurstPerBucket = 200
 	MaxPublicObjectReadLimiters    = 10_000
+	// PublicObjectReadRatePerClient bounds one client address's anonymous
+	// reads of one bucket per gatewayd-public process (burst
+	// PublicObjectReadBurstPerClient), so a single stranger cannot spend a
+	// bucket's whole rate and the owner's anonymous share with it (object
+	// storage audit OS-5). At most MaxPublicObjectReadClientLimiters
+	// address-bucket pairs are tracked.
+	PublicObjectReadRatePerClient     = 10
+	PublicObjectReadBurstPerClient    = 50
+	MaxPublicObjectReadClientLimiters = 100_000
 	// PublicObjectReadMaxAgeSeconds bounds how long a CDN or browser may keep
 	// a public object without revalidating, so a delete or overwrite takes
 	// effect within minutes rather than a year (H9-S144).
@@ -4257,15 +4207,18 @@ const ObjectStorageLimitsDocsURL = "https://github.com/poyrazK/faas/blob/main/do
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
 
-// ObjectStoragePlanLimitsMax is the largest storage ceiling and monthly egress
-// any plan sells. An installation's safety policy (ObjectStoragePolicy) must
-// allow at least these, because apid enforces the tighter of the two and a
-// smaller policy value silently sells every plan less.
+// ObjectStoragePlanLimitsMax is the largest storage ceiling, monthly requests
+// and monthly egress any plan sells. An installation's safety policy
+// (ObjectStoragePolicy) must allow at least these, because apid enforces the
+// tighter of the two and a smaller policy value silently sells every plan less.
+// Monthly authorizations follow requests, so they must allow the most
+// requests too.
 func ObjectStoragePlanLimitsMax() ObjectStoragePlanLimits {
 	var most ObjectStoragePlanLimits
 	for _, p := range Plans {
 		l := MustLimitsFor(p).ObjectStorage
 		most.MaxAccountBytes = max(most.MaxAccountBytes, l.MaxAccountBytes)
+		most.MaxMonthlyRequests = max(most.MaxMonthlyRequests, l.MaxMonthlyRequests)
 		most.MaxMonthlyEgressBytes = max(most.MaxMonthlyEgressBytes, l.MaxMonthlyEgressBytes)
 	}
 	return most
@@ -4312,6 +4265,10 @@ func (l ObjectStoragePlanLimits) Policy(p ObjectStoragePolicy) ObjectStoragePoli
 	p.MaxAccountBytes = tighterObjectStorageLimit(p.MaxAccountBytes, l.MaxAccountBytes)
 	p.MaxBucketBytes = tighterObjectStorageLimit(p.MaxBucketBytes, p.MaxAccountBytes)
 	p.MaxMonthlyRequests = tighterObjectStorageLimit(p.MaxMonthlyRequests, l.MaxMonthlyRequests)
+	// Every admitted read and write spends one authorization, so a plan's
+	// authorizations follow its requests; the operator value is only an
+	// upper safety bound (object storage audit OS-1, 2026-11-10).
+	p.MaxMonthlyAuthorizations = tighterObjectStorageLimit(p.MaxMonthlyAuthorizations, l.MaxMonthlyRequests)
 	p.MaxMonthlyEgressBytes = tighterObjectStorageLimit(p.MaxMonthlyEgressBytes, l.MaxMonthlyEgressBytes)
 	if p.AnonymousReads {
 		p.MaxMonthlyRequests = publicObjectReadShare(p.MaxMonthlyRequests)
@@ -4444,8 +4401,8 @@ type Limits struct {
 	// without reading limits.go. Spec §13 hard-limits table.
 	ConcurrencyPerVMBound int // Free 4, Hobby 5, Pro 25, Scale 80
 
-	// Runtime shape.
-	VCPU         int // firecracker vcpu_count (spec §4.4)
+	// Runtime shape. No plan field sets a guest's vCPU count: it follows the
+	// guest's memory (SizeVCPUs, ADR-20261109172421).
 	IdleTimeoutS int // default idle-reaper timeout (spec §4.3)
 
 	// M-2 / ADR-137+138: per-plan tier tightening for
@@ -4495,25 +4452,9 @@ type Limits struct {
 	RequestBudgetMs    int // 0 → type-aware default; non-zero plan override
 	RequestBudgetMaxMs int // 0 → RequestBudgetMax; non-zero must be ≥ RequestBudgetMs
 
-	// CPU fairness (issue #301 / ADR-044). The 3-level cgroup hierarchy
-	// (faas-tenant.slice/tenant-<plan>.slice/<instance>) enforces these
-	// per-plan via two complementary channels:
-	//
-	//   - CPUWeight is fed to the jailer --cgroup cpu.weight=N argv, so
-	//     the kernel schedules bursts under the plan's share of the
-	//     tenant slice. Ratio 2:4:8:16 (Free:Hobby:Pro:Scale) so
-	//     Scale-customer bursts can preempt Free-customer bursts but
-	//     never starve them out of their weight.
-	//   - CPUQuotaUS / CPUPeriodUS are written directly to the
-	//     instance's cpu.max file (jailer v1.7 has no --cgroup cpu.max
-	//     arg). Together they cap per-instance compute so a Plan H
-	//     hot-loop never burns the box's full multi-core share.
-	//
-	// The values are the issue #301 spec: Free 100ms/100ms, Hobby
-	// 200ms/200ms, Pro 500ms/500ms, Scale 1000ms/1000ms.
-	CPUWeight   int // kernel cpu.weight (1..10000); ratio per plan
-	CPUQuotaUS  int // cpu.max quota half (microseconds)
-	CPUPeriodUS int // cpu.max period half (microseconds)
+	// No plan field sets an instance's CPU: its vCPUs and cpu.weight follow
+	// its memory (SizeVCPUs, SizeCPUWeight) and it has no cpu.max quota
+	// unless the app chose one (ADR-20261109172421).
 
 	// Metering (spec §1, §10). Money in millicents.
 	IncludedGBHours int   // included GB-RAM-hours per calendar month
@@ -6101,7 +6042,6 @@ var planLimits = map[Plan]Limits{
 		// alignment comment; the value was 256 before this audit too.
 		AppLayerMaxMB:         256,
 		SourceTarballMaxMB:    100,
-		VCPU:                  2,
 		IdleTimeoutS:          60,
 		RequestBudgetMaxMs:    30_000, // request_timeout_s ceiling: 30 s (ADR-1150)
 		CertExpiryWarningDays: 30,
@@ -6364,14 +6304,6 @@ var planLimits = map[Plan]Limits{
 		// defence-in-depth value the handler still reads.
 		LogDeploymentFilterMax: 0,
 		LogStreamsMax:          2,
-		// CPU fairness (issue #301 / ADR-044): Free gets the smallest
-		// slice weight=2 and the tightest quota (100ms/100ms). 100 ms
-		// is enough headroom for a Free-tier app to handle a handful of
-		// requests without a throttle trip but stops a tight loop from
-		// preempting other slice members.
-		CPUWeight:   2,
-		CPUQuotaUS:  100_000,
-		CPUPeriodUS: 100_000,
 		// Streaming (issue #471 / ADR-047): Free is the abuse-floor
 		// tier — buffered path stays the contract, default off, no
 		// cap lift (spec §4.1 baseline 25 MB / 300 s).
@@ -6521,7 +6453,6 @@ var planLimits = map[Plan]Limits{
 		RAMMB:                 512,
 		AppLayerMaxMB:         512,
 		SourceTarballMaxMB:    100,
-		VCPU:                  2,
 		IdleTimeoutS:          60,
 		RequestBudgetMaxMs:    60_000, // request_timeout_s ceiling: 60 s (ADR-1150)
 		CertExpiryWarningDays: 30,
@@ -6815,12 +6746,6 @@ var planLimits = map[Plan]Limits{
 		// per-app cron cap (5).
 		LogDeploymentFilterMax: 1,
 		LogStreamsMax:          5,
-		// CPU fairness (issue #301): Hobby weight=4, quota 200ms/200ms.
-		// Doubles Free's quota — tracks the per-app concurrency bump
-		// (1 → 2) and the per-app rps (50 → 200).
-		CPUWeight:   4,
-		CPUQuotaUS:  200_000,
-		CPUPeriodUS: 200_000,
 		// Streaming (issue #471 / ADR-047): Hobby is the first paid
 		// tier — streaming is opt-in by default (the LLM use case is
 		// the Hobby customer's entry point). Cap lifts to 100 MB / 900 s
@@ -6975,7 +6900,6 @@ var planLimits = map[Plan]Limits{
 		RAMMB:                 1024,
 		AppLayerMaxMB:         1024,
 		SourceTarballMaxMB:    250,
-		VCPU:                  2,
 		IdleTimeoutS:          300,
 		RequestBudgetMaxMs:    300_000, // request_timeout_s ceiling: 5 min (ADR-1150)
 		CertExpiryWarningDays: 30,
@@ -7253,12 +7177,6 @@ var planLimits = map[Plan]Limits{
 		// goroutine fan-out.
 		LogDeploymentFilterMax: 10,
 		LogStreamsMax:          20,
-		// CPU fairness (issue #301): Pro weight=8, quota 500ms/500ms.
-		// Half-bandwidth of 2 cores — tracks the per-app concurrency
-		// (5) and the per-app rps (100).
-		CPUWeight:   8,
-		CPUQuotaUS:  500_000,
-		CPUPeriodUS: 500_000,
 		// Streaming (issue #471 / ADR-047): Pro is paid-tier streaming
 		// — same cap as Hobby. 100 MB / 900 s covers LLM chat
 		// completions and JSON/CSV exports; SaaS-scale apps don't
@@ -7394,7 +7312,6 @@ var planLimits = map[Plan]Limits{
 		RAMMB:                 2048,
 		AppLayerMaxMB:         2048,
 		SourceTarballMaxMB:    250,
-		VCPU:                  4,
 		IdleTimeoutS:          600,
 		RequestBudgetMaxMs:    900_000, // request_timeout_s ceiling: 15 min (ADR-1150)
 		CertExpiryWarningDays: 30,
@@ -7696,14 +7613,6 @@ var planLimits = map[Plan]Limits{
 		LogDeploymentFilterMax:  50,
 		LogStreamsMax:           50,
 		ScaleUpTargetCPUAllowed: true,
-		// CPU fairness (issue #301): Scale weight=16, quota 1000ms/1000ms
-		// — i.e. the full bandwidth of one core. Scale runs 20 concurrent
-		// VMs by plan, so the slice's aggregate quota is 20× at burst.
-		// The kernel cpu.weight ratio with the lower tiers keeps single
-		// VM bursts from monopolising the parent slice.
-		CPUWeight:   16,
-		CPUQuotaUS:  1_000_000,
-		CPUPeriodUS: 1_000_000,
 		// Streaming (issue #471 / ADR-047): Scale is paid-tier
 		// streaming — same cap as Hobby/Pro. 100 MB / 900 s is
 		// already the LLM-token-stream ceiling; Scale customers who
@@ -13238,49 +13147,6 @@ func (p Plan) SliceName() string {
 	}
 }
 
-// CPUWeight returns the kernel cpu.weight value for the plan, used as
-// the jailer `--cgroup cpu.weight=N` argv (issue #301 / ADR-044). The
-// ratio 2:4:8:16 (Free:Hobby:Pro:Scale) ensures a Scale-customer
-// burst can preempt a Free-customer burst but never starves them out of
-// their weight. Unknown plans fail closed (return 100 — the kernel
-// default) so a missing Limits row never silently disables the cgroup
-// weight; the cpu.max quota still bounds the impact.
-func (p Plan) CPUWeight() int {
-	l, ok := LimitsFor(p)
-	if !ok {
-		return 100
-	}
-	return l.CPUWeight
-}
-
-// CPUQuotaUS returns the cpu.max quota half (microseconds) for the
-// plan — written directly to the per-instance cpu.max file. Issue
-// #301 spec: Free 100ms / Hobby 200ms / Pro 500ms / Scale 1000ms.
-// Unknown plans fail closed (return 0 — disabled quota, which the
-// kernel treats as "no limit", so a misconfigured plan is detectable
-// in dashboards rather than silently denied).
-func (p Plan) CPUQuotaUS() int {
-	l, ok := LimitsFor(p)
-	if !ok {
-		return 0
-	}
-	return l.CPUQuotaUS
-}
-
-// CPUPeriodUS returns the cpu.max period half (microseconds) for the
-// plan. Always equal to CPUQuotaUS for the issue #301 spec — the
-// potential quota is "<period> microseconds per <period>". Unknown
-// plans fail closed (return 100_000 — the standard default period),
-// which then makes the quota half easy to reason about even when the
-// row is missing.
-func (p Plan) CPUPeriodUS() int {
-	l, ok := LimitsFor(p)
-	if !ok {
-		return 100_000
-	}
-	return l.CPUPeriodUS
-}
-
 // AdmissionMB is the RAM an instance charges against the admission ceiling and
 // tenant slice: its plan RAM plus the fixed per-VM overhead (spec §4.3, §6.2-2).
 func (l Limits) AdmissionMB() int {
@@ -16390,6 +16256,21 @@ const EventDeliveryAgeMaxMS int64 = 30 * 24 * 60 * 60 * 1000
 // Maximum explicit schema versions selected by one event subscription.
 const EventSubscriptionSchemaVersionsMax = 16
 
+// Event subscription filters (event_triggers[].filter) are copied into the
+// recipient snapshot of every event they may receive, so their size bounds
+// per-event storage, including uncharged gregale.* platform events (events
+// hunt #9). EventSubscriptionFilterMaxBytes caps the compact JSON encoding;
+// EventSubscriptionFilterMaxDepth caps object/array nesting, the top-level
+// object counting as 1 ({"data":{"amount":{"$gt":100}}} is depth 3).
+// EventSubscriptionFilterStoredMaxBytes is the event_subscriptions CHECK on
+// octet_length(filter::text): jsonb's text form adds a space after every ':'
+// and ',', so the database backstop allows twice the API cap.
+const (
+	EventSubscriptionFilterMaxBytes       = 8192
+	EventSubscriptionFilterMaxDepth       = 8
+	EventSubscriptionFilterStoredMaxBytes = 2 * EventSubscriptionFilterMaxBytes
+)
+
 // Event schema rollout previews are read-only and bound both input and observation.
 const (
 	EventSchemaRolloutIdentityMaxBytes   = 256
@@ -16913,6 +16794,12 @@ const (
 	EventDeliveryHealthWatchThresholdMax          = 24 * time.Hour
 	EventDeliveryHealthWatchCountMax        int64 = 9007199254740991
 )
+
+// EventDeliveryObservationClockSkew is how far a server observed_at may run
+// ahead of the CLI's clock before a capacity snapshot or receipt budget counts
+// as future-dated. Client clocks are commonly a few hundred milliseconds off
+// NTP; without a tolerance every read on such a machine fails (Hunt 32 H32-74).
+const EventDeliveryObservationClockSkew = 5 * time.Second
 
 // EventDeadlineInvestigationAlertFileMaxBytes bounds one saved CLI alert object.
 const EventDeadlineInvestigationAlertFileMaxBytes = 64 << 10

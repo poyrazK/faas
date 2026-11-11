@@ -582,6 +582,7 @@ var ManagedPostgresSpecFromRequest = managedPostgresSpecFromRequest
 var ManagedPostgresUsageCeilings = managedPostgresUsageCeilings
 var ManagedPostgresUsageOperatorView = managedPostgresUsageOperatorView
 var ManagedPostgresUsageView = managedPostgresUsageView
+var ManagedPostgresUsageHoldView = managedPostgresUsageHoldView
 var ManagedPostgresView = managedPostgresView
 var ManagedWorkflowCanConsumeFailedDependencies = managedWorkflowCanConsumeFailedDependencies
 var MapReconcileError = mapReconcileError
@@ -798,6 +799,7 @@ var SetupWithScopes = setupWithScopes
 var SourceDeltaLimits = sourceDeltaLimits
 var SourceRefAsyncRouteTestFixture = sourceRefAsyncRouteTestFixture
 var SourceRefManifestNeedsRollback = sourceRefManifestNeedsRollback
+var SourceRefEventSubscriptionProblem = sourceRefEventSubscriptionProblem
 var SpoolRoot = spoolRoot
 var SseFanIn = sseFanIn
 var StartSSEStream = startSSEStream
@@ -1609,8 +1611,11 @@ func (r *server) UpsertWorkPolicy(p0 http.ResponseWriter, p1 *http.Request, p2 s
 func (r *server) ValidateProjectDeploymentEnvironment(p0 context.Context, p1 state.Account, p2 string, p3 string) *api.Problem {
 	return r.validateProjectDeploymentEnvironment(p0, p1, p2, p3)
 }
-func (r *server) VerifyOAuthAccountEmail(p0 context.Context, p1 state.Account) (state.Account, error) {
-	return r.verifyOAuthAccountEmail(p0, p1)
+func (r *server) VerifyOAuthAccountEmail(p0 context.Context, p1 state.Account, p2 string) (state.Account, error) {
+	return r.verifyOAuthAccountEmail(p0, p1, p2)
+}
+func (r *server) RemoveForeignProviderLinks(p0 context.Context, p1 string, p2 string) {
+	r.removeForeignProviderLinks(p0, p1, p2)
 }
 func (r *server) VmmdMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.vmmdMetricsDiscovery(p0, p1)
@@ -2375,3 +2380,16 @@ var SourceLivenessOverrides = sourceLivenessOverrides
 
 // ValidateCustomMetricAlertLabels exposes the custom_metric rule label check.
 var ValidateCustomMetricAlertLabels = validateCustomMetricAlertLabels
+
+func (r *server) ManagedPostgresEgressAllowance(ctx context.Context, subjectID string, now time.Time) (managedpostgres.EgressAllowance, error) {
+	return r.managedPostgresEgressAllowance(ctx, subjectID, now)
+}
+
+// NewUsageSummaryEgressProvider is a billing provider whose egress meter
+// policy is mode for every paid plan.
+func NewUsageSummaryEgressProvider(mode billing.MeterDeliveryMode) billing.Provider {
+	return &usageSummaryEgressProvider{mode: mode}
+}
+
+// PlanWorkloadPublicAuthMode exposes the plan's public URL auth (H32-30).
+var PlanWorkloadPublicAuthMode = planWorkloadPublicAuthMode

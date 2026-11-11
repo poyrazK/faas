@@ -451,8 +451,9 @@ func (r *Registry) CanProvision(region string) bool {
 
 // PlanShortfalls names, as stable codes, the safety-policy limits below what
 // a plan sells (ADR-20261101214152): the largest plan's storage ceiling, in
-// one bucket or across an account, its monthly egress, and the million
-// objects every plan gets. apid enforces the tighter of the policy and the
+// one bucket or across an account, its monthly requests and egress, monthly
+// authorizations (one per admitted read or write, so at least the most
+// requests), and the million objects every plan gets. apid enforces the tighter of the policy and the
 // plan (api.ObjectStoragePlanLimits.Policy), so production-us's 16 MiB pilot
 // policy held every plan, Scale's 1,000 GiB included, to 16 MiB. In
 // production a shortfall closes provisioning; elsewhere apid logs it.
@@ -468,7 +469,9 @@ func (r *Registry) PlanShortfalls() []string {
 	}{
 		{"max_account_bytes_below_plan", r.Accounting.MaxAccountBytes, most.MaxAccountBytes},
 		{"max_bucket_bytes_below_plan", r.Accounting.MaxBucketBytes, most.MaxAccountBytes},
+		{"max_monthly_requests_below_plan", r.Accounting.MaxMonthlyRequests, most.MaxMonthlyRequests},
 		{"max_monthly_egress_bytes_below_plan", r.Accounting.MaxMonthlyEgressBytes, most.MaxMonthlyEgressBytes},
+		{"max_monthly_authorizations_below_plan", r.Accounting.MaxMonthlyAuthorizations, most.MaxMonthlyRequests},
 		{"max_account_keys_below_plan", r.Accounting.MaxAccountKeys, api.MaxObjectStorageAccountKeys},
 	} {
 		if c.have < c.want {

@@ -26,6 +26,8 @@ class AgentActivityEntry:
     created_at: datetime.datetime
     approval_id: str | Unset = UNSET
     """The approval request the write went through on, when it needed one."""
+    reason: str | Unset = UNSET
+    """What the agent said this write was for (its Gregale-Agent-Reason header), if it said. Untrusted agent text."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -41,6 +43,8 @@ class AgentActivityEntry:
 
         approval_id = self.approval_id
 
+        reason = self.reason
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -54,6 +58,8 @@ class AgentActivityEntry:
         )
         if approval_id is not UNSET:
             field_dict["approval_id"] = approval_id
+        if reason is not UNSET:
+            field_dict["reason"] = reason
 
         return field_dict
 
@@ -72,6 +78,8 @@ class AgentActivityEntry:
 
         approval_id = d.pop("approval_id", UNSET)
 
+        reason = d.pop("reason", UNSET)
+
         agent_activity_entry = cls(
             id=id,
             method=method,
@@ -79,6 +87,7 @@ class AgentActivityEntry:
             status=status,
             created_at=created_at,
             approval_id=approval_id,
+            reason=reason,
         )
 
         agent_activity_entry.additional_properties = d

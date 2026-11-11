@@ -40,6 +40,9 @@ type AgentApproval struct {
 	ExpiresAt  time.Time
 	// Note is the person's reason for a denial; empty otherwise.
 	Note string
+	// Reason is what the agent said the request is for
+	// (Gregale-Agent-Reason, ADR-20261110182236); empty when it gave none.
+	Reason string
 	// ReviewURL is the review page, and AgentName the connection's name, for
 	// a new request's webhook event and notification (ADR-20261107140000
 	// §4, §5). Neither is stored on the request.
@@ -175,7 +178,7 @@ func (s *PgStore) RequestAgentApproval(ctx context.Context, request AgentApprova
 	if err := q.InsertAgentApproval(ctx, tx, sqlc.InsertAgentApprovalParams{
 		ID: mustPgUUID(request.ID), KeyID: key, AccountID: mustPgUUID(request.AccountID), OrgID: mustPgUUID(request.OrgID),
 		Category: request.Category, Method: request.Method, Path: request.Path, BodySha256: request.BodySHA256,
-		ExpiresAt: pgTime(request.ExpiresAt),
+		ExpiresAt: pgTime(request.ExpiresAt), Reason: pgText(request.Reason),
 	}); err != nil {
 		return AgentApproval{}, mapErr(err)
 	}
@@ -198,7 +201,7 @@ func (s *PgStore) RequestAgentApproval(ctx context.Context, request AgentApprova
 func enqueueAgentApprovalEvent(ctx context.Context, q *sqlc.Queries, tx sqlc.DBTX, event, sourceID string, a AgentApproval) error {
 	payload := api.AgentApprovalWebhookPayload{
 		ApprovalID: a.ID, KeyID: a.KeyID, OrgID: a.OrgID, Category: a.Category, Method: a.Method, Path: a.Path,
-		Status: a.Status, ExpiresAt: a.ExpiresAt.UTC().Format(time.RFC3339), Note: a.Note,
+		Status: a.Status, ExpiresAt: a.ExpiresAt.UTC().Format(time.RFC3339), Note: a.Note, Reason: a.Reason,
 	}
 	if event == api.AgentApprovalRequestedWebhookEvent {
 		payload.ReviewURL = a.ReviewURL
@@ -314,6 +317,7 @@ func agentApprovalFromRow(row sqlc.AgentApprovalRequest) AgentApproval {
 		Category: row.Category, Method: row.Method, Path: row.Path, BodySHA256: row.BodySha256, Status: row.Status,
 		DecidedBy: pgUUIDString(row.DecidedBy), CreatedAt: row.CreatedAt.Time, DecidedAt: row.DecidedAt.Time,
 		ConsumedAt: row.ConsumedAt.Time, ExpiresAt: row.ExpiresAt.Time, Note: row.DecisionNote.String,
+		Reason: row.Reason.String,
 	}
 }
 
@@ -444,7 +448,7 @@ func (m *MemStore) RequestAgentApproval(_ context.Context, request AgentApproval
 func (m *MemStore) enqueueAgentApprovalEventLocked(event, sourceID string, a AgentApproval) {
 	payload := api.AgentApprovalWebhookPayload{
 		ApprovalID: a.ID, KeyID: a.KeyID, OrgID: a.OrgID, Category: a.Category, Method: a.Method, Path: a.Path,
-		Status: a.Status, ExpiresAt: a.ExpiresAt.UTC().Format(time.RFC3339), Note: a.Note,
+		Status: a.Status, ExpiresAt: a.ExpiresAt.UTC().Format(time.RFC3339), Note: a.Note, Reason: a.Reason,
 	}
 	if event == api.AgentApprovalRequestedWebhookEvent {
 		payload.ReviewURL = a.ReviewURL
