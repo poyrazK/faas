@@ -1614,6 +1614,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid: producer mail outbox: %w", err)
 	}
 
+	if err := srv.configureCustomerSupport(ctx, deps.pool, deps.getenv); err != nil {
+		return fmt.Errorf("apid: customer support: %w", err)
+	}
 	srv.rehearsalNetworkEnabled = deps.getenv("FAAS_REHEARSAL_NETWORK_CONTAINMENT") == "1"
 	srv.rehearsalSimulationEnabled = deps.getenv("FAAS_REHEARSAL_ACTION_SIMULATION") == "1"
 	srv.rehearsalWorkersEnabled = deps.getenv("FAAS_REHEARSAL_WORKERS") == "1"

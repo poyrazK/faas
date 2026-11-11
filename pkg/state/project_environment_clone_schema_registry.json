@@ -20122,5 +20122,158 @@
       "volume_bytes"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "support_admin_events",
+    "columns": [
+      "id",
+      "sequence",
+      "actor_id",
+      "kind",
+      "resource_id",
+      "data",
+      "created_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_engineering",
+    "columns": [
+      "ticket_id",
+      "revision",
+      "data"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_episodes",
+    "columns": [
+      "id",
+      "ticket_id",
+      "started_at",
+      "data"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_events",
+    "columns": [
+      "id",
+      "sequence",
+      "ticket_id",
+      "actor_id",
+      "kind",
+      "data",
+      "created_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_messages",
+    "columns": [
+      "id",
+      "sequence",
+      "ticket_id",
+      "actor_id",
+      "author",
+      "body",
+      "redacted",
+      "created_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_outbox",
+    "columns": [
+      "id",
+      "ticket_id",
+      "state",
+      "attempts",
+      "lease_id",
+      "available_at",
+      "lease_until",
+      "created_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_previews",
+    "columns": [
+      "id",
+      "ticket_id",
+      "actor_id",
+      "kind",
+      "snapshot",
+      "expires_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_receipts",
+    "columns": [
+      "id",
+      "actor_id",
+      "ticket_id",
+      "operation",
+      "resource_id",
+      "request_hash",
+      "result",
+      "created_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_resources",
+    "columns": [
+      "id",
+      "kind",
+      "revision",
+      "data",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_satisfaction",
+    "columns": [
+      "episode_id",
+      "actor_id",
+      "rating",
+      "created_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_staff",
+    "columns": [
+      "account_id",
+      "revision",
+      "role",
+      "profile"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_tickets",
+    "columns": [
+      "id",
+      "scope_key",
+      "account_id",
+      "org_id",
+      "created_by",
+      "subject",
+      "category",
+      "status",
+      "revision",
+      "priority",
+      "team_id",
+      "assignee_id",
+      "state",
+      "created_at",
+      "updated_at",
+      "resolved_at"
+    ],
+    "kind": "operational"
   }
+
 ]

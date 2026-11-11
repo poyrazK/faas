@@ -17497,3 +17497,47 @@ const (
 	DomainDoctorDNSTimeout    = 5 * time.Second
 	DomainDoctorCAAMaxQueries = 128
 )
+
+// Native customer support operating limits. These do not change plan prices or
+// create a contractual SLA; policy snapshots describe operating targets.
+const (
+	SupportSubjectMaxBytes        = 200
+	SupportBodyMaxBytes           = 10000
+	SupportRequestMaxBytes        = 65536
+	SupportPageSize               = 50
+	SupportMessagesPerTicket      = 1000
+	SupportCreatesPerDay          = 20
+	SupportWritesPerHour          = 100
+	SupportPoliciesMax            = 50
+	SupportTeamsMax               = 50
+	SupportStaffMax               = 100
+	SupportSkillsMax              = 8
+	SupportSkillMaxBytes          = 32
+	SupportStaffCapacityDefault   = 50
+	SupportStaffCapacityMax       = 1000
+	SupportFallbackDepth          = 5
+	SupportCalendarHolidaysMax    = 128
+	SupportCalendarSearchDays     = 3660
+	SupportTargetMin              = time.Minute
+	SupportTargetMax              = 30 * 24 * time.Hour
+	SupportDefaultResponse        = 24 * time.Hour
+	SupportDefaultNextReply       = 24 * time.Hour
+	SupportDefaultResolution      = 72 * time.Hour
+	SupportReopenWindowDefault    = 7 * 24 * time.Hour
+	SupportReopenWindowMax        = 30 * 24 * time.Hour
+	SupportCustomerReopensDefault = 3
+	SupportCustomerReopensMax     = 10
+	SupportReasonMaxBytes         = 200
+	SupportPreviewTTL             = 15 * time.Minute
+	SupportPreviewsPerActor       = 10
+	SupportConfigMaxBytes         = 65536
+	SupportStateMaxBytes          = 32768
+	SupportPreviewMaxBytes        = 65536
+	SupportReportDaysMax          = 90
+	SupportReportEpisodesMax      = 50000
+	SupportWorkerBatch            = 25
+	SupportWorkerInterval         = time.Minute
+	SupportDispatchTimeout        = 10 * time.Second
+	SupportWebhookMaxAttempts     = 10
+	SupportWebhookLease           = 30 * time.Second
+)

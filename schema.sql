@@ -56454,6 +56454,269 @@ CREATE TABLE public.stripe_push_dedupe (
 
 
 --
+-- Name: support_admin_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_admin_events (
+    id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    actor_id uuid,
+    kind text NOT NULL,
+    resource_id uuid NOT NULL,
+    data jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT support_admin_events_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT support_admin_events_data_check CHECK (((jsonb_typeof(data) = 'object'::text) AND (octet_length((data)::text) <= 65536))),
+    CONSTRAINT support_admin_events_kind_check CHECK ((kind = ANY (ARRAY['policy'::text, 'team'::text, 'staff'::text])))
+);
+
+
+--
+-- Name: support_admin_events_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.support_admin_events ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.support_admin_events_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: support_engineering; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_engineering (
+    ticket_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    data jsonb NOT NULL,
+    CONSTRAINT support_engineering_data_check CHECK (((jsonb_typeof(data) = 'object'::text) AND (octet_length((data)::text) <= 65536))),
+    CONSTRAINT support_engineering_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: support_episodes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_episodes (
+    id uuid NOT NULL,
+    ticket_id uuid NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    data jsonb NOT NULL,
+    CONSTRAINT support_episodes_data_check CHECK (((jsonb_typeof(data) = 'object'::text) AND (octet_length((data)::text) <= 32768))),
+    CONSTRAINT support_episodes_started_at_check CHECK (isfinite(started_at))
+);
+
+
+--
+-- Name: support_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_events (
+    id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    ticket_id uuid NOT NULL,
+    actor_id uuid,
+    kind text NOT NULL,
+    data jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT support_events_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT support_events_data_check CHECK (((jsonb_typeof(data) = 'object'::text) AND (octet_length((data)::text) <= 8192))),
+    CONSTRAINT support_events_kind_check CHECK ((kind = ANY (ARRAY['created'::text, 'reply'::text, 'note'::text, 'resolved'::text, 'reopened'::text, 'paused'::text, 'resumed'::text, 'triage'::text, 'handoff'::text, 'redacted'::text, 'engineering_saved'::text, 'engineering_published'::text])))
+);
+
+
+--
+-- Name: support_events_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.support_events ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.support_events_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: support_messages; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_messages (
+    id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    ticket_id uuid NOT NULL,
+    actor_id uuid,
+    author text NOT NULL,
+    body text NOT NULL,
+    redacted boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT support_messages_author_check CHECK ((author = ANY (ARRAY['customer'::text, 'staff'::text, 'note'::text]))),
+    CONSTRAINT support_messages_body_check CHECK (((octet_length(body) >= 1) AND (octet_length(body) <= 10000))),
+    CONSTRAINT support_messages_created_at_check CHECK (isfinite(created_at))
+);
+
+
+--
+-- Name: support_messages_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.support_messages ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.support_messages_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: support_outbox; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_outbox (
+    id uuid NOT NULL,
+    ticket_id uuid NOT NULL,
+    state text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    lease_id uuid,
+    available_at timestamp with time zone NOT NULL,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT support_outbox_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT support_outbox_available_at_check CHECK (isfinite(available_at)),
+    CONSTRAINT support_outbox_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT support_outbox_lease_until_check CHECK (((lease_until IS NULL) OR isfinite(lease_until))),
+    CONSTRAINT support_outbox_state_check CHECK ((state = ANY (ARRAY['queued'::text, 'inflight'::text, 'accepted'::text, 'failed'::text, 'skipped'::text])))
+);
+
+
+--
+-- Name: support_previews; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_previews (
+    id uuid NOT NULL,
+    ticket_id uuid NOT NULL,
+    actor_id uuid NOT NULL,
+    kind text NOT NULL,
+    snapshot jsonb NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT support_previews_expires_at_check CHECK (isfinite(expires_at)),
+    CONSTRAINT support_previews_kind_check CHECK ((kind = ANY (ARRAY['redaction'::text, 'engineering'::text]))),
+    CONSTRAINT support_previews_snapshot_check CHECK (((jsonb_typeof(snapshot) = 'object'::text) AND (octet_length((snapshot)::text) <= 65536)))
+);
+
+
+--
+-- Name: support_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_receipts (
+    id uuid NOT NULL,
+    actor_id uuid,
+    ticket_id uuid,
+    operation text NOT NULL,
+    resource_id uuid NOT NULL,
+    request_hash bytea NOT NULL,
+    result jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT support_receipts_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT support_receipts_operation_check CHECK (((octet_length(operation) >= 1) AND (octet_length(operation) <= 64))),
+    CONSTRAINT support_receipts_request_hash_check CHECK ((octet_length(request_hash) = 32)),
+    CONSTRAINT support_receipts_result_check CHECK (((jsonb_typeof(result) = 'object'::text) AND (octet_length((result)::text) <= 8192)))
+);
+
+
+--
+-- Name: support_resources; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_resources (
+    id uuid NOT NULL,
+    kind text NOT NULL,
+    revision bigint NOT NULL,
+    data jsonb NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT support_resources_data_check CHECK (((jsonb_typeof(data) = 'object'::text) AND (octet_length((data)::text) <= 65536))),
+    CONSTRAINT support_resources_kind_check CHECK ((kind = ANY (ARRAY['policy'::text, 'team'::text]))),
+    CONSTRAINT support_resources_revision_check CHECK ((revision > 0)),
+    CONSTRAINT support_resources_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: support_satisfaction; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_satisfaction (
+    episode_id uuid NOT NULL,
+    actor_id uuid,
+    rating integer NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT support_satisfaction_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT support_satisfaction_rating_check CHECK (((rating >= 1) AND (rating <= 5)))
+);
+
+
+--
+-- Name: support_staff; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_staff (
+    account_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    role text NOT NULL,
+    profile jsonb NOT NULL,
+    CONSTRAINT support_staff_profile_check CHECK (((jsonb_typeof(profile) = 'object'::text) AND (octet_length((profile)::text) <= 16384))),
+    CONSTRAINT support_staff_revision_check CHECK ((revision > 0)),
+    CONSTRAINT support_staff_role_check CHECK ((role = ANY (ARRAY['agent'::text, 'manager'::text, 'revoked'::text])))
+);
+
+
+--
+-- Name: support_tickets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_tickets (
+    id uuid NOT NULL,
+    scope_key text NOT NULL,
+    account_id uuid,
+    org_id uuid,
+    created_by uuid,
+    subject text NOT NULL,
+    category text NOT NULL,
+    status text NOT NULL,
+    revision bigint NOT NULL,
+    priority text NOT NULL,
+    team_id uuid,
+    assignee_id uuid,
+    state jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    resolved_at timestamp with time zone,
+    CONSTRAINT support_tickets_category_check CHECK ((category = ANY (ARRAY['deployment'::text, 'billing'::text, 'account'::text, 'incident'::text, 'other'::text]))),
+    CONSTRAINT support_tickets_check CHECK (((account_id IS NULL) <> (org_id IS NULL))),
+    CONSTRAINT support_tickets_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT support_tickets_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'high'::text, 'urgent'::text]))),
+    CONSTRAINT support_tickets_resolved_at_check CHECK (((resolved_at IS NULL) OR isfinite(resolved_at))),
+    CONSTRAINT support_tickets_revision_check CHECK ((revision > 0)),
+    CONSTRAINT support_tickets_scope_key_check CHECK ((octet_length(scope_key) <= 64)),
+    CONSTRAINT support_tickets_state_check CHECK (((jsonb_typeof(state) = 'object'::text) AND (octet_length((state)::text) <= 32768))),
+    CONSTRAINT support_tickets_status_check CHECK ((status = ANY (ARRAY['open'::text, 'pending'::text, 'resolved'::text]))),
+    CONSTRAINT support_tickets_subject_check CHECK (((octet_length(subject) >= 1) AND (octet_length(subject) <= 200))),
+    CONSTRAINT support_tickets_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
 -- Name: synthetic_check_runs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -70085,6 +70348,126 @@ ALTER TABLE ONLY public.stripe_push_dedupe
 
 
 --
+-- Name: support_admin_events support_admin_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_admin_events
+    ADD CONSTRAINT support_admin_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_admin_events support_admin_events_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_admin_events
+    ADD CONSTRAINT support_admin_events_sequence_key UNIQUE (sequence);
+
+
+--
+-- Name: support_engineering support_engineering_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_engineering
+    ADD CONSTRAINT support_engineering_pkey PRIMARY KEY (ticket_id);
+
+
+--
+-- Name: support_episodes support_episodes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_episodes
+    ADD CONSTRAINT support_episodes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_events support_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_events
+    ADD CONSTRAINT support_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_events support_events_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_events
+    ADD CONSTRAINT support_events_sequence_key UNIQUE (sequence);
+
+
+--
+-- Name: support_messages support_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_messages
+    ADD CONSTRAINT support_messages_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_messages support_messages_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_messages
+    ADD CONSTRAINT support_messages_sequence_key UNIQUE (sequence);
+
+
+--
+-- Name: support_outbox support_outbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_outbox
+    ADD CONSTRAINT support_outbox_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_previews support_previews_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_previews
+    ADD CONSTRAINT support_previews_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_receipts support_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_receipts
+    ADD CONSTRAINT support_receipts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_resources support_resources_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_resources
+    ADD CONSTRAINT support_resources_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_satisfaction support_satisfaction_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_satisfaction
+    ADD CONSTRAINT support_satisfaction_pkey PRIMARY KEY (episode_id);
+
+
+--
+-- Name: support_staff support_staff_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_staff
+    ADD CONSTRAINT support_staff_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: support_tickets support_tickets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_tickets
+    ADD CONSTRAINT support_tickets_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: synthetic_check_runs synthetic_check_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -80455,6 +80838,69 @@ CREATE INDEX stripe_push_dedupe_hour_idx ON public.stripe_push_dedupe USING btre
 --
 
 CREATE INDEX stripe_push_dedupe_org_id_idx ON public.stripe_push_dedupe USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: support_episodes_started_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_episodes_started_idx ON public.support_episodes USING btree (started_at, id);
+
+
+--
+-- Name: support_events_ticket_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_events_ticket_idx ON public.support_events USING btree (ticket_id, sequence);
+
+
+--
+-- Name: support_messages_search_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_messages_search_idx ON public.support_messages USING gin (to_tsvector('simple'::regconfig, body));
+
+
+--
+-- Name: support_messages_ticket_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_messages_ticket_idx ON public.support_messages USING btree (ticket_id, sequence);
+
+
+--
+-- Name: support_outbox_ready_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_outbox_ready_idx ON public.support_outbox USING btree (available_at, id) WHERE (state = ANY (ARRAY['queued'::text, 'inflight'::text]));
+
+
+--
+-- Name: support_previews_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_previews_expiry_idx ON public.support_previews USING btree (expires_at);
+
+
+--
+-- Name: support_tickets_assignee_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_tickets_assignee_idx ON public.support_tickets USING btree (assignee_id, status);
+
+
+--
+-- Name: support_tickets_queue_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_tickets_queue_idx ON public.support_tickets USING btree (team_id, status, created_at DESC, id DESC);
+
+
+--
+-- Name: support_tickets_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_tickets_scope_idx ON public.support_tickets USING btree (scope_key, created_at DESC, id DESC);
 
 
 --
@@ -103475,6 +103921,174 @@ ALTER TABLE ONLY public.stripe_push_dedupe
 
 ALTER TABLE ONLY public.stripe_push_dedupe
     ADD CONSTRAINT stripe_push_dedupe_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: support_admin_events support_admin_events_actor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_admin_events
+    ADD CONSTRAINT support_admin_events_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_engineering support_engineering_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_engineering
+    ADD CONSTRAINT support_engineering_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_episodes support_episodes_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_episodes
+    ADD CONSTRAINT support_episodes_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_events support_events_actor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_events
+    ADD CONSTRAINT support_events_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_events support_events_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_events
+    ADD CONSTRAINT support_events_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_messages support_messages_actor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_messages
+    ADD CONSTRAINT support_messages_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_messages support_messages_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_messages
+    ADD CONSTRAINT support_messages_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_outbox support_outbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_outbox
+    ADD CONSTRAINT support_outbox_id_fkey FOREIGN KEY (id) REFERENCES public.support_events(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_outbox support_outbox_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_outbox
+    ADD CONSTRAINT support_outbox_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_previews support_previews_actor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_previews
+    ADD CONSTRAINT support_previews_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_previews support_previews_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_previews
+    ADD CONSTRAINT support_previews_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_receipts support_receipts_actor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_receipts
+    ADD CONSTRAINT support_receipts_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_receipts support_receipts_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_receipts
+    ADD CONSTRAINT support_receipts_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_satisfaction support_satisfaction_actor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_satisfaction
+    ADD CONSTRAINT support_satisfaction_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_satisfaction support_satisfaction_episode_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_satisfaction
+    ADD CONSTRAINT support_satisfaction_episode_id_fkey FOREIGN KEY (episode_id) REFERENCES public.support_episodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_staff support_staff_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_staff
+    ADD CONSTRAINT support_staff_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_tickets support_tickets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_tickets
+    ADD CONSTRAINT support_tickets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_tickets support_tickets_assignee_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_tickets
+    ADD CONSTRAINT support_tickets_assignee_id_fkey FOREIGN KEY (assignee_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_tickets support_tickets_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_tickets
+    ADD CONSTRAINT support_tickets_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_tickets support_tickets_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_tickets
+    ADD CONSTRAINT support_tickets_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_tickets support_tickets_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_tickets
+    ADD CONSTRAINT support_tickets_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.support_resources(id);
 
 
 --
