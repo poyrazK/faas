@@ -22,7 +22,7 @@ func TestWorkflowTenantIdempotencyMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		for _, migration := range []string{"20261111160000000_workflow_idempotency_tenant_scope.sql", "20261111160000001_workflow_idempotency_legacy_index.sql"} {
+		for _, migration := range []string{"20261111164711523_workflow_idempotency_tenant_scope.sql", "20261111164713712_workflow_idempotency_legacy_index.sql"} {
 			raw, err := migrations.FS.ReadFile(migration)
 			if err != nil {
 				t.Fatal(err)
@@ -50,7 +50,7 @@ func TestWorkflowTenantIdempotencyMigration(t *testing.T) {
 	}
 	// A refused downgrade leaves an invalid concurrent index behind. Once
 	// the fixture's conflicting keys are reconciled, retry must rebuild it.
-	raw, err := migrations.FS.ReadFile("20261111160000001_workflow_idempotency_legacy_index.sql")
+	raw, err := migrations.FS.ReadFile("20261111164713712_workflow_idempotency_legacy_index.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

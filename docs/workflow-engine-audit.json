@@ -12,7 +12,7 @@
       "regression_tests": [
         "pkg/apid/apidserver/workflow_idempotency_regression_test.go",
         "pkg/state/workflow_idempotency_regression_test.go",
-        "migrations/20261111160000000_workflow_idempotency_tenant_scope_test.go"
+        "migrations/20261111164711523_workflow_idempotency_tenant_scope_test.go"
       ],
       "original_trigger": "Two separately authenticated platform tenants start the same app/workflow with the same idempotency key and input.",
       "original_observation": "Tenant B receives Tenant A's run ID and tenant identity; the response also exposes stored run data."
@@ -243,8 +243,8 @@
   },
   "decision_record": "docs/adr/20261111163000-workflow-recovery-and-replay-integrity.md",
   "rollout": [
-    "Apply expand migration 20261111160000000 before updating the control plane.",
-    "Upgrade all API replicas before applying contract migration 20261111160000001 in a full release.",
+    "Apply expand migration 20261111164711523 before updating the control plane.",
+    "Upgrade all API replicas before applying contract migration 20261111164713712 in a full release.",
     "Deploy the scheduler and internal gateway fixes, then redeploy applications with the updated workflow SDKs.",
     "Full replay-cursor checks require the updated SDKs; older SDKs remain readable but may not omit pending operations.",
     "The contract downgrade refuses shared cross-tenant keys until those keys are reconciled."
