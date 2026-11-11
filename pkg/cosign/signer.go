@@ -201,13 +201,28 @@ func (s *LocalSigner) Sign(ctx context.Context, layerKey, sigKey string) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("cosign: pre-sign ctx: %w", err)
 	}
-	digestHex, _, err := DigestObject(ctx, s.stor, layerKey, s.log)
+	digestHex, n, err := DigestObject(ctx, s.stor, layerKey, s.log)
 	if err != nil {
 		return err
 	}
+	return s.SignDigest(ctx, layerKey, sigKey, digestHex, n)
+}
+
+// SignDigest signs the layer at layerKey given the hex SHA-256 of its bytes,
+// which the caller computed while publishing them, and writes the signature
+// to sigKey. It saves reading the layer back: the signature then covers the
+// bytes the caller sent, and a store that kept different ones fails the
+// verify at boot instead of being signed.
+func (s *LocalSigner) SignDigest(ctx context.Context, layerKey, sigKey, digestHex string, _ int64) error {
+	if layerKey == "" || sigKey == "" {
+		return errors.New("cosign: SignDigest: empty layerKey or sigKey")
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("cosign: pre-sign ctx: %w", err)
+	}
 	digest, err := hex.DecodeString(digestHex)
-	if err != nil {
-		return fmt.Errorf("cosign: digest of %q: %w", layerKey, err)
+	if err != nil || len(digest) != sha256.Size {
+		return fmt.Errorf("cosign: digest of %q is not a hex SHA-256", layerKey)
 	}
 	var out []byte
 	if s.v2 {

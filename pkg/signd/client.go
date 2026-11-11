@@ -35,8 +35,31 @@ func NewClient(rpc signdpb.SigndClient, objects storage.StorageBackend, local La
 	return &Client{rpc: rpc, objects: objects, local: local}
 }
 
-// Sign implements pkg/rootfs.Signer.
+// Sign implements pkg/rootfs.Signer. It hashes the stored layer; SignDigest
+// takes the digest the publisher already computed.
 func (c *Client) Sign(ctx context.Context, layerKey, sigKey string) error {
+	return c.sign(ctx, layerKey, sigKey, func() (string, int64, error) {
+		return cosign.DigestObject(ctx, c.objects, layerKey, nil)
+	})
+}
+
+// SignDigest signs the layer at layerKey given the hex SHA-256 and length of
+// the bytes its publisher streamed to storage, without reading it back.
+func (c *Client) SignDigest(ctx context.Context, layerKey, sigKey, digestHex string, bytes int64) error {
+	if _, ok := DeploymentOfLayerKey(layerKey); !ok {
+		if ds, ok := c.local.(localDigestSigner); ok {
+			return ds.SignDigest(ctx, layerKey, sigKey, digestHex, bytes)
+		}
+	}
+	return c.sign(ctx, layerKey, sigKey, func() (string, int64, error) { return digestHex, bytes, nil })
+}
+
+// localDigestSigner is a local signer that also signs a known digest.
+type localDigestSigner interface {
+	SignDigest(ctx context.Context, layerKey, sigKey, digestHex string, bytes int64) error
+}
+
+func (c *Client) sign(ctx context.Context, layerKey, sigKey string, digestOf func() (string, int64, error)) error {
 	deploymentID, ok := DeploymentOfLayerKey(layerKey)
 	if !ok {
 		// Runtime bases and the agent layer: no verifier checks their
@@ -50,7 +73,7 @@ func (c *Client) Sign(ctx context.Context, layerKey, sigKey string) error {
 	if sigKey != cosign.SigKeyFor(layerKey) {
 		return fmt.Errorf("signd: signd writes %q's signature to %q, not %q", layerKey, cosign.SigKeyFor(layerKey), sigKey)
 	}
-	digest, n, err := cosign.DigestObject(ctx, c.objects, layerKey, nil)
+	digest, n, err := digestOf()
 	if err != nil {
 		return err
 	}

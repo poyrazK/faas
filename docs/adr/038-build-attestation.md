@@ -281,3 +281,20 @@ whose identity matches a record younger than
 - **Not covered:** a write into the cached file in place, with its size kept.
   That needs write access to the node cache, which the startup re-hash
   detected only at the next restart.
+
+## Amendment 2026-11-11: sign the digest computed at publish
+
+`publishExt4`, the full-rootfs publish and `publishBaseFile` already hash
+every byte they stream to storage (`rootfs.ArtifactIdentity`). The signer
+then read the stored layer back and hashed it again: on a production deploy
+the two SHA-256 passes over a sparse 1 GiB ext4 were ~14 s, about 80% of
+imaged's CPU for the deploy (2026-11-11 profile; no SHA extensions on the n2
+nodes). A signer that implements `SignDigest` (`cosign.LocalSigner`,
+`signd.Client`) now signs that digest; any other signer still reads back.
+
+The signature therefore covers the bytes imaged sent, not a read-back of the
+store. A store that kept different bytes fails the verify at boot, which is
+the fail-closed direction, and nothing can change the layer between publish
+and sign to have the change signed. signd already signed the digest the node
+sends without reading layers (ADR-20261109170000 §4); the client now sends
+the publish-time digest as that ADR's §3 describes.
