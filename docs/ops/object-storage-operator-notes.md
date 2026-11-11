@@ -929,8 +929,11 @@ Hobby 20 GiB, Pro 250 GiB, Scale 1,000 GiB. A spend cap below what that
 storage costs lowers it. Support raises one paid account's ceiling with
 `gregalectl accounts object-storage-ceiling --account-id ID --gib N --reason
 R --yes`, and `--plan` returns it to the plan's; the cap still applies, and
-`max_account_bytes` still bounds every account. Paid plans set no request or
-authorization ceilings of their own, so size those values, and
+`max_account_bytes` still bounds every account. Each plan has its own monthly
+request ceiling (Free 50,000, Hobby 500,000, Pro 2,500,000, Scale
+10,000,000), and its monthly authorizations follow it, because every admitted
+read and write spends one authorization; `max_monthly_requests` and
+`max_monthly_authorizations` only bound them from above. Size
 `max_account_bytes` for the largest grant support may give. `max_account_keys` is at most one
 million (`api.MaxObjectStorageAccountKeys`), because a bucket is metered by
 listing it whole.
@@ -940,7 +943,9 @@ below what the plans sell holds every account below its plan. With
 `FAAS_ENVIRONMENT=production`, apid refuses new buckets and withdraws object
 storage from capabilities until `max_account_bytes` and `max_bucket_bytes`
 reach the largest plan ceiling (1,000 GiB), `max_monthly_egress_bytes` the
-largest plan egress (2,000 GiB) and `max_account_keys` one million; every
+largest plan egress (2,000 GiB), `max_monthly_requests` and
+`max_monthly_authorizations` the most monthly requests (10,000,000) and
+`max_account_keys` one million; every
 environment logs the shortfall at startup (`object storage safety policy
 sells plans less than they promise`). CD sets `FAAS_ENVIRONMENT=production`
 for apid in every `production*` environment (the control-plane role's
@@ -952,21 +957,24 @@ A provider that refuses the installation's credentials withdraws object
 storage for an hour; after that the next bucket operation tries the provider
 again and restores it or renews the hour.
 
-Example safety values, sized for the plans (production-us runs these since
-2026-11-02); they are not plan allowances:
+Example safety values, sized for the plans; they are not plan allowances.
+Copy every value except `gateway_metering_since`: keep the installation's
+own, which must predate its first bucket (production-us has
+`2026-10-12T08:41:00Z`; a later value refuses every older bucket's reads and
+writes as stale, see above):
 
 ```json
 "accounting": {
   "accounting_mode": "gateway_safety_v1",
-  "gateway_metering_since": "2026-11-01T00:00:00Z",
+  "gateway_metering_since": "2026-10-12T08:41:00Z",
   "max_account_bytes": 1099511627776,
   "max_bucket_bytes": 1099511627776,
   "max_account_keys": 1000000,
   "max_monthly_cost_millicents": 0,
   "max_monthly_requests": 10000000,
   "max_monthly_egress_bytes": 2147483648000,
-  "max_monthly_authorizations": 1000000,
-  "max_report_age_seconds": 7200
+  "max_monthly_authorizations": 10000000,
+  "max_report_age_seconds": 900
 }
 ```
 
@@ -1053,7 +1061,9 @@ authorized size for its bucket/key and one key slot. Reissuing the same size
 or a smaller size does not reserve bytes again. The reservation is committed
 before signing and is not refunded on signer errors or lost HTTP responses.
 GET and PUT both consume a separate monthly authorization count, used only
-for issuance abuse protection—not as a count of actual upstream requests.
+for issuance abuse protection—not as a count of actual upstream requests. Its
+ceiling is the plan's monthly requests, bounded by
+`max_monthly_authorizations`.
 
 Control multipart creation commits its fixed session and declared full-object
 capacity in one transaction. Session-limit or quota failures leave neither a
