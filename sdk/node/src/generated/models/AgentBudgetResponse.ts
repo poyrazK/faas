@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * An agent connection's monthly budget for always-on capacity, and what it committed this month (ADR-20261111114059).
+ * An agent connection's monthly budget for always-on capacity, and what it committed this month.
  */
 export type AgentBudgetResponse = {
   /**

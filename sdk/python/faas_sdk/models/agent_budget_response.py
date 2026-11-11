@@ -14,7 +14,7 @@ T = TypeVar("T", bound="AgentBudgetResponse")
 
 @_attrs_define
 class AgentBudgetResponse:
-    """An agent connection's monthly budget for always-on capacity, and what it committed this month (ADR-20261111114059)."""
+    """An agent connection's monthly budget for always-on capacity, and what it committed this month."""
 
     source: AgentBudgetResponseSource
     """Where the budget comes from."""
