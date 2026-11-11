@@ -12,11 +12,17 @@ import (
 
 // Discovery must prove a complete, unambiguous exact-key result before a new
 // initiation. An incomplete page cannot establish that an earlier upload is absent.
+//
+// It asks for raw keys. GCS URL-encodes names when asked (encoding-type=url)
+// but its multipart listing does not say so in the reply, so an encoded key
+// could not be told from a raw one (Hunt 33 H33-41). Keys never hold control
+// characters (ValidKey), so raw XML carries every key; a reply that does
+// declare url encoding is still decoded.
 func (p *GCS) discoverGCSMultipartUpload(ctx context.Context, bucket string, r MultipartCreateRequest) (string, error) {
 	found, keyMarker, uploadMarker := "", "", ""
 	seen := map[string]bool{}
 	for range api.ObjectMultipartInitiationMaxPages {
-		q := url.Values{"uploads": {""}, "prefix": {r.Key}, "max-uploads": {strconv.Itoa(api.MaxObjectS3ListItems)}, "encoding-type": {"url"}}
+		q := url.Values{"uploads": {""}, "prefix": {r.Key}, "max-uploads": {strconv.Itoa(api.MaxObjectS3ListItems)}}
 		if keyMarker != "" {
 			q.Set("key-marker", keyMarker)
 		}
@@ -36,14 +42,14 @@ func (p *GCS) discoverGCSMultipartUpload(ctx context.Context, bucket string, r M
 		if err != nil || out.IsTruncated == nil || len(out.Uploads) > api.MaxObjectS3ListItems || len(out.CommonPrefixes) != 0 {
 			return "", ErrUnavailable
 		}
-		last := keyMarker
+		last, lastUpload := keyMarker, ""
 		for _, upload := range out.Uploads {
 			key, err := gcsVersionListKey(upload.Key, encoding)
 			identity := key + "\x00" + upload.UploadID
 			if err != nil || !ValidKey(key) || !strings.HasPrefix(key, r.Key) || key < last || !validMultipartUploadID(upload.UploadID) || seen[identity] {
 				return "", ErrUnavailable
 			}
-			last, seen[identity] = key, true
+			last, lastUpload, seen[identity] = key, upload.UploadID, true
 			if key == r.Key {
 				if found != "" {
 					return "", ErrConflict
@@ -52,8 +58,13 @@ func (p *GCS) discoverGCSMultipartUpload(ctx context.Context, bucket string, r M
 			}
 		}
 		if !*out.IsTruncated {
+			// S3-style replies may name the last listed upload as the next
+			// marker even on the final page. Any other marker is inconsistent.
 			if out.NextKeyMarker != "" || out.NextUploadIDMarker != "" {
-				return "", ErrUnavailable
+				next, err := gcsVersionListKey(out.NextKeyMarker, encoding)
+				if err != nil || lastUpload == "" || next != last || out.NextUploadIDMarker != lastUpload {
+					return "", ErrUnavailable
+				}
 			}
 			return found, nil
 		}

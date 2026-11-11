@@ -140,6 +140,22 @@ func (q *Queries) LockQueueCanaryApp(ctx context.Context, db DBTX, arg LockQueue
 	return id, err
 }
 
+const lockQueueClaimApp = `-- name: LockQueueClaimApp :one
+SELECT id FROM apps WHERE id=$1::uuid FOR SHARE
+`
+
+// A queue claim takes its app's share lock before the binding lock (Hunt 33
+// H33-27). Capped enqueues lock the app FOR UPDATE and then the binding FOR
+// SHARE (invocation insert trigger); a claim that locked the binding first
+// and reached the app through the invocation update triggers deadlocked
+// against them.
+func (q *Queries) LockQueueClaimApp(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockQueueClaimApp, appID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const queueCanaryManagedAuthority = `-- name: QueueCanaryManagedAuthority :one
 SELECT release.id::text AS release_id, source.generation
 FROM deployments d JOIN apps a ON a.id=d.app_id
