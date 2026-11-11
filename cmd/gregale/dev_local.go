@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	devLocalUsage        = "usage: gregale dev --local [--path DIR] [--name PROJECT] [--port N] [--env-file PATH] [--no-remote | --offline [--postgres] [--bucket NAME]... [--reset]] [--no-reload]"
+	devLocalUsage        = "usage: gregale dev --local [--path DIR] [--name PROJECT] [--port N] [--env-file PATH] [--watch-command CMD] [--no-remote | --offline [--postgres] [--bucket NAME]... [--reset]] [--no-reload]"
 	devLocalDefaultPort  = 8787
 	devLocalTokenHeader  = "X-Gregale-Local-Token"
 	devLocalTriggerPath  = "/__gregale/trigger"
@@ -81,8 +81,9 @@ func cmdDevLocal(args []string) int {
 	sourcePath := fs.String("path", "", "source directory (relative to the current directory)")
 	name := fs.String("name", "", "developer-session project name whose database and buckets to use")
 	port := fs.Int("port", devLocalDefaultPort, "local port")
-	envFile := fs.String("env-file", "", "KEY=VALUE file whose entries every function gets")
-	noReload := fs.Bool("no-reload", false, "do not reload functions when their source changes")
+	envFile := fs.String("env-file", "", "KEY=VALUE file for the local app or functions")
+	watchCommand := fs.String("watch-command", "", "local HTTP app command (default: detected development or start command)")
+	noReload := fs.Bool("no-reload", false, "do not restart the local app or functions when their source changes")
 	noRemote := fs.Bool("no-remote", false, "do not connect to the developer session's database and buckets")
 	offline := fs.Bool("offline", false, "run Postgres and buckets in Docker instead of using the developer session")
 	postgres := fs.Bool("postgres", false, "with --offline, start Postgres and set DATABASE_URL")
@@ -102,13 +103,16 @@ func cmdDevLocal(args []string) int {
 	if *offline && *noRemote {
 		return printErr("Invalid flags", errors.New("--offline already skips the developer session; drop --no-remote"))
 	}
+	if *port < 0 || *port > 65535 {
+		return printErr("Invalid port", errors.New("--port must be between 0 and 65535"))
+	}
 	projectDir, fileEnv, err := devLocalInputs(*sourcePath, *envFile)
 	if err != nil {
-		return printErr("Could not start local functions", err)
+		return printErr("Could not start locally", err)
 	}
-	fns, err := planLocalFunctions(projectDir)
+	fns, app, err := planDevLocalWorkload(projectDir, *watchCommand)
 	if err != nil {
-		return printErr("Could not start local functions", err)
+		return printErr("Could not start locally", err)
 	}
 	cacheDir, err := localCacheDir(projectDir)
 	if err != nil {
@@ -131,6 +135,17 @@ func cmdDevLocal(args []string) int {
 	}
 	defer remote.close()
 	baseEnv := devLocalEnv(os.Environ(), remote.Env, fileEnv)
+	if app != nil {
+		printDevLocalRemote(osStdout, remote, baseEnv, nil)
+		err := serveDevLocalApp(ctx, devLocalAppOptions{
+			root: projectDir, command: *watchCommand, plan: *app, env: baseEnv,
+			port: *port, noReload: *noReload, out: osStdout, errOut: osStderr,
+		})
+		if err != nil {
+			return printErr("Local app stopped", err)
+		}
+		return 0
+	}
 	for _, fn := range fns {
 		if err := fn.prepare(ctx, cacheDir, baseEnv); err != nil {
 			return printErr("Could not start function "+fn.Name, err)

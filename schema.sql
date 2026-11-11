@@ -43410,7 +43410,8 @@ CREATE TABLE public.invoice_refunds (
     CONSTRAINT invoice_refunds_amount_cents_check CHECK ((amount_cents > 0)),
     CONSTRAINT invoice_refunds_idempotency_key_check CHECK ((idempotency_key <> ''::text)),
     CONSTRAINT invoice_refunds_provider_refund_id_check CHECK ((provider_refund_id <> ''::text)),
-    CONSTRAINT invoice_refunds_source_check CHECK ((source = ANY (ARRAY['operator'::text, 'credit'::text, 'webhook'::text])))
+    CONSTRAINT invoice_refunds_source_check CHECK ((source = ANY (ARRAY['operator'::text, 'credit'::text, 'webhook'::text]))),
+    CONSTRAINT invoice_refunds_status_check CHECK ((status ~ '^[a-z_-]{0,64}$'::text))
 );
 
 

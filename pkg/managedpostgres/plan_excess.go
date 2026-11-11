@@ -57,8 +57,9 @@ func PlanAllowsClass(limits api.ManagedPostgresPlanLimits, class ServiceClass) b
 // PlanExcess maps each of a subject's databases that its plan no longer
 // includes to the reason. Databases rank oldest first; one ranked past the
 // plan's database limit, or in a service class the plan does not include, is
-// past the plan. A restore holding the restore slot, a deleting database and
-// one without a provider resource are not ranked. A plan that includes no
+// past the plan. A restore holding the restore slot, a PR preview database, a
+// deleting database and one without a provider resource are not ranked. A
+// preview database has its own limit and goes with its PR. A plan that includes no
 // managed PostgreSQL (NotIncluded) has every ranked database past it; an
 // unknown plan (no database limit) has nothing past it.
 func PlanExcess(databases []Database, limits api.ManagedPostgresPlanLimits) map[string]string {
@@ -67,7 +68,11 @@ func PlanExcess(databases []Database, limits api.ManagedPostgresPlanLimits) map[
 	}
 	ranked := make([]Database, 0, len(databases))
 	for _, database := range databases {
-		if !database.RestoreSlotUntil.IsZero() || !capEnforceable(database) {
+		// A PR preview database is outside the plan's database limit
+		// (ADR-20261102123523), as CountManagedPostgresLifecycleDatabases
+		// counts it at creation; ranking it would push production databases
+		// created after it past the plan.
+		if !database.RestoreSlotUntil.IsZero() || !database.Preview.IsZero() || !capEnforceable(database) {
 			continue
 		}
 		ranked = append(ranked, database)

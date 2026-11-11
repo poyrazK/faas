@@ -44,6 +44,44 @@ start the developer loop after authentication; it cannot be combined with
 values and destination. TOML manifests require an explicit migration before
 using this YAML writer.
 
+## Run HTTP apps on this machine
+
+From an existing Express, FastAPI, or Go HTTP project:
+
+```sh
+gregale dev --local
+gregale dev --local --offline --postgres --bucket uploads
+```
+
+The CLI detects the development command, falling back to the ordinary start
+command. It runs the app behind `http://localhost:8787`, passes its listening
+port as `PORT` and loopback address as `HOST`, and restarts the process group
+after source edits settle. The public local URL stays the same across restarts.
+Detected FastAPI, Flask, and Django commands receive explicit host/port options.
+Project tools in `node_modules/.bin`, `.venv/bin`, and `venv/bin` are on PATH;
+install your application's dependencies before starting it.
+
+Override detection for a custom command (which must listen on `PORT`):
+
+```sh
+gregale dev --local --watch-command 'node server.js'
+gregale dev --local --watch-command 'go run ./cmd/api' --port 9000
+```
+
+The command precedence is `--watch-command`, `dev.watch.command` in
+`gregale.yaml`, the detected framework development command, then the inferred
+start command. `--no-reload` disables CLI restarts; an explicitly selected
+command can still run its own watcher. App logs stream to the terminal. A crash
+keeps the proxy available with an unavailable response; fix the source and save
+to restart. Ctrl-C stops the app and its child processes before closing borrowed
+resources. Managed HTTP app processes currently require Linux or macOS.
+
+Apps use the same remote or offline Postgres/bucket setup described below.
+`--env-file` supplies local configuration; nothing is uploaded and remote secret
+values are not exported. Runtime host/port settings are reserved for the local
+proxy. Local runs do not reproduce microVM isolation or snapshot behavior.
+Function projects retain their existing runner and local trigger behavior.
+
 ## Run functions on this machine
 
 `gregale dev --local` runs the project's Node, Python and Go functions on
