@@ -682,6 +682,24 @@ jobs:
         if: matrix.shard == 1
         with:
           python-version: '3.12'
+      # Sandbox session SDKs (ADR-20261027090013 §8, §12): the OpenAI Agents
+      # SDK backend and the E2B-compatible clients. Each runs only when its
+      # directory, the Makefile or this workflow changed.
+      - name: sandbox SDKs (Agents SDK backend, E2B shims)
+        if: matrix.shard == 1
+        run: |
+          set -euo pipefail
+          ran=0
+          for sdk in agents-sandbox:test-agents-sandbox sandbox-e2b:test-sandbox-e2b sandbox-e2b-python:test-sandbox-e2b-python; do
+            dir="${sdk%%:*}" target="${sdk#*:}"
+            if grep -qE "^(sdk/${dir}/|Makefile|\.github/workflows/ci-light\.yml)" "$RUNNER_TEMP/changed-paths.txt"; then
+              echo "::group::make ${target}"
+              make "${target}"
+              echo "::endgroup::"
+              ran=1
+            fi
+          done
+          [[ "$ran" == 1 ]] || echo "no sandbox SDK changed"
       - name: generated Python PostgreSQL starter TLS recovery
         if: matrix.shard == 1
         env:

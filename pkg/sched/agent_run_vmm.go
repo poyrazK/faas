@@ -240,6 +240,24 @@ func relayToProto(r *AgentRunRelay) *vmmdpb.RunAgentRelay {
 		AgentVersion: int32(r.AgentVersion)}
 }
 
+// DeleteSandboxSnapshot removes a warm session snapshot's objects on vmmd
+// (DeleteWarmSnapshot, schedd's certificate). A missing object is no error.
+func (c *VMMClient) DeleteSandboxSnapshot(ctx context.Context, snap *AgentRunSnapshot) error {
+	if c == nil || c.cli == nil {
+		return errors.New("sched: nil vmmd sandbox client")
+	}
+	if snap == nil || snap.StorageKey == "" || snap.VMStateStorageKey == "" {
+		return errors.New("sched: a sandbox snapshot without its keys")
+	}
+	fields, _ := wire.FromContext(ctx)
+	if _, err := c.cli.DeleteWarmSnapshot(wire.WithCorrelationOutgoing(ctx, fields), &vmmdpb.DeleteWarmSnapshotRequest{
+		StorageKey: snap.StorageKey, VmstateStorageKey: snap.VMStateStorageKey,
+	}); err != nil {
+		return liftErr(err)
+	}
+	return nil
+}
+
 // CaptureSandboxSnapshot asks vmmd to capture a session's warm snapshot
 // (ADR-20261027090013 §12). spec carries no session data or commands.
 func (c *VMMClient) CaptureSandboxSnapshot(ctx context.Context, spec SandboxSpec, namespace, captureID string) (*AgentRunSnapshot, error) {
