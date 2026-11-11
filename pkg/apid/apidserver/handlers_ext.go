@@ -1433,6 +1433,12 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.RetryPolicy != nil {
 		retryPolicyPtr = &retryPolicyJSON
 	}
+	// ADR-20261111114059: an agent's added standing cost is charged to its
+	// budget, after validation and before the write.
+	commitBudget, answered := s.chargeAppUpdate(w, r, acct, app, req, ram)
+	if answered {
+		return
+	}
 	params := state.UpdateAppParams{
 		Visibility:         visibilityPtr(req.Visibility),
 		SetVisibility:      req.Visibility != nil,
@@ -1706,6 +1712,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, trafficproblem.Policy(err, fallback))
 		return
 	}
+	commitBudget()
 	if req.BeforeCheckpoint != nil || req.Profiling != nil || req.Tracing != nil {
 		// Existing process snapshots were created with the previous hook
 		// setting. The runtime-config stamp also retires live guests whose
