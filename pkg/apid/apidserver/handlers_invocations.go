@@ -580,7 +580,11 @@ func (s *server) queueReceive(w http.ResponseWriter, r *http.Request, acct state
 	}
 	defer release()
 	inv, err := s.receiveProductionQueueInvocation(r, acct, app)
-	if errors.Is(err, db.ErrWaitTimeout) {
+	// The wait is bounded by the request budget as well as its own 30 s, and
+	// both often expire together. Either deadline means "nothing arrived":
+	// 204, so the client polls again (Hunt 33 H33-12: 5 of 9 receives on an
+	// idle queue answered 503). A client that went away gets Canceled.
+	if errors.Is(err, db.ErrWaitTimeout) || errors.Is(err, context.DeadlineExceeded) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -589,6 +593,7 @@ func (s *server) queueReceive(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 	if err != nil {
+		s.log.WarnContext(r.Context(), "queue receive failed", "app_id", app.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("queue receive"))
 		return
 	}

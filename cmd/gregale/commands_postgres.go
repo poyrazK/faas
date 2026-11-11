@@ -400,7 +400,9 @@ func cmdPostgresCreate(args []string) int {
 	scaleToZero := fs.Bool("scale-to-zero", true, "suspend compute when idle")
 	storage := fs.Int64("storage-bytes", 0, "storage limit in bytes (0 uses plan allowance)")
 	restoreWindow := fs.Int64("restore-window-seconds", 0, "point-in-time restore window (0 uses plan allowance)")
-	if err := fs.Parse(args); err != nil {
+	// `postgres create --help` shows the flags first; the name may come on
+	// either side of them (Hunt 33 H33-24).
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if invalidPostgresChoice("postgres create", "class", *serviceClass, "availability", *availability) {
@@ -700,7 +702,7 @@ func cmdPostgresBindingsGet(args []string) int {
 
 func cmdPostgresBindingsRotate(args []string) int {
 	usage := "usage: gregale postgres bindings rotate ID [--wait] [--wait-timeout DURATION] [--poll-interval DURATION]"
-	positionals, waitOptions, ok := parseBindingRotationWaitArgs(args, "postgres bindings rotate", 1)
+	positionals, waitOptions, ok := parseBindingRotationWaitArgs(args, "postgres bindings rotate", 1, postgresBindingRotationWaitTimeoutDefault)
 	if !ok {
 		PrintUsage(osStderr, usage, "postgres")
 		return 1
@@ -745,13 +747,16 @@ func cmdPostgresBindingsRotate(args []string) int {
 		renderPostgresBinding(osStdout, result)
 	}
 	if timedOut {
-		PrintFail(osStderr, "timed out after %s waiting for PostgreSQL binding %s rotation", waitOptions.WaitTimeout, id)
+		PrintFail(osStderr, "timed out after %s waiting for PostgreSQL binding %s rotation; the rotation continues: check it with gregale postgres bindings get %s", waitOptions.WaitTimeout, id, id)
 		return 1
 	}
 	return 0
 }
 
 func cmdPostgresBindingsDelete(args []string) int {
+	// Every other delete takes --yes; this one has no prompt, so it is
+	// accepted and changes nothing (Hunt 33 H33-61).
+	args = slices.DeleteFunc(slices.Clone(args), func(arg string) bool { return arg == "--yes" || arg == "-yes" || arg == "--yes=true" })
 	id, ok := onePostgresID("postgres bindings delete", args)
 	if !ok {
 		return 1

@@ -1874,6 +1874,7 @@ var RunBindingVerificationJobs = runBindingVerificationJobs
 var RunBucketCapacity = runBucketCapacity
 var RunBucketCopySources = runBucketCopySources
 var RunBucketDefaultEncryption = runBucketDefaultEncryption
+var BucketStatusAlias = bucketStatusAlias
 var RunBucketDelete = runBucketDelete
 var RunBucketLifecycle = runBucketLifecycle
 var RunBucketList = runBucketList
@@ -2849,3 +2850,5 @@ var WorkerNoInstancesLine = workerNoInstancesLine
 
 // PrintPublicURLs exposes the plan's public URL list (H32-30).
 var PrintPublicURLs = printPublicURLs
+
+var RenderDeploymentHostingReceiptFor = renderDeploymentHostingReceiptFor
