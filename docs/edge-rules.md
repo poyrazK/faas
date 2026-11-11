@@ -825,7 +825,7 @@ refused until the plan allows them again. Delete the ones you no longer need.
 | 401 `unauthorized` | `jwt`; `throttle` with `missing_key_policy: reject` |
 | 403 `ip_denied` | `ip` |
 | 403 `geo_denied` | `geo` |
-| 403 `forbidden` | blocking `waf` |
+| 403 `waf_blocked` | blocking `waf` |
 | 403 `penalty_box` | a client in a penalty box, with `Retry-After` |
 | 403 `challenge_required` | `challenge` on a request that is not a page load |
 | 413 `request_too_large` | `limit`, `validate` |
