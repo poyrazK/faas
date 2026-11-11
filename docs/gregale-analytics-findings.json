@@ -219,7 +219,7 @@
       "remediation_status": "verified",
       "original_status": "confirmed_unfixed",
       "resolution": {
-        "summary": "Preserve gateway healthy intervals and app gap intervals and check only evidence overlapping the requested historical window. Missing proof, legacy losses, and windows before durable auditing remain unknown.",
+        "summary": "Preserve gateway healthy intervals and app gap intervals and check only evidence overlapping the requested historical window. Live app backlogs report pending only in their recorded intervals. Migration replay preserves tracked evidence without introducing legacy gaps. Missing proof, legacy losses, and windows before durable auditing remain unknown.",
         "files": [
           "pkg/state/request_analytics_rollup_queries.sql",
           "pkg/state/pgstore_route_analytics.go",
@@ -230,7 +230,9 @@
           "TestAnalyticsHistoricalCoverageSurvivesLaterLossAndNodeOutage",
           "TestRequestTelemetryCompletenessPG",
           "TestAnalyticsCountingHistoryIgnoresLaterRawLoss",
-          "TestAnalyticsHistoryRequiresProofForRetiredSilentNodes"
+          "TestAnalyticsHistoryRequiresProofForRetiredSilentNodes",
+          "TestAnalyticsCompletenessJudgesCountingNodesByAnalyticsGaps",
+          "TestAnalyticsCoverageMigrationReplayPreservesEvidence"
         ],
         "branch": "fix/gregale-analytics-findings"
       }

@@ -317,6 +317,10 @@ WITH participating_nodes AS (
  SELECT 1 FROM request_analytics_coverage_intervals i WHERE i.node_name=n.node_name AND i.source_kind='analytics'
  AND i.covered_since<=$2::timestamptz AND i.covered_until>=$1::timestamptz
  ) THEN 'analytics' ELSE 'raw' END::text AS source_kind FROM participating_nodes n
+), pending_app_gaps AS (
+ SELECT node_name,'raw'::text AS source_kind,app_id,last_gap_at FROM request_telemetry_app_gaps WHERE pending_count>0
+ UNION ALL
+ SELECT node_name,'analytics'::text AS source_kind,app_id,last_gap_at FROM request_analytics_app_gaps WHERE pending_count>0
 ), gaps AS (
  SELECT 'telemetry_coverage_unknown'::text AS reason WHERE NOT EXISTS(SELECT 1 FROM evidence)
  OR ($3::boolean AND EXISTS(SELECT 1 FROM evidence WHERE source_kind='raw') AND NOT EXISTS(
@@ -330,6 +334,13 @@ WITH participating_nodes AS (
  SELECT 'telemetry_window_incomplete'::text WHERE EXISTS(
  SELECT 1 FROM request_analytics_coverage_gaps g JOIN evidence e USING(node_name,source_kind)
  WHERE g.app_id=$4::uuid AND g.gap_from<$1::timestamptz AND g.gap_until>=$2::timestamptz)
+ UNION
+ -- A live backlog affects its recorded delivery interval, not earlier proof.
+ SELECT 'telemetry_ingestion_pending'::text WHERE EXISTS(
+ SELECT 1 FROM pending_app_gaps p JOIN evidence e USING(node_name,source_kind)
+ JOIN request_analytics_coverage_gaps g USING(node_name,source_kind,app_id)
+ WHERE p.app_id=$4::uuid AND g.gap_from<=p.last_gap_at AND g.gap_until>=p.last_gap_at
+ AND g.gap_from<$1::timestamptz AND g.gap_until>=$2::timestamptz)
  UNION
  SELECT CASE WHEN state='lost' THEN 'telemetry_window_incomplete' ELSE 'telemetry_ingestion_pending' END
  FROM request_analytics_rollup_windows WHERE $3::boolean AND app_id=$4::uuid

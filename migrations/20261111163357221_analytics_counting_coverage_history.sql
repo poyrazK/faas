@@ -3,7 +3,7 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
-CREATE FUNCTION request_analytics_record_counting_interval() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION request_analytics_record_counting_interval() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE previous_stamp timestamptz:=NEW.heartbeat_at; until_stamp timestamptz;
 BEGIN
  IF TG_OP='UPDATE' THEN previous_stamp:=least(OLD.heartbeat_at,NEW.heartbeat_at); END IF;
@@ -19,19 +19,25 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS request_analytics_record_counting_interval ON request_analytics_node_coverage;
 CREATE TRIGGER request_analytics_record_counting_interval AFTER INSERT OR UPDATE ON request_analytics_node_coverage
  FOR EACH ROW EXECUTE FUNCTION request_analytics_record_counting_interval();
+DROP TRIGGER IF EXISTS request_analytics_record_counting_gap ON request_analytics_app_gaps;
 CREATE TRIGGER request_analytics_record_counting_gap AFTER INSERT OR UPDATE ON request_analytics_app_gaps
  FOR EACH ROW EXECUTE FUNCTION request_analytics_record_coverage_gap();
 
 INSERT INTO request_analytics_coverage_watermarks(node_name,source_kind,registered_at,previous_source_at,source_at)
- SELECT c.node_name,'analytics',n.created_at,c.heartbeat_at,c.heartbeat_at FROM request_analytics_node_coverage c JOIN compute_nodes n ON n.name=c.node_name;
+ SELECT c.node_name,'analytics',n.created_at,c.heartbeat_at,c.heartbeat_at FROM request_analytics_node_coverage c JOIN compute_nodes n ON n.name=c.node_name
+ ON CONFLICT(node_name,source_kind) DO NOTHING;
 INSERT INTO request_analytics_coverage_intervals(node_name,source_kind,covered_since,covered_until)
  SELECT a.node_name,'analytics',a.counting_since,least(a.heartbeat_at,c.source_at)
  FROM request_analytics_node_coverage a JOIN request_telemetry_coverage c ON c.node_name=a.node_name AND c.boot_id=a.boot_id
- WHERE a.counting_since IS NOT NULL AND c.enabled AND c.sampling_basis_points=10000 AND least(a.heartbeat_at,c.source_at)>=a.counting_since;
+ WHERE a.counting_since IS NOT NULL AND c.enabled AND c.sampling_basis_points=10000 AND least(a.heartbeat_at,c.source_at)>=a.counting_since
+ ON CONFLICT(node_name,source_kind,covered_since) DO UPDATE SET covered_until=greatest(request_analytics_coverage_intervals.covered_until,EXCLUDED.covered_until);
 INSERT INTO request_analytics_coverage_gaps(node_name,source_kind,app_id,gap_from,gap_until,history_incomplete)
- SELECT node_name,'analytics',app_id,last_gap_at,greatest(last_gap_at,updated_at),true FROM request_analytics_app_gaps;
+ SELECT g.node_name,'analytics',g.app_id,g.last_gap_at,greatest(g.last_gap_at,g.updated_at),true FROM request_analytics_app_gaps g
+ WHERE NOT EXISTS(SELECT 1 FROM request_analytics_coverage_gaps h WHERE h.node_name=g.node_name AND h.app_id=g.app_id AND h.source_kind='analytics')
+ ON CONFLICT(node_name,source_kind,app_id,gap_from) DO NOTHING;
 -- +goose StatementEnd
 
 -- +goose Down
