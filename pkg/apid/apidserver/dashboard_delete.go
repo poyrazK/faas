@@ -240,8 +240,9 @@ func (s *server) dashboardRaiseOverageCap(w http.ResponseWriter, r *http.Request
 		}
 		capCents = &n
 	}
-	// ADR-20261105120000: the same paid-plan bounds as the API.
-	if api.OverageCapProblem(acct.Plan, capCents) != nil {
+	// ADR-20261105120000: the same paid-plan bounds as the API; a
+	// complimentary account keeps its $0 cap (ADR-20261111140000).
+	if api.OverageCapProblem(acct.Plan, capCents) != nil || s.complimentaryRefusal(r.Context(), acct.ID) != nil {
 		http.Redirect(w, r, "/dashboard/billing?cap=invalid", http.StatusSeeOther)
 		return
 	}
