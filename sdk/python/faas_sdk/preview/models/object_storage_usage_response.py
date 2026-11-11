@@ -45,7 +45,7 @@ class ObjectStorageUsageResponse:
     """UTC month boundary at which shadow/live handling starts. Periods before it are never charged."""
     over_ceiling: ObjectStorageOverCeilingDeletion | Unset = UNSET
     """Present while the account stores more than its object-storage ceiling. Unless the account gets back under
-    the ceiling first, Gregale deletes the excess on deletion_scheduled_at (ADR-20261111123000)."""
+    the ceiling first, Gregale deletes the excess on deletion_scheduled_at."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

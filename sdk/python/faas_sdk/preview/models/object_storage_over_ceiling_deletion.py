@@ -13,7 +13,7 @@ T = TypeVar("T", bound="ObjectStorageOverCeilingDeletion")
 @_attrs_define
 class ObjectStorageOverCeilingDeletion:
     """Present while the account stores more than its object-storage ceiling. Unless the account gets back under the
-    ceiling first, Gregale deletes the excess on deletion_scheduled_at (ADR-20261111123000).
+    ceiling first, Gregale deletes the excess on deletion_scheduled_at.
 
     """
 
