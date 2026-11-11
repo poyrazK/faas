@@ -155,6 +155,29 @@
     "kind": "account_identity"
   },
   {
+    "table": "billing_plan_activations",
+    "columns": [
+      "effective_at",
+      "from_plan",
+      "sequence",
+      "subject_id",
+      "to_plan"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "billing_usage_intents",
+    "columns": [
+      "account_id",
+      "created_at",
+      "meter",
+      "provider",
+      "quantity",
+      "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "financial_budget_alert_channel_deliveries",
     "columns": [
       "account_id",
@@ -17548,6 +17571,22 @@
       "sha256",
       "state",
       "storage_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "spend_cap_notice_outbox",
+    "columns": [
+      "account_id",
+      "cap_cents",
+      "delivered_at",
+      "id",
+      "lease_token",
+      "month",
+      "next_attempt_at",
+      "observed_cents",
+      "reached_at",
+      "state"
     ],
     "kind": "operational"
   },

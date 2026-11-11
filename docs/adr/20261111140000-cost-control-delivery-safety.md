@@ -24,6 +24,8 @@
    invalidates its pricing cache on the activation head and replays intermediate
    plans, including returns to the original plan and the previous UTC month.
    This does not reconstruct changes that happened before the migration.
+   Plan history, delivery intents and notice authority remain with the original
+   billing subject; project clones do not copy them.
 4. Shared strict compute funding uses the smallest **time-weighted** billing
    allowance applicable to any recorded hour segment. It never increases an
    existing month's funded allowance or erases paid commitments. This replaces
