@@ -91,9 +91,14 @@ A bucket created with `--public --serve-at /assets` serves its objects at
 without waking your app. Responses are cacheable for five minutes, so a deleted
 or replaced object disappears everywhere within that time. Anonymous reads may
 use at most 75% of your account's monthly request and egress ceilings, and each
-bucket serves at most 100 reads per second (bursts to 200); past either limit,
-readers get `429`. The mount path cannot change after creation. Buckets are
-private unless created public.
+bucket serves at most 100 reads per second (bursts to 200), and one client
+address at most 10 per second per bucket (bursts to 50); past any limit,
+readers get `429`. A read of a key that does not exist answers `404` and does
+not count against your ceilings. A public URL with a query string is
+redirected (`301`) to the same path without it before anything is counted, so
+query strings never reach your bucket: put an asset's version in its key, such
+as `/assets/app.3f9c2e.js`, not in `?v=`. The mount path cannot change after
+creation. Buckets are private unless created public.
 
 When public mount paths overlap, the longest matching path serves the request.
 For example, `/assets/images/logo.png` uses the bucket mounted at
@@ -528,7 +533,7 @@ what you used.
 | Lifecycle rules per bucket | 1,000 |
 | Notification rules per bucket | 1,000 |
 | CORS rules per bucket | 100 |
-| Anonymous reads of a public bucket | 75% of the account's monthly request and egress ceilings; 100 per second per bucket |
+| Anonymous reads of a public bucket | 75% of the account's monthly request and egress ceilings; 100 per second per bucket; 10 per second per client address per bucket; missing keys not counted |
 | Requests through `s3.gregale.dev` | 100 per second per account, bursts of 200; more answer `503 SlowDown`, which S3 SDKs retry with backoff |
 | Requests each month | Free 50,000, Hobby 500,000, Pro 2,500,000, Scale 10,000,000 ([plans](plans.md#object-storage)). At the limit, every request is refused until the month ends |
 | Uploads and upload parts in progress through `s3.gregale.dev` | A few per account; more wait up to 15 seconds for a turn, then answer `503 SlowDown` |
