@@ -59,6 +59,24 @@ func TestManagerExecuteAppTaskDestroysInstance(t *testing.T) {
 	}
 }
 
+// Hunt 33 H33-7: the first 'gregale app exec' after a deploy finished its
+// command but answered "result channel closed unexpectedly", because the VM's
+// teardown could not be confirmed yet. The teardown is retained and retried;
+// the finished command's result is returned.
+func TestManagerExecuteAppTaskKeepsResultWhenTeardownIsPending(t *testing.T) {
+	vmm := &appTaskTestVMM{fakeVMM: &fakeVMM{destroyWithExportErr: errors.New("veth removal unconfirmed")}}
+	m := NewManager(&fakeRunner{}, vmm, Paths{}, "1.0.0", nil, nil)
+	lease, leaseErr := m.alloc.Acquire("task-vm-2")
+	if leaseErr != nil {
+		t.Fatal(leaseErr)
+	}
+	m.live["task-vm-2"] = &Instance{Lease: lease, AppTaskOnly: true}
+	result, err := m.ExecuteAppTask(context.Background(), "task-vm-2", appTaskProtocolRequest("task-2"))
+	if err != nil || result.Status != apptaskproto.StatusSucceeded {
+		t.Fatalf("result = %+v, err = %v; want the finished command's result", result, err)
+	}
+}
+
 func TestManagerExecuteAppTaskDestroysWhenDialerIsUnavailable(t *testing.T) {
 	vmm := &fakeVMM{}
 	m := NewManager(&fakeRunner{}, vmm, Paths{}, "1.0.0", nil, nil)
