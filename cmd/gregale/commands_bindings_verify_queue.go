@@ -83,7 +83,7 @@ func executeQueueBindingCanary(ctx context.Context, client *api.Client, app, bin
 	for {
 		switch r.Status {
 		case "succeeded":
-			if r.CompletedAt == nil || r.DeliveredAt == nil || r.DeliveredAt.Before(r.PublishedAt) || r.CompletedAt.Before(*r.DeliveredAt) || r.CompletedAt.After(time.Now()) || !r.ExpiresAt.After(time.Now()) {
+			if r.CompletedAt == nil || r.DeliveredAt == nil || r.DeliveredAt.Before(r.PublishedAt) || r.CompletedAt.Before(*r.DeliveredAt) || serverTimeAhead(*r.CompletedAt, time.Now()) || !r.ExpiresAt.After(time.Now()) {
 				return r, fmt.Errorf("server did not confirm handler completion")
 			}
 			completed = true

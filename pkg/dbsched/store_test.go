@@ -258,6 +258,56 @@ func TestStoreAlwaysOn(t *testing.T) {
 	}
 }
 
+func TestStoreHoldAndComputeQuota(t *testing.T) {
+	for name, factory := range storeFactories(t) {
+		t.Run(name, func(t *testing.T) {
+			s, ctx := factory(t), context.Background()
+			seedNodes(t, s, Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 100 << 30, Lifecycle: NodeActive})
+			vm, err := s.Place(ctx, newVM(1<<30, 384))
+			if err != nil || vm.Held || vm.ComputeQuotaUnitSeconds != 0 {
+				t.Fatalf("Place = %+v, %v; want unheld with no quota", vm, err)
+			}
+			id := vm.DatabaseID
+			if err := s.SetHeld(ctx, id, true); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.SetComputeQuota(ctx, id, 7200); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := s.Get(ctx, id); !got.Held || got.ComputeQuotaUnitSeconds != 7200 {
+				t.Fatalf("Get = held %v quota %d; want held, 7200", got.Held, got.ComputeQuotaUnitSeconds)
+			}
+			if listed, _ := s.List(ctx, StateProvisioning); len(listed) != 1 || !listed[0].Held || listed[0].ComputeQuotaUnitSeconds != 7200 {
+				t.Fatalf("List = %+v; want the held database with its quota", listed)
+			}
+			if err := s.SetHeld(ctx, id, false); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.SetComputeQuota(ctx, id, 0); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := s.Get(ctx, id); got.Held || got.ComputeQuotaUnitSeconds != 0 {
+				t.Fatalf("Get after release = held %v quota %d; want neither", got.Held, got.ComputeQuotaUnitSeconds)
+			}
+			if err := s.SetHeld(ctx, uuid.NewString(), true); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("hold of a missing database = %v, want ErrNotFound", err)
+			}
+			if err := s.SetComputeQuota(ctx, uuid.NewString(), 1); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("quota of a missing database = %v, want ErrNotFound", err)
+			}
+			if err := s.Transition(ctx, id, []State{StateProvisioning}, StateDeleting, TransitionOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.SetHeld(ctx, id, true); !errors.Is(err, ErrConflict) {
+				t.Fatalf("hold of a deleting database = %v, want ErrConflict", err)
+			}
+			if err := s.SetComputeQuota(ctx, id, 1); !errors.Is(err, ErrConflict) {
+				t.Fatalf("quota of a deleting database = %v, want ErrConflict", err)
+			}
+		})
+	}
+}
+
 // TestStoreRestorePlacementAndLease pins a restore to its node, keeps its
 // lineage and lets one holder at a time run it.
 func TestStoreRestorePlacementAndLease(t *testing.T) {

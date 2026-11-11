@@ -27789,7 +27789,8 @@ SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, 
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
     move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
-    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history
+    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history,
+    held, compute_quota_unit_seconds
 FROM database_vms WHERE database_id = $1
 `
 
@@ -27831,6 +27832,8 @@ func (q *Queries) GetDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.
 		&i.UpgradeResult,
 		&i.UpgradeLeaseUntil,
 		&i.MajorHistory,
+		&i.Held,
+		&i.ComputeQuotaUnitSeconds,
 	)
 	return i, err
 }
@@ -48717,7 +48720,8 @@ SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, 
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
     move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
-    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history
+    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history,
+    held, compute_quota_unit_seconds
 FROM database_vms WHERE state = ANY($1::text[]) ORDER BY database_id
 `
 
@@ -48765,6 +48769,8 @@ func (q *Queries) ListDatabaseVMsByState(ctx context.Context, db DBTX, states []
 			&i.UpgradeResult,
 			&i.UpgradeLeaseUntil,
 			&i.MajorHistory,
+			&i.Held,
+			&i.ComputeQuotaUnitSeconds,
 		); err != nil {
 			return nil, err
 		}
@@ -106828,6 +106834,42 @@ type SetDatabaseVMAlwaysOnParams struct {
 
 func (q *Queries) SetDatabaseVMAlwaysOn(ctx context.Context, db DBTX, arg SetDatabaseVMAlwaysOnParams) (int64, error) {
 	result, err := db.Exec(ctx, setDatabaseVMAlwaysOn, arg.AlwaysOn, arg.DatabaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setDatabaseVMComputeQuota = `-- name: SetDatabaseVMComputeQuota :execrows
+UPDATE database_vms SET compute_quota_unit_seconds = $1
+WHERE database_id = $2 AND state <> 'deleting'
+`
+
+type SetDatabaseVMComputeQuotaParams struct {
+	ComputeQuotaUnitSeconds pgtype.Int8
+	DatabaseID              pgtype.UUID
+}
+
+func (q *Queries) SetDatabaseVMComputeQuota(ctx context.Context, db DBTX, arg SetDatabaseVMComputeQuotaParams) (int64, error) {
+	result, err := db.Exec(ctx, setDatabaseVMComputeQuota, arg.ComputeQuotaUnitSeconds, arg.DatabaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setDatabaseVMHeld = `-- name: SetDatabaseVMHeld :execrows
+UPDATE database_vms SET held = $1
+WHERE database_id = $2 AND state <> 'deleting'
+`
+
+type SetDatabaseVMHeldParams struct {
+	Held       bool
+	DatabaseID pgtype.UUID
+}
+
+func (q *Queries) SetDatabaseVMHeld(ctx context.Context, db DBTX, arg SetDatabaseVMHeldParams) (int64, error) {
+	result, err := db.Exec(ctx, setDatabaseVMHeld, arg.Held, arg.DatabaseID)
 	if err != nil {
 		return 0, err
 	}
