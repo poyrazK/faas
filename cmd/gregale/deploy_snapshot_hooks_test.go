@@ -3,6 +3,7 @@ package main_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -59,11 +60,12 @@ func TestDeployPlanListsSnapshotHooks(t *testing.T) {
 
 type hookLifecycleClient struct {
 	app     api.AppResponse
+	getErr  error
 	updates []api.UpdateAppRequest
 }
 
 func (c *hookLifecycleClient) GetApp(context.Context, string) (api.AppResponse, error) {
-	return c.app, nil
+	return c.app, c.getErr
 }
 
 func (c *hookLifecycleClient) UpdateApp(_ context.Context, _ string, req api.UpdateAppRequest) (api.AppResponse, error) {
@@ -107,6 +109,18 @@ func TestSingleFunctionDeployAppliesSnapshotHooks(t *testing.T) {
 	}
 	if len(c.updates) != 1 || c.updates[0].BeforeCheckpoint == nil || c.updates[0].BeforeCheckpoint.Path != "" {
 		t.Fatalf("updates = %+v, want before_checkpoint cleared", c.updates)
+	}
+
+	// An unreadable app fails the deploy only when the code declares hooks
+	// to set (a fake API without GET /v1/apps/{slug} broke plain deploys).
+	write("export default { fetch() {} };\n")
+	c = &hookLifecycleClient{getErr: errors.New("404 not found")}
+	if err := main.ApplyFunctionHookLifecycleForTest(ctx, c, "api", dir, ""); err != nil || len(c.updates) != 0 {
+		t.Fatalf("no hooks, unreadable app: err %v updates %+v, want neither", err, c.updates)
+	}
+	write("export default { fetch() {}, afterRestore() {} };\n")
+	if err := main.ApplyFunctionHookLifecycleForTest(ctx, c, "api", dir, ""); err == nil {
+		t.Fatal("declared hooks on an unreadable app must fail the deploy")
 	}
 
 	// An app hook of its own plus the same hook in code is refused.

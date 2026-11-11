@@ -55,6 +55,9 @@ func (m *MemStore) ConsumeOrgInvitationWithActivity(_ context.Context, hash []by
 	if !strings.EqualFold(invitation.Email, accepting.Email) {
 		return OrgMembership{}, OrgInvitation{}, 0, 0, ErrOrgInvitationInvalid
 	}
+	if err := m.checkInviterLocked(invitation); err != nil {
+		return OrgMembership{}, OrgInvitation{}, 0, 0, err
+	}
 	org, ok := m.orgs[invitation.OrgID]
 	if !ok {
 		return OrgMembership{}, OrgInvitation{}, 0, 0, ErrNotFound

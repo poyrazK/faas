@@ -120,7 +120,7 @@ func buildSubscriptionCapacityPreview(pressure *api.EventConsumerCapacityPressur
 	if pressure == nil || !pressure.Complete || pressure.Coverage != "live_slots_and_all_pending_application_recipients" || pressure.PlanMaxPendingDeliveries <= 0 || pressure.ConfiguredMaxPendingDeliveries < 0 || len(pressure.Scopes) != 3 || !sameBindingDeployment(pressure.AppID, app) || !sameBindingDeployment(pressure.SubscriptionID, sub) {
 		return out, fmt.Errorf("missing or incompatible complete scoped pressure snapshot; upgrade older servers before previewing")
 	}
-	if pressure.ObservedAt.IsZero() || serverTimeAhead(pressure.ObservedAt, now) || now.Sub(pressure.ObservedAt) > maxAge {
+	if pressure.ObservedAt.IsZero() || pressure.ObservedAt.After(now.Add(api.EventDeliveryObservationClockSkew)) || now.Sub(pressure.ObservedAt) > maxAge {
 		return out, fmt.Errorf("pressure snapshot is stale or future-dated")
 	}
 	names := [3]string{"consumer", "app", "account"}

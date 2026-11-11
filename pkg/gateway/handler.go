@@ -2154,6 +2154,13 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 	if !app.OnlyAllowDeclaredRoutes {
 		return false
 	}
+	// The gateway answers the app's health path itself without a VM, so it
+	// is not app surface the gate protects; refusing it broke uptime
+	// monitors on apps that turned the gate on (Hunt 32 H32-48, ADR-091
+	// amendment 2026-11-10). A health path that wakes the app stays gated.
+	if h.answersHealthAtEdge(r, app, requestPath) {
+		return false
+	}
 	if h.declaredRoutes == nil {
 		w.Header().Set("x-faas-error-reason", api.CodeDeclaredRoutePolicyUnavailable)
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable,
@@ -6300,6 +6307,7 @@ func (h *Handler) pickAfterCapacity(app App, preferredInstanceID, versionKey str
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r = r.WithContext(withResponseCacheFill(r.Context(), h.responseCache))
 	// These forwarding controls are authored below from the pinned app and
 	// streaming decision. A public header cannot turn ordinary HTTP into a
 	// detachable response and escape its deadline.
@@ -6436,6 +6444,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the response and gateway-private context, leaving cold-wake timelines
 	// without the customer-visible correlation handle.
 	r.Header.Set(api.RequestIDHeader, rid)
+	matchCtx.requestID = rid
 	if !isSyntheticInvocation(r.Context()) {
 		for name := range r.Header {
 			if api.IsReservedOperationHeader(name) || api.HasLowerPrefix(name, "x-gregale-event-") {
@@ -7399,7 +7408,7 @@ haveApp:
 		// check is the single chokepoint: an authed request
 		// cannot reach the tee even if applyEdgeRuleCache
 		// itself short-circuited to a miss.
-		cw := newCacheWriter(w, rec, rule, ResponseCachePerEntryMaxBytes)
+		cw := newCacheWriter(w, rec, rule, ResponseCachePerEntryMaxBytes, responseCacheFillFrom(r.Context(), h.responseCache))
 		cw.excludeManagedVersionCookie(managedVersionSetCookie)
 		cw.excludeManagedCookie(managedReleaseContextSetCookie)
 		w = cw

@@ -101,13 +101,26 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 			return Database{}, false, ErrConflict
 		}
 	}
-	active, err := s.countReservationOwner(ctx, tx, database)
-	if err != nil {
-		return Database{}, false, mapPostgresError(err)
-	}
-	slot, err := s.reservationTakesRestoreSlot(ctx, tx, database, active, limit)
-	if err != nil {
-		return Database{}, false, err
+	slot := false
+	if database.InBranchAllowance() {
+		// A short-lived branch takes a place in the branch allowance, never
+		// the database limit or the restore slot (ADR-20261106103654
+		// amendment 1). The owner lock above serializes the count.
+		held, err := s.countBranchAllowanceOwner(ctx, tx, database)
+		if err != nil {
+			return Database{}, false, mapPostgresError(err)
+		}
+		if allowance := branchLimit(ctx); allowance < 1 || held >= int64(allowance) {
+			return Database{}, false, ErrBranchLimit
+		}
+	} else {
+		active, err := s.countReservationOwner(ctx, tx, database)
+		if err != nil {
+			return Database{}, false, mapPostgresError(err)
+		}
+		if slot, err = s.reservationTakesRestoreSlot(ctx, tx, database, active, limit); err != nil {
+			return Database{}, false, err
+		}
 	}
 	row, err = q.InsertManagedPostgresLifecycleDatabase(ctx, tx, lifecycleInsertParams(database, accountID, databaseID))
 	if err != nil {
@@ -116,6 +129,13 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 	if slot {
 		row, err = q.TakeManagedPostgresRestoreSlot(ctx, tx, sqlc.TakeManagedPostgresRestoreSlotParams{
 			ID: databaseID, Until: databaseNullableTime(database.CreatedAt.Add(api.ManagedPostgresRestoreSlotWindow))})
+		if err != nil {
+			return Database{}, false, mapPostgresError(err)
+		}
+	}
+	if !database.ExpiresAt.IsZero() {
+		row, err = q.SetManagedPostgresDatabaseExpiry(ctx, tx, sqlc.SetManagedPostgresDatabaseExpiryParams{
+			ID: databaseID, ExpiresAt: databaseNullableTime(database.ExpiresAt)})
 		if err != nil {
 			return Database{}, false, mapPostgresError(err)
 		}
@@ -367,6 +387,9 @@ func validateReservation(database Database, limit int) error {
 		database.DesiredGeneration < 1 || database.ObservedGeneration != 0 ||
 		database.CreatedAt.IsZero() || database.UpdatedAt.IsZero() ||
 		database.ProviderResourceID != "" || database.DataResourceID != "" || database.LeaseToken != "" || database.DeletedAt != nil || database.EnvironmentCloneOperationID != "" || database.AccountingRequired {
+		return ErrInvalid
+	}
+	if !validReservationExpiry(database) {
 		return ErrInvalid
 	}
 	if database.RestoreSourceDatabaseID == "" && database.RestoreSourceResourceID == "" && database.RestorePointInTime.IsZero() {

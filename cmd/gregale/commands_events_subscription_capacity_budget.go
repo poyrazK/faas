@@ -11,7 +11,7 @@ func validateSubscriptionCapacityCommandBudget(b *api.EventSubscriptionCapacityC
 	if b == nil || !b.Complete || !sameBindingDeployment(b.AppID, app) || !sameBindingDeployment(b.SubscriptionID, sub) || b.Limit != api.EventSubscriptionCapacityCommandMaxReceipts || b.RetainedReceipts < 0 || b.RetainedReceipts > b.Limit || b.RemainingSlots != b.Limit-b.RetainedReceipts || b.Full != (b.RemainingSlots == 0) {
 		return fmt.Errorf("incompatible scoped receipt budget")
 	}
-	if b.ObservedAt.IsZero() || serverTimeAhead(b.ObservedAt, now) || now.Sub(b.ObservedAt) > maxAge {
+	if b.ObservedAt.IsZero() || b.ObservedAt.After(now.Add(api.EventDeliveryObservationClockSkew)) || now.Sub(b.ObservedAt) > maxAge {
 		return fmt.Errorf("receipt budget is stale or future-dated")
 	}
 	if (b.RetainedReceipts == 0) != (b.EarliestExpiryAt == nil) || (b.EarliestExpiryAt != nil && !b.EarliestExpiryAt.After(b.ObservedAt)) {

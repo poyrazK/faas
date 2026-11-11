@@ -384,7 +384,7 @@ func refusal(err error) error {
 	case errors.Is(err, managedpostgres.ErrUnavailable):
 		return fmt.Errorf("previewdb: set up preview database: %w", err)
 	case errors.Is(err, managedpostgres.ErrPreviewDatabaseLimit):
-		return &RefusedError{Reason: "the plan's PR preview databases are all in use; close a pull request or tear a preview down", Err: err}
+		return &RefusedError{Reason: "the account's PR preview databases are all in use (its plan's allowance or its share of the platform); close a pull request or tear a preview down", Err: err}
 	case errors.Is(err, managedpostgres.ErrQuotaExceeded):
 		return &RefusedError{Reason: "the plan does not include a PR preview database", Err: err}
 	case errors.Is(err, managedpostgres.ErrPreviewCopyUnsupported):

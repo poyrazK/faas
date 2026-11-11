@@ -54,6 +54,9 @@ func topLevelUsage(showAll, showOperator bool) string {
 		b.WriteString("Run 'gregale help --all --operator' to include operator and compatibility commands.\n")
 	}
 	b.WriteString("\nGlobal flags:\n")
+	b.WriteString("  --agent-reason TEXT    With an agent key, tell the person who approves a request\n")
+	b.WriteString("                         what it is for (before the command; up to 280 characters).\n")
+	b.WriteString("                         Equivalent env: GREGALE_AGENT_REASON.\n")
 	b.WriteString("  --json                 Machine-readable output where supported. Slices emit\n")
 	b.WriteString("                         NDJSON; scalars emit indented JSON; errors print\n")
 	b.WriteString("                         RFC 7807 to stderr. Equivalent env: FAAS_JSON=1.\n")
@@ -117,12 +120,13 @@ func run(args []string) (status int) {
 		jsonUsageHelp = previousUsageHelp
 		invokedCommandPath = previousPath
 	}()
-	previousAutomation, previousWait, previousOrg := nonInteractive, approvalWaitEnabled, projectOrganization
+	previousAutomation, previousWait, previousOrg, previousReason := nonInteractive, approvalWaitEnabled, projectOrganization, agentReason
 	defer func() {
-		nonInteractive, approvalWaitEnabled, projectOrganization = previousAutomation, previousWait, previousOrg
+		nonInteractive, approvalWaitEnabled, projectOrganization, agentReason = previousAutomation, previousWait, previousOrg, previousReason
 	}()
 	nonInteractive = false
 	projectOrganization = ""
+	agentReason = os.Getenv("GREGALE_AGENT_REASON")
 	approvalWaitEnabled = os.Getenv("GREGALE_WAIT_FOR_APPROVAL") == "1"
 	previousInsecureWarned := insecureAPIWarned
 	defer func() { insecureAPIWarned = previousInsecureWarned }()
@@ -168,6 +172,14 @@ func run(args []string) (status int) {
 	if len(args) > 0 {
 		if name, hidden := hiddenFlagArg(manifestLeafFlags(args), args[1:]); hidden {
 			return printErr("Unknown flag", fmt.Errorf("gregale: unknown flag %s; run 'gregale %s --help' for its options", name, leadingWords(typed)))
+		}
+	}
+	// A bare group that has nothing to run on its own lists its commands, as
+	// its --help does; `gregale bucket` printed one subcommand's usage and
+	// `gregale mcp` the usage of `mcp server` (Hunt 32 H32-2).
+	if len(typed) == 1 && bareGroupListsCommands[typed[0]] {
+		if printTreeManifestHelp(osStderr, typed) {
+			return 1
 		}
 	}
 	// Help under a tree noun or a shortcut comes from the tree manifest the
@@ -563,6 +575,8 @@ func run(args []string) (status int) {
 		return cmdDomains(args[1:])
 	case "deploy-tokens":
 		return cmdDeployTokens(args[1:])
+	case "sandbox-templates":
+		return cmdSandboxTemplates(args[1:])
 	case "sites":
 		return cmdSites(args[1:])
 	case "tenant-surfaces":
@@ -1203,3 +1217,7 @@ func findCliSubcommand(subcommands []cliSub, name string) (cliSub, bool) {
 	}
 	return cliSub{}, false
 }
+
+// bareGroupListsCommands names the groups whose bare invocation prints their
+// command list (on stderr, exit 1) instead of one subcommand's usage.
+var bareGroupListsCommands = map[string]bool{"bucket": true, "mcp": true}

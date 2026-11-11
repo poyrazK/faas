@@ -62,7 +62,13 @@ delay.
 
 - Preview databases do not count toward your plan's database limit. An
   account may hold at most one per open preview environment and production
-  database: your plan's open previews times its databases.
+  database: your plan's open previews times its databases. The platform
+  also caps one account's preview databases at a share of its capacity
+  (5%), so on a busy platform you may reach that first; a refusal says
+  `managed_postgres_preview_database_limit`.
+- When the platform is close to capacity, new preview databases pause
+  first (`managed_postgres_new_databases_paused`), so production databases
+  can still be created. Existing preview databases keep working.
 - Each is a small development database that scales to zero. An empty one
   stops at 1 GiB of storage (or your plan's storage, if smaller); a copy
   keeps the production database's storage limit.

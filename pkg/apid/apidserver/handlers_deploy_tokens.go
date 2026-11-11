@@ -123,7 +123,10 @@ func (s *server) createDeployToken(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrValidation("scopes require agent=true"))
 		return
 	}
-	token, err := store.CreateDeployToken(r.Context(), acct.ID, app.ID, hash, req.Label, scopes, expiresAt)
+	// The token authenticates as the member minting it, not as the app's
+	// creator it is listed under (ADR 20261110190000).
+	actor := actorAccount(r, acct)
+	token, err := store.CreateDeployToken(state.WithDeployTokenMinter(r.Context(), actor.ID), acct.ID, app.ID, hash, req.Label, scopes, expiresAt)
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.ErrCapacity("could not allocate deploy token"))
@@ -132,10 +135,11 @@ func (s *server) createDeployToken(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("could not create deploy token"))
 		return
 	}
+	s.noticeCredentialCreated(r, actor, credentialDeployToken, deployTokenNoticeLabel(app, token.Label))
 	resp := deployTokenResponse(token)
 	resp.Plaintext = plaintext
-	s.audit.Emit(r.Context(), "deploy_token.created", &acct.ID, map[string]any{
-		"token_id": token.ID, "app_id": app.ID, "scopes": token.Scopes,
+	s.audit.Emit(r.Context(), "deploy_token.created", &actor.ID, map[string]any{
+		"token_id": token.ID, "app_id": app.ID, "scopes": token.Scopes, "app_account_id": acct.ID,
 		"expires_at": token.ExpiresAt.UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusCreated, resp)
@@ -159,8 +163,9 @@ func (s *server) revokeDeployToken(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("could not revoke deploy token"))
 		return
 	}
-	s.audit.Emit(r.Context(), "deploy_token.revoked", &acct.ID, map[string]any{
-		"token_id": token.ID, "app_id": app.ID,
+	actorID := actorAccount(r, acct).ID
+	s.audit.Emit(r.Context(), "deploy_token.revoked", &actorID, map[string]any{
+		"token_id": token.ID, "app_id": app.ID, "app_account_id": acct.ID,
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -195,7 +200,8 @@ func (s *server) rotateDeployToken(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("could not generate deploy token"))
 		return
 	}
-	newToken, oldToken, err := store.RotateDeployToken(r.Context(), acct.ID, app.ID,
+	actor := actorAccount(r, acct)
+	newToken, oldToken, err := store.RotateDeployToken(state.WithDeployTokenMinter(r.Context(), actor.ID), acct.ID, app.ID,
 		r.PathValue("id"), hash, req.Label, expiresAt, 0)
 	if err != nil {
 		switch {
@@ -217,8 +223,19 @@ func (s *server) rotateDeployToken(w http.ResponseWriter, r *http.Request, acct 
 	if oldToken.ExpiresAt != nil {
 		resp.OldTokenExpires = oldToken.ExpiresAt.UTC().Format(time.RFC3339)
 	}
-	s.audit.Emit(r.Context(), "deploy_token.rotated", &acct.ID, map[string]any{
-		"token_id": newToken.ID, "old_token_id": oldToken.ID, "app_id": app.ID,
+	s.audit.Emit(r.Context(), "deploy_token.rotated", &actor.ID, map[string]any{
+		"token_id": newToken.ID, "old_token_id": oldToken.ID, "app_id": app.ID, "app_account_id": acct.ID,
 	})
+	s.noticeCredentialCreated(r, actor, credentialRotatedToken, deployTokenNoticeLabel(app, newToken.Label))
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+// deployTokenNoticeLabel names a deploy token in its credential notice: a
+// token deploys to one app for up to a year, so the mail says which
+// (account-flow audit 2026-11-10, ADR 20261111130000).
+func deployTokenNoticeLabel(app state.App, label string) string {
+	if label == "" {
+		return "for app " + app.Slug
+	}
+	return label + " (app " + app.Slug + ")"
 }

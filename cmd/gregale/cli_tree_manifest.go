@@ -357,7 +357,7 @@ func withAppTarget(sub cliSub, target string) cliSub {
 }
 
 // standardCliVerbs spells verbs in their standard form, dropping a synonym
-// whose standard verb is also listed (`rm` beside `delete`).
+// that is an alias of its listed standard verb (`rm` beside `delete`).
 func standardCliVerbs(subs []cliSub) []cliSub {
 	standard := make([]cliSub, 0, len(subs))
 	for _, sub := range subs {

@@ -44,6 +44,9 @@ type managedPostgresHooks struct {
 	// RestoreSlotExpired records a copy whose delete was scheduled because
 	// its restore slot ended without room (ADR-20261031123259).
 	RestoreSlotExpired func(context.Context, managedpostgres.Database)
+	// BranchExpired records a branch whose purge started because its TTL
+	// ended (ADR-20261106103654).
+	BranchExpired func(context.Context, managedpostgres.Database)
 	// NotifyRestoreSlot queues a restore slot email (ADR-20261031123259).
 	NotifyRestoreSlot func(context.Context, managedpostgres.RestoreSlotNotice) error
 	// NotifyPlanExcess queues the email for a database suspended past its
@@ -66,6 +69,13 @@ func (h *managedPostgresHooks) restoreSlotExpired() func(context.Context, manage
 		return nil
 	}
 	return h.RestoreSlotExpired
+}
+
+func (h *managedPostgresHooks) branchExpired() func(context.Context, managedpostgres.Database) {
+	if h == nil {
+		return nil
+	}
+	return h.BranchExpired
 }
 
 func (h *managedPostgresHooks) notifyRestoreSlot() func(context.Context, managedpostgres.RestoreSlotNotice) error {
@@ -111,9 +121,6 @@ func (h *managedPostgresHooks) egress() managedpostgres.EgressAllowanceFunc {
 }
 
 func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, hooks *managedPostgresHooks, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
-	// An invalid value fails startup in loadManagedPostgresCapEnforcer; here
-	// it reads as not "on", which refuses Free databases.
-	capMode, _ := managedpostgres.ParseCapEnforcementMode(getenv(managedpostgres.CapEnforcementEnv))
 	registry, err := managedpostgres.Load(getenv, managedPostgresFactories(pool))
 	if err != nil || registry == nil {
 		return nil, nil, nil, nil, nil, nil, err
@@ -146,7 +153,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		if _, err := capEnforcer.Enforce(ctx); err != nil && ctx.Err() == nil {
 			log.Warn("managed postgres compute cap sweep failed", "error", err)
 		}
-		deliverManagedPostgresOverage(ctx, store, hooks.charges(), billingAllowances, managedPostgresPlanSpans(accountStore), log)
+		deliverManagedPostgresOverage(ctx, store, hooks.charges(), billingAllowances, managedPostgresPlanSpans(accountStore), hooks.egress(), log)
 		observeManagedPostgresFleet(ctx, fleet, metrics, log)
 	}
 	usageCollector, err := managedpostgres.NewUsageCollector(registry, store, usageOptions)
@@ -200,6 +207,15 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			}
 			return limit, nil
 		},
+		// ADR-20261106103654 amendment 1: short-lived branches sit in their
+		// own allowance, outside the database limit.
+		MaxBranchesPerAccount: func(ctx context.Context, accountID string) (int, error) {
+			account, err := state.BillingResourceAccount(ctx, accountStore, accountID)
+			if err != nil {
+				return 0, err
+			}
+			return api.ManagedPostgresBranchesMax(api.Plan(account.Plan)), nil
+		},
 		FreePlan: func(ctx context.Context, subjectID string) (bool, error) {
 			account, err := state.BillingResourceAccount(ctx, accountStore, subjectID)
 			if err != nil {
@@ -220,9 +236,6 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		},
 		Admit: func(ctx context.Context, accountID string) error {
 			usagePolicy := registry.UsagePolicy().Enabled
-			if !usagePolicy && capMode == managedpostgres.CapEnforcementOn {
-				return nil
-			}
 			account, lookupErr := state.BillingResourceAccount(ctx, accountStore, accountID)
 			if lookupErr != nil {
 				if metrics != nil {
@@ -230,10 +243,11 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 				}
 				return lookupErr
 			}
-			// Every create and restore path admits here, so the Free-plan
+			// Every create and restore path admits here, so the plan
 			// refusal the create route makes also covers Compose, dev,
-			// pipeline mirrors and restores (bug hunt 33 H1).
-			if managedPostgresFreeClosed(api.Plan(account.Plan), capMode) {
+			// pipeline mirrors and restores (bug hunt 33 H1,
+			// ADR-20261110184700).
+			if managedPostgresNotInPlan(api.Plan(account.Plan)) {
 				if metrics != nil {
 					metrics.ObserveAdmission(managedpostgres.ErrNotInPlan)
 				}
@@ -324,6 +338,19 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		return nil, nil, nil, nil, nil, nil, err
 	}
 	reconciler.SetRestoreSlots(restoreSlots)
+	// ADR-20261110184700: a database past its plan for 30 days loses its
+	// bindings and enters the delete grace period.
+	capEnforcer.SetPlanExcessDelete(func(ctx context.Context, database managedpostgres.Database) (bool, error) {
+		return service.RetirePastPlan(ctx, bindingService, database)
+	})
+	branchExpiry, err := managedpostgres.NewBranchExpirySweeper(service, bindingService, managedpostgres.BranchExpirySweeperOptions{
+		Purged: hooks.branchExpired(),
+		Logger: log,
+	})
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+	reconciler.SetBranchExpiry(branchExpiry)
 	bindingReconciler, err := managedpostgres.NewBindingReconciler(bindingService, managedpostgres.BindingReconcilerOptions{
 		IncludeProvisioning: operationsGate,
 		Observe: func(ob managedpostgres.BindingReconcileObservation) {
@@ -393,6 +420,20 @@ func managedPostgresCapNoticeReady(getenv func(string) string) error {
 		managedpostgres.CapEnforcementEnv, internalmail.ManagedPostgresCapOutboxEnableEnv)
 }
 
+// managedPostgresPlanExcessDeleteReady refuses deleting databases past their
+// plan while the suspension email cannot be sent (ADR-20261110184700): the
+// email is the owner's only notice of the deletion date, and the sweep
+// deletes only on a date an email named, so without it nothing would ever be
+// deleted while the logs claim deletion is on.
+func managedPostgresPlanExcessDeleteReady(mode managedpostgres.CapEnforcementMode, getenv func(string) string) error {
+	if mode != managedpostgres.CapEnforcementOn || internalmail.ManagedPostgresPlanExcessOutboxEnabled(getenv) {
+		return nil
+	}
+	return fmt.Errorf("%s=on deletes databases past their plan, and owners learn the date only from the suspension email: "+
+		"set %s=1 with the internal mail producer outbox enabled, or keep deletion at shadow",
+		managedpostgres.PlanExcessDeleteEnv, internalmail.ManagedPostgresPlanExcessOutboxEnableEnv)
+}
+
 // loadManagedPostgresCapEnforcer builds the compute cap enforcer
 // (ADR-20261025094915). Each subject's ceiling is its plan's monthly compute
 // allowance, or twice it with overage on; the enforcer intersects it with the
@@ -410,15 +451,26 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 	if err != nil {
 		return nil, err
 	}
+	planExcessDeleteMode, err := managedpostgres.ParsePlanExcessDeleteMode(getenv(managedpostgres.PlanExcessDeleteEnv))
+	if err != nil {
+		return nil, err
+	}
+	if err := managedPostgresPlanExcessDeleteReady(planExcessDeleteMode, getenv); err != nil {
+		return nil, err
+	}
 	options := managedpostgres.CapEnforcerOptions{
-		Mode:             mode,
-		StorageMode:      storageMode,
-		PlanExcessMode:   planExcessMode,
-		Logger:           log,
-		Notify:           hooks.notifyCap(),
-		NotifyPlanExcess: hooks.notifyPlanExcess(),
-		Ceiling:          managedPostgresCapLimits(store, accountStore, hooks.overage()),
-		Egress:           hooks.egress(),
+		Mode:                 mode,
+		StorageMode:          storageMode,
+		PlanExcessMode:       planExcessMode,
+		PlanExcessDeleteMode: planExcessDeleteMode,
+		Logger:               log,
+		Notify:               hooks.notifyCap(),
+		NotifyPlanExcess:     hooks.notifyPlanExcess(),
+		Ceiling:              managedPostgresCapLimits(store, accountStore, hooks.overage()),
+		Egress:               hooks.egress(),
+		// The egress overage election moves the databases' hold only while
+		// their egress past the allowance is billed live (slice 3).
+		EgressBillingLive: managedPostgresChargesLive(hooks.charges()),
 	}
 	if mode == managedpostgres.CapEnforcementOn {
 		if err := managedPostgresCapNoticeReady(getenv); err != nil {
@@ -503,7 +555,7 @@ func managedPostgresPlanSpans(accountStore state.AppOwnerReader) func(context.Co
 // deliverManagedPostgresOverage charges overage through the billing provider
 // after a cap sweep (ADR-20261031110037). Without a provider, or with its
 // managed PostgreSQL policy off, nothing is charged or recorded.
-func deliverManagedPostgresOverage(ctx context.Context, store managedpostgres.UsageStore, sink billing.ManagedPostgresChargeSink, limits managedpostgres.OverageAllowance, spans func(context.Context, string, time.Time, time.Time) ([]managedpostgres.AllowanceSpan, error), log *slog.Logger) {
+func deliverManagedPostgresOverage(ctx context.Context, store managedpostgres.UsageStore, sink billing.ManagedPostgresChargeSink, limits managedpostgres.OverageAllowance, spans func(context.Context, string, time.Time, time.Time) ([]managedpostgres.AllowanceSpan, error), egress managedpostgres.EgressAllowanceFunc, log *slog.Logger) {
 	if sink == nil {
 		return
 	}
@@ -511,7 +563,7 @@ func deliverManagedPostgresOverage(ctx context.Context, store managedpostgres.Us
 	if !ok {
 		return
 	}
-	options := managedpostgres.OverageBillerOptions{Provider: policy.Provider, EffectiveFrom: policy.EffectiveFrom, Allowance: limits, PlanSpans: spans, Logger: log}
+	options := managedpostgres.OverageBillerOptions{Provider: policy.Provider, EffectiveFrom: policy.EffectiveFrom, Allowance: limits, PlanSpans: spans, Egress: egress, Logger: log}
 	if policy.Live {
 		options.Publish = func(ctx context.Context, step managedpostgres.OverageChargeStep) error {
 			return sink.PublishManagedPostgresCharge(ctx, billing.ManagedPostgresChargeStep(step))
@@ -526,6 +578,17 @@ func deliverManagedPostgresOverage(ctx context.Context, store managedpostgres.Us
 	if err != nil && ctx.Err() == nil {
 		log.Warn("managed postgres overage delivery failed", "error", err, "subjects", summary.Subjects, "failed", summary.Failed)
 	}
+}
+
+// managedPostgresChargesLive reports whether managed PostgreSQL overage
+// charges are delivered live through sink, as database egress past the
+// shared allowance is (ADR-20261110160000 slice 3).
+func managedPostgresChargesLive(sink billing.ManagedPostgresChargeSink) bool {
+	if sink == nil {
+		return false
+	}
+	policy, ok := sink.ManagedPostgresChargePolicy()
+	return ok && policy.Live
 }
 
 // configureManagedPostgresCapMode records the compute cap enforcement mode for

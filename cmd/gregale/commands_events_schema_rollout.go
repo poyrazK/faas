@@ -29,10 +29,10 @@ func cmdEventsSchemaRollout(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale event schema check SOURCE TYPE --version v2 [--schema @schema.json] [--samples @samples.json] [--from RFC3339 --until RFC3339]", "events")
 		return 1
 	}
+	// Without --version the request failed on an internal field name
+	// ("schema_versions entries must contain …", Hunt 32 H32-60).
 	if strings.TrimSpace(*version) == "" {
-		// Without it the server answered with its schema_versions pattern
-		// ("entries must contain 1..64 ASCII letters ..."), not the missing flag.
-		return printErr("Missing --version", fmt.Errorf("pass the proposed or registered schema version to check, for example --version v2"))
+		return printErr("Invalid rollout preview", fmt.Errorf("--version is required: the proposed or registered schema version to check, e.g. --version v2"))
 	}
 	if *schema == "-" && *samples == "-" {
 		return printErr("Invalid input", fmt.Errorf("only one input may read stdin"))

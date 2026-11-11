@@ -23,6 +23,9 @@ type PlanExcessNotice struct {
 	ServiceClass ServiceClass
 	Reason       string
 	RecordedAt   time.Time
+	// DeleteAt is when the database is deleted if it still does not fit,
+	// set only while the deletion pass is on (ADR-20261110184700).
+	DeleteAt time.Time
 }
 
 // PlanExcessNoticeStore is the optional store capability the cap sweep uses
@@ -154,18 +157,21 @@ func (s *MemoryStore) UnmailedPlanExcessNotices(_ context.Context, since time.Ti
 	return notices, nil
 }
 
-// memoryPlanExcessNotice is a notice and whether an email claimed it.
+// memoryPlanExcessNotice is a notice, whether an email claimed it, and the
+// deletion date that email named.
 type memoryPlanExcessNotice struct {
 	PlanExcessNotice
-	mailed bool
+	mailed   bool
+	deleteAt time.Time
 }
 
-// markPlanExcessNoticeMailed stands in for the mail outbox linking an intent.
-func (s *MemoryStore) markPlanExcessNoticeMailed(databaseID string) {
+// markPlanExcessNoticeMailed stands in for the mail outbox linking an intent
+// that names deleteAt (zero: no deletion date).
+func (s *MemoryStore) markPlanExcessNoticeMailed(databaseID string, deleteAt time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if n, ok := s.planExcessNotices[databaseID]; ok {
-		n.mailed = true
+	if n, ok := s.planExcessNotices[databaseID]; ok && !n.mailed {
+		n.mailed, n.deleteAt = true, deleteAt.UTC()
 		s.planExcessNotices[databaseID] = n
 	}
 }

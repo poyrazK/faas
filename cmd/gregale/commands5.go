@@ -533,7 +533,7 @@ func envPush(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			p, err := parseSecretsPair(line)
+			p, err := parseSecretsPair(stripDotenvExport(line))
 			if err != nil {
 				return printErr("Bad stdin line", fmt.Errorf("line %d: %w", lineNo, err))
 			}
@@ -559,7 +559,7 @@ func envPush(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			p, err := parseSecretsPair(line)
+			p, err := parseSecretsPair(stripDotenvExport(line))
 			if err != nil {
 				return printErr("Bad .env line", fmt.Errorf("line %d: %w", lineNo, err))
 			}
@@ -572,6 +572,13 @@ func envPush(args []string) int {
 	if len(pairs) == 0 {
 		PrintFail(os.Stderr, "no KEY=VALUE pairs in input")
 		return 1
+	}
+	// Every key is checked before the first write: a bad key on line 3
+	// stopped the push after lines 1 and 2 were saved (Hunt 32 H32-68).
+	for i, p := range pairs {
+		if problem := api.ValidateSecretKey(p.k); problem != nil {
+			return printErr("Invalid secret key", fmt.Errorf("pair %d (%s): %s; nothing was written", i+1, p.k, problem.Detail))
+		}
 	}
 	if *dryRun {
 		previewPairs := make([]secretsPair, len(pairs))
@@ -835,7 +842,7 @@ func cmdAppScale(slug string, args []string) int {
 	environment := fs.String("environment", "", "edit this project environment's workload settings")
 	workloadRevision := int64(-1)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
-	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
+	cpuMillicores := fs.Int("cpu-millicores", 0, "cap CPU at 250 or 500 millicores; 1000 leaves it uncapped")
 	profile := new(string)
 	resourceSizeFlag(fs, profile, "update named resource size: micro|small|medium|large|xlarge")
 	conc := fs.Int("max-concurrency", 0, "update the maximum instances (replicas) the app scales to")
@@ -1634,6 +1641,11 @@ func queueWorkFromFlags(policy, key, fairnessKey string) (*api.InvokeWork, error
 // the SDK-side timeout; a 204 No Content (empty queue) returns
 // `empty`. Mirrors the existing cmdQueueTail long-poll framing —
 // same signal.NotifyContext wiring.
+// queueReceiveEmpty explains an empty receive: it returns processed
+// messages' results, and pending messages are delivered to the app, so a
+// queue with depth > 0 can still receive nothing (Hunt 32 H32-44).
+const queueReceiveEmpty = "(empty: no message finished processing in the wait window; pending messages are delivered to the app, not to receive)"
+
 func cmdQueueReceive(args []string) int {
 	fs := newFlagSet("queue receive", flag.ContinueOnError)
 	appFlag := fs.String("app", "", appSlugFlagUsage)
@@ -1669,7 +1681,7 @@ func cmdQueueReceive(args []string) int {
 			if jsonOutput {
 				return jsonOut(writeJSON(api.QueueReceiveResponse{}))
 			}
-			_, _ = fmt.Fprintln(osStdout, "(empty)")
+			_, _ = fmt.Fprintln(osStdout, queueReceiveEmpty)
 			return 0
 		}
 		return printErr("Queue receive failed", err)
@@ -1682,7 +1694,7 @@ func cmdQueueReceive(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(resp))
 		}
-		_, _ = fmt.Fprintln(osStdout, "(empty)")
+		_, _ = fmt.Fprintln(osStdout, queueReceiveEmpty)
 		return 0
 	}
 	if jsonOutput {
@@ -2399,4 +2411,13 @@ func openCustomerDirectoryForSync(path string) (*os.File, error) {
 		return nil, fmt.Errorf("recovery directory changed during open: %q", path)
 	}
 	return directory, nil
+}
+
+// stripDotenvExport drops a dotenv `export ` prefix, so a file a shell can
+// source (`export KEY="value"`) pushes like `KEY="value"` (Hunt 32 H32-68).
+func stripDotenvExport(line string) string {
+	if rest, ok := strings.CutPrefix(line, "export "); ok {
+		return strings.TrimLeft(rest, " \t")
+	}
+	return line
 }

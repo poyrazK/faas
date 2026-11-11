@@ -21,7 +21,7 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|restore|bindings|attach|connect|cutover|live>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -74,6 +74,8 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresUpgradeStatus(args[1:])
 	case subRestore:
 		return cmdPostgresRestore(args[1:])
+	case "branch":
+		return cmdPostgresBranch(args[1:])
 	case "cutover":
 		return cmdPostgresCutover(args[1:])
 	case "bindings":
@@ -273,6 +275,14 @@ func cmdPostgresUsage(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "                                (%s of %s used)\n", formatGiBMonths(result.StorageByteSeconds), formatGiBMonths(result.StorageByteSecondsLimit))
 	_, _ = fmt.Fprintf(osStdout, "  history_byte_seconds:         %d (%s)\n", result.HistoryByteSeconds, formatGiBMonths(result.HistoryByteSeconds))
 	_, _ = fmt.Fprintf(osStdout, "  egress_bytes:                 %d (%s)\n", result.EgressBytes, formatIECBytes(result.EgressBytes))
+	if result.EgressAllowanceBytes > 0 {
+		_, _ = fmt.Fprintf(osStdout, "  app_egress_bytes:             %d (%s)\n", result.AppEgressBytes, formatIECBytes(result.AppEgressBytes))
+		_, _ = fmt.Fprintf(osStdout, "  egress_allowance:             %s (apps and databases together)\n", formatIECBytes(result.EgressAllowanceBytes))
+		_, _ = fmt.Fprintf(osStdout, "  egress_state:                 %s\n", result.EgressState)
+	}
+	if note := postgresHoldNote(result.Hold); note != "" {
+		_, _ = fmt.Fprintf(osStdout, "  hold:                         %s (every database is %s)\n", result.Hold, note)
+	}
 	return 0
 }
 
@@ -370,8 +380,10 @@ func cmdPostgresList(args []string) int {
 		if database.RestorableUntil != "" {
 			_, _ = fmt.Fprintf(osStdout, "%s is scheduled for deletion; undo before %s with: gregale postgres recover %s\n", database.Name, database.RestorableUntil, database.Name)
 		} else if database.RestoreSlotUntil != "" {
-			_, _ = fmt.Fprintf(osStdout, "%s is a restored copy past your plan's database limit; its delete is scheduled at %s unless you purge a database or upgrade first\n", database.Name, database.RestoreSlotUntil)
+			_, _ = fmt.Fprintf(osStdout, "%s is a restored copy past your plan's database limit; its delete is scheduled at %s unless you delete its source, purge another database or upgrade first\n", database.Name, database.RestoreSlotUntil)
 		} else if note := postgresPlanExcessNote(database); note != "" {
+			_, _ = fmt.Fprintf(osStdout, "%s is %s\n", database.Name, note)
+		} else if note := postgresHoldNote(database.Hold); note != "" {
 			_, _ = fmt.Fprintf(osStdout, "%s is %s\n", database.Name, note)
 		}
 	}
@@ -850,10 +862,19 @@ func renderPostgresDatabase(w io.Writer, database api.ManagedPostgresDatabase) {
 		_, _ = fmt.Fprintf(w, "  restore_range:    %s to %s\n", database.RestoreRange.Earliest, database.RestoreRange.Latest)
 	}
 	if database.RestoreSlotUntil != "" {
-		_, _ = fmt.Fprintf(w, "  restore_slot_until: %s (a temporary copy past your plan's database limit; purge a database or upgrade to keep it)\n", database.RestoreSlotUntil)
+		_, _ = fmt.Fprintf(w, "  restore_slot_until: %s (a temporary copy past your plan's database limit; delete its source, purge another database or upgrade to keep it)\n", database.RestoreSlotUntil)
+	}
+	if database.RestoreSourceDatabaseID != "" {
+		_, _ = fmt.Fprintf(w, "  restored_from:    %s at %s\n", database.RestoreSourceDatabaseID, database.RestorePointInTime)
+	}
+	if database.ExpiresAt != "" {
+		_, _ = fmt.Fprintf(w, "  expires_at:       %s (bindings revoked and purged then)\n", database.ExpiresAt)
 	}
 	if note := postgresPlanExcessNote(database); note != "" {
 		_, _ = fmt.Fprintf(w, "  plan_excess:      %s (%s)\n", database.PlanExcess, note)
+	}
+	if note := postgresHoldNote(database.Hold); note != "" {
+		_, _ = fmt.Fprintf(w, "  hold:             %s (%s)\n", database.Hold, note)
 	}
 	if health := database.Health; health != nil {
 		_, _ = fmt.Fprintf(w, "  provider_health:  %s (fresh=%t)\n", health.Status, health.Fresh)
@@ -929,6 +950,24 @@ func postgresPlanExcessNote(database api.ManagedPostgresDatabase) string {
 		return "suspended: your plan allows fewer databases than you have; its data is kept. Upgrade or delete a database to resume it"
 	case "service_class":
 		return fmt.Sprintf("suspended: your plan does not include the %s class; its data is kept. Upgrade, or resize it to a class your plan includes with gregale postgres resize, to resume it", database.ServiceClass)
+	default:
+		return ""
+	}
+}
+
+// postgresHoldNote explains why the platform holds a ready database
+// (ADR-20261110160000 amendment 2026-11-10); empty when nothing does, and for
+// plan_excess, which postgresPlanExcessNote explains.
+func postgresHoldNote(hold string) string {
+	switch hold {
+	case api.ManagedPostgresHoldComputeCeiling:
+		return "held: the account used this month's database compute; it refuses connections until the 1st of next month or an upgrade. Its data is kept"
+	case api.ManagedPostgresHoldEgress:
+		return "held: the account's apps and databases sent this month's egress allowance; it refuses connections until the 1st of next month or an upgrade. Its data is kept"
+	case api.ManagedPostgresHoldInactive:
+		return "held: the account is suspended; it refuses connections until the account is active again. Its data is kept"
+	case api.ManagedPostgresHoldPreview:
+		return "held: PR preview databases pause once the account used 80% of this month's database compute. Its data is kept"
 	default:
 		return ""
 	}

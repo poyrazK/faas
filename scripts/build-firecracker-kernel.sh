@@ -104,10 +104,20 @@ sed -i \
   -e 's/^CONFIG_FUSE_FS=.*/CONFIG_FUSE_FS=y/' \
   -e 's/^# CONFIG_IP_PNP is not set$/CONFIG_IP_PNP=y/' \
   -e 's/^CONFIG_IP_PNP=.*/CONFIG_IP_PNP=y/' \
+  -e 's/^CONFIG_MODULES=.*/# CONFIG_MODULES is not set/' \
+  -e 's/^CONFIG_KEXEC_FILE=.*/# CONFIG_KEXEC_FILE is not set/' \
   "$source_dir/.config"
 grep -q '^CONFIG_VIRTIO_BLK=y$' "$source_dir/.config"
 grep -q '^CONFIG_FUSE_FS=y$' "$source_dir/.config"
 grep -q '^CONFIG_IP_PNP=y$' "$source_dir/.config"
+# No kernel code from inside a guest (ADR-20261027090013 §10): sandbox
+# sessions give the tenant root, so the guest kernel loads no modules and
+# cannot kexec another kernel. The pinned config builds nothing as a module,
+# so turning modules off removes no driver.
+if grep -q '=m$' "$source_dir/.config"; then
+  echo "the guest config builds options as modules; build them in first" >&2
+  exit 1
+fi
 
 # Reproducibility is useful even though hosts consume the signed bytes. The
 # fixed metadata prevents a release rebuild from silently changing the
@@ -119,6 +129,14 @@ export KBUILD_BUILD_HOST=release-builder
 export KBUILD_BUILD_VERSION=1
 
 make -C "$source_dir" -j"$(nproc)" ARCH=x86_64 CROSS_COMPILE= olddefconfig
+# olddefconfig must not have turned any back on. It may drop a disabled
+# option's line altogether, so check that none is enabled.
+for option in MODULES KEXEC KEXEC_FILE; do
+  if grep -q "^CONFIG_${option}=y$" "$source_dir/.config"; then
+    echo "build-firecracker-kernel: olddefconfig enabled CONFIG_${option}" >&2
+    exit 1
+  fi
+done
 make -C "$source_dir" -j"$(nproc)" ARCH=x86_64 CROSS_COMPILE= vmlinux
 
 file -b "$source_dir/vmlinux" | grep -q 'ELF 64-bit.*x86-64'

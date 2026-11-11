@@ -78,6 +78,14 @@ func clampResolvedTTL(ttl time.Duration) time.Duration {
 // databases (ADR 20261026150000): the addresses are also allowed on that
 // port, outside the plan's egress ports, in the same nft transaction.
 func (m *Manager) AllowResolvedEgress(ctx context.Context, source netip.Addr, owner ServiceCallerIdentity, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
+	return m.AllowResolvedEgressNamed(ctx, source, owner, "", addrs, ttl, databasePort)
+}
+
+// AllowResolvedEgressNamed is AllowResolvedEgress for an answer to name. A
+// registries-mode sandbox session's VM admits addresses only for a name
+// api.SandboxRegistryHost allows (ADR-20261027090013 §6), so a resolver bug
+// cannot open another destination to it; an empty name admits none.
+func (m *Manager) AllowResolvedEgressNamed(ctx context.Context, source netip.Addr, owner ServiceCallerIdentity, name string, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
 	// Cleanup records its intent before joining this lock in circuit unregister.
 	// Finish an admitted grant before namespace teardown can recycle its name.
 	m.egressCircuitMu.Lock()
@@ -100,6 +108,9 @@ func (m *Manager) AllowResolvedEgress(ctx context.Context, source netip.Addr, ow
 		return resolvedEgressRefused{reason}
 	}
 	gated := inst.Net.DNSGated && inst.Net.Netns != ""
+	if inst.Net.SandboxRegistries && !api.SandboxRegistryHost(name) {
+		gated = false
+	}
 	database := databasePort != 0 && inst.Net.DatabaseEgress && inst.Net.Netns != ""
 	if !gated && !database {
 		m.mu.Unlock()

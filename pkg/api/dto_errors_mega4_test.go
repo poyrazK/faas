@@ -317,7 +317,7 @@ func TestEdgeRuleValidateActionValidate_Mega4(t *testing.T) {
 		t.Error("external $ref: p=nil")
 	}
 	// Internal pointer is fine.
-	if p := (&EdgeRuleValidateAction{Schema: json.RawMessage(`{"$ref":"#/definitions/Foo"}`)}).Validate(); p != nil {
+	if p := (&EdgeRuleValidateAction{Schema: json.RawMessage(`{"definitions":{"Foo":{"type":"object"}},"$ref":"#/definitions/Foo"}`)}).Validate(); p != nil {
 		t.Errorf("internal $ref: %v", p)
 	}
 	// Bad content_type.
