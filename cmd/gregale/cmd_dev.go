@@ -625,8 +625,8 @@ func cmdDev(args []string) int {
 
 	ctx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stopSignal()
-	runtimeLogCtx, cancelRuntimeLogs := context.WithCancel(ctx)
-	defer cancelRuntimeLogs()
+	stopRuntimeLogs := func() {}
+	defer func() { stopRuntimeLogs() }()
 	runtimeLogsStarted := false
 	debugProxyStarted := false
 	devBrowserOpened := false
@@ -638,14 +638,7 @@ func cmdDev(args []string) int {
 	}
 	seedPending := *postgresSeed != ""
 	forceReseed := *reseed
-	reportDevDiagnostic := func(d devDiagnostic) {
-		d.SourceDir = sourceDir
-		if jsonOutput {
-			_ = writeJSON(d)
-			return
-		}
-		renderDevDiagnostic(osStderr, d)
-	}
+	reportDevDiagnostic := newDevDiagnosticReporter(sourceDir, session.App.Slug)
 	openDevBrowser := func() {
 		if !*open || jsonOutput || devBrowserOpened {
 			return
@@ -802,12 +795,11 @@ func cmdDev(args []string) int {
 				debugProxyStarted = true
 				startDevDebugSession(ctx, session.App.Slug, *debugPort)
 			}
-			if *once || *noLogs || jsonOutput || runtimeLogsStarted {
+			if runtimeLogsStarted {
 				return
 			}
 			runtimeLogsStarted = true
-			PrintProgress(osStdout, "runtime logs attached (Ctrl-C to stop watching)")
-			go followDevRuntimeLogsWithDiagnostics(runtimeLogCtx, client, session.App.Slug, reportDevDiagnostic)
+			stopRuntimeLogs = startDevRuntimeLogs(ctx, client, session.App.Slug, *once, *noLogs, reportDevDiagnostic)
 		},
 		cancelDeploy: func(cancelCtx context.Context, deploymentID string) error {
 			cancelCtx, cancel := context.WithTimeout(cancelCtx, 15*time.Second)
