@@ -411,6 +411,20 @@ func managedPostgresCapNoticeReady(getenv func(string) string) error {
 		managedpostgres.CapEnforcementEnv, internalmail.ManagedPostgresCapOutboxEnableEnv)
 }
 
+// managedPostgresPlanExcessDeleteReady refuses deleting databases past their
+// plan while the suspension email cannot be sent (ADR-20261110184700): the
+// email is the owner's only notice of the deletion date, and the sweep
+// deletes only on a date an email named, so without it nothing would ever be
+// deleted while the logs claim deletion is on.
+func managedPostgresPlanExcessDeleteReady(mode managedpostgres.CapEnforcementMode, getenv func(string) string) error {
+	if mode != managedpostgres.CapEnforcementOn || internalmail.ManagedPostgresPlanExcessOutboxEnabled(getenv) {
+		return nil
+	}
+	return fmt.Errorf("%s=on deletes databases past their plan, and owners learn the date only from the suspension email: "+
+		"set %s=1 with the internal mail producer outbox enabled, or keep deletion at shadow",
+		managedpostgres.PlanExcessDeleteEnv, internalmail.ManagedPostgresPlanExcessOutboxEnableEnv)
+}
+
 // loadManagedPostgresCapEnforcer builds the compute cap enforcer
 // (ADR-20261025094915). Each subject's ceiling is its plan's monthly compute
 // allowance, or twice it with overage on; the enforcer intersects it with the
@@ -430,6 +444,9 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 	}
 	planExcessDeleteMode, err := managedpostgres.ParsePlanExcessDeleteMode(getenv(managedpostgres.PlanExcessDeleteEnv))
 	if err != nil {
+		return nil, err
+	}
+	if err := managedPostgresPlanExcessDeleteReady(planExcessDeleteMode, getenv); err != nil {
 		return nil, err
 	}
 	options := managedpostgres.CapEnforcerOptions{

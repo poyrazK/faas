@@ -445,8 +445,11 @@ type CapSweepSummary struct {
 	// PlanExcessDelete* count the deletion pass (ADR-20261110184700): due
 	// databases, deletes scheduled, ones only logged in shadow, ones waiting
 	// for bindings to go, and failures.
-	PlanExcessDeleteMode      CapEnforcementMode
-	PlanExcessDeleteDue       int
+	PlanExcessDeleteMode CapEnforcementMode
+	PlanExcessDeleteDue  int
+	// PlanExcessDeleteRearmed counts notices restarted so their email names
+	// a deletion date.
+	PlanExcessDeleteRearmed   int
 	PlanExcessDeleteScheduled int
 	PlanExcessDeleteShadowed  int
 	PlanExcessDeleteWaiting   int

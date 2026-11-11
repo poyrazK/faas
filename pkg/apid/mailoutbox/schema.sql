@@ -1318,3 +1318,25 @@ $plan_excess_validate$;
 
 RESET lock_timeout;
 
+
+-- +goose StatementBegin
+SET LOCAL lock_timeout = '5s';
+ALTER TABLE managed_postgres_plan_excess_notices
+    ADD COLUMN IF NOT EXISTS delete_at timestamptz;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $check$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'managed_postgres_plan_excess_notices'::regclass
+      AND conname = 'managed_postgres_plan_excess_notices_delete_at_check'
+  ) THEN
+    ALTER TABLE managed_postgres_plan_excess_notices
+      ADD CONSTRAINT managed_postgres_plan_excess_notices_delete_at_check
+      CHECK (delete_at IS NULL OR (isfinite(delete_at) AND mail_intent_id IS NOT NULL)) NOT VALID;
+  END IF;
+END
+$check$;
+-- +goose StatementEnd
+

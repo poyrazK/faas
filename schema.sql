@@ -45676,6 +45676,7 @@ CREATE TABLE public.managed_postgres_plan_excess_notices (
     reason text NOT NULL,
     recorded_at timestamp with time zone NOT NULL,
     mail_intent_id uuid,
+    delete_at timestamp with time zone,
     CONSTRAINT managed_postgres_plan_excess_notices_reason_check CHECK ((reason = ANY (ARRAY['database_limit'::text, 'service_class'::text]))),
     CONSTRAINT managed_postgres_plan_excess_notices_recorded_at_check CHECK (isfinite(recorded_at))
 );
@@ -66750,6 +66751,14 @@ ALTER TABLE public.managed_postgres_overage_pending
 
 ALTER TABLE ONLY public.managed_postgres_overage_pending
     ADD CONSTRAINT managed_postgres_overage_pending_pkey PRIMARY KEY (provider, subject_id, period_start);
+
+
+--
+-- Name: managed_postgres_plan_excess_notices managed_postgres_plan_excess_notices_delete_at_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_plan_excess_notices
+    ADD CONSTRAINT managed_postgres_plan_excess_notices_delete_at_check CHECK (((delete_at IS NULL) OR (isfinite(delete_at) AND (mail_intent_id IS NOT NULL)))) NOT VALID;
 
 
 --
