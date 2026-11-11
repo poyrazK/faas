@@ -20,7 +20,9 @@ type resizeHTTPFixture struct {
 	suspendTimeout                                                          int64
 	policy                                                                  bool
 	pending, changedDefault, duplicatePrimary, drift, lostResponse, delayed bool
-	pooledStorage                                                           int64
+	// disabled serves the endpoint held by the cap sweep.
+	disabled      bool
+	pooledStorage int64
 }
 
 func resizeHTTPProvider(t *testing.T, f *resizeHTTPFixture) *Provider {
@@ -52,7 +54,7 @@ func resizeHTTPProvider(t *testing.T, f *resizeHTTPFixture) *Provider {
 			}
 			writeResponse(t, w, 200, map[string]any{"branches": branches})
 		case root + "/endpoints":
-			endpoints := []map[string]any{{"id": "ep-main-123", "branch_id": "br-main-123", "type": "read_write", "current_state": "idle", "autoscaling_limit_min_cu": 0.25, "autoscaling_limit_max_cu": f.maximum, "suspend_timeout_seconds": f.suspendTimeout}}
+			endpoints := []map[string]any{{"id": "ep-main-123", "branch_id": "br-main-123", "type": "read_write", "current_state": "idle", "autoscaling_limit_min_cu": 0.25, "autoscaling_limit_max_cu": f.maximum, "suspend_timeout_seconds": f.suspendTimeout, "disabled": f.disabled}}
 			if f.duplicatePrimary {
 				endpoints = append(endpoints, endpoints[0])
 			}
@@ -117,6 +119,22 @@ func TestResizeAdoptsAppliedConfigurationAfterLostResponse(t *testing.T) {
 	}
 	if _, err = p.Update(t.Context(), r); err != nil || f.patches != 1 {
 		t.Fatal("replay not stable", err)
+	}
+}
+
+// A database the cap sweep holds keeps its endpoint disabled. A resize, which
+// the plan excess email asks for, converges without touching the flag, so it
+// neither fails forever in updating nor lifts the hold.
+func TestResizeConvergesOnAHeldEndpoint(t *testing.T) {
+	f := &resizeHTTPFixture{disabled: true}
+	p := resizeHTTPProvider(t, f)
+	r := resizeHTTPrequest()
+	observed, err := p.Update(t.Context(), r)
+	if err != nil || observed.Status != managedpostgres.ProviderStatusReady || observed.Spec != r.Spec || f.patches != 1 {
+		t.Fatal("held endpoint blocked the resize", observed, err, f.patches)
+	}
+	if !f.disabled {
+		t.Fatal("resize lifted the hold")
 	}
 }
 

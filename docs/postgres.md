@@ -356,7 +356,8 @@ databases by up to two hours.
   `egress_state` is `warning` at 80% of the allowance and `held` once the two
   together reach it: the databases then refuse connections until the 1st of
   next month or an upgrade, and the account is emailed once that month. Data
-  a database sends your app counts as database egress.
+  a database sends your app over the internet counts as database egress;
+  private network transfer does not.
 - With egress overage on (`gregale billing egress-overage`), your apps use
   the allowance first and database egress past it is billed at $0.105 per GB.
   `egress_state` is then `overage`, and the databases are held only at twice

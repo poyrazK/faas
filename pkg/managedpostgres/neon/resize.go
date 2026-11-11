@@ -89,9 +89,15 @@ func (p *Provider) resizeObservation(ctx context.Context, request managedpostgre
 		return managedpostgres.ObservedDatabase{}, endpoint{}, err
 	}
 	selected, primary, ready := selectBranch(metadata.branches.Branches, metadata.endpoints.Endpoints, data.branchID)
+	// A disabled endpoint is a database the cap sweep holds (ADR-20261025094915
+	// amendment 2026-11-05): a ready database is never in its delete grace
+	// period. Its compute settings change while it stays disabled, and the
+	// PATCH never touches the flag, so a resize neither lifts the hold nor
+	// sticks: the suspension email itself tells the owner to resize to a class
+	// the plan includes.
 	if selected.ID != data.branchID || !validProviderID.MatchString(primary.ID) ||
 		selected.ProjectID != "" && selected.ProjectID != data.projectID || primary.ProjectID != "" && primary.ProjectID != data.projectID ||
-		primary.RegionID != "" && primary.RegionID != p.regionID || primary.Disabled != nil && *primary.Disabled {
+		primary.RegionID != "" && primary.RegionID != p.regionID {
 		return managedpostgres.ObservedDatabase{}, endpoint{}, managedpostgres.ErrConflict
 	}
 	if lifecycle.branchID == "" {
