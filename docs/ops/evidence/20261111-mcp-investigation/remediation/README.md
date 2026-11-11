@@ -5,6 +5,11 @@ local fixes on `fix/mcp-investigation-backlog`. The parent directory retains the
 original investigation logs; this directory contains passing post-fix evidence.
 No deployment or live provider call was performed.
 
+These results describe the original local fix batch. See
+[the current-main integration verification](../integration/README.md) for the
+final cron receipt policy and the expanded Node/Python suite results after
+integrating main for PR #7080.
+
 ## Results
 
 | Check | Result | Evidence |

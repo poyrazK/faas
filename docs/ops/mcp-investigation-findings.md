@@ -262,6 +262,13 @@ Resolution (2026-11-11): Node startup, migration and Doctor authenticate every u
 
 ## Remediation validation
 
+Before PR #7080, the fixes were integrated with current main at
+`b376664ec965c8663be7c433b1e10592515bd6dd`. Post-integration Go regression,
+authorization and cron history checks pass; the expanded Node suite passes
+236 tests and Python passes 101 tests, both with PostgreSQL and zero skips.
+Evidence is in `docs/ops/evidence/20261111-mcp-investigation/integration/`.
+The older results below describe the original local fix batch.
+
 The retained probe runner completed all nine command groups with exit zero, including the real PostgreSQL heartbeat, shutdown-race and key-preflight checks. Passing logs and the manifest are in `docs/ops/evidence/20261111-mcp-investigation/remediation/`; the original failure logs remain untouched. Permanent regressions are included in the affected Go packages and starter suites.
 
 Affected Go package suites and MCP CLI checks pass. The full Node starter suite passes against disposable PostgreSQL (155 tests, none skipped). The full Python starter suite passes against disposable PostgreSQL (52 tests, none skipped). Go vet, golangci-lint (zero issues), repository boundary checks and whitespace checks pass. Results and exact commands are recorded in the remediation README. No deployment, live provider OAuth or native KVM acceptance was performed.
