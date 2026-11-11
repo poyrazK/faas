@@ -75,5 +75,15 @@ func loadDoctorAppEnv(parent context.Context, explicitApp, dir string) doctorApp
 	for _, row := range env.Env {
 		names[row.Key] = true
 	}
+	// Managed PostgreSQL bindings inject their own keys, such as the
+	// release-only MIGRATION_DATABASE_URL, which neither list shows (Hunt 33
+	// H33-60). The read is best effort: without it a binding key still warns.
+	if bindings, err := client.ListAppPostgresBindings(ctx, app); err == nil {
+		for _, binding := range bindings.Items {
+			if scopeOrDefault(binding.Scope) == scope && binding.EnvironmentKey != "" {
+				names[binding.EnvironmentKey] = true
+			}
+		}
+	}
 	return doctorAppEnv{App: app, Names: names}
 }

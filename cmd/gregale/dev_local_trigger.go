@@ -34,7 +34,9 @@ func cmdDevTriggerLocal(args []string) int {
 	if fs.NArg() == 3 {
 		requestPath = fs.Arg(2)
 	}
-	projectDir, _, err := devLocalInputs(*sourcePath, "")
+	// A trigger addresses the running process, including while its env file
+	// has an invalid edit; it does not consume that file itself.
+	projectDir, _, _, err := devLocalInputs(*sourcePath, "", true)
 	if err != nil {
 		return printErr("Could not trigger", err)
 	}

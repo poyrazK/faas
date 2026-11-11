@@ -89,6 +89,31 @@ func runRolloutEnvironmentScope(t *testing.T, ctx context.Context, s state.Store
 		}
 	})
 
+	// Hunt 33 H33-34: production is one lane with two scope names. A
+	// promotion (scope production) left the deploy's default-scope row live,
+	// holding its instance and concurrency slot; a later deploy (default)
+	// must likewise replace the promoted row.
+	t.Run("a stable go-live retires the production lane's other scope name", func(t *testing.T) {
+		appID := newApp("scope-production-lane")
+		deployed := scopedLive(t, ctx, s, appID, state.DefaultEnvScope, "d1")
+		staging := scopedLive(t, ctx, s, appID, "staging", "s1")
+		promoted := scopedLive(t, ctx, s, appID, "production", "p1")
+		want := func(id string, status state.DeploymentStatus, percent int) {
+			t.Helper()
+			d, err := s.DeploymentByID(ctx, id)
+			if err != nil || d.Status != status || d.TrafficPercent != percent {
+				t.Fatalf("%s = %s at %d%% (err %v), want %s at %d%%", id, d.Status, d.TrafficPercent, err, status, percent)
+			}
+		}
+		want(promoted.ID, state.DeployLive, 100)
+		want(deployed.ID, state.DeploySuperseded, 0)
+		want(staging.ID, state.DeployLive, 100)
+		redeployed := scopedLive(t, ctx, s, appID, state.DefaultEnvScope, "d2")
+		want(redeployed.ID, state.DeployLive, 100)
+		want(promoted.ID, state.DeploySuperseded, 0)
+		want(staging.ID, state.DeployLive, 100)
+	})
+
 	t.Run("a failure in one environment leaves the other's weights", func(t *testing.T) {
 		appID := newApp("scope-failure")
 		production := scopedLive(t, ctx, s, appID, state.DefaultEnvScope, "p1")
