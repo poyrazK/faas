@@ -858,6 +858,7 @@ func (m *MemStore) MarkAppTaskRunning(_ context.Context, taskID, leaseToken stri
 		m.syncAppTaskOccurrenceLocked(task, startedAt)
 		return AppTask{}, ErrAppTaskLeaseLost
 	}
+	delete(m.appTaskCapacityWaits, task.ID)
 	task.Status = AppTaskRunning
 	task.StartedAt = appTaskTimePtr(startedAt)
 	task.AttemptCount++
@@ -872,6 +873,45 @@ func (m *MemStore) MarkAppTaskRunning(_ context.Context, taskID, leaseToken stri
 	m.appTasks[task.ID] = task
 	m.syncAppTaskOccurrenceLocked(task, startedAt)
 	return cloneAppTask(task), nil
+}
+
+var _ AppTaskCapacityDeferrer = (*MemStore)(nil)
+
+func (m *MemStore) DeferAppTaskForCapacity(_ context.Context, taskID, leaseToken string, at, retryAt time.Time, maxWait time.Duration) (time.Time, bool, error) {
+	if taskID == "" || leaseToken == "" || at.IsZero() || retryAt.Before(at) || maxWait <= 0 {
+		return time.Time{}, false, ErrAppTaskInvalid
+	}
+	at, retryAt = at.UTC(), retryAt.UTC()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, ok := m.appTasks[taskID]
+	if !ok || task.Status != AppTaskRestoring || task.LeaseToken == nil || *task.LeaseToken != leaseToken ||
+		task.CancelRequested != nil || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(at) {
+		return time.Time{}, false, ErrAppTaskLeaseLost
+	}
+	if task.Kind != AppTaskKindRelease || task.StartedAt != nil {
+		return time.Time{}, false, nil
+	}
+	started, waiting := m.appTaskCapacityWaits[taskID]
+	if !waiting {
+		started = at
+	}
+	if !started.After(at.Add(-maxWait)) {
+		return started, false, nil
+	}
+	if m.appTaskCapacityWaits == nil {
+		m.appTaskCapacityWaits = make(map[string]time.Time)
+	}
+	m.appTaskCapacityWaits[taskID] = started
+	task.Status = AppTaskQueued
+	task.RetryAt = appTaskTimePtr(retryAt)
+	task.LeaseToken = nil
+	task.LeaseOwner = nil
+	task.LeaseExpiresAt = nil
+	task.UpdatedAt = at
+	m.appTasks[task.ID] = task
+	m.syncAppTaskOccurrenceLocked(task, at)
+	return started, true, nil
 }
 
 func (m *MemStore) RenewAppTaskLease(_ context.Context, taskID, leaseToken string, renewedAt time.Time, leaseDuration time.Duration) error {
