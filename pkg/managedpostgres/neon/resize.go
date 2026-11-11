@@ -2,6 +2,7 @@ package neon
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 
@@ -66,6 +67,12 @@ func (p *Provider) Update(ctx context.Context, request managedpostgres.UpdateReq
 	// observation path after a crash or a lost response from the same request.
 	err = p.doJSON(ctx, http.MethodPatch, path, nil, payload, nil, http.StatusOK)
 	if err != nil {
+		// Neon refusing the change on a held endpoint ends the resize on its
+		// source spec rather than retrying it forever in updating, where the
+		// cap sweep could never release the hold.
+		if errors.Is(err, managedpostgres.ErrConflict) && endpointDisabled(primary) {
+			return managedpostgres.ObservedDatabase{}, &managedpostgres.ChangeRejectedError{Code: "compute_held"}
+		}
 		return managedpostgres.ObservedDatabase{}, err
 	}
 	observed, _, err = p.resizeObservation(ctx, request)
@@ -89,12 +96,11 @@ func (p *Provider) resizeObservation(ctx context.Context, request managedpostgre
 		return managedpostgres.ObservedDatabase{}, endpoint{}, err
 	}
 	selected, primary, ready := selectBranch(metadata.branches.Branches, metadata.endpoints.Endpoints, data.branchID)
-	// A disabled endpoint is a database the cap sweep holds (ADR-20261025094915
-	// amendment 2026-11-05): a ready database is never in its delete grace
-	// period. Its compute settings change while it stays disabled, and the
-	// PATCH never touches the flag, so a resize neither lifts the hold nor
-	// sticks: the suspension email itself tells the owner to resize to a class
-	// the plan includes.
+	// A disabled endpoint is a database the cap sweep holds: a ready database
+	// is never in its delete grace period (ADR-20261025094915 amendment
+	// 2026-11-11). Its compute settings change while it stays disabled, and
+	// the PATCH never names the flag, so a resize does not lift the hold. The
+	// suspension email tells the owner to resize to a class the plan includes.
 	if selected.ID != data.branchID || !validProviderID.MatchString(primary.ID) ||
 		selected.ProjectID != "" && selected.ProjectID != data.projectID || primary.ProjectID != "" && primary.ProjectID != data.projectID ||
 		primary.RegionID != "" && primary.RegionID != p.regionID {

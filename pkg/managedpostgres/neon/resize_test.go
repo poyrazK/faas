@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -20,9 +21,11 @@ type resizeHTTPFixture struct {
 	suspendTimeout                                                          int64
 	policy                                                                  bool
 	pending, changedDefault, duplicatePrimary, drift, lostResponse, delayed bool
-	// disabled serves the endpoint held by the cap sweep.
-	disabled      bool
-	pooledStorage int64
+	// disabled serves the endpoint held by the cap sweep; refuseDisabled
+	// answers its PATCH with 409; namedDisabled records a PATCH that names
+	// the flag.
+	disabled, refuseDisabled, namedDisabled bool
+	pooledStorage                           int64
 }
 
 func resizeHTTPProvider(t *testing.T, f *resizeHTTPFixture) *Provider {
@@ -69,8 +72,20 @@ func resizeHTTPProvider(t *testing.T, f *resizeHTTPFixture) *Provider {
 			if r.Method != http.MethodPatch {
 				t.Error("unexpected mutation method", r.Method)
 			}
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Error(err)
+			}
+			if strings.Contains(string(body), `"disabled"`) {
+				f.namedDisabled = true
+			}
+			if f.disabled && f.refuseDisabled {
+				f.patches++
+				writeResponse(t, w, 409, map[string]any{"message": "endpoint is disabled"})
+				return
+			}
 			var payload map[string]map[string]float64
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			if err := json.Unmarshal(body, &payload); err != nil {
 				t.Error(err)
 			}
 			compute := payload["endpoint"]
@@ -133,8 +148,16 @@ func TestResizeConvergesOnAHeldEndpoint(t *testing.T) {
 	if err != nil || observed.Status != managedpostgres.ProviderStatusReady || observed.Spec != r.Spec || f.patches != 1 {
 		t.Fatal("held endpoint blocked the resize", observed, err, f.patches)
 	}
-	if !f.disabled {
-		t.Fatal("resize lifted the hold")
+	if f.namedDisabled {
+		t.Fatal("resize PATCH named the disabled flag, lifting the hold")
+	}
+	// A provider refusing the change on the held endpoint ends the resize
+	// instead of leaving it to retry forever in updating.
+	refused := &resizeHTTPFixture{disabled: true, refuseDisabled: true}
+	_, err = resizeHTTPProvider(t, refused).Update(t.Context(), r)
+	var rejected *managedpostgres.ChangeRejectedError
+	if !errors.As(err, &rejected) || rejected.Code != "compute_held" {
+		t.Fatalf("refused PATCH on a held endpoint = %v; want a compute_held rejection", err)
 	}
 }
 

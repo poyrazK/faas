@@ -456,5 +456,8 @@ resize to a class the plan includes, which always hit this.
 A ready database's disabled endpoint is a cap hold (one in its delete grace
 period is `deleting`, which a resize refuses). The resize now changes the
 endpoint's compute settings while it stays disabled. Its PATCH never names the
-flag, so a resize neither lifts the hold nor sticks, and the next sweep
-decides from the new class.
+flag, so a resize does not lift the hold, and the next sweep decides from the
+new class. If Neon refuses the change on the disabled endpoint (409), the resize
+ends on its source spec with code `compute_held` instead of retrying forever.
+Neon's acceptance of the PATCH on a disabled endpoint is verified only against
+a fake so far; a native check against Neon is still owed.

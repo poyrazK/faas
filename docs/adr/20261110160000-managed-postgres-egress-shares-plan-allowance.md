@@ -127,9 +127,11 @@ Neon's usage reader summed `public_network_transfer_bytes` and
 network transfer (Private Link, VPC) never leaves for the internet, yet it
 counted toward the shared allowance, could trip the egress hold, and since
 slice 3 would be billed at the public transfer price. The meter now counts
-public transfer only. The reader still requests both metrics, so a response
-missing either is still refused. Readings collected before this change keep
-what they recorded.
+public transfer only; the reader still requests private transfer so a later
+COGS report can read it. Readings collected before this change keep what they
+recorded. Gregale apps reach Neon over its public endpoints, so a database's
+replies to an app are still public transfer and still egress; that is a
+separate open item.
 
 ## Later slices
 
