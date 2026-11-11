@@ -121,6 +121,9 @@ func (s *pgCore) FinishObjectInventoryScan(ctx context.Context, bucket, token st
 	if err = q.ObjectInventoryScanDelete(ctx, tx, mustPgUUID(bucket)); err != nil {
 		return err
 	}
+	if err = q.ObjectBucketMarkOutstandingMutations(ctx, tx, mustPgUUID(bucket)); err != nil {
+		return err
+	}
 	if err = q.ObjectInventorySample(ctx, tx, sqlc.ObjectInventorySampleParams{BucketID: mustPgUUID(bucket), Token: token}); err != nil {
 		return err
 	}

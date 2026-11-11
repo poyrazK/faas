@@ -53,6 +53,13 @@ type ObjectBucketUsage struct {
 	// such a bucket, and no admitted write can grow it, so its last
 	// inventory remains the bound for admission until the transition ends.
 	InventoryHeld bool
+	// MutatedAt is the last time an admitted mutation may have changed what
+	// the bucket holds, stamped by Postgres at most once per
+	// api.ObjectInventoryMutationStampGranularity. ActiveSince is the first
+	// such stamp after the bucket was last quiet. Both are zero for a bucket
+	// created after tracking began that has never been mutated
+	// (ADR-20261110151628 §2).
+	MutatedAt, ActiveSince time.Time
 }
 
 type ObjectUsageSnapshot struct {

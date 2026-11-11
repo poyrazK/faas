@@ -22255,6 +22255,49 @@ $$;
 
 
 --
+-- Name: object_bucket_activity_stamp(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_bucket_activity_stamp() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+  PERFORM object_bucket_mark_mutated(OLD.bucket_id);
+  RETURN OLD;
+ END IF;
+ PERFORM object_bucket_mark_mutated(NEW.bucket_id);
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: object_bucket_mark_mutated(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_bucket_mark_mutated(target uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+ observed timestamptz;
+BEGIN
+ IF target IS NULL THEN
+  RETURN;
+ END IF;
+ SELECT observed_at INTO observed FROM object_storage_bucket_usage WHERE bucket_id=target;
+ -- A plain UPDATE whose WHERE fails takes no row lock, so a request within
+ -- the granularity of the last stamp reads the row and moves on.
+ UPDATE object_bucket_activity a SET mutated_at=now(),
+  active_since=CASE WHEN a.mutated_at < COALESCE(observed,'-infinity'::timestamptz) - interval '30 seconds' THEN now() ELSE a.active_since END
+ WHERE a.bucket_id=target AND a.mutated_at < now() - interval '30 seconds';
+ IF NOT FOUND THEN
+  INSERT INTO object_bucket_activity(bucket_id,mutated_at,active_since) VALUES(target,now(),now())
+  ON CONFLICT (bucket_id) DO NOTHING;
+ END IF;
+END $$;
+
+
+--
 -- Name: object_compute_trigger_ownership_valid(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -48103,6 +48146,18 @@ CREATE TABLE public.oauth_links (
 
 
 --
+-- Name: object_bucket_activity; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_activity (
+    bucket_id uuid NOT NULL,
+    mutated_at timestamp with time zone NOT NULL,
+    active_since timestamp with time zone NOT NULL,
+    CONSTRAINT object_bucket_activity_check CHECK ((active_since <= mutated_at))
+);
+
+
+--
 -- Name: object_bucket_cors; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -67809,6 +67864,14 @@ ALTER TABLE ONLY public.notification_outbox
 
 ALTER TABLE ONLY public.oauth_links
     ADD CONSTRAINT oauth_links_pkey PRIMARY KEY (provider, provider_subject);
+
+
+--
+-- Name: object_bucket_activity object_bucket_activity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_activity
+    ADD CONSTRAINT object_bucket_activity_pkey PRIMARY KEY (bucket_id);
 
 
 --
@@ -88626,6 +88689,41 @@ CREATE TRIGGER object_aaa_write_key_fence BEFORE INSERT ON public.object_storage
 --
 
 CREATE TRIGGER object_bucket_account_cleanup_fence BEFORE INSERT ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.fence_object_bucket_account_cleanup();
+
+
+--
+-- Name: object_bucket_mutations object_bucket_activity_stamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_activity_stamp AFTER INSERT OR DELETE ON public.object_bucket_mutations FOR EACH ROW EXECUTE FUNCTION public.object_bucket_activity_stamp();
+
+
+--
+-- Name: object_bucket_object_lock object_bucket_activity_stamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_activity_stamp AFTER INSERT OR UPDATE ON public.object_bucket_object_lock FOR EACH ROW EXECUTE FUNCTION public.object_bucket_activity_stamp();
+
+
+--
+-- Name: object_bucket_versioning object_bucket_activity_stamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_activity_stamp AFTER INSERT OR UPDATE ON public.object_bucket_versioning FOR EACH ROW EXECUTE FUNCTION public.object_bucket_activity_stamp();
+
+
+--
+-- Name: object_deletions object_bucket_activity_stamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_activity_stamp AFTER INSERT OR UPDATE OF state ON public.object_deletions FOR EACH ROW EXECUTE FUNCTION public.object_bucket_activity_stamp();
+
+
+--
+-- Name: object_storage_capacity_reconciliations object_bucket_activity_stamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_activity_stamp AFTER INSERT OR UPDATE OF state ON public.object_storage_capacity_reconciliations FOR EACH ROW EXECUTE FUNCTION public.object_bucket_activity_stamp();
 
 
 --

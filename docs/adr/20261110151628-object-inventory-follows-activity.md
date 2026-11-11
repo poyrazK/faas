@@ -150,6 +150,45 @@ in flight: "a held bucket cannot grow, so a past inventory holds"
   45 s listing takes a short worker. In production that happens only to a
   bucket that is new (and empty) or restored full.
 
+## Step 3 notes (2026-11-11)
+
+How §2's `mutated_at` is kept, refined during implementation. None of these
+choices changes what quiet means.
+
+- **One stamp site per journal, in Postgres.** `mutated_at` lives in its own
+  table, `object_bucket_activity`, and triggers stamp it. They fire on the
+  journals every content change already writes in its own transaction:
+  - `object_bucket_mutations`, insert and delete. Every provider write,
+    copy, multipart step, upload route and clone grant records a source
+    writer there before provider IO and clears it after a validated
+    acknowledgement (ADR-590).
+  - `object_deletions`, insert and state change.
+  - `object_bucket_versioning`, `object_bucket_object_lock` and
+    `object_storage_capacity_reconciliations`.
+
+  A writer that forgets to stamp would have to skip the journal, which
+  clones already depend on. Stamping in the database also covers the
+  previous release's daemons from the moment the migration runs. The contract
+  test (`TestObjectBucketActivityTriggersPG`) lists the stamped tables;
+  `TestObjectBucketActivityMemParity` holds the MemStore to the same writes.
+- **A write is covered from admission to acknowledgement.** The writer is
+  stamped when it begins and when it settles. A listing published while a
+  writer or deletion of its bucket is still outstanding also stamps the
+  bucket. Such a write may land after the listing started, or never settle
+  if its reply was lost.
+- **Coarse stamps.** A bucket's row is rewritten at most once per
+  `ObjectInventoryMutationStampGranularity` (30 s). A burst of PUTs costs one
+  row update, not two per request, and a stamp within the granularity
+  takes no row lock. A bucket is quiet only when `mutated_at` is older than
+  its listing's start by more than the granularity.
+- **`active_since`** records the first stamp after a bucket was last quiet.
+  Step 4 anchors an active bucket's 900 s window there. Otherwise a quiet
+  bucket observed hours ago would answer `503` from its second write until
+  the sweep listed it again.
+- **Rollout.** Every bucket that exists when the migration runs starts at the
+  migration's time. A bucket created later has no row until its first
+  mutation.
+
 ## Consequences
 
 - Listing work follows activity. Every 15 minutes, only buckets that changed

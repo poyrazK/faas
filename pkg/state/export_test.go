@@ -1197,3 +1197,14 @@ func CandidatePostgresDeadlineForAccess(access string, recorded time.Time, age t
 	inputs := RuntimeConfigInputs{SecretVersions: map[string]int64{"production/DATABASE_URL": 3}}
 	return candidatePostgresEvidenceDeadline(request, []candidatePostgresDelivery{delivery}, receipts, inputs, inputs, age, recorded.Add(time.Second))
 }
+
+// AgeObjectBucketActivityForTest moves a bucket's activity stamps back by d,
+// as the PG tests do with an UPDATE (ADR-20261110151628).
+func (m *MemStore) AgeObjectBucketActivityForTest(bucket string, d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if a, ok := m.objectBucketActivity[bucket]; ok {
+		a.mutatedAt, a.activeSince = a.mutatedAt.Add(-d), a.activeSince.Add(-d)
+		m.objectBucketActivity[bucket] = a
+	}
+}
