@@ -201,7 +201,7 @@ func (m *MemStore) workflowStepAttemptCurrentLocked(runID string, step WorkflowS
 	if leased && !lease.After(time.Now()) {
 		return false
 	}
-	return leased || !(operation || run.ResumeCount > 0 || step.ForEachParent != nil)
+	return leased || (!operation && run.ResumeCount <= 0 && step.ForEachParent == nil)
 }
 
 func (m *MemStore) recoverWorkflowStepsLocked(run WorkflowRun, now time.Time) {
