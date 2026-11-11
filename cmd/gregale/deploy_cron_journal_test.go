@@ -301,7 +301,7 @@ func TestDeployCronDeferredReceiptAndLegacyJournal(t *testing.T) {
 			if err = s.preparePolicyJournal(t.Context(), c, dir); err != nil {
 				t.Fatal(err)
 			}
-			if err = s.prepareCronJournal(t.Context(), c, dir, false); err != nil {
+			if err = s.prepareCronJournal(t.Context(), c, dir, "", false); err != nil {
 				t.Fatal(err)
 			}
 			if !s.record.CronJournal.Deferred {

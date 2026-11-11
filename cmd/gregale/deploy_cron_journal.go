@@ -17,21 +17,27 @@ type deployCronJournal struct {
 	Cleaned  bool                             `json:"cleaned,omitempty"`
 }
 type deployCronStagingClient interface {
-	GetDeploymentCronStagingSnapshot(context.Context, string) (api.DeploymentCronStagingSnapshot, error)
+	GetEnvironmentDeploymentCronStagingSnapshot(context.Context, string, string) (api.DeploymentCronStagingSnapshot, error)
 	ApplyDeploymentCronStaging(context.Context, string, api.DeploymentCronStagingRequest) (api.DeploymentStagingReceipt, error)
 }
 
-// deployStagesManifestCrons reports whether a deploy replaces the app's HTTP
-// crons with its gregale.yaml cron triggers. Crons fire only into production
-// (ADR-20261104120000), and the staging request names no environment, so a
-// deploy to any other environment would replace production's crons with the
-// stage manifest's. Those deploys leave crons alone, as source deploys from a
-// git ref already do; so do --no-triggers and dark (--traffic 0) deploys.
-func deployStagesManifestCrons(noTriggers bool, trafficPercent int, environment string) bool {
-	return !noTriggers && trafficPercent != 0 && (environment == "" || environment == "production")
+// deployStagesManifestCrons reports whether a deploy replaces the HTTP crons
+// of its environment with its gregale.yaml cron triggers. --no-triggers and
+// dark (--traffic 0) deploys leave crons alone.
+func deployStagesManifestCrons(noTriggers bool, trafficPercent int) bool {
+	return !noTriggers && trafficPercent != 0
 }
 
-func (s *savedDeploySession) prepareCronJournal(ctx context.Context, c deployCronStagingClient, dir string, noTriggers bool) error {
+// cronStagingEnvironment is the environment a deploy stages its manifest
+// crons into (ADR-20261104120000): empty for production.
+func cronStagingEnvironment(environment string) string {
+	if environment == "production" || environment == "default" {
+		return ""
+	}
+	return environment
+}
+
+func (s *savedDeploySession) prepareCronJournal(ctx context.Context, c deployCronStagingClient, dir, environment string, noTriggers bool) error {
 	if noTriggers || dir == "" || s.record.DarkDeploy {
 		return nil
 	}
@@ -55,17 +61,19 @@ func (s *savedDeploySession) prepareCronJournal(ctx context.Context, c deployCro
 	if err = s.save(); err != nil {
 		return err
 	}
-	snapshot, err := c.GetDeploymentCronStagingSnapshot(ctx, s.record.AppSlug)
+	environment = cronStagingEnvironment(environment)
+	snapshot, err := c.GetEnvironmentDeploymentCronStagingSnapshot(ctx, s.record.AppSlug, environment)
 	if err != nil {
 		return fmt.Errorf("snapshot deployment crons: %w", err)
 	}
-	if snapshot.AppID != s.record.AppID || snapshot.Revision < 0 {
-		return fmt.Errorf("cron snapshot has a different app or invalid revision")
+	if snapshot.AppID != s.record.AppID || snapshot.Revision < 0 || snapshot.Environment != environment {
+		return fmt.Errorf("cron snapshot has a different app, environment or invalid revision")
 	}
 	if err = api.ValidateDeploymentCrons(snapshot.Crons); err != nil {
 		return err
 	}
-	request := api.DeploymentCronStagingRequest{SessionID: s.record.ID, Operation: "stage", ExpectedAppID: s.record.AppID, ExpectedDeploymentID: snapshot.LatestDeploymentID, ExpectedRevision: snapshot.Revision, Before: snapshot.Crons, Desired: []api.DeploymentCronConfig{}}
+	request := api.DeploymentCronStagingRequest{SessionID: s.record.ID, Operation: "stage", ExpectedAppID: s.record.AppID, ExpectedDeploymentID: snapshot.LatestDeploymentID,
+		ExpectedRevision: snapshot.Revision, Before: snapshot.Crons, Desired: []api.DeploymentCronConfig{}, Environment: environment}
 	existing := map[string]string{}
 	for _, cron := range snapshot.Crons {
 		existing[manifestCronKey(cron.Schedule, cron.Path)] = cron.ID

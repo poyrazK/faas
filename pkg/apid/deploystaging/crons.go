@@ -15,6 +15,27 @@ type CronHandlers struct {
 	Store   state.DeploymentCronStagingStore
 	LoadApp func(http.ResponseWriter, *http.Request, state.Account, string) (state.App, bool)
 	Changed func(context.Context, string, string, string)
+	// Environment resolves a requested environment of app to its cron scope
+	// ('' for production), refusing one the app's project does not have
+	// (ADR-20261104120000).
+	Environment func(context.Context, state.App, string) (string, *api.Problem)
+}
+
+// scope resolves the environment a staging request names.
+func (h CronHandlers) scope(w http.ResponseWriter, r *http.Request, app state.App, environment string) (string, bool) {
+	if environment == "" {
+		return "", true
+	}
+	if h.Environment == nil {
+		api.WriteProblem(w, api.ErrCapacity("environment cron staging is unavailable"))
+		return "", false
+	}
+	scope, problem := h.Environment(r.Context(), app, environment)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return "", false
+	}
+	return scope, true
 }
 
 func (h CronHandlers) Snapshot(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -26,7 +47,20 @@ func (h CronHandlers) Snapshot(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.ErrCapacity("deployment cron staging is unavailable"))
 		return
 	}
-	snapshot, err := h.Store.DeploymentCronStagingSnapshot(r.Context(), acct.ID, app.ID)
+	scope, ok := h.scope(w, r, app, r.URL.Query().Get("environment"))
+	if !ok {
+		return
+	}
+	var snapshot api.DeploymentCronStagingSnapshot
+	var err error
+	if scope == "" {
+		snapshot, err = h.Store.DeploymentCronStagingSnapshot(r.Context(), acct.ID, app.ID)
+	} else if environments, supported := h.Store.(state.EnvironmentDeploymentCronStagingStore); supported {
+		snapshot, err = environments.EnvironmentDeploymentCronStagingSnapshot(r.Context(), acct.ID, app.ID, scope)
+	} else {
+		api.WriteProblem(w, api.ErrCapacity("environment cron staging is unavailable"))
+		return
+	}
 	if err != nil {
 		h.writeError(w, err, acct.Plan)
 		return
@@ -49,6 +83,14 @@ func (h CronHandlers) Apply(w http.ResponseWriter, r *http.Request, acct state.A
 	}
 	if h.Store == nil {
 		api.WriteProblem(w, api.ErrCapacity("deployment cron staging is unavailable"))
+		return
+	}
+	scope, ok := h.scope(w, r, app, request.Environment)
+	if !ok {
+		return
+	}
+	if scope != request.Environment {
+		api.WriteProblem(w, api.ErrValidation("invalid cron staging environment"))
 		return
 	}
 	limits, known := api.LimitsFor(acct.Plan)

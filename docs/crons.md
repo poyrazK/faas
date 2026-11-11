@@ -266,8 +266,10 @@ suspended; the app's other environments keep firing. Deleting the
 environment deletes its crons. A cron's environment cannot be changed: create
 it again in the other environment.
 
-Manifest crons stay production's: a `gregale deploy --environment` leaves
-them alone. Create a stage's crons with `--environment`.
+Manifest crons follow the deploy: `gregale deploy --environment staging`
+stages the `gregale.yaml` crons into staging. They take effect when the
+staging deployment is live with all of staging's traffic, and they replace
+only staging's manifest crons; production's are untouched.
 
 ## Command crons (preview)
 

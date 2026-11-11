@@ -26209,6 +26209,14 @@ paths:
       description: |
         Snapshots only HTTP scheduling intent for the owned app. Command crons,
         execution progress and server-held original rows are excluded.
+        `environment` reads one non-production environment's manifest crons
+        and its own revision and latest deployment (ADR-20261104120000).
+      parameters:
+        - name: environment
+          in: query
+          required: false
+          schema: { type: string }
+          description: A project environment of the app; omitted or `production` is production.
       responses:
         '200':
           description: The captured HTTP scheduling set.
@@ -96351,6 +96359,7 @@ components:
         crons:
           type: array
           items: { $ref: '#/components/schemas/DeploymentCronConfig' }
+        environment: { type: string, description: "The non-production environment read; omitted for production." }
     DeploymentCronStagingRequest:
       type: object
       description: Immutable HTTP cron intent. Prepare retains active schedules until the submitted production release owns all traffic; cancel fences an unsubmitted intent. Stage and restore support legacy recovery.
@@ -96369,6 +96378,7 @@ components:
         desired:
           type: array
           items: { $ref: '#/components/schemas/DeploymentCronConfig' }
+        environment: { type: string, description: "Stages the manifest's HTTP crons into this non-production environment of the app's project; it activates when the environment's deployment owns all of its traffic and replaces only its manifest crons. Only prepare, cancel and track_upload take one (ADR-20261104120000)." }
     DeploymentStagingSnapshot:
       type: object
       description: An atomic snapshot for journaling selected deployment policies before staging.

@@ -82,3 +82,26 @@ the app's production HTTP crons with the stage manifest's.
   - Each schema change is expand-only.
 - **Admission until a table's PR lands:** clone admission keeps refusing that
   table, then accepts it through the strategy in decision 4.
+
+## Amendment 2026-11-11: manifest crons and environment work
+
+- **Manifest staging state per environment.** Production keeps its staging
+  revision on `apps` and its pending activation in
+  `deployment_cron_activations`, which N-1 writes with `ON CONFLICT(app_id)`.
+  Every other environment has its own revision and activation in
+  `environment_deployment_cron_states` and
+  `environment_deployment_cron_activations`, keyed by app and scope, so a
+  stage deploy and a production deploy never supersede each other's intent.
+  Only the deferred protocol (prepare, cancel, track_upload) takes an
+  environment; the legacy immediate journal stays production's.
+- **Activation lane.** An environment's intent activates only from a
+  deployment of that environment, under the production rules within the lane
+  (live, all of the lane's traffic, no competing deployment, rollout done).
+- **Environment HTTP crons are environment work.** Their invocations carry the
+  environment and are owned by the cron row, whose environment never changes;
+  claims, version resolution and environment deletion check that ownership.
+- **Decided next (user, 2026-11-11):** an environment's event subscriptions
+  receive only that environment's events (its buckets, deployments and
+  databases, and custom events its code publishes); environment broker
+  triggers get a platform-derived consumer group or durable name per
+  environment, so a stage never competes with production for messages.

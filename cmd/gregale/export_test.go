@@ -2716,6 +2716,7 @@ var CmdGithubSetup = cmdGithubSetup
 
 // Manifest cron staging stays with production deploys (ADR-20261104120000).
 var DeployStagesManifestCrons = deployStagesManifestCrons
+var CronStagingEnvironment = cronStagingEnvironment
 
 // DebugWatchPoll runs one debug requests watch poll against baseURL and
 // returns the request IDs it read and whether it reported a gap.
