@@ -108,6 +108,9 @@ func (s *server) transferOrgOwnership(w http.ResponseWriter, r *http.Request, ac
 	if !s.requireOrgAction(w, r, authz.OrgActionTransferOwnership) {
 		return
 	}
+	if !s.sessionPresenceForIrreversible(w, r, acct, "org_ownership_transfer") {
+		return
+	}
 	mem, ok := s.requireMembership(w, r)
 	if !ok {
 		return
@@ -137,7 +140,10 @@ func (s *server) transferOrgOwnership(w http.ResponseWriter, r *http.Request, ac
 		"new_owner_account_id":      newOwnerID,
 	})
 	if err := s.transferOrgOwnershipWithActivity(r.Context(), mem.OrgID, mem.AccountID, newOwnerID, activity); err != nil {
+		var limit *state.OrgFreeLimitError
 		switch {
+		case errors.As(err, &limit):
+			api.WriteProblem(w, api.ErrOrgFreeTransferLimitExceeded(api.FreeOrganizationsOwnedMax, limit.Owned))
 		case errors.Is(err, state.ErrNotFound):
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 				"Member not found", "the new owner is not an active member of this org"))
@@ -256,7 +262,7 @@ func (s *server) acceptInvitation(w http.ResponseWriter, r *http.Request, acct s
 		"invitation": inv.ID,
 	})
 
-	writeJSON(w, http.StatusOK, api.OrgMemberResponseFromRow(s.memberToRow(r.Context(), membership)))
+	writeJSON(w, http.StatusOK, api.OrgMemberResponseFromRow(s.memberRowWithName(r.Context(), membership)))
 }
 
 // revokeInvitation stamps revoked_at on a still-pending invitation

@@ -70,7 +70,9 @@ func (s *server) fullEnvironmentClonesOffProblem(ctx context.Context, key string
 	if enabled {
 		return nil
 	}
-	if s.runtimeBool(runtimeConfigFullEnvironmentCloneAdmission, false) {
+	if open, err := s.fullEnvironmentCloneAdmissionOpen(ctx); err != nil {
+		return api.ErrCapacity("could not read the full environment clone admission switch")
+	} else if open {
 		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Full environment clone admission is open",
 			"turn off "+runtimeConfigFullEnvironmentCloneAdmission+" first, then wait for unfinished clones to end")
 	}
@@ -89,6 +91,29 @@ func (s *server) fullEnvironmentClonesOffProblem(ctx context.Context, key string
 	return nil
 }
 
+// fullEnvironmentCloneAdmissionOpen reads the stored admission switch, not only
+// this replica's cache, which can trail another replica's change. Admission
+// share-locks that row, so once it is stored as off every clone it admitted
+// has committed and the unfinished count that follows sees it.
+func (s *server) fullEnvironmentCloneAdmissionOpen(ctx context.Context) (bool, error) {
+	if s.runtimeBool(runtimeConfigFullEnvironmentCloneAdmission, false) {
+		return true, nil
+	}
+	stored, err := s.store.GetRuntimeConfig(ctx, runtimeConfigFullEnvironmentCloneAdmission, state.RuntimeConfigScopeGlobal, "")
+	if errors.Is(err, state.ErrRuntimeConfigNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	open, err := runtimeconfig.Bool(stored.DesiredValue)
+	if err != nil {
+		// An unreadable stored value refuses the switch-off like a read error.
+		return false, fmt.Errorf("read %s: %w", runtimeConfigFullEnvironmentCloneAdmission, err)
+	}
+	return open, nil
+}
+
 // admitFullProjectEnvironmentClone captures the source and creates the
 // operation in one transaction; the coordinator copies and publishes it. A
 // source that uses a table without an isolated strategy, or holds managed data,
@@ -104,9 +129,13 @@ func (s *server) admitFullProjectEnvironmentClone(w http.ResponseWriter, r *http
 		key = uuid.NewString()
 	}
 	op, err := store.CreateCapturedProjectEnvironmentCloneOperation(r.Context(), state.ProjectEnvironmentCloneCaptureRequest{AccountID: acct.ID, ProjectID: project.ID,
-		SourceEnvironment: req.FromEnvironment, TargetEnvironment: req.Slug, IdempotencyKey: key, RequireCompleteInventory: true})
+		SourceEnvironment: req.FromEnvironment, TargetEnvironment: req.Slug, IdempotencyKey: key, RequireCompleteInventory: true,
+		AdmissionSwitches:       []string{runtimeConfigFullEnvironmentClones, runtimeConfigFullEnvironmentCloneAdmission},
+		QualifiedObjectBackends: s.cloneQualifiedObjectBackends(),
+		CheckObjectCapacity:     s.cloneObjectCapacityCheck(acct)})
 	if err != nil {
-		api.WriteProblem(w, fullProjectEnvironmentCloneAdmissionProblem(project.Slug, req.FromEnvironment, err))
+		operator, _ := s.adminAllows(acct)
+		api.WriteProblem(w, fullProjectEnvironmentCloneAdmissionProblem(project.Slug, req.FromEnvironment, operator, err))
 		return
 	}
 	s.audit.Emit(r.Context(), "project.environment.clone_admitted", &acct.ID, map[string]any{
@@ -121,7 +150,10 @@ func (s *server) admitFullProjectEnvironmentClone(w http.ResponseWriter, r *http
 		CreatedAt: response.CreatedAt, UpdatedAt: response.UpdatedAt, CloneOperation: &response})
 }
 
-func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, err error) *api.Problem {
+// fullProjectEnvironmentCloneAdmissionProblem maps a refused capture. Inventory
+// blockers are tables the source itself uses, so they are named; a schema
+// coverage gap is the platform's and is named to operators only.
+func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, operator bool, err error) *api.Problem {
 	var inventory *state.ProjectEnvironmentCloneInventoryError
 	var coverage *state.ProjectEnvironmentCloneSchemaCoverageError
 	switch {
@@ -129,11 +161,18 @@ func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, err
 		problem := api.NewProblem(http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "Full environment clone unavailable",
 			"the source uses resources a full clone cannot copy into an isolated stage yet")
 		for _, blocker := range inventory.Blockers {
-			problem.Errors = append(problem.Errors, api.FieldError{Field: "resource_coverage." + blocker.Table, Expected: "an isolated stage strategy", Got: blocker.Code})
+			field := "resource_coverage." + blocker.Table
+			if blocker.Resource != "" {
+				field += "." + blocker.Resource
+			}
+			problem.Errors = append(problem.Errors, api.FieldError{Field: field, Expected: "an isolated stage strategy", Got: blocker.Code})
 		}
 		return problem
 	case errors.As(err, &coverage):
 		problem := fullProjectEnvironmentCloneUnavailable()
+		if !operator {
+			return problem
+		}
 		problem.Errors = nil
 		for _, blocker := range coverage.Blockers {
 			field := "resource_coverage." + blocker.Table
@@ -143,6 +182,26 @@ func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, err
 			problem.Errors = append(problem.Errors, api.FieldError{Field: field, Expected: "registered schema", Got: blocker.Code})
 		}
 		return problem
+	case errors.Is(err, state.ErrProjectEnvironmentCloneAdmissionClosed):
+		return fullProjectEnvironmentCloneUnavailable()
+	case errors.Is(err, state.ErrObjectCapacity):
+		return cloneObjectCapacityProblem(err)
+	case errors.Is(err, state.ErrObjectUsageStale):
+		return api.NewProblem(http.StatusServiceUnavailable, "object_storage_usage_stale", "Object storage usage unavailable",
+			"the source's buckets cannot be sized against the account's storage limits right now; retry in a few minutes")
+	case errors.Is(err, state.ErrInvalidProjectEnvironmentCloneOperation):
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid full clone",
+			"the Idempotency-Key must be 1 to 255 characters and the source and target environments must differ")
+	case errors.Is(err, state.ErrProjectEnvironmentCloneSourceNotDeployed):
+		return cloneSourceRefusal("source.workloads", "a live deployment for every workload", "not_deployed")
+	case errors.Is(err, state.ErrReleaseConfigurationTransferUnsupported):
+		return cloneSourceRefusal("source.release_configuration", "deployments without a release configuration snapshot", "release_pinned")
+	case errors.Is(err, state.ErrProjectSecretCloneTransferUnsupported):
+		return cloneSourceRefusal("source.project_secrets", "no shared environment secrets", "shared_secrets")
+	case errors.Is(err, state.ErrProjectEnvironmentQueueCollectionUnavailable):
+		return cloneSourceRefusal("source.queue_bindings", "environment-owned queue bindings", "legacy_stage_bindings")
+	case errors.Is(err, state.ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable):
+		return cloneSourceRefusal("source.work_policies", "work policies scoped to the source environment", "isolation_unavailable")
 	case errors.Is(err, state.ErrNotFound):
 		return projectEnvironmentNotFound(projectSlug, source)
 	case errors.Is(err, state.ErrConflict), errors.Is(err, state.ErrInvalidArgument):
@@ -153,8 +212,24 @@ func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, err
 	}
 }
 
+// cloneSourceRefusal names what in the source keeps it from a full clone. These
+// last until the customer changes the source, so they are never 503s.
+func cloneSourceRefusal(field, expected, got string) *api.Problem {
+	problem := api.NewProblem(http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "Full environment clone unavailable",
+		"the source environment holds something a full clone cannot copy into an isolated stage yet")
+	problem.Errors = []api.FieldError{{Field: field, Expected: expected, Got: got}}
+	return problem
+}
+
+// fullProjectEnvironmentCloneProblem refuses a full clone while admission is
+// closed. The registry gap is the whole platform's, not this project's, and
+// names internal tables of dark product areas, so only operators see it;
+// customers get the four resource categories.
 func (s *server) fullProjectEnvironmentCloneProblem(r *http.Request, acct state.Account, project state.Project) *api.Problem {
 	problem := fullProjectEnvironmentCloneUnavailable()
+	if operator, _ := s.adminAllows(acct); !operator {
+		return problem
+	}
 	store, ok := s.store.(state.ProjectEnvironmentCloneSchemaCoverageStore)
 	if !ok {
 		return problem
@@ -163,8 +238,7 @@ func (s *server) fullProjectEnvironmentCloneProblem(r *http.Request, acct state.
 	if err != nil {
 		return api.ErrCapacity("could not verify clone configuration schema coverage")
 	}
-	hostingVisible, _ := s.adminAllows(acct)
-	hostingVisible = hostingVisible && s.runtimeBool(runtimeConfigFrontendHosting, false)
+	hostingVisible := s.runtimeBool(runtimeConfigFrontendHosting, false)
 	for _, blocker := range coverage.Blockers {
 		if strings.HasPrefix(blocker.Table, "hosting_") && !hostingVisible {
 			continue

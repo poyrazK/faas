@@ -130,6 +130,12 @@ fleet runs that release. Rolling back past it means turning the variable off
 first. Every other request stays on HTTP/1.1, so an older gatewayd-public
 behind an h2c-enabled Caddy fails gRPC only.
 
+A new manifest key follows the same rule. An older gregalectl rejects a
+manifest key it does not know, so the deployment manifest gains the key only
+after a release whose gregalectl reads it has shipped; rolling back past that
+release means removing the key first. Feature stages in the manifest, such as
+`service_tcp` (ADR-576), turn on one stage per rollout and off in reverse.
+
 **Headers and trailers between gateways are part of the N±1 contract.**
 gatewayd-public runs on the control-plane host and moves with the
 control-plane stage, so for a whole rollout it sits in front of N-1 compute
@@ -148,6 +154,14 @@ budget. `TestPublicTrafficSecurityFollowsItsPeers`,
 `TestPublicProxyServesAPlainN1Answer` (`pkg/gateway`) hold the public hop to
 this. A new header requirement needs the same fleet gate or an opt-in
 negotiation, plus a case in those tests.
+
+**Policy data the edge reads is part of the contract too.** apid writes edge
+rules before the gateways upgrade, so a new field that changes what a rule
+does must not be written until every gateway reads it. ADR-20261108110000
+sealed header values as an empty `value` plus `secret_id`; an N-1 gateway
+ignored `secret_id` and sent the header empty. apid now seals only while every
+gateway reports `edge_header_secrets` in its traffic runtime report, a
+capability tied to the reporting boot so a rolled-back gateway stops counting.
 
 ## Gate 1: version skew (CI, every pull request)
 
@@ -342,6 +356,15 @@ The linter rejects an `expand` migration that does any of these:
 - drops a function, type, sequence, trigger or unique constraint that it
   does not create again;
 - drops a column default.
+
+A `RENAME` or `DROP` that a migration assembles at run time (`EXECUTE
+format(...)` or a concatenated string inside a function or `DO` block) is a
+`dynamic-ddl` finding whatever the class: the linter cannot check the previous
+release's references to objects it only knows at run time. Write those
+statements literally, or waive the finding with the reason the previous
+release does not read them. Migration `20261107145315064` renamed eleven
+tables that way; the previous release kept reading the old names until its
+daemons restarted, and deployments failed for five minutes.
 
 What no linter sees is the author's claim to make: a trigger function's
 `pg_notify` payload, whether the previous release's writes satisfy a new
@@ -579,6 +602,17 @@ root), as the other `gregalectl release` commands do.
   Neither is built.
 - The full release pipeline still has to enforce that no unit lags more than
   one release. The unit lanes do enforce it.
-- Gate 1 checks protos and guest JSON only. HTTP headers and trailers
-  between gatewayd-public and gatewayd-internal have no CI skew check; the
+- Gate 1 checks protos and guest JSON only. Edge-rule rows (apid writes
+  them, gatewayd-internal compiles them) have no CI skew check either. A
+  gateway fails a host closed on an enabled rule whose kind it does not know
+  or whose action is missing (ADR-091 amendment 2026-11-02), so release a new
+  kind behind a capability that is turned on after the edge rollout. A new
+  field on an existing kind is ignored by older gateways: if it makes a rule
+  refuse more, gate it the same way. A release that tightens the bounds a
+  stored WAF or challenge value must meet also fails the hosts of every saved
+  rule outside them closed; before releasing it, count those rules with the
+  new bounds and have their owners change them (`gregale edge rule list`
+  warns about each, ADR-091 amendment 2026-11-03).
+- HTTP headers and trailers between gatewayd-public and gatewayd-internal
+  have no CI skew check; the
   tests named under Deploy order are the guard.

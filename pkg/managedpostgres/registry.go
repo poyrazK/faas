@@ -37,6 +37,10 @@ type Config struct {
 type FleetConfig struct {
 	MaxDatabases             int   `json:"max_databases"`
 	MaxMonthlyCostMillicents int64 `json:"max_monthly_cost_millicents"`
+	// PaidReserveDatabases is how many of MaxDatabases only paid plans may
+	// add. Unset reserves api.ManagedPostgresFleetPaidReservePercent of
+	// MaxDatabases; 0 reserves none.
+	PaidReserveDatabases *int `json:"paid_reserve_databases,omitempty"`
 }
 
 func (c FleetConfig) policy() (FleetPolicy, error) {
@@ -44,7 +48,14 @@ func (c FleetConfig) policy() (FleetPolicy, error) {
 		c.MaxMonthlyCostMillicents < 0 || c.MaxMonthlyCostMillicents > api.ManagedPostgresFleetMonthlyCostCeilingMillicents {
 		return FleetPolicy{}, errors.New("managed postgres: invalid fleet policy")
 	}
-	return FleetPolicy(c), nil
+	reserve := c.MaxDatabases * api.ManagedPostgresFleetPaidReservePercent / 100
+	if c.PaidReserveDatabases != nil {
+		reserve = *c.PaidReserveDatabases
+	}
+	if reserve < 0 || (reserve > 0 && reserve >= c.MaxDatabases) {
+		return FleetPolicy{}, errors.New("managed postgres: the paid reserve must be below the fleet's database cap")
+	}
+	return FleetPolicy{MaxDatabases: c.MaxDatabases, MaxMonthlyCostMillicents: c.MaxMonthlyCostMillicents, PaidReserve: reserve}, nil
 }
 
 // UsageConfig is the JSON-safe form of UsagePolicy. Prices are integer
@@ -101,12 +112,21 @@ type BackendConfig struct {
 	Region    string            `json:"region"`
 	Namespace string            `json:"namespace"`
 	Settings  map[string]string `json:"settings,omitempty"`
-	SecretEnv map[string]string `json:"secret_env,omitempty"`
+	// PreviousSettings lists the settings this backend had before a capacity
+	// change (ADR-20261103091657). Databases created under one keep resolving
+	// to the backend; each entry may differ from Settings only in
+	// capacitySettings, so a placement change stays fenced.
+	PreviousSettings []map[string]string `json:"previous_settings,omitempty"`
+	SecretEnv        map[string]string   `json:"secret_env,omitempty"`
 	// DataAPIEnabled changes the qualified credential contract, not placement.
 	DataAPIEnabled bool `json:"data_api_enabled,omitempty"`
 	// AuthEnabled advertises the ADR-1190 auth credential mode under the same
 	// rule: a fresh qualification report must carry its evidence.
 	AuthEnabled bool `json:"auth_enabled,omitempty"`
+	// SessionEnabled advertises the direct session credential mode
+	// (ADR-20261109180000) under the same rule. It stays off until a
+	// qualification report carries session evidence (ADR-20261110120000).
+	SessionEnabled bool `json:"session_enabled,omitempty"`
 	// LiveHubURL enables ADR-20261016151947 live queries on this backend's databases:
 	// the ws:// or wss:// URL of the livequeryd hub serving a database, where
 	// {database_id} stands for the database's ID. Empty leaves live queries
@@ -125,6 +145,50 @@ type Backend struct {
 	Provider     Provider
 	// LiveHubURL is BackendConfig.LiveHubURL; see LiveHub.
 	LiveHubURL string
+	// previous holds the fingerprints of BackendConfig.PreviousSettings.
+	previous map[string]bool
+}
+
+// capacitySettings are the backend settings that bound what a database may
+// ask for without saying where it lives. Changing one may be declared in
+// previous_settings; every other setting is placement.
+var capacitySettings = map[string]bool{"max_storage_bytes": true, "max_restore_window_seconds": true}
+
+// maxPreviousSettings bounds how many superseded configurations a backend keeps.
+const maxPreviousSettings = 16
+
+// previousFingerprints fingerprints each superseded configuration, refusing
+// one that differs from the current settings in anything but capacity.
+func previousFingerprints(config BackendConfig) (map[string]bool, error) {
+	if len(config.PreviousSettings) > maxPreviousSettings {
+		return nil, fmt.Errorf("managed postgres: backend %s lists more than %d previous_settings", config.ID, maxPreviousSettings)
+	}
+	previous := make(map[string]bool, len(config.PreviousSettings))
+	for _, settings := range config.PreviousSettings {
+		for _, key := range settingKeys(settings, config.Settings) {
+			if settings[key] != config.Settings[key] && !capacitySettings[key] {
+				return nil, fmt.Errorf("managed postgres: backend %s previous_settings may change only max_storage_bytes and max_restore_window_seconds, not %s", config.ID, key)
+			}
+		}
+		superseded := config
+		superseded.Settings = settings
+		previous[fingerprint(superseded)] = true
+	}
+	return previous, nil
+}
+
+func settingKeys(a, b map[string]string) []string {
+	keys := make([]string, 0, len(a)+len(b))
+	for key := range a {
+		keys = append(keys, key)
+	}
+	for key := range b {
+		if _, ok := a[key]; !ok {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // LiveHub returns the hub serving databaseID's live queries, or "" when the
@@ -151,7 +215,12 @@ type Registry struct {
 
 func NewRegistry(config Config, getenv func(string) string, factories map[string]Factory) (*Registry, error) {
 	if config.MaxDatabasesPerAccount == 0 {
+		// Production sells the plans' limits; elsewhere a small cap keeps
+		// staging accounts from filling a shared provider.
 		config.MaxDatabasesPerAccount = 3
+		if ProductionEnvironmentActive(getenv) {
+			config.MaxDatabasesPerAccount = api.ManagedPostgresPlanDatabasesMax()
+		}
 	}
 	if config.MaxDatabasesPerAccount < 1 || config.MaxDatabasesPerAccount > 100 {
 		return nil, errors.New("managed postgres: invalid per-account database limit")
@@ -195,6 +264,10 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 		if err := validateLiveHubURL(backendConfig); err != nil {
 			return nil, err
 		}
+		previous, err := previousFingerprints(backendConfig)
+		if err != nil {
+			return nil, err
+		}
 		factory, ok := factories[backendConfig.Driver]
 		if !ok {
 			return nil, fmt.Errorf("managed postgres: unknown driver %s", backendConfig.Driver)
@@ -215,6 +288,7 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 			Capabilities: capabilities,
 			Provider:     provider,
 			LiveHubURL:   backendConfig.LiveHubURL,
+			previous:     previous,
 		}
 	}
 	for region, backendID := range config.Defaults {
@@ -282,7 +356,7 @@ func (r *Registry) Resolve(id, placementFingerprint string) (Backend, error) {
 		return Backend{}, ErrUnavailable
 	}
 	backend, ok := r.backends[id]
-	if !ok || backend.Fingerprint != placementFingerprint {
+	if !ok || backend.Fingerprint != placementFingerprint && !backend.previous[placementFingerprint] {
 		return Backend{}, ErrUnavailable
 	}
 	return backend, nil
@@ -310,8 +384,8 @@ func validateLiveHubURL(config BackendConfig) error {
 
 func fingerprint(config BackendConfig) string {
 	// SecretEnv is intentionally excluded: credential rotation or renaming an
-	// environment variable must not change placement. DataAPIEnabled and
-	// AuthEnabled are rollout capabilities, fenced by qualification's
+	// environment variable must not change placement. DataAPIEnabled,
+	// AuthEnabled and SessionEnabled are rollout capabilities, fenced by qualification's
 	// credential-access equality.
 	// Namespace and all non-secret settings fail closed if a backend is
 	// accidentally repurposed.

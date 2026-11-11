@@ -63,6 +63,28 @@ func (q *Queries) IssuePublishSourceMaps(ctx context.Context, db DBTX, arg Issue
 	return i, err
 }
 
+const issueReadSourceMapStatus = `-- name: IssueReadSourceMapStatus :one
+SELECT manifest_sha256, (canonical_manifest IS NOT NULL)::boolean AS ready
+FROM issue_source_map_artifacts WHERE app_id=$1 AND deployment_id=$2
+`
+
+type IssueReadSourceMapStatusParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type IssueReadSourceMapStatusRow struct {
+	ManifestSha256 string
+	Ready          bool
+}
+
+func (q *Queries) IssueReadSourceMapStatus(ctx context.Context, db DBTX, arg IssueReadSourceMapStatusParams) (IssueReadSourceMapStatusRow, error) {
+	row := db.QueryRow(ctx, issueReadSourceMapStatus, arg.AppID, arg.DeploymentID)
+	var i IssueReadSourceMapStatusRow
+	err := row.Scan(&i.ManifestSha256, &i.Ready)
+	return i, err
+}
+
 const issueReadSourceMaps = `-- name: IssueReadSourceMaps :one
 SELECT app_id, deployment_id, manifest_sha256, canonical_manifest, map_count, created_at, created_by_account_id, retired_at, retired_by_account_id FROM issue_source_map_artifacts WHERE app_id=$1 AND deployment_id=$2
 `

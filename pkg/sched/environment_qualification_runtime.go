@@ -76,7 +76,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	cpu := effectiveAppCPUMillicores(app)
 	startupCPU := cpu
 	if !dep.DisableStartupCPUBoost {
-		startupCPU = startupCPUBoostQuota(acct.Plan, cpu)
+		startupCPU = startupCPUBoostQuota(cpu)
 	}
 	preferredNodeID := app.NodeID
 	graphNodeID, graphNodePinned := ctx.Value(qualificationGraphDispatchNodeContextKey{}).(string)
@@ -84,7 +84,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 		preferredNodeID = graphNodeID
 	}
 	req := Request{AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB,
-		VCPU: limits.VCPU, CPUMillicores: startupCPU, MaxConcurrency: app.MaxConcurrency, PreferredNodeID: preferredNodeID}
+		VCPU: appVCPUs(app), CPUMillicores: startupCPU, MaxConcurrency: app.MaxConcurrency, PreferredNodeID: preferredNodeID}
 	placement, err := e.choosePlacementLocked(ctx, req)
 	if err != nil {
 		return err
@@ -153,7 +153,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 		return servingErr
 	}
 	if err := e.ledger.Admit(Request{Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope,
-		Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: cpu,
+		Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: appVCPUs(app), CPUMillicores: cpu,
 		CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: *claimed.LeaseUntil, MaxConcurrency: app.MaxConcurrency,
 		AllowConcurrencyOverlap: servingErr == nil && serving.ID != dep.ID, NodeID: placement.NodeID,
 		NodeCeilingMB: placement.CeilingMB, VCPUBudget: placement.VCPUBudget, CPUBudgetMillicores: placement.CPUBudgetMillicores}); err != nil {
@@ -264,17 +264,16 @@ func (e *Engine) recordQualificationInstanceTransition(ctx context.Context, ins 
 // Contention must respect the execution/cleanup deadline without leaving a
 // waiter goroutine that could acquire the mutex after its caller has returned.
 func (e *Engine) lockQualificationApp(ctx context.Context, appID string) (func(), error) {
-	mu := e.appMutex(appID)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, errors.Join(err, context.Cause(ctx))
 		}
-		if mu.TryLock() {
+		if unlock, ok := e.tryLockApp(appID); ok {
 			if err := ctx.Err(); err != nil {
-				mu.Unlock()
+				unlock()
 				return nil, errors.Join(err, context.Cause(ctx))
 			}
-			return mu.Unlock, nil
+			return unlock, nil
 		}
 		timer := time.NewTimer(api.EnvironmentGitOpsQualificationRuntimeCheckInterval)
 		select {

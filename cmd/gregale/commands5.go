@@ -318,7 +318,7 @@ func cmdEnv(args []string) int {
 		// in commands_env_diff.go.
 		return envDiff(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "gregale env: unknown subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "gregale env: unknown subcommand %q\n", args[0])
 	// `env list` named no verb (Hunt 14 H14-63).
 	parent, _ := lookupCliCommand("env")
 	return unknownSubcommandChoices(os.Stderr, "env", parent, args[0])
@@ -533,7 +533,7 @@ func envPush(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			p, err := parseSecretsPair(line)
+			p, err := parseSecretsPair(stripDotenvExport(line))
 			if err != nil {
 				return printErr("Bad stdin line", fmt.Errorf("line %d: %w", lineNo, err))
 			}
@@ -559,7 +559,7 @@ func envPush(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			p, err := parseSecretsPair(line)
+			p, err := parseSecretsPair(stripDotenvExport(line))
 			if err != nil {
 				return printErr("Bad .env line", fmt.Errorf("line %d: %w", lineNo, err))
 			}
@@ -572,6 +572,13 @@ func envPush(args []string) int {
 	if len(pairs) == 0 {
 		PrintFail(os.Stderr, "no KEY=VALUE pairs in input")
 		return 1
+	}
+	// Every key is checked before the first write: a bad key on line 3
+	// stopped the push after lines 1 and 2 were saved (Hunt 32 H32-68).
+	for i, p := range pairs {
+		if problem := api.ValidateSecretKey(p.k); problem != nil {
+			return printErr("Invalid secret key", fmt.Errorf("pair %d (%s): %s; nothing was written", i+1, p.k, problem.Detail))
+		}
 	}
 	if *dryRun {
 		previewPairs := make([]secretsPair, len(pairs))
@@ -835,7 +842,7 @@ func cmdAppScale(slug string, args []string) int {
 	environment := fs.String("environment", "", "edit this project environment's workload settings")
 	workloadRevision := int64(-1)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
-	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
+	cpuMillicores := fs.Int("cpu-millicores", 0, "cap CPU at 250 or 500 millicores; 1000 leaves it uncapped")
 	profile := new(string)
 	resourceSizeFlag(fs, profile, "update named resource size: micro|small|medium|large|xlarge")
 	conc := fs.Int("max-concurrency", 0, "update the maximum instances (replicas) the app scales to")
@@ -958,6 +965,10 @@ func cmdAppScale(slug string, args []string) int {
 		}
 		if explicit["per-instance-concurrency"] {
 			policy.PerInstanceConcurrency = *perInstanceConcurrency
+		}
+		if explicit["min"] {
+			// The policy was copied from the app, so it holds the old floor.
+			policy.MinInstances = *min
 		}
 		req.ScalingPolicy = policy
 	}
@@ -1171,20 +1182,29 @@ func cmdAppDispatch(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|costs [--month YYYY-MM] [--json]|rename <new>|restart|exec -- <command> [args...]|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|egress-ports {show|add <port>|remove <port>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|traffic-status|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N|--maintenance|--no-maintenance|--streaming-enabled|--no-streaming-enabled|--websocket-enabled|--no-websocket|--route-metrics|--no-route-metrics|--consumer-auth-mode optional|required|--platform-tenant-required|--no-platform-tenant-required]", "apps")
 		return 1
 	}
+	if args[0] == subWait && hasSelectorFlag(args[1:]) {
+		return cmdAppWaitSelected(args[1:])
+	}
 	slug := args[0]
 	if code, ok := cmdAppConditions(slug, args[1:]); ok {
 		return code
 	}
+	if code, ok := cmdAppLabels(slug, args[1:]); ok {
+		return code
+	}
 	if len(args) >= 2 {
+		commandArgs := args[2:]
 		switch args[1] {
 		case subHealth:
-			return cmdAppHealth(slug, args[2:])
+			return cmdAppHealth(slug, commandArgs)
 		case subChanges:
-			return cmdAppChanges(slug, args[2:])
+			return cmdAppChanges(slug, commandArgs)
 		case subScale:
-			return cmdAppScale(slug, args[2:])
+			return cmdAppScale(slug, commandArgs)
+		case "scaling":
+			return cmdAppScaling(slug, commandArgs)
 		case "costs":
-			return cmdAppCosts(slug, args[2:])
+			return cmdAppCosts(slug, commandArgs)
 		case subRename:
 			if len(args) != 3 {
 				PrintUsage(os.Stderr, "usage: gregale app <slug> rename <new-slug>", "apps")
@@ -1192,33 +1212,33 @@ func cmdAppDispatch(args []string) int {
 			}
 			return cmdAppRename(slug, args[2])
 		case subRestart:
-			return cmdAppRestart(slug, args[2:])
+			return cmdAppRestart(slug, commandArgs)
 		case subExec:
-			return cmdAppExec(slug, args[2:])
+			return cmdAppExec(slug, commandArgs)
 		case "cp":
-			return cmdAppCopy(slug, args[2:])
+			return cmdAppCopy(slug, commandArgs)
 		case "port-forward":
-			return cmdAppPortForward(slug, args[2:])
+			return cmdAppPortForward(slug, commandArgs)
 		case subSecurity:
-			return cmdAppSecurity(slug, args[2:])
+			return cmdAppSecurity(slug, commandArgs)
 		case subEgressAllowlist:
-			return cmdAppEgressAllowlist(slug, args[2:])
+			return cmdAppEgressAllowlist(slug, commandArgs)
 		case subEgressPorts:
-			return cmdAppEgressPorts(slug, args[2:])
+			return cmdAppEgressPorts(slug, commandArgs)
 		case subNetwork:
-			return cmdAppNetwork(slug, args[2:])
+			return cmdAppNetwork(slug, commandArgs)
 		case "traffic-status":
-			return cmdAppTrafficStatus(slug, args[2:])
+			return cmdAppTrafficStatus(slug, commandArgs)
 		case subRoutes:
-			return cmdAppsRoutes(slug, args[2:])
+			return cmdAppsRoutes(slug, commandArgs)
 		case subTCPListeners:
-			return cmdAppsTCP(slug, args[2:])
+			return cmdAppsTCP(slug, commandArgs)
 		case subUDPListeners:
-			return cmdAppsUDP(slug, args[2:])
+			return cmdAppsUDP(slug, commandArgs)
 		case subStreamingCap:
-			return cmdAppsStreamingCap(slug, args[2:])
+			return cmdAppsStreamingCap(slug, commandArgs)
 		case subStaticEgressIP:
-			return cmdAppStaticEgressIP(slug, args[2:])
+			return cmdAppStaticEgressIP(slug, commandArgs)
 		}
 	}
 	// Backwards-compat: legacy flag-form dispatch is the existing cmdApp.
@@ -1266,17 +1286,9 @@ func cmdPlan(args []string) int {
 		return printErr("Could not fetch account", err)
 	}
 	if acct.Plan != "" && planRank[api.Plan(acct.Plan)] > planRank[target] && !*yes {
-		if code := requireAutomationConfirmation(false, "--yes"); code != 0 {
+		question := fmt.Sprintf("Downgrade from %s to %s: existing apps may exceed the new plan's limits. Continue?", acct.Plan, target)
+		if code := confirmYesNo(question, "--yes", "the plan downgrade"); code != 0 {
 			return code
-		}
-		fmt.Fprintf(os.Stderr,
-			"Downgrade from %s to %s: existing apps may exceed the new plan's limits. "+
-				"Continue? [y/N] ", acct.Plan, target)
-		var ans string
-		_, _ = fmt.Scanln(&ans)
-		if strings.ToLower(strings.TrimSpace(ans)) != "y" {
-			_, _ = fmt.Fprintln(osStdout, "aborted")
-			return 1
 		}
 	}
 	updated, err := client.ChangePlan(context.Background(), string(target))
@@ -1289,7 +1301,25 @@ func cmdPlan(args []string) int {
 			(ae.Problem.CheckoutURL != "" || ae.Problem.BillingPortalURL != "") {
 			return renderPlanCheckoutHandoff(ae, target)
 		}
+		if errors.As(err, &ae) && ae.Problem.Code == api.CodeBillingSubscriptionEnding && !jsonOutput && acct.Plan != "" {
+			PrintWarn(osStderr, "Keep the subscription first: gregale billing plan %s", acct.Plan)
+		}
 		return printErr("Plan change failed", err)
+	}
+	if jsonOutput {
+		// The account as apid returned it: plan, plus plan_change_status,
+		// requested_plan and effective_at when the change is scheduled or
+		// a scheduled change was undone. Scripts branch on these instead
+		// of the human lines below.
+		return jsonOut(writeJSON(updated))
+	}
+	if updated.PlanChangeStatus == "scheduled_change_undone" {
+		PrintOK(osStdout, "Kept the %s subscription: its scheduled cancellation or plan change was undone", updated.Plan)
+		return 0
+	}
+	if string(target) == acct.Plan && updated.Plan == acct.Plan {
+		PrintOK(osStdout, "Already on %s; nothing was scheduled to change", target)
+		return 0
 	}
 	if updated.PlanChangeStatus == "pending_provider_confirmation" {
 		if updated.EffectiveAt != nil {
@@ -1611,6 +1641,11 @@ func queueWorkFromFlags(policy, key, fairnessKey string) (*api.InvokeWork, error
 // the SDK-side timeout; a 204 No Content (empty queue) returns
 // `empty`. Mirrors the existing cmdQueueTail long-poll framing —
 // same signal.NotifyContext wiring.
+// queueReceiveEmpty explains an empty receive: it returns processed
+// messages' results, and pending messages are delivered to the app, so a
+// queue with depth > 0 can still receive nothing (Hunt 32 H32-44).
+const queueReceiveEmpty = "(empty: no message finished processing in the wait window; pending messages are delivered to the app, not to receive)"
+
 func cmdQueueReceive(args []string) int {
 	fs := newFlagSet("queue receive", flag.ContinueOnError)
 	appFlag := fs.String("app", "", appSlugFlagUsage)
@@ -1646,7 +1681,7 @@ func cmdQueueReceive(args []string) int {
 			if jsonOutput {
 				return jsonOut(writeJSON(api.QueueReceiveResponse{}))
 			}
-			_, _ = fmt.Fprintln(osStdout, "(empty)")
+			_, _ = fmt.Fprintln(osStdout, queueReceiveEmpty)
 			return 0
 		}
 		return printErr("Queue receive failed", err)
@@ -1659,7 +1694,7 @@ func cmdQueueReceive(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(resp))
 		}
-		_, _ = fmt.Fprintln(osStdout, "(empty)")
+		_, _ = fmt.Fprintln(osStdout, queueReceiveEmpty)
 		return 0
 	}
 	if jsonOutput {
@@ -2376,4 +2411,13 @@ func openCustomerDirectoryForSync(path string) (*os.File, error) {
 		return nil, fmt.Errorf("recovery directory changed during open: %q", path)
 	}
 	return directory, nil
+}
+
+// stripDotenvExport drops a dotenv `export ` prefix, so a file a shell can
+// source (`export KEY="value"`) pushes like `KEY="value"` (Hunt 32 H32-68).
+func stripDotenvExport(line string) string {
+	if rest, ok := strings.CutPrefix(line, "export "); ok {
+		return strings.TrimLeft(rest, " \t")
+	}
+	return line
 }

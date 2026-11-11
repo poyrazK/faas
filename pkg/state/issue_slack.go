@@ -3,15 +3,16 @@ package state
 import (
 	"context"
 	"errors"
-	"regexp"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 const IssueSlackTokenNamespace = "issue-team-slack-bot-token"
 
 var ErrIssueSlackClaimLost = errors.New("slack delivery claim changed")
-var issueSlackChannel = regexp.MustCompile(`^[CG][A-Z0-9]{8,31}$`)
-var issueSlackTimestamp = regexp.MustCompile(`^[0-9]{1,20}\.[0-9]{1,10}$`)
+var issueSlackChannel = lazyregexp.New(`^[CG][A-Z0-9]{8,31}$`)
+var issueSlackTimestamp = lazyregexp.New(`^[0-9]{1,20}\.[0-9]{1,10}$`)
 
 func ValidIssueSlackChannel(s string) bool   { return issueSlackChannel.MatchString(s) }
 func ValidIssueSlackTimestamp(s string) bool { return issueSlackTimestamp.MatchString(s) }
@@ -53,6 +54,8 @@ type IssueSlackResult struct {
 	ResponseCode             int
 	RetryAt                  time.Time
 	ResetThread              bool
+	// Attempted is set only once the HTTP transport was invoked.
+	Attempted bool
 }
 type IssueSlackStore interface {
 	ListIssueSlackDestinations(context.Context, string, string) ([]IssueSlackDestination, error)
@@ -61,6 +64,7 @@ type IssueSlackStore interface {
 	RetryIssueSlackDelivery(context.Context, string, string, string) error
 	ClaimIssueSlackDelivery(context.Context) (IssueSlackClaim, bool, error)
 	IssueSlackDeliveryReady(context.Context, IssueSlackClaim) (bool, error)
+	BeginIssueSlackAttempt(context.Context, IssueSlackClaim) error
 	FinishIssueSlackDelivery(context.Context, IssueSlackClaim, IssueSlackResult) error
 	CleanupIssueSlackThreads(context.Context) error
 }

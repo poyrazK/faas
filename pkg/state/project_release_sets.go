@@ -18,6 +18,7 @@ import (
 // ProjectReleaseSet is an immutable app->deployment graph. Active is only the
 // default ingress choice; clients carrying its ID can continue until expiry.
 type ProjectReleaseSet struct {
+	fallbackSince             time.Time                              // MemStore routing history; PostgreSQL keeps its durable column.
 	Deactivation              *api.ProjectReleaseDeactivationReceipt `json:"deactivation,omitempty"`
 	RollbackSourceReleaseID   string                                 `json:"rollback_source_release_id,omitempty"`
 	RollbackPreviousReleaseID string                                 `json:"rollback_previous_release_id,omitempty"`
@@ -210,6 +211,16 @@ func publishProjectReleaseWithIDTx(ctx context.Context, tx pgx.Tx, accountID, pr
 	if err := rows.Err(); err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	environmentApps, err := projectEnvironmentAppIDsDB(ctx, tx, accountID, projectID, environment)
+	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	appRows = slices.DeleteFunc(appRows, func(app struct {
+		id       string
+		manifest []byte
+	}) bool {
+		return !slices.Contains(environmentApps, app.id)
+	})
 	if allowGitOpsReplacement {
 		excluded, err := workloadReleaseExclusionsTx(ctx, tx, EnvironmentGitSource{ID: "", AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment})
 		if err != nil {
@@ -266,23 +277,15 @@ func publishProjectReleaseWithIDTx(ctx context.Context, tx pgx.Tx, accountID, pr
 			return ProjectReleaseSet{}, err
 		}
 	}
+	if !allowGitOpsReplacement {
+		if err := checkProjectRollbackReleasesTx(ctx, tx, accountID, projectID, environment, activeID, members, false); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+	}
+
 	// A member may already have reached 0% when this graph is replaced.
 	if err := applyReleaseAdditionsDB(ctx, tx); err != nil {
 		return ProjectReleaseSet{}, err
-	}
-	// Its direct revision deadline began at the deployment cutover, which
-	// can precede this graph switch. Keep it alive through the old graph's
-	// compatibility window measured from this transaction.
-	if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
-		select rm.deployment_id, rm.app_id, now() + (rs.ttl_seconds * interval '1 second')
-		  from project_release_sets rs
-		  join project_release_members rm on rm.release_id = rs.id
-		  join deployments d on d.id = rm.deployment_id
-		 where rs.project_id = $1 and rs.environment_slug = $2 and rs.active
-		   and d.status = 'live' and d.traffic_percent = 0
-		on conflict (deployment_id) do update
-		   set expires_at = greatest(deployment_revision_pins.expires_at, excluded.expires_at)`, projectID, environment); err != nil {
-		return ProjectReleaseSet{}, fmt.Errorf("state: extend retained release members: %w", err)
 	}
 	var existing ProjectReleaseSet
 	if activateID != "" {
@@ -308,6 +311,9 @@ func publishProjectReleaseWithIDTx(ctx context.Context, tx pgx.Tx, accountID, pr
 			return ProjectReleaseSet{}, ErrConflict
 		}
 		release.ID, release.CreatedAt = existing.ID, existing.CreatedAt
+		if err := recordProjectFallbackWindowTx(ctx, tx, release.ID, activeID); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 		return release, nil
 	}
 	if qualifiedID, qualified := ctx.Value(qualifiedEnvironmentReleaseKey{}).(string); qualified {
@@ -336,6 +342,9 @@ func publishProjectReleaseWithIDTx(ctx context.Context, tx pgx.Tx, accountID, pr
 		if _, err := tx.Exec(ctx, `insert into project_release_members (release_id, app_id, deployment_id) values ($1, $2, $3)`, release.ID, member.AppID, member.DeploymentID); err != nil {
 			return ProjectReleaseSet{}, err
 		}
+	}
+	if err := recordProjectFallbackWindowTx(ctx, tx, release.ID, activeID); err != nil {
+		return ProjectReleaseSet{}, err
 	}
 	return release, nil
 }
@@ -396,6 +405,11 @@ func (s *PgStore) deactivateProjectReleaseSet(ctx context.Context, accountID, pr
 	if err := rows.Err(); err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	environmentApps, err := projectEnvironmentAppIDsDB(ctx, tx, accountID, projectID, environment)
+	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	appIDs = slices.DeleteFunc(appIDs, func(id string) bool { return !slices.Contains(environmentApps, id) })
 	managed, err := gitOpsReleaseSetHasManagedMembersTx(ctx, tx, activeID)
 	if err != nil {
 		return ProjectReleaseSet{}, err
@@ -426,16 +440,10 @@ func (s *PgStore) deactivateProjectReleaseSet(ctx context.Context, accountID, pr
 			return ProjectReleaseSet{}, checkedGraphWriteError(err)
 		}
 	}
-	if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
-		select rm.deployment_id, rm.app_id, now() + (rs.ttl_seconds * interval '1 second')
-		  from project_release_sets rs
-		  join project_release_members rm on rm.release_id = rs.id
-		  join deployments d on d.id = rm.deployment_id
-		 where rs.id = $1 and rs.active and d.status = 'live' and d.traffic_percent = 0
-		on conflict (deployment_id) do update
-		   set expires_at = greatest(deployment_revision_pins.expires_at, excluded.expires_at)`, expectedActiveID); err != nil {
-		return ProjectReleaseSet{}, fmt.Errorf("state: retain deactivated release members: %w", err)
+	if err := checkProjectRollbackReleasesTx(ctx, tx, accountID, projectID, environment, activeID, expectedFallback, true); err != nil {
+		return ProjectReleaseSet{}, err
 	}
+
 	if before != nil {
 		receipt, err := json.Marshal(projectDeactivationReceipt(ctx, expectedActiveID, expectedFallback, time.Now().UTC()))
 		if err != nil {
@@ -712,6 +720,16 @@ func (s *PgStore) publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, acc
 			return ProjectReleaseSet{}, err
 		}
 	}
+	environmentApps, err := projectEnvironmentAppIDsDB(ctx, tx, accountID, projectID, environment)
+	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	appRows = slices.DeleteFunc(appRows, func(app struct {
+		id       string
+		manifest []byte
+	}) bool {
+		return !slices.Contains(environmentApps, app.id)
+	})
 	if len(appRows) != len(byApp) {
 		return ProjectReleaseSet{}, ErrConflict
 	}
@@ -731,21 +749,10 @@ func (s *PgStore) publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, acc
 			return ProjectReleaseSet{}, err
 		}
 	}
-	// A member may already have reached 0% when this graph is replaced.
-	// Its direct revision deadline began at the deployment cutover, which
-	// can precede this graph switch. Keep it alive through the old graph's
-	// compatibility window measured from this transaction.
-	if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
-		select rm.deployment_id, rm.app_id, now() + (rs.ttl_seconds * interval '1 second')
-		  from project_release_sets rs
-		  join project_release_members rm on rm.release_id = rs.id
-		  join deployments d on d.id = rm.deployment_id
-		 where rs.project_id = $1 and rs.environment_slug = $2 and rs.active
-		   and d.status = 'live' and d.traffic_percent = 0
-		on conflict (deployment_id) do update
-		   set expires_at = greatest(deployment_revision_pins.expires_at, excluded.expires_at)`, projectID, environment); err != nil {
-		return ProjectReleaseSet{}, fmt.Errorf("state: extend retained release members: %w", err)
+	if err := checkProjectRollbackReleasesTx(ctx, tx, accountID, projectID, environment, activeID, members, false); err != nil {
+		return ProjectReleaseSet{}, err
 	}
+	// Retirement pins zero-traffic members through the graph's exact deadline.
 	if err := deactivateProjectReleaseSetsTx(ctx, tx, projectID, environment, ""); err != nil {
 		return ProjectReleaseSet{}, err
 	}
@@ -759,6 +766,9 @@ func (s *PgStore) publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, acc
 		if _, err := tx.Exec(ctx, `insert into project_release_members (release_id, app_id, deployment_id) values ($1, $2, $3)`, release.ID, member.AppID, member.DeploymentID); err != nil {
 			return ProjectReleaseSet{}, err
 		}
+	}
+	if err := recordProjectFallbackWindowTx(ctx, tx, release.ID, activeID); err != nil {
+		return ProjectReleaseSet{}, err
 	}
 	return release, nil
 }
@@ -1030,7 +1040,7 @@ func validateGitOpsReleaseMembersTx(ctx context.Context, tx pgx.Tx, releaseID st
 	rows, err := tx.Query(ctx, `select rm.app_id::text, rm.deployment_id::text
 		from project_release_members rm
 		join deployments d on d.id = rm.deployment_id
-		where rm.release_id = $1::uuid and d.environment_workload_runtime is not null
+		where rm.release_id = $1::uuid and environment_workload_ownership_active(d)
 		order by rm.app_id for update of d`, releaseID)
 	if err != nil {
 		return fmt.Errorf("state: lock managed release members: %w", err)
@@ -1053,7 +1063,7 @@ func gitOpsReleaseSetHasManagedMembersTx(ctx context.Context, tx pgx.Tx, release
 	err := tx.QueryRow(ctx, `select exists (
 		select 1 from project_release_members rm
 		join deployments d on d.id = rm.deployment_id
-		where rm.release_id = $1::uuid and d.environment_workload_runtime is not null
+		where rm.release_id = $1::uuid and environment_workload_ownership_active(d)
 	)`, releaseID).Scan(&managed)
 	return managed, err
 }

@@ -5,11 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -34,6 +34,10 @@ type GatewayTrafficFeatures struct {
 	SecurityRevocation bool
 	ManagedHTTP        bool
 	ManagedCircuit     bool
+	// EdgeHeaderSecrets: the gateway opens sealed edge-rule request header
+	// values (ADR-20261108110000). It counts only for the boot that reported
+	// it, so a gateway rolled back to an older release stops counting.
+	EdgeHeaderSecrets bool
 }
 
 type ServingGatewayTrafficRuntime struct {
@@ -82,7 +86,7 @@ func (s *PgStore) RegisterGatewayTrafficEpoch(ctx context.Context, node, boot st
 	return GatewayTrafficEpoch{NodeName: node, Generation: generation, BootID: boot}, nil
 }
 
-var gatewayTrafficBackendID = regexp.MustCompile(`^[0-9a-f]{16}$`)
+var gatewayTrafficBackendID = lazyregexp.New(`^[0-9a-f]{16}$`)
 
 func (f GatewayTrafficFeatures) validate() error {
 	if f.RateCounterMode != "central" && f.RateCounterMode != "local" && f.RateCounterMode != "unwired" {
@@ -114,6 +118,7 @@ func (s *PgStore) ReportGatewayTrafficRuntime(ctx context.Context, epoch Gateway
 		RetryEnabled: f.RetryEnabled, RateCounterMode: f.RateCounterMode, RetryCounterMode: f.RetryCounterMode,
 		RetryBackendID: f.RetryBackendID, DeadlineSigning: f.DeadlineSigning, PolicySnapshot: f.PolicySnapshot,
 		SecurityRevocation: f.SecurityRevocation, ManagedHttp: f.ManagedHTTP, ManagedCircuit: f.ManagedCircuit,
+		EdgeHeaderSecrets: f.EdgeHeaderSecrets,
 	})
 	return gatewayTrafficWriteResult(n, err)
 }
@@ -155,6 +160,7 @@ func (s *pgCore) ListServingGatewayTrafficRuntime(ctx context.Context) ([]Servin
 				RetryEnabled: row.RetryEnabled, RateCounterMode: row.RateCounterMode, RetryCounterMode: row.RetryCounterMode,
 				RetryBackendID: row.RetryBackendID, DeadlineSigning: row.DeadlineSigning, PolicySnapshot: row.PolicySnapshot,
 				SecurityRevocation: row.SecurityRevocation, ManagedHTTP: row.ManagedHttp, ManagedCircuit: row.ManagedCircuit,
+				EdgeHeaderSecrets: row.EdgeHeaderSecrets,
 			},
 		}
 		if row.ReportedAt.Valid {

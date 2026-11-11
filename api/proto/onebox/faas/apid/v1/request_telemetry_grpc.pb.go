@@ -46,6 +46,7 @@ const (
 	RequestTelemetry_RecordConsumerUsage_FullMethodName         = "/onebox.faas.apid.v1.RequestTelemetry/RecordConsumerUsage"
 	RequestTelemetry_RecordRequestIDJournal_FullMethodName      = "/onebox.faas.apid.v1.RequestTelemetry/RecordRequestIDJournal"
 	RequestTelemetry_RecordRequestIDJournalBatch_FullMethodName = "/onebox.faas.apid.v1.RequestTelemetry/RecordRequestIDJournalBatch"
+	RequestTelemetry_AddRequestAnalyticsRollups_FullMethodName  = "/onebox.faas.apid.v1.RequestTelemetry/AddRequestAnalyticsRollups"
 )
 
 // RequestTelemetryClient is the client API for RequestTelemetry service.
@@ -88,6 +89,12 @@ type RequestTelemetryClient interface {
 	// storage failures are gRPC errors for the whole batch. Gateways fall back
 	// to RecordRequestIDJournal while apid answers Unimplemented.
 	RecordRequestIDJournalBatch(ctx context.Context, in *RecordRequestIDJournalBatchRequest, opts ...grpc.CallOption) (*RecordRequestIDJournalBatchResponse, error)
+	// AddRequestAnalyticsRollups applies one gateway's per-minute analytics
+	// rollups (ADR-20261103113952 amendment 5), once per batch_id. A storage
+	// failure is a gRPC error and the gateway resends the batch. A gateway
+	// whose apid answers Unimplemented leaves its raw rows uncounted, so apid
+	// counts them as before.
+	AddRequestAnalyticsRollups(ctx context.Context, in *AddRequestAnalyticsRollupsRequest, opts ...grpc.CallOption) (*AddRequestAnalyticsRollupsResponse, error)
 }
 
 type requestTelemetryClient struct {
@@ -151,6 +158,16 @@ func (c *requestTelemetryClient) RecordRequestIDJournalBatch(ctx context.Context
 	return out, nil
 }
 
+func (c *requestTelemetryClient) AddRequestAnalyticsRollups(ctx context.Context, in *AddRequestAnalyticsRollupsRequest, opts ...grpc.CallOption) (*AddRequestAnalyticsRollupsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AddRequestAnalyticsRollupsResponse)
+	err := c.cc.Invoke(ctx, RequestTelemetry_AddRequestAnalyticsRollups_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RequestTelemetryServer is the server API for RequestTelemetry service.
 // All implementations must embed UnimplementedRequestTelemetryServer
 // for forward compatibility.
@@ -191,6 +208,12 @@ type RequestTelemetryServer interface {
 	// storage failures are gRPC errors for the whole batch. Gateways fall back
 	// to RecordRequestIDJournal while apid answers Unimplemented.
 	RecordRequestIDJournalBatch(context.Context, *RecordRequestIDJournalBatchRequest) (*RecordRequestIDJournalBatchResponse, error)
+	// AddRequestAnalyticsRollups applies one gateway's per-minute analytics
+	// rollups (ADR-20261103113952 amendment 5), once per batch_id. A storage
+	// failure is a gRPC error and the gateway resends the batch. A gateway
+	// whose apid answers Unimplemented leaves its raw rows uncounted, so apid
+	// counts them as before.
+	AddRequestAnalyticsRollups(context.Context, *AddRequestAnalyticsRollupsRequest) (*AddRequestAnalyticsRollupsResponse, error)
 	mustEmbedUnimplementedRequestTelemetryServer()
 }
 
@@ -215,6 +238,9 @@ func (UnimplementedRequestTelemetryServer) RecordRequestIDJournal(context.Contex
 }
 func (UnimplementedRequestTelemetryServer) RecordRequestIDJournalBatch(context.Context, *RecordRequestIDJournalBatchRequest) (*RecordRequestIDJournalBatchResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RecordRequestIDJournalBatch not implemented")
+}
+func (UnimplementedRequestTelemetryServer) AddRequestAnalyticsRollups(context.Context, *AddRequestAnalyticsRollupsRequest) (*AddRequestAnalyticsRollupsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AddRequestAnalyticsRollups not implemented")
 }
 func (UnimplementedRequestTelemetryServer) mustEmbedUnimplementedRequestTelemetryServer() {}
 func (UnimplementedRequestTelemetryServer) testEmbeddedByValue()                          {}
@@ -316,6 +342,24 @@ func _RequestTelemetry_RecordRequestIDJournalBatch_Handler(srv interface{}, ctx 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RequestTelemetry_AddRequestAnalyticsRollups_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddRequestAnalyticsRollupsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RequestTelemetryServer).AddRequestAnalyticsRollups(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RequestTelemetry_AddRequestAnalyticsRollups_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RequestTelemetryServer).AddRequestAnalyticsRollups(ctx, req.(*AddRequestAnalyticsRollupsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RequestTelemetry_ServiceDesc is the grpc.ServiceDesc for RequestTelemetry service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -339,11 +383,129 @@ var RequestTelemetry_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "RecordRequestIDJournalBatch",
 			Handler:    _RequestTelemetry_RecordRequestIDJournalBatch_Handler,
 		},
+		{
+			MethodName: "AddRequestAnalyticsRollups",
+			Handler:    _RequestTelemetry_AddRequestAnalyticsRollups_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "IncrementRequestTelemetry",
 			Handler:       _RequestTelemetry_IncrementRequestTelemetry_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+	},
+	Metadata: "onebox/faas/apid/v1/request_telemetry.proto",
+}
+
+const (
+	RequestIDLookups_Serve_FullMethodName = "/onebox.faas.apid.v1.RequestIDLookups/Serve"
+)
+
+// RequestIDLookupsClient is the client API for RequestIDLookups service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// RequestIDLookups lets apid resolve request IDs kept on compute nodes
+// (ADR-20261101085552). Served by apid beside RequestTelemetry, on the same
+// listener; an apid that predates it answers Unimplemented.
+type RequestIDLookupsClient interface {
+	// Serve is held open by each gatewayd-internal that keeps the request-ID
+	// journal on its node. The gateway's first message names its node; apid then
+	// sends lookups down the stream and the gateway answers each one on it. The
+	// stream rides the gateway's existing connection to apid, so compute nodes
+	// take no new inbound port.
+	Serve(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RequestIDLookupAnswer, RequestIDLookupQuestion], error)
+}
+
+type requestIDLookupsClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewRequestIDLookupsClient(cc grpc.ClientConnInterface) RequestIDLookupsClient {
+	return &requestIDLookupsClient{cc}
+}
+
+func (c *requestIDLookupsClient) Serve(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RequestIDLookupAnswer, RequestIDLookupQuestion], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &RequestIDLookups_ServiceDesc.Streams[0], RequestIDLookups_Serve_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[RequestIDLookupAnswer, RequestIDLookupQuestion]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RequestIDLookups_ServeClient = grpc.BidiStreamingClient[RequestIDLookupAnswer, RequestIDLookupQuestion]
+
+// RequestIDLookupsServer is the server API for RequestIDLookups service.
+// All implementations must embed UnimplementedRequestIDLookupsServer
+// for forward compatibility.
+//
+// RequestIDLookups lets apid resolve request IDs kept on compute nodes
+// (ADR-20261101085552). Served by apid beside RequestTelemetry, on the same
+// listener; an apid that predates it answers Unimplemented.
+type RequestIDLookupsServer interface {
+	// Serve is held open by each gatewayd-internal that keeps the request-ID
+	// journal on its node. The gateway's first message names its node; apid then
+	// sends lookups down the stream and the gateway answers each one on it. The
+	// stream rides the gateway's existing connection to apid, so compute nodes
+	// take no new inbound port.
+	Serve(grpc.BidiStreamingServer[RequestIDLookupAnswer, RequestIDLookupQuestion]) error
+	mustEmbedUnimplementedRequestIDLookupsServer()
+}
+
+// UnimplementedRequestIDLookupsServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedRequestIDLookupsServer struct{}
+
+func (UnimplementedRequestIDLookupsServer) Serve(grpc.BidiStreamingServer[RequestIDLookupAnswer, RequestIDLookupQuestion]) error {
+	return status.Error(codes.Unimplemented, "method Serve not implemented")
+}
+func (UnimplementedRequestIDLookupsServer) mustEmbedUnimplementedRequestIDLookupsServer() {}
+func (UnimplementedRequestIDLookupsServer) testEmbeddedByValue()                          {}
+
+// UnsafeRequestIDLookupsServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to RequestIDLookupsServer will
+// result in compilation errors.
+type UnsafeRequestIDLookupsServer interface {
+	mustEmbedUnimplementedRequestIDLookupsServer()
+}
+
+func RegisterRequestIDLookupsServer(s grpc.ServiceRegistrar, srv RequestIDLookupsServer) {
+	// If the following call panics, it indicates UnimplementedRequestIDLookupsServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&RequestIDLookups_ServiceDesc, srv)
+}
+
+func _RequestIDLookups_Serve_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(RequestIDLookupsServer).Serve(&grpc.GenericServerStream[RequestIDLookupAnswer, RequestIDLookupQuestion]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RequestIDLookups_ServeServer = grpc.BidiStreamingServer[RequestIDLookupAnswer, RequestIDLookupQuestion]
+
+// RequestIDLookups_ServiceDesc is the grpc.ServiceDesc for RequestIDLookups service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var RequestIDLookups_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "onebox.faas.apid.v1.RequestIDLookups",
+	HandlerType: (*RequestIDLookupsServer)(nil),
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Serve",
+			Handler:       _RequestIDLookups_Serve_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

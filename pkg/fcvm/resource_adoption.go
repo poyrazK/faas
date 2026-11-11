@@ -118,16 +118,21 @@ type resourceAdoptionInstance struct {
 	HealthcheckPath string `json:"healthcheck_path,omitempty"`
 	// HealthcheckGRPC selects gRPC readiness (main's health.v1 checks); later
 	// readers, such as rehearsal suspend, branch on it.
-	HealthcheckGRPC          bool            `json:"healthcheck_grpc,omitempty"`
-	ImageHealthcheckRequired bool            `json:"image_healthcheck_required,omitempty"`
-	StartupDeadlineS         int             `json:"startup_deadline_s,omitempty"`
-	ExecutionMode            string          `json:"execution_mode,omitempty"`
-	Runtime                  string          `json:"runtime,omitempty"`
-	WorkloadNames            []string        `json:"workload_names,omitempty"`
-	LivenessProbe            json.RawMessage `json:"liveness_probe,omitempty"`
-	ReadinessProbe           json.RawMessage `json:"readiness_probe,omitempty"`
-	QuietPauseAfterMs        int64           `json:"quiet_pause_after_ms,omitempty"`
-	FrameworkReadyAt         *time.Time      `json:"framework_ready_at,omitempty"`
+	HealthcheckGRPC          bool `json:"healthcheck_grpc,omitempty"`
+	ImageHealthcheckRequired bool `json:"image_healthcheck_required,omitempty"`
+	StartupDeadlineS         int  `json:"startup_deadline_s,omitempty"`
+	// RequestConcurrency is the wake's per-instance request limit (0 = the
+	// plan's); without it an adopted guest falls back to the plan cap.
+	RequestConcurrency int             `json:"request_concurrency,omitempty"`
+	ExecutionMode      string          `json:"execution_mode,omitempty"`
+	Runtime            string          `json:"runtime,omitempty"`
+	WorkloadNames      []string        `json:"workload_names,omitempty"`
+	LivenessProbe      json.RawMessage `json:"liveness_probe,omitempty"`
+	ReadinessProbe     json.RawMessage `json:"readiness_probe,omitempty"`
+	QuietPauseAfterMs  int64           `json:"quiet_pause_after_ms,omitempty"`
+	IdleLadderEligible bool            `json:"idle_ladder_eligible,omitempty"`
+	IdleLadderGuarded  bool            `json:"idle_ladder_guarded_pause,omitempty"`
+	FrameworkReadyAt   *time.Time      `json:"framework_ready_at,omitempty"`
 	// WarmPaused is a resident warm-pool restore (Instance.Paused), claimed
 	// or not. WarmSpare is one not yet claimed: its pause must survive
 	// adoption, unlike a quiet pause, which is resumed.
@@ -205,8 +210,10 @@ type resourceAdoptionNetwork struct {
 	// EgressAllowlist is the app's applied egress allowlist (CIDRs); host
 	// SMTP rules render from it. StaticEgressIP is the app's pinned egress
 	// address, if any.
-	EgressAllowlist []string `json:"egress_allowlist,omitempty"`
-	StaticEgressIP  string   `json:"static_egress_ip,omitempty"`
+	EgressAllowlist      []string `json:"egress_allowlist,omitempty"`
+	StaticEgressIP       string   `json:"static_egress_ip,omitempty"`
+	StaticEgressExcluded bool     `json:"static_egress_excluded,omitempty"`
+	StaticEgressBlocked  bool     `json:"static_egress_blocked,omitempty"`
 	// RehearsalRunID is the run whose outbound containment the guest's
 	// network carries (ADR-20261017201005). Adoption refuses such a guest:
 	// the containment and the run's recorder are not rebuilt.
@@ -224,11 +231,16 @@ type resourceAdoptionNetwork struct {
 // and tear the side-link down. The account bridge and transport are host
 // state that schedd reconciles separately.
 type resourceAdoptionPrivateNetwork struct {
-	Bridge        string                             `json:"bridge"`
-	Address       string                             `json:"address"`
-	CIDRs         []string                           `json:"cidrs"`
-	AllowedCIDRs  []string                           `json:"allowed_cidrs,omitempty"`
-	FirewallRules []netns.PrivateNetworkFirewallRule `json:"firewall_rules,omitempty"`
+	NetworkID      string                             `json:"network_id,omitempty"`
+	AppID          string                             `json:"app_id,omitempty"`
+	AccountID      string                             `json:"account_id,omitempty"`
+	ServiceAddress string                             `json:"service_address,omitempty"`
+	MTU            int                                `json:"mtu,omitempty"`
+	Bridge         string                             `json:"bridge"`
+	Address        string                             `json:"address"`
+	CIDRs          []string                           `json:"cidrs"`
+	AllowedCIDRs   []string                           `json:"allowed_cidrs,omitempty"`
+	FirewallRules  []netns.PrivateNetworkFirewallRule `json:"firewall_rules,omitempty"`
 }
 
 type resourceAdoptionLifecycle struct {
@@ -352,7 +364,8 @@ func (r resourceJournalRecord) validateAdoption() error {
 			return errors.New("invalid adoption instance string")
 		}
 	}
-	if len(in.WorkloadNames) > adoptionMaxWorkloads || in.Port < 0 || in.Port > 65535 || in.StartupDeadlineS < 0 || in.QuietPauseAfterMs < 0 {
+	if len(in.WorkloadNames) > adoptionMaxWorkloads || in.Port < 0 || in.Port > 65535 || in.StartupDeadlineS < 0 || in.QuietPauseAfterMs < 0 ||
+		in.RequestConcurrency < 0 || in.RequestConcurrency > api.AppRequestConcurrencyBound {
 		return errors.New("invalid adoption instance configuration")
 	}
 	for _, name := range in.WorkloadNames {
@@ -494,12 +507,15 @@ func (m *Manager) adoptionBlockFor(inst *Instance, now time.Time) resourceAdopti
 			HealthcheckGRPC:          inst.HealthcheckGRPC,
 			ImageHealthcheckRequired: inst.ImageHealthcheckRequired,
 			StartupDeadlineS:         inst.StartupDeadlineS,
+			RequestConcurrency:       inst.RequestConcurrency,
 			ExecutionMode:            inst.ExecutionMode,
 			Runtime:                  inst.Runtime,
 			WorkloadNames:            append([]string(nil), inst.WorkloadNames...),
 			LivenessProbe:            append(json.RawMessage(nil), inst.LivenessProbe...),
 			ReadinessProbe:           append(json.RawMessage(nil), inst.ReadinessProbe...),
 			QuietPauseAfterMs:        inst.QuietPauseAfter.Milliseconds(),
+			IdleLadderEligible:       inst.IdleLadderEligible,
+			IdleLadderGuarded:        inst.IdleLadderGuardedPause,
 			WarmPaused:               inst.Paused,
 			WarmSpare:                inst.warmSpare,
 			DevPatched:               inst.devPatched,
@@ -513,6 +529,7 @@ func (m *Manager) adoptionBlockFor(inst *Instance, now time.Time) resourceAdopti
 			PrivateNetworkHandleV4: inst.PrivateNetworkHandleV4,
 			PrivateNetworkHandleV6: inst.PrivateNetworkHandleV6,
 			Private:                adoptionPrivateNetworkFor(inst.Net),
+			StaticEgressExcluded:   inst.StaticEgressExcluded,
 			RehearsalRunID:         inst.Net.RehearsalRunID,
 			EgressCircuits:         inst.Net.EgressCircuitEnabled,
 		},
@@ -554,7 +571,10 @@ func adoptionPrivateNetworkFor(nc netns.Config) *resourceAdoptionPrivateNetwork 
 	if nc.PrivateVethHost == "" || nc.PrivateNetworkBridge == "" {
 		return nil
 	}
-	p := &resourceAdoptionPrivateNetwork{Bridge: nc.PrivateNetworkBridge, Address: nc.PrivateNetworkAddress.String()}
+	p := &resourceAdoptionPrivateNetwork{NetworkID: nc.PrivateNetworkID, AppID: nc.PrivateNetworkAppID, AccountID: nc.PrivateNetworkAccountID, Bridge: nc.PrivateNetworkBridge, Address: nc.PrivateNetworkAddress.String(), MTU: nc.PrivateNetworkMTU}
+	if nc.PrivateNetworkServiceAddress.IsValid() {
+		p.ServiceAddress = nc.PrivateNetworkServiceAddress.String()
+	}
 	for _, c := range nc.PrivateNetworkCIDRs {
 		p.CIDRs = append(p.CIDRs, c.String())
 	}
@@ -580,6 +600,18 @@ func (p *resourceAdoptionPrivateNetwork) netConfig(nc *netns.Config, slot int) e
 		return err
 	}
 	nc.PrivateNetworkBridge, nc.PrivateNetworkAddress = p.Bridge, address
+	nc.PrivateNetworkID, nc.PrivateNetworkAppID, nc.PrivateNetworkAccountID = p.NetworkID, p.AppID, p.AccountID
+	if p.ServiceAddress != "" {
+		service, err := netip.ParseAddr(p.ServiceAddress)
+		if err != nil || !service.Is4() {
+			return errors.New("invalid private service address")
+		}
+		nc.PrivateNetworkServiceAddress = service
+	}
+	if p.MTU != 0 && (p.MTU < 576 || p.MTU > 1500) {
+		return fmt.Errorf("invalid adopted private network MTU %d", p.MTU)
+	}
+	nc.PrivateNetworkMTU = p.MTU
 	nc.PrivateNetworkCIDRs, nc.PrivateNetworkAllowedCIDRs = cidrs, allowed
 	nc.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(p.FirewallRules)
 	nc.PrivateVethHost, nc.PrivateVethPeer = privateVethNames(slot)
@@ -628,7 +660,8 @@ func (m *Manager) adoptionPolicyFor(instance, appID string, block *resourceAdopt
 		}
 		m.perAppAllowlistMu.RUnlock()
 		m.perAppStaticIPMu.RLock()
-		if ip := m.perAppStaticIP[appID]; ip != nil {
+		block.Network.StaticEgressBlocked = m.perAppStaticBlocked[appID] && !block.Network.StaticEgressExcluded
+		if ip := m.perAppStaticIP[appID]; ip != nil && !block.Network.StaticEgressExcluded {
 			block.Network.StaticEgressIP = ip.String()
 		}
 		m.perAppStaticIPMu.RUnlock()

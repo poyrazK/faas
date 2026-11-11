@@ -11,6 +11,24 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const consumeInlineResetToken = `-- name: ConsumeInlineResetToken :one
+UPDATE login_tokens SET consumed_at=clock_timestamp()
+WHERE token_hash=$1 AND account_id=$2 AND consumed_at IS NULL AND expires_at>clock_timestamp()
+RETURNING account_id
+`
+
+type ConsumeInlineResetTokenParams struct {
+	TokenHash []byte
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ConsumeInlineResetToken(ctx context.Context, db DBTX, arg ConsumeInlineResetTokenParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, consumeInlineResetToken, arg.TokenHash, arg.AccountID)
+	var account_id pgtype.UUID
+	err := row.Scan(&account_id)
+	return account_id, err
+}
+
 const deleteAccountPassword = `-- name: DeleteAccountPassword :exec
 WITH changed AS (
     UPDATE accounts SET password_reset_revision=password_reset_revision+1
@@ -24,10 +42,57 @@ func (q *Queries) DeleteAccountPassword(ctx context.Context, db DBTX, id pgtype.
 	return err
 }
 
+const findInlineResetAccount = `-- name: FindInlineResetAccount :one
+SELECT account_id FROM login_tokens WHERE token_hash=$1
+`
+
+// Inline reset links share the legacy login_tokens table. Account-first locks
+// match the durable credential writers; the final CAS rechecks absolute expiry.
+func (q *Queries) FindInlineResetAccount(ctx context.Context, db DBTX, tokenHash []byte) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, findInlineResetAccount, tokenHash)
+	var account_id pgtype.UUID
+	err := row.Scan(&account_id)
+	return account_id, err
+}
+
+const lockInlineResetAccount = `-- name: LockInlineResetAccount :one
+SELECT id FROM accounts WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) LockInlineResetAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockInlineResetAccount, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
+const lockInlineResetToken = `-- name: LockInlineResetToken :one
+SELECT consumed_at,expires_at FROM login_tokens WHERE token_hash=$1 AND account_id=$2 FOR UPDATE
+`
+
+type LockInlineResetTokenParams struct {
+	TokenHash []byte
+	AccountID pgtype.UUID
+}
+
+type LockInlineResetTokenRow struct {
+	ConsumedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+}
+
+func (q *Queries) LockInlineResetToken(ctx context.Context, db DBTX, arg LockInlineResetTokenParams) (LockInlineResetTokenRow, error) {
+	row := db.QueryRow(ctx, lockInlineResetToken, arg.TokenHash, arg.AccountID)
+	var i LockInlineResetTokenRow
+	err := row.Scan(&i.ConsumedAt, &i.ExpiresAt)
+	return i, err
+}
+
 const setAccountPassword = `-- name: SetAccountPassword :execrows
 WITH changed AS (
     UPDATE accounts SET password_reset_revision=password_reset_revision+1
     WHERE id=$1 RETURNING id
+), legacy AS (
+    UPDATE mfa_disable_requests SET consumed_at=clock_timestamp() WHERE account_id=$1 AND consumed_at IS NULL
 )
 INSERT INTO account_passwords(account_id,hash,updated_at)
 SELECT id,$2,clock_timestamp() FROM changed
@@ -42,6 +107,8 @@ type SetAccountPasswordParams struct {
 // Password writers lock/update the account before its credential row, matching
 // reset redemption, producer handoff and account erasure. The revision survives
 // password deletion, so restoring an old PHC never revives an older reset link.
+// A password change also ends the account's legacy MFA-disable email
+// requests, which carry no revision (bug hunt 2026-10-28 H98).
 func (q *Queries) SetAccountPassword(ctx context.Context, db DBTX, arg SetAccountPasswordParams) (int64, error) {
 	result, err := db.Exec(ctx, setAccountPassword, arg.ID, arg.Hash)
 	if err != nil {

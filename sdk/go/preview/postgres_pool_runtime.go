@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -13,8 +14,26 @@ import (
 
 // PostgresPoolConfig contains an explicit managed connection URI. Factories
 // must use it without ambient credentials or connection-identity overrides.
+//
+// MaxConnections is how many connections one instance can use, from
+// GREGALE_POSTGRES_POOL_MAX when Gregale sets it (ADR-20261104141122), else 0.
+// Pass it to the pool, e.g. db.SetMaxOpenConns; an explicit setting wins.
 type PostgresPoolConfig struct {
 	ConnectionString string `json:"-"`
+	MaxConnections   int    `json:"-"`
+}
+
+// PostgresPoolMaxEnv carries the pool size Gregale derives from the
+// instance's concurrency.
+const PostgresPoolMaxEnv = "GREGALE_POSTGRES_POOL_MAX"
+
+// postgresPoolMax reads PostgresPoolMaxEnv, ignoring a value outside 1–1000.
+func postgresPoolMax(value string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || n < 1 || n > 1000 {
+		return 0
+	}
+	return n
 }
 
 func (PostgresPoolConfig) String() string   { return "PostgresPoolConfig{redacted}" }
@@ -136,5 +155,5 @@ func loadPostgresPoolConfig(value string) (PostgresPoolConfig, error) {
 			return PostgresPoolConfig{}, invalid
 		}
 	}
-	return PostgresPoolConfig{ConnectionString: value}, nil
+	return PostgresPoolConfig{ConnectionString: value, MaxConnections: postgresPoolMax(os.Getenv(PostgresPoolMaxEnv))}, nil
 }

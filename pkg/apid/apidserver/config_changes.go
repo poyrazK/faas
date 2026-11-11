@@ -42,6 +42,21 @@ func configGuardRequested(r *http.Request) bool {
 // when the request did not opt out and the scope has a live deployment
 // whose traffic can judge the change. Bookkeeping failures never block the
 // write; they leave the change unguarded and are audited.
+// configGuardHasTraffic reports whether a live deployment's traffic can judge
+// a config change in scope. A default-scope value overlays every
+// environment, so a project app serving production in the `production`
+// scope is judged there (ADR-1451 amendment 1).
+func (s *server) configGuardHasTraffic(ctx context.Context, appID, scope string) bool {
+	if _, err := s.store.LiveDeploymentForScope(ctx, appID, scope); err == nil {
+		return true
+	}
+	if scope != "" && scope != state.DefaultEnvScope {
+		return false
+	}
+	_, err := s.store.LiveDeploymentForScope(ctx, appID, "production")
+	return err == nil
+}
+
 func (s *server) beginConfigChange(r *http.Request, acct state.Account, app state.App, scope, secretKey string) *configChange {
 	store, ok := s.store.(state.ConfigRevisionStore)
 	if !ok {
@@ -49,18 +64,22 @@ func (s *server) beginConfigChange(r *http.Request, acct state.Account, app stat
 	}
 	guard := configGuardRequested(r)
 	if guard {
-		if _, err := s.store.LiveDeploymentForScope(r.Context(), app.ID, scope); err != nil {
-			guard = false
-		}
+		guard = s.configGuardHasTraffic(r.Context(), app.ID, scope)
 	}
-	c := &configChange{store: store, acct: acct, app: app, scope: scope, actor: configActor(r, acct)}
-	start := state.ConfigChangeStart{AccountID: acct.ID, AppID: app.ID, Scope: scope, Actor: c.actor, Guard: guard, Now: time.Now().UTC()}
+	return s.beginConfigChangeAs(r.Context(), store, acct, app, scope, configActor(r, acct), guard, secretKey)
+}
+
+// beginConfigChangeAs records the baseline for a config write made outside an
+// HTTP request, such as a repository push, attributed to actor.
+func (s *server) beginConfigChangeAs(ctx context.Context, store state.ConfigRevisionStore, acct state.Account, app state.App, scope, actor string, guard bool, secretKey string) *configChange {
+	c := &configChange{store: store, acct: acct, app: app, scope: scope, actor: actor}
+	start := state.ConfigChangeStart{AccountID: acct.ID, AppID: app.ID, Scope: scope, Actor: actor, Guard: guard, Now: time.Now().UTC()}
 	if guard {
 		start.SecretKey = secretKey
 	}
-	ticket, err := store.BeginConfigChange(r.Context(), start)
+	ticket, err := store.BeginConfigChange(ctx, start)
 	if err != nil {
-		s.configRevisionFailed(r.Context(), acct, app, scope, "begin", err)
+		s.configRevisionFailed(ctx, acct, app, scope, "begin", err)
 		return nil
 	}
 	c.ticket = ticket

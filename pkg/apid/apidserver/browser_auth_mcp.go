@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
@@ -18,8 +19,11 @@ import (
 var errBrowserAuthInput = errors.New("invalid browser authorization request")
 
 // mintBrowserAuthCode mints the code the request asks for; device reports a
-// CLI login code whose request asked for a device code (H67).
-func mintBrowserAuthCode(r *http.Request) (code string, hash []byte, device bool, err error) {
+// CLI login code to bind to a device code (H67). deviceCodes says whether the
+// store can bind one. Only a device-bound login code is short: a person types
+// it, and it is exchanged only with the device code. A CLI that predates device
+// codes exchanges by the code alone, so it gets a 64-bit code.
+func mintBrowserAuthCode(r *http.Request, deviceCodes bool) (code string, hash []byte, device bool, err error) {
 	var input api.CliAuthCodeRequest
 	if r.ContentLength != 0 && r.Body != http.NoBody {
 		if err := decodeJSON(r, &input); err != nil {
@@ -27,8 +31,12 @@ func mintBrowserAuthCode(r *http.Request) (code string, hash []byte, device bool
 		}
 	}
 	if input.Purpose == "" && len(input.Scopes) == 0 {
-		code, hash, err := mintCliAuthCodeRaw()
-		return code, hash, input.Device, err
+		if input.Device && deviceCodes {
+			code, hash, err := mintCliAuthCodeRaw()
+			return code, hash, true, err
+		}
+		code, hash, err := mintCodeOnlyCliAuthCode()
+		return code, hash, false, err
 	}
 	if input.Device {
 		return "", nil, false, errBrowserAuthInput
@@ -50,6 +58,10 @@ func mintMCPAuthCode(input api.CliAuthCodeRequest) (string, []byte, error) {
 		}
 		// One hex digit names the scope set (ADR-20261026195952).
 		prefix = "MCP" + strings.ToUpper(strconv.FormatUint(uint64(bits), 16))
+		if bits > 15 {
+			// Old one-digit codes retain their original permissions and hash.
+			prefix = "MC2" + strings.ToUpper(fmt.Sprintf("%02x", bits))
+		}
 	default:
 		return "", nil, errBrowserAuthInput
 	}
@@ -79,18 +91,26 @@ func mcpScopeBits(scopes []string) (uint8, bool) {
 
 func isMCPAuthCode(raw string) bool {
 	normalized := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(raw), "-", ""))
+	if len(normalized) == 69 && strings.HasPrefix(normalized, "MC2") {
+		bits, err := strconv.ParseUint(normalized[3:5], 16, 8)
+		return err == nil && bits > 15 && bits < 1<<len(api.MCPGrantableScopes)
+	}
 	return len(normalized) == 68 && strings.HasPrefix(normalized, "MCP") && strings.ContainsRune("RW0123456789ABCDEF", rune(normalized[3]))
 }
 
 // mcpCodeScopes are the scopes a valid MCP code's purpose digit grants.
 func mcpCodeScopes(raw string) []string {
+	raw = strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(raw), "-", ""))
 	scopes := []string{api.ScopeAppsRead}
-	switch digit := strings.ToUpper(strings.TrimSpace(raw))[3]; digit {
+	switch digit := raw[3]; digit {
 	case 'R':
 	case 'W':
 		scopes = append(scopes, api.ScopeDeployWrite)
 	default:
 		bits, _ := strconv.ParseUint(string(digit), 16, 8)
+		if strings.HasPrefix(raw, "MC2") {
+			bits, _ = strconv.ParseUint(raw[3:5], 16, 8)
+		}
 		for i, scope := range api.MCPGrantableScopes {
 			if bits&(1<<i) == 0 {
 				continue
@@ -104,9 +124,12 @@ func mcpCodeScopes(raw string) []string {
 	return scopes
 }
 
+// cliLoginKeyLabel marks the key `gregale login` mints.
+const cliLoginKeyLabel = "cli-login"
+
 func browserAuthCredential(raw string) (string, []string, time.Duration) {
 	if !isMCPAuthCode(raw) {
-		return "cli-login", api.ScopesAdminOnly, cliAuthKeyTTL
+		return cliLoginKeyLabel, api.ScopesAdminOnly, cliAuthKeyTTL
 	}
 	// The key slides while used (ADR-20261028205920; TouchKeyLastUsed).
 	return api.MCPLoginKeyLabel, mcpCodeScopes(raw), api.MCPLoginKeyIdle
@@ -116,10 +139,12 @@ func browserAuthCredential(raw string) (string, []string, time.Duration) {
 // beyond inspection.
 func mcpCapabilities(raw string) []string {
 	described := map[string]string{
-		api.ScopeDeployWrite:           "deploy, promote and roll back apps, and add custom domains and crons",
+		api.ScopeDeployWrite:           "deploy, promote, roll back, restart and scale apps, and add, change or remove custom domains and crons",
 		api.ScopeSecretsRequest:        "ask you to enter secrets on a Gregale page; it never sees their values",
 		api.ScopeStorageManage:         "create object storage buckets and bind them to apps",
 		api.ScopeManagedPostgresManage: "create managed PostgreSQL databases and bind them to apps (billed)",
+		api.ScopeEnvWrite:              "change non-secret environment variables and restore configuration revisions",
+		api.ScopeUsageRead:             "read usage and billing cost summaries",
 	}
 	var out []string
 	for _, scope := range mcpCodeScopes(raw) {

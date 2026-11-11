@@ -26,6 +26,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/analyticsrollup"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
@@ -67,6 +68,73 @@ type requestAnalyticsRouteDeploymentReader interface {
 	RequestTelemetryAnalyticsByRouteDeployment(context.Context, sqlc.RequestTelemetryAnalyticsByRouteDeploymentParams) ([]sqlc.RequestTelemetryAnalyticsByRouteDeploymentRow, error)
 }
 
+type requestAnalyticsCompletenessReader interface {
+	RequestTelemetryCompleteness(ctx context.Context, appID string, from, until time.Time) ([]string, error)
+}
+
+type requestAnalyticsRollupCompletenessReader interface {
+	RequestAnalyticsCompleteness(ctx context.Context, appID string, from, until time.Time) ([]string, error)
+}
+
+// rollupCompleteness reads the analytics completeness through the raw
+// reader's shape.
+type rollupCompleteness struct {
+	r requestAnalyticsRollupCompletenessReader
+}
+
+func (c rollupCompleteness) RequestTelemetryCompleteness(ctx context.Context, appID string, from, until time.Time) ([]string, error) {
+	return c.r.RequestAnalyticsCompleteness(ctx, appID, from, until)
+}
+
+// requestAnalyticsCompleteness says whether every gateway delivered the
+// window's telemetry. Losses (a ring overwrite, an exhausted retry, an app
+// over its ingest cap) otherwise only lowered the totals without a trace.
+// The newest RequestAnalyticsSettleLag is still arriving and is not judged;
+// a window entirely inside it is reported as pending. A failed check leaves
+// the verdict unknown rather than failing the read.
+//
+// When the app's rollups answer the window, a gateway counting analytics
+// itself is judged by its analytics gaps, not raw delivery: a raw row it
+// counted and then lost leaves the rollups whole (ADR-20261103113952
+// amendment 6).
+func (s *server) requestAnalyticsCompleteness(ctx context.Context, appID string, window requestAnalyticsWindow) (*bool, []string) {
+	var reader requestAnalyticsCompletenessReader
+	if analytics, ok := s.store.(requestAnalyticsRollupCompletenessReader); ok {
+		if _, covered := analyticsrollup.Covers(ctx, s.store, appID, window.From); covered {
+			reader = rollupCompleteness{analytics}
+		}
+	}
+	if reader == nil {
+		raw, ok := s.store.(requestAnalyticsCompletenessReader)
+		if !ok {
+			return nil, nil
+		}
+		reader = raw
+	}
+	complete, gaps := requestAnalyticsCompletenessFrom(ctx, reader, s.log, appID, window)
+	return analyticsrollup.WithRollupGaps(ctx, s.store, s.log, appID, window.From, window.Until, complete, gaps)
+}
+
+func requestAnalyticsCompletenessFrom(ctx context.Context, reader requestAnalyticsCompletenessReader, log *slog.Logger, appID string, window requestAnalyticsWindow) (*bool, []string) {
+	until := window.Until
+	if settled := window.AsOf.Add(-api.RequestAnalyticsSettleLag); until.After(settled) {
+		until = settled
+	}
+	if !until.After(window.From) {
+		complete := false
+		return &complete, []string{"telemetry_ingestion_pending"}
+	}
+	gaps, err := reader.RequestTelemetryCompleteness(ctx, appID, window.From, until)
+	if err != nil {
+		if log != nil {
+			log.Warn("request analytics completeness check failed", "app_id", appID, "err", err)
+		}
+		return nil, nil
+	}
+	complete := len(gaps) == 0
+	return &complete, gaps
+}
+
 // getAppRequestAnalytics serves the bounded, aggregated request analytics
 // overview for one app. The route is gated by the same paid telemetry
 // entitlement as the customer debugger, but exposes no request IDs or trace
@@ -97,7 +165,7 @@ func (s *server) getAppRequestAnalytics(w http.ResponseWriter, r *http.Request, 
 	response, err := s.requestAnalyticsResponse(r.Context(), app, acct, window, groupBy)
 	if err != nil {
 		s.log.Warn("request analytics read failed", "app_id", app.ID, "err", err)
-		api.WriteProblem(w, api.ErrCapacity("request analytics"))
+		api.WriteProblem(w, routeAnalyticsProblem(err, "request analytics"))
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -140,7 +208,7 @@ func (s *server) getAppRequestAnalyticsTimeseries(w http.ResponseWriter, r *http
 	response, err := s.requestAnalyticsTimeseriesResponse(r.Context(), app, acct, window, groupBy, route, method)
 	if err != nil {
 		s.log.Warn("request analytics timeseries read failed", "app_id", app.ID, "err", err)
-		api.WriteProblem(w, api.ErrCapacity("request analytics timeseries"))
+		api.WriteProblem(w, routeAnalyticsProblem(err, "request analytics timeseries"))
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -218,12 +286,19 @@ func parseRequestAnalyticsWindow(r *http.Request, now time.Time, retention time.
 
 	windowClamped := false
 	if retention > 0 {
-		minimum := until.Add(-retention)
+		// Retention is anchored to collection time, not to until: rows older
+		// than now-retention are gone, so a historical until past them would
+		// read as a window with no traffic instead of an expired one.
+		minimum := now.Add(-retention)
+		if !until.After(minimum) {
+			return requestAnalyticsWindow{}, fmt.Errorf("until must be within retained telemetry (%d days on this plan)", int(retention/(24*time.Hour)))
+		}
 		if from.Before(minimum) {
 			from = minimum
 			windowClamped = true
 		}
 	}
+	from, until = analyticsrollup.AlignWindow(from, until, now, retention)
 	return requestAnalyticsWindow{
 		From:           from,
 		Until:          until,
@@ -268,19 +343,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		ReceivedAt:   pgtype.Timestamptz{Time: window.From, Valid: true},
 		ReceivedAt_2: pgtype.Timestamptz{Time: window.Until, Valid: true},
 	}
-	summary, err := s.store.RequestTelemetryAnalyticsSummary(ctx, params)
-	if err != nil {
-		return api.RequestAnalyticsResponse{}, err
-	}
-
-	groupRows, err := s.store.RequestTelemetryAnalyticsByDimension(ctx, sqlc.RequestTelemetryAnalyticsByDimensionParams{
-		AppID:        params.AppID,
-		AccountID:    params.AccountID,
-		ReceivedAt:   params.ReceivedAt,
-		ReceivedAt_2: params.ReceivedAt_2,
-		GroupBy:      groupBy,
-		Limit:        requestAnalyticsGroupLimit,
-	})
+	summary, groupRows, sampledOK, err := s.requestAnalyticsTotals(ctx, app, acct, window, groupBy, params)
 	if err != nil {
 		return api.RequestAnalyticsResponse{}, err
 	}
@@ -401,17 +464,27 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 			RequestCount:              requestCount,
 		}
 
+		// When rollups answer the window, the deployment splits take their
+		// request counts too, so they add up to the route totals above.
+		split, err := s.requestAnalyticsRollupSplit(ctx, app, acct, window)
+		if err != nil {
+			return api.RequestAnalyticsResponse{}, err
+		}
 		if deploymentStore, ok := s.store.(requestAnalyticsDeploymentReader); ok {
-			deploymentRows, err := deploymentStore.RequestTelemetryAnalyticsByDeployment(ctx, sqlc.RequestTelemetryAnalyticsByDeploymentParams{
-				AppID:        params.AppID,
-				AccountID:    params.AccountID,
-				ReceivedAt:   params.ReceivedAt,
-				ReceivedAt_2: params.ReceivedAt_2,
-				Limit:        requestAnalyticsDeploymentLimit,
+			deploymentRows, ok, err := requestAnalyticsSampledRead(ctx, s, split != nil, "deployments", func(ctx context.Context) ([]sqlc.RequestTelemetryAnalyticsByDeploymentRow, error) {
+				return deploymentStore.RequestTelemetryAnalyticsByDeployment(ctx, sqlc.RequestTelemetryAnalyticsByDeploymentParams{
+					AppID:        params.AppID,
+					AccountID:    params.AccountID,
+					ReceivedAt:   params.ReceivedAt,
+					ReceivedAt_2: params.ReceivedAt_2,
+					Limit:        requestAnalyticsDeploymentLimit,
+				})
 			})
 			if err != nil {
 				return api.RequestAnalyticsResponse{}, err
 			}
+			sampledOK = sampledOK && ok
+			deploymentRows = split.deployments(deploymentRows, summary.Requests)
 			var totalDeploymentRequests int64
 			if len(deploymentRows) > 0 {
 				totalDeploymentRequests = deploymentRows[0].TotalRequests
@@ -470,22 +543,31 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		}
 
 		if routeDeploymentStore, ok := s.store.(requestAnalyticsRouteDeploymentReader); ok && len(routes) > 0 {
-			routeDeploymentRows, err := routeDeploymentStore.RequestTelemetryAnalyticsByRouteDeployment(ctx, sqlc.RequestTelemetryAnalyticsByRouteDeploymentParams{
-				AppID:           params.AppID,
-				AccountID:       params.AccountID,
-				ReceivedAt:      params.ReceivedAt,
-				ReceivedAt_2:    params.ReceivedAt_2,
-				DeploymentLimit: requestAnalyticsRouteDeploymentLimit,
-				RouteLimit:      requestAnalyticsRouteLimit,
+			routeDeploymentRows, ok, err := requestAnalyticsSampledRead(ctx, s, split != nil, "route deployments", func(ctx context.Context) ([]sqlc.RequestTelemetryAnalyticsByRouteDeploymentRow, error) {
+				return routeDeploymentStore.RequestTelemetryAnalyticsByRouteDeployment(ctx, sqlc.RequestTelemetryAnalyticsByRouteDeploymentParams{
+					AppID:           params.AppID,
+					AccountID:       params.AccountID,
+					ReceivedAt:      params.ReceivedAt,
+					ReceivedAt_2:    params.ReceivedAt_2,
+					DeploymentLimit: requestAnalyticsRouteDeploymentLimit,
+					RouteLimit:      requestAnalyticsRouteLimit,
+				})
 			})
 			if err != nil {
 				return api.RequestAnalyticsResponse{}, err
 			}
-			attachRequestAnalyticsRouteDeploymentObservations(routes, routeDeploymentRows, summary.Requests)
+			sampledOK = sampledOK && ok
+			if ok {
+				attachRequestAnalyticsRouteDeploymentObservations(routes, split.routeDeployments(routeDeploymentRows), summary.Requests)
+			}
 		}
 	}
 
+	telemetryComplete, telemetryGaps := s.requestAnalyticsCompleteness(ctx, app.ID, window)
 	return api.RequestAnalyticsResponse{
+		TelemetryComplete:     telemetryComplete,
+		TelemetryGaps:         telemetryGaps,
+		SampledMeasures:       requestAnalyticsSampledMeasuresState(sampledOK),
 		Slug:                  app.Slug,
 		Since:                 echoDebugSince(window.RequestedSince, window.Since),
 		From:                  window.From.Format(time.RFC3339Nano),
@@ -510,6 +592,15 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		DeploymentCosts:       deploymentCosts,
 		AsOf:                  window.AsOf.Format(time.RFC3339Nano),
 	}, nil
+}
+
+// requestAnalyticsSampledMeasuresState names whether the response carries
+// the detail only raw sampled rows hold (api.RequestAnalyticsSampledMeasures*).
+func requestAnalyticsSampledMeasuresState(ok bool) string {
+	if ok {
+		return api.RequestAnalyticsSampledMeasuresIncluded
+	}
+	return api.RequestAnalyticsSampledMeasuresOmitted
 }
 
 // annotateDeploymentCPURegressions compares the mean measured guest CPU time
@@ -1057,14 +1148,7 @@ func (s *server) requestAnalyticsTimeseriesResponse(ctx context.Context, app sta
 	if groupBy != "" {
 		return s.requestAnalyticsGroupedTimeseriesResponse(ctx, app, acct, window, groupBy, route, method)
 	}
-	rows, err := s.store.RequestTelemetryAnalyticsTimeseries(ctx, sqlc.RequestTelemetryAnalyticsTimeseriesParams{
-		AppID:       stringToPgUUID(app.ID),
-		AccountID:   stringToPgUUID(acct.ID),
-		ReceivedAt:  pgtype.Timestamptz{Time: window.From, Valid: true},
-		ReceivedAt2: pgtype.Timestamptz{Time: window.Until, Valid: true},
-		Route:       route,
-		Method:      method,
-	})
+	rows, err := s.requestAnalyticsTimeseriesRows(ctx, app, acct, window, route, method)
 	if err != nil {
 		return api.RequestAnalyticsTimeseriesResponse{}, err
 	}
@@ -1081,31 +1165,25 @@ func (s *server) requestAnalyticsTimeseriesResponse(ctx context.Context, app sta
 			P99MS:         int(row.P99Ms),
 		})
 	}
+	telemetryComplete, telemetryGaps := s.requestAnalyticsCompleteness(ctx, app.ID, window)
 	return api.RequestAnalyticsTimeseriesResponse{
-		Slug:          app.Slug,
-		Route:         route,
-		Method:        method,
-		Since:         echoDebugSince(window.RequestedSince, window.Since),
-		From:          window.From.Format(time.RFC3339Nano),
-		Until:         window.Until.Format(time.RFC3339Nano),
-		WindowClamped: window.WindowClamped,
-		Bucket:        "1h",
-		Points:        points,
-		AsOf:          window.AsOf.Format(time.RFC3339Nano),
+		TelemetryComplete: telemetryComplete,
+		TelemetryGaps:     telemetryGaps,
+		Slug:              app.Slug,
+		Route:             route,
+		Method:            method,
+		Since:             echoDebugSince(window.RequestedSince, window.Since),
+		From:              window.From.Format(time.RFC3339Nano),
+		Until:             window.Until.Format(time.RFC3339Nano),
+		WindowClamped:     window.WindowClamped,
+		Bucket:            "1h",
+		Points:            points,
+		AsOf:              window.AsOf.Format(time.RFC3339Nano),
 	}, nil
 }
 
 func (s *server) requestAnalyticsGroupedTimeseriesResponse(ctx context.Context, app state.App, acct state.Account, window requestAnalyticsWindow, groupBy, route, method string) (api.RequestAnalyticsTimeseriesResponse, error) {
-	rows, err := s.store.RequestTelemetryAnalyticsTimeseriesGrouped(ctx, sqlc.RequestTelemetryAnalyticsTimeseriesGroupedParams{
-		AppID:       stringToPgUUID(app.ID),
-		AccountID:   stringToPgUUID(acct.ID),
-		ReceivedAt:  pgtype.Timestamptz{Time: window.From, Valid: true},
-		ReceivedAt2: pgtype.Timestamptz{Time: window.Until, Valid: true},
-		GroupBy:     groupBy,
-		Route:       route,
-		Method:      method,
-		Limit:       requestAnalyticsGroupLimit,
-	})
+	rows, err := s.requestAnalyticsGroupedTimeseriesRows(ctx, app, acct, window, groupBy, route, method)
 	if err != nil {
 		return api.RequestAnalyticsTimeseriesResponse{}, err
 	}
@@ -1132,18 +1210,21 @@ func (s *server) requestAnalyticsGroupedTimeseriesResponse(ctx context.Context, 
 			P99MS:         int(row.P99Ms),
 		})
 	}
+	telemetryComplete, telemetryGaps := s.requestAnalyticsCompleteness(ctx, app.ID, window)
 	return api.RequestAnalyticsTimeseriesResponse{
-		Slug:          app.Slug,
-		Route:         route,
-		Method:        method,
-		GroupBy:       groupBy,
-		Since:         echoDebugSince(window.RequestedSince, window.Since),
-		From:          window.From.Format(time.RFC3339Nano),
-		Until:         window.Until.Format(time.RFC3339Nano),
-		WindowClamped: window.WindowClamped,
-		Bucket:        "1h",
-		Series:        series,
-		AsOf:          window.AsOf.Format(time.RFC3339Nano),
+		TelemetryComplete: telemetryComplete,
+		TelemetryGaps:     telemetryGaps,
+		Slug:              app.Slug,
+		Route:             route,
+		Method:            method,
+		GroupBy:           groupBy,
+		Since:             echoDebugSince(window.RequestedSince, window.Since),
+		From:              window.From.Format(time.RFC3339Nano),
+		Until:             window.Until.Format(time.RFC3339Nano),
+		WindowClamped:     window.WindowClamped,
+		Bucket:            "1h",
+		Series:            series,
+		AsOf:              window.AsOf.Format(time.RFC3339Nano),
 	}, nil
 }
 
@@ -1182,6 +1263,10 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 	if !limits.DebugTelemetryEnabled {
 		return nil
 	}
+	// The app page re-renders on live events, so one slow window must not
+	// hold every render (and a Postgres backend) for the reads' full budget.
+	ctx, cancel := context.WithTimeout(ctx, api.DashboardRequestAnalyticsTimeout)
+	defer cancel()
 	now := time.Now().UTC()
 	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
 	window := requestAnalyticsWindow{
@@ -1318,6 +1403,7 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 		SelectedMethod:        selectedMethod,
 		SelectedQuery:         selectedQuery.Encode(),
 		TimeseriesURL:         "/v1/apps/" + app.Slug + "/analytics/timeseries?" + seriesQuery.Encode(),
+		TelemetryGaps:         response.TelemetryGaps,
 	}
 	series, err := s.requestAnalyticsTimeseriesResponse(ctx, app, acct, window, "", selectedRoute, selectedMethod)
 	if err != nil {

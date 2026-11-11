@@ -125,6 +125,14 @@ jobs:
           npm run starter:sync -- --check
           node --test dist-test/test/postgres-pool-runtime.test.js dist-test/test/restore-aware-postgres-pool.test.js
           node --test test/postgres-pool-package.test.mjs
+      # The race binaries below, their build cache and the restored Go cache
+      # filled the hosted runner's disk (run 41261525251). This job uses none
+      # of the preinstalled Android, .NET, GHC or CodeQL toolchains.
+      - name: free runner disk for the race builds
+        run: |
+          df -h / "$RUNNER_TEMP"
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h / "$RUNNER_TEMP"
       - name: compile portable and qualified test binaries
         env:
           # Compilation is serial on the 16 GiB runner. Keep the smaller

@@ -2,7 +2,6 @@
 package apphealth
 
 import (
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -40,7 +39,19 @@ type Evidence struct {
 	Nodes            map[string]state.ComputeNode
 	Metrics          appmetrics.RequestHealth
 	MetricsAllowed   bool
-	Now              time.Time
+	// AssessWorkers releases worker assessment (the app_health_workers
+	// platform flag); Worker is a worker-mode app's queue evidence
+	// (ADR-20261102091500).
+	AssessWorkers bool
+	Worker        WorkerQueue
+	// AssessMemory releases the memory check (the app_health_memory platform
+	// flag); Memory is the app's memory-pressure rollup (ADR-20261102124306).
+	AssessMemory bool
+	Memory       MemoryEvidence
+	// Plan is the account's plan; with it the memory check says how much RAM
+	// the app needs (ADR-20261102124306 step 3).
+	Plan api.Plan
+	Now  time.Time
 }
 
 func Evaluate(e Evidence) api.AppHealthResponse {
@@ -51,6 +62,11 @@ func Evaluate(e Evidence) api.AppHealthResponse {
 		ServingDeploymentIDs: []string{}, Checks: []api.AppHealthCheck{},
 	}
 	mode := e.App.Manifest.ExecutionMode
+	if mode == api.ExecutionModeWorker && e.AssessWorkers {
+		evaluateWorker(&out, e)
+		assessMemory(&out, e)
+		return finish(out)
+	}
 	if mode != "" && mode != "request" && mode != "service" {
 		out.Phase = "unsupported"
 		add(&out, "workload", Unknown, "HTTP serving health does not assess worker or job execution.", "configuration", "")
@@ -72,6 +88,7 @@ func Evaluate(e Evidence) api.AppHealthResponse {
 		add(&out, "maintenance", Warning, "Maintenance mode intentionally returns 503 responses.", "configuration", "")
 	}
 	assessRequests(&out, e)
+	assessMemory(&out, e)
 	return finish(out)
 }
 
@@ -247,33 +264,7 @@ func assessCapacity(out *api.AppHealthResponse, e Evidence, live []state.Deploym
 // Match the gateway's independent primary-app and primary-ingress gates.
 // Decode only routing fields, never companion environment or probe output.
 func requiredSources(d state.Deployment) ([]string, error) {
-	var sources []string
-	if len(d.OverrideReadinessProbe) > 0 {
-		var p api.DeploymentReadinessProbe
-		if err := json.Unmarshal(d.OverrideReadinessProbe, &p); err != nil {
-			return nil, fmt.Errorf("decode readiness: %w", err)
-		}
-		if p.Path != "" || p.GRPC != nil {
-			sources = append(sources, "primary_app")
-		}
-	}
-	var companions []struct {
-		Name           string            `json:"name"`
-		Type           api.SidecarType   `json:"type"`
-		PrimaryIngress bool              `json:"primary_ingress"`
-		ReadinessProbe *api.SidecarProbe `json:"readiness_probe"`
-	}
-	if len(d.Sidecars) > 0 {
-		if err := json.Unmarshal(d.Sidecars, &companions); err != nil {
-			return nil, fmt.Errorf("decode companions: %w", err)
-		}
-	}
-	for _, c := range companions {
-		if c.Type == api.SidecarTypeSidecar && c.PrimaryIngress && c.ReadinessProbe != nil && c.Name != "" {
-			sources = append(sources, "sidecar:"+c.Name)
-		}
-	}
-	return sources, nil
+	return state.DeploymentReadinessSources(d)
 }
 
 func add(out *api.AppHealthResponse, code, status, detail, action, deploymentID string) {

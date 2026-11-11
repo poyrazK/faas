@@ -53,6 +53,21 @@ func IsDeploySubmissionRequest(r *http.Request) bool {
 	return matchesRoute(r, deploySubmissionRoutes)
 }
 
+// appLifecycleRoutes delete and restore an app. Both change the account's
+// traffic policy, so they wait for the account's traffic binding lock behind
+// any deploy in the same account, and a deploy (30 s budget) can hold it for
+// several seconds. Under the 5 s default a delete queued behind one answered
+// 503 "could not delete app" (Hunt 31 H31-13).
+var appLifecycleRoutes = []struct{ method, path string }{
+	{http.MethodDelete, "/v1/apps/*"},
+	{http.MethodPost, "/v1/apps/*/restore"},
+}
+
+// IsAppLifecycleRequest identifies app delete and restore.
+func IsAppLifecycleRequest(r *http.Request) bool {
+	return matchesRoute(r, appLifecycleRoutes)
+}
+
 // accountExportRoutes assemble the whole account (every app, deployment and
 // audit row) into one spool before the first byte goes out. On
 // production-us a 44-app account outran the 5 s apid default on every
@@ -88,12 +103,50 @@ func matchesRoute(r *http.Request, routes []struct{ method, path string }) bool 
 // queue got an error and backed off instead of an empty list (bug hunt
 // 2026-10-28 B35). A route that needs longer than the platform ceiling must
 // detach its work instead.
+//
+// The second group set their own longer timeouts (10 s to 2 minutes) that the
+// 5 s default silently cut: alert test sends, invoice history pages and
+// refreshes, profile queries, the app health read, the Slack and Linear OAuth
+// exchanges, binding promotion, MCP readiness and the native issue-tracker
+// calls. They get the ceiling too; a test send or invoice page that needs
+// longer answers before the ceiling instead of being cut at 5 s.
 var longWaitRoutes = []struct{ method, path string }{
 	{http.MethodPost, "/v1/apps/*/queues/*/leases"},
 	{http.MethodPost, "/v1/orgs/*/apps/*/queues/*/leases"},
 	{http.MethodGet, "/v1/apps/*/policy/status"},
 	{http.MethodPost, "/v1/projects/scan/source-ref"},
 	{http.MethodPost, "/v1/apps/*/deployments/dev-source"},
+
+	{http.MethodPost, "/v1/notification-channels/*/test"},
+	{http.MethodPost, "/v1/apps/*/alert-presets/*/test"},
+	{http.MethodPost, "/dashboard/apps/*/alert-presets/*/test"},
+	{http.MethodPost, "/v1/invoices/backfill"},
+	{http.MethodPost, "/v1/invoices/*/refresh"},
+	{http.MethodGet, "/v1/apps/*/profiles"},
+	{http.MethodGet, "/v1/apps/*/profiles/heap"},
+	{http.MethodPost, "/v1/apps/*/profiles/compare"},
+	{http.MethodPost, "/v1/apps/*/profiles/investigations/*/check"},
+	{http.MethodGet, "/v1/apps/*/health"},
+	{http.MethodGet, "/oauth/slack/callback"},
+	{http.MethodGet, "/oauth/linear/callback"},
+	{http.MethodPost, "/v1/deployments/*/promote"},
+	{http.MethodPost, "/v1/deployments/*/promote-with-application-ack"},
+	{http.MethodPost, "/v1/deployments/*/mcp-readiness"},
+	{http.MethodPost, "/dashboard/mcp/apps/*/oauth"},
+	{http.MethodPost, "/v1/apps/*/issues/*/native-tickets"},
+	{http.MethodPost, "/v1/apps/*/issues/*/native-linear-tickets"},
+	{http.MethodGet, "/v1/apps/*/issues/*/tracker-links/*/native-status"},
+	{http.MethodPost, "/v1/apps/*/issues/*/tracker-links/*/native-status"},
+	{http.MethodGet, "/v1/apps/*/issues/*/tracker-links/*/native-linear-status"},
+	{http.MethodPost, "/v1/apps/*/issues/*/tracker-links/*/native-linear-status"},
+	{http.MethodGet, "/v1/apps/*/issues/*/tracker-links/*/auto-sync"},
+	{http.MethodPut, "/v1/apps/*/issues/*/tracker-links/*/auto-sync"},
+	{http.MethodGet, "/v1/apps/*/issue-tracker-linear-connection"},
+	{http.MethodPut, "/v1/apps/*/issue-tracker-linear-connection"},
+	{http.MethodPost, "/dashboard/apps/*/issues/*/tracker-sync"},
+	{http.MethodPost, "/dashboard/apps/*/issues/*/linear-connection"},
+	{http.MethodGet, "/dashboard/apps/*/issues/*/tracker-sync/*"},
+	{http.MethodGet, "/dashboard/apps/*/issues/slack-routing"},
 }
 
 // IsLongWaitRequest identifies a request on one of longWaitRoutes.

@@ -410,6 +410,9 @@ func NormalizeInput(input Input) (Input, error) {
 	if !strings.HasPrefix(input.Path, "/") || len(input.Path) > 2048 {
 		return Input{}, fmt.Errorf("path must start with / and be at most 2048 characters")
 	}
+	// The gateway forwards, and its rules see, the normalized path
+	// (ADR-20261108100000).
+	input.Path = api.NormalizeEdgeRequestPath(input.Path)
 	input.Method = strings.ToUpper(strings.TrimSpace(input.Method))
 	if input.Method == "" {
 		input.Method = http.MethodGet
@@ -630,6 +633,10 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 			MatchHost: rule.MatchHost, MatchPath: rule.MatchPath,
 			MatchMethods: rule.MatchMethods, MatchHeaders: cloneStringMap(rule.MatchHeaders),
 		}
+		overridden := ""
+		if m, ok := ruleMatchMethod(rule, input, input.Path, matchMethod, input.Headers); ok && m != matchMethod {
+			matchMethod, overridden = m, m
+		}
 		switch {
 		case rule.ExpiresAt != nil && !time.Now().Before(*rule.ExpiresAt):
 			row.Status, row.Reason = "skipped", "rule expired at "+rule.ExpiresAt.UTC().Format(time.RFC3339)
@@ -683,6 +690,9 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 		if rule.Kind == "cors" && row.Status != "skipped" && requestedMethod != "" {
 			row.Reason += fmt.Sprintf("; preflight requests %s", requestedMethod)
 		}
+		if overridden != "" && row.Status != "skipped" {
+			row.Reason += fmt.Sprintf("; matched as %s, the method the request asks the app to run it as (method override)", overridden)
+		}
 		row.Outcome, row.OutcomeReason, row.ActionPreview = previewAction(rule, row, input, input.Path)
 		result.Rules = append(result.Rules, row)
 	}
@@ -722,8 +732,20 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		return stopped
 	}
 
+	// accessGatePhases enforce the rule for the client's original path and
+	// the rule for the rewritten one, as the gateway's matchEdgeGates does:
+	// the rewritten-path rule runs as a second pass of the same phase.
+	accessGatePhases := map[string]bool{"jwt": true, "ip": true, "geo": true, "throttle": true, "challenge": true}
 	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "declared_routes", "jwt", "ip", "geo", "limit", "throttle", "validate", "challenge", "respond", "async", "cache", "budget", "circuit_breaker", "retry"}
-	for _, phase := range phases {
+	var rewrittenGateRule *api.EdgeRuleResponse
+	nextPhase := func(i int) int {
+		if rewrittenGateRule != nil {
+			return i
+		}
+		return i + 1
+	}
+	for i := 0; i < len(phases); i = nextPhase(i) {
+		phase := phases[i]
 		if phase == "app_maintenance" {
 			if unavailable := unavailableTotalDeadlineRule(input, rules); unavailable != nil {
 				stopped := stop("incomplete", api.CodeTrafficPolicyUnavailable, "policy", "the named owner's invalid total deadline prevents host-policy verification; when that owner is resolved, the gateway refuses HTTP 503 before authentication, wake or forwarding", unavailable)
@@ -806,7 +828,16 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		if phase == "cors" {
 			matchMethod, _ = corsMatchMethod(input.Method, workingHeaders)
 		}
-		rule, tied := firstPhaseRule(rules, phase, input, requestPath, matchMethod, input.Headers)
+		var rule *api.EdgeRuleResponse
+		var tied bool
+		switch {
+		case rewrittenGateRule != nil:
+			rule, rewrittenGateRule = rewrittenGateRule, nil
+		case accessGatePhases[phase] && input.Path != requestPath:
+			rule, tied, rewrittenGateRule = accessGateRules(rules, phase, input, requestPath, matchMethod)
+		default:
+			rule, tied = firstPhaseRule(rules, phase, input, requestPath, matchMethod, input.Headers)
+		}
 		if phase == "budget" && pinnedBudget != nil {
 			rule, tied = pinnedBudget, false
 		}
@@ -1108,6 +1139,16 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			step.PathAfter = requestPath
 			simulation.Steps = append(simulation.Steps, step)
 		case "challenge":
+			if outcome == "challenge_preflight" {
+				// A preflight carries no pass and no credential, so the
+				// edge's 204 is certain (ADR-831 amendment 18).
+				simulation.Status, simulation.Outcome = "complete", outcome
+				simulation.StatusCode, simulation.StoppedAt, simulation.Reason = http.StatusNoContent, phase, reason
+				step.StatusCode = http.StatusNoContent
+				simulation.Steps = append(simulation.Steps, step)
+				simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
+				return simulation
+			}
 			if outcome != "challenge_page" && outcome != "challenge_required" {
 				return stop("incomplete", outcome, phase, reason, rule)
 			}
@@ -1352,10 +1393,10 @@ func firstPhaseRule(rules []api.EdgeRuleResponse, kind string, input Input, requ
 	var first *api.EdgeRuleResponse
 	for i := range rules {
 		rule := &rules[i]
-		if rule.Kind != kind || !rule.Enabled || unreleasedChallenge(*rule) || !HostMatches(rule.MatchHost, input.Host) || !ruleMethodMatches(rule.Kind, rule.MatchMethods, method) || !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, headers) {
+		if rule.Kind != kind || !rule.Enabled || unreleasedChallenge(*rule) || !HostMatches(rule.MatchHost, input.Host) || !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, headers) || rule.Mode == api.EdgeRuleModeLog {
 			continue
 		}
-		if rule.Mode == api.EdgeRuleModeLog || !traceConditionMatches(*rule, input, requestPath, method, headers) {
+		if _, ok := ruleMatchMethod(*rule, input, requestPath, method, headers); !ok {
 			continue
 		}
 		matched, err := true, error(nil)
@@ -1375,6 +1416,27 @@ func firstPhaseRule(rules []api.EdgeRuleResponse, kind string, input Input, requ
 		return first, first.Priority == rule.Priority
 	}
 	return first, false
+}
+
+// accessGateRules picks an access gate's rules after a rewrite changed the
+// path, as the gateway's matchEdgeGates does (ADR-091 amendments 2026-11-02
+// and 2026-11-03): first the rule for the client's path, and second, when a
+// different rule matches the rewritten path, that rule. Either path's tie is
+// reported as one.
+func accessGateRules(rules []api.EdgeRuleResponse, phase string, input Input, rewrittenPath, method string) (first *api.EdgeRuleResponse, tied bool, second *api.EdgeRuleResponse) {
+	public, publicTied := firstPhaseRule(rules, phase, input, input.Path, method, input.Headers)
+	rewritten, rewrittenTied := firstPhaseRule(rules, phase, input, rewrittenPath, method, input.Headers)
+	switch {
+	case publicTied:
+		return public, true, nil
+	case public == nil:
+		return rewritten, rewrittenTied, nil
+	case rewrittenTied:
+		return rewritten, true, nil
+	case rewritten == nil || rewritten.ID == public.ID:
+		return public, false, nil
+	}
+	return public, false, rewritten
 }
 
 func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestPath string) (string, string, *ActionPreview) {
@@ -2278,10 +2340,6 @@ func previewValidateParameters(rule api.EdgeRuleResponse, action api.EdgeRuleVal
 	if prob := p.Validate(rule.MatchPath); prob != nil {
 		return "unavailable", "validation parameters are invalid; gateway compilation would reject the rule", true
 	}
-	query, err := url.ParseQuery(input.Query)
-	if err != nil {
-		return "unavailable", "the request query string could not be parsed", true
-	}
 	for _, loc := range []struct {
 		name   string
 		schema json.RawMessage
@@ -2309,13 +2367,21 @@ func previewValidateParameters(rule api.EdgeRuleResponse, action api.EdgeRuleVal
 				values[name] = []string{v}
 			}
 		case "query":
+			query, err := api.ParseEdgeRuleQuery(input.Query)
+			if err != nil {
+				// Like the gateway, an undecodable escape is a query
+				// mismatch (HTTP 422 in enforce mode), checked only when
+				// the rule has a query schema.
+				preview.ValidationField = "query"
+				preview.ValidationKeyword = "query_string"
+				if outcome, reason, done := validateModeOutcome(rule, action, preview, "request query string has an undecodable percent-escape"); done {
+					return outcome, reason, true
+				}
+				continue
+			}
 			values = query
 		default:
-			for name := range kinds {
-				if raw := input.Headers.Values(name); len(raw) > 0 {
-					values[name] = raw
-				}
-			}
+			values = api.EdgeRuleHeaderParamValues(input.Headers, kinds)
 		}
 		instance, err := api.EdgeRuleParamInstance(kinds, values)
 		if err != nil {
@@ -2688,7 +2754,13 @@ func traceConditionMatches(rule api.EdgeRuleResponse, input Input, requestPath, 
 	if err != nil {
 		return false
 	}
-	return program.Matches(api.EdgeRuleMatchInput{
+	matches := program.Matches
+	if api.EdgeRuleKindUsesProtectivePathMatch(rule.Kind) {
+		// A gate's condition holds for any path form its match_path covers,
+		// as at the gateway (ADR-20261107190000).
+		matches = program.MatchesProtective
+	}
+	return matches(api.EdgeRuleMatchInput{
 		Method: method, Path: requestPath, Host: input.Host, Headers: headers,
 		ClientIP: net.ParseIP(input.ClientIP), Country: input.Country, ASN: input.ASN,
 		VerifiedBot:       traceVerifiedBot(input.VerifiedBot, headers),
@@ -2836,6 +2908,28 @@ func MethodMatches(methods []string, method string) bool {
 	return false
 }
 
+// ruleMatchMethod returns the method under which rule's method selector and
+// condition cover the request: method itself or, for a kind that denies or
+// constrains requests, the method a method-override header or "_method"
+// query parameter asks the app to run it as, as the gateway's
+// MatchProtectiveEdgeRule does (ADR-091 amendment 2026-11-02, later).
+func ruleMatchMethod(rule api.EdgeRuleResponse, input Input, requestPath, method string, headers http.Header) (string, bool) {
+	if ruleMethodMatches(rule.Kind, rule.MatchMethods, method) && traceConditionMatches(rule, input, requestPath, method, headers) {
+		return method, true
+	}
+	if !api.EdgeRuleKindUsesProtectivePathMatch(rule.Kind) {
+		return "", false
+	}
+	override := api.EdgeRuleMethodOverride(input.Method, input.Headers, input.Query)
+	if override == "" || override == method {
+		return "", false
+	}
+	if ruleMethodMatches(rule.Kind, rule.MatchMethods, override) && traceConditionMatches(rule, input, requestPath, override, headers) {
+		return override, true
+	}
+	return "", false
+}
+
 // ruleMethodMatches uses the gateway's case-sensitive lookup for CORS methods.
 // The ordinary HTTP method has already been normalized; Access-Control-Request-Method
 // is passed to the gateway matcher as submitted, without case normalization.
@@ -2947,6 +3041,10 @@ func previewChallengeRule(rule api.EdgeRuleResponse, input Input) (string, strin
 	}
 	const unless = "unless the request carries a verified API key, consumer key or JWT, or a challenge pass from an earlier solve"
 	preview := &ActionPreview{Type: "challenge", StatusCode: http.StatusForbidden}
+	if _, preflight := api.EdgeChallengePreflightHeaders(input.Method, input.Headers); preflight {
+		preview.StatusCode, preview.Message = http.StatusNoContent, "preflight allowed without credentials"
+		return "challenge_preflight", "a CORS preflight would be answered at the edge with 204, allowing the request without credentials; the request itself is still challenged", preview
+	}
 	if api.EdgeChallengeNavigation(input.Method, input.Headers) {
 		preview.Message = "proof-of-work page"
 		return "challenge_page", fmt.Sprintf("a browser navigation would get the challenge page (difficulty %d, pass lasts %ds) %s", action.Difficulty, action.PassTTLSeconds, unless), preview

@@ -75,9 +75,16 @@ type Integration struct {
 	Name      string
 	// AccountPlan is the owning account's plan; customer AI integrations
 	// need a plan entitled to the AI gateway (ADR-998).
-	AccountPlan                    api.Plan
-	Origin                         *url.URL
-	TokenHash                      [32]byte
+	AccountPlan api.Plan
+	// AccountStatus is the owning account's status; a suspended account's
+	// customer integrations refuse calls (ADR 20261027132936).
+	AccountStatus string
+	Origin        *url.URL
+	TokenHash     [32]byte
+	// StoredTokenHash is the token hash as the database holds it, plain or
+	// keyed under the outbound ring (ADR 20261029202403 amendment 1); set
+	// for an integration read from the database.
+	StoredTokenHash                []byte
 	AppIDs                         map[string]struct{}
 	OperatorAppIDs                 map[string]struct{}
 	BindingAppIDs                  map[string]struct{}
@@ -225,7 +232,7 @@ func (i Integration) Validate() error {
 	if strings.TrimSpace(i.ID) == "" || i.Origin == nil {
 		return fmt.Errorf("%w: id and origin are required", ErrInvalidIntegration)
 	}
-	if i.TokenHash == ([32]byte{}) && i.ProviderAuthMode != ProviderAuthManaged {
+	if i.TokenHash == ([32]byte{}) && len(i.StoredTokenHash) == 0 && i.ProviderAuthMode != ProviderAuthManaged {
 		return fmt.Errorf("%w: token hash is required", ErrInvalidIntegration)
 	}
 	if i.Origin.Scheme != "https" || i.Origin.Host == "" || i.Origin.User != nil || i.Origin.RawQuery != "" || i.Origin.Fragment != "" {

@@ -30,6 +30,8 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	// DatabaseVMs enables database VMs on a database node (ADR-1027).
+	DatabaseVMs *DatabaseVMConfig `toml:"database_vms"`
 	// NativeProcessRecovery enables journal-backed launch and strict recovery.
 	// Experimental until the dedicated native VM/leak acceptance gates pass.
 	NativeProcessRecovery bool `toml:"native_process_recovery"`
@@ -59,6 +61,11 @@ type Config struct {
 	// Amendment 1). Older vmmd binaries refuse such a journal: enable it only
 	// once every compute node and any rollback target can read version three.
 	NativeLaunchOwnerRecords bool `toml:"native_launch_owner_records"`
+	// NativeQualificationCapture opens GitOps qualification capture, restore
+	// and retirement on this host (ADR 20261023093000). It requires native
+	// process recovery and both private roots above, and stays off on a host
+	// whose native qualification acceptance has not passed.
+	NativeQualificationCapture bool `toml:"native_qualification_capture"`
 	// ResourceJournalDir persists lease intent and process incarnations before
 	// resource creation (ADR-473). Keep it outside jail tmpfs and /run.
 	ResourceJournalDir string `toml:"resource_journal_dir"`
@@ -91,6 +98,13 @@ type Config struct {
 	// this process (docs/adr/20261018-runtime-admission-rebind.md). Off,
 	// they are refused and re-admitted. Requires adopt_running_vms.
 	AdoptAdmittedRuntimes bool `toml:"adopt_admitted_runtimes"`
+	// FlatTenantCgroups launches every new tenant VM directly under
+	// faas-tenant.slice instead of its plan's sub-slice
+	// (ADR-20261109172421 step 6.5). This release adopts and tears down VMs
+	// in either place; an older vmmd only knows the sub-slices, so turn it
+	// off, and let flat VMs park, before rolling vmmd back past this
+	// release. Not with native_process_recovery.
+	FlatTenantCgroups bool `toml:"flat_tenant_cgroups"`
 	// FailureReportDir is persistent root-owned storage for liveness/OOM
 	// reports (ADR-471). Keep it outside /run and the Firecracker jail tmpfs.
 	FailureReportDir string `toml:"failure_report_dir"`
@@ -115,6 +129,15 @@ type Config struct {
 	// returns guest-freed pages to the host. It is on by default on
 	// Firecracker 1.14+; FAAS_FREE_PAGE_REPORTING=0 overrides TOML.
 	DisableFreePageReporting bool `toml:"disable_free_page_reporting"`
+	// DisableRestoreClockRealtime stops advancing a restored guest's
+	// kvm-clock by the time its capture spent parked (ADR-20261109120000).
+	// It is on by default on Firecracker 1.16+ hosts with the tsc
+	// clocksource; FAAS_RESTORE_CLOCK_REALTIME=0 overrides TOML.
+	DisableRestoreClockRealtime bool `toml:"disable_restore_clock_realtime"`
+	// DisableReleaseConnectionsOnDestroy stops asking an app guest to reset
+	// its TCP connections before teardown destroys it (ADR-20261109130000).
+	// It is on by default; FAAS_RELEASE_CONNECTIONS_ON_DESTROY=0 overrides TOML.
+	DisableReleaseConnectionsOnDestroy bool `toml:"disable_release_connections_on_destroy"`
 	// RestoreReseedThread boots app VMs whose Node processes answer the
 	// restore reseed barrier from a native thread instead of their event
 	// loop (ADR-20261024105607). Off by default; FAAS_RESTORE_RESEED_THREAD
@@ -137,6 +160,34 @@ type Config struct {
 	// quiet_pause wins when both are set. Off by default.
 	// FAAS_QUIET_PAUSE_OBSERVE overrides TOML.
 	QuietPauseObserve bool `toml:"quiet_pause_observe"`
+	// IdleLadder selects the idle ladder mode (ADR-20261107122928,
+	// proposed): "off" (the default), "observe" or "on". Observe measures,
+	// for every request-serving instance whatever its declared pause, the
+	// ladder level its idle time reaches, the RAM held at each level and the
+	// billed MB-seconds the unbilled levels would not bill
+	// (vmmd_idle_ladder_observed_*); it pauses nothing and runs beside quiet
+	// pause. On also applies levels L1 and L2 to the instances quiet pause
+	// pauses: it pauses them after 1 s, and reports those quiet for 10 s at
+	// L2 (InstanceStats.idle_ladder_level), whose memory measured admission
+	// charges with the frozen floor. On needs quiet_pause. FAAS_IDLE_LADDER
+	// overrides TOML.
+	IdleLadder string `toml:"idle_ladder"`
+	// IdleLadderApps lets the idle ladder quiet-pause apps that declared no
+	// pause (schedd marks them; ADR-20261107122928 §6), but only when its
+	// activity guard agrees they are idle: no request for 1 s and, over that
+	// second, VM CPU <= 10 ms and veth <= 512 bytes each way. Any inbound
+	// byte on a paused app's veth resumes it. Needs idle_ladder = "on". Off
+	// by default. FAAS_IDLE_LADDER_APPS overrides TOML.
+	IdleLadderApps bool `toml:"idle_ladder_apps"`
+	// IdleLadderCompress applies the idle ladder's L3 and L4
+	// (ADR-20261107122928): vmmd ages a quiet-paused VM's memory after the
+	// guest ran and, at 60 s and 180 s of quiet, compresses into memory-only
+	// zswap every multi-gen LRU generation but the youngest 3 and 2. A wake
+	// over its budget (100 ms, or the instance's restore time if shorter)
+	// makes the app keep one more generation. Needs idle_ladder = "on", and
+	// does nothing on a node without the zswap role or the multi-gen LRU.
+	// Off by default. FAAS_IDLE_LADDER_COMPRESS overrides TOML.
+	IdleLadderCompress bool `toml:"idle_ladder_compress"`
 	// AgentWaitPause enables the model-wait pause of agent runs
 	// (ADR-20261027090012): vmmd pauses a run VM while it waits on the
 	// outbound relay and nothing else, and resumes it on the relay's next
@@ -443,6 +494,28 @@ type ComputeNodeConfig struct {
 	// rebuilds. Both are supplied by the vmmd systemd egress drop-in.
 	PrivateIngressCIDRs    []string `toml:"private_ingress_cidrs"`
 	PrivateIngressTCPPorts []int    `toml:"private_ingress_tcp_ports"`
+	// PrivateControlIngressCIDRs, when set, replaces PrivateIngressCIDRs as
+	// the sources of the control-plane rule: the control plane's exact
+	// addresses (ADR-20261110120000). PrivateIngressCIDRs keeps the wider
+	// list for a vmmd that predates these fields.
+	PrivateControlIngressCIDRs []string `toml:"private_control_ingress_cidrs"`
+	// PrivatePeerIngressCIDRs and PrivatePeerIngressTCPPorts admit the other
+	// compute nodes to the ports they use on this one (vmmd forwards, schedd
+	// wakes), as the boot policy's compute-peer rule does.
+	PrivatePeerIngressCIDRs    []string `toml:"private_peer_ingress_cidrs"`
+	PrivatePeerIngressTCPPorts []int    `toml:"private_peer_ingress_tcp_ports"`
+	// PublicIngressCIDRs, when set, restricts the public 80/443 accept to
+	// these sources, as the nftables role does for
+	// faas_cloudflare_origin_only. The vmmd egress drop-in supplies
+	// Cloudflare's pinned ranges (ADR-20261102081618 §2).
+	PublicIngressCIDRs []string `toml:"public_ingress_cidrs"`
+	// PublicEntryAddrs, when set, are this compute edge's public entry
+	// addresses with no proxy in front, as the nftables role renders for
+	// faas_public_entry_addrs (ADR-20261103163954 §2): 443 from every source
+	// to them only, nothing else to them. Takes precedence over
+	// PublicIngressCIDRs, which the drop-in sends beside it for a vmmd that
+	// predates this field.
+	PublicEntryAddrs []string `toml:"public_entry_addrs"`
 	// OverlayCIDR is the per-host overlay subnet the vmmd overlay
 	// detector prefers when multiple IPv4 candidates come back from
 	// `tailscale ip -4` (Mega-PR-B Commit 3). Defaults to
@@ -465,12 +538,20 @@ type ComputeNodeConfig struct {
 	// VXLAN seam. It is disabled by default until the operator has provisioned
 	// a shared encrypted overlay for every node in the region.
 	PrivateNetworkTransportEnabled bool `toml:"private_network_transport_enabled"`
+	PrivateNetworkTransportMTU     int  `toml:"private_network_transport_mtu"`
 	// ServiceTCPEnabled turns on private TCP service addressing (ADR-576):
 	// every new netns admits guest TCP to api.ServiceAddressCIDR, the runtime
 	// host policy DNATs it onto the tenant-bridge service listeners, and the
 	// node records compute_nodes.service_address_ready_at so service DNS only
 	// hands addresses to instances whose netns carries the admission.
 	ServiceTCPEnabled bool `toml:"service_tcp_enabled"`
+	// DatabaseRouteEnabled turns on the managed-database route (ADR-1027):
+	// every new netns admits guest TCP to api.DatabaseRouteAddress on the
+	// PostgreSQL port, and the runtime host policy DNATs it onto the
+	// gatewayd-internal forwarder that relays to pgproxyd. Pair with the
+	// nftables role's faas_database_route_enabled and gatewayd-internal's
+	// database_route_listen.
+	DatabaseRouteEnabled bool `toml:"database_route_enabled"`
 	// PrivateNetworkTransportInterface is the underlay NIC used for VXLAN
 	// packets. Empty falls back to OverlayInterface, which keeps the common
 	// Tailscale/WireGuard deployment concise.
@@ -720,6 +801,7 @@ func LoadConfig(path string) (*Config, error) {
 		{"FAAS_VMMD_ADOPTION_RECORD", &c.AdoptionRecord},
 		{"FAAS_VMMD_ADOPT_RUNNING_VMS", &c.AdoptRunningVMs},
 		{"FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES", &c.AdoptAdmittedRuntimes},
+		{"FAAS_VMMD_FLAT_TENANT_CGROUPS", &c.FlatTenantCgroups},
 	} {
 		if v := os.Getenv(sw.env); v != "" {
 			on, perr := strconv.ParseBool(v)
@@ -737,6 +819,9 @@ func LoadConfig(path string) (*Config, error) {
 	if c.AdoptAdmittedRuntimes && !c.AdoptRunningVMs {
 		return nil, errors.New("vmmd: adopt_admitted_runtimes requires adopt_running_vms = true")
 	}
+	if c.FlatTenantCgroups && c.NativeProcessRecovery {
+		return nil, errors.New("vmmd: flat_tenant_cgroups is not supported with native_process_recovery")
+	}
 	if err := validateAdoptionConfig(c.AdoptionRecord, c.AdoptRunningVMs, c.NativeProcessRecovery); err != nil {
 		return nil, err
 	}
@@ -747,6 +832,9 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 	if err := validateNativeRuntimeCaptureConfig(c); err != nil {
+		return nil, err
+	}
+	if err := validateNativeQualificationCaptureConfig(c); err != nil {
 		return nil, err
 	}
 	// Gate-B: resolve Role AFTER toml.Unmarshal so the post-decode
@@ -819,6 +907,25 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_PRIVATE_INGRESS_CIDRS"); v != "" {
 		c.ComputeNode.PrivateIngressCIDRs = splitNonEmpty(v)
 	}
+	if v := os.Getenv("FAAS_PUBLIC_INGRESS_CIDRS"); v != "" {
+		c.ComputeNode.PublicIngressCIDRs = splitNonEmpty(v)
+	}
+	if v := os.Getenv("FAAS_PRIVATE_CONTROL_INGRESS_CIDRS"); v != "" {
+		c.ComputeNode.PrivateControlIngressCIDRs = splitNonEmpty(v)
+	}
+	if v := os.Getenv("FAAS_PRIVATE_PEER_INGRESS_CIDRS"); v != "" {
+		c.ComputeNode.PrivatePeerIngressCIDRs = splitNonEmpty(v)
+	}
+	if v := os.Getenv("FAAS_PRIVATE_PEER_INGRESS_TCP_PORTS"); v != "" {
+		ports, perr := parseTCPPorts(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_PRIVATE_PEER_INGRESS_TCP_PORTS %q invalid: %w", v, perr)
+		}
+		c.ComputeNode.PrivatePeerIngressTCPPorts = ports
+	}
+	if v := os.Getenv("FAAS_PUBLIC_ENTRY_ADDRS"); v != "" {
+		c.ComputeNode.PublicEntryAddrs = splitNonEmpty(v)
+	}
 	if v := os.Getenv("FAAS_PRIVATE_INGRESS_TCP_PORTS"); v != "" {
 		ports, perr := parseTCPPorts(v)
 		if perr != nil {
@@ -851,6 +958,22 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_SERVICE_TCP_ENABLED %q invalid: %w", v, perr)
 		}
 		c.ComputeNode.ServiceTCPEnabled = parsed
+	}
+	// ADR-1027: Ansible sets it from the manifest's managed_postgres.app_route,
+	// with the nftables role's faas_database_route_enabled.
+	if v := os.Getenv("FAAS_VMMD_DATABASE_ROUTE_ENABLED"); v != "" {
+		parsed, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_VMMD_DATABASE_ROUTE_ENABLED %q invalid: %w", v, perr)
+		}
+		c.ComputeNode.DatabaseRouteEnabled = parsed
+	}
+	if v := os.Getenv("FAAS_PRIVATE_NETWORK_TRANSPORT_MTU"); v != "" {
+		mtu, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("vmmd: invalid private transport MTU: %w", err)
+		}
+		c.ComputeNode.PrivateNetworkTransportMTU = mtu
 	}
 	if v := os.Getenv("FAAS_PRIVATE_NETWORK_TRANSPORT_INTERFACE"); v != "" {
 		c.ComputeNode.PrivateNetworkTransportInterface = v
@@ -918,6 +1041,37 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_QUIET_PAUSE_OBSERVE must be a boolean (got %q)", v)
 		}
 		c.QuietPauseObserve = enabled
+	}
+	if v := os.Getenv("FAAS_IDLE_LADDER"); v != "" {
+		c.IdleLadder = v
+	}
+	if v := os.Getenv("FAAS_IDLE_LADDER_APPS"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_IDLE_LADDER_APPS must be a boolean (got %q)", v)
+		}
+		c.IdleLadderApps = enabled
+	}
+	if v := os.Getenv("FAAS_IDLE_LADDER_COMPRESS"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_IDLE_LADDER_COMPRESS must be a boolean (got %q)", v)
+		}
+		c.IdleLadderCompress = enabled
+	}
+	idleLadder, ierr := parseIdleLadderMode(c.IdleLadder)
+	if ierr != nil {
+		return nil, ierr
+	}
+	c.IdleLadder = idleLadder
+	if c.IdleLadder == idleLadderOn && !c.QuietPause {
+		return nil, fmt.Errorf("vmmd: idle_ladder = on needs quiet_pause on (FAAS_IDLE_LADDER, FAAS_QUIET_PAUSE)")
+	}
+	if c.IdleLadderApps && c.IdleLadder != idleLadderOn {
+		return nil, fmt.Errorf("vmmd: idle_ladder_apps needs idle_ladder = on (FAAS_IDLE_LADDER_APPS, FAAS_IDLE_LADDER)")
+	}
+	if c.IdleLadderCompress && c.IdleLadder != idleLadderOn {
+		return nil, fmt.Errorf("vmmd: idle_ladder_compress needs idle_ladder = on (FAAS_IDLE_LADDER_COMPRESS, FAAS_IDLE_LADDER)")
 	}
 	if v := os.Getenv("FAAS_VMMD_AGENT_WAIT_PAUSE"); v != "" {
 		enabled, perr := strconv.ParseBool(v)
@@ -1014,6 +1168,20 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_FREE_PAGE_REPORTING must be a boolean (got %q)", v)
 		}
 		c.DisableFreePageReporting = !enabled
+	}
+	if v := os.Getenv("FAAS_RESTORE_CLOCK_REALTIME"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_CLOCK_REALTIME must be a boolean (got %q)", v)
+		}
+		c.DisableRestoreClockRealtime = !enabled
+	}
+	if v := os.Getenv("FAAS_RELEASE_CONNECTIONS_ON_DESTROY"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RELEASE_CONNECTIONS_ON_DESTROY must be a boolean (got %q)", v)
+		}
+		c.DisableReleaseConnectionsOnDestroy = !enabled
 	}
 	// A shared acceptance host runs several vmmd builds over time; each test
 	// run points its own vmmd at a private journal so a record written by a
@@ -1129,6 +1297,9 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.ComputeNode.TenantEgressIface = iface
 	}
+	if mtu := c.ComputeNode.PrivateNetworkTransportMTU; mtu != 0 && (mtu < 576 || mtu > 1500) {
+		return nil, fmt.Errorf("vmmd: private_network_transport_mtu must be between 576 and 1500")
+	}
 	if iface := strings.TrimSpace(c.ComputeNode.PrivateNetworkTransportInterface); iface != "" {
 		if err := validatePublicIface(iface); err != nil {
 			return nil, fmt.Errorf("vmmd: [compute_node].private_network_transport_interface %q invalid: %w", iface, err)
@@ -1163,7 +1334,36 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: private_ingress_tcp_ports contains invalid TCP port %d", port)
 		}
 	}
+	if err := validatePrivatePeerIngress(&c.ComputeNode); err != nil {
+		return nil, err
+	}
+	for i, raw := range c.ComputeNode.PublicIngressCIDRs {
+		prefix, perr := netip.ParsePrefix(strings.TrimSpace(raw))
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: public_ingress_cidrs[%d] %q invalid: %w", i, raw, perr)
+		}
+		c.ComputeNode.PublicIngressCIDRs[i] = prefix.Masked().String()
+	}
+	if err := validatePublicEntryAddrs(c.ComputeNode); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// validatePublicEntryAddrs holds each entry address to the form the nftables
+// role writes verbatim, so the boot policy and vmmd's runtime policy stay
+// byte-identical.
+func validatePublicEntryAddrs(cfg ComputeNodeConfig) error {
+	for i, raw := range cfg.PublicEntryAddrs {
+		addr, err := netip.ParseAddr(raw)
+		if err != nil {
+			return fmt.Errorf("vmmd: public_entry_addrs[%d] %q invalid: %w", i, raw, err)
+		}
+		if addr.Zone() != "" || addr.Is4In6() || addr.String() != raw {
+			return fmt.Errorf("vmmd: public_entry_addrs[%d] %q must be a plain address in canonical form (%s)", i, raw, addr.Unmap().WithZone(""))
+		}
+	}
+	return nil
 }
 
 func validateAdoptionConfig(record, adopt, nativeRecovery bool) error {
@@ -1194,6 +1394,19 @@ func validateNativeRuntimeCaptureConfig(c *Config) error {
 	}
 	if !c.NativeProcessRecovery || c.NativeSnapshotPublicationRoot == "" || c.NativeImageStagingRoot == "" || c.NativeRuntimeSnapshotRoot == "" {
 		return errors.New("vmmd: native_runtime_capture requires native_process_recovery = true, native_snapshot_publication_root, native_image_staging_root and native_runtime_snapshot_root")
+	}
+	return nil
+}
+
+// Qualification capture publishes through the native producer and restores
+// through the journal-backed lifecycle; without them every attempt would be
+// refused after a candidate had already booted.
+func validateNativeQualificationCaptureConfig(c *Config) error {
+	if !c.NativeQualificationCapture {
+		return nil
+	}
+	if !c.NativeProcessRecovery || c.NativeSnapshotPublicationRoot == "" || c.NativeImageStagingRoot == "" {
+		return fmt.Errorf("vmmd: native_qualification_capture requires native_process_recovery = true, native_snapshot_publication_root and native_image_staging_root")
 	}
 	return nil
 }
@@ -1272,18 +1485,27 @@ func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix, serviceHTTPS 
 	}
 	policy.TenantEgressIface = strings.TrimSpace(cfg.TenantEgressIface)
 	policy.MasqueradeCIDR = bridge.Masked().String()
-	for _, raw := range cfg.PrivateIngressCIDRs {
-		prefix, err := netip.ParsePrefix(raw)
-		if err != nil {
-			continue // LoadConfig validates; retain a safe pure helper for tests.
+	controlSources := cfg.PrivateIngressCIDRs
+	if len(cfg.PrivateControlIngressCIDRs) > 0 {
+		controlSources = cfg.PrivateControlIngressCIDRs
+	}
+	policy.PrivateInputAllowRules = appendPrivateInputRules(policy.PrivateInputAllowRules, controlSources, cfg.PrivateIngressTCPPorts)
+	policy.PrivateInputAllowRules = appendPrivateInputRules(policy.PrivateInputAllowRules, cfg.PrivatePeerIngressCIDRs, cfg.PrivatePeerIngressTCPPorts)
+	for _, raw := range cfg.PublicIngressCIDRs {
+		if prefix, err := netip.ParsePrefix(raw); err == nil {
+			policy.PublicInputSourceCIDRs = append(policy.PublicInputSourceCIDRs, prefix.Masked())
 		}
-		policy.PrivateInputAllowRules = append(policy.PrivateInputAllowRules, netns.PrivateInputAllowRule{
-			Source: prefix.Masked(),
-			Ports:  append([]int(nil), cfg.PrivateIngressTCPPorts...),
-		})
+	}
+	for _, raw := range cfg.PublicEntryAddrs {
+		if addr, err := netip.ParseAddr(raw); err == nil {
+			policy.PublicEntryAddrs = append(policy.PublicEntryAddrs, addr)
+		}
 	}
 	if cfg.ServiceTCPEnabled {
 		policy.ServiceTCP = netns.NewServiceTCPHostPolicy(api.ServiceAddressCIDR(), bridge.Masked().Addr().Next(), api.ServiceTCPProxyPort, serviceHTTPS)
+	}
+	if cfg.DatabaseRouteEnabled {
+		policy.DatabaseRoute = netns.NewDatabaseRouteHostPolicy(api.DatabaseRouteAddress(), bridge.Masked().Addr().Next(), api.DatabaseRouteProxyPort)
 	}
 	return policy
 }
@@ -1404,5 +1626,24 @@ func (c *Config) resourceJournal() fcvm.ResourceJournalConfig {
 		Dir:            c.ResourceJournalDir,
 		VolatileDir:    c.ResourceJournalVolatileDir,
 		VolatileWrites: c.ResourceJournalVolatileWrites,
+	}
+}
+
+// Idle ladder modes (ADR-20261107122928).
+const (
+	idleLadderOff     = "off"
+	idleLadderObserve = "observe"
+	idleLadderOn      = "on"
+)
+
+// parseIdleLadderMode normalizes idle_ladder / FAAS_IDLE_LADDER; empty is off.
+func parseIdleLadderMode(v string) (string, error) {
+	switch mode := strings.ToLower(strings.TrimSpace(v)); mode {
+	case "", idleLadderOff:
+		return idleLadderOff, nil
+	case idleLadderObserve, idleLadderOn:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("vmmd: idle_ladder (FAAS_IDLE_LADDER) must be off, observe or on (got %q)", v)
 	}
 }

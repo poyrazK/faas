@@ -24,22 +24,28 @@ const (
 var ledgerResults = []string{LedgerMatch, LedgerPending, LedgerCapped, LedgerIncomplete, LedgerDrift, LedgerFailed}
 
 // LedgerMonthReconciliation is one month's pass: how many eligible accounts
-// got each result, and the summed absolute difference of the drifted ones.
+// got each result, and the summed absolute difference of the drifted ones,
+// for compute and, when the provider bills egress, for egress.
 type LedgerMonthReconciliation struct {
 	Month          string // "current" or "previous"
 	Start, End     time.Time
 	Results        map[string]int
 	DriftMBSeconds int64
+	// EgressResults is nil when no paid plan has an egress policy.
+	EgressResults    map[string]int
+	EgressDriftBytes int64
 }
 
-// LedgerReconciler compares the financial ledger's net compute quantity with
-// the compute receipts the pusher recorded for the same hours (ADR-20261019193600). It
-// is read-only.
+// LedgerReconciler compares the financial ledger's billed compute and egress
+// with the receipts the pusher recorded for the same hours
+// (ADR-20261019193600). It is read-only.
 type LedgerReconciler struct {
-	pusher   *Pusher
-	provider string
-	accounts *prometheus.GaugeVec
-	drift    *prometheus.GaugeVec
+	pusher         *Pusher
+	provider       string
+	accounts       *prometheus.GaugeVec
+	drift          *prometheus.GaugeVec
+	egressAccounts *prometheus.GaugeVec
+	egressDrift    *prometheus.GaugeVec
 }
 
 // NewLedgerReconciler wires the dual run onto the pusher's store and clock.
@@ -57,9 +63,17 @@ func NewLedgerReconciler(p *Pusher, provider string, reg prometheus.Registerer) 
 			Name: "meterd_financial_ledger_drift_mb_seconds",
 			Help: "ADR-20261019193600 ledger dual run: summed absolute difference in MB-seconds between ledger net compute and pusher receipts across drifted accounts in the last pass.",
 		}, []string{"month"}),
+		egressAccounts: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "meterd_financial_ledger_egress_reconcile_accounts",
+			Help: "ADR-20261019193600 ledger dual run: paid accounts per egress result (match, pending, capped, incomplete, drift, failed) in the last pass, for the current and previous UTC month. Absent while no paid plan bills egress.",
+		}, []string{"month", "result"}),
+		egressDrift: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "meterd_financial_ledger_egress_drift_bytes",
+			Help: "ADR-20261019193600 ledger dual run: summed absolute difference in bytes between the egress the ledger bills and the pusher's egress receipts across drifted accounts in the last pass.",
+		}, []string{"month"}),
 	}
 	if reg != nil {
-		reg.MustRegister(r.accounts, r.drift)
+		reg.MustRegister(r.accounts, r.drift, r.egressAccounts, r.egressDrift)
 	}
 	return r
 }
@@ -103,7 +117,9 @@ func (r *LedgerReconciler) RunOnce(ctx context.Context) ([]LedgerMonthReconcilia
 	if final := finalThrough.Truncate(time.Hour); final.Before(cutoff) {
 		cutoff = final
 	}
-	accounts, err := p.store.ListAllAccounts(ctx)
+	// Company organizations are billing subjects of their own (#6029) and
+	// the pusher delivers their hours, so the dual run covers them too.
+	accounts, err := state.ListBillingResourceAccounts(ctx, p.store)
 	if err != nil {
 		return nil, fmt.Errorf("meter: ledger reconciliation accounts: %w", err)
 	}
@@ -126,6 +142,12 @@ func (r *LedgerReconciler) RunOnce(ctx context.Context) ([]LedgerMonthReconcilia
 			r.accounts.WithLabelValues(pass.Month, result).Set(float64(pass.Results[result]))
 		}
 		r.drift.WithLabelValues(pass.Month).Set(float64(pass.DriftMBSeconds))
+		if pass.EgressResults != nil {
+			for _, result := range ledgerResults {
+				r.egressAccounts.WithLabelValues(pass.Month, result).Set(float64(pass.EgressResults[result]))
+			}
+			r.egressDrift.WithLabelValues(pass.Month).Set(float64(pass.EgressDriftBytes))
+		}
 	}
 	return out, nil
 }
@@ -147,42 +169,83 @@ func (r *LedgerReconciler) reconcileMonth(ctx context.Context, deliveries state.
 	for _, w := range pendingWindows {
 		pending[w.AccountID] = true
 	}
+	egress, billsEgress, err := r.egressLedgerFor(ctx, start, end)
+	if err != nil {
+		return pass, err
+	}
+	pendingEgress := map[string]bool{}
+	if billsEgress {
+		pass.EgressResults = map[string]int{}
+		windows, err := r.pusher.store.PendingBillingMeterUsageWindows(ctx, provider, state.BillingMeterEgress, start, end)
+		if err != nil {
+			return pass, fmt.Errorf("meter: ledger reconciliation pending egress windows: %w", err)
+		}
+		for _, w := range windows {
+			pendingEgress[w.AccountID] = true
+		}
+	}
 	for _, acct := range accounts {
 		if acct.Plan == "free" || acct.Status == state.AccountSuspended || acct.Status == state.AccountDeletedPending {
 			continue
 		}
-		result, diff := r.reconcileAccount(ctx, deliveries, provider, acct, start, end, pending[acct.ID], caps)
-		if result == "" {
+		from, window := r.billingFrom(ctx, provider, acct, start, end)
+		switch window {
+		case ledgerOutside:
+			continue
+		case LedgerFailed:
+			pass.Results[LedgerFailed]++
+			if billsEgress {
+				pass.EgressResults[LedgerFailed]++
+			}
 			continue
 		}
+		result, diff := r.reconcileAccount(ctx, deliveries, provider, acct, start, end, from, pending[acct.ID], caps)
 		pass.Results[result]++
 		if result == LedgerDrift {
 			pass.DriftMBSeconds += max(diff, -diff)
+		}
+		if billsEgress {
+			result, diff := r.reconcileEgress(ctx, deliveries, provider, egress, acct, start, end, from, pendingEgress[acct.ID], caps)
+			pass.EgressResults[result]++
+			if result == LedgerDrift {
+				pass.EgressDriftBytes += max(diff, -diff)
+			}
 		}
 	}
 	return pass, nil
 }
 
-// reconcileAccount returns "" for an account outside the window (no billing
-// identity, or one that starts after the cutoff), and otherwise its result
-// with the delivered-minus-ledger difference in MB-seconds.
-func (r *LedgerReconciler) reconcileAccount(ctx context.Context, deliveries state.BillingDeliveryReader, provider string, acct state.Account, start, end time.Time, pending bool, caps map[string]int64) (string, int64) {
-	p := r.pusher
-	identity, err := p.store.BillingIdentity(ctx, acct.ID, provider)
+// ledgerOutside marks an account outside a month's window: no billing
+// identity, or one that starts after the window.
+const ledgerOutside = "outside"
+
+// billingFrom returns where acct's billing starts in [start, end): its
+// identity's billing_from, at the earliest start, with an empty result. An
+// account outside the window gets ledgerOutside, and one whose identity
+// cannot be read LedgerFailed.
+func (r *LedgerReconciler) billingFrom(ctx context.Context, provider string, acct state.Account, start, end time.Time) (time.Time, string) {
+	identity, err := r.pusher.store.BillingIdentity(ctx, acct.ID, provider)
 	if errors.Is(err, state.ErrNotFound) {
-		return "", 0
+		return time.Time{}, ledgerOutside
 	}
 	if err != nil {
-		p.log.Warn("meter: ledger reconciliation identity", "account", acct.ID, "err", err)
-		return LedgerFailed, 0
+		r.pusher.log.Warn("meter: ledger reconciliation identity", "account", acct.ID, "err", err)
+		return time.Time{}, LedgerFailed
 	}
 	from := identity.BillingFrom.UTC().Truncate(time.Minute)
 	if from.Before(start) {
 		from = start
 	}
 	if !from.Before(end) {
-		return "", 0
+		return time.Time{}, ledgerOutside
 	}
+	return from, ""
+}
+
+// reconcileAccount returns acct's compute result for [from, end) with the
+// delivered-minus-ledger difference in MB-seconds.
+func (r *LedgerReconciler) reconcileAccount(ctx context.Context, deliveries state.BillingDeliveryReader, provider string, acct state.Account, start, end, from time.Time, pending bool, caps map[string]int64) (string, int64) {
+	p := r.pusher
 	if pending {
 		return LedgerPending, 0
 	}
@@ -214,8 +277,16 @@ func (r *LedgerReconciler) reconcileAccount(ctx context.Context, deliveries stat
 	switch {
 	case diff == 0:
 		return LedgerMatch, 0
-	case diff < 0 && hasCap(caps, acct.ID):
-		return LedgerCapped, diff
+	case diff < 0:
+		capped, err := r.capExplains(ctx, acct, caps, end, atFrom, expected, delivered)
+		if err != nil {
+			p.log.Warn("meter: ledger reconciliation cap", "account", acct.ID, "err", err)
+			return LedgerFailed, 0
+		}
+		if capped {
+			return LedgerCapped, diff
+		}
+		fallthrough
 	default:
 		p.log.Warn("meter: ledger drift", "account", acct.ID, "provider", provider,
 			"from", from, "through", end, "ledger_mb_seconds", expected, "delivered_mb_seconds", delivered)
@@ -223,9 +294,25 @@ func (r *LedgerReconciler) reconcileAccount(ctx context.Context, deliveries stat
 	}
 }
 
-func hasCap(caps map[string]int64, accountID string) bool {
-	_, ok := caps[accountID]
-	return ok
+// capExplains reports whether acct's spend cap accounts for delivering less
+// than the ledger's net compute. Every paid plan starts with a cap, so having
+// one explains nothing: the shortfall is the cap's only when the pusher could
+// not have delivered more. The pusher clamps each hour to the cap less the
+// month's live egress and object-storage charges at that hour; both only grow
+// within a month, so the allowance at the window's last hour is the least it
+// ever granted. Delivering at least the window's net compute under that
+// allowance is the cap at work; delivering less is lost usage. atFrom is the
+// month's net compute before the window, which the pusher's clamp counts too.
+func (r *LedgerReconciler) capExplains(ctx context.Context, acct state.Account, caps map[string]int64, end time.Time, atFrom, expected, delivered int64) (bool, error) {
+	capCents, ok := caps[acct.ID]
+	if !ok {
+		return false, nil
+	}
+	floor, err := r.pusher.computeWithinCap(ctx, acct, end.Add(-time.Hour), capCents, atFrom, atFrom+expected)
+	if err != nil {
+		return false, err
+	}
+	return delivered >= floor, nil
 }
 
 // ledgerComputeQuantity is the ledger's compute quantity for usage in

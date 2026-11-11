@@ -1,14 +1,21 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
+	"github.com/onebox-faas/faas/pkg/authz"
+	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -108,13 +115,19 @@ func validateAppLogDrainAuthHeader(raw string) *api.Problem {
 	return nil
 }
 
-func appLogDrainResponse(row state.AppLogDrain) api.AppLogDrainResponse {
+// appLogDrainResponse renders a drain; revealTarget is
+// appLogDrainTargetVisible's answer for the request.
+func appLogDrainResponse(row state.AppLogDrain, revealTarget bool) api.AppLogDrainResponse {
+	target := row.TargetURL
+	if !revealTarget {
+		target = api.MaskAppLogDrainTargetURL(target)
+	}
 	return api.AppLogDrainResponseFromRow(api.AppLogDrainRow{
 		ID:            row.ID,
 		AppID:         row.AppID,
 		AccountID:     row.AccountID,
 		Kind:          string(row.Kind),
-		TargetURL:     row.TargetURL,
+		TargetURL:     target,
 		HasAuthHeader: len(row.AuthHeaderSealed) > 0,
 		Enabled:       row.Enabled,
 		CreatedAt:     row.CreatedAt,
@@ -122,6 +135,27 @@ func appLogDrainResponse(row state.AppLogDrain) api.AppLogDrainResponse {
 	})
 }
 
+// appLogDrainTargetVisible reports whether the caller sees drain targets in
+// full. Destinations such as Sumo Logic and Loggly carry their ingestion
+// token in the URL path or query, so only a caller who may change the drain
+// sees it: a session or an admin or deploy:write key, and on an
+// organization's app an owner or admin. Viewers, developers and read-only
+// keys get the scheme and host (logs audit 2026-10-31 D9).
+func appLogDrainTargetVisible(r *http.Request) bool {
+	if !authmw.HasScope(r, api.ScopesDeployWriteSurface...) {
+		return false
+	}
+	if _, shared := appaccess.FromContext(r.Context()); !shared {
+		return true
+	}
+	_, _, member, ok := authmw.PrincipalFrom(r)
+	return ok && member != nil && authz.Can(member.Role, authz.OrgActionManageAppSecurity)
+}
+
+// logDrainsAllowed gates configuring drains: creating one, and enabling or
+// changing one. Reading, disabling and deleting drains work on every plan, so
+// an owner whose plan stopped including drains can still see and stop the
+// ones it has, which delivery has paused (logs audit 2026-10-31 D3).
 func (s *server) logDrainsAllowed(w http.ResponseWriter, acct state.Account) (api.Limits, bool) {
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok || limits.LogDrainPerApp == 0 {
@@ -131,10 +165,26 @@ func (s *server) logDrainsAllowed(w http.ResponseWriter, acct state.Account) (ap
 	return limits, true
 }
 
-func (s *server) listAppLogDrains(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if _, ok := s.logDrainsAllowed(w, acct); !ok {
-		return
+// appLogDrainUpdateOnlyStops reports whether a PATCH can only stop a drain,
+// which needs no plan: it changes nothing but, at most, disables it.
+func appLogDrainUpdateOnlyStops(req api.UpdateAppLogDrainRequest) bool {
+	return req.Kind == nil && req.TargetURL == nil && req.AuthHeader == nil && (req.Enabled == nil || !*req.Enabled)
+}
+
+// appLogDrainDelivers reports whether log delivery runs drain: it is enabled
+// and the app owner's plan covers it (state.Store.ListEnabledAppLogDrains).
+func (s *server) appLogDrainDelivers(ctx context.Context, drain state.AppLogDrain) (bool, error) {
+	if !drain.Enabled {
+		return false, nil
 	}
+	paused, err := s.store.ListAppLogDrainsPausedByPlan(ctx, drain.AppID)
+	if err != nil {
+		return false, err
+	}
+	return !slices.Contains(paused, drain.ID), nil
+}
+
+func (s *server) listAppLogDrains(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
@@ -145,10 +195,11 @@ func (s *server) listAppLogDrains(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.ErrCapacity("could not list log drains"))
 		return
 	}
+	reveal := appLogDrainTargetVisible(r)
 	out := make([]api.AppLogDrainResponse, 0, len(rows))
 	for _, row := range rows {
 		if row.AccountID == acct.ID {
-			out = append(out, appLogDrainResponse(row))
+			out = append(out, appLogDrainResponse(row, reveal))
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -175,6 +226,10 @@ func (s *server) createAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	if prob := validateAppLogDrainURL(req.TargetURL); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.appLogDrainSelfTargetProblem(r.Context(), app, req.TargetURL); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -225,13 +280,10 @@ func (s *server) createAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 	s.audit.Emit(r.Context(), "app.log_drain_created", &acct.ID, map[string]any{
 		"log_drain_id": row.ID, "app_id": app.ID, "kind": string(row.Kind), "enabled": row.Enabled,
 	})
-	writeJSON(w, http.StatusCreated, appLogDrainResponse(row))
+	writeJSON(w, http.StatusCreated, appLogDrainResponse(row, true))
 }
 
 func (s *server) getAppLogDrain(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if _, ok := s.logDrainsAllowed(w, acct); !ok {
-		return
-	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
@@ -241,13 +293,10 @@ func (s *server) getAppLogDrain(w http.ResponseWriter, r *http.Request, acct sta
 		s.notFound(w, "log drain not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, appLogDrainResponse(row))
+	writeJSON(w, http.StatusOK, appLogDrainResponse(row, appLogDrainTargetVisible(r)))
 }
 
 func (s *server) getAppLogDrainHealth(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if _, ok := s.logDrainsAllowed(w, acct); !ok {
-		return
-	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
@@ -274,9 +323,16 @@ func (s *server) getAppLogDrainHealth(w http.ResponseWriter, r *http.Request, ac
 			UpdatedAt: drain.UpdatedAt,
 		}
 	}
-	// A disabled configuration is authoritative even if the last gateway
-	// snapshot was written before the disable took effect or before a restart.
-	if !drain.Enabled {
+	delivers, err := s.appLogDrainDelivers(r.Context(), drain)
+	if err != nil {
+		s.log.WarnContext(r.Context(), "read app log drain plan coverage", slog.String("err", err.Error()))
+		api.WriteProblem(w, api.ErrCapacity("could not read log drain health"))
+		return
+	}
+	// A disabled drain, or one the plan does not cover, is inactive even if
+	// the last gateway snapshot was written before the change took effect or
+	// before a restart.
+	if !delivers {
 		health.Active = false
 		health.Status = api.AppLogDrainHealthStatusInactive
 	}
@@ -289,8 +345,10 @@ func (s *server) updateAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeAppLogDrainInvalid, "Bad request", err.Error()))
 		return
 	}
-	if _, ok := s.logDrainsAllowed(w, acct); !ok {
-		return
+	if !appLogDrainUpdateOnlyStops(req) {
+		if _, ok := s.logDrainsAllowed(w, acct); !ok {
+			return
+		}
 	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -315,6 +373,10 @@ func (s *server) updateAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 	if req.TargetURL != nil {
 		targetURL := strings.TrimSpace(*req.TargetURL)
 		if prob := validateAppLogDrainURL(targetURL); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		if prob := s.appLogDrainSelfTargetProblem(r.Context(), app, targetURL); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
@@ -371,13 +433,10 @@ func (s *server) updateAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 	s.audit.Emit(r.Context(), "app.log_drain_updated", &acct.ID, map[string]any{
 		"log_drain_id": row.ID, "app_id": app.ID, "kind": string(row.Kind), "enabled": row.Enabled,
 	})
-	writeJSON(w, http.StatusOK, appLogDrainResponse(row))
+	writeJSON(w, http.StatusOK, appLogDrainResponse(row, true))
 }
 
 func (s *server) deleteAppLogDrain(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if _, ok := s.logDrainsAllowed(w, acct); !ok {
-		return
-	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
@@ -413,6 +472,31 @@ func sealAppLogDrainAuthHeader(plaintext string) ([]byte, error) {
 	return secretbox.SealBytesTo(recipients, appLogDrainSecretSealLabel, []byte(plaintext), api.AppLogDrainAuthHeaderMaxBytes)
 }
 
+// environmentPolicyHost is the stable environment URL whose rules policy
+// changes (the host updateProjectEnvironmentPolicies fences).
+func (s *server) environmentPolicyHost(ctx context.Context, policy state.ProjectEnvironmentEdgePolicy) (string, error) {
+	environment, err := s.store.ProjectEnvironmentBySlug(ctx, policy.AccountID, policy.ProjectID, policy.EnvironmentSlug)
+	if err != nil {
+		return "", err
+	}
+	host := gateway.BuildEnvironmentHost(hostidentity.DeploySuffix(), environment.ID, policy.AppID)
+	if host == "" {
+		return "", errors.New("environment URL is unavailable")
+	}
+	return host, nil
+}
+
+// sealEdgeRuleHeaderValue seals a secret edge-rule request header value to
+// the edge domain, like a log drain header; gatewayd-internal opens it when
+// it compiles the rule (ADR-20261108110000).
+func sealEdgeRuleHeaderValue(plaintext string) ([]byte, error) {
+	recipients, err := edgeCredentialRecipients()
+	if err != nil {
+		return nil, fmt.Errorf("seal edge rule header value: %w", err)
+	}
+	return secretbox.SealBytesTo(recipients, api.EdgeRuleHeaderSecretSealNamespace, []byte(plaintext), api.EdgeRuleHeaderSecretMaxBytes)
+}
+
 func appLogDrainHealthResponse(health state.AppLogDrainHealth) api.AppLogDrainHealthResponse {
 	return api.AppLogDrainHealthResponse{
 		LogDrainID:            health.DrainID,
@@ -436,4 +520,39 @@ func appLogDrainHealthResponse(health state.AppLogDrainHealth) api.AppLogDrainHe
 		LastError:             api.SanitizeAppLogDrainHealthError(health.LastError),
 		UpdatedAt:             api.FormatAlertTime(health.UpdatedAt),
 	}
+}
+
+// appLogDrainSelfTargetProblem refuses a drain that delivers to the app it
+// drains: each delivery is a request to the app, whose log lines are drained
+// again, so the app never idles. Hunt 32 H32-52 saw 3,578 deliveries and an
+// instance that never parked until the drain was deleted.
+func (s *server) appLogDrainSelfTargetProblem(ctx context.Context, app state.App, targetURL string) *api.Problem {
+	// An unparsable URL is refused by the target validation; it has no
+	// host to compare here.
+	host := ""
+	if parsed, err := url.Parse(targetURL); err == nil {
+		host = strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	}
+	if host == "" {
+		return nil
+	}
+	domains := hostidentity.Configured()
+	self := host == strings.ToLower(app.Slug)+"."+domains.Apps
+	if canonical, ok := domains.CanonicalAppHost(host); ok && canonical == strings.ToLower(app.Slug)+"."+domains.Apps {
+		self = true
+	}
+	if !self {
+		if custom, err := s.store.ListDomainsForApp(ctx, app.ID); err == nil {
+			for _, d := range custom {
+				if strings.EqualFold(strings.TrimSuffix(d.Domain, "."), host) {
+					self = true
+					break
+				}
+			}
+		}
+	}
+	if !self {
+		return nil
+	}
+	return api.ErrAppLogDrainInvalid("a log drain cannot deliver to the app it drains: each delivery is a request whose log lines would be drained again, so the app would never idle")
 }

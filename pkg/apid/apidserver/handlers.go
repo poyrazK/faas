@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -51,13 +52,41 @@ func retryPolicyDTOFromJSON(raw json.RawMessage) *api.RetryPolicyDTO {
 }
 
 func (s *server) whoami(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if p, ok := principalFrom(r); ok && p.Key != nil && p.Key.AppID != "" {
+		app, err := s.store.AppByID(r.Context(), p.Key.AppID)
+		if err != nil || app.AccountID != acct.ID {
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Forbidden", "app-bound principal is no longer available"))
+			return
+		}
+		limits := s.accountResponse(r.Context(), acct, r).Limits
+		writeJSON(w, http.StatusOK, api.AccountResponse{ID: acct.ID, Plan: string(acct.Plan), Status: string(acct.Status), Limits: limits, KeyScopes: p.Key.Scopes, KeyApp: &api.AppAgentBinding{ID: app.ID, Slug: app.Slug}})
+		return
+	}
 	resp := s.accountResponse(r.Context(), acct, r)
 	// A key learns its own scopes; the hosted MCP server lists an agent
 	// key's tools from them (ADR-20261029085359). Sessions have none.
 	if p, ok := principalFrom(r); ok && p.Key != nil {
 		resp.KeyScopes = p.Key.Scopes
+		resp.KeyOrg = s.keyOrg(r.Context(), p.Key.OrgID)
+		if p.Key.ProjectLimited {
+			resp.KeyProjects = s.projectSlugsByID(r.Context(), p.Key.ProjectIDs)
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// keyOrg names the shared organization a key acts in, or nil for a personal
+// one; a connected agent lists that organization's apps
+// (ADR-20261101225122).
+func (s *server) keyOrg(ctx context.Context, orgID string) *api.KeyOrg {
+	if orgID == "" {
+		return nil
+	}
+	org, err := s.store.OrgByID(ctx, orgID)
+	if err != nil || org.Personal {
+		return nil
+	}
+	return &api.KeyOrg{ID: org.ID, Slug: org.Slug, Name: org.Name}
 }
 
 // nilStringPtr returns a *string pointing at the given value, or
@@ -126,23 +155,33 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 		api.WriteProblem(w, api.ErrCapacity("could not list apps"))
 		return
 	}
-	latestByApp, err := s.store.ListLatestDeploymentPerApp(r.Context(), acct.ID)
-	if err != nil {
-		s.log.Error("list app deployments failed", "account", acct.ID, "err", err)
+	apps, labelsByApp, problem := s.appListLabels(r, acct, apps)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	deps := s.readAccountAppDeployments(r.Context(), acct.ID, apps)
+	if deps.latestErr != nil {
+		s.log.Error("list app deployments failed", "account", acct.ID, "err", deps.latestErr)
 		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment state"))
 		return
 	}
-	liveByApp, err := s.store.ListAppsWithLiveDeployment(r.Context(), acct.ID)
-	if err != nil {
-		s.log.Error("list app live deployments failed", "account", acct.ID, "err", err)
+	if deps.liveErr != nil {
+		s.log.Error("list app live deployments failed", "account", acct.ID, "err", deps.liveErr)
 		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment availability"))
 		return
 	}
-	parkedByApp := s.latestParkedDeploymentsByApp(r.Context(), acct.ID)
+	latestByApp, liveByApp, parkedByApp := deps.latest, deps.live, deps.parked
 	out := make([]api.AppResponse, 0, len(apps))
 	for _, a := range apps {
-		resp := s.appResponseWithContext(r.Context(), a, acct.Plan)
+		var resp api.AppResponse
+		if deps.domainsRead {
+			resp = s.appResponseWithDomain(a, acct.Plan, deps.domains[a.ID])
+		} else {
+			resp = s.appResponseWithContext(r.Context(), a, acct.Plan)
+		}
 		resp.DeploymentAvailability = appDeploymentAvailability(liveByApp[a.ID])
+		resp.Labels = labelsByApp[a.ID]
 		if _, deployed := latestByApp[a.ID]; !deployed && resp.Status == string(state.AppActive) {
 			resp.Status = api.AppStatusUndeployed
 		}
@@ -153,6 +192,44 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 		out = append(out, s.withParkedDeploymentRef(r.Context(), resp, a))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// accountAppDeployments are listApps' account-wide deployment reads.
+type accountAppDeployments struct {
+	latest    map[string]state.Deployment
+	latestErr error
+	live      map[string]bool
+	liveErr   error
+	parked    map[string]state.Deployment
+	// domains are the apps' default custom domains; domainsRead is false
+	// when they could not be read in one query.
+	domains     map[string]string
+	domainsRead bool
+}
+
+// readAccountAppDeployments makes listApps' account-wide reads, and the
+// listed apps' default custom domains, at once: each needs only the account
+// or the app list, and one after another they cost every app list four round
+// trips (the domains were one per app).
+func (s *server) readAccountAppDeployments(ctx context.Context, accountID string, apps []state.App) accountAppDeployments {
+	var out accountAppDeployments
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		out.domains, out.domainsRead = s.defaultCustomDomains(ctx, apps)
+	}()
+	go func() {
+		defer wg.Done()
+		out.latest, out.latestErr = s.store.ListLatestDeploymentPerApp(ctx, accountID)
+	}()
+	go func() {
+		defer wg.Done()
+		out.live, out.liveErr = s.store.ListAppsWithLiveDeployment(ctx, accountID)
+	}()
+	out.parked = s.latestParkedDeploymentsByApp(ctx, accountID)
+	wg.Wait()
+	return out
 }
 
 // latestParkedDeploymentsByApp reads every app's parked reference in one
@@ -336,7 +413,8 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if ram == 0 {
 		ram = api.StandaloneAppDefaultRAMMB(limits)
 		if req.VCPU != 0 {
-			// An explicit vCPU asks for the plan's joint RAM/vCPU shape.
+			// An explicit vCPU without RAM asks for the plan's largest
+			// instance, whose vCPUs it must match (ADR-20261109172421).
 			ram = limits.RAMMB
 		}
 	}
@@ -372,6 +450,10 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		return state.App{}, prob
 	}
 	if prob := lifecycleProblem(acct.Plan, lifecycle, mc); prob != nil {
+		return state.App{}, prob
+	}
+	// A new app has no binding yet: only the ordinary cap applies.
+	if prob := unboundAfterRestoreBudgetProblem(lifecycle.AfterRestore); prob != nil {
 		return state.App{}, prob
 	}
 	if prob := lifecycleObserverLinkProblem(req.Slug, lifecycle); prob != nil {
@@ -458,15 +540,13 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if req.RouteMetricsEnabled != nil {
 		rm = *req.RouteMetricsEnabled
 	}
-	// Issue #470 / ADR-055: per-app two-tier snapshot flag. Apply
-	// the plan-level default when the request didn't carry one —
-	// a Pro customer's brand-new app gets warm.snap capture
-	// without an extra PATCH round-trip. Free/Hobby default to
-	// false (the only legal value on those tiers; apid rejects
-	// PATCH-true with 403 plan_warm_snapshot_not_allowed). The
-	// per-request override on Pro/Scale lets a customer opt out
-	// (e.g. an app they know runs cold every request).
-	warmEnabled := acct.Plan.WarmSnapshotEnabled()
+	// Issue #470 / ADR-055: per-app two-tier snapshot flag. New apps
+	// are off on every plan (ADR-20261110180000): a warm snapshot
+	// restores the memory and /tmp of an instance's first requests in
+	// every later wake, so a Pro/Scale app opts in with the request
+	// field or a later PATCH. Free/Hobby may not (403
+	// plan_warm_snapshot_not_allowed).
+	warmEnabled := acct.Plan.WarmSnapshotNewAppDefault()
 	if req.WarmSnapshotEnabled != nil {
 		warmEnabled = *req.WarmSnapshotEnabled
 	}
@@ -825,6 +905,10 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 		dep.ID = publishedImageDeploymentID(app.ID, dep.Scope, req.Image)
 		dep.ReleaseCommand = append([]string(nil), publishedPrevious.ReleaseCommand...)
 		dep.ReleaseCommandShell = publishedPrevious.ReleaseCommandShell
+		if s.releasePhaseOff && len(dep.ReleaseCommand) > 0 {
+			api.WriteProblem(w, releasePhaseOffProblem())
+			return
+		}
 	}
 	if !s.admitCanaryDeployment(w, r, dep) {
 		return
@@ -956,6 +1040,42 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 // Request handlers should use the request context so the optional canonical
 // domain lookup is cancelled with the request.
 func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan api.Plan) api.AppResponse {
+	return s.appResponseWithDomain(a, plan, s.defaultCustomDomain(ctx, a.ID))
+}
+
+// defaultCustomDomain is the app's usable default custom domain, or "".
+func (s *server) defaultCustomDomain(ctx context.Context, appID string) string {
+	if resolver, ok := s.store.(state.DefaultCustomDomainStore); ok {
+		if domain, err := resolver.DefaultCustomDomain(s.defaultDomainContext(ctx), appID); err == nil {
+			return domain
+		}
+	}
+	return ""
+}
+
+// defaultCustomDomains reads every listed app's default custom domain in one
+// query; ok is false when the store cannot, or the read failed, and callers
+// then read app by app.
+func (s *server) defaultCustomDomains(ctx context.Context, apps []state.App) (map[string]string, bool) {
+	reader, ok := s.store.(state.DefaultCustomDomainBatchReader)
+	if !ok {
+		return nil, false
+	}
+	ids := make([]string, 0, len(apps))
+	for _, a := range apps {
+		ids = append(ids, a.ID)
+	}
+	domains, err := reader.DefaultCustomDomains(s.defaultDomainContext(ctx), ids)
+	if err != nil {
+		s.log.Warn("apid: default custom domains lookup", "apps", len(ids), "err", err)
+		return nil, false
+	}
+	return domains, true
+}
+
+// appResponseWithDomain is appResponseWithContext with the default custom
+// domain already read ("" for none).
+func (s *server) appResponseWithDomain(a state.App, plan api.Plan, domain string) api.AppResponse {
 	var allowedCallers *[]string
 	if a.Manifest.AllowedServiceCallers != nil {
 		copyOfNames := append([]string{}, (*a.Manifest.AllowedServiceCallers)...)
@@ -978,11 +1098,9 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 	}
 	platformURL := appURLForDomain(a.Slug, s.domain)
 	canonicalURL, defaultDomain := platformURL, ""
-	if resolver, ok := s.store.(state.DefaultCustomDomainStore); ok {
-		if domain, err := resolver.DefaultCustomDomain(ctx, a.ID); err == nil && domain != "" {
-			defaultDomain = domain
-			canonicalURL = "https://" + domain
-		}
+	if domain != "" {
+		defaultDomain = domain
+		canonicalURL = "https://" + domain
 	}
 	// EgressAllowlist is materialised as a non-nil empty slice so
 	// the JSON shape is `[]` (never `null`) regardless of plan /
@@ -996,7 +1114,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 		ID:                        a.ID, Slug: a.Slug, Type: string(a.Type), WorkloadClass: string(a.WorkloadClass), Runtime: a.Runtime,
 		ProjectID:  a.ProjectID,
 		Visibility: string(api.NormalizeAppVisibility(a.Visibility)),
-		RAMMB:      a.RAMMB, VCPU: api.VCPUPerPlan[plan], CPUMillicores: effectiveAppCPUMillicores(a, plan),
+		RAMMB:      a.RAMMB, VCPU: api.SizeVCPUs(a.RAMMB), CPUMillicores: effectiveAppCPUMillicores(a, plan),
 		ResourceProfile: api.ResourceProfileForResources(a.RAMMB, effectiveAppCPUMillicores(a, plan)),
 		MaxConcurrency:  a.MaxConcurrency, IdleTimeoutS: a.IdleTimeoutS,
 		RequestTimeoutS:     a.Manifest.RequestTimeoutS,
@@ -1005,8 +1123,9 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 		// for the customer's plan. Distinct from MaxConcurrency
 		// (the per-app instance cap above). Unknown plans fall
 		// through the accessor to 0 — same fail-closed contract
-		// as MaxMinInstances.
-		ConcurrencyPerVMBound: plan.ConcurrencyPerVMBound(),
+		// as MaxMinInstances. app_request_concurrency_max replaces it
+		// once runtime config sets it (ADR-20261101215228).
+		ConcurrencyPerVMBound: plan.RequestConcurrencyBound(),
 		EffectiveLimits:       appEffectiveLimits(a, plan),
 		ConfiguredResources: api.AppConfiguredResources{
 			MemoryMB: a.RAMMB, CPUMillicores: effectiveAppCPUMillicores(a, plan),
@@ -1208,6 +1327,11 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 		// writes and reads this column; omitting it here made a successful
 		// PATCH appear to remain false to API clients.
 		MaintenanceMode: a.MaintenanceMode,
+		// Issue #475: the DTO documents eviction_priority as the field
+		// customers read to verify their PATCH; it was never projected, so
+		// `app get` showed best_effort after a successful switch to reserved
+		// (Hunt 32 H32-55).
+		EvictionPriority: state.EvictionPriorityOrBestEffort(a.EvictionPriority),
 	}
 }
 
@@ -1247,11 +1371,11 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 	}
 	cpuMillicores := effectiveAppCPUMillicores(a, plan)
 	requestRateRPS, requestRateBurst := appRequestRateLimits(a, plan)
-	planCPUMaxMillicores := int(int64(limits.CPUQuotaUS) * 1000 / int64(limits.CPUPeriodUS))
+	// An instance's vCPUs and weight follow its size (ADR-20261109172421).
 	return api.AppEffectiveLimits{
 		MemoryLimitMB: a.RAMMB, PlanMemoryMaxMB: limits.RAMMB,
 		EphemeralDiskMaxMB: limits.EphemeralDiskMaxMB(),
-		GuestVCPUs:         limits.VCPU, CPULimitMillicores: cpuMillicores, PlanCPUMaxMillicores: planCPUMaxMillicores, CPUWeight: limits.CPUWeight,
+		GuestVCPUs:         api.SizeVCPUs(a.RAMMB), CPULimitMillicores: cpuMillicores, PlanCPUMaxMillicores: api.DefaultAppCPUMillicores, CPUWeight: api.SizeCPUWeight(a.RAMMB),
 		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.PerInstanceConcurrency(perInstance),
 		ConcurrencyQueueDepth: queueDepth, ConcurrencyQueueWaitMS: queueWait.Milliseconds(),
 		AppRequestRateRPS: requestRateRPS, AppRequestBurst: requestRateBurst,
@@ -1260,6 +1384,8 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 		RequestBudgetMaxMS:    limits.RequestBudgetMaxDuration().Milliseconds(),
 		ResponseWriteTimeoutS: int64(plan.ResponseWriteTimeout().Seconds()),
 		RequestBodyMaxBytes:   plan.MaxRequestBodyBytes(),
+		IdleTimeoutS:          limits.EffectiveIdleTimeoutS(string(a.Type), a.IdleTimeoutS),
+		Pause:                 api.EffectivePause(a.Manifest.Pause, a.Type == state.AppTypeFunction),
 	}
 }
 
@@ -1274,12 +1400,9 @@ func appRequestRateLimits(a state.App, plan api.Plan) (rps, burst int) {
 	return api.EffectiveAppRequestRateLimits(plan, rpsOverride, burstOverride)
 }
 
-func effectiveAppCPUMillicores(a state.App, plan api.Plan) int {
+func effectiveAppCPUMillicores(a state.App, _ api.Plan) int {
 	if a.CPUMillicores > 0 {
 		return a.CPUMillicores
-	}
-	if limits, ok := api.LimitsFor(plan); ok && limits.CPUQuotaUS > 0 && limits.CPUPeriodUS > 0 {
-		return int(int64(limits.CPUQuotaUS) * 1000 / int64(limits.CPUPeriodUS))
 	}
 	return api.DefaultAppCPUMillicores
 }
@@ -1307,14 +1430,20 @@ func cORSOriginsList(v []string) []string {
 // at the schema layer (migration 00157), so this helper never
 // needs to validate.
 func (s *server) withParkedDeploymentRef(ctx context.Context, resp api.AppResponse, app state.App) api.AppResponse {
+	return withParkedDeployment(resp, s.latestParkedDeployment(ctx, app))
+}
+
+// latestParkedDeployment is the app's parked reference, or a zero Deployment
+// when it has none or the read failed.
+func (s *server) latestParkedDeployment(ctx context.Context, app state.App) state.Deployment {
 	d, err := s.store.LatestParkedDeploymentForApp(ctx, app.ID)
 	if err != nil {
 		if !errors.Is(err, state.ErrNotFound) {
 			s.log.Warn("apid: parked deployment ref lookup", "app", app.ID, "err", err)
 		}
-		return resp
+		return state.Deployment{}
 	}
-	return withParkedDeployment(resp, d)
+	return d
 }
 
 // withParkedDeployment attaches d as the parked reference; a zero d (no parked
@@ -1359,6 +1488,7 @@ func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
 			Metric: p.Target.Metric,
 			Value:  p.Target.Value,
 			Name:   p.Target.Name,
+			Labels: p.Target.Labels,
 		}
 	}
 	// ADR-194 targets, ADR-195 schedules — the read half of the same gap
@@ -1366,7 +1496,7 @@ func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
 	// configured even once the write path carried it.
 	for _, t := range p.Targets {
 		out.Targets = append(out.Targets, api.ScalingTarget{
-			Metric: t.Metric, Value: t.Value, Name: t.Name,
+			Metric: t.Metric, Value: t.Value, Name: t.Name, Labels: t.Labels,
 		})
 	}
 	out.Timezone = p.Timezone
@@ -1409,7 +1539,7 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 		Limits: api.AccountLimits{
 			Plan:                        string(acct.Plan),
 			RAMMB:                       l.RAMMB,
-			VCPU:                        l.VCPU,
+			VCPU:                        api.SizeVCPUs(l.RAMMB), // the plan's largest instance (ADR-20261109172421)
 			MaxConcurrency:              l.MaxConcurrency,
 			DeployedApps:                l.DeployedApps,
 			PreviewApps:                 l.PreviewApps,
@@ -1430,8 +1560,11 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 		},
 	}
 	if !acct.EmailVerified() {
-		graceEnds := acct.CreatedAt.Add(emailVerificationGrace)
+		graceEnds := verificationDeadline(acct)
 		resp.EmailVerificationGraceEndsAt = &graceEnds
+	}
+	if flow, ok := s.store.(state.AccountFlowStore); ok {
+		resp.DisplayName, _ = flow.AccountDisplayName(ctx, acct.ID)
 	}
 	if inst, err := s.store.GitHubInstallForAccount(ctx, acct.ID); err == nil {
 		resp.GitHubInstall = strconv.FormatInt(inst.InstallationID, 10)

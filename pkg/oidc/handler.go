@@ -321,6 +321,30 @@ func (h Handler) serveLegacy(w http.ResponseWriter, r *http.Request) {
 			"Invalid token", detail))
 		return
 	}
+	// A policy Gregale created trusts every workflow of a bound repository;
+	// its deploy bearers are held to the refs and app the GitHub App would
+	// deploy (ADR-20261101100000). A policy the customer wrote is
+	// authoritative and keeps account-wide bearers. Checked before the
+	// policy is written, so a refused first use creates nothing.
+	var boundAppID string
+	if policy.AuditLogin == autoPolicyLogin && grantsDeploy(scopes) {
+		appID, problem := h.deployTarget(r.Context(), acct.ID, issuerURL, subject, req.App, claims)
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		boundAppID = appID
+	} else if policy.AuditLogin == autoPolicyLogin && req.Capability == CapabilityPreviewRead {
+		// Reading an app's preview status takes no ref gate: a pull request
+		// run may wait for its preview. The bearer is bound to the app
+		// (ADR-20261102203228).
+		appID, problem := h.boundRepositoryApp(r.Context(), acct.ID, issuerURL, subject, req.App)
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		boundAppID = appID
+	}
 	if createPolicy {
 		policy, err = deps.Policies.Upsert(r.Context(), policy)
 		if err != nil {
@@ -359,6 +383,7 @@ func (h Handler) serveLegacy(w http.ResponseWriter, r *http.Request) {
 		Audience:  claims.Aud,
 		JTI:       claims.JTI,
 		Scopes:    scopes,
+		AppID:     boundAppID,
 	}
 	// Insert returns the server-minted row id (gen_random_uuid at
 	// the SQL layer; uuid.NewString in memstore). The id is the

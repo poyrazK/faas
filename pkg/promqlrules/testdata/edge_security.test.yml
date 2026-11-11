@@ -276,3 +276,29 @@ tests:
               summary: "App b is in attack mode"
               description: "gateway_edge_attack_mode_total shows app b's attack mode deciding requests for 15m. While attack mode is preview, review each use: did it stop the flood, and did the app's own clients get through?"
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeAttackMode.md"
+
+  - name: a country database built more than 75 days ago warns; a fresher one does not
+    interval: 1m
+    input_series:
+      # Built 77 days (gw-1) and 60 days (gw-2) before the test's epoch.
+      - series: geoip_db_build_timestamp_seconds{instance="gw-1"}
+        values: -6652800x90
+      - series: geoip_db_build_timestamp_seconds{instance="gw-2"}
+        values: -5184000x90
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasGeoIPDatabaseStale
+        exp_alerts: []
+      - eval_time: 75m
+        alertname: FaasGeoIPDatabaseStale
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: edge_security
+              public_status: internal
+              instance: gw-1
+            exp_annotations:
+              summary: "gw-1 judges geo rules with a country database built more than 75 days ago"
+              description: "geoip_db_build_timestamp_seconds on gw-1 is more than 75 days old. Addresses reassigned since then resolve to their old country or to none, so kind=geo rules and country match conditions misjudge them. Bump faas_geoip_release and re-run the geoip role."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGeoIPDatabaseStale.md"

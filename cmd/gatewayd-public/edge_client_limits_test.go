@@ -1,0 +1,309 @@
+// adr: 20261103163954
+// edge_client_limits_test.go pins how a compute edge applies its
+// per-client-address limits: the request rate counts against the client the
+// gateway trusts, so behind Cloudflare that is CF-Connecting-IP and with no
+// front it is the connection's peer, whatever the client claims; the
+// connection and handshake limits wrap only a listener with no front.
+package main
+
+import (
+	"crypto/tls"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/netip"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/clientlimit"
+)
+
+func TestEdgeClientLimitsFromEnv(t *testing.T) {
+	for _, tc := range []struct {
+		name, value, proxies string
+		overload             string
+		mode                 publicEdgeMode
+		wantOn               bool
+		wantProxies          int
+		wantOverload         clientlimit.OverloadMode
+		wantErr              string
+	}{
+		{name: "unset", mode: edgeModeCompute},
+		{name: "off", value: "0", mode: edgeModeCompute},
+		{name: "on", value: "1", mode: edgeModeCompute, wantOn: true},
+		{name: "on a control-plane edge", value: "1", mode: edgeModeControlPlane, wantErr: "for a compute edge"},
+		{name: "not a switch value", value: "yes", mode: edgeModeCompute, wantErr: edgeClientLimitsEnv},
+		{name: "on with Cloudflare ranges", value: "1", proxies: "173.245.48.0/20, 2400:cb00::/32", mode: edgeModeCompute, wantOn: true, wantProxies: 2},
+		{name: "a proxy entry is no prefix", value: "1", proxies: "173.245.48.1/20", mode: edgeModeCompute, wantErr: edgeProxyCIDRsEnv},
+		{name: "overload off", value: "1", overload: "off", mode: edgeModeCompute, wantOn: true},
+		{name: "overload observe", value: "1", overload: "observe", mode: edgeModeCompute, wantOn: true, wantOverload: clientlimit.OverloadObserve},
+		{name: "overload on", value: "1", overload: "on", mode: edgeModeCompute, wantOn: true, wantOverload: clientlimit.OverloadOn},
+		{name: "overload without the limits", overload: "on", mode: edgeModeCompute, wantErr: edgeClientLimitsEnv + "=1"},
+		{name: "overload not a mode", value: "1", overload: "yes", mode: edgeModeCompute, wantErr: edgeOverloadEnv},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l, err := edgeClientLimitsFromEnv(tc.mode, func(k string) string {
+				switch k {
+				case edgeClientLimitsEnv:
+					return tc.value
+				case edgeProxyCIDRsEnv:
+					return tc.proxies
+				case edgeOverloadEnv:
+					return tc.overload
+				}
+				return ""
+			})
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want one naming %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if l.on != tc.wantOn || len(l.proxies) != tc.wantProxies {
+				t.Fatalf("on = %v with %d proxies, want %v with %d", l.on, len(l.proxies), tc.wantOn, tc.wantProxies)
+			}
+			if got := l.overload.Mode(); got != tc.wantOverload {
+				t.Fatalf("overload = %s, want %s", got, tc.wantOverload)
+			}
+		})
+	}
+}
+
+// TestEdgeClientLimitsShedOnlyWhenOverloadIsOn pins that the overload level
+// refuses requests only in on mode: observe measures and refuses nothing.
+func TestEdgeClientLimitsShedOnlyWhenOverloadIsOn(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	refused := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "refused"}, []string{"reason"})
+	for _, tc := range []struct {
+		mode string
+		want int
+	}{
+		{"observe", http.StatusNoContent},
+		{"on", http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			l, err := edgeClientLimitsFromEnv(edgeModeCompute, func(k string) string {
+				return map[string]string{edgeClientLimitsEnv: "1", edgeOverloadEnv: tc.mode}[k]
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			l.refused = refused
+			for range 20 {
+				l.overload.Update(clientlimit.OverloadSignals{SchedDelayP99: time.Second})
+			}
+			// No app has answered for this host, so at level 1 it is refused
+			// first.
+			rec := httptest.NewRecorder()
+			l.shed(next, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "https://unknown.gregale.dev/", nil))
+			if rec.Code != tc.want {
+				t.Fatalf("status %d, want %d", rec.Code, tc.want)
+			}
+			if tc.want == http.StatusServiceUnavailable && !strings.Contains(rec.Body.String(), "edge_overloaded") {
+				t.Fatalf("body %q, want the edge_overloaded problem", rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestEdgeClientLimitsCountRequestsAgainstTheTrustedClient(t *testing.T) {
+	refused := newEdgeMetrics().refused
+	limits := edgeClientLimits{on: true, refused: refused}
+	trusted := []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}
+	// The production order: cloudflareClientIP outside the limits.
+	h := cloudflareClientIP(limits.requests(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), trusted), trusted)
+	burst := api.EdgeClientRequestsBurstPerAddr
+	send := func(peer, cfConnectingIP string) int {
+		req := httptest.NewRequest(http.MethodGet, "https://shop.gregale.dev/", nil)
+		req.RemoteAddr = peer + ":40000"
+		req.Header.Set("CF-Connecting-IP", cfConnectingIP)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	// servedUntilRefused sends until the first 429 and returns how many were
+	// served first. The bucket refills in real time while the loop runs, so
+	// a few more than the burst may pass, never fewer.
+	servedUntilRefused := func(peer string, client func(i int) string) int {
+		t.Helper()
+		for i := range 2 * burst {
+			switch code := send(peer, client(i)); code {
+			case http.StatusNoContent:
+			case http.StatusTooManyRequests:
+				return i
+			default:
+				t.Fatalf("request %d = %d", i, code)
+			}
+		}
+		t.Fatalf("%d requests from %s were all served", 2*burst, peer)
+		return 0
+	}
+
+	// Behind the tunnel the peer is loopback, so each client is its
+	// CF-Connecting-IP.
+	if served := servedUntilRefused("127.0.0.1", func(int) string { return "203.0.113.9" }); served < burst {
+		t.Fatalf("one client was refused after %d requests, want at least the burst %d", served, burst)
+	}
+	if code := send("127.0.0.1", "203.0.113.10"); code != http.StatusNoContent {
+		t.Fatalf("another client behind the same connector = %d, want it served", code)
+	}
+
+	// With no front the peer is the client: a new CF-Connecting-IP on each
+	// request buys nothing.
+	forged := func(i int) string { return fmt.Sprintf("192.0.2.%d", i%250) }
+	if served := servedUntilRefused("198.51.100.7", forged); served < burst {
+		t.Fatalf("a direct client was refused after %d requests, want at least the burst %d", served, burst)
+	}
+	if got := testutil.ToFloat64(refused.WithLabelValues(clientlimit.ReasonRequestRate)); got != 2 {
+		t.Fatalf("request_rate refusals = %v, want 2", got)
+	}
+}
+
+func TestEdgeClientLimitsWrapOnlyAListenerWithNoFront(t *testing.T) {
+	refused := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "refused"}, []string{"reason"})
+	for _, tc := range []struct {
+		name     string
+		on       bool
+		direct   bool
+		wantGate bool
+	}{
+		{name: "off", direct: true},
+		{name: "behind Cloudflare", on: true},
+		{name: "no front", on: true, direct: true, wantGate: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ln := edgeClientLimits{on: tc.on, refused: refused}.tlsListener(t.Context(), raw, &tls.Config{}, tc.direct, func(net.Addr, error) {})
+			defer ln.Close()
+			if _, isGate := ln.(*clientlimit.HandshakeGate); isGate != tc.wantGate {
+				t.Fatalf("listener %T, want the handshake gate = %v", ln, tc.wantGate)
+			}
+		})
+	}
+}
+
+func TestEdgeClientLimitsCapForwardsAndExemptGRPC(t *testing.T) {
+	refused := newEdgeMetrics().refused
+	release := make(chan struct{})
+	var entered sync.WaitGroup
+	blocking := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		entered.Done()
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	if got := (edgeClientLimits{}).forwards(blocking, nil); fmt.Sprintf("%p", got) != fmt.Sprintf("%p", blocking) {
+		t.Fatal("the forward cap wrapped the forwarder with the limits off")
+	}
+	if (edgeClientLimits{on: true, refused: refused}).forwards(nil, nil) != nil {
+		t.Fatal("a missing forwarder became a handler")
+	}
+
+	capped := edgeClientLimits{on: true, refused: refused}.forwards(blocking, nil)
+	// Each forward from its own address, so the shared cap binds and not
+	// one address's share (ADR-20261107180000).
+	from := func(i int) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "https://shop.gregale.dev/upload", nil)
+		r.RemoteAddr = fmt.Sprintf("198.51.%d.%d:40000", i/250, i%250+1)
+		return r
+	}
+	entered.Add(api.EdgeControlPlaneForwardsInFlightMax)
+	var done sync.WaitGroup
+	for i := range api.EdgeControlPlaneForwardsInFlightMax {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			capped.ServeHTTP(httptest.NewRecorder(), from(i))
+		}()
+	}
+	entered.Wait()
+	rec := httptest.NewRecorder()
+	capped.ServeHTTP(rec, from(api.EdgeControlPlaneForwardsInFlightMax))
+	close(release)
+	done.Wait()
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a forward past the cap = %d, want 503", rec.Code)
+	}
+	if got := testutil.ToFloat64(refused.WithLabelValues(clientlimit.ReasonForwardInFlight)); got != 1 {
+		t.Fatalf("forward_in_flight refusals = %v, want 1", got)
+	}
+
+	for contentType, want := range map[string]bool{
+		"application/grpc":       true,
+		"application/grpc+proto": true,
+		"application/json":       false,
+		"":                       false,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "https://shop.gregale.dev/", nil)
+		req.Header.Set("Content-Type", contentType)
+		if got := isGRPC(req); got != want {
+			t.Errorf("isGRPC(%q) = %v, want %v", contentType, got, want)
+		}
+	}
+}
+
+// The per-host ceiling is off with the limits, keys on the hostname without
+// port, case or trailing dot, and sits above every plan's per-app limit so
+// the gateway's plan limit answers an app first (ADR-20261103163954 §4).
+func TestEdgeClientLimitsHostCeiling(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	refused := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "refused"}, []string{"reason"})
+	flood := func(h http.Handler) int {
+		for i := range 2 * api.EdgeHostRequestsBurst {
+			r := httptest.NewRequest(http.MethodGet, "https://shop.gregale.dev/", nil)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, r)
+			if rec.Code != http.StatusNoContent {
+				return i
+			}
+		}
+		return -1
+	}
+	if got := flood(edgeClientLimits{}.hosts(next)); got != -1 {
+		t.Fatalf("with the limits off request %d to one host was refused", got)
+	}
+	// The bucket refills on the real clock while the loop runs, so the first
+	// refusal lands at or after the burst.
+	if got := flood(edgeClientLimits{on: true, refused: refused}.hosts(next)); got < api.EdgeHostRequestsBurst {
+		t.Fatalf("with the limits on the first refusal was request %d, want one at or after %d", got, api.EdgeHostRequestsBurst)
+	}
+	for in, want := range map[string]string{
+		"Shop.Gregale.DEV":     "shop.gregale.dev",
+		"shop.gregale.dev:443": "shop.gregale.dev",
+		"shop.gregale.dev.":    "shop.gregale.dev",
+		"[2001:db8::1]:443":    "2001:db8::1",
+		"":                     "",
+	} {
+		r := httptest.NewRequest(http.MethodGet, "https://x/", nil)
+		r.Host = in
+		if got, ok := edgeRequestHost(r); got != want || ok != (want != "") {
+			t.Errorf("edgeRequestHost(%q) = %q, %v; want %q", in, got, ok, want)
+		}
+	}
+	for _, plan := range api.Plans {
+		l, ok := api.LimitsFor(plan)
+		if !ok {
+			t.Fatalf("no limits for plan %s", plan)
+		}
+		if api.EdgeHostRequestsPerSecond < 2*l.RateLimitRPS || api.EdgeHostRequestsBurst < 2*l.RateLimitBurst {
+			t.Fatalf("host ceiling %d/s burst %d is under twice plan %s's per-app %d/s burst %d",
+				api.EdgeHostRequestsPerSecond, api.EdgeHostRequestsBurst, plan, l.RateLimitRPS, l.RateLimitBurst)
+		}
+	}
+}

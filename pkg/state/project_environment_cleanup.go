@@ -2,8 +2,13 @@ package state
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
+
+// ErrProjectEnvironmentCleanupPending reserves a deleted environment's slug
+// until all of its managed resources have been cleaned up.
+var ErrProjectEnvironmentCleanupPending = fmt.Errorf("state: environment cleanup pending: %w", ErrConflict)
 
 // ProjectEnvironmentCleanupResources is the durable, non-secret description
 // of provider resources that must be removed after an environment is deleted.
@@ -50,6 +55,11 @@ type ProjectEnvironmentPostgresCleanupResource struct {
 	DatabaseName            string `json:"database_name,omitempty"`
 	RestoreSourceDatabaseID string `json:"restore_source_database_id,omitempty"`
 	DeleteDatabase          bool   `json:"delete_database,omitempty"`
+	// CloneOperationID names the full environment clone that restored the
+	// database for this stage (ADR-20261024224230). Such a database is not
+	// customer-visible once its stage is gone, so cleanup reaches it through
+	// the clone.
+	CloneOperationID string `json:"clone_operation_id,omitempty"`
 }
 
 type ProjectEnvironmentObjectStorageCleanupResource struct {

@@ -82,7 +82,14 @@ func (a *authHandlers) renderLoginForm(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("next"); raw != "" {
 		next = dashboardMFANext(raw)
 	}
-	a.renderLogin(w, r, http.StatusOK, "", false, next)
+	flash := ""
+	if r.URL.Query().Get("verify") == "1" {
+		flash = verifySignInFlash
+	}
+	if r.URL.Query().Get("reauth") == "1" {
+		flash = recentSignInFlash
+	}
+	a.renderLogin(w, r, http.StatusOK, flash, false, next)
 }
 
 // renderLogin renders the sign-in form. next is carried through the POST so a
@@ -98,8 +105,9 @@ func (a *authHandlers) renderLogin(w http.ResponseWriter, r *http.Request, statu
 		// SignInConfig is read here — not at request time — so
 		// there is no per-request os.Getenv cost.
 		Auth: &dashboard.AuthCapabilitiesView{
-			GoogleEnabled: a.srv.oauthConfig.Google.Enabled(),
-			GitHubEnabled: a.srv.oauthConfig.GitHub.Enabled(),
+			GoogleEnabled:  a.srv.oauthConfig.Google.Enabled(),
+			GitHubEnabled:  a.srv.oauthConfig.GitHub.Enabled(),
+			TermsPublished: termsPublished(),
 		},
 		Data: map[string]any{
 			"Error":     isError,
@@ -115,11 +123,13 @@ func (a *authHandlers) renderLogin(w http.ResponseWriter, r *http.Request, statu
 // consumed). No information leak between cases — they all return 410.
 //
 // A link opened straight from a mail app or the address bar signs in at
-// once. Any other navigation, such as a click in webmail or a page that
-// sends the browser here, gets a confirm page instead, whose POST must come
-// from Gregale itself: otherwise any site could sign a visitor into an
-// account of its choosing with a link it requested for itself (login CSRF,
-// security audit 2026-10-27).
+// once. Any other request, such as a click in webmail, a page that sends the
+// browser here, or a client that sends no Sec-Fetch-Site at all (mail
+// scanners that prefetch links, curl), gets a confirm page instead, whose
+// POST must come from Gregale itself: otherwise any site could sign a visitor
+// into an account of its choosing with a link it requested for itself (login
+// CSRF, security audit 2026-10-27), and a scanner's prefetch would use up the
+// single-use token before the customer clicks (bug hunt H19).
 func (a *authHandlers) verify(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	hash, ok := magicLinkHash(token)
@@ -153,10 +163,11 @@ func (a *authHandlers) verifyConfirmed(w http.ResponseWriter, r *http.Request) {
 // directNavigation reports whether the browser opened this URL itself
 // (address bar, bookmark, a desktop mail app) or from a Gregale page, rather
 // than following a link or redirect on another site. A client that sends no
-// Sec-Fetch-Site (old browsers, curl) is treated as direct.
+// Sec-Fetch-Site is not a current browser navigating (mail scanners, link
+// previews, curl), so it gets the confirm page and cannot use up the token.
 func directNavigation(r *http.Request) bool {
 	switch strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site"))) {
-	case "", "none", "same-origin":
+	case "none", "same-origin":
 		return true
 	}
 	return false
@@ -331,7 +342,7 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 		// ignored the flag, so MFA protected only /v1: the password or
 		// inbox alone opened every page. Until the TOTP challenge is
 		// passed, only the challenge itself is reachable.
-		mfaPending := session.IsMFAPending(env)
+		mfaPending := session.IsMFAPending(env) && s.sessionMFAPending(acct)
 		if mfaPending && !dashboardMFARoute(r.Method, r.URL.Path) {
 			target := dashboardMFAPath
 			if r.Method == http.MethodGet {
@@ -344,6 +355,12 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 			http.Redirect(w, r, dashboardRecoveryPage(acct), http.StatusFound)
 			return
 		}
+		// Past the verification grace only the account page (with its
+		// resend button) and the resend form remain.
+		if s.verificationOverdueNow(acct) && !dashboardMFARoute(r.Method, r.URL.Path) && !dashboardOverdueRoute(r.Method, r.URL.Path) {
+			http.Redirect(w, r, "/dashboard/account", http.StatusFound)
+			return
+		}
 		// The session and pending flag feed cookie re-issue on
 		// /dashboard/mfa, the same context shape RequireSession builds.
 		//nolint:contextcheck // derives from r.Context(); same contract as the WithStepUp stamp below.
@@ -352,6 +369,9 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 		r = r.WithContext(authmw.WithMFAPending(r.Context(), mfaPending))
 		//nolint:contextcheck // derives from r.Context(); same contract as the WithStepUp stamp below.
 		r = r.WithContext(WithAccount(r.Context(), acct))
+		// Dashboard verification uses the same live account policy as /v1.
+		//nolint:contextcheck // WithPrincipal derives from r.Context(), preserving the session and MFA stamps above.
+		r = r.WithContext(authmw.WithPrincipal(r.Context(), acct, nil, nil))
 		// IAM-hardening-mega-PR (logical change 6, ADR-077 /
 		// review finding #3): stamp env.StepUpAt onto
 		// r.Context() so requireStepUpHandler can read it. The
@@ -575,7 +595,7 @@ func dashboardMFANext(raw string) string {
 	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil {
 		return fallback
 	}
-	if u.Path != cliAuthPath && u.Path != "/dashboard" && !strings.HasPrefix(u.Path, "/dashboard/") {
+	if u.Path != cliAuthPath && u.Path != emailVerificationPath && u.Path != "/dashboard" && !strings.HasPrefix(u.Path, "/dashboard/") {
 		return fallback
 	}
 	if u.Path == dashboardMFAPath {
@@ -587,5 +607,10 @@ func dashboardMFANext(raw string) string {
 // dashboardMFARoute is what an mfa_pending session may reach: the TOTP
 // challenge and its form post.
 func dashboardMFARoute(method, path string) bool {
-	return path == dashboardMFAPath && (method == http.MethodGet || method == http.MethodPost)
+	return path == dashboardMFAPath && (method == http.MethodGet || method == http.MethodPost) ||
+		path == "/dashboard/account/mfa" && method == http.MethodGet
 }
+
+// verifySignInFlash is the sign-in banner for a verification link opened in
+// a browser that is not signed in to its account (ADR 20261109120000).
+const verifySignInFlash = "Sign in to finish verifying your email. If you did not create this account or do not know its password, use \"Email me a sign-in link\" instead: it verifies the address and removes the password and keys someone else set."

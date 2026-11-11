@@ -194,8 +194,8 @@ func (e *Engine) ownerGenerationHolds(ctx context.Context) error {
 
 // ownerEntryForPhaseOne returns the app's entry for wake phase 1 under the
 // same conditions as admission.
-func (e *Engine) ownerEntryForPhaseOne(ctx context.Context, appID, deploymentID string) (ownerEntry, bool) {
-	return e.ownerEntryForAdmission(ctx, appID, deploymentID)
+func (e *Engine) ownerEntryForPhaseOne(ctx context.Context, appID, deploymentID, trigger string) (ownerEntry, bool) {
+	return e.ownerEntryForAdmission(ctx, appID, deploymentID, trigger)
 }
 
 // runningInstanceOfDeployment is runningInstanceForWake for a deployment the
@@ -204,7 +204,7 @@ func (e *Engine) runningInstanceOfDeployment(ctx context.Context, appID string, 
 	if dep.AppID != appID || dep.Status != state.DeployLive {
 		return state.Instance{}, state.ErrNotFound
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return state.Instance{}, err
 	}
@@ -238,18 +238,26 @@ func withoutOwnerCache(ctx context.Context) context.Context {
 	return context.WithValue(forgetWakeApp(ctx), ownerCacheBypassKey{}, true)
 }
 
-// ownerEntryForAdmission returns the app's entry for an ordinary production
-// admission: no explicit deployment, no scope, cache on and not bypassed.
-// A coordinated wake (EnsureWake, the gateway's path) is served only when
-// its selection is the entry's production deployment, environment and
-// account (ADR-1741 amendment 2026-10-21). A failed load falls back to the
-// ordinary reads, which report the error the wake path always reported.
-func (e *Engine) ownerEntryForAdmission(ctx context.Context, appID, deploymentID string) (ownerEntry, bool) {
-	if deploymentID != "" || ScopeFrom(ctx) != "" || ctx.Value(ownerCacheBypassKey{}) != nil {
+// ownerEntryForAdmission returns the app's entry for a production admission:
+// cache on and not bypassed, and either no deployment and no scope, or the
+// entry's own production deployment named explicitly (ADR-1741 amendment
+// 2026-11-05). A coordinated wake (EnsureWake) is served only when its
+// selection is the entry's production deployment, environment and account
+// (amendment 2026-10-21). A failed load falls back to the ordinary reads,
+// which report the error the wake path always reported.
+func (e *Engine) ownerEntryForAdmission(ctx context.Context, appID, deploymentID, trigger string) (ownerEntry, bool) {
+	scope := ScopeFrom(ctx)
+	// A scope with no deployment names another environment's live row. The
+	// authenticated smoke wakes a candidate that is not production's yet.
+	if ctx.Value(ownerCacheBypassKey{}) != nil || trigger == TriggerDeploymentSmoke || (deploymentID == "" && scope != "") {
 		return ownerEntry{}, false
 	}
 	entry, err := e.ownerEntryFor(ctx, appID)
 	if err != nil {
+		return ownerEntry{}, false
+	}
+	if deploymentID != "" && !entry.servesDeployment(deploymentID, scope) {
+		e.observeOwnerCache("selection")
 		return ownerEntry{}, false
 	}
 	if selected, ok := wakeEnvironmentFrom(ctx); ok && !entry.serves(selected) {
@@ -257,6 +265,20 @@ func (e *Engine) ownerEntryForAdmission(ctx context.Context, appID, deploymentID
 		return ownerEntry{}, false
 	}
 	return entry, true
+}
+
+// servesDeployment reports whether a wake that names deploymentID, in scope,
+// is for the deployment this entry holds. Production traffic names its
+// deployment on every path that reaches schedd by RPC (the gateway's
+// AdmitInstance, the drain's invocations, service and floor wakes), so the
+// entry serves the one it was loaded for and nothing else: a canary, a
+// retained release or another environment reads its own rows. An empty
+// scope states no environment; a named one must be the deployment's.
+func (entry ownerEntry) servesDeployment(deploymentID, scope string) bool {
+	if entry.dep.ID != deploymentID || entry.dep.Status != state.DeployLive {
+		return false
+	}
+	return scope == "" || normalizedDeploymentScope(scope) == normalizedDeploymentScope(entry.dep.Scope)
 }
 
 // serves reports whether a coordinated wake's selection is the one this

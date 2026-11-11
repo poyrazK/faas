@@ -176,6 +176,22 @@ faas_seal_domain_edge_writes: ""
 # the rollback window. Required for writes=domain.
 faas_seal_domain_edge_readers_verified: false
 
+# The contract step: gatewayd-internal drops the fleet and host identities
+# and opens basic-auth credentials, log drain headers and edge rule header
+# secrets with the domain identity alone. Needs writes=domain, and the role
+# refuses it while `gregalectl seal-domain migrate --domain edge --check`
+# finds a credential the fleet or host identity still opens, or a log
+# destination an application standard manages that only they open.
+faas_seal_domain_edge_contracted: false
+
+# Operator-local files from `gregalectl seal-domain init --domain edge-tls`
+# (ADR-20261103163954 §3). Compute hosts stage the identity (gatewayd-public
+# opens the apps domains' certificate key), control-plane hosts the
+# recipient (edgednsd seals the key to it). No fleet copy: the domain is new.
+faas_seal_domain_edge_tls_identity_src: ""
+faas_seal_domain_edge_tls_previous_identity_src: ""
+faas_seal_domain_edge_tls_recipient_src: ""
+
 # Operator-local files from `gregalectl seal-domain init --domain alerting`.
 # Control-plane hosts stage both: meterd opens alert rule webhook secrets,
 # notification channel destinations and MCP readiness provider keys with the
@@ -241,6 +257,16 @@ faas_seal_domain_control_identity_src: ""
 # to the new one completes; empty removes it.
 faas_seal_domain_control_previous_identity_src: ""
 
+# The contract step for schedd's two domains: schedd drops the fleet
+# identity and opens the cluster signing key with the control identity
+# alone. schedd reads delivery values with the same credentials, so it
+# contracts only together with faas_seal_domain_delivery_contracted; the
+# role refuses one without the other, and refuses both while `gregalectl
+# seal-domain migrate --domain control --check` (or delivery) finds a value
+# the fleet or host identity still opens. host.age stays: it is per host
+# and opens no fleet-sealed value.
+faas_seal_domain_control_contracted: false
+
 # Operator-local files from `gregalectl seal-domain init --domain delivery`.
 # Every host stages the identity (schedd runs on both node roles and opens
 # app webhook signing secrets, commit-source connections and execution
@@ -263,6 +289,11 @@ faas_seal_domain_delivery_writes: ""
 # faas_seal_domain_loaded{domain="delivery"} 1 and the previous release
 # left the rollback window. Required for writes=domain.
 faas_seal_domain_delivery_readers_verified: false
+
+# The contract step for delivery values (app webhook secrets, commit-source
+# connections, execution payloads, trigger config credentials). Needs
+# writes=domain and faas_seal_domain_control_contracted (see there).
+faas_seal_domain_delivery_contracted: false
 
 # Operator-local file from `gregalectl seal-domain init --domain account`.
 # Control-plane hosts stage it: apid seals and opens account values with it,

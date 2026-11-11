@@ -24,6 +24,15 @@ func connectTestServer(t *testing.T, backend *httptest.Server, timeout time.Dura
 }
 
 func connectConfiguredTestServer(t *testing.T, backend *httptest.Server, opts Options, version string) (*mcp.ClientSession, context.Context) {
+	// Existing feature fixtures deliberately exercise the complete catalog.
+	// Default-catalog evaluations use connectSelectedTestServer directly.
+	if opts.Toolsets == nil {
+		opts.Toolsets = []string{ToolsetAll}
+	}
+	return connectSelectedTestServer(t, backend, opts, version)
+}
+
+func connectSelectedTestServer(t *testing.T, backend *httptest.Server, opts Options, version string) (*mcp.ClientSession, context.Context) {
 	t.Helper()
 	c := api.NewClient(backend.URL, testToken)
 	c.SetCompletionCache(nil)
@@ -54,6 +63,15 @@ func callTool(t *testing.T, ctx context.Context, cs *mcp.ClientSession, name str
 		t.Fatal(err)
 	}
 	if result.IsError != wantError {
+		if result.IsError {
+			raw, _ := json.Marshal(result.StructuredContent)
+			var detail struct {
+				Code    string
+				Message string
+			}
+			_ = json.Unmarshal(raw, &detail)
+			t.Fatalf("%s error=%v, want %v; code=%s message=%s", name, result.IsError, wantError, detail.Code, detail.Message)
+		}
 		t.Fatalf("%s error=%v, want %v; content=%v", name, result.IsError, wantError, result.Content)
 	}
 	data, err := json.Marshal(result.StructuredContent)
@@ -130,11 +148,11 @@ func TestManagementMCPJourney(t *testing.T) {
 			defer backend.Close()
 			cs, ctx := connectTestServer(t, backend, 0, version)
 			catalog, err := cs.ListTools(ctx, nil)
-			if err != nil || len(catalog.Tools) != 49 {
-				t.Fatalf("catalog=%+v error=%v", catalog, err)
+			if err != nil || len(catalog.Tools) != 79 {
+				t.Fatalf("catalog count=%d catalog=%+v error=%v", len(catalog.Tools), catalog, err)
 			}
 			for _, tool := range catalog.Tools {
-				if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint || tool.InputSchema == nil {
+				if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint || tool.InputSchema == nil || tool.OutputSchema == nil {
 					t.Errorf("tool lacks read-only annotation or schema: %s", tool.Name)
 				}
 			}
@@ -260,7 +278,6 @@ func TestManagementBoundsAndLogFailures(t *testing.T) {
 		metrics          bool
 	}{
 		{"large-result", `{"source":"` + strings.Repeat("x", maxResultBytes) + `"}`, "response_too_large", true},
-		{"large-logs", strings.Repeat("x", maxLogBytes+1), "response_too_large", false},
 		{"malformed-entry", "event: log\ndata: {bad}\n\n", "invalid_response", false},
 		{"stream-error", "event: error\ndata: {\"code\":\"logs_denied\",\"detail\":\"not permitted\"}\n\n", "logs_denied", false},
 		{"degraded", "event: degraded\ndata: {}\n\n", "logs_unavailable", false},
@@ -278,6 +295,31 @@ func TestManagementBoundsAndLogFailures(t *testing.T) {
 				t.Fatalf("result=%s", out)
 			}
 		})
+	}
+}
+
+// A busy app's snapshot is megabytes. get_logs used to buffer it under a
+// 1 MiB bound and fail with response_too_large; it now keeps the newest
+// entries.
+func TestManagementLogsKeepNewestFromLargeSnapshot(t *testing.T) {
+	var body strings.Builder
+	for i := 0; i < 20000; i++ {
+		data, _ := json.Marshal(api.LogEvent{Seq: int64(i + 1), Line: fmt.Sprintf("line %05d %s", i, strings.Repeat("x", 80))})
+		body.WriteString("event: log\ndata: " + string(data) + "\n\n")
+	}
+	if body.Len() <= 1<<20 {
+		t.Fatalf("fixture is %d bytes, want over the old 1 MiB bound", body.Len())
+	}
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, body.String()) }))
+	defer backend.Close()
+	cs, ctx := connectTestServer(t, backend, 0, "")
+	out := callTool(t, ctx, cs, "gregale_get_logs", map[string]any{"app": "alpha", "limit": 3}, false)
+	var items []api.LogEvent
+	if err := json.Unmarshal(out["items"], &items); err != nil {
+		t.Fatalf("result=%s: %v", out, err)
+	}
+	if len(items) != 3 || !strings.HasPrefix(items[2].Line, "line 19999") {
+		t.Fatalf("items = %+v, want the newest three", items)
 	}
 }
 

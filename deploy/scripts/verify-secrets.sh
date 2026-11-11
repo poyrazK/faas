@@ -123,6 +123,13 @@ for unit in faas-gatewayd-internal faas-gatewayd-public faas-imaged faas-githubd
   "
 done
 
+# 4b. gatewayd-internal, where it runs, signs edge challenges and traffic
+#     deadlines with the gateway fleet key instead (ADR-20261102191500).
+check "faas-gatewayd-internal loads FAAS_GATEWAY_FLEET_KEY_FILE where installed" bash -c '
+  ! systemctl cat faas-gatewayd-internal >/dev/null 2>&1 \
+    || systemctl show faas-gatewayd-internal -p Environment 2>/dev/null | grep -q "FAAS_GATEWAY_FLEET_KEY_FILE"
+'
+
 # 5. apid's unit file references LoadCredential (defence in depth).
 check "faas-apid.service uses LoadCredential=" bash -c '
   grep -q "^LoadCredential=faas_session_key:" /etc/systemd/system/faas-apid.service
@@ -217,6 +224,15 @@ elif [[ -f /etc/faas/sealed.env ]]; then
           || grep -qsE \"^[[:space:]]*${polar_product}_product_id[[:space:]]*=[[:space:]]+\\\"[^\\\"]+\\\"\" /etc/faas/apid.toml /etc/faas/meterd.toml 2>/dev/null
       "
     done
+    # A production deployment refuses Polar's sandbox: a sandbox checkout
+    # pays with a test card and still grants a paid plan. apid and meterd
+    # refuse it at boot too (billing/loader ErrPolarSandboxInProduction).
+    if grep -qsE "^Environment=FAAS_ENVIRONMENT=[Pp]roduction$" /etc/systemd/system/faas-apid.service.d/zz-faas-environment.conf; then
+      check "Polar sandbox is off in production" bash -c '
+        ! grep -qE "^FAAS_POLAR_SANDBOX=(1|true)$" /etc/faas/sealed.env \
+          && ! grep -qsE "^[[:space:]]*sandbox[[:space:]]*=[[:space:]]*true" /etc/faas/apid.toml /etc/faas/meterd.toml
+      '
+    fi
   elif [[ "${effective_billing_provider}" == "paddle" ]]; then
     check "sealed.env has FAAS_PADDLE_API_KEY" bash -c '
       grep -q "^FAAS_PADDLE_API_KEY=pdl_" /etc/faas/sealed.env

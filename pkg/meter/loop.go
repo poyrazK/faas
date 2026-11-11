@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"sync"
 	"time"
 
@@ -121,6 +120,10 @@ type Loop struct {
 	// snapshots recordFinancialPricing last confirmed stored. Only the sample
 	// goroutine touches it.
 	pricedTerms map[string]string
+
+	// freePeriods caches when a Free account's Free period began this month
+	// (freePeriodStart). Only the quota goroutine touches it.
+	freePeriods map[string]freePeriod
 }
 
 // NewLoop wires the loop. The interfaces are local to pkg/meter so the
@@ -310,6 +313,14 @@ func (l *Loop) Run(ctx context.Context) error {
 			"per_account_flag", l.quietPauseRelease != nil)
 	}
 	pusher := NewPusher(l.store, l.pusher, l.log, l.now, l.ops)
+	if source, err := ParseUsageSource(l.cfg.BillingUsageSource); err != nil {
+		// cmd/meterd refuses to start on an invalid value; a Loop built
+		// another way keeps billing usage_minutes.
+		l.log.Warn("meter: billing usage source stays usage_minutes", "err", err)
+	} else {
+		pusher.WithUsageSource(source)
+		l.log.Info("meter: billing usage source (ADR-20261107105126)", "source", source)
+	}
 	finalLag := newUsageFinalLagGauge(l.ops.Registry())
 	// One result slot per possible worker, including monitoring and delivery;
 	// a cancelled Run must not strand workers trying to report their exit.
@@ -553,9 +564,13 @@ func (l *Loop) runQuotaTicks(ctx context.Context) error {
 
 func (l *Loop) runQuotaTick(ctx context.Context) {
 	start := time.Now()
-	l.runQuotaOnce(ctx)
-	l.ops.Observe("quota", time.Since(start), nil)
-	l.recordTick("quota", start, nil)
+	// A failed tick is recorded as one (ADR-20261104211412): this loop is what
+	// stops Free accounts, applies the egress ceiling and records spend-cap
+	// holds, so a tick that skipped them must reach the quota op metric, the
+	// tick health and FaasMeterdQuotaFailing rather than look healthy.
+	err := l.runQuotaOnce(ctx)
+	l.ops.Observe("quota", time.Since(start), err)
+	l.recordTick("quota", start, err)
 }
 
 // RunQuotaOnce is the test seam for the per-account quota loop. It
@@ -565,8 +580,12 @@ func (l *Loop) runQuotaTick(ctx context.Context) {
 // callers must use Run, which schedules runQuotaTicks on the
 // configured QuotaInterval.
 func (l *Loop) RunQuotaOnce(ctx context.Context) {
-	l.runQuotaOnce(ctx)
+	_ = l.runQuotaOnce(ctx)
 }
+
+// RunQuotaTick is the test seam for one recorded quota tick: it runs the
+// sweep and records its result as the production ticker does.
+func (l *Loop) RunQuotaTick(ctx context.Context) { l.runQuotaTick(ctx) }
 
 // RunAlertsOnce is the test seam for the alert-evaluator loop. It
 // runs a single tick of the alert evaluator without spinning the
@@ -615,77 +634,126 @@ type AlertsEvaluator = alerts.Evaluator
 // Concurrency note: holds are recomputed from durable usage every tick, so
 // two meterd replicas converge on the same row; a hold written for a cap the
 // customer has since changed is ignored by schedd until the next tick.
-func (l *Loop) runQuotaOnce(ctx context.Context) {
+//
+// It returns an error when the sweep could not list the accounts, or when any
+// account's usage read, spend-cap hold or enforcement failed: the rest still
+// run, and the tick is recorded as failed (ADR-20261104211412).
+func (l *Loop) runQuotaOnce(ctx context.Context) error {
 	accounts, err := state.ListBillingResourceAccounts(ctx, l.store)
 	if err != nil {
 		l.log.Warn("meter: quota list_accounts", "err", err)
-		return
+		return fmt.Errorf("meter: quota list accounts: %w", err)
+	}
+	var failures int
+	var firstErr error
+	failed := func(err error) {
+		failures++
+		if firstErr == nil {
+			firstErr = err
+		}
 	}
 	capCache, err := l.store.LoadAllOverageCapCents(ctx)
 	if err != nil {
 		// Fail-open: a transient read failure must not skip the
 		// quota ladder. Log once and proceed with no caps.
 		l.log.Warn("meter: overage cap load failed", "err", err)
+		failed(fmt.Errorf("load spend caps: %w", err))
 		capCache = map[string]int64{}
 	}
 	now := l.now()
+	l.syncRealtimeEgress(ctx, now)
+	elections := l.loadEgressOverageElections(ctx, accounts)
 	for _, acct := range accounts {
 		usages, err := MonthUsageForAccount(ctx, l.store, acct.ID, now)
 		if err != nil {
 			l.log.Warn("meter: quota usage_by_month", "account", acct.ID, "err", err)
+			failed(fmt.Errorf("account %s usage: %w", acct.ID, err))
 			continue
 		}
 		if capCents, ok := capCache[acct.ID]; ok && capCents >= 0 {
-			l.recordSpendCapHold(ctx, acct, now, capCents)
+			if err := l.recordSpendCapHold(ctx, acct, now, capCents); err != nil {
+				failed(fmt.Errorf("account %s spend cap hold: %w", acct.ID, err))
+			}
 		}
 		used := MonthlyUsageGB(usages)
-		if _, err := (QuotaParams{Store: l.store, Notif: l.notif, Parker: l.parker, Mailer: l.mailer, Log: l.log, WarningRequested: l.quotaWarningRequested, WarningCommands: l.quotaWarningCommands}).Enforce(ctx, acct, used, now); err != nil {
+		if acct.Plan != api.PlanFree {
+			delete(l.freePeriods, acct.ID)
+		} else if CheckQuota(acct.Plan, used).Action != "" {
+			used = l.freePeriodUsageGB(ctx, acct, now, used)
+		}
+		params := QuotaParams{Store: l.store, Notif: l.notif, Parker: l.parker, Mailer: l.mailer, Log: l.log, WarningRequested: l.quotaWarningRequested, WarningCommands: l.quotaWarningCommands,
+			EgressBytes: MonthlyEgressBytes(usages), EgressCeilingBytes: EgressCeilingBytes(l.pusher, acct.Plan, elections[acct.ID], now)}
+		if _, err := params.Enforce(ctx, acct, used, now); err != nil {
 			// EnforceQuota already logged + skipped parked-instance failures;
 			// only status/structural errors reach here.
 			if errors.Is(err, state.ErrNotFound) {
 				continue
 			}
 			l.log.Warn("meter: enforce_quota", "account", acct.ID, "err", err)
+			failed(fmt.Errorf("account %s enforce: %w", acct.ID, err))
 		}
+	}
+	if failures > 0 {
+		return fmt.Errorf("meter: quota: %d failure(s), first: %w", failures, firstErr)
+	}
+	return nil
+}
+
+// realtimeEgressSyncer is the store side of syncRealtimeEgress.
+type realtimeEgressSyncer interface {
+	SyncRealtimeEgressUsage(ctx context.Context, now time.Time) (int64, error)
+}
+
+// syncRealtimeEgress meters the realtime bytes delivered since the last tick
+// as each app's egress before the tick reads usage (ADR-20261104132753), so
+// realtime fan-out reaches the egress ceiling and overage like an instance's
+// bytes. A failure leaves them for the next tick.
+func (l *Loop) syncRealtimeEgress(ctx context.Context, now time.Time) {
+	syncer, ok := l.store.(realtimeEgressSyncer)
+	if !ok {
+		return
+	}
+	if _, err := syncer.SyncRealtimeEgressUsage(ctx, now); err != nil {
+		l.log.Warn("meter: realtime egress sync failed", "err", err)
 	}
 }
 
 // recordSpendCapHold compares the account's combined billable overage this
 // UTC month with its cap and records or clears the hold schedd enforces
 // (ADR-20261026120843). A read failure keeps the previous hold.
-func (l *Loop) recordSpendCapHold(ctx context.Context, acct state.Account, now time.Time, capCents int64) {
+func (l *Loop) recordSpendCapHold(ctx context.Context, acct state.Account, now time.Time, capCents int64) error {
 	monthCents, err := l.store.CurrentMonthOverageCents(ctx, acct.ID)
 	if err != nil {
 		l.log.Warn("meter: overage read failed", "account", acct.ID, "err", err)
-		return
+		return err
 	}
 	meterCents, err := liveMeterOverageCents(ctx, l.store, l.pusher, acct, now, state.BillingMeterEgress)
 	if err != nil {
 		l.log.Warn("meter: secondary overage read failed", "account", acct.ID, "err", err)
-		return
+		return err
 	}
 	// apid bills object storage in daily steps under the same cap
 	// (ADR-20261027093220); a part cent counts as reached. A pending step's
 	// reservation is an upper bound, not a charge, so it never parks.
-	objectStorage, _, err := liveObjectStorageCharge(ctx, l.store, acct.ID, now)
+	objectStorageCents, err := SpendCapObjectStorageCents(ctx, l.store, acct.ID, now)
 	if err != nil {
 		l.log.Warn("meter: object storage charge read failed", "account", acct.ID, "err", err)
-		return
+		return err
 	}
-	objectStorageCents := objectStorage/api.MillicentsPerCent + min(objectStorage%api.MillicentsPerCent, 1)
 	observed := saturatedAdd(saturatedAdd(monthCents, meterCents), objectStorageCents)
 	holds, hasHolds := l.store.(state.SpendCapHoldStore)
 	if observed < capCents {
 		if hasHolds {
 			if err := holds.ClearSpendCapHold(ctx, acct.ID); err != nil {
 				l.log.Warn("meter: clear spend cap hold failed", "account", acct.ID, "err", err)
+				return err
 			}
 		}
-		return
+		return nil
 	}
 	l.ops.BillingCapExceededTotal(string(acct.Plan))
 	if !hasHolds {
-		return
+		return nil
 	}
 	at := now.UTC()
 	hold := state.SpendCapHold{AccountID: acct.ID, Month: time.Date(at.Year(), at.Month(), 1, 0, 0, 0, 0, time.UTC),
@@ -697,11 +765,12 @@ func (l *Loop) recordSpendCapHold(ctx context.Context, acct state.Account, now t
 	engaged := readErr == nil && (!held || !prior.Month.Equal(hold.Month) || prior.CapCents != capCents)
 	if err := holds.PutSpendCapHold(ctx, hold); err != nil {
 		l.log.Warn("meter: record spend cap hold failed", "account", acct.ID, "err", err)
-		return
+		return err
 	}
 	if engaged {
 		l.sendSpendCapMail(ctx, acct, hold, now)
 	}
+	return nil
 }
 
 func (l *Loop) sendSpendCapMail(ctx context.Context, acct state.Account, hold state.SpendCapHold, now time.Time) {
@@ -720,6 +789,12 @@ func (l *Loop) sendSpendCapMail(ctx context.Context, acct state.Account, hold st
 	}
 }
 
+// liveMeterOverageCents is the month's live overage on meter for the spend
+// cap. Egress is what the month is billed by the egress hour rules
+// (monthLiveEgressBilled): bytes sent in hours the overage election does not
+// cover, or on Free, are not billed (ADR-20261103131742 amendment 2,
+// ADR-20261104204500). A store that cannot read usage by hour keeps the
+// older bound: the elected overage above the allowance.
 func liveMeterOverageCents(ctx context.Context, store state.Store, provider billing.Provider, acct state.Account, now time.Time, meter state.BillingMeter) (int64, error) {
 	policyProvider, ok := provider.(billing.MeterUsagePolicyProvider)
 	if !ok {
@@ -729,31 +804,57 @@ func liveMeterOverageCents(ctx context.Context, store state.Store, provider bill
 	if !configured || policy.Mode != billing.MeterDeliveryLive {
 		return 0, nil
 	}
+	if meter == state.BillingMeterEgress {
+		// The egress the month is billed by the hour rules, the figure the
+		// pusher's cap clamps reserve.
+		billed, err := monthLiveEgressBilled(ctx, usageReader{store: store}, provider, acct, now, now)
+		if !errors.Is(err, errNoHourlyUsage) {
+			if err != nil {
+				return 0, err
+			}
+			return billing.MeterUsageCents(policy, billed), nil
+		}
+	}
 	monthStart := time.Date(now.UTC().Year(), now.UTC().Month(), 1, 0, 0, 0, 0, time.UTC)
 	start := monthStart
 	if policy.EffectiveFrom.After(start) {
 		start = policy.EffectiveFrom
 	}
+	if meter != state.BillingMeterEgress {
+		return 0, nil
+	}
+	// Only egress in hours the election covers is billed (ADR-20261104204500).
+	election, err := billing.EgressOverageElectionFor(ctx, store, acct.ID)
+	if err != nil || election.EnabledAt == nil {
+		return 0, err
+	}
 	usages, err := store.UsageByHour(ctx, acct.ID, start, now.UTC())
 	if err != nil {
 		return 0, err
 	}
-	var total int64
-	for _, usage := range usages {
-		var quantity int64
-		switch meter {
-		case state.BillingMeterEgress:
-			quantity = usage.NetTxBytes
-		default:
-			return 0, nil
-		}
-		if quantity > math.MaxInt64-total {
-			total = math.MaxInt64
-			break
-		}
-		total += quantity
+	return billing.MeterUsageCents(policy, billing.ElectedEgressOverage(usages, policy.IncludedQuantity, election)), nil
+}
+
+// loadEgressOverageElections reads the egress overage elections of the
+// quota tick's subjects in one query. A read failure keeps every ceiling in
+// place for this tick: failing closed stops apps that elected, which a later
+// tick undoes, while failing open would let unelected egress run past the
+// allowance.
+func (l *Loop) loadEgressOverageElections(ctx context.Context, accounts []state.Account) map[string]state.EgressOverageElection {
+	reader, ok := l.store.(state.EgressOverageStore)
+	if !ok {
+		return nil
 	}
-	return billing.MeterUsageCents(policy, max(total-policy.IncludedQuantity, 0)), nil
+	ids := make([]string, 0, len(accounts))
+	for _, acct := range accounts {
+		ids = append(ids, acct.ID)
+	}
+	elections, err := reader.EgressOverageElections(ctx, ids)
+	if err != nil {
+		l.log.Warn("meter: egress overage elections load failed", "err", err)
+		return nil
+	}
+	return elections
 }
 
 // emitFloorApplied (ADR-060, issue #515) groups the sampler's
@@ -844,13 +945,6 @@ func (l *Loop) emitMeteredMB(ctx context.Context, rows []RolledRow) {
 		return
 	}
 	for _, r := range rows {
-		// Mirror rows would be skipped upstream; defensive
-		// check matches IsMeteredSkippableMode so a future
-		// refactor that pulls the filter out of the sampler
-		// can't accidentally emit a mirror row here.
-		if state.IsMeteredSkippableMode(r.Mode) {
-			continue
-		}
 		// A caught-up row (H5-55) may repeat a row an earlier, failed
 		// tick already wrote and counted.
 		if r.CatchUp {

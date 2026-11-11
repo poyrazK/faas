@@ -82,13 +82,18 @@ func workloadDiff(
 	// app the operator explicitly asked to leave alone.
 	if len(exclude) > 0 {
 		filtered := make([]state.App, 0, len(existing))
+		excludedNames := make(map[string]bool)
 		for _, a := range existing {
-			if exclude[strings.ToLower(a.WorkloadName)] {
+			if AppMatchesSelectors(exclude, a) {
+				excludedNames[strings.ToLower(a.WorkloadName)] = true
 				continue
 			}
 			filtered = append(filtered, a)
 		}
 		existing = filtered
+		scan.Workloads = slices.DeleteFunc(slices.Clone(scan.Workloads), func(w reposcan.Workload) bool {
+			return WorkloadMatchesSelectors(exclude, w) || excludedNames[strings.ToLower(w.Name)]
+		})
 	}
 	// workload_name is the durable project identity. RootDir is mutable build
 	// metadata, so moving a service directory must produce one update instead
@@ -146,6 +151,11 @@ func workloadDiff(
 			continue
 		}
 		if _, ok := renamed[a.WorkloadName]; ok {
+			continue
+		}
+		// A function the repository no longer declares keeps its app; deleting
+		// it stays explicit (ADR-20261108160000 §2).
+		if a.Type == state.AppTypeFunction {
 			continue
 		}
 		removes = append(removes, Action{
@@ -313,6 +323,10 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if !slices.Equal(a.Manifest.ProjectSecretFiles, imageManifest.ProjectSecretFiles) {
 		changed = append(changed, "secret_files")
 	}
+	if !slices.Equal(a.Manifest.ProjectReleaseCommand, imageManifest.ProjectReleaseCommand) ||
+		a.Manifest.ProjectReleaseCommandShell != imageManifest.ProjectReleaseCommandShell {
+		changed = append(changed, "release_command")
+	}
 	changed = append(changed, composeResourcesChanged(a, w)...)
 	if !maps.Equal(a.Manifest.ProjectDependencyConditions, w.DependsOnConditions) {
 		changed = append(changed, "dependency_conditions")
@@ -442,6 +456,7 @@ func DeriveScanSource(workloads []reposcan.Workload) state.ProjectScanSource {
 		{"render", state.ProjectScanSourceRender},
 		{"fly", state.ProjectScanSourceFly},
 		{"serverless", state.ProjectScanSourceServerless},
+		{"functions", state.ProjectScanSourceFunctions},
 	}
 	for _, candidate := range priority {
 		for _, workload := range workloads {
@@ -513,7 +528,7 @@ func tierRank(s state.ProjectScanSource) int {
 		return 8
 	case state.ProjectScanSourceFly:
 		return 8
-	case state.ProjectScanSourceServerless:
+	case state.ProjectScanSourceServerless, state.ProjectScanSourceFunctions:
 		return 8
 	case state.ProjectScanSourceProcfile:
 		return 6

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -124,7 +125,7 @@ func (m *MemStore) createAppTaskLocked(resolved CreateAppTaskParams) (AppTask, e
 		}
 		m.appTaskAttach[task.ID] = AppTaskAttach{
 			TaskID: task.ID, TTY: resolved.Interactive.TTY,
-			TokenSHA256: append([]byte(nil), resolved.Interactive.TokenSHA256...), CreatedAt: now,
+			TokenSHA256: familyStoredCredential(credhash.FamilyAttach, credTagInteractiveAttach, resolved.Interactive.TokenSHA256), CreatedAt: now,
 		}
 	}
 	return cloneAppTask(task), nil
@@ -744,7 +745,14 @@ func (m *MemStore) ListAppTasks(_ context.Context, accountID, appID string, limi
 	return rows[offset:end], nil
 }
 
-func (m *MemStore) ClaimNextAppTask(_ context.Context, owner string, claimedAt time.Time, leaseDuration time.Duration) (AppTask, error) {
+func (m *MemStore) ClaimNextAppTask(ctx context.Context, owner string, claimedAt time.Time, leaseDuration time.Duration) (AppTask, error) {
+	return m.ClaimNextAppTaskForNode(ctx, owner, "", claimedAt, leaseDuration)
+}
+
+// ClaimNextAppTaskForNode is ClaimNextAppTask restricted to apps a schedd on
+// nodeID may place: apps it owns and unowned apps. An empty nodeID claims
+// any app.
+func (m *MemStore) ClaimNextAppTaskForNode(_ context.Context, owner, nodeID string, claimedAt time.Time, leaseDuration time.Duration) (AppTask, error) {
 	if owner == "" || leaseDuration <= 0 || claimedAt.IsZero() {
 		return AppTask{}, ErrAppTaskInvalid
 	}
@@ -762,6 +770,9 @@ func (m *MemStore) ClaimNextAppTask(_ context.Context, owner string, claimedAt t
 			!m.appTaskExclusiveCurrentLocked(candidate, claimedAt) {
 			continue
 		}
+		if app, ok := m.apps[candidate.AppID]; nodeID != "" && ok && app.NodeID != "" && app.NodeID != nodeID {
+			continue
+		}
 		if workpolicy.DeadlineMissed(candidate.StartDeadlineAt, claimedAt) && !m.appTaskOccurrenceStartedLocked(candidate) {
 			candidate.Status = AppTaskCancelled
 			candidate.FinishedAt = appTaskTimePtr(claimedAt)
@@ -771,7 +782,7 @@ func (m *MemStore) ClaimNextAppTask(_ context.Context, owner string, claimedAt t
 			m.syncAppTaskOccurrenceLocked(candidate, claimedAt)
 			continue
 		}
-		if !m.migrationTaskAllowedLocked(candidate) {
+		if !m.migrationTaskAllowedLocked(candidate) || !m.releaseTaskTurnLocked(candidate) {
 			continue
 		}
 		priority := candidate.CreatedAt
@@ -818,6 +829,11 @@ func (m *MemStore) MarkAppTaskRunning(_ context.Context, taskID, leaseToken stri
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	task, ok := m.appTasks[taskID]
+	if ok && task.Kind == AppTaskKindRelease {
+		if admitted := m.clock().UTC(); admitted.After(startedAt) {
+			startedAt = admitted
+		}
+	}
 	if !ok || task.Status != AppTaskRestoring || task.LeaseToken == nil ||
 		m.financialPreviewCommandHeldLocked(task, startedAt) ||
 		*task.LeaseToken != leaseToken || task.CancelRequested != nil || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(startedAt) ||

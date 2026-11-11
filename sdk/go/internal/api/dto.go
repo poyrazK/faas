@@ -938,6 +938,9 @@ type UpdateCronRequest struct {
 	SkipIfRunning       *bool           `json:"skip_if_running,omitempty"`
 	RetryMax            *int            `json:"retry_max,omitempty"`
 	RetryBackoffSeconds *int            `json:"retry_backoff_seconds,omitempty"`
+	// ClearSchedulePolicy and ClearFailureRules remove them from the cron.
+	ClearSchedulePolicy bool `json:"clear_schedule_policy,omitempty"`
+	ClearFailureRules   bool `json:"clear_failure_rules,omitempty"`
 }
 
 // SchedulePolicy controls overlap and missed-run handling for recurring work.
@@ -1251,14 +1254,17 @@ type ExecutionUsageSummaryResponse struct {
 // without having to sum rows.
 //
 // Overage math: anything above IncludedGBHours is billable at the
-// overage rate in the financial model (€0.01/GB-h). Cents are integer.
+// overage rate in the financial model ($0.05/GB-h). Cents are integer.
 type UsageSummaryResponse struct {
 	Month           string                         `json:"month"`             // YYYY-MM
 	UsedGBHours     float64                        `json:"used_gb_hours"`     // Σ mb_seconds / 3_600_000
 	IncludedGBHours int64                          `json:"included_gb_hours"` // from plan limits
 	OverageGBHours  float64                        `json:"overage_gb_hours"`  // max(0, used - included)
-	OverageCents    int64                          `json:"overage_cents"`     // overage * 1.0 (€0.01/GB-h in cents)
+	OverageCents    int64                          `json:"overage_cents"`     // overage priced at $0.05/GB-h, in cents
 	Executions      *ExecutionUsageSummaryResponse `json:"executions,omitempty"`
+	// QuietPausedGBHours is quiet-paused time that was not billed; not part
+	// of UsedGBHours. Zero until unbilled quiet pause reaches the account.
+	QuietPausedGBHours float64 `json:"quiet_paused_gb_hours,omitempty"`
 }
 
 // AccountUsageResponse is the account-level usage projection. Optional

@@ -19,6 +19,24 @@ a missing or stale PR preview, or a missed repository rename.
   failed although the newest succeeded, typically a githubd restart.
 - `FaasGithubAppDeliveryLogUnreadable`: githubd has not read the delivery log
   for an hour, so the two alerts above cannot fire.
+- `FaasGithubAppConfigDrift`: the App lacks a webhook event or permission that
+  [the GitHub App configuration](../ops/github-app.md) requires. githubd reads
+  `GET /app` with each delivery-log poll; the `kind` and `name` labels say
+  which. A missing event means GitHub never sends it (a missing `repository`
+  event stops rename handling until the hourly installation sync; a missing
+  `issues` event stops issue-tracker callbacks). A missing permission makes
+  GitHub refuse githubd's writes.
+
+## Recover from FaasGithubAppConfigDrift
+
+1. In the App's settings on GitHub, subscribe the named event under
+   **Permissions & events → Subscribe to events**, or grant the named
+   permission at the access the configuration page lists.
+2. A new permission waits for each installation's owner to accept it. Until
+   then those installations keep the old set; organization connects that need
+   Members (read) answer `github_permission_pending`.
+3. The alert clears on the next poll after `githubd_github_app_config_missing`
+   reads 0 for every series.
 
 ## Verify
 

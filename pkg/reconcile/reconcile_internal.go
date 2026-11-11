@@ -104,6 +104,10 @@ func (s *Service) reconcile(
 		excludeSet[strings.ToLower(strings.TrimSpace(name))] = true
 	}
 	actions := workloadDiff(scan, project, existing, excludeSet)
+	actions, err = preserveEnvironmentOnlyActions(ctx, s.Store, project, actions)
+	if err != nil {
+		return out, err
+	}
 
 	// 5. Apply. applyActions may emit a quota_blocked alert and
 	// return out with no error; it returns a real error only on
@@ -117,6 +121,10 @@ func (s *Service) reconcile(
 		return out, err
 	}
 	out.Added = applied.Added
+	s.labelAddedApps(ctx, applied.Added, scan.Workloads)
+	if err := s.syncAppProtocols(ctx, project, scan.Workloads); err != nil {
+		return out, err
+	}
 	out.Changed = applied.Changed
 	out.Removed = applied.Removed
 	out.Alerts = append(out.Alerts, applied.Alerts...)

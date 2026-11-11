@@ -9,10 +9,12 @@ package main
 //	gatewayd-internal socket (the compute pool only while it is unhealthy)
 //
 // Platform hosts and custom domains stay on the control plane. Requests that
-// need control-plane credentials or sockets — public object-storage reads,
-// uploads and the customer OTLP endpoint — are forwarded to the control
-// plane's gatewayd-public, so a compute node holds no storage credentials and
-// no apid sockets. The mode is off by default.
+// need control-plane credentials or sockets — object uploads and the
+// customer OTLP endpoint — are forwarded to the control plane's
+// gatewayd-public, so a compute node holds no apid sockets. Public bucket
+// reads are forwarded too, unless the node holds the S3 gateway's provider
+// credential (ADR-20261031122757 step 7): then the edge serves them itself,
+// within its part of the node's port share. The mode is off by default.
 
 import (
 	"context"
@@ -25,6 +27,7 @@ import (
 	"net/netip"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -33,6 +36,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
+	"github.com/onebox-faas/faas/pkg/clientlimit"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
@@ -103,7 +107,27 @@ type edgeMetrics struct {
 	// placement counts how each dial attempt used placement routing
 	// (ADR-20261031105055).
 	placement *prometheus.CounterVec
+	// tlsHandshakeFailures counts connections the public TLS listener
+	// refused during the handshake (ADR-20261102081618).
+	tlsHandshakeFailures prometheus.Counter
+	// refused counts connections and requests the per-client-address
+	// limits turned away, by reason (ADR-20261103163954 §4).
+	refused *prometheus.CounterVec
+	// overloadLevel and overloadSignal export the overload level and the
+	// signals it follows (ADR-20261110123517 §8).
+	overloadLevel  prometheus.Gauge
+	overloadSignal *prometheus.GaugeVec
+	// hopFallbacks counts requests for the binary hop that went over
+	// HTTP/1.1 instead, by reason (ADR-20261110081523).
+	hopFallbacks *prometheus.CounterVec
 }
+
+// Label values of gatewayd_public_overload_signal.
+const (
+	overloadSignalSchedDelay   = "sched_delay_p99_seconds"
+	overloadSignalNodePressure = "node_cpu_pressure"
+	overloadSignalGatewayShare = "gateway_cpu_share"
+)
 
 func newEdgeMetrics() *edgeMetrics {
 	m := &edgeMetrics{
@@ -132,6 +156,38 @@ func newEdgeMetrics() *edgeMetrics {
 			Name: "gatewayd_public_edge_placement_total",
 			Help: "Compute-edge dial attempts by placement result: remote (routed to the node that last served the host), self (that node is this one), miss (no node known), unusable (the node is not in the inventory, unready or excluded), failed (its dial failed) (ADR-20261031105055).",
 		}, []string{"result"}),
+		tlsHandshakeFailures: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gatewayd_public_edge_tls_handshake_failures_total",
+			Help: "Connections a compute edge's public TLS listener refused during the handshake, such as a peer without the zone's Authenticated Origin Pulls certificate (ADR-20261102081618).",
+		}),
+		refused: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gatewayd_public_edge_refused_total",
+			Help: "Connections and requests a compute edge's client limits turned away, by reason: open_connections, connection_rate and handshakes (reset before TLS), request_rate and host_request_rate (answered 429), body_rate (a body slower than the minimum rate, its read failed) and forward_in_flight (answered 503 at the cap on requests forwarded to the control plane) (ADR-20261103163954 §4); handshakes_per_address and forward_in_flight_per_address (one address's share, ADR-20261107180000); and, while the edge sheds load, overload_connection and overload_cooloff (reset before TLS, or a cut-off address's request) and overload_unknown_host, overload_address and overload_request (answered 503 edge_overloaded) (ADR-20261110123517).",
+		}, []string{"reason"}),
+		overloadLevel: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "gatewayd_public_overload_level",
+			Help: "A compute edge's overload level, from 0 to 1, in observe and on modes; the edge sheds by it only when FAAS_EDGE_OVERLOAD=on (ADR-20261110123517).",
+		}),
+		overloadSignal: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gatewayd_public_overload_signal",
+			Help: "The signals a compute edge's overload level follows, each over the last second: sched_delay_p99_seconds (the edge's goroutine scheduling delay), node_cpu_pressure (share of time any task waited for a CPU) and gateway_cpu_share (the gateway daemons' share of the node's CPUs) (ADR-20261110123517).",
+		}, []string{"signal"}),
+		hopFallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gatewayd_public_internal_hop_fallback_total",
+			Help: "Requests a compute edge meant for its own node's gatewayd-internal in binary HTTP that went over HTTP/1.1 instead, by reason: no_socket (the hop socket is missing or nothing listens on it, as beside a gatewayd-internal from before the hop or while it restarts) and dial_error (ADR-20261110081523).",
+		}, []string{"reason"}),
+	}
+	for _, reason := range clientlimit.Reasons {
+		m.refused.WithLabelValues(reason)
+	}
+	for _, reason := range clientlimit.OverloadReasons {
+		m.refused.WithLabelValues(reason)
+	}
+	for _, signal := range []string{overloadSignalSchedDelay, overloadSignalNodePressure, overloadSignalGatewayShare} {
+		m.overloadSignal.WithLabelValues(signal)
+	}
+	for _, reason := range gateway.HopFallbackReasons {
+		m.hopFallbacks.WithLabelValues(reason)
 	}
 	for _, result := range placementResults {
 		m.placement.WithLabelValues(result)
@@ -141,8 +197,21 @@ func newEdgeMetrics() *edgeMetrics {
 			m.wakeFailover.WithLabelValues(reason, outcome)
 		}
 	}
-	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover, m.placement)
+	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover, m.placement, m.tlsHandshakeFailures, m.refused, m.overloadLevel, m.overloadSignal, m.hopFallbacks)
 	return m
+}
+
+// observeOverload exports one tick of the overload controller.
+func (m *edgeMetrics) observeOverload(s clientlimit.OverloadSignals, level float64) {
+	m.overloadLevel.Set(level)
+	m.overloadSignal.WithLabelValues(overloadSignalSchedDelay).Set(s.SchedDelayP99.Seconds())
+	m.overloadSignal.WithLabelValues(overloadSignalNodePressure).Set(s.NodeCPUPressure)
+	m.overloadSignal.WithLabelValues(overloadSignalGatewayShare).Set(s.GatewayCPUShare)
+}
+
+// observeHopFallback counts one binary hop request sent over HTTP/1.1.
+func (m *edgeMetrics) observeHopFallback(reason string) {
+	m.hopFallbacks.WithLabelValues(reason).Inc()
 }
 
 // observeWakeFailover is the gateway.WakeFailover observer.
@@ -177,6 +246,9 @@ type localFirstDialer struct {
 	// it (ADR-20261031105055); nil keeps every request local first.
 	placement     *edgePlacement
 	placementPool *computeGatewayPool
+	// hop, when set, dials this node's gatewayd-internal's binary HTTP
+	// socket, offered with the local upstream (ADR-20261110081523).
+	hop gateway.InternalDialer
 }
 
 // nodeInventory reports a compute node's registry state: whether it is
@@ -205,6 +277,18 @@ func (d *localFirstDialer) withPlacement(placement *edgePlacement, pool *compute
 	return d
 }
 
+// withBinaryHop offers the local upstream's binary HTTP socket, dialled
+// with hop (ADR-20261110081523).
+func (d *localFirstDialer) withBinaryHop(hop gateway.InternalDialer) *localFirstDialer {
+	d.hop = hop
+	return d
+}
+
+// dialHop opens a connection to this node's binary HTTP socket.
+func (d *localFirstDialer) dialHop(ctx context.Context) (net.Conn, error) {
+	return d.hop.DialContext(ctx, "")
+}
+
 // placementRoute returns the ready node a request's host was last served
 // from, when that is another node this attempt may use.
 func (d *localFirstDialer) placementRoute(ctx context.Context, rec *gateway.DialRecord) (computeGatewayEndpoint, gateway.PreferredNode, bool) {
@@ -213,7 +297,10 @@ func (d *localFirstDialer) placementRoute(ctx context.Context, rec *gateway.Dial
 	}
 	pref, ok := gateway.PreferredNodeFrom(ctx)
 	if !ok {
-		d.metrics.placement.WithLabelValues(placementMiss).Inc()
+		// Health probes dial too; only a proxied request is a miss.
+		if gateway.PlacementAsked(ctx) {
+			d.metrics.placement.WithLabelValues(placementMiss).Inc()
+		}
 		return computeGatewayEndpoint{}, pref, false
 	}
 	endpoint, ok := d.placementPool.peekEndpoint(ctx, pref.NodeID)
@@ -228,12 +315,13 @@ func (d *localFirstDialer) placementRoute(ctx context.Context, rec *gateway.Dial
 	return endpoint, pref, true
 }
 
-// dialPlacement dials the node placement named; a failure forgets the host,
-// so its next request routes locally until a response names a node again.
+// dialPlacement dials the node placement named; a failure forgets that node
+// for the host, so the host's next request goes to another of its nodes, or
+// locally until a response names a node again.
 func (d *localFirstDialer) dialPlacement(ctx context.Context, endpoint computeGatewayEndpoint, pref gateway.PreferredNode) (net.Conn, error) {
 	conn, err := d.placementPool.dial(ctx, endpoint)
 	if err != nil && ctx.Err() == nil {
-		d.placement.Forget(pref.Host)
+		d.placement.Forget(pref.Host, pref.NodeID)
 		d.metrics.placement.WithLabelValues(placementFailed).Inc()
 	}
 	return conn, err
@@ -303,7 +391,11 @@ func (d *localFirstDialer) PickUpstream(ctx context.Context, rec *gateway.DialRe
 	localExcluded := d.nodeName != "" && rec.Excluded(d.nodeName)
 	viaLocal := d.healthy.Load() && !localExcluded
 	if viaLocal && !slices.Contains(failed, localUpstreamKey) {
-		return gateway.Upstream{Key: localUpstreamKey, Node: d.nodeName, Dial: d.dialLocal}, nil
+		local := gateway.Upstream{Key: localUpstreamKey, Node: d.nodeName, Dial: d.dialLocal}
+		if d.hop != nil {
+			local.Hop = d.dialHop
+		}
+		return local, nil
 	}
 	pool, ok := d.fallback.(gateway.UpstreamPicker)
 	if !ok {
@@ -495,14 +587,19 @@ func newControlPlaneForwarder(target string, trusted []netip.Prefix, log *slog.L
 }
 
 // computeEdgeRoot puts the credential-bound object-storage routes in front of
-// next: upload routes and their receipts, then public bucket reads, are
-// forwarded; everything else goes to next.
-func computeEdgeRoot(next, forward http.Handler, store objectstorage.PublicReadStore, domains hostidentity.Domains, log *slog.Logger) (http.Handler, error) {
-	publicRead, err := objectstorage.NewPublicReadForwarder(objectstorage.PublicReadForwardConfig{
-		Store: store, AppsDomain: domains.Apps, Forward: forward, Next: next, Log: log,
-	})
-	if err != nil {
-		return nil, err
+// next: upload routes and their receipts are forwarded; public bucket reads
+// go to localReads when the edge serves them itself and are forwarded
+// otherwise; everything else goes to next.
+func computeEdgeRoot(next, forward, localReads http.Handler, store objectstorage.PublicReadStore, hostLookups *objectstorage.HostLookupBudget, tenantSurfaces func() bool, domains hostidentity.Domains, log *slog.Logger) (http.Handler, error) {
+	publicRead := localReads
+	if publicRead == nil {
+		var err error
+		publicRead, err = objectstorage.NewPublicReadForwarder(objectstorage.PublicReadForwardConfig{
+			Store: store, HostLookups: hostLookups, TenantSurfacesEnabled: tenantSurfaces, AppsDomain: domains.Apps, Forward: forward, Next: next, Log: log,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if objectstorage.IsUploadPath(r.URL.Path) {
@@ -511,6 +608,32 @@ func computeEdgeRoot(next, forward http.Handler, store objectstorage.PublicReadS
 		}
 		publicRead.ServeHTTP(w, r)
 	}), nil
+}
+
+// publicReadBudgetEnv is the compute edge's part of its node's gateway port
+// share for public bucket reads, in bytes per second. s3_gateway_compute_service
+// sets it beside the provider registry and the gateway credential when the
+// manifest's object_storage.compute_public_reads is on.
+const publicReadBudgetEnv = "FAAS_PUBLIC_OBJECT_READ_MAX_BYTES_PER_SECOND"
+
+// computePublicReadBudget checks what a compute edge must hold to serve
+// public reads itself (ADR-20261031122757 §4 and step 7): the gateway
+// credential for every backend, never the bucket-admin one, and its part of
+// the node's port share (api.ObjectGatewayPublicReadSharePercent), which it
+// returns.
+func computePublicReadBudget(getenv func(string) string, registry *objectstorage.Registry) (int64, error) {
+	for _, b := range registry.Backends() {
+		if !b.GatewayCredential {
+			return 0, fmt.Errorf("compute edge public reads: backend %s names no gateway credential; a compute node never holds the bucket-admin one", b.ID)
+		}
+	}
+	raw := strings.TrimSpace(getenv(publicReadBudgetEnv))
+	budget, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || budget < api.MinObjectGatewayTransferBytesPerSecond || budget > api.MaxObjectGatewayTransferBytesPerSecond {
+		return 0, fmt.Errorf("compute edge public reads: %s must be the edge's part of the node's port share, %d–%d bytes/s, got %q",
+			publicReadBudgetEnv, api.MinObjectGatewayTransferBytesPerSecond, api.MaxObjectGatewayTransferBytesPerSecond, raw)
+	}
+	return budget, nil
 }
 
 // requireComputeEdgeConfig checks what a compute edge cannot run without.

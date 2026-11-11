@@ -656,7 +656,7 @@ func TestCmdEdgeRulesTraceReportsThrottlePolicyAndPlanCeiling(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.AccountResponse{Plan: string(api.PlanHobby)})
 		case "/v1/apps/demo":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{EffectiveLimits: api.AppEffectiveLimits{
-				AppRequestRateRPS: 8, AppRequestBurst: 32, AccountRequestRateRPM: 1200,
+				AppRequestRateRPS: 8, AppRequestBurst: 32, AccountRequestRateRPM: api.MustLimitsFor(api.PlanHobby).RateLimitPerAccountRPM,
 			}})
 		case "/v1/apps/demo/edge-rules":
 			_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{{
@@ -687,7 +687,7 @@ func TestCmdEdgeRulesTraceReportsThrottlePolicyAndPlanCeiling(t *testing.T) {
 		t.Fatalf("throttle trace = %#v", result.Simulation)
 	}
 	policy := result.Simulation.Steps[0].ThrottlePolicy
-	if policy == nil || policy.RequestsPerSecond != 2.5 || policy.Burst != 12 || policy.KeyBy != api.ThrottleKeyByCountry || policy.PlanMaxRPS != api.MustLimitsFor(api.PlanHobby).RateLimitRPS || policy.PlanCeilingStatus != "within_plan" || policy.AppRequestRPS != 8 || policy.AppRequestBurst != 32 || policy.AccountRequestRPM != 1200 {
+	if policy == nil || policy.RequestsPerSecond != 2.5 || policy.Burst != 12 || policy.KeyBy != api.ThrottleKeyByCountry || policy.PlanMaxRPS != api.MustLimitsFor(api.PlanHobby).RateLimitRPS || policy.PlanCeilingStatus != "within_plan" || policy.AppRequestRPS != 8 || policy.AppRequestBurst != 32 || policy.AccountRequestRPM != api.MustLimitsFor(api.PlanHobby).RateLimitPerAccountRPM {
 		t.Fatalf("throttle policy = %#v", policy)
 	}
 }
@@ -799,7 +799,7 @@ func TestCmdEdgeRulesTraceReportsEffectiveBudgetOverride(t *testing.T) {
 		case "/v1/apps/demo/edge-rules":
 			_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{{
 				ID: "budget", Enabled: true, Kind: "budget", MatchHost: "example.com", MatchPath: "/payments",
-				Action: json.RawMessage(`{"budget":{"budget_ms":2000}}`),
+				Action: json.RawMessage(`{"budget":{"budget_ms":2000,"allow_override_header":"x-faas-budget-ms"}}`),
 			}})
 		default:
 			t.Errorf("unexpected API path %s", r.URL.Path)

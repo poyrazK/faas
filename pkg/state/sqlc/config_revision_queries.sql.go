@@ -14,7 +14,9 @@ import (
 const appConfigGuardTelemetry = `-- name: AppConfigGuardTelemetry :one
 WITH scoped AS (
     SELECT d.id FROM deployments d
-    WHERE d.app_id = $1::uuid AND COALESCE(NULLIF(d.scope, ''), 'default') = $2::text
+    WHERE d.app_id = $1::uuid
+      AND (COALESCE(NULLIF(d.scope, ''), 'default') = $2::text
+           OR ($2::text = 'default' AND d.scope = 'production'))
       AND d.created_at <= $3::timestamptz
 ), rows AS (
     SELECT t.count::bigint AS weight, t.status,
@@ -26,7 +28,15 @@ WITH scoped AS (
     FROM request_telemetry t
     LEFT JOIN instances i ON i.id = CASE WHEN t.instance_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
         THEN t.instance_id::uuid END
-    WHERE t.app_id = $1::uuid AND t.deployment_id IN (SELECT id FROM scoped)
+    WHERE t.app_id = $1::uuid
+      AND (t.deployment_id IN (SELECT id FROM scoped)
+           -- A wake that failed before any instance served (the app crashed on
+           -- startup) is recorded without a deployment. It is the failure the
+           -- guard exists for; a platform refusal (capacity) is not the
+           -- config's fault. Without a deployment it cannot name a lane, so
+           -- only the default scope's guard counts it.
+           OR (t.deployment_id = '00000000-0000-0000-0000-000000000000'::uuid
+               AND NOT t.platform_refusal AND $2::text = 'default'))
       AND t.received_at >= $5::timestamptz AND t.received_at < $6::timestamptz
 )
 SELECT
@@ -54,12 +64,15 @@ type AppConfigGuardTelemetryRow struct {
 }
 
 // New config: requests from the minute of the latest change on, served by an
-// instance started after it or failing before any instance served them.
+// instance started after it or failing before any instance served them
+// (those carry no deployment; see the WHERE clause).
 // Old config: requests in the baseline window before the guard opened.
 // Telemetry is minute-bucketed, so instance start time attributes the change
 // minute. Only deployments that existed when the guard opened count: a
 // release deployed during the guard is judged by its own rollout, not
 // blamed on the config. Uses request_telemetry_app_dep_received_idx.
+// A default-scope value overlays every environment, so its guard also judges
+// the project production lane (ADR-1451 amendment 1).
 func (q *Queries) AppConfigGuardTelemetry(ctx context.Context, db DBTX, arg AppConfigGuardTelemetryParams) (AppConfigGuardTelemetryRow, error) {
 	row := db.QueryRow(ctx, appConfigGuardTelemetry,
 		arg.AppID,
@@ -116,6 +129,28 @@ DELETE FROM app_config_guard_secrets WHERE guard_id = $1::uuid
 
 func (q *Queries) DeleteAppConfigGuardSecrets(ctx context.Context, db DBTX, guardID pgtype.UUID) error {
 	_, err := db.Exec(ctx, deleteAppConfigGuardSecrets, guardID)
+	return err
+}
+
+const deleteAppConfigVariable = `-- name: DeleteAppConfigVariable :exec
+DELETE FROM app_envs WHERE account_id=$1::uuid AND app_id=$2::uuid
+AND scope=$3::text AND key=$4::text
+`
+
+type DeleteAppConfigVariableParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Scope     string
+	Key       string
+}
+
+func (q *Queries) DeleteAppConfigVariable(ctx context.Context, db DBTX, arg DeleteAppConfigVariableParams) error {
+	_, err := db.Exec(ctx, deleteAppConfigVariable,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+	)
 	return err
 }
 
@@ -441,11 +476,19 @@ func (q *Queries) ListAppConfigRevisions(ctx context.Context, db DBTX, arg ListA
 
 const listWatchingAppConfigGuards = `-- name: ListWatchingAppConfigGuards :many
 SELECT id, account_id, app_id, scope, base_revision, head_revision, status, restorable, opened_at, last_change_at, window_ends_at, closed_at, decision FROM app_config_guards WHERE status = 'watching'
-ORDER BY last_change_at, id LIMIT $1::int
+AND ($1::timestamptz IS NULL
+     OR (last_change_at, id) > ($1::timestamptz, $2::uuid))
+ORDER BY last_change_at, id LIMIT $3::int
 `
 
-func (q *Queries) ListWatchingAppConfigGuards(ctx context.Context, db DBTX, rowLimit int32) ([]AppConfigGuard, error) {
-	rows, err := db.Query(ctx, listWatchingAppConfigGuards, rowLimit)
+type ListWatchingAppConfigGuardsParams struct {
+	AfterChangedAt pgtype.Timestamptz
+	AfterID        pgtype.UUID
+	RowLimit       int32
+}
+
+func (q *Queries) ListWatchingAppConfigGuards(ctx context.Context, db DBTX, arg ListWatchingAppConfigGuardsParams) ([]AppConfigGuard, error) {
+	rows, err := db.Query(ctx, listWatchingAppConfigGuards, arg.AfterChangedAt, arg.AfterID, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -476,6 +519,31 @@ func (q *Queries) ListWatchingAppConfigGuards(ctx context.Context, db DBTX, rowL
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockAppConfigGuardForRestore = `-- name: LockAppConfigGuardForRestore :one
+SELECT id, account_id, app_id, scope, base_revision, head_revision, status, restorable, opened_at, last_change_at, window_ends_at, closed_at, decision FROM app_config_guards WHERE id = $1::uuid FOR UPDATE
+`
+
+func (q *Queries) LockAppConfigGuardForRestore(ctx context.Context, db DBTX, id pgtype.UUID) (AppConfigGuard, error) {
+	row := db.QueryRow(ctx, lockAppConfigGuardForRestore, id)
+	var i AppConfigGuard
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Scope,
+		&i.BaseRevision,
+		&i.HeadRevision,
+		&i.Status,
+		&i.Restorable,
+		&i.OpenedAt,
+		&i.LastChangeAt,
+		&i.WindowEndsAt,
+		&i.ClosedAt,
+		&i.Decision,
+	)
+	return i, err
 }
 
 const lockAppConfigScope = `-- name: LockAppConfigScope :exec
@@ -525,6 +593,21 @@ func (q *Queries) LockWatchingAppConfigGuard(ctx context.Context, db DBTX, arg L
 		&i.Decision,
 	)
 	return i, err
+}
+
+const notifyConfigRestoreChange = `-- name: NotifyConfigRestoreChange :exec
+SELECT pg_notify($1::text, $2::text)
+`
+
+type NotifyConfigRestoreChangeParams struct {
+	Channel string
+	Payload string
+}
+
+// Advisory cache invalidations become visible only with the complete restore.
+func (q *Queries) NotifyConfigRestoreChange(ctx context.Context, db DBTX, arg NotifyConfigRestoreChangeParams) error {
+	_, err := db.Exec(ctx, notifyConfigRestoreChange, arg.Channel, arg.Payload)
+	return err
 }
 
 const openAppConfigGuardWindow = `-- name: OpenAppConfigGuardWindow :execrows
@@ -673,6 +756,70 @@ func (q *Queries) RecordAppConfigGuardChange(ctx context.Context, db DBTX, arg R
 	return result.RowsAffected(), nil
 }
 
+const restoreAppConfigSecret = `-- name: RestoreAppConfigSecret :execrows
+UPDATE app_secrets SET ciphertext=$1::bytea, kid=$2::text,
+value_hash=nullif($3::text, ''), secret_class=$4::text,
+updated_at=clock_timestamp(), secret_version=coalesce(secret_version,0)+1,
+delivery_version=delivery_version+1, delivery_status='pending',
+last_delivery_attempt_at=NULL, last_delivery_error_code=NULL
+WHERE account_id=$5::uuid AND app_id=$6::uuid
+AND scope=$7::text AND key=$8::text
+AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL
+`
+
+type RestoreAppConfigSecretParams struct {
+	Ciphertext  []byte
+	Kid         string
+	ValueHash   string
+	SecretClass string
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	Scope       string
+	Key         string
+}
+
+func (q *Queries) RestoreAppConfigSecret(ctx context.Context, db DBTX, arg RestoreAppConfigSecretParams) (int64, error) {
+	result, err := db.Exec(ctx, restoreAppConfigSecret,
+		arg.Ciphertext,
+		arg.Kid,
+		arg.ValueHash,
+		arg.SecretClass,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const restoreAppConfigVariable = `-- name: RestoreAppConfigVariable :exec
+INSERT INTO app_envs(account_id, app_id, scope, key, value)
+VALUES($1::uuid, $2::uuid, $3::text, $4::text, $5::text)
+ON CONFLICT(app_id, scope, key) DO UPDATE SET value=excluded.value, updated_at=clock_timestamp()
+`
+
+type RestoreAppConfigVariableParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Scope     string
+	Key       string
+	Value     string
+}
+
+func (q *Queries) RestoreAppConfigVariable(ctx context.Context, db DBTX, arg RestoreAppConfigVariableParams) error {
+	_, err := db.Exec(ctx, restoreAppConfigVariable,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+		arg.Value,
+	)
+	return err
+}
+
 const retainAppConfigGuardSecret = `-- name: RetainAppConfigGuardSecret :exec
 INSERT INTO app_config_guard_secrets (guard_id, config_key, existed, ciphertext, kid, value_hash, secret_class)
 SELECT $1::uuid, $2::text, s.key IS NOT NULL, s.ciphertext, s.kid, s.value_hash,
@@ -700,5 +847,15 @@ func (q *Queries) RetainAppConfigGuardSecret(ctx context.Context, db DBTX, arg R
 		arg.AppID,
 		arg.Scope,
 	)
+	return err
+}
+
+const stampConfigRestoreRuntimeChange = `-- name: StampConfigRestoreRuntimeChange :exec
+INSERT INTO app_runtime_config_changes(app_id,changed_at) VALUES($1::uuid,clock_timestamp())
+ON CONFLICT(app_id) DO UPDATE SET changed_at=greatest(app_runtime_config_changes.changed_at,excluded.changed_at)
+`
+
+func (q *Queries) StampConfigRestoreRuntimeChange(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, stampConfigRestoreRuntimeChange, appID)
 	return err
 }

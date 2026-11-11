@@ -97,6 +97,41 @@ func TestRepairReplacement50040(t *testing.T) {
 	}
 }
 
+func TestRepairReplacementStandaloneIdentityNamespaces(t *testing.T) {
+	e, scope, source := fixture(t, 1)
+	ctx := t.Context()
+	parent, err := e.Prepare(ctx, scope, source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.NewString()
+	child, err := e.Replace(ctx, scope, parent.ID, parent.Digest, id)
+	if err != nil || child.Replacement == nil || !child.Replacement.Valid(child) || child.Replacement.ParentPlanID != source {
+		t.Fatalf("replacement rejected an accepted standalone parent: %+v %v", child, err)
+	}
+	for range 2 {
+		if replay, err := e.Replace(ctx, scope, parent.ID, parent.Digest, id); err != nil || !reflect.DeepEqual(replay, child) {
+			t.Fatalf("replacement replay changed the committed child: %+v %v", replay, err)
+		}
+	}
+	if p, err := e.Get(ctx, scope, parent.ID); err != nil || p.ReplacementPlanID != id {
+		t.Fatalf("parent fence missing: %+v %v", p, err)
+	}
+	if history, err := e.History(ctx, scope, source, HistoryQuery{}); err != nil || len(history.Items) != 2 {
+		t.Fatalf("replacement disappeared from history: %+v %v", history, err)
+	}
+	child, err = e.Rehearse(ctx, scope, child.ID, child.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Approve(ctx, scope, child.ID, child.Digest, "reviewer"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Apply(ctx, scope, child.ID, child.Digest, child.ID, "replacement"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRepairReplacementNeverPromotesExcludedAndFurtherDriftRollsBack(t *testing.T) {
 	e, s, source := fixture(t, 3)
 	ctx := t.Context()

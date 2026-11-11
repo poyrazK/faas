@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -92,6 +93,11 @@ type ExchangedToken = state.OIDCExchangedToken
 // inspect secrets, or change environment configuration.
 const CapabilityEnvironmentPreflight = "environment-preflight"
 
+// CapabilityPreviewRead requests a bearer that reads the PR preview status of
+// one app (ADR-20261102203228). It cannot deploy or read anything else, so a
+// pull request workflow may have it.
+const CapabilityPreviewRead = "preview-read"
+
 // OIDCBearerScopes is the default closed scope set for an OIDC-derived
 // bearer. The historical default remains deploy-only.
 func OIDCBearerScopes() []string {
@@ -108,6 +114,8 @@ func OIDCBearerScopesForCapability(capability string) ([]string, error) {
 		return OIDCBearerScopes(), nil
 	case CapabilityEnvironmentPreflight:
 		return []string{"project_environments:read", "project_environments:qualify"}, nil
+	case CapabilityPreviewRead:
+		return []string{api.ScopePreviewsRead}, nil
 	default:
 		return nil, errors.New("unsupported OIDC capability")
 	}

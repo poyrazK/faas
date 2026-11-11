@@ -55,6 +55,22 @@ stale so monitoring cannot silently skip it. Non-ready databases are not polled.
 Health is optional on mutation responses and present on GET/list. Reads never
 call the provider and retain lifecycle behavior during outages.
 
+Amendment 2026-11-05: the collector observes the catalog's pinned dataset when
+one exists, and requires matching dataset evidence in the result. Neon returns
+the selected project/branch identity. Changing the project's default branch
+cannot make a failed original database appear healthy from a ready copy.
+Legacy rows without a dataset pin keep their original observation selector.
+
+The health table's `provider_resource_id` records the concrete observation
+target, independently of the catalog's lifecycle/deletion selector. Claims
+return both catalog identities; completion, cached reads and aggregate counts
+match the effective dataset target. A dataset backfill or replacement hides
+previous samples immediately and fences pending results. No migration is
+needed. During version skew, upgraded readers discard alias-based samples from
+older collectors for pinned databases. Older readers may temporarily show
+unknown health for a concrete-target sample until their collector replaces it;
+database lifecycle and provider resources are unchanged.
+
 Metrics use closed status/outcome labels without tenant or resource identity.
 Every replica reports the whole ready catalog; alerts aggregate with `max`,
 not a sum. Enabled collectors alert on degraded resources, stale observations,

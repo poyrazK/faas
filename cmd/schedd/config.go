@@ -21,6 +21,9 @@ import (
 
 // Config is the on-disk representation of schedd's TOML config.
 type Config struct {
+	// DatabaseScheduler enables the database scheduler (ADR-1027).
+	DatabaseScheduler *DatabaseSchedulerConfig `toml:"database_scheduler"`
+
 	// AppsDomain matches public routing for deployment alias activation checks.
 	AppsDomain                      string `toml:"apps_domain"`
 	EventAcknowledgmentWriterSlot   string `toml:"event_acknowledgment_writer_slot"`
@@ -223,6 +226,16 @@ type Config struct {
 	// billed seconds once its quiet_pause_unbilled switch is on. Off by
 	// default; FAAS_QUIET_PAUSE_LEDGER overrides it.
 	QuietPauseLedger bool `toml:"quiet_pause_ledger"`
+	// IdleLadderIdleOut (ADR-20261107122928 §3) hands idle-out to vmmd's
+	// idle ladder: an instance vmmd holds quiet-paused stays resident past
+	// its idle timeout and parks IdleLadderSnapshotAfterSeconds after its
+	// last request, or sooner under RAM pressure, instead of freezing. It
+	// applies only to accounts the quiet_pause_unbilled platform flag
+	// releases, since only the pause ledger leaves those seconds unbilled,
+	// and is ignored unless quiet_pause_ledger is on. Turn it on only where
+	// meterd's quiet_pause_unbilled mode is on. Off by default;
+	// FAAS_IDLE_LADDER_IDLE_OUT overrides it.
+	IdleLadderIdleOut bool `toml:"idle_ladder_idle_out"`
 
 	// FrozenTier (ADR-1151) freezes an idle eligible function instance in
 	// place at its idle timeout instead of parking it: vmmd keeps the VM
@@ -241,10 +254,17 @@ type Config struct {
 	// thaw it before booting a new one. Off by default and ignored unless
 	// frozen_tier is on. FAAS_FROZEN_TIER_WORKERS overrides it.
 	FrozenTierWorkers bool `toml:"frozen_tier_workers"`
+	// FrozenProactiveCompress (ADR 20261031143521) compresses frozen VMs
+	// into memory-only swap on nodes near their RAM ceiling, longest frozen
+	// first, so the RAM they free goes back to admission. On by default; a
+	// node without the zswap role answers unavailable and is left alone.
+	// FAAS_FROZEN_PROACTIVE_COMPRESS overrides it either way.
+	FrozenProactiveCompress bool `toml:"frozen_proactive_compress"`
 	// FrozenTierEarlyFreezeAfterS (ADR-20261021215353) freezes a quiet
 	// between_requests instance this many seconds after its last request
 	// instead of at its idle timeout, so it stops accruing usage soon after
-	// it last served. 0 (the default) is off; otherwise 2-300. Ignored unless
+	// it last served. 0 is off; otherwise 2-300, by default
+	// api.FrozenEarlyFreezeDefaultSeconds (ADR 20261102072403). Ignored unless
 	// frozen_tier is on. FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S overrides it.
 	FrozenTierEarlyFreezeAfterS int `toml:"frozen_tier_early_freeze_after_s"`
 
@@ -260,6 +280,12 @@ type Config struct {
 	// (app_runtime_changed); the admission insert commits only while that
 	// generation holds. Off by default. FAAS_OWNER_CACHE overrides it.
 	OwnerCache bool `toml:"owner_cache"`
+
+	// AsyncWakeFinalize (ADR-20261105090246) answers a booted wake as soon as
+	// its RUNNING publication commits and records what the boot proved (the
+	// observed workload class and the secret delivery) afterwards. Off by
+	// default. FAAS_ASYNC_WAKE_FINALIZE overrides it.
+	AsyncWakeFinalize bool `toml:"async_wake_finalize"`
 
 	// MigratingWatchdogTickLimit (ADR-067) caps the per-tick
 	// batch of state='migrating' rows the watchdog self-heals.
@@ -523,9 +549,15 @@ func LoadConfig(path string) (*Config, error) {
 		// pressure backstop. Release rollouts re-render schedd.toml from the
 		// manifest, so only a binary default keeps them on; each stays an
 		// opt-out (= false in schedd.toml).
-		QuietPauseAdmission:  true,
-		MeasuredCPUAdmission: true,
-		CPUPressureBackstop:  true,
+		QuietPauseAdmission: true,
+		// ADR 20261031143521: zswap (the role's canary list) gates it per
+		// node.
+		FrozenProactiveCompress: true,
+		MeasuredCPUAdmission:    true,
+		CPUPressureBackstop:     true,
+		// ADR 20261102072403: early freeze on by default for density; 0 in
+		// schedd.toml or FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S turns it off.
+		FrozenTierEarlyFreezeAfterS: api.FrozenEarlyFreezeDefaultSeconds,
 		// ADR-067: 0 means "use the api.* default"
 		// (api.MigratingWatchdogTickLimit = 50,
 		// api.MigratingWatchdogIntervalSeconds = 1). cmd/schedd/main.go
@@ -576,7 +608,7 @@ func LoadConfig(path string) (*Config, error) {
 			c.Role = role.FromConfig(string(c.Role), "FAAS_SCHEDD_ROLE")
 			applyRoutingEnv()
 			c.overlayEventAcknowledgmentWriterEnv()
-			return c, nil
+			return c, loadDatabaseSchedulerFile(c)
 		}
 		return nil, fmt.Errorf("schedd: read %q: %w", path, err)
 	}
@@ -608,6 +640,14 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.QuietPauseLedger = enabled
 	}
+	// ADR-20261107122928: FAAS_IDLE_LADDER_IDLE_OUT overrides idle_ladder_idle_out.
+	if v := os.Getenv("FAAS_IDLE_LADDER_IDLE_OUT"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_IDLE_LADDER_IDLE_OUT must be a boolean (got %q)", v)
+		}
+		c.IdleLadderIdleOut = enabled
+	}
 	// ADR-1151: FAAS_FROZEN_TIER overrides frozen_tier.
 	if v := os.Getenv("FAAS_FROZEN_TIER"); v != "" {
 		enabled, err := strconv.ParseBool(v)
@@ -632,6 +672,14 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.OwnerCache = enabled
 	}
+	// ADR-20261105090246: FAAS_ASYNC_WAKE_FINALIZE overrides async_wake_finalize.
+	if v := os.Getenv("FAAS_ASYNC_WAKE_FINALIZE"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_ASYNC_WAKE_FINALIZE must be a boolean (got %q)", v)
+		}
+		c.AsyncWakeFinalize = enabled
+	}
 	if v := os.Getenv("FAAS_FROZEN_TIER_APPS"); v != "" {
 		enabled, err := strconv.ParseBool(v)
 		if err != nil {
@@ -649,6 +697,7 @@ func LoadConfig(path string) (*Config, error) {
 		{"FAAS_QUIET_PAUSE_ADMISSION", &c.QuietPauseAdmission},
 		{"FAAS_MEASURED_CPU_ADMISSION", &c.MeasuredCPUAdmission},
 		{"FAAS_CPU_PRESSURE_BACKSTOP", &c.CPUPressureBackstop},
+		{"FAAS_FROZEN_PROACTIVE_COMPRESS", &c.FrozenProactiveCompress},
 	} {
 		if v := os.Getenv(sw.env); v != "" {
 			enabled, err := strconv.ParseBool(v)
@@ -678,7 +727,36 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("schedd: frozen_tier_early_freeze_after_s must be 0 or %d-%d (got %d)", api.FrozenEarlyFreezeMinSeconds, api.FrozenEarlyFreezeMaxSeconds, s)
 	}
 	applyRoutingEnv()
-	return c, nil
+	return c, loadDatabaseSchedulerFile(c)
+}
+
+// loadDatabaseSchedulerFile reads [database_scheduler] from the file
+// FAAS_SCHEDD_DATABASE_CONFIG names (ADR-1027). Ansible renders that file
+// from the deployment manifest's database hosts, beside the operator's
+// schedd.toml; the table may live in only one of them.
+func loadDatabaseSchedulerFile(c *Config) error {
+	path := os.Getenv("FAAS_SCHEDD_DATABASE_CONFIG")
+	if path == "" {
+		return nil
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // operator-configured path
+	if err != nil {
+		return fmt.Errorf("schedd: read FAAS_SCHEDD_DATABASE_CONFIG: %w", err)
+	}
+	var file struct {
+		DatabaseScheduler *DatabaseSchedulerConfig `toml:"database_scheduler"`
+	}
+	if err := toml.Unmarshal(b, &file); err != nil {
+		return fmt.Errorf("schedd: parse %q: %w", path, err)
+	}
+	if file.DatabaseScheduler == nil {
+		return fmt.Errorf("schedd: %q has no [database_scheduler]", path)
+	}
+	if c.DatabaseScheduler != nil {
+		return fmt.Errorf("schedd: [database_scheduler] is in both the config and %q", path)
+	}
+	c.DatabaseScheduler = file.DatabaseScheduler
+	return nil
 }
 
 func (c *Config) overlayEventAcknowledgmentWriterEnv() {

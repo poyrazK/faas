@@ -39,7 +39,7 @@ import (
 //
 // Include private Python module filenames, which directory embedding omits.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres rest-api-postgres-python cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node data-api-teams data-api-support-console auth
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres rest-api-postgres-python cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node data-api-teams data-api-support-console auth agent-stateless-node agent-infinity-rust
 //go:embed rest-api-postgres-python/runtime/*.py object-storage-python object-storage-python/runtime/*.py
 var FS embed.FS
 
@@ -101,6 +101,8 @@ var Names = []string{
 	"data-api-support-console",
 	"durable-entity-node",
 	"auth",
+	"agent-stateless-node",
+	"agent-infinity-rust",
 }
 
 // unlisted templates stay embedded and materializable by name but are left
@@ -108,8 +110,9 @@ var Names = []string{
 // unknown-template hints and the dashboard catalog. durable-entity-node
 // scaffolds the operator-only durable entity preview (ADR-712); auth is
 // application Auth, a dark launch (ADR-1190) that `gregale auth create`
-// materializes.
-var unlisted = map[string]bool{"durable-entity-node": true, "auth": true}
+// materializes. agent-stateless-node and agent-infinity-rust scaffold a
+// stateless agent, behind the internal agents capability (ADR-20261030125501).
+var unlisted = map[string]bool{"durable-entity-node": true, "auth": true, "agent-stateless-node": true, "agent-infinity-rust": true}
 
 // ListedNames returns Names without unlisted templates, in catalog order.
 func ListedNames() []string {
@@ -195,6 +198,7 @@ require github.com/modelcontextprotocol/go-sdk v1.8.0
 require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/google/jsonschema-go v0.4.3
 	github.com/yosida95/uritemplate/v3 v3.0.2
 )
 
@@ -203,7 +207,6 @@ require (
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
@@ -531,7 +534,7 @@ func CategoryFor(name string) string {
 		return "event-driven"
 	case "s3-uploader", "object-storage-node", "object-storage-python", "slack-bot", "rest-api-postgres", "rest-api-postgres-python", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform", "data-api", "data-api-starter", "data-api-teams", "data-api-support-console", "auth":
 		return "stateless-contract"
-	case "ai-chat":
+	case "ai-chat", "agent-stateless-node", "agent-infinity-rust":
 		return "ai"
 	case "mcp-node", "mcp-go", "mcp-python":
 		return "mcp"

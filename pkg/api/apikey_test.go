@@ -60,8 +60,8 @@ func TestGeneratePlatformTenantAccessToken(t *testing.T) {
 	if IsValidScope(ScopePlatformTenantUsageRead) || IsValidScope(ScopePlatformTenantStatementsRead) ||
 		IsValidScope(ScopePlatformTenantActivationRead) || IsValidScope(ScopePlatformTenantHostnamesManage) ||
 		IsValidScope(ScopePlatformTenantCredentialsRead) || IsValidScope(ScopePlatformTenantCredentialsManage) ||
-		IsValidScope(ScopePlatformTenantConsumersManage) || IsValidScope(ScopePlatformTenantAutomationsRead) ||
-		IsValidScope(ScopePlatformTenantAutomationsManage) {
+		IsValidScope(ScopePlatformTenantConsumersManage) || IsValidScope(ScopePlatformTenantStoredWorkflowsRead) ||
+		IsValidScope(ScopePlatformTenantStoredWorkflowsManage) {
 		t.Fatal("tenant-self scopes must not be mintable as account-wide API-key scopes")
 	}
 }
@@ -288,6 +288,7 @@ func TestScopeSurfaceConstants(t *testing.T) {
 	mustContain("ScopesAdminOnly", ScopesAdminOnly, ScopeAdmin)
 	mustContain("ScopesReadSurface", ScopesReadSurface, ScopeAdmin, ScopeAppsRead)
 	mustContain("ScopesDeploymentReadSurface", ScopesDeploymentReadSurface, ScopeAdmin, ScopeAppsRead, ScopeDeployWrite)
+	mustContain("ScopesDeployTargetReadSurface", ScopesDeployTargetReadSurface, ScopeAdmin, ScopeAppsRead, ScopeDeployWrite)
 	mustContain("ScopesUsageReadSurface", ScopesUsageReadSurface, ScopeAdmin, ScopeUsageRead)
 	mustContain("ScopesSecretsWriteSurface", ScopesSecretsWriteSurface, ScopeAdmin, ScopeSecretsWrite)
 	mustContain("ScopesDeployWriteSurface", ScopesDeployWriteSurface, ScopeAdmin, ScopeDeployWrite)

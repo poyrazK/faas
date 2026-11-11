@@ -43,7 +43,13 @@ func open(t *testing.T) *pgxpool.Pool {
 		CREATE TABLE object_buckets (id uuid PRIMARY KEY, account_id uuid NOT NULL, app_id uuid NOT NULL, state text NOT NULL DEFAULT 'ready');
 		CREATE TABLE platform_mail_agent_run_observations (delivery_id uuid PRIMARY KEY, account_id uuid NOT NULL, disposition text NOT NULL);
 		CREATE TABLE workflow_runs (id uuid PRIMARY KEY, status text NOT NULL);
-		CREATE TABLE workflow_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id uuid NOT NULL, event_name text NOT NULL);`); err != nil {
+		CREATE TABLE workflow_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id uuid NOT NULL, event_name text NOT NULL);
+		CREATE TABLE managed_realtime_endpoints (id uuid PRIMARY KEY);
+		CREATE TABLE jobs (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account_id uuid NOT NULL, status text NOT NULL DEFAULT 'active',
+			image_storage_key text, image_materialization_status text NOT NULL DEFAULT 'pending', image_materialization_error text);
+		CREATE TABLE apps (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account_id uuid NOT NULL, slug text NOT NULL, status text NOT NULL DEFAULT 'active');
+		CREATE TABLE deployments (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), app_id uuid NOT NULL, status text NOT NULL,
+			error text, rootfs_key text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now());`); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range agentMigrations {
@@ -69,7 +75,12 @@ func open(t *testing.T) *pgxpool.Pool {
 // agentMigrations are the agent migrations, in order.
 var agentMigrations = []string{"20261029093503390_agent_runs.sql", "20261029093510563_agent_run_execution.sql",
 	"20261029093517736_agent_run_model_access.sql", "20261029093524909_agent_run_checkout.sql", "20261029093538256_agent_deliveries.sql", "20261029093545429_agent_delivery_destinations.sql", "20261029093606948_agent_run_workflow_steps.sql",
-	"20261030205907043_agent_version_pause_during_model_calls.sql"}
+	"20261030205907043_agent_version_pause_during_model_calls.sql",
+	"20261031122245453_agent_run_usage.sql", "20261031215544747_agent_callback_revocations.sql",
+	"20261102075456168_agent_run_callbacks.sql", "20261110153935524_sandbox_sessions.sql",
+	"20261110153935557_sandbox_workspace_snapshots.sql", "20261110153935586_sandbox_ports.sql",
+	"20261110153935627_sandbox_session_images.sql", "20261110153935666_sandbox_templates.sql",
+	"20261110153935695_sandbox_session_templates.sql", "20261110153935721_sandbox_session_usage.sql"}
 
 func spec() agents.VersionSpec {
 	return agents.VersionSpec{Harness: agents.Harness{Preset: "codex"}, PromptTemplate: "Triage {{event.title}}", TimeoutSec: 300}

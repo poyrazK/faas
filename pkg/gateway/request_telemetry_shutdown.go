@@ -57,6 +57,12 @@ func (p *requestTelemetryPublisher) stopLocked(ctx context.Context) {
 }
 
 func (p *requestTelemetryPublisher) drainFinal() {
+	// The HTTP drain is over: ship every buffered analytics minute first.
+	p.recorder.analytics.tick(p.finalCtx, true)
+	if p.minutes != nil {
+		p.drainFinalMinutes()
+		return
+	}
 	for len(p.pending) != 0 || p.recorder.PendingCount() != 0 {
 		if p.finalCtx.Err() != nil {
 			p.dropPending("request telemetry shutdown deadline; dropping interrupted batch")
@@ -70,12 +76,36 @@ func (p *requestTelemetryPublisher) drainFinal() {
 	}
 }
 
+// drainFinalMinutes ships every open minute within the shutdown budget; what
+// it cannot deliver in time is counted as lost.
+func (p *requestTelemetryPublisher) drainFinalMinutes() {
+	for len(p.pending) != 0 || !p.minutes.empty() || p.recorder.PendingCount() != 0 {
+		if p.finalCtx.Err() != nil {
+			p.dropPending("request telemetry shutdown deadline; dropping interrupted batch")
+			p.recordDroppedRows(p.minutes.takeAll())
+			for p.recorder.PendingCount() != 0 {
+				p.recordDroppedRows(p.recorder.DrainBatch(p.cfg.FlushBatchSize))
+			}
+			p.log.Warn("request telemetry shutdown deadline; queued evidence dropped")
+			return
+		}
+		p.tickMinutes(p.finalCtx, true)
+	}
+}
+
 func (p *requestTelemetryPublisher) dropPending(message string) {
 	if len(p.pending) == 0 {
 		return
 	}
 	count := requestTelemetryCount(p.pending)
 	p.log.Warn(message, slog.Int("batch_size", len(p.pending)), slog.Int64("request_count", count))
-	p.recordDroppedRows(p.pending)
+	if p.receiverAnswered {
+		// The receiver took other rows of this batch and kept refusing these:
+		// the loss belongs to their apps (for example an ingest cap).
+		p.recordDroppedRows(p.pending)
+	} else {
+		p.recordPlatformDroppedRows(p.pending)
+	}
 	p.pending = nil
+	p.receiverAnswered = false
 }

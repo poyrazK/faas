@@ -88,6 +88,14 @@ The GA review lists this as a data-safety blocker. The owner decided on
 
 ## Delivery
 
+Amendment 2026-11-05: endpoint holds and releases use the catalog's pinned
+dataset identity. Neon requires an explicit project/branch selector and checks
+the endpoint's branch again on confirmation. Changing a project's default
+branch cannot redirect either operation onto a restore copy. A legacy root row
+without a recorded branch is refused until its dataset identity is verified
+and recorded; the hold must not guess from the current default. Qualification
+freezes its disposable resource's branch before holding or releasing it.
+
 1. This record.
 2. Schedule and undo:
    - the `purge_after` column (expand-only);
@@ -141,3 +149,47 @@ way.
 - **Suspend through the compute quota.** Undo would have to restore a quota
   that may never have been set, and the cap sweep rewrites quotas. The
   endpoint's `disabled` flag is reversible exactly.
+
+## Amendment 1 (2026-11-03): one waived schedule per database per 30 days
+
+Decision 6 waived every usage window inside any scheduled delete. Nothing
+limited how often one database cycled, so a customer could schedule a delete,
+undo it shortly before the window closed and schedule it again, paying only
+for the short ready gaps while Gregale paid the provider for the storage
+(bug hunt H106).
+
+A waiver now counts only when no earlier waiver for the same database began
+within `api.ManagedPostgresUsageWaiverPeriod` (30 days) before it.
+`ManagedPostgresUsageForSubject` and the in-memory store apply the same rule;
+the trigger still records every window, so nothing changes in the schema. A
+customer who undoes a mistaken delete keeps the first week waived; a second
+schedule within 30 days is billed as usual. The fleet spend breaker is
+unchanged.
+
+## Amendment 2 (2026-11-05): recover uncertain holds before the purge deadline
+
+A provider can disable an endpoint and then lose its confirmation response.
+Returning the catalog to `ready` on that error left the endpoint disabled and
+made undelete refuse it. A worker crash before applying the hold also left
+the database unheld until its purge deadline.
+
+The schedule claim now records `last_error_code = deletion_hold_pending`
+before provider I/O. An uncertain hold keeps the database in `deleting`, with
+its original undo window; it is never reported ready without a confirmed
+release. Repeating delete retries the hold without extending the window, and
+undelete remains available. A failed delete request can therefore have a
+durable schedule: clients check its status and retry or recover it.
+
+Updated reconcilers discover pending holds after lease expiry and a 15-second
+retry interval, even with provisioning disabled. Oldest attempts go first so
+repeated failures cannot monopolize the batch. A confirmed hold clears the
+marker. `retry_at` remains the purge deadline throughout: an N-1 reconciler
+does not understand hold recovery and would purge any deleting row it found
+due earlier. No new state or schema column is needed.
+
+An undo claim sets the same marker before enabling the endpoint. If its
+worker dies before committing ready, reconciliation re-applies the last
+durable deletion intent; the customer can retry undo. Both successful hold
+confirmation and the ready commit use bounded contexts independent of the
+HTTP request's cancellation. An explicit purge still ends the undo window
+immediately.

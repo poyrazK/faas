@@ -342,7 +342,12 @@ func idempotentCommand(args []string) bool {
 		return sub == "list" || sub == "set" || sub == "unset" ||
 			sub == "history" || sub == "diff" || sub == "pull" || sub == "push"
 	case "cron":
-		return sub == "delete" || sub == "runs" || sub == "list"
+		// label set and unset write absolute values (ADR-20261031100025).
+		return sub == "delete" || sub == "runs" || sub == "list" || sub == "label"
+	case "job":
+		return sub == "delete" || sub == "info" || sub == "list" || sub == "label"
+	case "domain":
+		return sub == "list"
 	case "key":
 		return sub == "delete" || sub == "list"
 	case "bucket":
@@ -350,6 +355,14 @@ func idempotentCommand(args []string) bool {
 	case "add":
 		// add bucket reuses the bucket and binding an attempt left behind.
 		return sub == "bucket"
+	case "postgres":
+		return sub == "list" || sub == "get" || sub == "capabilities" || sub == "usage"
+	case "event":
+		// A publish with an explicit --id names one identity: repeating it
+		// answers the original receipt.
+		return sub == "get" || sub == "subscription" || (sub == "publish" && slices.Contains(args, "--id"))
+	case "dlq":
+		return sub == "list"
 	}
 	return false
 }
@@ -812,18 +825,27 @@ func probeSource(t *testing.T, version string) string {
 // labelled e2ej-<run>-<name> and revoked when the journey ends.
 func (tg *target) scopedKey(t *testing.T, name string, scopes ...string) string {
 	t.Helper()
+	key, _ := tg.scopedKeyWithID(t, t, name, scopes...)
+	return key
+}
+
+// scopedKeyWithID is scopedKey that also returns the key's id. The key is
+// revoked when owner ends: a story step that mints a key later steps use
+// passes the journey's top-level test.
+func (tg *target) scopedKeyWithID(t, owner *testing.T, name string, scopes ...string) (key, id string) {
+	t.Helper()
 	args := []string{"keys", "add", tg.slug(name)}
 	if len(scopes) > 0 {
 		args = append(args, "--scopes", strings.Join(scopes, ","))
 	}
 	res := tg.ok(t, time.Minute, args...)
-	key := apiKeyRe.FindString(string(res.stdout))
-	id := str(object(t, res.stdout), "id")
+	key = apiKeyRe.FindString(string(res.stdout))
+	id = str(object(t, res.stdout), "id")
 	if key == "" || id == "" {
 		t.Fatalf("key create printed no key or id")
 	}
-	t.Cleanup(func() { tg.run(t, time.Minute, "key", "delete", id) })
-	return key
+	owner.Cleanup(func() { tg.run(owner, time.Minute, "key", "delete", id) })
+	return key, id
 }
 
 // apiCall sends one request to the public API with a bearer key.
@@ -1145,7 +1167,36 @@ func (tg *target) sweep(hours string) error {
 		}
 		fmt.Fprintf(os.Stderr, "journeys: swept stale app %s\n", slug)
 	}
+	tg.sweepDatabases(cutoff)
 	return nil
+}
+
+// sweepDatabases purges managed databases journeys created in earlier runs,
+// after the apps that held their bindings are gone. A database a crashed or
+// refused cleanup left behind otherwise holds one of the account's database
+// slots forever. Failures are logged; the next run retries.
+func (tg *target) sweepDatabases(cutoff time.Time) {
+	docs, err := tg.cliJSON("postgres", "list")
+	if err != nil || len(docs) == 0 {
+		return
+	}
+	items, _ := docs[0]["items"].([]any)
+	var dbs []map[string]any
+	for _, item := range items {
+		if db, ok := item.(map[string]any); ok && str(db, "state") != "deleted" {
+			dbs = append(dbs, map[string]any{"slug": str(db, "name")})
+		}
+	}
+	for _, name := range staleSlugs(dbs, cutoff, tg.runID) {
+		rm := exec.Command(tg.cli, "--non-interactive", "postgres", "delete", name, "--purge", "--yes")
+		rm.Env = tg.cliEnv(tg.token)
+		rm.Dir = tg.home
+		if out, err := rm.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "journeys: sweep database %s: %v: %s\n", name, err, tail(string(out), 300))
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "journeys: swept stale database %s\n", name)
+	}
 }
 
 // previewSlugRe matches pull-request previews of journey apps:

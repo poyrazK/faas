@@ -51,7 +51,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"edge", "Manage edge rules, rule lists, caching and CORS", "Configure"},
 	{"api", "Manage your API: routes, OpenAPI spec, consumers and tenants", "Configure"},
 	{"flag", "Roll out feature flags to selected customers", "Configure"},
-	{"postgres", "Manage PostgreSQL databases: usage, overage and capabilities", "Data"},
+	{"postgres", "Create, attach and restore managed PostgreSQL databases", "Data"},
 	{"bucket", "Manage object storage buckets", "Data"},
 	{"pipeline", "Sync PostgreSQL sources into read-only mirrors", "Data"},
 	{"data-api", "Generate an API from a PostgreSQL schema", "Data"},
@@ -63,7 +63,6 @@ var cliTreeNouns = []cliTreeNoun{
 	{"worker", "Inspect and scale background worker pools", "Work"},
 	{"workflow", "Manage durable workflows", "Work"},
 	{"operation", "Inspect your customers' operations and their deliveries", "Work"},
-	{"automation", "Build, monitor and recover automations", "Work"},
 	{"event", "Publish and send events, manage subscriptions and replays", "Work"},
 	{"webhook", "Register webhooks and deliver events to them", "Work"},
 	{"queue", "Inspect and feed an app's queues", "Work"},
@@ -107,6 +106,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"release resume", "deploy resume"},
 	{"release recover", "deploy recover"},
 	{"release diff", "deployment diff"},
+	{"release timeline", "deployment timeline"},
+	{"release resolve", "deployment resolve"},
 	{"release hide", "deploys clear"},
 	{"release prune", "deploys clear-obsolete"},
 	{"release reorder", "deploys reorder"},
@@ -127,6 +128,9 @@ var cliTreeAliases = []cliTreeAlias{
 	{"preview", "preview"},
 	{"environment migration recover", "projects environments recover-migration"},
 	{"environment", "projects environments"},
+	// #6612 added `projects preview-secrets`; the tree takes no hyphenated
+	// words, so its verbs sit under `project preview secret`.
+	{"project preview secret", "projects preview-secrets"},
 	{"project", "projects"},
 	{"build", "build"},
 	{"github", "github"},
@@ -152,6 +156,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"app deploy-token", "deploy-tokens"},
 	{"app streaming-cap", "apps streaming-cap"},
 	{"sandbox run", "run"},
+	{"sandbox template publish", "sandbox-templates build"},
+	{"sandbox template", "sandbox-templates"},
 	{"sandbox", "runs"},
 	{"invocation watch", "tail"},
 	{"invocation", "invocations"},
@@ -223,16 +229,16 @@ var cliTreeAliases = []cliTreeAlias{
 	{"operation outcome summary", "customer-operations outcome-summary"},
 	{"operation binding generate", "customer-operations bindings"},
 	{"operation", "customer-operations"},
-	{"automation recovery health", "automations recovery-health"},
-	{"automation recovery suppress", "automations recovery-suppress"},
-	{"automation recovery create", "automations recovery-start"},
-	{"automation recovery cancel", "automations recovery-cancel"},
-	{"automation recovery run", "automations recovery-plan"},
-	{"automation failure list", "automations failures"},
-	{"automation failure policy", "automations failure-policy"},
-	{"automation failure resume", "automations failure-resume"},
-	{"automation policy publish", "automations publish-policy"},
-	{"automation", "automations"},
+	{"workflow stored recovery health", "stored-workflows recovery-health"},
+	{"workflow stored recovery suppress", "stored-workflows recovery-suppress"},
+	{"workflow stored recovery create", "stored-workflows recovery-start"},
+	{"workflow stored recovery cancel", "stored-workflows recovery-cancel"},
+	{"workflow stored recovery run", "stored-workflows recovery-plan"},
+	{"workflow stored failure list", "stored-workflows failures"},
+	{"workflow stored failure policy", "stored-workflows failure-policy"},
+	{"workflow stored failure resume", "stored-workflows failure-resume"},
+	{"workflow stored policy publish", "stored-workflows publish-policy"},
+	{"workflow stored", "stored-workflows"},
 	{"event send", "send"},
 	{"event subscription list", "events subscriptions"},
 	{"event subscription get", "events subscription-status"},
@@ -304,6 +310,7 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Agents. Hosting verbs and client verbs sit directly under `mcp` today.
 	{"mcp serve", "mcp serve"},
+	{"mcp connect", "mcp connect"},
 	{"mcp connection", "mcp connections"},
 	{"mcp server", "mcp"},
 	{"mcp client tools", "mcp tools"},
@@ -321,6 +328,7 @@ var cliTreeAliases = []cliTreeAlias{
 	// Account.
 	{"account mfa", "mfa"},
 	{"account", "account"},
+	{"org agent policy", "orgs agent-policy"},
 	{"org invitation accept", "invitations accept"},
 	{"org invitation peek", "invitations peek"},
 	{"org invitation", "orgs invitations"},
@@ -396,12 +404,12 @@ var cliTreeAliases = []cliTreeAlias{
 	{"api tenant trial get", "platform-tenants trial"},
 	{"api tenant trial end", "platform-tenants trial-end"},
 	{"api tenant trial set", "platform-tenants trial-set"},
-	{"automation event recover", "automations event-recover"},
-	{"automation event-recovery start", "automations event-recovery-start"},
-	{"automation failure-recovery review", "automations failure-recovery-review"},
-	{"automation recovery-policy evaluate", "automations recovery-policy-evaluate"},
-	{"automation recovery-response apply", "automations recovery-response-apply"},
-	{"automation recovery-response status", "automations recovery-response-status"},
+	{"workflow stored event recover", "stored-workflows event-recover"},
+	{"workflow stored event-recovery start", "stored-workflows event-recovery-start"},
+	{"workflow stored failure-recovery review", "stored-workflows failure-recovery-review"},
+	{"workflow stored recovery-policy evaluate", "stored-workflows recovery-policy-evaluate"},
+	{"workflow stored recovery-response apply", "stored-workflows recovery-response-apply"},
+	{"workflow stored recovery-response status", "stored-workflows recovery-response-status"},
 	{"debug issue releases compare", "issues compare-releases"},
 	{"debug issue token create", "issues create-token"},
 	{"debug issue token revoke", "issues revoke-token"},
@@ -458,9 +466,12 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp readiness notification", "mcp readiness notifications"},
 	{"mcp readiness reminder", "mcp readiness reminder-defaults"},
 	{"mcp server export", "mcp config"},
+	{"mcp server approval channels", "mcp approval-channels"},
 	{"mcp server monitor check", "mcp monitor provider-check"},
 	{"mcp server retirements ack", "mcp retirements acknowledge-manual"},
 	{"mcp server tasks deploy", "mcp tasks release"},
+	{"mcp server approvals get", "mcp approval-channels"},
+	{"mcp server approvals set", "mcp approval-channels"},
 	{"mcp observer", "mcp tasks observer"},
 	{"environment check", "projects environments preflight"},
 	{"environment cancel", "projects environments abort"},
@@ -475,6 +486,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"data-api serve", "data-api dev"},
 	{"data-api fixture export", "data-api fixture build"},
 	{"data-api storage export", "data-api storage sql"},
+	{"data-api hooks export", "data-api hooks sql"},
 	{"data-api release verify", "data-api verify release"},
 
 	// Proposed 2026-10-29 for review (round 9: one-off verbs).
@@ -492,13 +504,17 @@ var cliTreeAliases = []cliTreeAlias{
 	{"app binding call", "bindings smoke"},
 	{"app binding probe-policy set", "bindings probe-policy"},
 	{"app binding verification", "bindings verification-runs"},
-	{"automation failure-recovery evidence", "automations failure-recovery-evidence"},
-	{"automation failure-recovery list", "automations failure-recovery-reviews"},
-	{"automation recovery evidence", "automations recovery-retry-evidence"},
-	{"automation recovery-policy history", "automations recovery-policy-reviews"},
-	{"automation recovery-response check", "automations recovery-response-preview"},
-	{"automation live check", "automations live gate"},
-	{"automation live run", "automations live suite"},
+	{"workflow stored failure-recovery evidence", "stored-workflows failure-recovery-evidence"},
+	{"workflow stored failure-recovery list", "stored-workflows failure-recovery-reviews"},
+	{"workflow stored recovery evidence", "stored-workflows recovery-retry-evidence"},
+	{"workflow stored recovery-policy history", "stored-workflows recovery-policy-reviews"},
+	{"workflow stored recovery-response check", "stored-workflows recovery-response-preview"},
+	{"workflow stored live check", "stored-workflows live gate"},
+	{"workflow stored live run", "stored-workflows live suite"},
+	// `live baseline <verb>` would be five words under `workflow stored`.
+	{"workflow stored baseline", "stored-workflows live baseline"},
+	{"billing egress-overage get", "billing egress-overage"},
+	{"billing egress-overage set", "billing egress-overage"},
 	{"billing payment-method get", "billing payment-method"},
 	{"bucket copy-source", "bucket copy-sources"},
 	{"bucket encryption keys", "bucket encryption-keys"},
@@ -550,23 +566,32 @@ var cliTreeAliases = []cliTreeAlias{
 	{"ai tag-limit set", "ai tag-limits"},
 	{"ai app-limit get", "ai app-limit"},
 	{"ai app-limit set", "ai app-limit"},
+	{"ai request-policy get", "ai request-policy"},
+	{"ai request-policy set", "ai request-policy"},
 	{"api tenant activation get", "platform-tenants activation"},
 	{"api tenant activation wait", "platform-tenants activation"},
-	{"automation recovery-policy get", "automations recovery-policy"},
-	{"automation recovery-policy set", "automations recovery-policy"},
+	{"workflow stored recovery-policy get", "stored-workflows recovery-policy"},
+	{"workflow stored recovery-policy set", "stored-workflows recovery-policy"},
 	{"bucket protection legal-hold get", "bucket protection legal-hold"},
 	{"bucket protection legal-hold set", "bucket protection legal-hold"},
 	{"bucket protection event-hold set", "bucket protection event-hold"},
 	{"debug issue impact-alert get", "issues impact-alert"},
 	{"debug issue impact-alert set", "issues impact-alert"},
-	{"debug issue lifecycle-alert get", "issues lifecycle-alerts"},
-	{"debug issue lifecycle-alert set", "issues lifecycle-alerts"},
 	{"debug issue ownership-rule get", "issues ownership-rules"},
 	{"debug issue ownership-rule set", "issues ownership-rules"},
-	{"debug issue compound-alert get", "issues compound-alerts"},
-	{"debug issue compound-alert set", "issues compound-alerts"},
-	{"debug issue source-map get", "issues source-maps"},
-	{"debug issue source-map publish", "issues source-maps"},
+	// These three take their mode as their first word; each tree verb runs
+	// one mode (CLI audit 2026-10-31: `lifecycle-alert get save` saved).
+	{"debug issue lifecycle-alert", "issues lifecycle-alerts"},
+	{"debug issue lifecycle-alert get", "issues lifecycle-alerts get"},
+	{"debug issue lifecycle-alert set", "issues lifecycle-alerts save"},
+	{"debug issue compound-alert", "issues compound-alerts"},
+	{"debug issue compound-alert get", "issues compound-alerts get"},
+	{"debug issue compound-alert set", "issues compound-alerts save"},
+	{"debug issue compound-alert delete", "issues compound-alerts remove"},
+	{"debug issue source-map", "issues source-maps"},
+	{"debug issue source-map get", "issues source-maps status"},
+	{"debug issue source-map publish", "issues source-maps publish"},
+	{"debug issue source-map retire", "issues source-maps retire"},
 	{"edge rule attack-mode get", "edge-rules attack-mode"},
 	// Round 11 (2026-10-31): the last customer paths in the baseline. A
 	// WAF exclusion change updates the rule's WAF beside `waf review`;
@@ -582,6 +607,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"postgres compute-policy set", "postgres compute-policy"},
 	{"postgres compute-policy status", "postgres compute-policy-status"},
 	{"postgres resize status", "postgres resize-status"},
+	// ADR-20261102123523: what a database gives PR previews is a setting.
+	{"postgres previews set", "postgres previews"},
 
 	// Operator tools live under the hidden admin command (rule 7) and keep
 	// their names; the naming rules cover the customer tree.
@@ -597,6 +624,9 @@ var cliTreeAliases = []cliTreeAlias{
 	{"admin postgres reconcile", "postgres reconcile"},
 	{"admin postgres usage-import", "postgres usage-import"},
 	{"admin postgres diagnostics", "postgres diagnostics"},
+	// Sealed live queries stay an operator preview (ADR-20261016151947);
+	// customers read live through `data-api live`.
+	{"admin postgres live", "postgres live"},
 	{"admin billing refresh-invoice", "billing refresh-invoice"},
 	{"admin billing backfill-invoices", "billing backfill-invoices"},
 }
@@ -629,14 +659,31 @@ func cliTreeStandardVerb(verb string) string {
 }
 
 // cliTreeVerbFor spells a verb of siblings in its standard form. A synonym
-// whose standard verb is also a sibling (`rm` beside `delete`) is not
-// listed: the standard verb runs the sibling.
+// whose standard verb is also a sibling alias of it (`rm` beside `delete`)
+// is not listed: the standard verb runs the sibling. A synonym that is a
+// command of its own (`flags inspect` beside `flags get`) keeps its name;
+// folding it hid the command from help (Hunt 32 H32-72).
 func cliTreeVerbFor(verb string, siblings []cliSub) (string, bool) {
 	standard := cliTreeStandardVerb(verb)
-	if standard != verb && slices.ContainsFunc(siblings, func(sub cliSub) bool { return sub.Name == standard }) {
+	if standard == verb {
+		return verb, true
+	}
+	i := slices.IndexFunc(siblings, func(sub cliSub) bool { return sub.Name == standard })
+	if i < 0 {
+		return standard, true
+	}
+	j := slices.IndexFunc(siblings, func(sub cliSub) bool { return sub.Name == verb })
+	if j < 0 || cliSubsAreOneCommand(siblings[j], siblings[i]) {
 		return "", false
 	}
-	return standard, true
+	return verb, true
+}
+
+// cliSubsAreOneCommand reports whether two sibling verbs run one command:
+// one names the other as an alias, or both carry the same description.
+func cliSubsAreOneCommand(a, b cliSub) bool {
+	return a.Short == b.Short || a.Short == "Alias for "+b.Name || b.Short == "Alias for "+a.Name ||
+		slices.Contains(a.Aliases, b.Name) || slices.Contains(b.Aliases, a.Name)
 }
 
 func lookupCliTreeNoun(name string) (cliTreeNoun, bool) {
@@ -756,6 +803,13 @@ func rewriteTreePath(args []string) ([]string, error) {
 	if folded, ok := rewriteFlagFold(args); ok {
 		return folded, nil
 	}
+	if path, flags, ok := onlyFoldPath(args); ok {
+		// Help for the path comes from the tree manifest (treeHelpWords).
+		if hasHelpFlag(args) {
+			return args, nil
+		}
+		return nil, errFoldFlagRequired{fmt.Errorf("gregale %s needs %s; run 'gregale %s --help' for usage", path, strings.Join(flags, " or "), path)}
+	}
 	alias, used, ok := matchCliTreeAlias(args)
 	if !ok {
 		return args, nil
@@ -767,26 +821,49 @@ func rewriteTreePath(args []string) ([]string, error) {
 	if used > depth || (used == depth && len(args) > depth && !strings.HasPrefix(args[depth], "-")) {
 		return joinTreeRewrite(alias, args[used:]), nil
 	}
-	return args, nil
+	return spellTodayVerbs(args), nil
 }
 
-// joinTreeRewrite builds today's argv for alias, mapping a standard verb to
-// the spelling today's command uses.
+// joinTreeRewrite builds today's argv for alias, with each standard verb
+// spelled the way today's command takes it.
 func joinTreeRewrite(alias cliTreeAlias, rest []string) []string {
-	out := strings.Fields(alias.Old)
-	if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
-		if node, ok := lookupCliPath(out); ok && len(node.Subs) > 0 && !node.AfterPositionals {
-			if _, known := findCliSubcommand(node.Subs, rest[0]); !known {
-				for _, spelling := range cliTreeVerbSynonyms[rest[0]] {
-					if _, found := findCliSubcommand(node.Subs, spelling); found {
-						rest = append([]string{spelling}, rest[1:]...)
-						break
-					}
-				}
+	return spellTodayVerbs(append(strings.Fields(alias.Old), rest...))
+}
+
+// spellTodayVerbs walks argv through today's manifest and replaces a
+// standard verb today's command does not know with the synonym it takes
+// (`account billing-run get` runs `account billing-run show`). The tree
+// lists verbs in their standard form at every depth (treeSubs), so dispatch
+// maps them back at every depth. It stops at a flag, at a word that is
+// neither a verb nor a synonym of one, and before the data word of a
+// slug-first family.
+func spellTodayVerbs(argv []string) []string {
+	if len(argv) == 0 {
+		return argv
+	}
+	command, ok := lookupCliCommand(argv[0])
+	if !ok {
+		return argv
+	}
+	subs, afterPositionals := command.Subcommands, command.SubcommandsAfterPositionals
+	out := argv
+	for i := 1; i < len(out) && len(subs) > 0 && !afterPositionals && !strings.HasPrefix(out[i], "-"); i++ {
+		sub, known := findCliSubcommand(subs, out[i])
+		for _, spelling := range cliTreeVerbSynonyms[out[i]] {
+			if known {
+				break
+			}
+			if sub, known = findCliSubcommand(subs, spelling); known {
+				out = slices.Clone(out)
+				out[i] = spelling
 			}
 		}
+		if !known {
+			break
+		}
+		subs, afterPositionals = sub.Subcommands, sub.SubcommandsAfterPositionals
 	}
-	return append(out, rest...)
+	return out
 }
 
 var errAppTarget = errors.New("name the app: gregale app <verb> <app>, --app <app>, or run it in a linked checkout")
@@ -814,6 +891,10 @@ func rewriteAppPath(args []string) ([]string, error) {
 			return nil, err
 		}
 		return append([]string{appSlugFallback, app}, rest...), nil
+	}
+	if verb == subWait && hasSelectorFlag(args[2:]) {
+		// `app wait -l SELECTOR` names its apps by label (ADR-20261031100025).
+		return args, nil
 	}
 	command, ok := lookupCliCommand(appSlugFallback)
 	if !ok {
@@ -883,6 +964,9 @@ func rewriteAppListener(args []string) ([]string, error) {
 	}
 	app, tail, err := takeAppTarget(rest[1:])
 	if err != nil {
+		if hasHelpFlag(args) {
+			return args, nil
+		}
 		return nil, err
 	}
 	return append([]string{appSlugFallback, app, protocol, verb}, tail...), nil
@@ -929,11 +1013,12 @@ func rewriteCliTree(args []string) ([]string, error) {
 		return args, nil
 	}
 	if len(args) > 1 && args[0] == "help" {
-		topic, err := rewriteTreePath(args[1:])
-		if err != nil {
-			return nil, err
+		if topic, err := rewriteTreePath(args[1:]); err == nil {
+			return append([]string{"help"}, topic...), nil
 		}
-		return append([]string{"help"}, topic...), nil
+		// Help needs no app (`help app scale`): a path that cannot rewrite
+		// without one is answered by the tree's own help.
+		return args, nil
 	}
 	return rewriteTreePath(args)
 }
@@ -993,7 +1078,7 @@ func lookupCliTreeTopic(words []string, help bool) (cliTreeTopic, bool) {
 		return cliTreeTopic{}, false
 	}
 	if len(words) == 1 {
-		if today && !cliTreeReshapes(noun.Name) {
+		if today && (!cliTreeReshapes(noun.Name) || !cliTreeListsNoun(noun.Name)) {
 			return cliTreeTopic{}, false
 		}
 		return cliTreeTopic{Path: words, Short: noun.Short}, true
@@ -1008,6 +1093,14 @@ func lookupCliTreeTopic(words []string, help bool) (cliTreeTopic, bool) {
 		}
 	}
 	return cliTreeTopic{Path: words, Short: "Commands under gregale " + path}, true
+}
+
+// cliTreeListsNoun reports whether the tree can list the noun's command. An
+// operator command (postgres) stays out of the tree (cliTreeDiscovery.node),
+// so it keeps today's help rather than a topic that lists nothing.
+func cliTreeListsNoun(noun string) bool {
+	command, ok := lookupCliCommand(cliTreeNounCommand(noun))
+	return ok && command.Audience == cliAudienceCustomer
 }
 
 // cliTreeReshapes reports a noun whose tree verbs differ from today's
@@ -1172,9 +1265,108 @@ func groupCliTreeEntries(entries []cliTreeEntry) []cliTreeEntry {
 	return grouped
 }
 
-// printCliTreeHelp writes help for a tree topic. A topic the tree maps to
-// one of today's commands also lists that command's own flags.
+// treeHelpWords returns the path words of a help request (`<path> --help`,
+// `help <path>`) whose first word is a tree noun or a shortcut.
+func treeHelpWords(typed []string) ([]string, bool) {
+	words := typed
+	switch {
+	case len(words) > 1 && words[0] == "help":
+		words = words[1:]
+	case !hasHelpFlag(words):
+		return nil, false
+	}
+	if len(words) == 0 {
+		return nil, false
+	}
+	// A fold flag names another command (`realtime send --principal P`
+	// runs `realtime send-principal`); its help is that command's, which
+	// lists the flags the fold adds. The tree's help for the path has only
+	// the path's own flags.
+	if _, folded := rewriteFlagFold(words); folded {
+		return nil, false
+	}
+	// `--help --all` on one of today's commands (`github`, `deploy`, `app`)
+	// asks for that command's full manifest help, every option grouped; a
+	// tree-only noun (`release`) has no such help, so the tree's answers.
+	if path := leadingTreeWords(words); slices.Contains(words, "--all") && (words[0] == appSlugFallback || oldPathDepth(path) == len(path)) {
+		return nil, false
+	}
+	if _, ok := lookupCliTreeNoun(words[0]); ok || slices.Contains(cliTreeShortcutCommands, words[0]) {
+		return words, true
+	}
+	return nil, false
+}
+
+// printTreeManifestHelp prints help for a path under a tree noun or a
+// shortcut from the tree manifest the reference renders (cliTreeManifest),
+// so help lists exactly the verbs, subnouns, folds and flags the reference
+// documents, at every depth. It reports false when words name no path of
+// the tree, or a command that renders its own help (cliHelpRenderedByCommand);
+// run() then prints today's help under the typed name.
+func printTreeManifestHelp(w io.Writer, words []string) bool {
+	d := newCliTreeDiscovery()
+	var command cliCommand
+	if noun, ok := lookupCliTreeNoun(words[0]); ok {
+		// An operator command (postgres) stays out of the tree.
+		if !cliTreeListsNoun(noun.Name) {
+			// A path that exists only through its folds (`edge cache set`)
+			// has no command of today's to print help for.
+			return printOnlyFoldHelp(w, words)
+		}
+		tree, ok := d.treeCommand(noun)
+		if !ok {
+			return false
+		}
+		command = tree
+	} else {
+		today, ok := d.commands[words[0]]
+		if !ok || today.Audience != cliAudienceCustomer || cliHelpRenderedByCommand(today.Name) {
+			return false
+		}
+		command = d.shortcutCommand(today)
+	}
+	if old, ok := d.runsToday(leadingTreeWords(words)); ok && cliHelpRenderedByCommand(old) {
+		return false
+	}
+	// printLocalHelpFlags spells flags for display (cliTreeFlagsForDisplay).
+	return printManifestHelp(w, command, words[1:])
+}
+
+// printOnlyFoldHelp prints help for a path that exists only through its
+// flag folds, or for its parent (`edge cache`, whose command of today's
+// lists the folded verbs GET and HEAD), from the tree manifest the reference
+// renders. It reports false for any other path.
+func printOnlyFoldHelp(w io.Writer, words []string) bool {
+	path := leadingTreeWords(words)
+	if !slices.ContainsFunc(cliTreeFlagFolds, func(fold cliTreeFlagFold) bool {
+		fields := strings.Fields(fold.New)
+		return fold.Only && len(path) > 1 && len(path) <= len(fields) && slices.Equal(fields[:len(path)], path)
+	}) {
+		return false
+	}
+	for _, command := range cliTreeManifest(discoverableCliCommands()) {
+		if command.Name == words[0] {
+			return printManifestHelp(w, command, words[1:])
+		}
+	}
+	return false
+}
+
+// cliHelpRenderedByCommand reports today's paths whose help is written by
+// hand because the manifest cannot express their shape (rollback, rollouts,
+// deploys retry; printManifestHelp).
+func cliHelpRenderedByCommand(old string) bool {
+	first := strings.Fields(old)[0]
+	return first == "rollback" || first == "rollouts" || old == "deploys retry"
+}
+
+// printCliTreeHelp writes help for a tree topic from the tree manifest, as
+// `<topic> --help` does. A topic the manifest cannot walk falls back to the
+// verbs the alias table lists under it.
 func printCliTreeHelp(w io.Writer, topic cliTreeTopic) {
+	if printTreeManifestHelp(w, topic.Path) {
+		return
+	}
 	name := strings.Join(topic.Path, " ")
 	discovery := newCliTreeDiscovery()
 	_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  gregale %s <command> [flags]\n\nCommands:\n", topic.Short, name)
@@ -1402,7 +1594,7 @@ func cliTreeHelpRename(typed, args []string) (from, to string, ok bool) {
 	}
 	if slices.Equal(typed, args) {
 		// Help reached by an earlier name is spelled in the tree too.
-		words := typed[:oldPathDepth(typed)]
+		words := manifestVerbNames(typed[:oldPathDepth(typed)])
 		spelled, ok := cliTreeSpelling(words)
 		if !ok {
 			return "", "", false
@@ -1423,6 +1615,28 @@ func cliTreeHelpRename(typed, args []string) (from, to string, ok bool) {
 		to += " " + typed[used]
 	}
 	return from, to, true
+}
+
+// manifestVerbNames spells each verb of today's path by its manifest name,
+// as help prints it: `cors ls` reads `cors list` once list takes ls as an
+// alias.
+func manifestVerbNames(path []string) []string {
+	if len(path) == 0 {
+		return path
+	}
+	command, ok := lookupCliCommand(path[0])
+	if !ok {
+		return path
+	}
+	out, subs := slices.Clone(path), command.Subcommands
+	for i := 1; i < len(out); i++ {
+		sub, ok := findCliSubcommand(subs, out[i])
+		if !ok {
+			break
+		}
+		out[i], subs = sub.Name, sub.Subcommands
+	}
+	return out
 }
 
 // renameHelpPath spells `gregale <from>` as `gregale <to>` in help text. Its

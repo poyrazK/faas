@@ -94,12 +94,11 @@ func TestWakePromotesWarmRowRecordsResumePhase(t *testing.T) {
 		t.Fatalf("Create warm instance: %v", err)
 	}
 	warm = publishWarmFixture(t, store, warm)
-	limits := api.MustLimitsFor(api.PlanPro)
 	vmm := &warmResumeFakeVMM{fakeVMM: &fakeVMM{}}
 	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
 	if err := e.Ledger().Admit(Request{
 		Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: api.PlanPro,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: api.SizeVCPUs(app.RAMMB), MaxConcurrency: app.MaxConcurrency,
 		NodeID: node.ID, Kind: KindWarmPool,
 	}); err != nil {
 		t.Fatalf("Admit warm reservation: %v", err)
@@ -143,12 +142,11 @@ func TestWarmPromotionChecksTheOwnerCacheGeneration(t *testing.T) {
 		t.Fatalf("Create warm instance: %v", err)
 	}
 	warm = publishWarmFixture(t, store, warm)
-	limits := api.MustLimitsFor(api.PlanPro)
 	vmm := &warmResumeFakeVMM{fakeVMM: &fakeVMM{}}
 	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd")).WithOwnerCache()
 	if err := e.Ledger().Admit(Request{
 		Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: api.PlanPro,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: api.SizeVCPUs(app.RAMMB), MaxConcurrency: app.MaxConcurrency,
 		NodeID: node.ID, Kind: KindWarmPool,
 	}); err != nil {
 		t.Fatalf("Admit warm reservation: %v", err)

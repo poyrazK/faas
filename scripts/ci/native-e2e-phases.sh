@@ -93,6 +93,7 @@ native_e2e_phase_files() {
       shared_runtime_python_metal_test.go \
       secrets_image_deploy_e2e_test.go \
       object_storage_native_metal_test.go \
+      managed_postgres_database_node_metal_test.go \
       queue_binding_native_metal_test.go \
       queue_push_parallel_metal_test.go \
       private_service_tcp_metal_test.go \
@@ -122,6 +123,7 @@ native_e2e_phase_files() {
       customer_http_operations_features_metal_test.go \
       feature_flags_native_restore_metal_test.go \
       before_checkpoint_metal_test.go \
+      function_snapshot_hooks_metal_test.go \
       fleet_wake_dedup_e2e_test.go \
       private_service_tcp_stale_metal_test.go \
       private_tcp_wake_ahead_metal_test.go \

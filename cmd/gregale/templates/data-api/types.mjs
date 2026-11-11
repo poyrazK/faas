@@ -6,6 +6,8 @@ import { databaseURL, schemaNames, limits } from './config.mjs'
 
 // Fixed, parameterized catalog reads run in the customer's workload using
 // its restricted binding. No SQL text or database URL comes from a request.
+// The change hooks table (ADR-20261022121642) is the relay's, never part of
+// the contract.
 const columnsQuery = `SELECT n.nspname AS schema, c.relname AS relation, c.relkind AS kind,
  c.oid::text AS id, a.attnum AS number,
  a.attname AS name, a.atttypid::text AS type, a.attnotnull AS required,
@@ -15,12 +17,31 @@ const columnsQuery = `SELECT n.nspname AS schema, c.relname AS relation, c.relki
  FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
  JOIN pg_attribute a ON a.attrelid=c.oid
  LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum
- WHERE n.nspname=ANY($1::text[]) AND c.relkind IN ('r','p','v','m')
+ WHERE n.nspname=ANY($1::text[]) AND c.relkind IN ('r','p','v','m') AND c.relname NOT IN ('gregale_change_events','gregale_change_drops')
  AND a.attnum>0 AND NOT a.attisdropped AND has_schema_privilege(COALESCE($2::name,current_user),n.oid,'USAGE')
  AND has_column_privilege(COALESCE($2::name,current_user),c.oid,a.attnum,'SELECT')
  ORDER BY n.nspname,c.relname,a.attnum LIMIT ${limits.columns + 1}`
 
-const typesQuery = `SELECT t.oid::text AS id, t.typname AS name, n.nspname AS schema,
+// Only the types the contract can reach are read: the built-in catalog, every
+// type in an exposed schema, the types of exposed columns and function
+// signatures, and what those reach through array elements, domain bases and
+// composite fields. Tables and partitions in other schemas each add two types,
+// so reading the whole database's types failed the limit on databases whose
+// exposed schemas were small.
+const typesQuery = `WITH RECURSIVE reachable(oid) AS (
+ SELECT t.oid FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
+  WHERE n.nspname=ANY($2::text[]) OR n.nspname IN ('pg_catalog','information_schema')
+ UNION SELECT a.atttypid FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+  WHERE n.nspname=ANY($2::text[]) AND a.attnum>0 AND NOT a.attisdropped
+ UNION SELECT s.oid FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+  CROSS JOIN LATERAL unnest(array_append(COALESCE(p.proallargtypes,p.proargtypes::oid[]),p.prorettype)) AS s(oid)
+  WHERE n.nspname=ANY($2::text[])
+ UNION SELECT x.oid FROM reachable r JOIN pg_type t ON t.oid=r.oid
+  CROSS JOIN LATERAL (SELECT t.typelem UNION ALL SELECT t.typbasetype
+   UNION ALL SELECT a.atttypid FROM pg_attribute a WHERE t.typrelid<>0 AND a.attrelid=t.typrelid AND a.attnum>0 AND NOT a.attisdropped) AS x(oid)
+  WHERE x.oid<>0
+)
+SELECT t.oid::text AS id, t.typname AS name, n.nspname AS schema,
  t.typtype AS kind, t.typbasetype::text AS base, t.typelem::text AS element,
  t.typnotnull AS required,
  has_schema_privilege(COALESCE($1::name,current_user),n.oid,'USAGE')
@@ -29,6 +50,7 @@ const typesQuery = `SELECT t.oid::text AS id, t.typname AS name, n.nspname AS sc
  has_table_privilege(COALESCE($1::name,current_user),c.oid,'SELECT') ELSE false END AS selectable,
  ARRAY(SELECT e.enumlabel::text FROM pg_enum e WHERE e.enumtypid=t.oid ORDER BY e.enumsortorder) AS labels
  FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace LEFT JOIN pg_class c ON c.oid=t.typrelid
+ WHERE t.oid IN (SELECT oid FROM reachable)
  ORDER BY t.oid LIMIT ${limits.types + 1}`
 
 // Standalone CREATE TYPE ... AS (...) objects only. Table row types must keep
@@ -287,7 +309,7 @@ export async function inspectRowMetadata(client, schemas, snapshot, privilegeRol
 
 export async function inspectClient(client, schemas, { includeUnexecutable = false, privilegeRole = null } = {}) {
   const columns = (await client.query(columnsQuery, [schemas, privilegeRole])).rows
-  const types = (await client.query(typesQuery, [privilegeRole])).rows
+  const types = (await client.query(typesQuery, [privilegeRole, schemas])).rows
   const relations = (await client.query(relationsQuery, [schemas, privilegeRole])).rows
   if (columns.length > limits.columns || types.length > limits.types || relations.length > limits.relations) throw new Error('Schema exceeds generation limits')
   const functions = (await client.query(functionsQuery, [schemas, includeUnexecutable, privilegeRole])).rows

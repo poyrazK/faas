@@ -7,8 +7,11 @@
     - restart faas-githubd for seal domains
     - restart faas-imaged for seal domains
     - restart faas-gatewayd-internal for seal domains
+    - restart faas-gatewayd-public-edge for seal domains
+    - restart faas-edgednsd for seal domains
     - restart faas-meterd for seal domains
     - restart faas-s3-gatewayd for seal domains
+    - restart faas-s3-gatewayd-compute for seal domains
     - restart faas-schedd for seal domains
     - restart faas-apid for seal domains
     - restart faas-apid-clone-worker for seal domains
@@ -39,6 +42,11 @@
   changed_when: true
   listen: restart faas-s3-gatewayd for seal domains
 
+- name: seal_domains — try-restart faas-s3-gatewayd-compute
+  ansible.builtin.command: systemctl try-restart faas-s3-gatewayd-compute.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-s3-gatewayd-compute for seal domains
+
 # A node join defers service handlers: the node starts drained and its
 # daemons start later with the drop-in in place.
 - name: seal_domains — try-restart faas-schedd
@@ -52,6 +60,19 @@
   changed_when: true
   listen: restart faas-gatewayd-internal for seal domains
   when: not (faas_join_defer_service_handlers | default(false) | bool)
+
+# The compute edge (gatewayd-public as faas-gatewayd-public-edge); try-restart
+# starts nothing that was not running, and a node join defers it.
+- name: seal_domains — try-restart faas-gatewayd-public-edge
+  ansible.builtin.command: systemctl try-restart faas-gatewayd-public-edge.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-gatewayd-public-edge for seal domains
+  when: not (faas_join_defer_service_handlers | default(false) | bool)
+
+- name: seal_domains — try-restart faas-edgednsd
+  ansible.builtin.command: systemctl try-restart faas-edgednsd.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-edgednsd for seal domains
 
 - name: seal_domains — try-restart faas-apid
   ansible.builtin.command: systemctl try-restart faas-apid.service  # noqa: command-instead-of-module

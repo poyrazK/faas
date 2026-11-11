@@ -63,6 +63,7 @@ func (s *PostgresStore) RequestCheck(ctx context.Context, account, id string, re
 	if revision < 1 || (database != "" && !validID(database)) {
 		return ConnectionCheck{}, ErrInvalid
 	}
+	database = canonicalID(database)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return ConnectionCheck{}, storeError(err)
@@ -78,7 +79,27 @@ func (s *PostgresStore) RequestCheck(ctx context.Context, account, id string, re
 	if c.Revision != revision {
 		return ConnectionCheck{}, ErrConflict
 	}
+	// A working setup owns the single check slot until it has consumed its
+	// source or mirror evidence. Lock its phase with the account and
+	// connection so a manual check cannot replace evidence between the setup's
+	// read and its pipeline creation.
+	owner, ownerErr := s.q.PipelineSetupCheckOwner(ctx, tx, sqlc.PipelineSetupCheckOwnerParams{AccountID: account, ConnectionID: id})
+	if ownerErr != nil && !errors.Is(ownerErr, pgx.ErrNoRows) {
+		return ConnectionCheck{}, storeError(ownerErr)
+	}
+	if ownerErr == nil {
+		expected := ""
+		if owner.Phase == "checking_mirror" || owner.Phase == "starting" {
+			expected = owner.DatabaseID
+		}
+		if database != expected {
+			return ConnectionCheck{}, ErrCheckBusy
+		}
+	}
 	old, err := s.q.PipelineCheckGet(ctx, tx, sqlc.PipelineCheckGetParams{AccountID: account, ConnectionID: id})
+	if err == nil && old.ConnectionRevision == revision && old.DatabaseID != database && (old.State == "pending" || old.State == "running") {
+		return ConnectionCheck{}, ErrCheckBusy
+	}
 	if err == nil && old.ConnectionRevision == revision && old.DatabaseID == database {
 		check, decodeErr := describeCheck(old)
 		if decodeErr != nil {
@@ -143,6 +164,7 @@ func (s *Service) RequestCheck(ctx context.Context, account, id string, r api.Re
 		if !validID(r.DatabaseID) {
 			return api.DataConnectionCheck{}, ErrInvalid
 		}
+		r.DatabaseID = canonicalID(r.DatabaseID)
 		if s.ValidateTarget == nil {
 			return api.DataConnectionCheck{}, ErrUnavailable
 		}

@@ -155,6 +155,7 @@
     owner: root
     group: root
     mode: "0644"
+  notify: restart faas-apid-data-pipeline-worker
 
 # ADR-1591: independent catalog health monitor; install without enabling.
 - name: control_plane_service — install private pipeline alert worker unit
@@ -164,6 +165,7 @@
     owner: root
     group: root
     mode: "0644"
+  notify: restart faas-apid-data-pipeline-alert-worker
 
 # ADR-531: ship the private worker without enabling it. The same APID user owns
 # customer-intent writes; data capture remains gated in the coordinator.
@@ -249,6 +251,36 @@
     group: root
     mode: "0644"
   notify: restart faas-apid
+
+- name: control_plane_service — scheduler credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: scheduler
+    credential_units: [faas-apid, faas-schedd]
+
+- name: control_plane_service — outbound credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: outbound
+    credential_units: [faas-apid, faas-outboundd]
+
+- name: control_plane_service — attach credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: attach
+    credential_units: [faas-apid]
+
+- name: control_plane_service — dev-bridge credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: dev-bridge
+    credential_units: [faas-apid, faas-bridged]
+
+- name: control_plane_service — data-api credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: data-api
+    credential_units: [faas-apid]
 
 - name: control_plane_service — set developer live patch gate (ADR-740)
   ansible.builtin.template:
@@ -399,6 +431,30 @@
     - faas-meterd
     - faas-outboundd
 
+- name: control_plane_service — set apid's deployment environment
+  notify: restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-environment.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/zz-faas-environment.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_environment | length > 0
+
+- name: control_plane_service — remove apid's deployment environment when unset
+  notify: restart faas-apid
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-apid.service.d/zz-faas-environment.conf
+    state: absent
+  when: faas_environment | length == 0
+
+# Public-beta billing activation switch. The release unit defaults to live;
+# this role overrides it until the launch-date transition. This drop-in and
+# zz-faas-public-status.conf must render byte-for-byte what the signed
+# control-plane bundle installs (cd-controlplane.yml): deployctl hands apid
+# off only while no unit input changed since it started, so two different
+# renders of one file restart apid on every release and fail the API gate.
+# pkg/daemonunitspec TestAnsibleAndBundleRenderTheSameControlPlaneDropIns.
 - name: control_plane_service — set public-beta billing mode
   notify:
     - restart faas-apid
@@ -419,6 +475,7 @@
 - name: control_plane_service — converge the app outbound relay (ADR-989)
   ansible.builtin.include_tasks: outbound_relay.yml
 
+# Managed here and in the signed bundle; keep both renders identical (above).
 - name: control_plane_service — set public status launch boundary
   notify: restart faas-apid
   ansible.builtin.template:
@@ -684,6 +741,39 @@
     group: root
     mode: "0644"
 
+# ADR-1027: schedd's database scheduler, from the manifest's database hosts
+# (faas_schedd_database_scheduler, rendered by `gregalectl manifest ansible`).
+# A fleet without database hosts keeps neither file.
+- name: control_plane_service — render schedd's database scheduler
+  notify: restart faas-schedd
+  ansible.builtin.template:
+    src: schedd-database.toml.j2
+    dest: /etc/faas/schedd-database.toml
+    owner: root
+    group: faas
+    mode: "0640"
+  when: faas_schedd_database_scheduler is defined
+
+- name: control_plane_service — point schedd at its database scheduler
+  notify: restart faas-schedd
+  ansible.builtin.template:
+    src: 99-faas-schedd-database.conf.j2
+    dest: /etc/systemd/system/faas-schedd.service.d/99-faas-database.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_schedd_database_scheduler is defined
+
+- name: control_plane_service — remove schedd's database scheduler
+  notify: restart faas-schedd
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/faas-schedd.service.d/99-faas-database.conf
+    - /etc/faas/schedd-database.toml
+  when: faas_schedd_database_scheduler is not defined
+
 # Issue #585 / ADR-127 — per-daemon secret file perm-asserts. The
 # shared block checks ALL new per-daemon secret files (schedd +
 # meterd belong to this role; the others are checked here too as
@@ -692,6 +782,17 @@
 # absent (operator-provisioned via `gregalectl secrets init`).
 - name: control_plane_service — sealed.env split perm-asserts (issue # 585 / ADR-127)
   ansible.builtin.include_tasks: ../../_shared/tasks/sealed_env_split_perm_asserts.yml
+
+# ADR-20261107180000: apid refuses the labels of edgednsd's managed host
+# names as new apps' names.
+- name: control_plane_service — install apid reserved app names drop-in (ADR-20261107180000)
+  notify: restart faas-apid
+  ansible.builtin.template:
+    src: 99-faas-reserved-app-slugs.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/99-faas-reserved-app-slugs.conf
+    owner: root
+    group: root
+    mode: "0644"
 
 # Mega-PR-C (issue #911 / ADR-110): wire the per-box role gate
 # through to the four control-plane daemons (apid, schedd,
@@ -1179,11 +1280,17 @@
       fi
       transport="$(grep -E '^FAAS_MAIL_TRANSPORT=' "$envfile" 2>/dev/null | head -1 | cut -d= -f2- || true)"
       case "$transport" in
-        resend|postmark|noop)
+        resend|postmark)
           # live transport — credentials are the operator's responsibility.
           # The pkg/mail factory fails closed on a missing credential
           # so we don't double-assert here.
           echo "$daemon mail transport = $transport (prod)"
+          ;;
+        noop)
+          # Bootable, but every email is dropped: no account can verify its
+          # address and no password reset or magic link is ever delivered.
+          # Production ran like this from bootstrap without anyone noticing.
+          echo "WARNING: $daemon mail transport = noop in $envfile — NO email is delivered (address verification, password reset, magic links, billing notices). Set FAAS_MAIL_TRANSPORT=resend (or postmark) with FAAS_MAIL_FROM and the provider key."
           ;;
         log|"")
           echo "FAIL: FAAS_MAIL_TRANSPORT=${transport:-unset} in $envfile — $daemon will refuse to boot. Set FAAS_MAIL_TRANSPORT=resend (or postmark / noop)."

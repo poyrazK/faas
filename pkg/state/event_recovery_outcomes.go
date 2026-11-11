@@ -116,7 +116,7 @@ func getEventRecovery(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, accoun
 	now := time.Now().UTC()
 	var observations map[int64]api.EventRecoveryExecution
 	if out.Selection.Mode == "workflow" {
-		observations, err = observeWorkflowRecoveryExecutions(ctx, q, db, account, job, 0, api.AutomationRecoveryBatchMaxRuns, now)
+		observations, err = observeWorkflowRecoveryExecutions(ctx, q, db, account, job, 0, api.StoredWorkflowRecoveryBatchMaxRuns, now)
 	} else {
 		observations, err = observeRecoveryExecutions(ctx, q, db, account, job, 0, api.EventRecoveryRecipientsMax, now)
 	}

@@ -2,7 +2,6 @@
 package apidserver
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/configguard"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -154,6 +154,31 @@ func (s *server) rollbackConfig(w http.ResponseWriter, r *http.Request, acct sta
 	if !ok {
 		return
 	}
+	// A rollback writes variables like a batch (ADR-20261019071733 amendment 11).
+	if problem := protectedEnvironmentConfigProblem(r.Context(), s.store, app.AccountID, app.ProjectID, scope); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if problem := validateReviewedConfigRollback(req, app.ID, scope); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if req.RequestID != "" {
+		reader, ok := s.store.(state.ConfigRollbackReceiptReader)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("reviewed rollback recovery is unavailable"))
+			return
+		}
+		_, err := reader.ConfigRollbackReceipt(r.Context(), acct.ID, app.ID, scope, req.RequestID, req.ReceiptProof)
+		if err == nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Rollback already recorded", "Read the original rollback receipt"))
+			return
+		}
+		if !errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.ErrCapacity("reviewed rollback recovery is unavailable"))
+			return
+		}
+	}
 	target, err := store.GetConfigRevision(r.Context(), app.ID, scope, req.Revision)
 	if errors.Is(err, state.ErrNotFound) {
 		api.WriteProblem(w, api.ErrConfigRevisionNotFound(scope, req.Revision))
@@ -166,70 +191,118 @@ func (s *server) rollbackConfig(w http.ResponseWriter, r *http.Request, acct sta
 	}
 	out := api.ConfigRollbackResponse{RestoredRevision: target.Revision, Set: []string{}, Deleted: []string{},
 		SecretsNotRestored: secretDifferences(target.Secrets, secrets)}
-	writes := configguard.VariablesToward(target.Variables, variables)
-	if len(writes) > 0 {
-		change := s.beginConfigChange(r, acct, app, scope, "")
-		applyErr := s.applyVariableWrites(r.Context(), acct, app, scope, writes, &out)
-		revision := s.finishRestore(r.Context(), change, target.Revision)
-		if applyErr != nil {
-			if !writeEnvironmentGitOpsOwnershipProblem(w, applyErr) {
-				api.WriteProblem(w, api.ErrCapacity("could not restore config"))
-			}
-			return
-		}
-		out.Change = configChangeReceipt(change, revision)
-		s.audit.Emit(r.Context(), "config.rollback", &acct.ID, map[string]any{"app_id": app.ID, "scope": scope,
-			"restored_revision": target.Revision, "set": out.Set, "deleted": out.Deleted})
+	restore := state.ConfigRestore{Finish: state.ConfigChangeFinish{AccountID: acct.ID, AppID: app.ID, Scope: scope,
+		Source: state.ConfigSourceRollback, RestoredRevision: target.Revision},
+		ExpectedVariables: variables, ExpectedSecrets: secrets,
+		Variables: configVariableRestores(configguard.VariablesToward(target.Variables, variables)), ExpectedRevision: req.ExpectedRevision,
+		ExpectedAppID: req.ExpectedAppID, ExpectedEnvironmentID: req.ExpectedEnvironmentID, RequestID: req.RequestID, ReceiptProof: req.ReceiptProof}
+	if (len(restore.Variables) > 0 || req.ExpectedRevision != nil) && !s.applyConfigRollback(w, r, acct, app, restore, &out) {
+		return
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-// finishRestore records a config.rollback revision for a guarded rollback.
-func (s *server) finishRestore(ctx context.Context, c *configChange, restored int64) *state.ConfigRevision {
-	if c == nil {
+func validateReviewedConfigRollback(req api.ConfigRollbackRequest, appID, scope string) *api.Problem {
+	if req.RequestID != "" || req.ReceiptProof != "" {
+		id, err := uuid.Parse(req.RequestID)
+		if req.ExpectedRevision == nil || err != nil || id == uuid.Nil || id.String() != req.RequestID || !api.ValidEnvBatchReceiptProof(req.ReceiptProof) {
+			return api.ErrValidation("reviewed rollback requires a request UUID and 256-bit receipt proof")
+		}
+	}
+	if req.ExpectedRevision == nil {
+		if req.ExpectedAppID != "" || req.ExpectedEnvironmentID != "" {
+			return api.ErrValidation("target identities require expected_revision")
+		}
 		return nil
 	}
-	revision, err := c.store.FinishConfigChange(ctx, state.ConfigChangeFinish{AccountID: c.acct.ID, AppID: c.app.ID,
-		Scope: c.scope, Actor: c.actor, Source: state.ConfigSourceRollback, GuardID: c.ticket.GuardID,
-		RestoredRevision: restored, Now: time.Now().UTC()})
-	if err != nil {
-		s.configRevisionFailed(ctx, c.acct, c.app, c.scope, "finish", err)
-		return nil
+	want, err := uuid.Parse(req.ExpectedAppID)
+	current, currentErr := uuid.Parse(appID)
+	if err != nil || currentErr != nil || want == uuid.Nil || *req.ExpectedRevision < 0 || (scope == state.DefaultEnvScope) != (req.ExpectedEnvironmentID == "") {
+		return api.ErrValidation("reviewed rollback requires a non-negative revision and target identities")
 	}
-	return &revision
+	if want != current {
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Configuration target changed", "Review the current app before planning another rollback")
+	}
+	if req.ExpectedEnvironmentID != "" {
+		id, err := uuid.Parse(req.ExpectedEnvironmentID)
+		if err != nil || id == uuid.Nil {
+			return api.ErrValidation("expected_environment_id must be a UUID")
+		}
+	}
+	return nil
 }
 
-// applyVariableWrites applies a restore's variable writes, invalidates the
-// scope's snapshots and tells the runtime, as the env handlers do.
-func (s *server) applyVariableWrites(ctx context.Context, acct state.Account, app state.App, scope string, writes []configguard.VariableWrite, out *api.ConfigRollbackResponse) error {
-	for _, write := range writes {
-		var err error
-		if write.Delete {
-			err = s.store.DeleteAppEnvInScope(ctx, acct.ID, app.ID, scope, write.Key)
-			if errors.Is(err, state.ErrNotFound) {
-				err = nil
-			}
-		} else {
-			err = s.store.UpsertAppEnvInScope(ctx, acct.ID, app.ID, scope, write.Key, write.Value)
+func (s *server) applyConfigRollback(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, restore state.ConfigRestore, out *api.ConfigRollbackResponse) bool {
+	restoreStore, ok := s.store.(state.ConfigRestoreStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("atomic config restoration is unavailable"))
+		return false
+	}
+	var change *configChange
+	if restore.ExpectedRevision != nil {
+		restore.Finish.Actor = configActor(r, acct)
+		restore.ReviewedGuard = configGuardRequested(r) && s.configGuardHasTraffic(r.Context(), app.ID, restore.Finish.Scope)
+	} else {
+		change = s.beginConfigChange(r, acct, app, restore.Finish.Scope, "")
+		if change == nil {
+			api.WriteProblem(w, api.ErrCapacity("could not begin config restoration"))
+			return false
 		}
-		if err != nil {
-			return err
+		restore.Finish.Actor, restore.Finish.GuardID = change.actor, change.ticket.GuardID
+	}
+	restore.Finish.Now = time.Now().UTC()
+	var revision state.ConfigRevision
+	var err error
+	if restore.ExpectedRevision != nil {
+		reviewed, ok := s.store.(state.ReviewedConfigRollbackStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("reviewed atomic config restoration is unavailable"))
+			return false
 		}
+		revision, err = reviewed.ApplyReviewedConfigRollback(r.Context(), restore)
+	} else {
+		revision, err = restoreStore.ApplyConfigRestore(r.Context(), restore)
+	}
+	if err != nil {
+		if errors.Is(err, state.ErrConfigRollbackRecorded) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Rollback already recorded", "Read the original rollback receipt"))
+		} else if errors.Is(err, state.ErrEnvBatchRequestConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Request ID already used", "Inspect the original request before planning again"))
+		} else if errors.Is(err, state.ErrConfigRestoreChanged) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Configuration changed", "Refresh configuration history and retry the rollback."))
+		} else if !writeEnvironmentGitOpsOwnershipProblem(w, err) {
+			api.WriteProblem(w, api.ErrCapacity("could not restore config"))
+		}
+		return false
+	}
+	for _, write := range restore.Variables {
 		kind := "set"
 		if write.Delete {
+			out.Deleted = append(out.Deleted, write.Key)
 			kind = "delete"
+		} else {
+			out.Set = append(out.Set, write.Key)
 		}
-		if out != nil {
-			if write.Delete {
-				out.Deleted = append(out.Deleted, write.Key)
-			} else {
-				out.Set = append(out.Set, write.Key)
-			}
-		}
-		s.notifyRuntimeConfigChange(ctx, db.NotifyAppEnvChanged, acct, app, kind, scope, write.Key)
+		s.notifyRuntimeConfigChange(r.Context(), db.NotifyAppEnvChanged, acct, app, kind, restore.Finish.Scope, write.Key)
 	}
-	_, err := state.InvalidateAppSnapshotsInScope(ctx, s.store, app.ID, scope)
-	return err
+	if restore.ExpectedRevision != nil {
+		if len(restore.Variables) > 0 {
+			out.Change = &api.ConfigChangeReceipt{Revision: revision.Revision, Guard: revision.RestoreGuard}
+		}
+	} else {
+		out.Change = configChangeReceipt(change, &revision)
+	}
+	s.audit.Emit(r.Context(), "config.rollback", &acct.ID, map[string]any{"app_id": app.ID, "scope": restore.Finish.Scope,
+		"restored_revision": restore.Finish.RestoredRevision, "set": out.Set, "deleted": out.Deleted})
+	return true
+}
+
+func configVariableRestores(writes []configguard.VariableWrite) []state.ConfigVariableRestore {
+	out := make([]state.ConfigVariableRestore, 0, len(writes))
+	for _, write := range writes {
+		out = append(out, state.ConfigVariableRestore{Key: write.Key, Value: write.Value, Delete: write.Delete})
+	}
+	return out
 }
 
 func secretDifferences(target, current map[string]state.ConfigSecretFingerprint) []api.ConfigSecretDifference {

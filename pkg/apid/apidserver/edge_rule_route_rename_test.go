@@ -6,6 +6,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -47,5 +48,40 @@ func TestRenameAppRetargetsRouteRules(t *testing.T) {
 	unchanged, err := store.GetEdgeRuleByID(ctx, other.ID)
 	if err != nil || unchanged.Action.Route.TargetAppSlug != "shop-front" {
 		t.Fatalf("a route rule to another app changed: %+v, %v", unchanged.Action.Route, err)
+	}
+}
+
+// adr: 091 — amendment 2026-11-02 (review round 8): a rule written for the
+// app's platform hostname moves with a rename. It used to stay on the old
+// hostname, which the rename frees, so it stopped protecting the app.
+func TestRenameAppMovesRulesOnItsPlatformHostname(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	store, acct := *e.Store(), *e.Acct()
+	ctx := t.Context()
+	app := apidserver.MustSeedApp(t, e, "admin-panel")
+	apps := hostidentity.Configured().Apps
+	if apps == "" {
+		t.Skip("no apps domain configured")
+	}
+	ip := state.EdgeRuleAction{Kind: state.EdgeRuleKindIP, IP: &state.EdgeRuleIPAction{Allow: []string{"203.0.113.0/24"}}}
+	onHost, err := store.CreateEdgeRule(ctx, state.CreateEdgeRuleParams{AccountID: acct.ID, AppID: app,
+		MatchHost: "admin-panel." + apps, MatchPath: "/**", Priority: 10, Enabled: true, Kind: state.EdgeRuleKindIP, Action: ip})
+	if err != nil {
+		t.Fatal(err)
+	}
+	elsewhere, err := store.CreateEdgeRule(ctx, state.CreateEdgeRuleParams{AccountID: acct.ID, AppID: app,
+		MatchHost: "admin.example.com", MatchPath: "/**", Priority: 10, Enabled: true, Kind: state.EdgeRuleKindIP, Action: ip})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := e.Do(t, http.MethodPost, "/v1/apps/admin-panel/rename", api.RenameAppRequest{NewSlug: "ops-panel"}, map[string]string{"Idempotency-Key": "rename-host"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename = %d: %s", rec.Code, rec.Body)
+	}
+	if got, err := store.GetEdgeRuleByID(ctx, onHost.ID); err != nil || got.MatchHost != "ops-panel."+apps {
+		t.Fatalf("rule on the old hostname = %q, %v; want ops-panel.%s", got.MatchHost, err, apps)
+	}
+	if got, err := store.GetEdgeRuleByID(ctx, elsewhere.ID); err != nil || got.MatchHost != "admin.example.com" {
+		t.Fatalf("rule on a custom domain = %q, %v; want it unchanged", got.MatchHost, err)
 	}
 }

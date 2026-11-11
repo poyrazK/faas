@@ -12,7 +12,11 @@ import (
 func TestCapAllowancesExactArithmetic(t *testing.T) {
 	const gib = int64(1 << 30)
 	policy := billing.MeterUsagePolicy{UnitQuantity: gib, MillicentsPerUnit: 2000}
-	halfGBHour := api.SecondsPerGBHour / 2
+	// compute is the MB-seconds a number of millicents buys at the overage
+	// rate, so the cases hold at any rate.
+	compute := func(millicents int64) int64 {
+		return millicents * api.SecondsPerGBHour / api.OverageMillicentsPerGBHour
+	}
 	for _, tc := range []struct {
 		name            string
 		cap             int64
@@ -20,10 +24,10 @@ func TestCapAllowancesExactArithmetic(t *testing.T) {
 		wantCompute     int64 // compute allowance after reserving egress
 		wantEgress      int64 // egress allowance after reserving compute
 	}{
-		// 1 cent = 1,000 millicents: half a GB-hour (500) plus a quarter GiB
-		// at 2,000 millicents per GiB (500) exactly fill it.
-		{"fractional meters exactly fit", 1, halfGBHour, gib / 4, halfGBHour, gib / 4},
-		{"no egress leaves the whole cap to compute", 1, 0, 0, api.SecondsPerGBHour, gib / 2},
+		// 1 cent = 1,000 millicents: 500 millicents of compute plus a quarter
+		// GiB at 2,000 millicents per GiB (500) exactly fill it.
+		{"fractional meters exactly fit", 1, compute(500), gib / 4, compute(500), gib / 4},
+		{"no egress leaves the whole cap to compute", 1, 0, 0, compute(1000), gib / 2},
 		{"egress alone fills the cap", 1, 0, gib / 2, 0, gib / 2},
 		{"usage beyond the cap leaves nothing", 1, 2 * api.SecondsPerGBHour, gib, 0, 0},
 		{"zero cap", 0, 0, 0, 0, 0},
@@ -41,9 +45,10 @@ func TestCapAllowancesExactArithmetic(t *testing.T) {
 		})
 	}
 	// ADR-20261027093220: live object storage billed this month is reserved
-	// first; 400 of 1,000 millicents leaves 0.6 GB-hours or 0.3 GiB.
-	if got := capComputeAllowance(1, 0, nil, 400); got != api.SecondsPerGBHour*6/10 {
-		t.Fatalf("compute allowance after object storage = %d, want %d", got, api.SecondsPerGBHour*6/10)
+	// first; 400 of 1,000 millicents leaves 600 millicents of compute or
+	// 0.3 GiB.
+	if got := capComputeAllowance(1, 0, nil, 400); got != compute(600) {
+		t.Fatalf("compute allowance after object storage = %d, want %d", got, compute(600))
 	}
 	if got := capEgressAllowance(1, 0, 400, policy); got != gib*3/10 {
 		t.Fatalf("egress allowance after object storage = %d, want %d", got, gib*3/10)

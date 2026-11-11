@@ -118,6 +118,9 @@ func TestWakeBurstSpreadsSnapshotRestoresAcrossPgEngines(t *testing.T) {
 	startWake(secondEngine, appIDs[1])
 	waitRestore(cachedNodeID, "first restore should use snapshot origin")
 	waitRestore(cachedNodeID, "second restore should use snapshot origin before watermark")
+	// The leases land in the background (ADR 20261103195512); wait until
+	// both are visible, as they are a round trip after placement.
+	waitLeases(t, firstStore, func(counts map[string]int) bool { return counts[cachedNodeID] == 2 })
 	startWake(firstEngine, appIDs[2])
 	waitRestore(peerNodeID, "third restore should use peer after shared watermark")
 
@@ -132,16 +135,22 @@ func TestWakeBurstSpreadsSnapshotRestoresAcrossPgEngines(t *testing.T) {
 		}
 	}
 
-	session, err := firstStore.AcquireSnapshotRestorePressure(ctx)
-	if err != nil {
-		t.Fatalf("AcquireSnapshotRestorePressure after burst: %v", err)
+	// The releases delete the leases in the background.
+	waitLeases(t, firstStore, func(counts map[string]int) bool { return len(counts) == 0 })
+}
+
+func waitLeases(t *testing.T, store state.SnapshotRestorePressureLeases, done func(map[string]int) bool) {
+	t.Helper()
+	var counts map[string]int
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		var err error
+		counts, err = store.ActiveSnapshotRestoreCounts(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("ActiveSnapshotRestoreCounts: %v", err)
+		}
+		if done(counts) {
+			return
+		}
 	}
-	counts, err := session.ActiveSnapshotRestoreCounts(ctx)
-	session.Close()
-	if err != nil {
-		t.Fatalf("ActiveSnapshotRestoreCounts after burst: %v", err)
-	}
-	if len(counts) != 0 {
-		t.Fatalf("active restore leases after burst = %#v, want empty", counts)
-	}
+	t.Fatalf("active restore leases = %#v", counts)
 }

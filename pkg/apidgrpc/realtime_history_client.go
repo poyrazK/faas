@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
@@ -25,6 +26,9 @@ type RealtimeHistoryClientImpl struct {
 	conn     *grpc.ClientConn
 	cli      apidpb.RealtimeHistoryClient
 	nodeName string
+	// endpointSyncRefusedUntil (unix nanos) pauses sending endpoint counts
+	// after an apid that predates them refused the field.
+	endpointSyncRefusedUntil atomic.Int64
 }
 
 var _ RealtimeHistoryClient = (*RealtimeHistoryClientImpl)(nil)
@@ -151,4 +155,11 @@ func (c *RealtimeHistoryClientImpl) Close() error {
 		return nil
 	}
 	return c.conn.Close()
+}
+
+// CredentialMatcher asks apid, over the same connection, whether a stored
+// credential hash matches a presented token: apid serves its Auth service
+// on the listeners realtimed reaches (ADR 20261029202403 amendment 1).
+func (c *RealtimeHistoryClientImpl) CredentialMatcher() *CredentialMatcher {
+	return NewCredentialMatcher(NewAuthClient(c.conn))
 }

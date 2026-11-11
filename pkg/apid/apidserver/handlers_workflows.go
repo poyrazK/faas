@@ -281,10 +281,10 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.ErrWorkflowDefinitionNotFound())
 		return
 	}
-	if store, ok := s.store.(state.AutomationStore); ok {
+	if store, ok := s.store.(state.StoredWorkflowStore); ok {
 		dep.Workflows, err = store.EffectiveWorkflowDefinitions(r.Context(), app.ID, dep.Workflows)
 		if err != nil {
-			api.WriteProblem(w, api.ErrCapacity("failed to read published automations"))
+			api.WriteProblem(w, api.ErrCapacity("failed to read published stored workflows"))
 			return
 		}
 	}
@@ -621,17 +621,6 @@ func (s *server) injectWorkflowEventForRun(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Events may arrive before schedd claims a newly-created run, and recording
-	// an unrelated event atomically wakes an awaiting run back to pending for
-	// re-evaluation. Accept every active state while continuing to reject
-	// terminal runs.
-	if run.Status != state.WorkflowRunStatusPending &&
-		run.Status != state.WorkflowRunStatusRunning &&
-		run.Status != state.WorkflowRunStatusAwaitingEvent {
-		api.WriteProblem(w, api.ErrWorkflowNotRunning())
-		return
-	}
-
 	evt := &state.WorkflowEvent{
 		RunID:     run.ID,
 		EventName: req.EventName,
@@ -652,6 +641,14 @@ func (s *server) injectWorkflowEventForRun(w http.ResponseWriter, r *http.Reques
 		err = s.store.InsertWorkflowEvent(r.Context(), evt)
 	}
 	if err != nil {
+		if errors.Is(err, state.ErrWorkflowInvalidInput) {
+			api.WriteProblem(w, api.ErrValidation("Event payload exceeds the supported size or numeric range."))
+			return
+		}
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Event idempotency conflict", "The event key was already used with different content."))
+			return
+		}
 		if errors.Is(err, state.ErrWorkflowRunNotFound) {
 			api.WriteProblem(w, api.ErrWorkflowRunNotFound())
 			return
@@ -814,6 +811,8 @@ func (s *server) completeWorkflowCallbackForRun(w http.ResponseWriter, r *http.R
 			api.WriteProblem(w, api.ErrWorkflowCallbackClosed())
 		case errors.Is(err, state.ErrConflict):
 			api.WriteProblem(w, api.ErrWorkflowCallbackPayloadConflict())
+		case errors.Is(err, state.ErrWorkflowInvalidInput):
+			api.WriteProblem(w, api.ErrValidation("Callback payload exceeds the supported size or numeric range."))
 		default:
 			s.log.Error("complete workflow callback failed", "run_id", run.ID, "err", err)
 			api.WriteProblem(w, api.ErrCapacity("failed to complete workflow callback"))

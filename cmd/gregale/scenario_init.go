@@ -4,16 +4,22 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"gopkg.in/yaml.v3"
 )
+
+const testOpenAPIDocumentLimit = 5 << 20
 
 // cmdTestInit creates a conservative, runnable smoke scenario from public,
 // parameter-free GET endpoints. Business assertions remain customer-owned.
@@ -38,11 +44,11 @@ func cmdTestInit(args []string) int {
 	if inferredSource {
 		*source = scaffoldTestSource(*from, *output)
 	}
-	data, err := os.ReadFile(*from)
+	data, err := readScaffoldOpenAPIDocument(*from)
 	if err != nil {
 		return printErr("Could not read OpenAPI document", err)
 	}
-	if len(data) > 5<<20 {
+	if len(data) > testOpenAPIDocumentLimit {
 		return printErr("Invalid OpenAPI document", errors.New("document exceeds 5 MiB"))
 	}
 	steps, skipped, err := scaffoldTestHTTPRequests(data)
@@ -57,6 +63,29 @@ func cmdTestInit(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "Scenario source: %s, the workload holding the OpenAPI document (override with --source).\n", *source)
 	}
 	return 0
+}
+
+func readScaffoldOpenAPIDocument(path string) ([]byte, error) {
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	// Nonblocking open and fstat reject FIFOs and devices without waiting for a
+	// writer, even if the final path component changes while it is opened.
+	file, err := root.OpenFile(filepath.Base(path), os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("OpenAPI document must be a regular file")
+	}
+	return io.ReadAll(io.LimitReader(file, testOpenAPIDocumentLimit+1))
 }
 
 // scaffoldTestSource defaults --source to the workload that holds the OpenAPI
@@ -157,6 +186,12 @@ func scaffoldTestHTTPRequests(data []byte) ([]testHTTPRequest, int, error) {
 	usedNames := make(map[string]bool)
 	for _, path := range paths {
 		item := spec.Paths[path]
+		if _, referenced := item.Raw["$ref"]; referenced {
+			item, err = scaffoldReferencedPathItem(document, item.Raw)
+			if err != nil {
+				return nil, skipped, fmt.Errorf("path %s: %w", path, err)
+			}
+		}
 		methods := make([]string, 0, len(item.Methods))
 		for method := range item.Methods {
 			methods = append(methods, method)
@@ -164,11 +199,18 @@ func scaffoldTestHTTPRequests(data []byte) ([]testHTTPRequest, int, error) {
 		sort.Strings(methods)
 		for _, method := range methods {
 			op := item.Methods[method]
-			if method != "get" || !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "{}?#") || hasRequiredOpenAPIParameter(item.Raw["parameters"]) || hasRequiredOpenAPIParameter(op.Raw["parameters"]) || hasOpenAPIAuth(op.Raw, globalSecurity) {
+			if method != "get" || !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "{}?#") || hasRequiredOpenAPIParameter(item.Raw["parameters"]) || hasRequiredOpenAPIParameter(op.Raw["parameters"]) || hasRequiredOpenAPIRequestBody(op.Raw["requestBody"]) || hasOpenAPIAuth(op.Raw, globalSecurity) {
 				skipped++
 				continue
 			}
-			status, contentType := scaffoldSuccessResponse(op.Responses)
+			prefix, err := scaffoldServerPrefix(document, item.Raw, op.Raw)
+			if err != nil {
+				return nil, skipped, fmt.Errorf("GET %s: %w", path, err)
+			}
+			status, contentType, err := scaffoldSuccessResponse(op.Responses, document)
+			if err != nil {
+				return nil, skipped, fmt.Errorf("GET %s: %w", path, err)
+			}
 			if status == 0 {
 				skipped++
 				continue
@@ -191,7 +233,11 @@ func scaffoldTestHTTPRequests(data []byte) ([]testHTTPRequest, int, error) {
 				}
 			}
 			usedNames[name] = true
-			steps = append(steps, testHTTPRequest{Name: name, Method: "GET", Path: path, Expect: testHTTPExpect{Status: status, ContentType: contentType}})
+			requestPath := strings.TrimSuffix(prefix, "/") + path
+			if _, err := expandTestHTTPPath(requestPath, nil); err != nil {
+				return nil, skipped, fmt.Errorf("GET %s: invalid server path: %w", path, err)
+			}
+			steps = append(steps, testHTTPRequest{Name: name, Method: "GET", Path: requestPath, Expect: testHTTPExpect{Status: status, ContentType: contentType}})
 		}
 	}
 	if len(steps) == 0 {
@@ -200,12 +246,137 @@ func scaffoldTestHTTPRequests(data []byte) ([]testHTTPRequest, int, error) {
 	return steps, skipped, nil
 }
 
+func scaffoldReferencedPathItem(document, item map[string]any) (*openapidiff.PathItem, error) {
+	resolved, err := resolveScaffoldPathItem(document, item, make(map[string]bool))
+	if err != nil {
+		return nil, err
+	}
+	for key := range resolved {
+		switch key {
+		case "summary", "description", "servers", "parameters", "get", "put", "post", "delete", "options", "head", "patch", "trace":
+		default:
+			if !strings.HasPrefix(key, "x-") {
+				return nil, fmt.Errorf("referenced path item has unsupported field %q", key)
+			}
+		}
+	}
+	result := &openapidiff.PathItem{Raw: resolved, Methods: make(map[string]*openapidiff.Operation)}
+	for _, method := range []string{"get", "post", "put", "patch", "delete", "options", "head", "trace"} {
+		value, present := resolved[method]
+		if !present {
+			continue
+		}
+		raw, ok := value.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("referenced %s operation must be an object", method)
+		}
+		operation := &openapidiff.Operation{Raw: raw, Responses: make(map[string]*openapidiff.Response)}
+		if responses, ok := raw["responses"].(map[string]any); ok {
+			for code, value := range responses {
+				response, ok := value.(map[string]any)
+				if !ok {
+					return nil, fmt.Errorf("referenced response %q must be an object", code)
+				}
+				operation.Responses[code] = &openapidiff.Response{Raw: response}
+			}
+		}
+		result.Methods[method] = operation
+	}
+	return result, nil
+}
+
+func resolveScaffoldPathItem(document, item map[string]any, seen map[string]bool) (map[string]any, error) {
+	rawRef, present := item["$ref"]
+	if !present {
+		return maps.Clone(item), nil
+	}
+	ref, ok := rawRef.(string)
+	if !ok || !strings.HasPrefix(ref, "#/") {
+		return nil, errors.New("path item references must be local JSON pointers")
+	}
+	pointer, err := url.PathUnescape(ref[1:])
+	if err != nil || len(seen) >= 100 || seen[pointer] {
+		return nil, errors.New("path item reference is invalid, cyclic, or too deep")
+	}
+	if _, err := testJSONPointerParts(pointer); err != nil {
+		return nil, errors.New("path item reference has an invalid JSON pointer")
+	}
+	value, found := testJSONPointer(document, pointer)
+	target, ok := value.(map[string]any)
+	if !found || !ok {
+		return nil, errors.New("path item reference could not be resolved to an object")
+	}
+	seen[pointer] = true
+	resolved, err := resolveScaffoldPathItem(document, target, seen)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range item {
+		if key == "$ref" {
+			continue
+		}
+		if _, exists := resolved[key]; exists {
+			return nil, fmt.Errorf("path item reference has an ambiguous sibling field %q", key)
+		}
+		resolved[key] = value
+	}
+	return resolved, nil
+}
+
 func nonemptyOpenAPISecurity(raw any) bool {
 	if raw == nil {
 		return false
 	}
 	items, ok := raw.([]any)
-	return !ok || len(items) > 0
+	if !ok {
+		return true
+	}
+	for _, item := range items {
+		if clause, ok := item.(map[string]any); ok && len(clause) == 0 {
+			return false
+		}
+	}
+	return len(items) > 0
+}
+
+// Operation and path servers override the document servers. Different base
+// paths or unresolved variables require a choice the scaffold cannot make.
+func scaffoldServerPrefix(document, path, operation map[string]any) (string, error) {
+	var raw any
+	for _, scope := range []map[string]any{operation, path, document} {
+		if value, exists := scope["servers"]; exists {
+			raw = value
+			break
+		}
+	}
+	if raw == nil {
+		return "", nil
+	}
+	servers, ok := raw.([]any)
+	if !ok {
+		return "", errors.New("servers must be an array")
+	}
+	prefix := ""
+	for i, entry := range servers {
+		server, ok := entry.(map[string]any)
+		if !ok {
+			return "", errors.New("invalid server declaration")
+		}
+		address, ok := server["url"].(string)
+		if !ok || address == "" || strings.ContainsAny(address, "{}") {
+			return "", errors.New("server URL must be explicit and cannot contain variables")
+		}
+		parsed, err := url.Parse(address)
+		if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || (parsed.IsAbs() && (parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.Host == "")) || (!parsed.IsAbs() && (parsed.Host != "" || !strings.HasPrefix(address, "/") || strings.HasPrefix(address, "//"))) {
+			return "", errors.New("server URL must be an HTTP URL or an absolute path without credentials, query, or fragment")
+		}
+		candidate := strings.TrimSuffix(parsed.EscapedPath(), "/")
+		if i > 0 && candidate != prefix {
+			return "", errors.New("server URLs have different path prefixes; select one in the OpenAPI document")
+		}
+		prefix = candidate
+	}
+	return prefix, nil
 }
 
 func hasOpenAPIAuth(operation map[string]any, global bool) bool {
@@ -233,19 +404,56 @@ func hasRequiredOpenAPIParameter(raw any) bool {
 	return false
 }
 
-func scaffoldSuccessResponse(responses map[string]*openapidiff.Response) (int, string) {
+func hasRequiredOpenAPIRequestBody(raw any) bool {
+	if raw == nil {
+		return false
+	}
+	body, ok := raw.(map[string]any)
+	if !ok {
+		return true
+	}
+	if _, referenced := body["$ref"]; referenced {
+		return true
+	}
+	if required, exists := body["required"]; exists {
+		value, ok := required.(bool)
+		return !ok || value
+	}
+	return false
+}
+
+func scaffoldSuccessResponse(responses map[string]*openapidiff.Response, document map[string]any) (int, string, error) {
 	status := 0
-	contentType := ""
+	var selected *openapidiff.Response
 	for code, response := range responses {
 		parsed, err := strconv.Atoi(code)
 		if err != nil || parsed < 200 || parsed > 299 || (status != 0 && parsed >= status) {
 			continue
 		}
 		status = parsed
-		contentType = ""
-		if _, ok := response.Content["application/json"]; ok {
-			contentType = "application/json"
+		selected = response
+	}
+	if selected == nil {
+		return 0, "", nil
+	}
+	raw := selected.Raw
+	seen := map[string]bool{}
+	for raw["$ref"] != nil {
+		ref, ok := raw["$ref"].(string)
+		if !ok || !strings.HasPrefix(ref, "#/components/responses/") || seen[ref] || len(seen) >= 100 {
+			return 0, "", errors.New("unsupported or cyclic response reference")
+		}
+		seen[ref] = true
+		value, found := testJSONPointer(document, strings.TrimPrefix(ref, "#"))
+		raw, ok = value.(map[string]any)
+		if !found || !ok {
+			return 0, "", errors.New("response reference could not be resolved")
 		}
 	}
-	return status, contentType
+	if content, ok := raw["content"].(map[string]any); ok {
+		if _, ok := content["application/json"]; ok {
+			return status, "application/json", nil
+		}
+	}
+	return status, "", nil
 }

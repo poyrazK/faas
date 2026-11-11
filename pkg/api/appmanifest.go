@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"io"
 	"path"
-	"regexp"
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // AppManifestPath is where imaged writes the manifest inside the app layer and
@@ -66,7 +67,7 @@ func (h *BeforeCheckpointHook) Validate() error {
 	if h == nil {
 		return nil
 	}
-	return validateLifecycleHook("before_checkpoint", h.Path, h.TimeoutMS)
+	return validateLifecycleHook("before_checkpoint", h.Path, h.TimeoutMS, AfterRestoreHookMaxTimeoutMS)
 }
 
 func (h *BeforeCheckpointHook) EffectiveTimeout() time.Duration {
@@ -80,10 +81,12 @@ func (h *AfterRestoreHook) Validate() error {
 	if h == nil {
 		return nil
 	}
-	return validateLifecycleHook("after_restore", h.Path, h.TimeoutMS)
+	// The bound-app cap applies here; apid refuses more than
+	// AfterRestoreHookMaxTimeoutMS for an app without a managed binding.
+	return validateLifecycleHook("after_restore", h.Path, h.TimeoutMS, AfterRestoreHookBoundMaxTimeoutMS)
 }
 
-func validateLifecycleHook(name, path string, timeoutMS int) error {
+func validateLifecycleHook(name, path string, timeoutMS, maxTimeoutMS int) error {
 	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") ||
 		strings.ContainsAny(path, "?#%") {
 		return fmt.Errorf("%s.path must be an absolute path without query, fragment, or percent escapes", name)
@@ -93,8 +96,8 @@ func validateLifecycleHook(name, path string, timeoutMS int) error {
 			return fmt.Errorf("%s.path must not contain control characters", name)
 		}
 	}
-	if timeoutMS < 0 || timeoutMS > AfterRestoreHookMaxTimeoutMS {
-		return fmt.Errorf("%s.timeout_ms must be between 0 and %d", name, AfterRestoreHookMaxTimeoutMS)
+	if timeoutMS < 0 || timeoutMS > maxTimeoutMS {
+		return fmt.Errorf("%s.timeout_ms must be between 0 and %d", name, maxTimeoutMS)
 	}
 	return nil
 }
@@ -534,7 +537,7 @@ func (c *PreAuthRateLimitConfig) ValidateRoutes() error {
 	return nil
 }
 
-var versionAffinityCookieNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$`)
+var versionAffinityCookieNameRe = lazyregexp.New(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$`)
 
 // ValidateVersionAffinityCookieName keeps the configured lookup unambiguous
 // and bounded. The empty name disables cookie-derived affinity.
@@ -572,7 +575,7 @@ type WorkloadPort struct {
 	Internal bool `json:"internal,omitempty"`
 }
 
-var workloadPortNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,30}$`)
+var workloadPortNameRe = lazyregexp.New(`^[a-z0-9][a-z0-9-]{0,30}$`)
 
 // EffectiveProtocol maps the omitted protocol used by old callers to TCP.
 func (p WorkloadPort) EffectiveProtocol() WorkloadPortProtocol {
@@ -580,6 +583,40 @@ func (p WorkloadPort) EffectiveProtocol() WorkloadPortProtocol {
 		return WorkloadPortTCP
 	}
 	return WorkloadPortProtocol(strings.ToLower(string(p.Protocol)))
+}
+
+// IsInternalWorkloadPort reports whether the current manifest reserves this
+// protocol/port for private service traffic. A previously published listener
+// must stop admitting traffic even if its old name differs from the manifest.
+func IsInternalWorkloadPort(ports []WorkloadPort, protocol WorkloadPortProtocol, port int) bool {
+	for _, declared := range ports {
+		if declared.Internal && declared.EffectiveProtocol() == protocol && declared.Port == port {
+			return true
+		}
+	}
+	return false
+}
+
+// DeclaresPublicWorkloadPort requires the current public name/protocol/port
+// tuple. An internal reservation wins even for malformed duplicate entries.
+func DeclaresPublicWorkloadPort(ports []WorkloadPort, name string, protocol WorkloadPortProtocol, port int) bool {
+	if IsInternalWorkloadPort(ports, protocol, port) {
+		return false
+	}
+	name = strings.ToLower(strings.TrimSpace(name))
+	for _, declared := range ports {
+		if declared.Internal || declared.EffectiveProtocol() != protocol || declared.Port != port {
+			continue
+		}
+		declaredName := strings.ToLower(strings.TrimSpace(declared.Name))
+		if declaredName == "" {
+			declaredName = fmt.Sprintf("%s-%d", protocol, port)
+		}
+		if declaredName == name {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateWorkloadPorts validates the bounded listener contract and rejects

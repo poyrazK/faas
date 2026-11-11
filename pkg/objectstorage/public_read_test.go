@@ -1,14 +1,18 @@
 package objectstorage
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -61,20 +65,44 @@ func TestValidPublicReadPath(t *testing.T) {
 
 func TestPublicReadHandlerServesWithoutNext(t *testing.T) {
 	for _, mode := range []string{"", api.ObjectStorageGatewaySafetyV1} {
-		t.Run(mode, func(t *testing.T) { publicReadServesWithoutNext(t, mode, false) })
+		t.Run(mode, func(t *testing.T) { publicReadServesWithoutNext(t, mode, false, nil, false) })
 	}
 	// ADR-20261030075301 step 2: the same read, admitted from a cached
 	// decision with its counts batched.
-	t.Run("cached admission", func(t *testing.T) { publicReadServesWithoutNext(t, api.ObjectStorageGatewaySafetyV1, true) })
+	t.Run("cached admission", func(t *testing.T) { publicReadServesWithoutNext(t, api.ObjectStorageGatewaySafetyV1, true, nil, false) })
+	t.Run("compressed asset", func(t *testing.T) { publicReadServesWithoutNext(t, api.ObjectStorageGatewaySafetyV1, true, nil, true) })
+	// ADR-20261031122757 step 7: on a compute node the body draws on the
+	// edge's part of the node's port share.
+	t.Run("paced to the port share", func(t *testing.T) {
+		publicReadServesWithoutNext(t, api.ObjectStorageGatewaySafetyV1, true, NewTransferLimiter(api.MinObjectGatewayTransferBytesPerSecond, "test"), false)
+	})
 }
 
-func publicReadServesWithoutNext(t *testing.T, mode string, cached bool) {
+func publicReadServesWithoutNext(t *testing.T, mode string, cached bool, transfers *TransferLimiter, compressed bool) {
+	body := []byte("png")
+	if compressed {
+		var buf bytes.Buffer
+		zw := gzip.NewWriter(&buf)
+		if _, err := zw.Write(body); err != nil {
+			t.Fatal(err)
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		body = buf.Bytes()
+	}
+	size := int64(len(body))
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/" || len(r.URL.Query()) != 0 {
 			t.Errorf("upstream request = %s %s", r.Method, r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "image/png")
-		_, _ = io.WriteString(w, "png")
+		w.Header().Set("Content-Language", "en")
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		if compressed {
+			w.Header().Set("Content-Encoding", "gzip")
+		}
+		_, _ = w.Write(body)
 	}))
 	defer provider.Close()
 	registry, err := NewRegistry(Config{
@@ -132,8 +160,8 @@ func publicReadServesWithoutNext(t *testing.T, mode string, cached bool) {
 		registry.Accounting.AccountingMode = mode
 		registry.Accounting.GatewayMeteringSince = &since
 		registry.Accounting.MaxMonthlyCostMillicents = 0
-		// Anonymous reads get 75% of the ceiling (H9-S137): exactly 3 bytes.
-		registry.Accounting.MaxMonthlyEgressBytes = 4
+		// Anonymous reads get 75% of the ceiling (H9-S137): one whole body.
+		registry.Accounting.MaxMonthlyEgressBytes = (size*4 + 2) / 3
 	}
 	var reads *ReadAdmitter
 	locking := state.ObjectStorageAccountingStore(store)
@@ -143,7 +171,7 @@ func publicReadServesWithoutNext(t *testing.T, mode string, cached bool) {
 	}
 	nextCalled := false
 	h, err := NewPublicReadHandler(PublicReadConfig{
-		Store: store, Registry: registry, RequestMetrics: store, Accounting: locking, ReadAdmitter: reads, AppsDomain: "apps.example",
+		Store: store, Registry: registry, RequestMetrics: store, Accounting: locking, ReadAdmitter: reads, Transfers: transfers, AppsDomain: "apps.example",
 		Next: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { nextCalled = true }),
 	})
 	if err != nil {
@@ -152,14 +180,22 @@ func publicReadServesWithoutNext(t *testing.T, mode string, cached bool) {
 	req := httptest.NewRequest(http.MethodGet, "http://assets-app.apps.example/assets/logo.png", nil)
 	res := httptest.NewRecorder()
 	h.ServeHTTP(res, req)
-	if res.Code != http.StatusOK || res.Body.String() != "png" {
+	if res.Code != http.StatusOK || !bytes.Equal(res.Body.Bytes(), body) {
 		t.Fatalf("response = %d %q", res.Code, res.Body.String())
+	}
+	if res.Header().Get("Content-Language") != "en" || compressed && res.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("stored representation headers were lost: %v", res.Header())
 	}
 	if nextCalled {
 		t.Fatal("public asset fell through to app handler")
 	}
 	if got := res.Header().Get("Cache-Control"); got != publicCacheControl {
 		t.Fatalf("Cache-Control = %q", got)
+	}
+	if transfers != nil {
+		if got := testutil.ToFloat64(transfers.bytes.WithLabelValues("download")); got != float64(size) {
+			t.Fatalf("paced download bytes = %v, want the %d-byte body", got, size)
+		}
 	}
 	if cached {
 		if metrics, _ := store.ListObjectStorageProviderRequestMetrics(context.Background(), backend.ID, backend.Fingerprint, time.Now().UTC()); len(metrics) != 0 && metrics[0].RequestCount != 0 {
@@ -170,7 +206,7 @@ func publicReadServesWithoutNext(t *testing.T, mode string, cached bool) {
 		}
 	}
 	metrics, err := store.ListObjectStorageProviderRequestMetrics(context.Background(), backend.ID, backend.Fingerprint, time.Now().UTC())
-	if err != nil || len(metrics) != 1 || metrics[0].RequestCount != 1 || metrics[0].EgressBytes != 3 {
+	if err != nil || len(metrics) != 1 || metrics[0].RequestCount != 1 || metrics[0].EgressBytes != size {
 		t.Fatalf("metrics = %+v, err=%v", metrics, err)
 	}
 	if mode != "" {

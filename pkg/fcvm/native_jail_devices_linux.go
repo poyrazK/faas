@@ -25,6 +25,13 @@ func newNativeJailDeviceBackend(base string) nativeJailDeviceBackend {
 type linuxNativeJailInputs struct {
 	scope jailsetup.DeviceSetupScope
 	files []*os.File
+	// waitMntns and waitChroot are how long Prepare waited for the jailer to
+	// unshare its mount namespace and then to pivot into this jail's root.
+	waitMntns, waitChroot time.Duration
+}
+
+func (p *linuxNativeJailInputs) JailWaits() (mntns, chroot time.Duration) {
+	return p.waitMntns, p.waitChroot
 }
 
 func (p *linuxNativeJailInputs) Scope() jailsetup.DeviceSetupScope { return p.scope }
@@ -118,6 +125,8 @@ func (b linuxNativeJailDevices) Prepare(ctx context.Context, owner nativeLaunchR
 	if err != nil {
 		return nil, err
 	}
+	waitStart := time.Now()
+	var unshared time.Time // first observation of the jailer outside the host namespace
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -144,6 +153,9 @@ func (b linuxNativeJailDevices) Prepare(ctx context.Context, owner nativeLaunchR
 		if err := errors.Join(actualErr, expectedErr); err != nil {
 			return nil, errors.Join(err, namespace.Close(), originalRoot.Close())
 		}
+		if unshared.IsZero() && (identity.Inode != hostNS.Inode || identity.Device != hostNS.Device) {
+			unshared = time.Now()
+		}
 		if identity.Inode == hostNS.Inode && identity.Device == hostNS.Device || !os.SameFile(actualInfo, expectedInfo) {
 			if err := errors.Join(namespace.Close(), originalRoot.Close()); err != nil {
 				return nil, err
@@ -163,6 +175,10 @@ func (b linuxNativeJailDevices) Prepare(ctx context.Context, owner nativeLaunchR
 		}
 		tun := os.NewFile(uintptr(tunFD), "original-device-tun")
 		p := &linuxNativeJailInputs{files: []*os.File{originalRoot, namespace, process, tun}}
+		if unshared.IsZero() {
+			unshared = waitStart
+		}
+		p.waitMntns, p.waitChroot = unshared.Sub(waitStart), time.Since(unshared)
 		if err := b.completeScope(p, owner, proc, source); err != nil {
 			// Close the process descriptor here only once; the outer failure
 			// defer still owns it while inputs remain unpublished.
@@ -290,7 +306,19 @@ func (linuxNativeJailDevices) NamespaceRemoved(ctx context.Context, s jailsetup.
 			return err
 		}
 		for _, task := range tasks {
-			if err := nativeDeviceNamespacePathGone(filepath.Join(path, "task", task.Name(), "ns", "mnt"), s.Namespace); err != nil {
+			err := nativeDeviceNamespacePathGone(filepath.Join(path, "task", task.Name(), "ns", "mnt"), s.Namespace)
+			if errors.Is(err, errNativeNamespaceHeld) {
+				// Identify the holder: its cgroup names the jail it was
+				// launched into, and pid plus start time its incarnation.
+				pid, _ := strconv.Atoi(process.Name())
+				holder := &nativeNamespaceHolderError{err: err, PID: pid, Task: task.Name(),
+					Comm: nativeProcessComm(path), Cgroup: nativeProcessCgroupPath(path)}
+				if stat, statErr := os.ReadFile(filepath.Join(path, "stat")); statErr == nil {
+					holder.StartTime, _ = nativeProcessStartTime(string(stat), pid)
+				}
+				return holder
+			}
+			if err != nil {
 				return err
 			}
 		}
@@ -319,6 +347,32 @@ func (linuxNativeJailDevices) NamespaceRemoved(ctx context.Context, s jailsetup.
 	}
 	return nil
 }
+
+// nativeProcessComm is a process's command name for a recovery diagnostic,
+// empty when it has exited or cannot be read.
+func nativeProcessComm(procPath string) string {
+	comm, err := os.ReadFile(filepath.Join(procPath, "comm"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(comm))
+}
+
+// nativeProcessCgroupPath is a process's cgroup v2 path for a recovery
+// diagnostic, empty when it has exited or cannot be read.
+func nativeProcessCgroupPath(procPath string) string {
+	data, err := os.ReadFile(filepath.Join(procPath, "cgroup"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if path, ok := strings.CutPrefix(line, "0::"); ok {
+			return path
+		}
+	}
+	return strings.TrimSpace(string(data))
+}
+
 func nativeDeviceNamespacePathGone(path string, expected jailsetup.DeviceFDIdentity) error {
 	var stat unix.Stat_t
 	err := unix.Stat(path, &stat)
@@ -329,7 +383,7 @@ func nativeDeviceNamespacePathGone(path string, expected jailsetup.DeviceFDIdent
 		return err
 	}
 	if (jailsetup.DeviceFDIdentity{Device: uint64(stat.Dev), Inode: stat.Ino}) == expected {
-		return errors.New("native jail device cleanup: original namespace still has a task")
+		return errNativeNamespaceHeld
 	}
 	return nil
 }

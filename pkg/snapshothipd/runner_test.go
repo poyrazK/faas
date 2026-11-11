@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -685,6 +686,164 @@ func TestRunnerTickClaimsOnlyWhenTheProbeFindsWork(t *testing.T) {
 			}
 			if tc.wantClaims && !store.ready {
 				t.Fatal("claimable tick did not process the replica")
+			}
+		})
+	}
+}
+
+// scriptedProbeStore reports each probe on probes and answers with the next
+// added count from added (0 once it runs out), never claimable.
+type scriptedProbeStore struct {
+	fakeReplicaStore
+	added  []int
+	n      int
+	probes chan int
+}
+
+func (f *scriptedProbeStore) ReconcileSnapshotReplicas(context.Context, string) (int, bool, error) {
+	added := 0
+	if f.n < len(f.added) {
+		added = f.added[f.n]
+	}
+	f.n++
+	f.probes <- f.n
+	return added, false, nil
+}
+
+// TestRunnerWithWakeSleepsUntilWokenWhileCaughtUp pins the wake-driven loop: a
+// caught-up runner waits for its wake signal (or the idle interval) instead of
+// probing every interval, and a tick that found work keeps the fast interval
+// until the node is caught up.
+func TestRunnerWithWakeSleepsUntilWokenWhileCaughtUp(t *testing.T) {
+	store := &scriptedProbeStore{added: []int{0, 1}, probes: make(chan int, 16)}
+	wake := make(chan struct{}, 1)
+	r := New(store, &fakeBackend{}, "node-2", slog.Default()).
+		WithInterval(time.Millisecond).
+		WithIdleInterval(time.Hour).
+		WithWake(wake)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- r.Run(ctx) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("Run: %v", err)
+		}
+	}()
+
+	expectProbe := func(want int) {
+		t.Helper()
+		select {
+		case got := <-store.probes:
+			if got != want {
+				t.Fatalf("probe %d, want %d", got, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("probe %d never ran", want)
+		}
+	}
+	expectQuiet := func() {
+		t.Helper()
+		select {
+		case got := <-store.probes:
+			t.Fatalf("caught-up runner probed again (probe %d) without a wake", got)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+
+	expectProbe(1) // start-up tick: caught up
+	expectQuiet()
+	wake <- struct{}{}
+	expectProbe(2) // woken: enqueues work, so the fast interval follows
+	expectProbe(3) // no wake needed: caught up again
+	expectQuiet()
+}
+
+func TestRunnerNextTick(t *testing.T) {
+	r := New(nil, nil, "node", nil).WithInterval(time.Millisecond).WithIdleInterval(time.Minute)
+	if got := r.nextTick(false); got != time.Millisecond {
+		t.Fatalf("no wake signal: next tick %s, want the fixed interval", got)
+	}
+	r.WithWake(make(chan struct{}))
+	if got := r.nextTick(true); got != time.Millisecond {
+		t.Fatalf("busy: next tick %s, want the fast interval", got)
+	}
+	if got := r.nextTick(false); got != time.Minute {
+		t.Fatalf("caught up: next tick %s, want the idle interval", got)
+	}
+}
+
+// A replica carries its v2 capture's ADR-510 backing identity, so vmmd's
+// pre-restore check reads it locally. It never decides the replica's state.
+func TestRunnerReplicatesBackingIdentity(t *testing.T) {
+	const (
+		mem     = "snap/dep-b/captures/c1/v2/mem"
+		vmstate = "snap/dep-b/captures/c1/v2/vmstate"
+		drive   = "snap/dep-b/captures/c1/v2/drive"
+		backing = "snap/dep-b/captures/c1/v2/backing"
+	)
+	for _, tc := range []struct {
+		name         string
+		storageKey   string
+		withBacking  bool
+		failBacking  bool
+		revalidation bool
+		resident     []string
+		wantCached   bool
+		wantGet      bool
+	}{
+		{name: "v2 capture caches its identity", storageKey: mem, withBacking: true, wantCached: true, wantGet: true},
+		{name: "capture from before ADR-510 is still ready", storageKey: mem, wantGet: true},
+		{name: "unreadable identity leaves the replica ready", storageKey: mem, withBacking: true, failBacking: true, wantGet: true},
+		{
+			name: "revalidation adds the identity to an existing replica", storageKey: mem, withBacking: true,
+			revalidation: true, resident: []string{mem, vmstate, drive}, wantCached: true, wantGet: true,
+		},
+		{
+			name: "resident identity is not read again", storageKey: mem, withBacking: true,
+			revalidation: true, resident: []string{mem, vmstate, drive, backing}, wantCached: true,
+		},
+		{name: "legacy capture has no identity", storageKey: "snap/dep-b/mem"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := &fakeBackend{objects: map[string][]byte{
+				tc.storageKey: []byte("memory"), vmstate: []byte("vmstate"), drive: []byte("drive"),
+				"snap/dep-b/vmstate": []byte("vmstate"),
+			}}
+			if tc.withBacking {
+				parent.objects[backing] = []byte(`{"version":2}`)
+			}
+			if tc.failBacking {
+				parent.failKey = backing
+			}
+			cache, err := storage.NewLocalCacheBackend(parent, t.TempDir(), 1<<20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range tc.resident {
+				if err := cache.Put(context.Background(), key, bytes.NewReader(parent.objects[key])); err != nil {
+					t.Fatal(err)
+				}
+			}
+			vmstateKey := vmstate
+			if tc.storageKey != mem {
+				vmstateKey = "snap/dep-b/vmstate"
+			}
+			store := &fakeReplicaStore{job: state.SnapshotReplicaJob{
+				SnapshotID: "snap-b", DeploymentID: "dep-b", NodeID: "node-2",
+				StorageKey: tc.storageKey, VMStateStorageKey: vmstateKey, Attempts: 1, Revalidation: tc.revalidation,
+			}}
+			New(store, cache, "node-2", slog.Default()).runWorkTick(context.Background())
+			if !store.ready {
+				t.Fatalf("replica not ready (failed=%v)", store.failed)
+			}
+			cached, _, err := storage.CachedLocally(cache, backing)
+			if err != nil || cached != tc.wantCached {
+				t.Fatalf("identity cached = %v (%v), want %v", cached, err, tc.wantCached)
+			}
+			got := slices.Contains(parent.gets, backing)
+			if got != tc.wantGet {
+				t.Fatalf("read identity from the parent = %v, want %v (gets %v)", got, tc.wantGet, parent.gets)
 			}
 		})
 	}

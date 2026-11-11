@@ -275,6 +275,30 @@ func (tx *trafficPolicyMutationTx) Rollback(ctx context.Context) error {
 	return tx.Tx.Rollback(ctx)
 }
 
+// trafficAnalysisTimeoutAttempts bounds retries of a whole traffic mutation
+// whose policy analysis ran out of time. The analysis normally takes 10-16 ms;
+// it exceeds its 2 s budget only while the database stalls, and an app delete
+// then failed outright (prod 2026-11-09 12:25 and 13:04).
+const trafficAnalysisTimeoutAttempts = 3
+
+// retryTrafficAnalysisTimeout reruns op, a complete transaction, when its
+// traffic policy analysis exceeded a time budget. Any other error, including
+// a policy the analysis rejected, returns at once.
+func retryTrafficAnalysisTimeout(ctx context.Context, op func() error) error {
+	for attempt := 1; ; attempt++ {
+		err := op()
+		var analysis *TrafficPolicyAnalysisError
+		if !errors.As(err, &analysis) || analysis.Scope != "time" && analysis.Scope != "database_time" || attempt == trafficAnalysisTimeoutAttempts {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
+		}
+	}
+}
+
 func boundedTrafficPolicyAnalysis(ctx context.Context, analyze func(context.Context) error) error {
 	start := time.Now()
 	bounded, cancel := context.WithTimeout(ctx, api.TrafficPolicyAnalysisTimeout)
@@ -334,23 +358,55 @@ func (s *PgStore) beginAppConfigMutation(ctx context.Context, id string, p Updat
 	if err != nil {
 		return nil, fmt.Errorf("state: read app config owner: %w", mapErr(err))
 	}
+	for attempt := 1; ; attempt++ {
+		tx, err := s.lockAppConfigMutation(ctx, id, account)
+		if !transientLockConflict(err) || attempt == appConfigLockAttempts {
+			return tx, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(time.Duration(attempt) * 50 * time.Millisecond):
+		}
+	}
+}
+
+// appConfigLockAttempts bounds how often the opening locks of an app config
+// mutation are retried after Postgres aborts them as a deadlock victim. The
+// account lock comes first, but a concurrent insert that references the
+// account's namespace (a cron, for one) holds a key-share lock on it and then
+// locks the account in a trigger. Two journeys of one account lost an app
+// update to that cycle as a 503 (Hunt 31 H31-10). No work has happened yet,
+// so starting the transaction again is safe.
+const appConfigLockAttempts = 3
+
+func (s *PgStore) lockAppConfigMutation(ctx context.Context, id string, account pgtype.UUID) (pgx.Tx, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("state: begin app config mutation: %w", err)
 	}
 	if _, err := sqlc.New().LockAppConfigAccount(ctx, tx, account); err != nil {
 		_ = tx.Rollback(context.WithoutCancel(ctx))
-		return nil, fmt.Errorf("state: lock app config account: %w", mapErr(err))
+		return nil, fmt.Errorf("state: lock app config account: %w", lockErr(err))
 	}
 	owner, err := sqlc.New().LockTrafficAppAccount(ctx, tx, uuidToPgtype(id))
 	if err != nil || owner != account {
 		_ = tx.Rollback(context.WithoutCancel(ctx))
 		if err != nil {
-			return nil, fmt.Errorf("state: lock app config owner: %w", mapErr(err))
+			return nil, fmt.Errorf("state: lock app config owner: %w", lockErr(err))
 		}
 		return nil, ErrConflict
 	}
 	return tx, nil
+}
+
+// lockErr keeps a deadlock or serialization failure as the Postgres error, so
+// the caller can retry it, and maps every other error as before.
+func lockErr(err error) error {
+	if transientLockConflict(err) {
+		return err
+	}
+	return mapErr(err)
 }
 
 func appConfigChangesTrafficScope(p UpdateAppParams) bool {

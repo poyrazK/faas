@@ -61,7 +61,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
-	"github.com/onebox-faas/faas/pkg/apid/release"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
@@ -77,25 +77,48 @@ import (
 // insert + status-flip commit critical section.
 //
 // In-process only — apid is a single replica per CLAUDE.md,
-// so a package-level sync.Map is sufficient. Cross-replica
+// so a package-level map is sufficient. Cross-replica
 // concurrency would need pg_advisory_xact_lock (deferred).
-var uploadSessionLocks sync.Map // map[string]*sync.Mutex
+//
+// Entries are reference-counted and removed when the last holder or waiter
+// unlocks. Before, one mutex per upload ID and per "account:" key stayed in a
+// sync.Map for the life of the process (deploy review 2026-11-10).
+var (
+	uploadSessionLocksMu sync.Mutex
+	uploadSessionLocks   = map[string]*uploadSessionLock{}
+)
 
-// acquireUploadSessionLock returns a per-upload_id mutex that the
-// caller MUST Unlock after the critical section exits.
-func acquireUploadSessionLock(uploadID string) *sync.Mutex {
-	if v, ok := uploadSessionLocks.Load(uploadID); ok {
-		return v.(*sync.Mutex)
+type uploadSessionLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lockUploadSession locks the per-key mutex and returns the function that
+// unlocks it; the caller MUST call it exactly once.
+func lockUploadSession(key string) (unlock func()) {
+	uploadSessionLocksMu.Lock()
+	l := uploadSessionLocks[key]
+	if l == nil {
+		l = &uploadSessionLock{}
+		uploadSessionLocks[key] = l
 	}
-	mu := &sync.Mutex{}
-	actual, _ := uploadSessionLocks.LoadOrStore(uploadID, mu)
-	return actual.(*sync.Mutex)
+	l.refs++
+	uploadSessionLocksMu.Unlock()
+	l.mu.Lock()
+	return func() {
+		l.mu.Unlock()
+		uploadSessionLocksMu.Lock()
+		l.refs--
+		if l.refs == 0 {
+			delete(uploadSessionLocks, key)
+		}
+		uploadSessionLocksMu.Unlock()
+	}
 }
 
 // startUploadRequest is the JSON body POST /v1/uploads accepts.
-// total_size is required; sha256_hex is optional (build
-// provenance audit row records it, but server does not
-// re-verify — ADR-115 trust boundary).
+// total_size is required; sha256_hex is optional. When it is set,
+// commit compares it with the received bytes (verifyUploadChecksum).
 type startUploadRequest struct {
 	AppSlug       string                   `json:"app_slug"`
 	TotalSize     int64                    `json:"total_size"`
@@ -154,6 +177,10 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 			"Invalid total_size", "total_size must be > 0"))
 		return
 	}
+	if prob := uploadSHA256HexProblem(req.Sha256Hex); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	app, err := s.store.AppBySlug(r.Context(), req.AppSlug)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -200,9 +227,8 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 	// dynamic; serializing starts for one account closes the in-process
 	// check-then-insert race across different apps. A multi-replica
 	// deployment still needs a database-backed admission primitive.
-	startMu := acquireUploadSessionLock("account:" + acct.ID)
-	startMu.Lock()
-	defer startMu.Unlock()
+	unlockStart := lockUploadSession("account:" + acct.ID)
+	defer unlockStart()
 
 	openCount, err := s.store.CountOpenUploadSessionsByAccountApp(r.Context(), sqlc.CountOpenUploadSessionsByAccountAppParams{
 		Column1: acctUUID,
@@ -425,9 +451,8 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 	// the paired row/file transition. Re-read after acquiring it: the
 	// first row read can race a commit, cancel, or the reaper while the
 	// request body is being received.
-	mu := acquireUploadSessionLock(uploadID)
-	mu.Lock()
-	defer mu.Unlock()
+	unlock := lockUploadSession(uploadID)
+	defer unlock()
 	row, err = s.store.GetUploadSession(ctx, uploadID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -547,10 +572,9 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	// prevent two concurrent commit retries both calling
 	// apidsource.Enqueue and leaving an orphan deployment.
 	// In-process only (single-replica per CLAUDE.md); see
-	// acquireUploadSessionLock above for the deferral note.
-	mu := acquireUploadSessionLock(uploadID)
-	mu.Lock()
-	defer mu.Unlock()
+	// lockUploadSession above for the deferral note.
+	unlock := lockUploadSession(uploadID)
+	defer unlock()
 	row, err := s.store.GetUploadSession(r.Context(), uploadID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -619,6 +643,22 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			fmt.Sprintf("Session received %d of %d bytes; PATCH the remaining bytes before committing.", row.ReceivedBytes, row.TotalSize)))
 		return
 	}
+	if prob, err := s.verifyUploadChecksum(r.Context(), row, acct.ID); err != nil || prob != nil {
+		if prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		writeCustomerInternalProblem(w, r, s.log, "verify upload checksum",
+			"Gregale could not check the uploaded archive.",
+			"Retry the commit request; contact support if it continues.", err)
+		return
+	}
+	// ADR-20261104140058: an agent deploying a production app needs a
+	// person's approval; the commit names its app only in the session, so
+	// the gate runs here rather than in the authentication middleware.
+	if actor, key, _, ok := authmw.PrincipalFrom(r); ok && s.authMw.RequireAgentApprovalForApp(w, r, actor, key, app) {
+		return
+	}
 	if prob := s.enforceSecurityPostureGate(r.Context(), app); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -643,9 +683,9 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		}
 	}(r.Context())
 	limits := api.MustLimitsFor(acct.Plan)
-	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars, OverrideFreeze: opts.OverrideFreeze, ReleaseAt: opts.ReleaseAt, ReleaseNotify: opts.ReleaseNotify}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars, OverrideFreeze: opts.OverrideFreeze, ReleaseAt: opts.ReleaseAt, ReleaseNotify: opts.ReleaseNotify, Workflows: opts.Workflows}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(opts.Healthcheck)
-	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
+	_, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
 	if healthProblem != nil {
 		api.WriteProblem(w, healthProblem)
 		return
@@ -669,42 +709,15 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
-	if opts.SourceRoot != "" {
-		root, rootErr := sourcecontext.StorageRoot(opts.SourceRoot)
-		if rootErr != nil {
-			api.WriteProblem(w, api.ErrSourceInvalid("invalid source_root: "+rootErr.Error()))
-			return
-		}
-		opts.SourceRoot = root
-	}
-	sched, prob := s.releaseFreezeOrSchedule(r, acct, app, rolloutReq)
-	if prob != nil {
-		api.WriteProblem(w, prob)
+	root, rootErr := sourcecontext.DeploymentRoot(opts.SourceRoot, app.RootDir)
+	if rootErr != nil {
+		api.WriteProblem(w, api.ErrSourceInvalid("invalid source_root: "+rootErr.Error()))
 		return
 	}
-	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
-	if ap := s.releaseApprovalCanaryProblem(r.Context(), app, rolloutReq); ap != nil {
-		api.WriteProblem(w, ap)
-		return
-	}
-	if prob := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
-	if prob := s.validateAndPlanSidecars(rolloutReq, acct, limits); prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
-	sched.park(rolloutReq)
-	rollout, prob := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
-	if prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
+	opts.SourceRoot = root
 	if app.Type == state.AppTypeFunction {
-		if opts.Dockerfile {
-			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-				"Dockerfile functions unsupported", "function deploys use the platform runtime scaffold; remove dockerfile=true"))
+		if opts.Dockerfile && !api.FunctionRuntimeBuildsFromDockerfile(app.Runtime) {
+			api.WriteProblem(w, api.FunctionDockerfileProblem(app.Runtime, true))
 			return
 		}
 		if opts.Runtime != "" && opts.Runtime != app.Runtime {
@@ -712,8 +725,8 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 				"Runtime mismatch", "function deploys must match the app's runtime"))
 			return
 		}
-		if opts.Handler == "" {
-			api.WriteProblem(w, api.ErrHandlerMissing())
+		if problem := api.FunctionHandlerProblem(app.Runtime, opts.Handler); problem != nil {
+			api.WriteProblem(w, problem)
 			return
 		}
 	}
@@ -755,10 +768,19 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
-	manifestApp := app
-	if opts.SourceRoot != "" {
-		manifestApp.RootDir = opts.SourceRoot
+	if app.Type == state.AppTypeFunction {
+		hasDockerfile, err := archiveHasRootDockerfileAtRoot(row.PartPath, opts.SourceRoot)
+		if err != nil {
+			api.WriteProblem(w, api.ErrSourceInvalid(err.Error()))
+			return
+		}
+		if problem := api.FunctionDockerfileProblem(app.Runtime, opts.Dockerfile || hasDockerfile); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	}
+	manifestApp := app
+	manifestApp.RootDir = opts.SourceRoot
 	manifest, manifestProblem := loadSourceRefManifest(row.PartPath, manifestApp, acct.Plan, s.agentStepsAllowed(acct))
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
@@ -769,19 +791,12 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, buildProblem)
 		return
 	}
-	manifestOverrides, workloadsApplied, workloadProblem := s.applyManifestWorkloads(rolloutReq, manifest, acct, limits)
-	if workloadProblem != nil {
-		api.WriteProblem(w, workloadProblem)
+	rollout, sched, prob := s.prepareSourceDeploymentRollout(r, acct, app, manifest, rolloutReq)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
-	if workloadsApplied {
-		rollout, prob = buildDeploymentForInsert(app, rolloutReq, manifestOverrides, limits, acct.Plan)
-		if prob != nil {
-			api.WriteProblem(w, prob)
-			return
-		}
-	}
-	releaseCommand, releaseProblem := resolveSourceReleaseCommand(row.PartPath, manifestApp, manifest)
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(row.PartPath, manifestApp, manifest, s.releasePhaseOff)
 	if releaseProblem != nil {
 		api.WriteProblem(w, releaseProblem)
 		return
@@ -792,6 +807,11 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !opts.NoTriggers)
 	if stagedManifest.cronIntent != nil {
 		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), stagedManifest.cronIntent.SessionID))
+	}
+	// Guarded like the cron intent above: contextcheck follows the request
+	// through the branch, not through an unconditional WithContext.
+	if stagedManifest.eventSubscriptionIntent != nil {
+		r = r.WithContext(state.ContextWithDeploymentEventSubscriptions(r.Context(), stagedManifest.eventSubscriptionIntent))
 	}
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
@@ -851,7 +871,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
 		CanaryStages:           rollout.CanaryStages,
 		DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
-		Workflows:              marshalWorkflowDefinitions(opts.Workflows),
+		Workflows:              append(json.RawMessage(nil), rollout.Workflows...),
 		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
 		OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
 		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
@@ -860,7 +880,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		Scope:                  rolloutReq.Scope,
 		HostingObserver:        s.ops,
 		HostingFlow:            "first_deploy",
-		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService,
+		ServiceRollout:         state.IsServiceRollout(rollout),
 	})
 	if err != nil {
 		s.writeDeploymentCreateError(w, err)
@@ -944,9 +964,8 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 // → cancelled and removes the .part file.
 func (s *server) handleCancelUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	uploadID := r.PathValue("id")
-	mu := acquireUploadSessionLock(uploadID)
-	mu.Lock()
-	defer mu.Unlock()
+	unlock := lockUploadSession(uploadID)
+	defer unlock()
 	row, err := s.store.GetUploadSession(r.Context(), uploadID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {

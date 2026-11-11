@@ -32,6 +32,8 @@ type settingsAPI struct {
 	requests []recordedRequest
 	secrets  []api.AppSecretResponse
 	rules    []api.EdgeRuleResponse
+	// parked: the app is evicted_cold and the restart API refuses it.
+	parked bool
 }
 
 func newSettingsAPI(t *testing.T, secrets ...api.AppSecretResponse) *settingsAPI {
@@ -44,7 +46,15 @@ func newSettingsAPI(t *testing.T, secrets ...api.AppSecretResponse) *settingsAPI
 		s.mu.Unlock()
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/shop-data":
-			_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: "shop-data", CanonicalURL: "https://shop-data.example.com"})
+			status := "active"
+			if s.parked {
+				status = "evicted_cold"
+			}
+			_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: "shop-data", CanonicalURL: "https://shop-data.example.com", Status: status})
+		case s.parked && strings.Contains(r.URL.Path, "restart"):
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"type":"about:blank","title":"App is parked","status":409,"code":"conflict"}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/edge-rules"):
 			_ = json.NewEncoder(w).Encode(s.rules)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/edge-rules"), r.Method == http.MethodPatch:
@@ -204,6 +214,23 @@ func TestDataAPIServerKeyLifecycle(t *testing.T) {
 	if len(calls) != 4 || !strings.HasSuffix(calls[0], "/secrets") || calls[1] != "DELETE /v1/apps/shop-data/secrets/DATA_API_SERVER_KEY_B_PERMISSIONS" || calls[2] != "PUT /v1/apps/shop-data/secrets/DATA_API_SERVER_KEY_B_SHA256" || !strings.Contains(calls[3], "restart") {
 		t.Fatalf("calls = %v (an unrestricted key must clear stale permissions before its hash)", calls)
 	}
+
+	// A parked app cannot be restarted, and needs no restart: the key is
+	// still shown, and the command succeeds.
+	parked := newSettingsAPI(t, api.AppSecretResponse{Key: "DATA_API_SERVER_KEY_A_SHA256", Scope: api.DefaultEnvScope, UpdatedAt: "2026-10-01T00:00:00Z"},
+		api.AppSecretResponse{Key: "DATA_API_SERVER_KEY_B_SHA256", Scope: api.DefaultEnvScope, UpdatedAt: "2026-10-02T00:00:00Z"})
+	parked.parked = true
+	before := len(out.String())
+	if code := cmdDataAPIServerKey([]string{"create", "shop-data", "--replace-oldest"}); code != 0 {
+		t.Fatalf("parked: exit = %d, output %s", code, out.String())
+	}
+	if shown := out.String()[before:]; !regexp.MustCompile(`gdsk_[A-Za-z0-9_-]{43}`).MatchString(shown) || !strings.Contains(shown, "App is parked") {
+		t.Fatalf("parked: the key or the parked note is missing: %s", out.String())
+	}
+	// The replaced key goes before its slot takes new permissions.
+	if calls := parked.calls(); len(calls) < 4 || calls[1] != "DELETE /v1/apps/shop-data/secrets/DATA_API_SERVER_KEY_A_SHA256" || calls[2] != "DELETE /v1/apps/shop-data/secrets/DATA_API_SERVER_KEY_A_PERMISSIONS" || calls[3] != "PUT /v1/apps/shop-data/secrets/DATA_API_SERVER_KEY_A_SHA256" {
+		t.Fatalf("parked: calls = %v", calls)
+	}
 }
 
 func TestDataAPIServerKeySlotsRefuseSilentReplacement(t *testing.T) {
@@ -291,7 +318,7 @@ func writeMigrationFixture(t *testing.T) string {
 func TestDataAPISingleAppArchiveAddsMigrationsAndReleaseCommand(t *testing.T) {
 	dir := writeMigrationFixture(t)
 	archive := filepath.Join(t.TempDir(), "api.tar.gz")
-	if err := buildDataAPISingleAppArchive(dir, dataAPIDefaultReleaseCommand, archive); err != nil {
+	if err := buildDataAPISingleAppArchive(embeddedRuntimeForTest(t), dir, dataAPIDefaultReleaseCommand, archive); err != nil {
 		t.Fatal(err)
 	}
 	files := readArchive(t, archive)
@@ -321,27 +348,27 @@ func TestDataAPISingleAppArchiveAddsMigrationsAndReleaseCommand(t *testing.T) {
 func TestDataAPISingleAppArchiveRejectsUnsafeInput(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "api.tar.gz")
 	empty := t.TempDir()
-	if err := buildDataAPISingleAppArchive(empty, dataAPIDefaultReleaseCommand, archive); err == nil {
+	if err := buildDataAPISingleAppArchive(embeddedRuntimeForTest(t), empty, dataAPIDefaultReleaseCommand, archive); err == nil {
 		t.Fatal("empty migrations accepted")
 	}
 	noRelease := t.TempDir()
 	if err := os.WriteFile(filepath.Join(noRelease, "migrate.mjs"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := buildDataAPISingleAppArchive(noRelease, dataAPIDefaultReleaseCommand, archive); err == nil || !strings.Contains(err.Error(), "release.mjs") {
+	if err := buildDataAPISingleAppArchive(embeddedRuntimeForTest(t), noRelease, dataAPIDefaultReleaseCommand, archive); err == nil || !strings.Contains(err.Error(), "release.mjs") {
 		t.Fatalf("missing release.mjs: %v", err)
 	}
-	if err := buildDataAPISingleAppArchive(noRelease, "node migrations/migrate.mjs", archive); err != nil {
+	if err := buildDataAPISingleAppArchive(embeddedRuntimeForTest(t), noRelease, "node migrations/migrate.mjs", archive); err != nil {
 		t.Fatalf("custom release command: %v", err)
 	}
-	if err := buildDataAPISingleAppArchive(noRelease, "node a.mjs\nrm -rf /", archive); err == nil {
+	if err := buildDataAPISingleAppArchive(embeddedRuntimeForTest(t), noRelease, "node a.mjs\nrm -rf /", archive); err == nil {
 		t.Fatal("multi-line release command accepted")
 	}
 	linked := writeMigrationFixture(t)
 	if err := os.Symlink("/etc/hosts", filepath.Join(linked, "hosts.sql")); err != nil {
 		t.Skip("symlinks unavailable")
 	}
-	if err := buildDataAPISingleAppArchive(linked, dataAPIDefaultReleaseCommand, archive); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+	if err := buildDataAPISingleAppArchive(embeddedRuntimeForTest(t), linked, dataAPIDefaultReleaseCommand, archive); err == nil || !strings.Contains(err.Error(), "not a regular file") {
 		t.Fatalf("symlink accepted: %v", err)
 	}
 }

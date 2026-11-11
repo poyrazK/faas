@@ -3,12 +3,14 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { EventEmitter } from 'node:events'
 import { createServer } from '../server.mjs'
-import { createHealth } from '../health.mjs'
+import { createHealth, readRuntimeVersion } from '../health.mjs'
 import { runtimeConfig, limits } from '../config.mjs'
 
 async function fixture(t, coordinated = false) {
   const config = runtimeConfig({ DATABASE_URL: 'postgres://restricted:private-password@localhost/db', DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes', ...(coordinated ? { DATA_API_COORDINATED_REFRESH: '1' } : {}) })
-  const state = { sql: 200, live: 200, paused: false, failed: false, reads: 0, probes: [], verified: 0, logs: [] }
+  const state = { sql: 200, live: 200, paused: false, failed: false, reads: 0, probes: [], verified: 0, logs: [], clock: 0, frozen: false }
+  // Each health check sees a fresh clock unless a test freezes it to observe the cache.
+  config.healthClock = () => state.frozen ? state.clock : (state.clock += limits.healthCacheMs)
   config.refreshStatus = async () => {
     state.reads++
     if (state.failed) throw Error('private-database-host-and-password')
@@ -27,7 +29,7 @@ async function fixture(t, coordinated = false) {
     for (const server of [gateway, admin]) server.closeAllConnections()
     await Promise.all([gateway, admin].map(server => new Promise(resolve => server.close(resolve))))
   })
-  return { config, state, admin, base: `http://127.0.0.1:${gateway.address().port}` }
+  return { config, state, admin, gateway, base: `http://127.0.0.1:${gateway.address().port}` }
 }
 
 test('liveness needs no engine, database, JWT or admission and readiness distinguishes observations', async t => {
@@ -42,6 +44,7 @@ test('liveness needs no engine, database, JWT or admission and readiness disting
   assert.equal(response.status, 200)
   assert.deepEqual(report.checks, { engine: 'reachable', sql: 'ready', database: 'reachable', refresh: 'disabled' })
   assert.deepEqual(report.admission, { active: 0, queued: 0, capacity: 2, queue_capacity: 8 })
+  assert.equal(report.runtime_version, readRuntimeVersion())
   assert.equal(report.pool.state, 'observed')
   assert.equal(report.pool.capacity, 2)
   assert.equal(report.pool.available, 1)
@@ -95,13 +98,49 @@ test('refresh pause and reader failure remain distinct from SQL readiness and re
   assert.equal(report.refresh_paused, false)
 })
 
-test('concurrent hung probes have a total deadline and share bounded engine and refresh work', { timeout: 10000 }, async t => {
-  let release, reads = 0, probes = 0
+test('completed checks answer public health polling for the cache interval', async t => {
+  const { state, base } = await fixture(t, true)
+  state.frozen = true
+  for (let i = 0; i < 5; i++) assert.equal((await fetch(base + '/healthz')).status, 200)
+  assert.equal(state.probes.filter(path => path === '/ready').length, 1, 'one SQL readiness probe per interval')
+  assert.equal(state.reads, 1, 'one refresh read per interval')
+  state.sql = 503
+  assert.equal((await fetch(base + '/healthz')).status, 200, 'the cached result still answers')
+  state.clock += limits.healthCacheMs
+  const expired = await fetch(base + '/healthz')
+  assert.equal(expired.status, 503, 'an expired result is checked again')
+  assert.equal(state.probes.filter(path => path === '/ready').length, 2)
+  assert.equal((await expired.json()).admission.capacity, 1, 'admission is read live')
+})
+
+test('an unready answer is never reused, so a starting engine reports ready at once', async t => {
+  const { state, base } = await fixture(t)
+  state.frozen = true
+  state.sql = 503
+  assert.equal((await fetch(base + '/healthz')).status, 503)
+  state.sql = 200
+  assert.equal((await fetch(base + '/healthz')).status, 200, 'the platform readiness probe must not see a remembered "not yet"')
+  assert.equal(state.probes.filter(path => path === '/ready').length, 2)
+})
+
+test('an engine stop, start, reload or restore forgets the cached answer', async t => {
+  const { state, base, gateway } = await fixture(t)
+  state.frozen = true
+  assert.equal((await fetch(base + '/healthz')).status, 200)
+  state.sql = 503
+  assert.equal((await fetch(base + '/healthz')).status, 200, 'within the interval the ready answer is reused')
+  gateway.invalidateHealth()
+  assert.equal((await fetch(base + '/healthz')).status, 503, 'the engine it described is gone')
+  assert.equal(state.probes.filter(path => path === '/ready').length, 2)
+})
+
+test('concurrent hung probes have a total deadline and share bounded engine and refresh work',{ timeout: 10000 }, async t => {
+  let release, reads = 0, probes = 0, clock = 0
   const admin = http.createServer(req => { if (req.url === '/ready') probes++ })
   await new Promise(resolve => admin.listen(0, '127.0.0.1', resolve))
   t.after(() => { admin.closeAllConnections(); admin.close() })
   const config = { coordinatedRefresh: true, refreshStatus: () => { reads++; return new Promise(resolve => { release = resolve }) } }
-  const health = createHealth(config, admin.address().port, admin.address().port)
+  const health = createHealth(config, admin.address().port, admin.address().port, { monotonic: () => clock })
   const admission = () => ({ active: 1, queued: 8, capacity: 1, queue_capacity: 8 })
   const started = performance.now()
   const reports = await Promise.all(Array.from({ length: 32 }, () => health.snapshot(admission)))
@@ -110,6 +149,7 @@ test('concurrent hung probes have a total deadline and share bounded engine and 
   assert.equal(reads, 1)
   assert.equal(probes, 1)
   assert.ok(reports.every(report => !report.ready && report.checks.refresh === 'unavailable'))
+  clock += limits.healthCacheMs
   const next = health.snapshot(admission)
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(reads, 1, 'a timed-out reader must stay shared until it settles')
@@ -141,4 +181,24 @@ test('a retained readiness probe expires at its hard cap and a fresh probe recov
   assert.equal(destroyed, 1)
   assert.equal(await health.sql(), 'ready')
   assert.equal(probes, 2, 'recovery uses a fresh probe after the hard cap')
+})
+
+test('readiness reports the runtime version the image was built from', async t => {
+  const { mkdtemp, writeFile, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { readFile } = await import('node:fs/promises')
+  const shipped = JSON.parse(await readFile(new URL('../runtime-version.json', import.meta.url), 'utf8')).version
+  assert.match(shipped, /^[0-9a-f]{16}$/)
+  assert.equal(readRuntimeVersion(), shipped)
+  const dir = await mkdtemp(join(tmpdir(), 'data-api-version-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const file = join(dir, 'runtime-version.json')
+  assert.equal(readRuntimeVersion(file), 'unknown', 'a local run without the file is unknown, not a crash')
+  for (const content of ['{', '{"version":"0123456789ABCDEF"}', '{"version":42}']) {
+    await writeFile(file, content)
+    assert.equal(readRuntimeVersion(file), 'unknown')
+  }
+  await writeFile(file, '{"version":"0123456789abcdef"}')
+  assert.equal(readRuntimeVersion(file), '0123456789abcdef')
 })

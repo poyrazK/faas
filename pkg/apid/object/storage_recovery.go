@@ -58,6 +58,9 @@ func (s *Service) ExecuteBucketOperation(ctx context.Context, st state.ObjectBuc
 			if err == nil {
 				err = backend.Provider.CreateBucket(callCtx, b.PhysicalName)
 			}
+			if err == nil {
+				s.startAllVersionAccounting(callCtx, backend.Provider, b)
+			}
 		}
 	} else {
 		owned, err = s.ownedBucketCleanupRequired(callCtx, b)
@@ -71,6 +74,9 @@ func (s *Service) ExecuteBucketOperation(ctx context.Context, st state.ObjectBuc
 			err = s.inventoryRequestRecorder(b)(callCtx)
 			if err == nil {
 				err = backend.Provider.DeleteBucket(callCtx, b.PhysicalName)
+			}
+			if err == nil {
+				err = s.revokeDeletedBucketBindings(callCtx, b)
 			}
 		}
 	}
@@ -234,51 +240,60 @@ func (s *Service) ReconcileObjectMultipartUploads(ctx context.Context, observe f
 func (s *Service) RunObjectStorageRecovery(ctx context.Context) {
 	attempts := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_recovery_attempts_total", Help: "Claimed object-storage recovery attempts by operation and outcome."}, []string{"operation", "outcome"})
 	settlements := newNodeSettlementMetrics()
+	// While a provider refuses the credentials, stalled creates are skipped
+	// and the attempt counter stays flat, so the refusal needs its own signal
+	// (Hunt 14 H14-14 ran three weeks unnoticed).
+	refusing := prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "faas_object_storage_provider_refusing_credentials", Help: "1 while a storage provider refused this installation's credentials within the last hour and object storage is withdrawn."}, func() float64 {
+		if s.providerRefusingCredentials() {
+			return 1
+		}
+		return 0
+	})
 	if s.Host.Ops() != nil {
-		s.Host.Ops().Registry().MustRegister(attempts, settlements.backlog, settlements.oldest)
+		s.Host.Ops().Registry().MustRegister(attempts, settlements.backlog, settlements.oldest, refusing)
 	}
 	observe := func(operation, outcome string) { attempts.WithLabelValues(operation, outcome).Inc() }
 	ticker := time.NewTicker(objectRecoveryInterval)
 	defer ticker.Stop()
 	for {
 		if err := s.ReconcileObjectBuckets(ctx, observe); err != nil && ctx.Err() == nil {
-			s.Host.Logger().Warn("object storage recovery sweep failed")
+			s.Host.Logger().Warn("object storage recovery sweep failed", "err", logErr(err))
 		}
 		if err := s.ReconcileObjectMultipartUploads(ctx, observe); err != nil && ctx.Err() == nil {
-			s.Host.Logger().Warn("object storage multipart recovery sweep failed")
+			s.Host.Logger().Warn("object storage multipart recovery sweep failed", "err", logErr(err))
 		}
 		if err := s.pruneObjectUploadGrants(ctx); err != nil && ctx.Err() == nil {
-			s.Host.Logger().Warn("object upload grant pruning failed")
+			s.Host.Logger().Warn("object upload grant pruning failed", "err", logErr(err))
 		}
 		if err := s.ReconcileObjectUploads(ctx, observe); err != nil && ctx.Err() == nil {
-			s.Host.Logger().Warn("object upload recovery sweep failed")
+			s.Host.Logger().Warn("object upload recovery sweep failed", "err", logErr(err))
 		}
 		if err := s.ReconcileObjectNodeSettlements(ctx, observe); err != nil && ctx.Err() == nil {
-			s.Host.Logger().Warn("object settlement acknowledgement sweep failed")
+			s.Host.Logger().Warn("object settlement acknowledgement sweep failed", "err", logErr(err))
 		}
 		if err := s.observeNodeSettlementBacklog(ctx, settlements); err != nil && ctx.Err() == nil {
-			s.Host.Logger().Warn("object settlement backlog observation failed")
+			s.Host.Logger().Warn("object settlement backlog observation failed", "err", logErr(err))
 		}
 		if err := s.ReconcileObjectDeletions(ctx, observe); err != nil && ctx.Err() == nil {
-			s.Host.Logger().Warn("object deletion recovery sweep failed")
+			s.Host.Logger().Warn("object deletion recovery sweep failed", "err", logErr(err))
 		}
 		if err := s.ReconcileObjectBucketVersioning(ctx, observe); err != nil && ctx.Err() == nil {
-			s.Host.Logger().Warn("object bucket versioning recovery sweep failed")
+			s.Host.Logger().Warn("object bucket versioning recovery sweep failed", "err", logErr(err))
 		}
 		if err := s.ReconcileObjectBucketObjectLock(ctx, observe); err != nil && ctx.Err() == nil {
-			s.Host.Logger().Warn("object bucket Object Lock recovery sweep failed")
+			s.Host.Logger().Warn("object bucket Object Lock recovery sweep failed", "err", logErr(err))
 		}
 		if err := s.ReconcileObjectVersionProtection(ctx, observe); err != nil && ctx.Err() == nil {
-			s.Host.Logger().Warn("object version protection recovery sweep failed")
+			s.Host.Logger().Warn("object version protection recovery sweep failed", "err", logErr(err))
 		}
 		if err := s.ReconcileObjectBucketEncryption(ctx, observe); err != nil && ctx.Err() == nil {
-			s.Host.Logger().Warn("object bucket encryption recovery sweep failed")
+			s.Host.Logger().Warn("object bucket encryption recovery sweep failed", "err", logErr(err))
 		}
 		if err := s.ReconcileObjectCapacity(ctx, observe); err != nil && ctx.Err() == nil {
-			s.Host.Logger().Warn("object storage capacity reconciliation sweep failed")
+			s.Host.Logger().Warn("object storage capacity reconciliation sweep failed", "err", logErr(err))
 		}
 		if err := s.ReconcileObjectLifecycle(ctx, observe); err != nil && ctx.Err() == nil {
-			s.Host.Logger().Warn("object lifecycle recovery sweep failed")
+			s.Host.Logger().Warn("object lifecycle recovery sweep failed", "err", logErr(err))
 		}
 		ticker.Reset(objectRecoveryInterval)
 		select {

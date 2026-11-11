@@ -56,7 +56,7 @@ func drainWithdrawsRoutes(ins state.Instance) bool {
 	case state.InstanceModeWorker, state.InstanceModeJob:
 		return false
 	}
-	return !state.IsFork(ins.Mode)
+	return !state.NeverServes(ins.Mode)
 }
 
 // retireForDrain is the runtime-config retirement (retireRuntimeConfigInstance)
@@ -132,12 +132,16 @@ func (e *Engine) ObserveNodeLifecycles(nodes []state.ComputeNode) {
 		return
 	}
 	leaving := make(map[string]struct{})
+	ceilings := make(map[string]int)
 	for _, node := range nodes {
 		if nodeLeaving(node) {
 			leaving[node.ID] = struct{}{}
+		} else if node.Active && node.AdmissionCeilingMB > 0 {
+			ceilings[node.ID] = node.AdmissionCeilingMB
 		}
 	}
 	e.leavingNodes.Store(&leaving)
+	e.admittingCeilings.Store(&ceilings)
 }
 
 // nodeLeavingByID reports whether the last observed node list showed

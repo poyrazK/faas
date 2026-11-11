@@ -36,7 +36,11 @@ func cmdAccountReleaseWebhooks(args []string) int {
 	disable := fs.Bool("disable", false, "disable receiver")
 	pageSize := fs.Int("page-size", 50, "delivery page size (1..100)")
 	pageToken := fs.String("page-token", "", "opaque delivery cursor")
-	if err := fs.Parse(args[1:]); err != nil {
+	// rm never prompts; --yes is accepted like `webhook rm`. A --yes after
+	// the ID was read as a second webhook ID (Hunt 32 H32-60), so flags
+	// may follow the positionals.
+	fs.Bool("yes", false, "accepted for consistency; rm does not prompt")
+	if err := parseInterspersed(fs, args[1:]); err != nil {
 		return 1
 	}
 	if *enable && *disable {

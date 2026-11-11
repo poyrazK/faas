@@ -10,7 +10,6 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
-	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -53,21 +52,15 @@ func TestRotateManagedPostgresBindingQueuesRuntimeRefresh(t *testing.T) {
 	if rotated.CredentialGeneration != 2 || !rotated.RotationPending || rotated.State != "ready" {
 		t.Fatalf("rotation response = %+v", rotated)
 	}
-	if (*notifier.Channel()) != db.NotifyRuntimeConfigRestart {
-		t.Fatalf("notification channel=%q, want %q", (*notifier.Channel()), db.NotifyRuntimeConfigRestart)
+	if (*notifier.Channel()) != "" {
+		t.Fatal("HTTP handler published a second, non-atomic runtime handoff")
 	}
-	var payload struct {
-		AppID  string `json:"app_id"`
-		WakeID string `json:"wake_id"`
-	}
-	if err := json.Unmarshal([]byte((*notifier.Payload())), &payload); err != nil {
-		t.Fatalf("decode notification: %v", err)
-	}
-	if payload.AppID != (*env.AppID()) || payload.WakeID == "" {
-		t.Fatalf("rotation notification = %+v", payload)
+	intents := bindings.PendingBindingRotationRefreshes()
+	if len(intents) != 1 || intents[0].AppID != (*env.AppID()) || intents[0].WakeID == "" {
+		t.Fatalf("durable rotation handoff missing: %+v", intents)
 	}
 	current, err := bindings.GetBinding(context.Background(), (*env.AcctID()), binding.ID)
-	if err != nil || current.RotationWakeID != payload.WakeID || current.RotationPreviousGeneration != 1 {
+	if err != nil || current.RotationWakeID != intents[0].WakeID || current.RotationPreviousGeneration != 1 {
 		t.Fatalf("stored rotation = %+v err=%v", current, err)
 	}
 }

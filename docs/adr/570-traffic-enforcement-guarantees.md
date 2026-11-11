@@ -343,8 +343,10 @@ health and independent security generations can still refuse or cancel dispatch.
 These routing checks have local fixtures and Postgres evidence; deployed path,
 load and native lifecycle acceptance remain required.
 
-Ordinary policy updates fence new requests during convergence; an admitted
-request retains its snapshot. Emergency security revocation uses a separate
+Ordinary policy updates no longer fence new requests during convergence
+(ADR-20261101141123): each gateway serves its current rules until its apply,
+which the update waits for before returning; an admitted request retains its
+snapshot. Emergency security revocation uses a separate
 durable generation for an account, app or deployment. Account suspension/abuse
 hold, app deletion and deployment security quarantine advance that generation;
 release advances it again so a missed revoke/release pair cannot revive an old
@@ -1685,8 +1687,9 @@ reads `FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY` (boolean, default off):
 - **off** — host ownership, route-target lookups and the compiled edge policy
   come from the existing route and edge-rule caches. Each request still pins
   one sealed copy of its cached host policy, so a refresh cannot change the
-  rules mid-request, and owner-scoped convergence fences still refuse requests
-  while a two-phase edge-rule mutation is in flight.
+  rules mid-request. A two-phase edge-rule mutation in flight no longer
+  refuses requests (ADR-20261101141123); its owner-scoped fence only refuses
+  a route rule whose target stopped resolving.
 - **on** — the authoritative snapshot path described above.
 
 Turning it on by default requires fleet load and Postgres-outage evidence;
@@ -1811,3 +1814,24 @@ stored refusal back for 24 hours. Nothing retried it either.
   the code, not every 4xx with `Retry-After`: an MFA cooldown sends a 24-hour one.
 
 The bound, ceilings, codes and fail-closed behaviour are unchanged.
+
+### Amendment: a failed placement read keeps the lease (2026-11-03)
+
+The placement repair worker and request hydration treated a failed read like
+an answer that cannot prove absence: every target of the batch stopped
+routing at once. On production-us each node logged about 600 placement reads
+and 400 traffic observations a day that missed their deadline, in bursts of
+minutes while the two-vCPU control plane was busy; each burst took running
+apps out of rotation on every node, though nothing about them had changed.
+
+- An answer that cannot prove absence (missing, partial, mismatched or
+  truncated rows) still refuses routing at once and keeps the resident
+  count, as above.
+- A read that fails (an error, or a result after the one-second deadline,
+  which is still discarded) no longer marks the targets. They route until
+  the 30-second lease from their last verified read runs out, then refuse.
+  A lease is never renewed by a failed read, a replayed publication or hot
+  traffic.
+
+The deadline, the lease length, the batch bounds and the fail-closed result
+of a stall longer than the lease are unchanged.

@@ -1,12 +1,37 @@
 package polar
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/url"
 	"strconv"
 	"strings"
 )
+
+// IsTransient reports whether err is a Polar or network failure a later
+// attempt can clear: a timeout, a connection failure, HTTP 429 or a 5xx.
+// Catalog validation failures, a missing access token and other HTTP 4xx
+// answers are configuration (ADR-20261031100000).
+func IsTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ae *APIError
+	if errors.As(err, &ae) {
+		return ae.Status == 429 || ae.Status >= 500
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var ne net.Error
+	if errors.As(err, &ne) {
+		return true
+	}
+	var ue *url.Error
+	return errors.As(err, &ue)
+}
 
 var (
 	ErrNoAPIKey          = errors.New("polar: access token not configured")
@@ -93,4 +118,35 @@ func (e *APIError) Error() string {
 		return "polar: API returned HTTP " + strconv.Itoa(e.Status)
 	}
 	return "polar: API returned HTTP " + strconv.Itoa(e.Status) + ": " + body
+}
+
+// Polar error names (the "error" field of an error response) that apid
+// answers differently from a generic provider failure.
+const (
+	// errAlreadyCanceledSubscription: the subscription is cancelled or
+	// scheduled to cancel, so it cannot be cancelled again or change
+	// product (403).
+	errAlreadyCanceledSubscription = "AlreadyCanceledSubscription"
+	// errPaymentActionRequired: the bank asked to confirm a charge made
+	// without the customer present (3-D Secure, 402).
+	errPaymentActionRequired = "PaymentActionRequired"
+	// errPaymentFailed: the charge was declined or there is no card (402).
+	errPaymentFailed = "PaymentFailed"
+)
+
+// errorName is the "error" field of a Polar error response, which carries
+// the exception name ({"error": "AlreadyCanceledSubscription", "detail":
+// ...}); empty when err is not an APIError or the body is not one.
+func errorName(err error) string {
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		return ""
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal([]byte(ae.Body), &body) != nil {
+		return ""
+	}
+	return body.Error
 }

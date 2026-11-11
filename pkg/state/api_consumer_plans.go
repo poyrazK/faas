@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"regexp"
 	"slices"
 	"sort"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // APIConsumerPlan is a named consumer plan (ADR-953): enforcement limits
@@ -129,7 +129,7 @@ type APIConsumerPlanStore interface {
 	ListAPIConsumerUsageAlerts(ctx context.Context, accountID, appID, consumerID string, limit int) ([]APIConsumerUsageAlert, error)
 }
 
-var apiConsumerPlanNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+var apiConsumerPlanNameRE = lazyregexp.New(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // ValidateAPIConsumerPlan checks a plan's name and limits.
 func ValidateAPIConsumerPlan(plan APIConsumerPlan) error {

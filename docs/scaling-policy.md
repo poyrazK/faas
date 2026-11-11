@@ -58,6 +58,10 @@ per tick, so `queue_depth` counts what Gregale has **already pulled** while
 million-message Kafka backlog with a batch size of 64 shows a queue depth of
 64. Scale a broker-backed consumer on `queue_lag`.
 
+For Kafka, `queue_lag` is the topic's high watermark less the consumer
+group's committed offset, summed over partitions, so a partition whose
+commit is held by a retried record shows its whole backlog.
+
 `queue_lag` reports no signal at all when no broker answers (the trigger is
 disabled, the broker is unreachable, or the source does not report lag). It
 does not fall back to the local queue depth, so an app declaring only
@@ -104,9 +108,10 @@ Things to know:
   rather than its last value, so a dead pusher makes the app scale *down* on
   its other signals instead of holding the fleet at a frozen backlog. Push at
   least twice per window.
-- **Names are capped per app.** Pushing a new value for an existing metric
-  always works; only a *new* name can hit the cap. `DELETE` one to free a
-  slot.
+- **Names are capped per app:** 20 on Hobby, 50 on Pro, 200 on Scale (an
+  organization's app follows the organization's plan). Pushing a new value
+  for an existing metric always works; only a *new* name can hit the cap.
+  `DELETE` one to free a slot.
 - Paid plans only.
 
 When more than one target is declared, Gregale evaluates each independently
@@ -158,8 +163,12 @@ key:
 ```sh
 OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=https://api.gregale.dev/v1/apps/my-api/otlp/v1/metrics
 OTEL_EXPORTER_OTLP_METRICS_HEADERS="Authorization=Bearer $GREGALE_METRICS_KEY"
-OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative
+OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta
 ```
+
+Delta temporality is recommended: when several instances of an app send the
+same counter, their deltas add up, whereas each instance's cumulative total
+would replace the others'.
 
 Both `http/protobuf` and `http/json` work, uncompressed or with gzip
 (`Content-Encoding: gzip`, the OpenTelemetry Collector's default); bodies
@@ -167,14 +176,60 @@ are limited to 1 MiB, also once decompressed.
 Each data point becomes a custom metric under the same per-app name cap:
 
 - **Gauges** are stored like a pushed value and can drive scaling.
-- **Cumulative monotonic sums** (counters) are stored as counters. Their
-  history shows a per-second rate over 5 minutes, and they never drive
-  scaling, because a total that only grows would mean scaling out for ever.
+- **Monotonic sums** (counters) are stored as counters. Their history shows
+  a per-second rate over 5 minutes, and they never drive scaling, because a
+  total that only grows would mean scaling out for ever.
+- **Send counters with delta temporality.** Each delta is added to a total
+  Gregale keeps, so every instance of your app adds to the same counter, and
+  a restart, a restore from a snapshot or a new instance changes nothing. A
+  cumulative counter is each process's own running total: it is stored as
+  sent and only reads correctly from an app that runs a single instance. One
+  export cannot mix delta and cumulative points for a series. A delta export
+  that is retried after a server error can count twice.
+- **Counters stay in the history while they sit idle.** A gauge drops out of
+  the history 5 minutes after its last value; a counter's total does not,
+  so an increment after a quiet hour still shows in its rate and can fire
+  an alert. A rate needs a value before the increase: add `0` to a counter
+  when the app starts, or its very first increment only starts the series.
+- **Timestamps** may be at most 5 minutes ahead of Gregale's clock. A value
+  stamped before the one already stored is ignored, so a delayed export
+  cannot move a gauge backwards.
+- **Up-down counters** (non-monotonic sums, such as queue depth or open
+  connections) are stored as gauges. A delta up-down counter moves the
+  stored value, which never goes below 0.
+- **Histograms** (explicit buckets) are stored as five metrics:
+  `<name>_count` and `<name>_sum` (counters) and `<name>_p50`, `<name>_p95`
+  and `<name>_p99` (gauges estimated from the buckets of the newest data
+  point, interpolating inside a bucket). With cumulative temporality the
+  percentiles describe everything since the process started; set
+  `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta` to have them
+  describe each export interval. A histogram uses five of the app's names,
+  and its name may be at most 57 characters after normalising.
 - **Names are normalised:** lowercase, with `.`, `-` and `/` turned into `_`,
   so `orders.pending` becomes `orders_pending`.
-- **Rejected:** data points with attributes (each attribute value would be a
-  separate series), delta or non-monotonic sums, histograms, summaries,
-  negative values, and new names beyond the cap. The response's
+- **Attributes become labels.** A data point may carry up to 3 attributes
+  (string, bool, int or double values of at most 128 bytes; keys normalised
+  like names). Each distinct label set is a *series* of the metric, for
+  example `queue_depth{queue=emails}` and `queue_depth{queue=billing}`. The
+  metric itself holds the aggregate of its series: their **sum** for
+  counters, the **maximum** of series refreshed in the last 5 minutes for
+  gauges. Alerts, release gates, scaling and the metric's history read that
+  aggregate unless they name a series. `GET /v1/apps/{slug}/custom-metrics`
+  lists each series with its `key`, and the history endpoint takes
+  `?labels=<key>` to chart one series. To act on one series, give its exact
+  label set: `labels` on a custom scaling target, `custom_metric_labels` on an
+  alert rule (`--metric-label queue=emails` in the CLI) and `labels` on a
+  `custom_metric` or `metric_change` release gate (`--metric-label`). A
+  scaling target on a series reads only gauges, like an unlabelled one.
+  A metric holds at most 50 series, and an app at most 100 (Hobby), 500
+  (Pro) or 2,000 (Scale). Use attributes with few values (a queue, a route,
+  a status class), never a user or request id. Once a metric has labelled
+  series, an unlabelled point for it is stored as the series with no labels.
+- **Rejected:** more than 3 attributes, attributes that are arrays, maps or
+  bytes, exponential histograms, summaries, negative values (except a delta
+  up-down counter's decrease), histograms whose buckets do not add up,
+  unspecified temporality, timestamps too far ahead, new names beyond the
+  cap and new series beyond the series caps. The response's
   `partial_success` says how many points were rejected and why; the rest are
   stored.
 

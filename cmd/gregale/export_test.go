@@ -17,12 +17,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindingrun"
 	"github.com/onebox-faas/faas/pkg/chaos"
+	"github.com/onebox-faas/faas/pkg/mcphosting"
 )
 
 // Package-level types
@@ -39,33 +41,33 @@ type AppNetworkUpstreams = appNetworkUpstreams
 type AuthCreateOptions = authCreateOptions
 type AuthKeyRow = authKeyRow
 type AuthPublicSettings = authPublicSettings
-type AutomationCheckReport = automationCheckReport
-type AutomationCheckedPublishReport = automationCheckedPublishReport
-type AutomationCoverageExclusion = automationCoverageExclusion
-type AutomationCoverageGate = automationCoverageGate
-type AutomationCoverageHint = automationCoverageHint
-type AutomationDefinitionChange = automationDefinitionChange
-type AutomationDefinitionDiff = automationDefinitionDiff
-type AutomationEventPlan = automationEventPlan
-type AutomationEventPlanItem = automationEventPlanItem
-type AutomationEventPlanOutcome = automationEventPlanOutcome
-type AutomationLiveGateReport = automationLiveGateReport
-type AutomationLiveSuiteCaseResult = automationLiveSuiteCaseResult
-type AutomationRecoveryJournalEntry = automationRecoveryJournalEntry
-type AutomationRecoveryPlan = automationRecoveryPlan
-type AutomationRecoveryPreview = automationRecoveryPreview
-type AutomationRecoveryReport = automationRecoveryReport
-type AutomationRecoveryRetryPreview = automationRecoveryRetryPreview
-type AutomationRecoveryRetryRow = automationRecoveryRetryRow
-type AutomationRecoverySelection = automationRecoverySelection
-type AutomationResponseAction = automationResponseAction
-type AutomationResponsePlan = automationResponsePlan
-type AutomationRunSummary = automationRunSummary
-type AutomationScenario = automationScenario
-type AutomationScenarioCoverage = automationScenarioCoverage
-type AutomationScenarioResult = automationScenarioResult
-type AutomationScenarioSuite = automationScenarioSuite
-type AutomationStepExpectation = automationStepExpectation
+type StoredWorkflowCheckReport = storedWorkflowCheckReport
+type StoredWorkflowCheckedPublishReport = storedWorkflowCheckedPublishReport
+type StoredWorkflowCoverageExclusion = storedWorkflowCoverageExclusion
+type StoredWorkflowCoverageGate = storedWorkflowCoverageGate
+type StoredWorkflowCoverageHint = storedWorkflowCoverageHint
+type StoredWorkflowDefinitionChange = storedWorkflowDefinitionChange
+type StoredWorkflowDefinitionDiff = storedWorkflowDefinitionDiff
+type StoredWorkflowEventPlan = storedWorkflowEventPlan
+type StoredWorkflowEventPlanItem = storedWorkflowEventPlanItem
+type StoredWorkflowEventPlanOutcome = storedWorkflowEventPlanOutcome
+type StoredWorkflowLiveGateReport = storedWorkflowLiveGateReport
+type StoredWorkflowLiveSuiteCaseResult = storedWorkflowLiveSuiteCaseResult
+type StoredWorkflowRecoveryJournalEntry = storedWorkflowRecoveryJournalEntry
+type StoredWorkflowRecoveryPlan = storedWorkflowRecoveryPlan
+type StoredWorkflowRecoveryPreview = storedWorkflowRecoveryPreview
+type StoredWorkflowRecoveryReport = storedWorkflowRecoveryReport
+type StoredWorkflowRecoveryRetryPreview = storedWorkflowRecoveryRetryPreview
+type StoredWorkflowRecoveryRetryRow = storedWorkflowRecoveryRetryRow
+type StoredWorkflowRecoverySelection = storedWorkflowRecoverySelection
+type StoredWorkflowResponseAction = storedWorkflowResponseAction
+type StoredWorkflowResponsePlan = storedWorkflowResponsePlan
+type StoredWorkflowRunSummary = storedWorkflowRunSummary
+type StoredWorkflowScenario = storedWorkflowScenario
+type StoredWorkflowScenarioCoverage = storedWorkflowScenarioCoverage
+type StoredWorkflowScenarioResult = storedWorkflowScenarioResult
+type StoredWorkflowScenarioSuite = storedWorkflowScenarioSuite
+type StoredWorkflowStepExpectation = storedWorkflowStepExpectation
 type BindingCreationFailureReport = bindingCreationFailureReport
 type BindingPolicyVerificationReport = bindingPolicyVerificationReport
 type BindingRecoverySummary = bindingRecoverySummary
@@ -167,6 +169,7 @@ type InspectReleaseSummary = inspectReleaseSummary
 type InspectRuntimeSummary = inspectRuntimeSummary
 type InspectSummary = inspectSummary
 type InspectSummaryInputs = inspectSummaryInputs
+type InspectRecommendation = inspectRecommendation
 type InspectWatchEvent = inspectWatchEvent
 type IssueTicketSyncResult = issueTicketSyncResult
 type LocalAppLog = localAppLog
@@ -228,6 +231,7 @@ type ProjectEnvironmentInspection = projectEnvironmentInspection
 type ProjectEnvironmentPromotionWaitReceipt = projectEnvironmentPromotionWaitReceipt
 type QueueCanaryConsentKey = queueCanaryConsentKey
 type QueueStatusReport = queueStatusReport
+type ReleaseGateFlags = releaseGateFlags
 type ResumableUploadState = resumableUploadState
 type RolloutHeldNotice = rolloutHeldNotice
 type RouteHealthCorrelationReport = routeHealthCorrelationReport
@@ -281,6 +285,7 @@ type TestChaosEvidence = testChaosEvidence
 type TestChaosRule = testChaosRule
 type TestChaosRuleEvidence = testChaosRuleEvidence
 type TestChaosSpec = testChaosSpec
+type TestCircuitBreakerSpec = testCircuitBreakerSpec
 type TestCommandExecutionSpec = testCommandExecutionSpec
 type TestComparisonGate = testComparisonGate
 type TestComparisonGateCheck = testComparisonGateCheck
@@ -297,8 +302,10 @@ type TestFaultPercentOverride = testFaultPercentOverride
 type TestFaultReplayOverrides = testFaultReplayOverrides
 type TestFaultRuleRef = testFaultRuleRef
 type TestHTTPExpect = testHTTPExpect
+type TestAssertionProfile = testAssertionProfile
 type TestHTTPRequest = testHTTPRequest
 type TestHTTPRequestEvidence = testHTTPRequestEvidence
+type TestRequestDeadlineSpec = testRequestDeadlineSpec
 type TestInvocationOutput = testInvocationOutput
 type TestJUnitSuite = testJUnitSuite
 type TestLoadChaosPhase = testLoadChaosPhase
@@ -316,6 +323,7 @@ type TestLoadRecoverySample = testLoadRecoverySample
 type TestLoadRecoverySpec = testLoadRecoverySpec
 type TestLoadRecoveryStabilityEvidence = testLoadRecoveryStabilityEvidence
 type TestLoadSpec = testLoadSpec
+type TestLoadStreamSpec = testLoadStreamSpec
 type TestLoadStageSpec = testLoadStageSpec
 type TestLoadStepThresholdConfig = testLoadStepThresholdConfig
 type TestLoadStepThresholdSpec = testLoadStepThresholdSpec
@@ -342,6 +350,9 @@ type TestReportComparisonStats = testReportComparisonStats
 type TestResilienceEvidence = testResilienceEvidence
 type TestResilienceSpec = testResilienceSpec
 type TestRestartEvidence = testRestartEvidence
+type TestRestartSpec = testRestartSpec
+type TestRestartInFlightSpec = testRestartInFlightSpec
+type TestRestartCheckpointSpec = testRestartCheckpointSpec
 type TestRestartInFlightEvidence = testRestartInFlightEvidence
 type TestRetryAmplificationEvidence = testRetryAmplificationEvidence
 type TestRetryPolicy = testRetryPolicy
@@ -372,7 +383,7 @@ const AuthEventsKeyName = authEventsKeyName
 const AuthJWTSecretName = authJWTSecretName
 const AuthSignerPrefix = authSignerPrefix
 const AuthSigningKeyPrefix = authSigningKeyPrefix
-const AutomationDefinitionYAML = automationDefinitionYAML
+const StoredWorkflowDefinitionYAML = storedWorkflowDefinitionYAML
 const BindingProbeTaskTimeoutSeconds = bindingProbeTaskTimeoutSeconds
 const BindingSmokeTaskTimeoutSeconds = bindingSmokeTaskTimeoutSeconds
 const BindingTypeObjectStorage = bindingTypeObjectStorage
@@ -507,6 +518,7 @@ const UploadSessionOffsetConflictCode = uploadSessionOffsetConflictCode
 
 // Package-level vars
 var TerminalSafe = terminalSafe
+var TerminalSafeLines = terminalSafeLines
 var AuthAdminHTTPClient = &authAdminHTTPClient
 var AuthAdminKeyID = &authAdminKeyID
 var AuthAdminKeyName = &authAdminKeyName
@@ -516,10 +528,13 @@ var AuthRestartRetryPause = &authRestartRetryPause
 var AuthRestartRetryWindow = &authRestartRetryWindow
 var AuthSigningKeyName = &authSigningKeyName
 var BillingRunPollInterval = &billingRunPollInterval
+var SandboxTemplatePoll = &sandboxTemplatePoll
 var CampaignTrendTemplate = &campaignTrendTemplate
 var CliCommands = &cliCommands
 var CorsDefaultMethods = &corsDefaultMethods
 var DataAPIRotationActions = &dataAPIRotationActions
+var DataAPIDiagnosticCodes = &dataAPIDiagnosticCodes
+var DataAPIDiagnosticRoutes = &dataAPIDiagnosticRoutes
 var DocsPageSlugs = &docsPageSlugs
 var DocsURLPrefix = &docsURLPrefix
 var EdgeRuleKindVocab = &edgeRuleKindVocab
@@ -556,7 +571,7 @@ var PreviewEnvironmentReviewNote = previewEnvironmentReviewNote
 var AddRouteMonitorSourceOwners = addRouteMonitorSourceOwners
 var AddSafeReleasePreview = addSafeReleasePreview
 var AddValidateParamFlags = addValidateParamFlags
-var AdmitOrReadAutomationLiveSuiteCase = admitOrReadAutomationLiveSuiteCase
+var AdmitOrReadStoredWorkflowLiveSuiteCase = admitOrReadStoredWorkflowLiveSuiteCase
 var AdvancedCliCommands = advancedCliCommands
 var AiRouteCallPath = aiRouteCallPath
 var AlertRollbackWindowSeconds = alertRollbackWindowSeconds
@@ -566,13 +581,14 @@ var AppLabel = appLabel
 var AppNetworkProbeState = appNetworkProbeState
 var AppendDeployPreviewAnnotationIntent = appendDeployPreviewAnnotationIntent
 var ApplyAIGuardrailFlags = applyAIGuardrailFlags
-var ApplyAutomationCoverageGate = applyAutomationCoverageGate
+var ApplyStoredWorkflowCoverageGate = applyStoredWorkflowCoverageGate
 var ApplyDeployLifecycleToCreateRequest = applyDeployLifecycleToCreateRequest
 var ApplyDevManifestDefaults = applyDevManifestDefaults
 var ApplyJSONFlag = applyJSONFlag
 var ApplyMCPGatewayPolicy = applyMCPGatewayPolicy
 var ApplyMCPTasksStatusChecks = applyMCPTasksStatusChecks
 var ApplyRolloutFlag = applyRolloutFlag
+var SafeFlagName = safeFlagName
 var ApplySimpleAppPlanToCreateRequest = applySimpleAppPlanToCreateRequest
 var ApplyTestConnectionLeaks = applyTestConnectionLeaks
 var ApplyTestFaultMatrixCase = applyTestFaultMatrixCase
@@ -599,14 +615,14 @@ var AuthUserRefValid = authUserRefValid
 var AuthedClient = authedClient
 var AuthedFakeAPI = authedFakeAPI
 var AutoPackSource = autoPackSource
-var AutomationCommandArgument = automationCommandArgument
-var AutomationEventJobRequest = automationEventJobRequest
-var AutomationLiveUUID = automationLiveUUID
-var AutomationPublicationEvidence = automationPublicationEvidence
-var AutomationRecoveryEventReason = automationRecoveryEventReason
-var AutomationRecoveryRetryPlan = automationRecoveryRetryPlan
-var AutomationRecoveryRunKey = automationRecoveryRunKey
-var AutomationRunJobRequest = automationRunJobRequest
+var StoredWorkflowCommandArgument = storedWorkflowCommandArgument
+var StoredWorkflowEventJobRequest = storedWorkflowEventJobRequest
+var StoredWorkflowLiveUUID = storedWorkflowLiveUUID
+var StoredWorkflowPublicationEvidence = storedWorkflowPublicationEvidence
+var StoredWorkflowRecoveryEventReason = storedWorkflowRecoveryEventReason
+var StoredWorkflowRecoveryRetryPlan = storedWorkflowRecoveryRetryPlan
+var StoredWorkflowRecoveryRunKey = storedWorkflowRecoveryRunKey
+var StoredWorkflowRunJobRequest = storedWorkflowRunJobRequest
 var AwakeDuration = awakeDuration
 var BindingCheckCLICodes = bindingCheckCLICodes
 var BindingCheckCLIInventory = bindingCheckCLIInventory
@@ -651,7 +667,7 @@ var CanUseResumableUpload = canUseResumableUpload
 var CancelSmokeTask = cancelSmokeTask
 var CanonicalServicePolicy = canonicalServicePolicy
 var CanonicalStartScope = canonicalStartScope
-var CaptureAutomationStdout = captureAutomationStdout
+var CaptureStoredWorkflowStdout = captureStoredWorkflowStdout
 var CaptureBindingCLI = captureBindingCLI
 var CapturePreviewRun = capturePreviewRun
 var CaptureStderr = captureStderr
@@ -665,6 +681,7 @@ var CheckMCPConditionalParking = checkMCPConditionalParking
 var CheckMCPNativeRetirement = checkMCPNativeRetirement
 var CheckProfileConnection = checkProfileConnection
 var CheckRetainedHostingPlan = checkRetainedHostingPlan
+var CheckTestConnectionsAfterDrain = checkTestConnectionsAfterDrain
 var CheckTestPoolAfterDrain = checkTestPoolAfterDrain
 var ChooseMenuAction = chooseMenuAction
 var ClassifyDevRuntimeLog = classifyDevRuntimeLog
@@ -696,6 +713,7 @@ var CliRevisionPinTTLSeconds = cliRevisionPinTTLSeconds
 var CliSessionMetadataPath = cliSessionMetadataPath
 var CmdAI = cmdAI
 var CmdReleaseGates = cmdReleaseGates
+var CmdApprovals = cmdApprovals
 var CmdAITokens = cmdAITokens
 var CmdAccount = cmdAccount
 var CmdAccountDelete = cmdAccountDelete
@@ -707,6 +725,7 @@ var CmdAdd = cmdAdd
 var CmdAddBucket = cmdAddBucket
 var CmdAddPostgres = cmdAddPostgres
 var CmdAdmin = cmdAdmin
+var CmdAppCopy = cmdAppCopy
 var CmdAlertActions = cmdAlertActions
 var CmdAlertAdd = cmdAlertAdd
 var CmdAlertInfo = cmdAlertInfo
@@ -736,24 +755,24 @@ var CmdAppsTCP = cmdAppsTCP
 var CmdAppsUDP = cmdAppsUDP
 var CmdAuditEvents = cmdAuditEvents
 var CmdAuth = cmdAuth
-var CmdAutomations = cmdAutomations
-var CmdAutomationsCheck = cmdAutomationsCheck
-var CmdAutomationsFailurePolicy = cmdAutomationsFailurePolicy
-var CmdAutomationsFailureResume = cmdAutomationsFailureResume
-var CmdAutomationsHealth = cmdAutomationsHealth
-var CmdAutomationsHistory = cmdAutomationsHistory
-var CmdAutomationsInit = cmdAutomationsInit
-var CmdAutomationsPublish = cmdAutomationsPublish
-var CmdAutomationsRecover = cmdAutomationsRecover
-var CmdAutomationsRecoveryPolicy = cmdAutomationsRecoveryPolicy
-var CmdAutomationsRecoveryPolicyEvaluate = cmdAutomationsRecoveryPolicyEvaluate
-var CmdAutomationsRecoveryPolicyReviews = cmdAutomationsRecoveryPolicyReviews
-var CmdAutomationsRecoveryPreview = cmdAutomationsRecoveryPreview
-var CmdAutomationsRecoverySuppress = cmdAutomationsRecoverySuppress
-var CmdAutomationsReport = cmdAutomationsReport
-var CmdAutomationsResponseExecute = cmdAutomationsResponseExecute
-var CmdAutomationsResponsePlan = cmdAutomationsResponsePlan
-var CmdAutomationsSimulate = cmdAutomationsSimulate
+var CmdStoredWorkflows = cmdStoredWorkflows
+var CmdStoredWorkflowsCheck = cmdStoredWorkflowsCheck
+var CmdStoredWorkflowsFailurePolicy = cmdStoredWorkflowsFailurePolicy
+var CmdStoredWorkflowsFailureResume = cmdStoredWorkflowsFailureResume
+var CmdStoredWorkflowsHealth = cmdStoredWorkflowsHealth
+var CmdStoredWorkflowsHistory = cmdStoredWorkflowsHistory
+var CmdStoredWorkflowsInit = cmdStoredWorkflowsInit
+var CmdStoredWorkflowsPublish = cmdStoredWorkflowsPublish
+var CmdStoredWorkflowsRecover = cmdStoredWorkflowsRecover
+var CmdStoredWorkflowsRecoveryPolicy = cmdStoredWorkflowsRecoveryPolicy
+var CmdStoredWorkflowsRecoveryPolicyEvaluate = cmdStoredWorkflowsRecoveryPolicyEvaluate
+var CmdStoredWorkflowsRecoveryPolicyReviews = cmdStoredWorkflowsRecoveryPolicyReviews
+var CmdStoredWorkflowsRecoveryPreview = cmdStoredWorkflowsRecoveryPreview
+var CmdStoredWorkflowsRecoverySuppress = cmdStoredWorkflowsRecoverySuppress
+var CmdStoredWorkflowsReport = cmdStoredWorkflowsReport
+var CmdStoredWorkflowsResponseExecute = cmdStoredWorkflowsResponseExecute
+var CmdStoredWorkflowsResponsePlan = cmdStoredWorkflowsResponsePlan
+var CmdStoredWorkflowsSimulate = cmdStoredWorkflowsSimulate
 var CmdBilling = cmdBilling
 var CmdBillingBudgetPreview = cmdBillingBudgetPreview
 var CmdBillingBudgets = cmdBillingBudgets
@@ -823,6 +842,21 @@ var CmdDataAPIFixture = cmdDataAPIFixture
 var CmdDataAPIInstall = cmdDataAPIInstall
 var CmdDataAPILive = cmdDataAPILive
 var CmdDataAPIStorage = cmdDataAPIStorage
+var CmdDataAPIHooks = cmdDataAPIHooks
+var DataAPIHooksSQL = dataAPIHooksSQL
+var DataAPIHooksUpgradeSQL = dataAPIHooksUpgradeSQL
+var DataAPIHooksBacklogFull = dataAPIHooksBacklogFull
+var EnableDataAPIHooks = enableDataAPIHooks
+var DisableDataAPIHooks = disableDataAPIHooks
+var DataAPIHooksStatus = dataAPIHooksStatus
+var DataAPIHooksDelivery = dataAPIHooksDelivery
+var ApplyDataAPIDrainSchedule = applyDataAPIDrainSchedule
+
+type DataAPIHooksReceipt = dataAPIHooksReceipt
+
+var DataAPIDrainSchedule = dataAPIDrainSchedule
+var DataAPIDrainEvery = dataAPIDrainEvery
+var CheckDataAPIReportSettings = checkDataAPIReportSettings
 var CmdDataAPIMigration = cmdDataAPIMigration
 var CmdDataAPIOnboard = cmdDataAPIOnboard
 var CmdDataAPIRefresh = cmdDataAPIRefresh
@@ -849,6 +883,8 @@ var CmdDeliver = cmdDeliver
 var CmdDeployGithubSnippet = cmdDeployGithubSnippet
 var CmdDeployRepoSourceRef = cmdDeployRepoSourceRef
 var CmdDeployTarball = cmdDeployTarball
+var CmdDeployCheck = cmdDeployCheck
+var CredentialFileName = credentialFileName
 var CmdDeployTarballToExisting = cmdDeployTarballToExisting
 var CmdDeployment = cmdDeployment
 var CmdDeploymentAliasDelete = cmdDeploymentAliasDelete
@@ -1128,12 +1164,8 @@ var CmdWorkflowsStatus = cmdWorkflowsStatus
 var CmdWorkflowsSteps = cmdWorkflowsSteps
 var CollectEventDeliveryPages = collectEventDeliveryPages
 
-// ReleaseGateRequest builds a release-gates add request from its flags.
-func ReleaseGateRequest(name, slo string, maxBurn int, newErrors bool, maxGroups, minEvents int, metric, below, above, aiMetric string,
-	maxIncrease, minSamples int) (api.CreateReleaseGateRequest, error) {
-	return releaseGateRequest(releaseGateFlags{name: name, slo: slo, maxBurn: maxBurn, newErrors: newErrors, maxGroups: maxGroups,
-		minEvents: minEvents, metric: metric, below: below, above: above, aiMetric: aiMetric, maxIncrease: maxIncrease, minSamples: minSamples})
-}
+// ReleaseGateRequest builds a release gate create request from its flags.
+var ReleaseGateRequest = releaseGateRequest
 
 func CollectListPages[T any](p0 context.Context, p1 string, p2 bool, p3 func(context.Context, string) ([]T, string, error)) ([]T, string, error) {
 	return collectListPages[T](p0, p1, p2, p3)
@@ -1166,6 +1198,9 @@ var ComposeProjectName = composeProjectName
 var ConfigureDataAPI = configureDataAPI
 var ConfigureScenarioTCP = configureScenarioTCP
 var ConfigureTestWorkloadAccess = configureTestWorkloadAccess
+var ConfigureTestWorkloadVisibility = configureTestWorkloadVisibility
+var ScenarioInternalServices = scenarioInternalServices
+var TestTerminationSignals = testTerminationSignals
 var ConfiguredJSONPreference = configuredJSONPreference
 var ConsumeLogStream = consumeLogStream
 var ContainsString = containsString
@@ -1216,6 +1251,8 @@ var DeployIdempotencyKey = deployIdempotencyKey
 var DeployManifestObjectStorageBindings = deployManifestObjectStorageBindings
 var DeployManifestPostgresBindings = deployManifestPostgresBindings
 var DeployManifestQueueBindings = deployManifestQueueBindings
+
+var DeployManifestLabels = deployManifestLabels
 var DeployManifestTriggersWithRollback = deployManifestTriggersWithRollback
 var DeployOperationIdempotencyKey = deployOperationIdempotencyKey
 var DeployOptionsFingerprint = deployOptionsFingerprint
@@ -1251,7 +1288,7 @@ var DeveloperIDPath = developerIDPath
 var DiagnoseCommitSource = diagnoseCommitSource
 var DiagnosticProblem = diagnosticProblem
 var DialAppTaskAttach = dialAppTaskAttach
-var DiffAutomationDefinition = diffAutomationDefinition
+var DiffStoredWorkflowDefinition = diffStoredWorkflowDefinition
 var DiffDataAPISnapshots = diffDataAPISnapshots
 var DiffPreviewRoutePolicy = diffPreviewRoutePolicy
 var DiffRequestFromCLI = diffRequestFromCLI
@@ -1269,7 +1306,6 @@ var EdgePolicySummary = edgePolicySummary
 var EdgeRuleValidateFlagsVisited = edgeRuleValidateFlagsVisited
 var EditDistance = editDistance
 var EffectiveKeyring = effectiveKeyring
-var EgressAllowlistChangeNeedsRestart = egressAllowlistChangeNeedsRestart
 var EmitInspectWatchEvent = emitInspectWatchEvent
 var EmptyPilotTextSHA256 = emptyPilotTextSHA256
 var EncodeCustomerOperationReceipt = encodeCustomerOperationReceipt
@@ -1279,6 +1315,7 @@ var EndpointRecoveryReport = endpointRecoveryReport
 var EndpointRecoverySpec = endpointRecoverySpec
 var EnsurePostgresEgress = ensurePostgresEgress
 var EnsureSourceRefApp = ensureSourceRefApp
+var DeployPreviewSource = deployPreviewSource
 var ErrAuth = errAuth
 var EnvCreate = envCreate
 var EnvPull = envPull
@@ -1289,16 +1326,17 @@ var EstimateCrawlerWakeCost = estimateCrawlerWakeCost
 var EstimateTestWorkloadMinutes = estimateTestWorkloadMinutes
 var EvaluateAllBindingCoverage = evaluateAllBindingCoverage
 var EvaluateAllBindingCoverageGate = evaluateAllBindingCoverageGate
-var EvaluateAutomationScenario = evaluateAutomationScenario
+var EvaluateStoredWorkflowScenario = evaluateStoredWorkflowScenario
 var EvaluateDataAPICoverage = evaluateDataAPICoverage
 var EvaluateTestCampaignCoverageRegression = evaluateTestCampaignCoverageRegression
 var EvaluateTestCampaignRecoveryRegression = evaluateTestCampaignRecoveryRegression
 var EvaluateTestConnectionWindow = evaluateTestConnectionWindow
 var EvaluateTestLoadRecovery = evaluateTestLoadRecovery
 var EvaluateTestPoolPhase = evaluateTestPoolPhase
+var ExecuteTestRunPlan = executeTestRunPlan
 var ExecutableHeaderMismatch = executableHeaderMismatch
-var ExecuteAutomationLiveSuite = executeAutomationLiveSuite
-var ExecuteAutomationRecoveryPlan = executeAutomationRecoveryPlan
+var ExecuteStoredWorkflowLiveSuite = executeStoredWorkflowLiveSuite
+var ExecuteStoredWorkflowRecoveryPlan = executeStoredWorkflowRecoveryPlan
 var ExecuteBindingPolicyVerification = executeBindingPolicyVerification
 var ExecuteDurableBindingVerification = executeDurableBindingVerification
 var ExecuteDurableProjectVerification = executeDurableProjectVerification
@@ -1326,6 +1364,8 @@ var FindPreviewReportRoute = findPreviewReportRoute
 var FindProjectContext = findProjectContext
 var FindSecretStatus = findSecretStatus
 var FinishMCPDeploy = finishMCPDeploy
+var FinishMCPDeployWithSmoke = finishMCPDeployWithSmoke
+var RunMCPVerificationJobs = runMCPVerificationJobs
 var FinishPreviewRequestComparison = finishPreviewRequestComparison
 var FinishPreviewSecurityComparison = finishPreviewSecurityComparison
 var FinishTestRunReports = finishTestRunReports
@@ -1343,10 +1383,12 @@ var FormatSuspectedDependency = formatSuspectedDependency
 var FreezeRequestFromFlags = freezeRequestFromFlags
 var FunctionConcurrencyDeployHint = functionConcurrencyDeployHint
 var GeneratedTestCICompareCommand = generatedTestCICompareCommand
+var GeneratedTestCIInstallCommand = generatedTestCIInstallCommand
 var GeneratedTestCIRunCommand = generatedTestCIRunCommand
 var GeneratedTestCIVMConfigCommand = generatedTestCIVMConfigCommand
 var GeneratedTestCIVMRunCommand = generatedTestCIVMRunCommand
 var GitArchiveHEAD = gitArchiveHEAD
+var GithubSetupCheckWaitFor = githubSetupCheckWaitFor
 var GithubTarballURL = githubTarballURL
 var GithubWebhookSecretSet = githubWebhookSecretSet
 var GroupDigits = groupDigits
@@ -1359,6 +1401,7 @@ var ImageRunExitCode = imageRunExitCode
 var IndexByte = indexByte
 var InitTestRepo = initTestRepo
 var InitZeroConfigRepo = initZeroConfigRepo
+var InspectArtifactOutputDirectory = inspectArtifactOutputDirectory
 var InspectCommitEvent = inspectCommitEvent
 var InspectData = inspectData
 var InspectOpenAPI = inspectOpenAPI
@@ -1383,7 +1426,7 @@ var LiveCLIView = liveCLIView
 var LiveServicePolicy = liveServicePolicy
 var LiveSuiteCaseKey = liveSuiteCaseKey
 var LiveSuiteHash = liveSuiteHash
-var LoadAutomationScenarios = loadAutomationScenarios
+var LoadStoredWorkflowScenarios = loadStoredWorkflowScenarios
 var LoadBucketUploadCheckpoint = loadBucketUploadCheckpoint
 var LoadDataAPIRotationCommand = loadDataAPIRotationCommand
 var LoadDevManifest = loadDevManifest
@@ -1394,8 +1437,9 @@ var LoadOrCreateDeveloperID = loadOrCreateDeveloperID
 var LoadTestStep = loadTestStep
 var LoadToken = loadToken
 var LoadWorkflowManifestForDeploy = loadWorkflowManifestForDeploy
+var LargestSourceTarballMB = largestSourceTarballMB
 var LocalTestConsumerEnv = localTestConsumerEnv
-var LockAutomationLiveSuite = lockAutomationLiveSuite
+var LockStoredWorkflowLiveSuite = lockStoredWorkflowLiveSuite
 var LockBucketUploadCheckpoint = lockBucketUploadCheckpoint
 var LockResumableUploadState = lockResumableUploadState
 var LogDrainAuthHeaderPair = logDrainAuthHeaderPair
@@ -1437,6 +1481,8 @@ var MinimizationTestOptions = minimizationTestOptions
 var MinimizationTestReceipt = minimizationTestReceipt
 var MinimizationTestScenario = minimizationTestScenario
 var MinimizedTestReplay = minimizedTestReplay
+var MonitorTestConnectionLeaks = monitorTestConnectionLeaks
+var MonitorTestPoolExhaustion = monitorTestPoolExhaustion
 var MonitorTokenEnv = monitorTokenEnv
 var MustGit = mustGit
 var NewAuthSigningKey = newAuthSigningKey
@@ -1488,11 +1534,12 @@ func NormalizeGitArchive(repoRoot, prefix, archivePath string) ([]string, error)
 var ParkedArchivePendingNote = parkedArchivePendingNote
 var ParkedLogsSelection = parkedLogsSelection
 var ParkedWindowInstances = parkedWindowInstances
+var RetainedLineLevelMatches = retainedLineLevelMatches
 var ParseAIPriceSpec = parseAIPriceSpec
 var ParseAIRouteTargets = parseAIRouteTargets
-var ParseAutomationLiveBaseline = parseAutomationLiveBaseline
-var ParseAutomationLiveGate = parseAutomationLiveGate
-var ParseAutomationLiveSuite = parseAutomationLiveSuite
+var ParseStoredWorkflowLiveBaseline = parseStoredWorkflowLiveBaseline
+var ParseStoredWorkflowLiveGate = parseStoredWorkflowLiveGate
+var ParseStoredWorkflowLiveSuite = parseStoredWorkflowLiveSuite
 var ParseBillingStatusFlags = parseBillingStatusFlags
 var ParseCanaryStages = parseCanaryStages
 var ParseCustomerMilestoneCommand = parseCustomerMilestoneCommand
@@ -1549,8 +1596,8 @@ var PortableDevFile = portableDevFile
 var PostgresBindingIsNew = postgresBindingIsNew
 var PostgresUsageObservedLabel = postgresUsageObservedLabel
 var PreAuthSummary = preAuthSummary
-var PrepareAutomationExpectation = prepareAutomationExpectation
-var PrepareAutomationLiveSuite = prepareAutomationLiveSuite
+var PrepareStoredWorkflowExpectation = prepareStoredWorkflowExpectation
+var PrepareStoredWorkflowLiveSuite = prepareStoredWorkflowLiveSuite
 var PrepareBindingPolicyVerification = prepareBindingPolicyVerification
 var PrepareDeployIssueSourceMaps = prepareDeployIssueSourceMaps
 var PrepareTestBehavior = prepareTestBehavior
@@ -1575,9 +1622,9 @@ var PreviewReportSpec = previewReportSpec
 var PreviewRequirementsHost = previewRequirementsHost
 var PrimaryDomainOrFallback = primaryDomainOrFallback
 var PrintAppSettingsReceipt = printAppSettingsReceipt
-var PrintAutomationCheckReport = printAutomationCheckReport
-var PrintAutomationDefinitionDiff = printAutomationDefinitionDiff
-var PrintAutomationRevisionDetails = printAutomationRevisionDetails
+var PrintStoredWorkflowCheckReport = printStoredWorkflowCheckReport
+var PrintStoredWorkflowDefinitionDiff = printStoredWorkflowDefinitionDiff
+var PrintStoredWorkflowRevisionDetails = printStoredWorkflowRevisionDetails
 var PrintBuildStatus = printBuildStatus
 var PrintDeployColdWakeSentence = printDeployColdWakeSentence
 var PrintDoctorReport = printDoctorReport
@@ -1615,7 +1662,7 @@ var ProjectEnvironmentPreflightExitCode = projectEnvironmentPreflightExitCode
 var ProjectInspectionTarget = projectInspectionTarget
 var PromptMCPInput = promptMCPInput
 var ProvisionTestConsumers = provisionTestConsumers
-var PublishAutomationWithScenarios = publishAutomationWithScenarios
+var PublishStoredWorkflowWithScenarios = publishStoredWorkflowWithScenarios
 var PublishDeployIssueSourceMaps = publishDeployIssueSourceMaps
 var PumpAppTaskAttach = pumpAppTaskAttach
 var QualifyProjectEnvironmentWithProfile = qualifyProjectEnvironmentWithProfile
@@ -1625,12 +1672,12 @@ var QueueStatusHealth = queueStatusHealth
 var RandomAuthSecret = randomAuthSecret
 var RankDataAPIQueryShapes = rankDataAPIQueryShapes
 var ReadAuthzFile = readAuthzFile
-var ReadAutomationDefinition = readAutomationDefinition
-var ReadAutomationEventPlan = readAutomationEventPlan
-var ReadAutomationItemMockAttempts = readAutomationItemMockAttempts
-var ReadAutomationLiveSuite = readAutomationLiveSuite
-var ReadAutomationRecoveryPlan = readAutomationRecoveryPlan
-var ReadAutomationResponsePlan = readAutomationResponsePlan
+var ReadStoredWorkflowDefinition = readStoredWorkflowDefinition
+var ReadStoredWorkflowEventPlan = readStoredWorkflowEventPlan
+var ReadStoredWorkflowItemMockAttempts = readStoredWorkflowItemMockAttempts
+var ReadStoredWorkflowLiveSuite = readStoredWorkflowLiveSuite
+var ReadStoredWorkflowRecoveryPlan = readStoredWorkflowRecoveryPlan
+var ReadStoredWorkflowResponsePlan = readStoredWorkflowResponsePlan
 var ReadCapturedDeployArchive = readCapturedDeployArchive
 var ReadCheckedReleaseFile = readCheckedReleaseFile
 var ReadCoverageEvidence = readCoverageEvidence
@@ -1662,6 +1709,8 @@ var ReadSavedToken = readSavedToken
 var ReadSecretsFile = readSecretsFile
 var ReadStandardReviewCLI = readStandardReviewCLI
 var ReadTestBaselineReport = readTestBaselineReport
+var ReadScaffoldOpenAPIDocument = readScaffoldOpenAPIDocument
+var ReadTestCircuitCounter = readTestCircuitCounter
 var ReadTestComparisonBudget = readTestComparisonBudget
 var ReadTestConnections = readTestConnections
 var ReadTestData = readTestData
@@ -1685,6 +1734,7 @@ var RehearsalTestRepo = rehearsalTestRepo
 var RejectDevTriggerAppSelection = rejectDevTriggerAppSelection
 var ReleaseDiffLines = releaseDiffLines
 var ReleaseSummaryLine = releaseSummaryLine
+var ReleaseTimelineLines = releaseTimelineLines
 var ReleasedUsage = releasedUsage
 var RemoveTestFaultRules = removeTestFaultRules
 var RenderAccountSLO = renderAccountSLO
@@ -1692,7 +1742,7 @@ var RenderAppBindingInventory = renderAppBindingInventory
 var RenderAppMetrics = renderAppMetrics
 var RenderAppSLO = renderAppSLO
 var RenderApplyRescue = renderApplyRescue
-var RenderAutomationLiveGate = renderAutomationLiveGate
+var RenderStoredWorkflowLiveGate = renderStoredWorkflowLiveGate
 var RenderBashCommand = renderBashCommand
 var RenderBindingCreationFailure = renderBindingCreationFailure
 var RenderBuildListRow = renderBuildListRow
@@ -1724,6 +1774,7 @@ var RenderEnvDiffCell = renderEnvDiffCell
 var RenderEnvDiffTable = renderEnvDiffTable
 var RenderFireNowStatus = renderFireNowStatus
 var RenderFishCommand = renderFishCommand
+var RenderGithubSetupWorkflow = renderGithubSetupWorkflow
 var RenderGithubSnippet = renderGithubSnippet
 var RenderHTTPLogQueryPageWarnings = renderHTTPLogQueryPageWarnings
 var RenderInspectErrorsHuman = renderInspectErrorsHuman
@@ -1807,8 +1858,8 @@ var RouteHealthTargetError = routeHealthTargetError
 var RouteMonitorCodeownersPatternMatches = routeMonitorCodeownersPatternMatches
 var RouteMonitorMatchCodeowners = routeMonitorMatchCodeowners
 var Run = run
-var RunAutomationLiveGate = runAutomationLiveGate
-var RunAutomationScenarios = runAutomationScenarios
+var RunStoredWorkflowLiveGate = runStoredWorkflowLiveGate
+var RunStoredWorkflowScenarios = runStoredWorkflowScenarios
 var RunBindingCheckCLI = runBindingCheckCLI
 var RunBindingVerificationJobs = runBindingVerificationJobs
 var RunBucketCapacity = runBucketCapacity
@@ -1863,6 +1914,7 @@ var RunTestHTTPRequests = runTestHTTPRequests
 var RunTestProfile = runTestProfile
 var RunTestRehearsal = runTestRehearsal
 var RunTestResilience = runTestResilience
+var RunTestRestart = runTestRestart
 var RunTestScenarioStepLoad = runTestScenarioStepLoad
 var RunTestScenarioSteps = runTestScenarioSteps
 var RunTestSuspendResume = runTestSuspendResume
@@ -1872,8 +1924,8 @@ var SafeMCPConnectionError = safeMCPConnectionError
 var SafeReleaseHealthGate = safeReleaseHealthGate
 var SameBindingDeployment = sameBindingDeployment
 var SameSunsetContracts = sameSunsetContracts
-var SaveAutomationLiveSuite = saveAutomationLiveSuite
-var SaveAutomationResponsePlan = saveAutomationResponsePlan
+var SaveStoredWorkflowLiveSuite = saveStoredWorkflowLiveSuite
+var SaveStoredWorkflowResponsePlan = saveStoredWorkflowResponsePlan
 var SaveBucketUploadCheckpoint = saveBucketUploadCheckpoint
 var SaveCLIConfig = saveCLIConfig
 var SaveDeployIssueSourceMapsRecovery = saveDeployIssueSourceMapsRecovery
@@ -1911,7 +1963,7 @@ var SetupConnectionProfiles = setupConnectionProfiles
 var SetupHermeticTokensEnv = setupHermeticTokensEnv
 var SetupQueueWorkload = setupQueueWorkload
 var SetupQueueWorkloadWithRetry = setupQueueWorkloadWithRetry
-var SharedAutomationLiveSuiteID = sharedAutomationLiveSuiteID
+var SharedStoredWorkflowLiveSuiteID = sharedStoredWorkflowLiveSuiteID
 var SimulateEdgeRuleRequest = simulateEdgeRuleRequest
 var SortedKeys = sortedKeys
 var SplitArgsForFlags = splitArgsForFlags
@@ -1950,6 +2002,7 @@ var TestDiagnosticRedactions = testDiagnosticRedactions
 var TestExecutionCompleteForEvidence = testExecutionCompleteForEvidence
 var TestFaultCampaignDraw = testFaultCampaignDraw
 var TestFaultReplayVersion = testFaultReplayVersion
+var TestHTTPConsumerKeys = testHTTPConsumerKeys
 var TestLatencySelection = testLatencySelection
 var TestManagedWorkDigest = testManagedWorkDigest
 var TestPhaseRecoveryEvidence = testPhaseRecoveryEvidence
@@ -1974,7 +2027,7 @@ var TriggerRecordLine = triggerRecordLine
 var Trunc = trunc
 var TruncateReason = truncateReason
 var UnconsumedQueueWarning = unconsumedQueueWarning
-var UnexcludedAutomationCoverageHints = unexcludedAutomationCoverageHints
+var UnexcludedStoredWorkflowCoverageHints = unexcludedStoredWorkflowCoverageHints
 var UpdateMCPWatchCapabilityNames = updateMCPWatchCapabilityNames
 var UploadHostingFile = uploadHostingFile
 var UploadStateDir = uploadStateDir
@@ -1987,13 +2040,14 @@ var ValidDataAPIConnectionBudget = validDataAPIConnectionBudget
 var ValidDeploymentRef = validDeploymentRef
 var ValidDeveloperID = validDeveloperID
 var ValidGithubSetupBranch = validGithubSetupBranch
+var ValidGithubSetupWorkflowName = validGithubSetupWorkflowName
 var ValidLiveSuiteHash = validLiveSuiteHash
 var ValidSecretClass = validSecretClass
 var ValidTestCIEnvironment = validTestCIEnvironment
-var ValidateAutomationCoverageExclusions = validateAutomationCoverageExclusions
-var ValidateAutomationEventPlan = validateAutomationEventPlan
-var ValidateAutomationRecoveryPlan = validateAutomationRecoveryPlan
-var ValidateAutomationResponsePlan = validateAutomationResponsePlan
+var ValidateStoredWorkflowCoverageExclusions = validateStoredWorkflowCoverageExclusions
+var ValidateStoredWorkflowEventPlan = validateStoredWorkflowEventPlan
+var ValidateStoredWorkflowRecoveryPlan = validateStoredWorkflowRecoveryPlan
+var ValidateStoredWorkflowResponsePlan = validateStoredWorkflowResponsePlan
 var ValidateCIUploadGrants = validateCIUploadGrants
 var ValidateCLIInvestigation = validateCLIInvestigation
 var ValidateCLILimit = validateCLILimit
@@ -2013,6 +2067,11 @@ var ValidateLocalTestURL = validateLocalTestURL
 var ValidateMCPDeploySecretsFile = validateMCPDeploySecretsFile
 var ValidateMCPDeploymentCatalogFleetPin = validateMCPDeploymentCatalogFleetPin
 var ValidateMCPDeploymentCatalogPin = validateMCPDeploymentCatalogPin
+
+func PinMCPCandidateWithSubmit(ctx context.Context, c *Client, key string, cfg mcphosting.Config, candidate api.DeploymentResponse, submit func([]string, map[string]string) (api.DeploymentResponse, error)) (api.DeploymentResponse, string, error) {
+	return pinMCPCandidateRevisionWithSubmit(ctx, c, mcpDeployOptions{slug: "demo", timeout: 60, idempotencyKey: key}, "/src", cfg, candidate, submit)
+}
+
 var ValidatePreviewArchivePlanLimit = validatePreviewArchivePlanLimit
 var ValidateProductCustomerActivity = validateProductCustomerActivity
 var ValidateProductOnboardingPreview = validateProductOnboardingPreview
@@ -2032,6 +2091,10 @@ var ValidateTestCampaignCoverageBatch = validateTestCampaignCoverageBatch
 var ValidateTestCampaignGuidanceOptions = validateTestCampaignGuidanceOptions
 var ValidateTestCommandExecution = validateTestCommandExecution
 var ValidateTestHTTPRequests = validateTestHTTPRequests
+var ValidateTestAssertionProfiles = validateTestAssertionProfiles
+var PrepareTestRequestDeadline = prepareTestRequestDeadline
+var ExpandTestAssertionProfiles = expandTestAssertionProfiles
+var TestHTTPDataFields = testHTTPDataFields
 var ValidateTestLoadRecovery = validateTestLoadRecovery
 var ValidateTestLoadSpec = validateTestLoadSpec
 var ValidateTestManagedWork = validateTestManagedWork
@@ -2049,11 +2112,13 @@ var VerifyTestServiceHot = verifyTestServiceHot
 var VerifyTestServiceTCPHot = verifyTestServiceTCPHot
 var VerifyTestServiceWake = verifyTestServiceWake
 var VisibleCliCommands = visibleCliCommands
+var PublicReferenceCommands = publicReferenceCommands
 var WaitAlertRollback = waitAlertRollback
 var WaitCommitEvent = waitCommitEvent
 var WaitDataAPIRefresh = waitDataAPIRefresh
 var WaitDataAPIRestart = waitDataAPIRestart
 var WaitDataPipeline = waitDataPipeline
+var WaitPipelineConnectionCheck = waitConnectionCheck
 var WaitForAppWake = waitForAppWake
 var WaitForDeploymentReceiptUntil = waitForDeploymentReceiptUntil
 var WaitForDeploymentRollout = waitForDeploymentRollout
@@ -2068,7 +2133,9 @@ var WaitForTestInvocation = waitForTestInvocation
 var WaitForTestOutputs = waitForTestOutputs
 var WaitMCPAccessConvergence = waitMCPAccessConvergence
 var WakeRecommendationTier = wakeRecommendationTier
+var WarnClientScopedProtectiveRule = warnClientScopedProtectiveRule
 var WarnRootOnlyProtectiveRule = warnRootOnlyProtectiveRule
+var WarnSingleHostProtectiveRule = warnSingleHostProtectiveRule
 var WarnTemplatedEdgeRulePaths = warnTemplatedEdgeRulePaths
 var WatchDevPatch = watchDevPatch
 var WithBindingProgress = withBindingProgress
@@ -2076,17 +2143,18 @@ var WithBindingVerificationBudget = withBindingVerificationBudget
 var WithBindingVerificationSlot = withBindingVerificationSlot
 var WithCwd = withCwd
 var WithFixtureCronStaging = withFixtureCronStaging
+var WithFixturePolicyStaging = withFixturePolicyStaging
 var WithGetErr = withGetErr
 var WithRecorder = withRecorder
 var WithResetJSONOutput = withResetJSONOutput
 var WithTTYForTest = withTTYForTest
 var WithoutConfirmationFlags = withoutConfirmationFlags
 var WorkerReplicaBounds = workerReplicaBounds
-var WriteAutomationFixture = writeAutomationFixture
-var WriteAutomationHealthRunHints = writeAutomationHealthRunHints
-var WriteAutomationRecoveryAttention = writeAutomationRecoveryAttention
-var WriteAutomationRecoveryPlanFile = writeAutomationRecoveryPlanFile
-var WriteAutomationSuggestions = writeAutomationSuggestions
+var WriteStoredWorkflowFixture = writeStoredWorkflowFixture
+var WriteStoredWorkflowHealthRunHints = writeStoredWorkflowHealthRunHints
+var WriteStoredWorkflowRecoveryAttention = writeStoredWorkflowRecoveryAttention
+var WriteStoredWorkflowRecoveryPlanFile = writeStoredWorkflowRecoveryPlanFile
+var WriteStoredWorkflowSuggestions = writeStoredWorkflowSuggestions
 var WriteCustomerOperationBindings = writeCustomerOperationBindings
 var WriteDataAPIApprovalFixture = writeDataAPIApprovalFixture
 var WriteDataAPIConnectionBudget = writeDataAPIConnectionBudget
@@ -2129,21 +2197,51 @@ var WriteWaitedDeploymentReceiptUntil = writeWaitedDeploymentReceiptUntil
 var WriteWaitedDeploymentReceiptUntilWithOptions = writeWaitedDeploymentReceiptUntilWithOptions
 var ZeroConfigDeployServer = zeroConfigDeployServer
 
+// Data API runtime served by the control plane (ADR-20261031095954).
+var ServedDataAPIRuntime = servedDataAPIRuntime
+var UploadedSourceFiles = uploadedSourceFiles
+var UploadedServerHas = uploadedServerHas
+var ReadDataAPIRuntimeArchive = readDataAPIRuntimeArchive
+var AttachDataAPIRuntime = attachDataAPIRuntime
+var CurrentDataAPIRuntimeVersion = currentDataAPIRuntimeVersion
+
+type DataAPIHealthProbe = dataAPIHealthProbe
+
+const ServedRuntimeVersion = servedRuntimeVersion
+
 // Members of appTaskStreamSession
 func (r *appTaskStreamSession) Stdout() **io.PipeReader { return &r.stdout }
+
+// Members of artifactOutputDirectory
+func (d *artifactOutputDirectory) Planned() []string                { return d.planned }
+func (d *artifactOutputDirectory) Root() *os.Root                   { return d.root }
+func (d *artifactOutputDirectory) Create(ctx context.Context) error { return d.create(ctx) }
+
+// OpenArtifactTaskDirectory opens a server-named task directory under parent.
+var OpenArtifactTaskDirectory = openArtifactTaskDirectory
+
+// CLIUserAgent is the User-Agent the CLI's API client sends.
+var CLIUserAgent = cliUserAgent
+
+// ResetServerNotices forgets the notices already printed this run.
+func ResetServerNotices() {
+	serverNotices.Lock()
+	defer serverNotices.Unlock()
+	serverNotices.seen = nil
+}
 
 // Members of authCreateOptions
 func (r *authCreateOptions) EmailAPIKey() *string   { return &r.emailAPIKey }
 func (r *authCreateOptions) EmailFrom() *string     { return &r.emailFrom }
 func (r *authCreateOptions) EmailProvider() *string { return &r.emailProvider }
 
-// Members of automationLiveSuiteOptions
-func (r *automationLiveSuiteOptions) Interval() *time.Duration       { return &r.interval }
-func (r *automationLiveSuiteOptions) Path() *string                  { return &r.path }
-func (r *automationLiveSuiteOptions) Plan() *automationLiveSuitePlan { return &r.plan }
+// Members of storedWorkflowLiveSuiteOptions
+func (r *storedWorkflowLiveSuiteOptions) Interval() *time.Duration           { return &r.interval }
+func (r *storedWorkflowLiveSuiteOptions) Path() *string                      { return &r.path }
+func (r *storedWorkflowLiveSuiteOptions) Plan() *storedWorkflowLiveSuitePlan { return &r.plan }
 
-// Members of automationScenarioCoverage
-func (r automationScenarioCoverage) XHints(p0 api.WorkflowSpec) []automationCoverageHint {
+// Members of storedWorkflowScenarioCoverage
+func (r storedWorkflowScenarioCoverage) XHints(p0 api.WorkflowSpec) []storedWorkflowCoverageHint {
 	return r.hints(p0)
 }
 
@@ -2264,13 +2362,15 @@ func (r *fakeAPI) Srv() **httptest.Server  { return &r.srv }
 // Members of imageRunOptions
 func (r *imageRunOptions) Request() *api.CreateImageRunRequest { return &r.request }
 
-// Members of loadedAutomationScenario
-func (r *loadedAutomationScenario) CoverageExclusions() *[]automationCoverageExclusion {
+// Members of loadedStoredWorkflowScenario
+func (r *loadedStoredWorkflowScenario) CoverageExclusions() *[]storedWorkflowCoverageExclusion {
 	return &r.coverageExclusions
 }
-func (r *loadedAutomationScenario) Outputs() *map[string]json.RawMessage    { return &r.outputs }
-func (r *loadedAutomationScenario) Request() *api.SimulateAutomationRequest { return &r.request }
-func (r *loadedAutomationScenario) Scenario() *automationScenario           { return &r.scenario }
+func (r *loadedStoredWorkflowScenario) Outputs() *map[string]json.RawMessage { return &r.outputs }
+func (r *loadedStoredWorkflowScenario) Request() *api.SimulateStoredWorkflowRequest {
+	return &r.request
+}
+func (r *loadedStoredWorkflowScenario) Scenario() *storedWorkflowScenario { return &r.scenario }
 
 // Members of manifestCronTransaction
 func (r *manifestCronTransaction) Steps() *[]manifestCronRollbackStep { return &r.steps }
@@ -2454,6 +2554,8 @@ const UsageSynopsisLimit = usageSynopsisLimit
 var InvokedCommandPath = &invokedCommandPath
 
 var AppArgumentEnabled = &appArgumentEnabled
+var AppArgumentAsFlag = appArgumentAsFlag
+var AppFlagAsArgument = appFlagAsArgument
 
 // AppArgumentPaths lists every visible command path whose leaf takes the
 // app as its first argument.
@@ -2461,7 +2563,7 @@ func AppArgumentPaths() [][]string {
 	var paths [][]string
 	var walk func(path []string, flags []cliFlag, positionals []string, children []cliSub)
 	walk = func(path []string, flags []cliFlag, positionals []string, children []cliSub) {
-		if takesAppArgument(flags, positionals, children) {
+		if takesAppArgument(flags, positionals, children, "app") {
 			paths = append(paths, append([]string{}, path...))
 		}
 		for _, child := range children {
@@ -2577,6 +2679,8 @@ func DevGoCommandRequest(command string) api.UpsertDevSessionRequest {
 
 var NormalizeTreeFlags = normalizeTreeFlags
 
+var CronRunCommand = cronRunCommand
+
 // Bucket CORS CLI (ADR-20261025202805).
 var (
 	DecodeBucketCORSFile = decodeBucketCORSFile
@@ -2602,3 +2706,133 @@ func TierDiscoverableFlags(names, capabilities []string) []string {
 var BindExclusiveLock = bindExclusiveLock
 
 type ExclusiveLock = exclusiveLock
+
+// CLI audit 2026-10-31 (auth and credentials).
+var CmdLogin = cmdLogin
+var WithEntry = withEntry
+
+// GitHub connector commands (ADR-20261101160300).
+var CmdGithub = cmdGithub
+var CmdGithubSetup = cmdGithubSetup
+
+// DebugWatchPoll runs one debug requests watch poll against baseURL and
+// returns the request IDs it read and whether it reported a gap.
+func DebugWatchPoll(baseURL, slug string, limit int, seen map[string]string, follow bool) ([]string, bool, error) {
+	resp, missed, err := debugWatchPoll(context.Background(), api.NewClient(baseURL, "fp_test"), slug, api.DebugTelemetryListOptions{Limit: limit}, seen, follow)
+	ids := make([]string, 0, len(resp.Requests))
+	for _, request := range resp.Requests {
+		ids = append(ids, request.ID)
+	}
+	return ids, missed, err
+}
+
+const DebugWatchMaxPages = debugWatchMaxPages
+
+var McpNativeDrainBudget = mcpNativeDrainBudget
+var McpNativeDrainableWorkerIDs = mcpNativeDrainableWorkerIDs
+
+var McpNativeWorkerIDs = mcpNativeWorkerIDs
+
+// Rate comparison seams for boundary regression tests.
+type TestLoadMetrics = testLoadMetrics
+type TestLoadRelativeSpec = testLoadRelativeSpec
+
+var TestLoadThresholdEvidenceFor = testLoadThresholdEvidenceFor
+var CompareTestBaseline = compareTestBaseline
+var ResolveTestRegressionConfig = resolveTestRegressionConfig
+var CompareTestStagedLoadRelative = compareTestStagedLoadRelative
+var CompareTestGateErrorRate = compareTestGateErrorRate
+var CompareRepeatedTestGateErrorRate = compareRepeatedTestGateErrorRate
+
+// Profile warnings in doctor --strict and deploy --plan (#6640).
+var CmdDoctor = cmdDoctor
+var ResolveSimpleAppPlanWithWarnings = resolveSimpleAppPlanWithWarnings
+var RenderSimpleAppPlanWithWarnings = renderSimpleAppPlanWithWarnings
+
+// Deploy preflights (#6625, #6631).
+var PreflightDeploySessionStorage = preflightDeploySessionStorage
+var SourceCapLookupBudgets = &sourceCapLookupBudgets
+var SourceUploadLimitError = sourceUploadLimitError
+
+// ResolveSourceUploadCapForTest exposes resolveSourceUploadCap's result.
+func ResolveSourceUploadCapForTest(ctx context.Context, c *Client) (mb int, verified bool, warning string, explain func(error) error) {
+	got := resolveSourceUploadCap(ctx, c)
+	return got.mb, got.verified, got.warning(), got.explain
+}
+
+// ForwardAppTaskSession is the shared port-forward / postgres connect relay.
+var ForwardAppTaskSession = forwardAppTaskSession
+
+// AddBucketBindingUnavailable is add bucket's compute-binding precheck.
+var AddBucketBindingUnavailable = addBucketBindingUnavailable
+
+// AddPostgresUnsupported and PrintAddPostgresMigrationHint are add postgres's
+// region capability check and its migration-binding hint.
+var AddPostgresUnsupported = addPostgresUnsupported
+var PrintAddPostgresMigrationHint = printAddPostgresMigrationHint
+
+var DebugWatchNextWait = debugWatchNextWait
+
+// ADR-20261107180000 `gregale config explain`.
+var (
+	ExplainConfigKey         = explainConfigKey
+	RenderSettingExplanation = renderSettingExplanation
+)
+
+// gregale mcp connect seams (ADR-20261109121411).
+var (
+	MCPConnectLookPath    = &mcpConnectLookPath
+	MCPConnectRun         = &mcpConnectRun
+	MCPConnectInteractive = &mcpConnectInteractive
+	MCPConnectHome        = &mcpConnectHome
+	MCPEndpointCheck      = &mcpEndpointCheck
+	MCPHeadlessToolCount  = &mcpHeadlessToolCount
+	MCPConnectRunStdin    = &mcpConnectRunStdin
+	UpsertCodexServer     = upsertCodexServer
+)
+
+// MCPConnectOptions builds the options a test passes to MCPHeadlessToolCount.
+type MCPConnectOptions = mcpConnectOptions
+
+var RefuseDevFunctionSet = refuseDevFunctionSet
+
+// MetricLabelFlags exposes the --metric-label parser.
+var MetricLabelFlags = metricLabelFlags
+
+// ValidateSubscriptionCapacityCommandBudget exposes the receipt budget check.
+var ValidateSubscriptionCapacityCommandBudget = validateSubscriptionCapacityCommandBudget
+
+// ActivityDisplayTime exposes the org activity / keys list time formatter.
+var ActivityDisplayTime = activityDisplayTime
+
+// RenderHTTPLogQueryEvent exposes the `logs --source http` row renderer.
+var RenderHTTPLogQueryEvent = renderHTTPLogQueryEvent
+
+// ManifestDeclaredBindings exposes the bindings check manifest reader (ADR-20261110213000).
+var ManifestDeclaredBindings = manifestDeclaredBindings
+
+// ApplyFunctionHookLifecycleForTest exposes applyFunctionHookLifecycle.
+func ApplyFunctionHookLifecycleForTest(ctx context.Context, client interface {
+	GetApp(ctx context.Context, slug string) (api.AppResponse, error)
+	UpdateApp(ctx context.Context, slug string, req api.UpdateAppRequest) (api.AppResponse, error)
+}, slug, sourceDir, handler string) error {
+	return applyFunctionHookLifecycle(ctx, client, slug, sourceDir, handler)
+}
+
+// InvalidAlertMetricError exposes the unknown --metric error (H32-18).
+var InvalidAlertMetricError = invalidAlertMetricError
+var RealtimeClientURL = realtimeClientURL
+var CmdEdgeRuleListsRm = cmdEdgeRuleListsRm
+var CmdAppScaling = cmdAppScaling
+var CmdEventsSchemaRollout = cmdEventsSchemaRollout
+var CmdOrgsSeatUsage = cmdOrgsSeatUsage
+
+type CustomerOperationTypesResult = customerOperationTypesResult
+
+var CustomerOperationTypesMessage = customerOperationTypesMessage
+
+// WorkerNoInstancesLine exposes the empty worker pool explanation.
+var WorkerNoInstancesLine = workerNoInstancesLine
+
+// PrintPublicURLs exposes the plan's public URL list (H32-30).
+var PrintPublicURLs = printPublicURLs

@@ -15,8 +15,10 @@ import (
 // publicCacheControl lets a CDN or browser keep a public object for a bounded
 // time and then revalidate it, so deleting or replacing it takes effect within
 // PublicObjectReadMaxAgeSeconds (H9-S144). Mount paths are mutable keys; the
-// earlier one-year immutable lifetime kept deleted files public.
-var publicCacheControl = "public, max-age=" + strconv.Itoa(api.PublicObjectReadMaxAgeSeconds) + ", must-revalidate"
+// earlier one-year immutable lifetime kept deleted files public. no-transform
+// keeps Cloudflare from rewriting the body, which it does to HTML (H9-S161:
+// a 116-byte object grew to 1,054 bytes); the S3 path already sends it.
+var publicCacheControl = "public, max-age=" + strconv.Itoa(api.PublicObjectReadMaxAgeSeconds) + ", must-revalidate, no-transform"
 
 // keyedLimiters holds one token bucket per key, bounded to max keys; when
 // full it starts over rather than grow, which at worst lets a key burst again.
@@ -53,6 +55,12 @@ func newPublicReadLimiters() *publicReadLimiters {
 	return newKeyedLimiters(api.PublicObjectReadRatePerBucket, api.PublicObjectReadBurstPerBucket, api.MaxPublicObjectReadLimiters)
 }
 
+// newPublicReadClientLimiters bounds each client's anonymous reads of each
+// bucket (audit OS-5).
+func newPublicReadClientLimiters() *publicReadLimiters {
+	return newKeyedLimiters(api.PublicObjectReadRatePerClient, api.PublicObjectReadBurstPerClient, api.MaxPublicObjectReadClientLimiters)
+}
+
 // AccountRequestLimiter bounds each bucket owner's authenticated S3 requests
 // per gateway process (ADR-20261030075301).
 type AccountRequestLimiter struct{ limiters *keyedLimiters }
@@ -74,6 +82,12 @@ func (l *AccountRequestLimiter) Allow(b state.ObjectBucket) bool {
 // writePublicReadRefusal answers an admission or reservation failure. A
 // reached budget is the account's own limit, not an outage.
 func writePublicReadRefusal(w http.ResponseWriter, err error) {
+	var limit *state.ObjectStorageLimitError
+	if errors.As(err, &limit) && limit.Kind == "account_bytes" {
+		// ADR-20261101214152: the owner stores more than its plan's ceiling.
+		http.Error(w, "this bucket's owner stores more than its plan allows; downloads resume once it is back under", http.StatusPaymentRequired)
+		return
+	}
 	if errors.Is(err, state.ErrObjectBudget) {
 		http.Error(w, "this bucket's public read allowance for the month is used up", http.StatusTooManyRequests)
 		return

@@ -2,16 +2,24 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppPostgresBindingList } from '../models/AppPostgresBindingList.js';
 import type { AppTaskResponse } from '../models/AppTaskResponse.js';
 import type { ChangeManagedPostgresComputePolicyRequest } from '../models/ChangeManagedPostgresComputePolicyRequest.js';
 import type { CreateDataAPIContractTaskRequest } from '../models/CreateDataAPIContractTaskRequest.js';
 import type { CreateManagedPostgresBindingRequest } from '../models/CreateManagedPostgresBindingRequest.js';
 import type { CreateManagedPostgresDatabaseRequest } from '../models/CreateManagedPostgresDatabaseRequest.js';
+import type { DataAPIChangeEventBatch } from '../models/DataAPIChangeEventBatch.js';
+import type { DataAPIChangeEventBatchResponse } from '../models/DataAPIChangeEventBatchResponse.js';
+import type { DataAPIChangeHookReport } from '../models/DataAPIChangeHookReport.js';
 import type { DataAPIConnectionBudgets } from '../models/DataAPIConnectionBudgets.js';
+import type { DataAPIRuntime } from '../models/DataAPIRuntime.js';
 import type { DataAPIRuntimeConnectionReport } from '../models/DataAPIRuntimeConnectionReport.js';
+import type { DataAPIStatus } from '../models/DataAPIStatus.js';
 import type { DataAPIUsage } from '../models/DataAPIUsage.js';
 import type { DataAPIUsageReport } from '../models/DataAPIUsageReport.js';
 import type { DataAPIUsageReportResponse } from '../models/DataAPIUsageReportResponse.js';
+import type { LabelChange } from '../models/LabelChange.js';
+import type { LabelsResponse } from '../models/LabelsResponse.js';
 import type { ManagedPostgresBinding } from '../models/ManagedPostgresBinding.js';
 import type { ManagedPostgresBindingList } from '../models/ManagedPostgresBindingList.js';
 import type { ManagedPostgresCapabilities } from '../models/ManagedPostgresCapabilities.js';
@@ -124,6 +132,39 @@ export class ManagedPostgresService {
       url: '/v1/postgres/databases',
       headers: {
         'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Set and remove a database's labels.
+   * Preview (resource-labels capability). Sets and removes labels in one
+   * atomic write and returns every label the database carries after it, with
+   * the same rules, codes and audit event as PATCH /v1/apps/{slug}/labels.
+   * Requires postgres:manage or admin scope and MFA. While the capability is on,
+   * GET /v1/postgres/databases and GET /v1/postgres/databases/{id} include labels, and GET /v1/postgres/databases
+   * takes ?selector=, a Kubernetes label selector.
+   *
+   * @returns LabelsResponse The database's labels after the write.
+   * @returns Problem An invalid change, missing sign-in, scope or MFA, a database this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static updateManagedPostgresDatabaseLabels({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: LabelChange,
+  }): CancelablePromise<LabelsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/postgres/databases/{id}/labels',
+      path: {
+        'id': id,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -575,6 +616,7 @@ export class ManagedPostgresService {
   }
   /**
    * Restore a database into a new managed PostgreSQL database
+   * The restored database counts toward the plan's database limit. A restore may go one database past the limit: that copy reports restore_slot_until, 7 days out, and becomes an ordinary database once the account has room; otherwise its delete is scheduled then. A second restore past the limit while a copy holds the slot answers 403 managed_postgres_restore_slot_in_use.
    * @returns Problem Invalid point in time, plan limit, or provider error
    * @returns ManagedPostgresDatabase Restore accepted or ready
    * @throws ApiError
@@ -650,6 +692,66 @@ export class ManagedPostgresService {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/data-api/connection-budget',
+      path: {
+        'slug': slug,
+      },
+    });
+  }
+  /**
+   * Download the current Data API runtime
+   * Returns the Data API runtime this control plane serves: its version,
+   * and a gzipped tar of the runtime under one `data-api/` directory with
+   * its SHA-256. `gregale data-api create` and `gregale data-api deploy`
+   * deploy this archive, so an older CLI release does not redeploy an older
+   * runtime. A running Data API reports the version it was built from as
+   * `runtime_version` on `/healthz`; a different version is not the
+   * platform's current runtime.
+   *
+   * @returns DataAPIRuntime The current runtime
+   * @returns Problem App lookup, permission or runtime failure
+   * @throws ApiError
+   */
+  public static getDataApiRuntime({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<DataAPIRuntime | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/data-api/runtime',
+      path: {
+        'slug': slug,
+      },
+    });
+  }
+  /**
+   * Read a Data API's platform status
+   * Returns what the platform knows about the app's Data API without
+   * waking it: the runtime version this control plane serves, whether
+   * this installation accepts runtime reports, and the change hook
+   * delivery the app's runtime last reported. Without runtime reports,
+   * usage reports, monthly caps, keyless live reads and change hooks do
+   * not reach the platform. `change_hooks` is absent until a runtime with
+   * change hooks on has reported.
+   *
+   * @returns DataAPIStatus The Data API's status
+   * @returns Problem App lookup, permission or status read failure
+   * @throws ApiError
+   */
+  public static getDataApiStatus({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<DataAPIStatus | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/data-api/status',
       path: {
         'slug': slug,
       },
@@ -783,6 +885,34 @@ export class ManagedPostgresService {
       query: {
         'since': since,
         'granularity': granularity,
+      },
+    });
+  }
+  /**
+   * List an app's managed PostgreSQL bindings
+   * Lists the app's live managed PostgreSQL bindings on every database it
+   * is bound to, including organization databases and project environment
+   * copies. Deleting the app is refused while a binding listed here is not
+   * being deleted. Bindings on an environment copy are removed by tearing
+   * down that environment.
+   *
+   * @returns AppPostgresBindingList The app's bindings on every database, without credential material
+   * @returns Problem App lookup, permission or binding listing error
+   * @throws ApiError
+   */
+  public static listAppPostgresBindings({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AppPostgresBindingList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/postgres-bindings',
+      path: {
+        'slug': slug,
       },
     });
   }
@@ -962,7 +1092,7 @@ export class ManagedPostgresService {
   }
   /**
    * Report Data API usage deltas
-   * Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion; account, app and instance come from it, never from the body. Each report id is applied once, so retried or snapshot-duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API keys and application JWTs are not accepted.
+   * Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion from a live instance of an active app; account, app and instance come from it, never from the body. Only a production deployment reports; a stage, preview or cloned environment is refused for good with 403 workload_not_production, so its usage never counts against production's caps and its access settings never govern production's live reads. Each report id is applied once, so retried or snapshot-duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API keys and application JWTs are not accepted.
    * @returns DataAPIUsageReportResponse Report applied, or already applied; month-to-date totals for owner caps.
    * @throws ApiError
    */
@@ -979,7 +1109,63 @@ export class ManagedPostgresService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Publish recorded Data API row changes
+   * Private runtime surface for change hooks. Requires a short-lived gregale:data-api:events workload assertion from a live instance of an active app; account and app come from it, never from the body. Only a production deployment publishes; a stage, preview or cloned environment is refused for good with 403 workload_not_production. Each event publishes as an app-scoped producer-key event under the app's own source with key data-api.change.ID, so a republished change deduplicates while its receipt is retained. Events publish in order; publication stops at the first event that may succeed later, and later events are reported as retryable without being attempted. Owner API keys and application JWTs are not accepted.
+   * @returns DataAPIChangeEventBatchResponse Per-event outcomes in input order.
+   * @throws ApiError
+   */
+  public static publishDataApiChangeEvents({
+    requestBody,
+  }: {
+    requestBody: DataAPIChangeEventBatch,
+  }): CancelablePromise<DataAPIChangeEventBatchResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/runtime/data-api/events',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        413: `The publication exceeds 1 MiB.`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Report Data API change hook delivery
+   * Private runtime surface for change hook delivery. Requires the same gregale:data-api:events workload assertion from a live instance of an active app as publication; account and app come from it, never from the body. The report carries counts the runtime read from its change event table (waiting and rejected changes, when the oldest waiting change was recorded, the latest rejection code, whether publications keep failing) and when it last published; it never carries change data. Owners read the latest report in the app's Data API status. Owner API keys and application JWTs are not accepted.
+   * @returns void
+   * @throws ApiError
+   */
+  public static reportDataApiChangeStatus({
+    requestBody,
+  }: {
+    requestBody: DataAPIChangeHookReport,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/runtime/data-api/change-status',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).

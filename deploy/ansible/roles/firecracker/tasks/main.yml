@@ -132,6 +132,54 @@
     - { dest: /usr/local/bin/firecracker, src: firecracker }
     - { dest: /usr/local/bin/jailer, src: jailer }
 
+# ADR-20261108170000: production compute nodes run the Firecracker that release
+# CI built from fc_source_commit plus deploy/firecracker/patches (the host owns
+# every virtio-net header written to the TAP). node_join stages it from the
+# verified bundle as /var/lib/faas/bootstrap/firecracker-vmm. It is installed
+# under the upstream basename: the jailer names chroot directories after it and
+# vmmd's native recovery recognises launches by it. The release-anchor check
+# below then requires release.firecracker_digest of whichever bytes are here.
+- name: firecracker — detect the release-built Firecracker VMM
+  ansible.builtin.stat:
+    path: /var/lib/faas/bootstrap/firecracker-vmm
+  register: faas_release_firecracker_stat
+  changed_when: false
+
+- name: firecracker — select the Firecracker VMM source
+  ansible.builtin.set_fact:
+    faas_firecracker_from_release: >-
+      {{ (faas_box_role | default('single-box')) == 'compute-only'
+         and not (faas_image_seed | default(false) | bool)
+         and (faas_release_firecracker_stat.stat.exists | default(false) | bool)
+         and (faas_release_firecracker_stat.stat.isreg | default(false) | bool) }}
+
+- name: firecracker — install the release-built Firecracker VMM
+  ansible.builtin.copy:
+    src: /var/lib/faas/bootstrap/firecracker-vmm
+    dest: "/usr/local/bin/firecracker-{{ fc_release }}-{{ fc_arch }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  when: faas_firecracker_from_release | bool
+
+# A release built before the patch (or a rollback to one) ships no
+# firecracker-vmm and its manifest names upstream's digest: put upstream's
+# bytes back rather than keep a newer release's binary.
+- name: firecracker — restore upstream Firecracker when the release ships none
+  ansible.builtin.unarchive:
+    src: "/tmp/firecracker-{{ fc_release }}.tgz"
+    dest: /usr/local/bin
+    remote_src: true
+    include:
+      - "release-{{ fc_release }}-{{ fc_arch }}/firecracker-{{ fc_release }}-{{ fc_arch }}"
+    extra_opts:
+      - --strip-components=1
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - not (faas_image_seed | default(false) | bool)
+    - not (faas_firecracker_from_release | bool)
+
 - name: firecracker — detect the release-pinned guest kernel
   ansible.builtin.stat:
     path: /var/lib/faas/bootstrap/vmlinux
@@ -144,23 +192,23 @@
       - faas_release_kernel_stat.stat.exists
       - faas_release_kernel_stat.stat.isreg
     fail_msg: >-
-      compute-only production bootstrap requires vmlinux extracted from the
+      compute-only and database production bootstraps require vmlinux extracted from the
       signed release bundle at /var/lib/faas/bootstrap/vmlinux. Refusing to
       rebuild a host-specific kernel whose digest cannot be shared by the
       fleet.
   when:
-    - (faas_box_role | default('single-box')) == 'compute-only'
+    - (faas_box_role | default('single-box')) in ['compute-only', 'database']
     - not (faas_image_seed | default(false) | bool)
 
 - name: firecracker — select the kernel source
   ansible.builtin.set_fact:
     faas_kernel_release_staged: >-
-      {{ (faas_box_role | default('single-box')) == 'compute-only'
+      {{ (faas_box_role | default('single-box')) in ['compute-only', 'database']
          and not (faas_image_seed | default(false) | bool)
          and (faas_release_kernel_stat.stat.exists | default(false) | bool) }}
     faas_kernel_source_path: >-
       {{ '/var/lib/faas/bootstrap/vmlinux'
-         if ((faas_box_role | default('single-box')) == 'compute-only'
+         if ((faas_box_role | default('single-box')) in ['compute-only', 'database']
              and not (faas_image_seed | default(false) | bool))
          else '/usr/src/linux-' ~ fc_kernel_version ~ '/vmlinux' }}
     faas_kernel_rebuild_required: false
@@ -268,6 +316,21 @@
   register: ip_pnp_config
   when: not (faas_kernel_release_staged | bool)
 
+# No kernel code from inside a guest (ADR-20261027090013 §10): sandbox
+# sessions give the tenant root, so the guest kernel loads no modules and
+# cannot kexec. Same edits as scripts/build-firecracker-kernel.sh.
+- name: firecracker — disable loadable modules and kexec in the guest kernel
+  ansible.builtin.lineinfile:
+    path: /usr/src/linux-{{ fc_kernel_version }}/.config
+    regexp: "^(# )?CONFIG_{{ item }}(=.*| is not set)$"
+    line: "# CONFIG_{{ item }} is not set"
+    state: present
+  loop:
+    - MODULES
+    - KEXEC_FILE
+  register: no_kernel_code_config
+  when: not (faas_kernel_release_staged | bool)
+
 - name: firecracker — inspect existing kernel build output
   ansible.builtin.stat:
     path: "/usr/src/linux-{{ fc_kernel_version }}/vmlinux"
@@ -286,7 +349,8 @@
          or (obsolete_virtio_config.changed | default(false) | bool)
          or (virtio_blk_config.changed | default(false) | bool)
          or (fuse_config.changed | default(false) | bool)
-         or (ip_pnp_config.changed | default(false) | bool) }}
+         or (ip_pnp_config.changed | default(false) | bool)
+         or (no_kernel_code_config.changed | default(false) | bool) }}
   when: not (faas_kernel_release_staged | bool)
 
 - name: firecracker — build kernel (vmlinux) with 4 jobs

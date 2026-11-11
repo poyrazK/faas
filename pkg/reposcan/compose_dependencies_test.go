@@ -43,7 +43,9 @@ func TestComposeDependencyConditionsPreserved(t *testing.T) {
 
 func TestComposeDependencyConditionsRejectUnsupportedDeclarations(t *testing.T) {
 	for _, tc := range []struct{ name, declaration, want string }{
-		{"completion", "condition: service_completed_successfully", "completion gates are unsupported"},
+		// A completion dependency runs as a release command (ADR-20261102192943),
+		// which needs a command to run.
+		{"completion", "condition: service_completed_successfully", "has no command:"},
 		{"unknown", "condition: ready", "dependency condition"},
 		{"optional health", "condition: service_healthy\n        required: false", "required: true"},
 		{"wrong type", "condition: 123", "must be a string"},

@@ -142,3 +142,28 @@ failing now). The other event-routing alerts (`FaasEventRoutingSweepSlow`,
 `FaasEventDeliveryCapacityBacklog`, `FaasDeadLetterSpike`,
 `FaasBrokerTriggerPollErrors`, `FaasEventsPublishingPaused`) are warn. Runbook:
 [FaasEventDriven](../runbooks/FaasEventDriven.md).
+
+## Amendment (2026-10-31): routing that runs but delivers nothing
+
+A routing pass that fails every claim still completes, so
+`FaasEventRoutingStalled` stayed quiet while nothing was routed. schedd now
+counts routing results in `schedd_event_routing_outcomes_total{outcome}`
+(`routed`, `waiting`, `retry`, `failed`, `claim_error`). The page also fires
+when, for fifteen minutes, sweeps hit claim errors and route no recipient at
+all, while an event has waited over ten minutes
+(`schedd_event_routing_oldest_pending_seconds`), so one transient claim error
+on a quiet fleet does not page. It is still the only event-routing page. A new warn,
+`FaasEventRoutingFailing`, fires when more than half of the recipients routed
+in fifteen minutes (and at least 50) failed or went back to retry.
+`FaasDeadLetterSpike` now counts recipients whose routing failed alongside
+invocation and trigger dead letters. The warn route is unchanged.
+
+## Amendment (2026-11-09): managed PostgreSQL approval near expiry
+
+`FaasManagedPostgresProductionApprovalImminent` pages when the production
+managed PostgreSQL approval ends within 48 hours. When it ends, new databases,
+bindings, restores and resizes close for every account, and renewal is a
+config change plus an apid restart, so it gets the same short lead as the
+near-expiry certificate pages above. The 14-day
+`FaasManagedPostgresProductionApprovalExpiring` stays warn; on 2026-11-09 it had
+fired for days with the approval 44 hours from ending and no one had acted.

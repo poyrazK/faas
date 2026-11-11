@@ -4528,3 +4528,50 @@ retained workloads first. This feature does not delete customer data.
 Production enforcement remains gated. These changes do not replace the
 required end-to-end run and leak checks on an exclusive dedicated native
 x86_64 KVM host.
+
+## Retired namespace proof under inode reuse — 2026-10-31
+
+Recovery and cleanup prove that a retired attempt's jail mount namespace is
+gone before they acknowledge its helper frames (jail devices, snapshot outputs).
+The proof scans every task's `ns/mnt` for the namespace's recorded nsfs device
+and inode number. Linux reuses that inode number once the namespace is freed,
+so a newer VM's jail namespace can take it. Native lane B on n2 refused vmmd's
+restart this way four times (2026-10-29 to 2026-10-30): the holder was always a
+`firecracker` newer than the retired launch, and in eaedb-20261030T230509 its
+cgroup named another instance (`76973f50`) than the retired one (`9e4ea724`).
+
+A task found under the recorded identity now ends the proof only when it is the
+launched process of a live launch record for another instance: the task's
+cgroup leaf names that instance, as native recovery already reads it, and the
+record is authorized, not revoked, not resource-removed, and names the same pid
+and start time. Every jail gets its own mount namespace and two live namespaces
+never share an inode number, so that namespace is the other launch's and the
+retired attempt's namespace ended. Any other holder, including a task of the
+retired instance, an unverified incarnation or an open descriptor, still blocks
+the acknowledgement and vmmd's start, as before.
+
+The refusal names the holder (pid, command, task, cgroup) and the retired owner
+or helper frame. Validation:
+`TestNativeJailDeviceRecycledNamespaceIdentityReleasesOnlyAnotherLiveLaunch`.
+
+### Framework-ready evidence only for runtime runners (2026-10-26)
+
+Activation evidence requires a restored framework-ready receipt only for
+non-Job candidates whose app has a runtime runner (`apps.runtime` set). Only a
+function runtime runner signals framework-ready, and production stamps none for
+an app without one, so a full-rootfs image candidate could never qualify. The
+graph member records `no_framework_ready_signal` at preparation; graphs
+prepared earlier keep the requirement. For a runner candidate the native
+restore reads the framework-ready state the runner kept in guest memory and
+records the receipt itself. Details and n2 evidence:
+ADR 20261023093000 amendment 1.
+
+### A served graph meets the unqualified-workload fence (2026-10-31)
+
+The runtime observation fences every Git-managed workload source as
+unqualified (`EnvironmentGitOpsUnqualifiedWorkloads`), from the preview that
+predates graph qualification, and nothing clears it. An enforced graph that
+qualified, activated and served could therefore never record its applied
+revision. Runtime verification now treats the fence as met when the reviewed
+graph served in the same pass; runtime freshness still applies, and report mode
+keeps the fence. Details and n2 evidence: ADR 20261023093000 acceptance record.

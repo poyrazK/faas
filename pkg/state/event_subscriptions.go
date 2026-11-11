@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/eventfilter"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -70,14 +71,33 @@ func normalizeEventSubscriptionFilter(filter json.RawMessage) ([]byte, error) {
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return []byte("{}"), nil
 	}
+	// Decode numbers as json.Number: through float64 a filter on an integer
+	// above 2^53 was stored rounded and matched the wrong events
+	// (ADR-20261031130000).
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.UseNumber()
 	var value any
-	if err := json.Unmarshal(trimmed, &value); err != nil {
+	if err := decoder.Decode(&value); err != nil {
 		return nil, err
+	}
+	if decoder.More() {
+		return nil, errors.New("event subscription filter must be one JSON object")
 	}
 	if _, ok := value.(map[string]any); !ok {
 		return nil, errors.New("event subscription filter must be a JSON object")
 	}
 	return json.Marshal(value)
+}
+
+// normalizeNewEventSubscriptionFilter is the store backstop for the
+// subscription filter caps the manifest validator applies (events hunt #9):
+// every recipient snapshot copies the filter, so an unbounded one amplified
+// storage per event. A cap failure is an *eventfilter.BoundError.
+func normalizeNewEventSubscriptionFilter(filter json.RawMessage) ([]byte, error) {
+	if err := eventfilter.ValidateBoundedFilter(filter, api.EventSubscriptionFilterMaxBytes, api.EventSubscriptionFilterMaxDepth); err != nil {
+		return nil, err
+	}
+	return normalizeEventSubscriptionFilter(filter)
 }
 
 func eventSubscriptionFromSQL(row sqlc.EventSubscription) EventSubscription {
@@ -168,7 +188,7 @@ func (s *PgStore) ListMatchingEventSubscriptionsForAccount(ctx context.Context, 
 // true only when a new row was inserted, allowing deploy compensation to
 // remove only rows created by the current operation.
 func (s *PgStore) UpsertEventSubscription(ctx context.Context, accountID, appID, source, typ string, filter json.RawMessage) (EventSubscription, bool, error) {
-	canonical, err := normalizeEventSubscriptionFilter(filter)
+	canonical, err := normalizeNewEventSubscriptionFilter(filter)
 	if err != nil {
 		return EventSubscription{}, false, err
 	}
@@ -322,7 +342,7 @@ func (m *MemStore) eventSubscriptionAppLocked(appID string) (App, bool) {
 }
 
 func (m *MemStore) UpsertEventSubscription(_ context.Context, accountID, appID, source, typ string, filter json.RawMessage) (EventSubscription, bool, error) {
-	canonical, err := normalizeEventSubscriptionFilter(filter)
+	canonical, err := normalizeNewEventSubscriptionFilter(filter)
 	if err != nil {
 		return EventSubscription{}, false, err
 	}
@@ -344,6 +364,11 @@ func (m *MemStore) UpsertEventSubscription(_ context.Context, accountID, appID, 
 	}
 	mapKey := canonicalMemUUID(appID) + "\x00" + key
 	if existing, ok := m.eventSubscriptions[mapKey]; ok {
+		if !existing.Enabled {
+			existing.Enabled = true
+			existing.UpdatedAt = time.Now().UTC()
+			m.eventSubscriptions[mapKey] = existing
+		}
 		return cloneEventSubscription(existing), false, nil
 	}
 	now := time.Now().UTC()

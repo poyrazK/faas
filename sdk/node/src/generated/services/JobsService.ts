@@ -16,6 +16,8 @@ import type { JobRunCancelledResponse } from '../models/JobRunCancelledResponse.
 import type { JobRunResponse } from '../models/JobRunResponse.js';
 import type { JobTaskLogResponse } from '../models/JobTaskLogResponse.js';
 import type { JobTaskRetryResponse } from '../models/JobTaskRetryResponse.js';
+import type { LabelChange } from '../models/LabelChange.js';
+import type { LabelsResponse } from '../models/LabelsResponse.js';
 import type { ListJobRunsResponse } from '../models/ListJobRunsResponse.js';
 import type { ListJobsResponse } from '../models/ListJobsResponse.js';
 import type { ListJobTaskAttemptsResponse } from '../models/ListJobTaskAttemptsResponse.js';
@@ -167,6 +169,39 @@ export class JobsService {
         \`profile_investigation_limit\`.
         `,
       },
+    });
+  }
+  /**
+   * Set and remove a job's labels.
+   * Preview (resource-labels capability). Sets and removes labels in one
+   * atomic write and returns every label the job carries after it, with
+   * the same rules, codes and audit event as PATCH /v1/apps/{slug}/labels.
+   * Requires deploy:write or admin scope and MFA. While the capability is on,
+   * GET /v1/jobs and GET /v1/jobs/{name} include labels, and GET /v1/jobs
+   * takes ?selector=, a Kubernetes label selector.
+   *
+   * @returns LabelsResponse The job's labels after the write.
+   * @returns Problem An invalid change, missing sign-in, scope or MFA, a job this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static updateJobLabels({
+    name,
+    requestBody,
+  }: {
+    /**
+     * Slug of the job whose labels change.
+     */
+    name: string,
+    requestBody: LabelChange,
+  }): CancelablePromise<LabelsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/jobs/{name}/labels',
+      path: {
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**

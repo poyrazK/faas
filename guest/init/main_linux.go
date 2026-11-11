@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/overlaymetadata"
@@ -67,11 +68,22 @@ const (
 	modeAppTask
 	modeDataRepair
 	modeAgent
+	modeSandbox
 )
 
 // main is guest PID 1. Any fatal error here panics the VM (panic=1 in boot args
 // reboots it), which schedd observes as a failed wake.
 func main() {
+	// PostgreSQL's archive_command and restore_command run guest-init as an
+	// ordinary process (ADR-1027); only PID 1 boots.
+	if os.Getpid() != 1 && len(os.Args) > 1 && os.Args[1] == "archive-wal" {
+		os.Exit(runArchiveWAL(os.Args[2:]))
+	}
+	// A primary's replication bridge runs guest-init as the replication OS
+	// user, one process per standby stream.
+	if os.Getpid() != 1 && len(os.Args) == 2 && os.Args[1] == replicationBridgeCommand {
+		os.Exit(runReplicationBridge())
+	}
 	if os.Getenv(dependencyInputsHelperEnv) == publicBuildURLsHelperValue && os.Getpid() != 1 {
 		os.Exit(runPublicBuildURLs(os.Args[1:]))
 	}
@@ -95,6 +107,47 @@ func boot() error {
 		return fmt.Errorf("mount basics: %w", err)
 	}
 	guestStage("mount-basics")
+	// ADR-1027: a database VM's drive1 is its persistent volume, never an
+	// overlay upper, so database mode is decided before overlay assembly.
+	if cmdline, readErr := os.ReadFile("/proc/cmdline"); readErr == nil {
+		database, major, parseErr := dbguest.ParseCmdline(string(cmdline))
+		if parseErr != nil {
+			_ = poweroffDatabase()
+			return fmt.Errorf("database mode: %w", parseErr)
+		}
+		if database {
+			guestStage("mode-database")
+			target, restoring, targetErr := dbguest.RestoreTarget(string(cmdline))
+			if targetErr == nil && restoring && !dbguest.ArchiveEnabled(string(cmdline)) {
+				targetErr = errors.New("restore needs the archive relay")
+			}
+			if targetErr != nil {
+				_ = poweroffDatabase()
+				return fmt.Errorf("database restore mode: %w", targetErr)
+			}
+			upgradeFrom, upgradeErr := dbguest.UpgradeFrom(string(cmdline), major)
+			if upgradeErr != nil {
+				_ = poweroffDatabase()
+				return fmt.Errorf("database upgrade mode: %w", upgradeErr)
+			}
+			boot := databaseBoot{major: major, archive: dbguest.ArchiveEnabled(string(cmdline)), restoreTarget: target,
+				restoreUntilEnd: dbguest.RestoreUntilEnd(string(cmdline)), spare: dbguest.Spare(string(cmdline)), standby: dbguest.Standby(string(cmdline)),
+				promote: dbguest.Promote(string(cmdline)), upgradeFrom: upgradeFrom}
+			if upgradeFrom != 0 && (boot.spare || boot.standby || restoring) {
+				_ = poweroffDatabase()
+				return errors.New("database mode: an upgrade boot is neither a spare, a standby nor a restore")
+			}
+			if boot.spare && (restoring || boot.standby) {
+				_ = poweroffDatabase()
+				return errors.New("database mode: a spare boots neither a restore nor a standby")
+			}
+			if (boot.standby && restoring) || (boot.promote && !boot.standby) {
+				_ = poweroffDatabase()
+				return errors.New("database mode: a standby cannot boot a restore, and only a standby promotes at boot")
+			}
+			return runDatabaseGuest(slog.Default(), boot)
+		}
+	}
 	root, err := assembleOverlay()
 	if err != nil {
 		return fmt.Errorf("assemble overlay: %w", err)
@@ -127,6 +180,12 @@ func boot() error {
 	if mode == modeAgent {
 		guestStage("before-agent-run")
 		return runAgentGuest(slog.Default())
+	}
+	// Sandbox sessions (ADR-20261027090013 §4) serve many operations until
+	// vmmd stops the VM.
+	if mode == modeSandbox {
+		guestStage("before-sandbox")
+		return runSandboxGuest(slog.Default())
 	}
 	var extensionHooks *extensionLifecycle
 	var afterRestore atomic.Pointer[afterRestoreRuntime]
@@ -320,7 +379,11 @@ func boot() error {
 	if err != nil {
 		return err
 	}
-	if err := startProfileBridge(manifest.Profiling, manifest.ProfilingOnDemand, slog.Default()); err != nil {
+	if manifest.EffectivePort() == api.ProfileBridgePort() {
+		// The bridge would take the app's own port; an older imaged may
+		// still have stamped collectors for it (ADR-1155).
+		slog.Default().Warn("profile bridge skipped: the app listens on its port", "port", manifest.EffectivePort())
+	} else if err := startProfileBridge(manifest.Profiling, manifest.ProfilingOnDemand, slog.Default()); err != nil {
 		slog.Default().Warn("profile bridge unavailable", "err", err)
 	}
 	if err := startTraceBridge(manifest.Tracing, slog.Default()); err != nil {
@@ -383,6 +446,11 @@ func boot() error {
 	if apiErr != nil {
 		slog.Default().Warn("env.json could not be loaded; proceeding without api env", "err_kind", errorKind(apiErr))
 	}
+	// ADR-20261107160000: the identity file outlives the environment's
+	// FAAS_INSTANCE_ID, which a snapshot restore cannot change.
+	if err := publishBootInstanceIdentity(apiEnv, time.Now()); err != nil {
+		slog.Default().Warn("instance identity file unavailable", "err", err)
+	}
 	qualificationReceiptToken, qualificationReceiptMACKey, qualificationReceiptErr := takeQualificationConfigReceiptControl(apiEnv)
 	if qualificationReceiptErr != nil {
 		slog.Default().Warn("qualification configuration receipt control is invalid")
@@ -424,6 +492,11 @@ func boot() error {
 	if qualificationReceiptToken != "" {
 		emitQualificationConfigReceipt(slog.Default(), "main", qualificationReceiptToken, qualificationReceiptMACKey, apiEnv, secrets, nil)
 		clear(qualificationReceiptMACKey)
+		// A native qualification restore of this guest re-attests the same
+		// configuration under a fresh token (ADR 20261023093000).
+		if err := rememberQualificationRestoreBasis(apiEnv, secrets); err != nil {
+			slog.Default().Warn("qualification restore receipt basis unavailable", "err", err)
+		}
 	}
 
 	// ADR-051 Phase 4: Supervisor holds atomic.Pointer (Run is a
@@ -567,10 +640,14 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	env = StampEventPublishEnv(env)
 	env = StampOutboundRelayEnv(env)
 	env = StampRuntimeConfigEnv(env)
-	env = stampProfileEnv(env, m.Profiling, m.ProfilingOnDemand)
+	if m.EffectivePort() != api.ProfileBridgePort() {
+		// Collectors would poll the app's own port where the bridge belongs.
+		env = stampProfileEnv(env, m.Profiling, m.ProfilingOnDemand)
+	}
 	env = stampTracingEnv(env, m.Tracing)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
 	env = StampRestoreReseedEnv(env)
+	env = StampInstanceIdentityEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	serviceProxyTrust, trustErr := prepareServiceProxyTrust("/", "/")
 	if trustErr != nil {
@@ -585,16 +662,23 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// boundary. Empty = no OTel configured, the env is unchanged.
 	env = StampTraceparentEnv(env, GetResumeTraceparent())
 	// ADR-741: `gregale dev --debug` starts the Node inspector for the main
-	// workload only.
+	// workload only, and only in a developer environment: schedd owns the
+	// marker, so the switch set on any other app is ignored.
+	developer := apiEnv[api.PlatformDeveloperEnvironmentEnv] == "1"
 	preload := ""
 	if devDebugEnvValue(env, api.DevDebugEnv) == api.DevDebugRuntimeNode {
-		if err := writeDevDebugPreload(devDebugPreloadPath); err != nil {
-			slog.Warn("dev debug preload unavailable; inspecting the first node process", "err", err)
-		} else {
-			preload = devDebugPreloadPath
+		switch {
+		case !developer:
+			slog.Warn("dev debug ignored: not a developer environment", "key", api.DevDebugEnv)
+		default:
+			if err := writeDevDebugPreload(devDebugPreloadPath); err != nil {
+				slog.Warn("dev debug preload unavailable; inspecting the first node process", "err", err)
+			} else {
+				preload = devDebugPreloadPath
+			}
 		}
 	}
-	env = StampDevDebugEnv(env, preload)
+	env = StampDevDebugEnv(env, preload, developer)
 	// ADR-1170: a watch-mode developer image runs a development server that
 	// reloads patched files itself.
 	devWatchActive.Store(devDebugEnvValue(env, api.DevWatchEnv) == "1")
@@ -623,7 +707,12 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	if sup != nil {
 		output = io.MultiWriter(os.Stdout, sup.LogBuffer())
 	}
-	outputPipe, err := newWorkloadOutputPipe(output, int(credential.Uid), int(credential.Gid))
+	// Spec §17 G2: sealed values never reach the logs in cleartext. A
+	// reloadable app shares one redactor across restarts so reloaded values
+	// are masked too (ADR-20261110090000).
+	redactor := processSecrets.logRedactor()
+	redactor.update(secrets)
+	outputPipe, err := newWorkloadOutputPipe(redactor.writer(output), int(credential.Uid), int(credential.Gid))
 	if err != nil {
 		return fmt.Errorf("run app: workload output pipe: %w", err)
 	}
@@ -727,14 +816,12 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		}
 		sup.markHealthy()
 	}
-	// ADR-1155: report memory pressure so the control plane can capture the
-	// heap before an OOM kill. Only deployments with on-demand profiling
-	// have collectors to capture from.
-	if m.ProfilingOnDemand {
-		pressureCtx, pressureCancel := context.WithCancel(context.Background())
-		go WatchMemoryPressure(pressureCtx, "/proc/meminfo", profileCollectorsActive, EmitMemoryPressure, slog.Default())
-		defer pressureCancel()
-	}
+	// Report memory pressure on every app so app health can warn before an
+	// OOM kill (ADR-20261102124306); a report made while a profile collector
+	// is active also lets the control plane capture the heap (ADR-1155).
+	pressureCtx, pressureCancel := context.WithCancel(context.Background())
+	go WatchMemoryPressure(pressureCtx, "/proc/meminfo", profileCollectorsActive, EmitMemoryPressure, slog.Default())
+	defer pressureCancel()
 	// ADR-1155: a Go application serving net/http/pprof is profiled through
 	// that endpoint, labelled with this run's process, when the deployment
 	// names its port and the profile bridge is running.
@@ -783,6 +870,7 @@ func errorKind(err error) string {
 //
 // Mode priority (ADR-171):
 //  0. agent.json with kind=="agent"            → modeAgent (ADR-20261027090010), alone
+//     sandbox.json with kind=="sandbox"        → modeSandbox (ADR-20261027090013), alone
 //  1. app-task.json with kind=="app_task"     → modeAppTask
 //  2. execution.json with kind=="execution"   → modeExecution
 //  3. job.json with kind=="job"               → modeJob
@@ -817,7 +905,7 @@ func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
 		if markerErr := validateAgentManifest(data); markerErr != nil {
 			return modeAgent, api.BuildManifest{}, fmt.Errorf("invalid agent manifest: %w", markerErr)
 		}
-		for _, other := range []string{appTaskManifestRelativePath, executionManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
+		for _, other := range []string{sandboxManifestRelativePath, appTaskManifestRelativePath, executionManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
 			if _, err = fs.Stat(fsys, other); !errors.Is(err, fs.ErrNotExist) {
 				return modeAgent, api.BuildManifest{}, errors.New("conflicting agent guest mode")
 			}
@@ -825,6 +913,19 @@ func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
 		return modeAgent, api.BuildManifest{}, nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return modeAgent, api.BuildManifest{}, fmt.Errorf("read agent manifest: %w", err)
+	}
+	if data, err := fs.ReadFile(fsys, sandboxManifestRelativePath); err == nil {
+		if markerErr := validateSandboxManifest(data); markerErr != nil {
+			return modeSandbox, api.BuildManifest{}, fmt.Errorf("invalid sandbox manifest: %w", markerErr)
+		}
+		for _, other := range []string{appTaskManifestRelativePath, executionManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
+			if _, err = fs.Stat(fsys, other); !errors.Is(err, fs.ErrNotExist) {
+				return modeSandbox, api.BuildManifest{}, errors.New("conflicting sandbox guest mode")
+			}
+		}
+		return modeSandbox, api.BuildManifest{}, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return modeSandbox, api.BuildManifest{}, fmt.Errorf("read sandbox manifest: %w", err)
 	}
 	if data, err := fs.ReadFile(fsys, appTaskManifestRelativePath); err == nil {
 		if markerErr := validateAppTaskManifest(data); markerErr != nil {
@@ -1391,6 +1492,11 @@ func runBuildOnce(m api.BuildManifest) error {
 		err = context.DeadlineExceeded
 	}
 	clock.finishBuild(time.Since(buildStarted), buf.Bytes())
+	// A failure to reach the registry for a platform-owned image is the
+	// platform's, not the customer's (H105).
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) && platformPullFailure(buf.Bytes(), m.RuntimeBaseRef) {
+		err = builderNetworkError{fmt.Errorf("pull platform image: %w", err)}
+	}
 	// A deferred stop runs after writeAndPoweroff, which never returns on a
 	// successful halt. Quiesce the daemon before reading its log and syncing
 	// the writable drive so export cannot observe partially written metadata.
@@ -1994,8 +2100,9 @@ func buildArgv(m api.BuildManifest) []string {
 	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && " + choose + " && exec " + build + ` "$@"` + output}
 }
 
-// buildkitSnapshotter returns BuildKit's worker snapshotter. fuse-overlayfs
-// is the default. With BuildKitSnapshotterAuto (ADR-20261029105325) rootless
+// buildkitSnapshotter returns BuildKit's worker snapshotter: fuse-overlayfs
+// when the manifest names none. With BuildKitSnapshotterAuto, which builderd
+// sends by default (ADR-20261029105325), rootless
 // BuildKit prefers kernel overlayfs, whose layer diffs read only the overlay
 // upper directory, and falls back to fuse-overlayfs, then native, when the
 // kernel refuses an unprivileged overlay mount. A FUSE snapshotter sends every

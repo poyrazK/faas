@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import https from 'node:https'
+import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,6 +17,10 @@ test('compiled health CLI validates runtime pool observations over trusted TLS a
   const runtime = pathToFileURL(process.env.DATA_API_RUNTIME_DIR + '/')
   const { createServer } = await import(new URL('server.mjs', runtime))
   const { runtimeConfig } = await import(new URL('config.mjs', runtime))
+  // The control plane serves this runtime (ADR-20261031095954), so health
+  // reports the running one as current.
+  const { version: runtimeVersion } = JSON.parse(await readFile(new URL('runtime-version.json', runtime), 'utf8'))
+  const servedArchive = Buffer.from('served runtime archive')
   const directory = await mkdtemp(join(tmpdir(), 'gregale-pool-health-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const key = join(directory, 'key.pem'), cert = join(directory, 'cert.pem')
@@ -28,6 +33,9 @@ test('compiled health CLI validates runtime pool observations over trusted TLS a
   })
   await new Promise(resolve => engine.listen(0, '127.0.0.1', resolve))
   const config = runtimeConfig({ DATABASE_URL: 'postgres://restricted:test-only@localhost/db', DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' })
+  // Each scenario changes the pool seconds apart; public /healthz would reuse
+  // a ready answer for DataAPIHealthCache (ADR-20261109160000).
+  config.healthCacheMs = 0
   const gateway = createServer(config, async () => { throw Error('health must not verify JWTs') }, engine.address().port, engine.address().port, () => {})
   await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve))
   const serving = https.createServer({ key: await readFile(key), cert: await readFile(cert) }, (req, res) => {
@@ -45,6 +53,10 @@ test('compiled health CLI validates runtime pool observations over trusted TLS a
     assert.equal(req.headers.authorization, 'Bearer private-owner-token')
     if (req.url === '/v1/apps/notes') return res.end(JSON.stringify({ slug: 'notes', canonical_url: `https://127.0.0.1:${serving.address().port}` }))
     if (req.url === '/v1/apps/notes/data-api/connection-budget') return res.end(JSON.stringify({ version: 1, app: 'notes', state: 'not_applicable', truncated: false, databases: [] }))
+    if (req.url === '/v1/apps/notes/data-api/status') return res.end(JSON.stringify({ runtime_version: runtimeVersion, runtime_reports: 'available' }))
+    if (req.url === '/v1/apps/notes/data-api/runtime') {
+      return res.end(JSON.stringify({ version: runtimeVersion, archive_sha256: createHash('sha256').update(servedArchive).digest('hex'), archive: servedArchive.toString('base64') }))
+    }
     assert.ok(req.url.startsWith('/v1/apps/notes/logs?'))
     res.writeHead(200, { 'Content-Type': 'text/event-stream' })
     res.end('event: end\ndata: {}\n\n')
@@ -76,10 +88,13 @@ test('compiled health CLI validates runtime pool observations over trusted TLS a
       assert.ok(Number.isFinite(Date.parse(report.readiness.pool.checked_at)))
     }
     assert.equal(report.current_findings.includes('pool_waiting'), scenario === 'waiting')
+    assert.deepEqual(report.runtime, { running: runtimeVersion, current: runtimeVersion, state: 'current' })
+    assert.equal(report.current_findings.includes('runtime_not_current'), false)
     assert.doesNotMatch(result.stdout + result.stderr, /private-owner-token|private-upstream-body|private-metric-label|test-only/)
   }
   const human = await command(process.env.DATA_API_DEV_CLI, ['data-api', 'health', 'notes'], { env, timeout: 15000 })
   assert.match(human.stdout, /Pool: capacity 2; available 1; waiting 0; cumulative acquisition timeouts 0; checked at/)
+  assert.ok(human.stdout.includes(`Runtime: ${runtimeVersion} (current)`))
   assert.equal(publicReads, 10)
-  assert.equal(managementReads, 15)
+  assert.equal(managementReads, 20)
 })

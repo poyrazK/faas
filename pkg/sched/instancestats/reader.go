@@ -84,6 +84,10 @@ type InstanceStat struct {
 	// QuietPaused (ADR-1151) is true while vmmd holds the instance
 	// quiet-paused between requests.
 	QuietPaused bool
+	// IdleLadderLevel (ADR-20261107122928) is the idle ladder level vmmd
+	// holds a quiet-paused instance at: 1 quiet pause, 2 freeze, which
+	// measured admission books at the frozen charge. 0 otherwise.
+	IdleLadderLevel int32
 	// Frozen (ADR-1151) is true while vmmd holds the instance frozen in
 	// place.
 	Frozen bool
@@ -238,6 +242,13 @@ type Reader struct {
 	rateMu       sync.Mutex
 	previousRate map[string]requestRateSample
 	requestRates map[string]requestRate
+
+	// departed keeps the last row of each instance that left the snapshot,
+	// for api.MeterFinalNetworkReadingRetention (departed.go).
+	departedMu sync.Mutex
+	departed   map[string]departedStat
+	// now is the departure clock; nil means time.Now.
+	now func() time.Time
 }
 
 type requestRateSample struct {
@@ -276,6 +287,7 @@ func (r *Reader) Replace(next []InstanceStat) {
 	cp := make([]InstanceStat, len(next))
 	copy(cp, next)
 	r.updateRequestRates(cp)
+	r.trackDeparted(r.snap.Load(), cp)
 	r.snap.Store(&cp)
 }
 
@@ -443,8 +455,9 @@ func (r *Reader) SnapshotActivity(now time.Time) map[string]sched.InstanceActivi
 			continue
 		}
 		activity := sched.InstanceActivity{
-			Inflight:    row.InflightRequests,
-			LastRequest: row.LastRequestAt,
+			Inflight:        row.InflightRequests,
+			LastRequest:     row.LastRequestAt,
+			IdleLadderLevel: int(row.IdleLadderLevel),
 		}
 		if row.RSSMB > 0 {
 			activity.ResidentMB = int(row.RSSMB)

@@ -13,17 +13,27 @@ import (
 )
 
 type BindingServiceOptions struct {
-	LeaseDuration       time.Duration
-	ProviderTimeout     time.Duration
-	RetryInterval       time.Duration
+	LeaseDuration   time.Duration
+	ProviderTimeout time.Duration
+	RetryInterval   time.Duration
+	// ProvisioningEnabled gates every binding operation. A binding works on a
+	// database that already exists, so production passes the operations gate
+	// here, not the new-database gate (ADR-20261103091657).
 	ProvisioningEnabled func() bool
 	// ProvisioningAllowed optionally narrows an enabled rollout to specific
 	// accounts. It is intended for staging canaries; deletion remains
 	// available regardless of this gate.
 	ProvisioningAllowed func(context.Context, string) bool
-	Now                 func() time.Time
-	NewID               func() string
-	NewLeaseToken       func() string
+	// MaxBindingsPerApp returns the live bindings one app of the account may
+	// hold (ADR-20261110120000). Nil, or zero, leaves the count unbounded.
+	MaxBindingsPerApp func(context.Context, string) (int, error)
+	// ReleaseSecretsPinned reports whether the app's secrets in the scope are
+	// pinned to an active project release (accountID, appID, scope). Nil
+	// treats every app as unpinned.
+	ReleaseSecretsPinned func(context.Context, string, string, string) (bool, error)
+	Now                  func() time.Time
+	NewID                func() string
+	NewLeaseToken        func() string
 }
 
 // BindingService owns the recoverable saga between a provider credential and
@@ -32,18 +42,20 @@ type BindingServiceOptions struct {
 // idempotent sink references, and the persisted lease make every boundary safe
 // to retry after a process crash.
 type BindingService struct {
-	registry            *Registry
-	databases           Store
-	bindings            BindingStore
-	sink                CredentialSink
-	leaseDuration       time.Duration
-	providerTimeout     time.Duration
-	retryInterval       time.Duration
-	provisioningEnabled func() bool
-	provisioningAllowed func(context.Context, string) bool
-	now                 func() time.Time
-	newID               func() string
-	newLeaseToken       func() string
+	registry             *Registry
+	databases            Store
+	bindings             BindingStore
+	sink                 CredentialSink
+	leaseDuration        time.Duration
+	providerTimeout      time.Duration
+	retryInterval        time.Duration
+	provisioningEnabled  func() bool
+	provisioningAllowed  func(context.Context, string) bool
+	maxBindingsPerApp    func(context.Context, string) (int, error)
+	releaseSecretsPinned func(context.Context, string, string, string) (bool, error)
+	now                  func() time.Time
+	newID                func() string
+	newLeaseToken        func() string
 }
 
 type CreateBindingRequest struct {
@@ -54,6 +66,9 @@ type CreateBindingRequest struct {
 	Scope             string
 	EnvironmentKey    string
 	Access            CredentialAccess
+	// PreviewSetup marks apid's PR preview setup, the only caller that may
+	// bind a PR preview environment's database (ADR-20261102123523).
+	PreviewSetup bool
 }
 
 func NewBindingService(registry *Registry, databases Store, bindings BindingStore, sink CredentialSink, options BindingServiceOptions) (*BindingService, error) {
@@ -88,18 +103,20 @@ func NewBindingService(registry *Registry, databases Store, bindings BindingStor
 		options.NewLeaseToken = uuid.NewString
 	}
 	return &BindingService{
-		registry:            registry,
-		databases:           databases,
-		bindings:            bindings,
-		sink:                sink,
-		leaseDuration:       options.LeaseDuration,
-		providerTimeout:     options.ProviderTimeout,
-		retryInterval:       options.RetryInterval,
-		provisioningEnabled: options.ProvisioningEnabled,
-		provisioningAllowed: options.ProvisioningAllowed,
-		now:                 options.Now,
-		newID:               options.NewID,
-		newLeaseToken:       options.NewLeaseToken,
+		registry:             registry,
+		databases:            databases,
+		bindings:             bindings,
+		sink:                 sink,
+		leaseDuration:        options.LeaseDuration,
+		providerTimeout:      options.ProviderTimeout,
+		retryInterval:        options.RetryInterval,
+		provisioningEnabled:  options.ProvisioningEnabled,
+		provisioningAllowed:  options.ProvisioningAllowed,
+		maxBindingsPerApp:    options.MaxBindingsPerApp,
+		releaseSecretsPinned: options.ReleaseSecretsPinned,
+		now:                  options.Now,
+		newID:                options.NewID,
+		newLeaseToken:        options.NewLeaseToken,
 	}, nil
 }
 
@@ -122,12 +139,18 @@ func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBin
 		!request.Access.Known() {
 		return Binding{}, false, ErrInvalid
 	}
+	if err := customerBindingEnvironmentKeyError(request.EnvironmentKey); err != nil {
+		return Binding{}, false, err
+	}
 	if !s.provisioningAllowed(ctx, request.AccountID) {
 		return Binding{}, false, ErrProvisioningClosed
 	}
 	database, err := customerDatabase(ctx, s.databases, bindingRequestNamespace(request), request.DatabaseID)
 	if err != nil {
 		return Binding{}, false, err
+	}
+	if !database.Preview.IsZero() && !request.PreviewSetup {
+		return Binding{}, false, ErrPreviewDatabase
 	}
 	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
 	if err != nil {
@@ -136,8 +159,24 @@ func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBin
 	if err := backend.Capabilities.SupportsCredentialAccess(request.Access); err != nil {
 		return Binding{}, false, err
 	}
+	if s.releaseSecretsPinned != nil {
+		pinned, err := s.releaseSecretsPinned(ctx, request.AccountID, request.AppID, request.Scope)
+		if err != nil {
+			return Binding{}, false, err
+		}
+		if pinned {
+			return Binding{}, false, ErrReleaseSecretsPinned
+		}
+	}
+	appBindingLimit := 0
+	if s.maxBindingsPerApp != nil {
+		if appBindingLimit, err = s.maxBindingsPerApp(ctx, request.AccountID); err != nil {
+			return Binding{}, false, err
+		}
+	}
 	now := s.now()
 	binding, created, err := s.bindings.ReserveBinding(ctx, Binding{
+		appBindingLimit:      appBindingLimit,
 		ID:                   s.newID(),
 		AccountID:            request.AccountID,
 		DatabaseAccountID:    database.AccountID,
@@ -192,6 +231,11 @@ func (s *BindingService) Rotate(ctx context.Context, accountID, bindingID string
 	if err != nil {
 		return Binding{}, err
 	}
+	if binding.Access != CredentialMigration {
+		if _, ok := s.bindings.(BindingRotationRefreshStore); !ok {
+			return Binding{}, ErrUnsupported
+		}
+	}
 	if binding.RotationPreviousGeneration == 0 {
 		if binding.State != BindingStateReady {
 			return Binding{}, ErrConflict
@@ -208,7 +252,7 @@ func (s *BindingService) Rotate(ctx context.Context, accountID, bindingID string
 	case BindingStateProvisioning, BindingStateFailed:
 		return s.Reconcile(ctx, accountID, bindingID)
 	case BindingStateReady, BindingStateRetiring:
-		return binding, nil
+		return s.reconcileRotationRefresh(ctx, binding)
 	default:
 		return Binding{}, ErrConflict
 	}
@@ -294,11 +338,50 @@ func (s *BindingService) Delete(ctx context.Context, accountID, bindingID string
 	if err != nil {
 		return Binding{}, err
 	}
+	return s.deleteBinding(ctx, accountID, binding)
+}
+
+// DeleteEnvironmentCloneTargetBinding revokes a binding on a database a full
+// environment clone restored for its stage (ADR-20261024224230). Once that
+// stage is deleted the database is no longer customer-visible, so the clone's
+// operation names it instead.
+func (s *BindingService) DeleteEnvironmentCloneTargetBinding(ctx context.Context, accountID, bindingID, operationID string) (Binding, error) {
+	binding, err := s.bindings.GetBinding(ctx, accountID, bindingID)
+	if err != nil {
+		return Binding{}, err
+	}
+	database, err := s.databases.Get(ctx, binding.DatabaseNamespace(), binding.DatabaseID)
+	if err != nil {
+		return Binding{}, err
+	}
+	if operationID == "" || database.EnvironmentCloneOperationID != operationID {
+		return Binding{}, ErrConflict
+	}
+	return s.deleteBinding(ctx, accountID, binding)
+}
+
+// ListEnvironmentCloneTargetBindings lists every binding of a database a full
+// environment clone restored, whether or not its stage still exists.
+func (s *BindingService) ListEnvironmentCloneTargetBindings(ctx context.Context, accountID, databaseID, operationID string) ([]Binding, error) {
+	if accountID == "" || databaseID == "" {
+		return nil, ErrInvalid
+	}
+	database, err := s.databases.Get(ctx, accountID, databaseID)
+	if err != nil {
+		return nil, err
+	}
+	if operationID == "" || database.EnvironmentCloneOperationID != operationID {
+		return nil, ErrConflict
+	}
+	return s.bindings.ListBindings(ctx, accountID, databaseID)
+}
+
+func (s *BindingService) deleteBinding(ctx context.Context, accountID string, binding Binding) (Binding, error) {
 	if binding.State == BindingStateDeleted {
 		return binding, nil
 	}
 	now := s.now()
-	binding, err = s.bindings.ClaimBinding(ctx, accountID, bindingID, s.newLeaseToken(), BindingStateDeleting, now, now.Add(s.leaseDuration))
+	binding, err := s.bindings.ClaimBinding(ctx, accountID, binding.ID, s.newLeaseToken(), BindingStateDeleting, now, now.Add(s.leaseDuration))
 	if err != nil {
 		return Binding{}, err
 	}

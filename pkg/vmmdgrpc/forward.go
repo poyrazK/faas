@@ -55,6 +55,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -231,7 +232,7 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	// lock contention for marginal signal value.
 	finishActivity := s.beginDispatchActivity(reqInit)
 	defer finishActivity()
-	finishTrace := s.inflightTraces.begin(reqInit.GetInstance(), forwardTraceparent(reqInit))
+	finishTrace := s.inflightTraces.begin(reqInit.GetInstance(), forwardOf(reqInit, time.Now()))
 	defer finishTrace()
 	if err := s.prepareGuest(stream.Context(), reqInit.GetInstance()); err != nil {
 		return err
@@ -515,28 +516,7 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 		// boundary, and the per-flush tx_bytes increments
 		// attribute every egress byte to
 		// (instance_id, current minute).
-		buf := make([]byte, 8*1024)
-		for {
-			n, rerr := bodySrc.Read(buf)
-			if n > 0 {
-				if serr := stream.Send(&vmmdpb.ForwardHTTPStreamResponse{
-					Frame: &vmmdpb.ForwardHTTPStreamResponse_BodyChunk{
-						BodyChunk: append([]byte(nil), buf[:n]...),
-					},
-				}); serr != nil {
-					streamErrCh <- status.Errorf(codes.Internal, "send body chunk: %v", serr)
-					return
-				}
-			}
-			if errors.Is(rerr, io.EOF) {
-				streamErrCh <- nil
-				return
-			}
-			if rerr != nil {
-				streamErrCh <- status.Errorf(codes.Internal, "read body: %v", rerr)
-				return
-			}
-		}
+		streamErrCh <- sendForwardResponseBody(stream, bodySrc)
 	}()
 
 	// Drain the body-copy goroutine BEFORE waiting on the bridge.
@@ -1555,6 +1535,12 @@ type quietReporter interface {
 	QuietPauseReport(instance string) fcvm.QuietPauseReport
 }
 
+// idleLadderReporter reports the idle ladder level vmmd holds an instance
+// at (ADR-20261107122928).
+type idleLadderReporter interface {
+	IdleLadderLevel(instance string, now time.Time) fcvm.IdleLevel
+}
+
 // addQuietPauseState fills InstanceStats' quiet pause fields: the current
 // pause, so schedd can leave a quiet-paused instance's vCPUs out of the
 // node's active vCPU (ADR-1151), and the last completed pause with the
@@ -1575,6 +1561,13 @@ func (s *Server) addQuietPauseState(row *vmmdpb.InstanceStats) {
 		row.QuietLastPauseStartedAt = timestamppb.New(r.LastStarted)
 		row.QuietLastPauseEndedAt = timestamppb.New(r.LastEnded)
 		row.QuietPausedNsTotal = wrapperspb.Int64(r.PausedTotal.Nanoseconds())
+	}
+	// The ladder level is only meaningful for a guest the row reports
+	// paused: measured admission charges level 2 with the frozen floor.
+	if l, ok := s.vmm.(idleLadderReporter); ok && row.QuietPaused {
+		if level := l.IdleLadderLevel(row.GetInstance(), time.Now()); level > fcvm.IdleRunning {
+			row.IdleLadderLevel = int32(level)
+		}
 	}
 }
 
@@ -1739,15 +1732,29 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		}
 		httpReq.Header.Add(h.GetName(), h.GetValue())
 	}
+	// exchangeRetained and bridgeStreamEnded let a persistent exchange skip
+	// its completion wait: the bridge retains the completion, and its HTTP/2
+	// server ends the response stream only after the bridge handler returned.
+	// A refused exchange skips it too: it never reached the guest.
+	var (
+		exchange          string
+		exchangeRetained  bool
+		exchangeRefused   bool
+		bridgeStreamEnded bool
+	)
 	if persistent {
 		// Persistent bridges receive request metadata on this H2C stream,
 		// not through process-wide environment variables. The bridge strips
 		// these private headers before it forwards anything to the guest.
 		httpReq.Header.Set("X-Faas-Bridge-Persistent", "1")
-		exchange := uuid.NewString()
+		exchange = uuid.NewString()
 		httpReq.Header.Set(bridgecompletion.ExchangeHeader, exchange)
+		httpReq.Header.Set(bridgecompletion.RetainRequestHeader, bridgecompletion.RetainRequestValue)
 		defer func() {
 			reqCancel()
+			if exchangeRefused || (exchangeRetained && bridgeStreamEnded) {
+				return
+			}
 			if err := awaitBridgeCompletion(context.WithoutCancel(ctx), client, exchange); err != nil {
 				s.log.Warn("vmmd: bridge completion uncertain; fencing child", "instance", reqInit.GetInstance(), "err", err)
 				s.streamBridges.invalidate(ctx, bridgeLease)
@@ -1846,6 +1853,22 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		return status.Errorf(codes.Unavailable, "H2C request: %v (bridge: %v)", err, bridgeErr)
 	}
 	defer func() { _ = httpResp.Body.Close() }()
+	// Only the bridge that tracks this exchange can echo its ID; an older
+	// bridge, or a guest header, leaves the wait in place.
+	exchangeRetained = persistent && slices.Contains(httpResp.Header.Values(bridgecompletion.RetainedHeader), exchange)
+	// The bridge refused this exchange before the guest saw it, most likely
+	// because TrafficBridgeCompletionMaxEntries are open. It keeps no
+	// completion, so the completion wait would answer 404 and fence the
+	// bridge, ending every other exchange it carries. Fail this request
+	// alone, as admission does when the instance is full.
+	if persistent && slices.Contains(httpResp.Header.Values(bridgecompletion.RefusedHeader), exchange) {
+		exchangeRefused = true
+		_ = bodyPr.Close()
+		_ = bodyPw.Close()
+		s.log.Warn("vmmd: stream bridge refused an exchange; the instance is at its open exchange limit",
+			"instance", reqInit.GetInstance(), "limit", api.TrafficBridgeCompletionMaxEntries)
+		return instanceBusy(api.TrafficBridgeCompletionMaxEntries, api.TrafficBridgeCompletionMaxEntries+1)
+	}
 
 	// 8. Mirror guest response headers into the gRPC init frame.
 	initHeaders := make([]*vmmdpb.Header, 0, len(httpResp.Header))
@@ -1855,7 +1878,7 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		// can compute match/mismatch for vmmd_bridge_framing_total.
 		// Stripped from the gRPC init frame — this is a vmmd↔bridge
 		// signal, not a guest response header.
-		if strings.EqualFold(k, "X-Faas-Bridge-Framing") {
+		if strings.EqualFold(k, "X-Faas-Bridge-Framing") || strings.EqualFold(k, bridgecompletion.RetainedHeader) || strings.EqualFold(k, bridgecompletion.RefusedHeader) {
 			continue
 		}
 		if strings.EqualFold(k, "Transfer-Encoding") {
@@ -1936,34 +1959,14 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 	streamErrCh := make(chan error, 1)
 	go func() {
 		defer close(streamErrCh)
-		buf := make([]byte, 8*1024)
-		for {
-			n, rerr := httpResp.Body.Read(buf)
-			if n > 0 {
-				if serr := stream.Send(&vmmdpb.ForwardHTTPStreamResponse{
-					Frame: &vmmdpb.ForwardHTTPStreamResponse_BodyChunk{
-						BodyChunk: append([]byte(nil), buf[:n]...),
-					},
-				}); serr != nil {
-					streamErrCh <- status.Errorf(codes.Internal, "send body chunk: %v", serr)
-					return
-				}
-			}
-			if errors.Is(rerr, io.EOF) {
-				streamErrCh <- nil
-				return
-			}
-			if rerr != nil {
-				streamErrCh <- status.Errorf(codes.Internal, "read body: %v", rerr)
-				return
-			}
-		}
+		streamErrCh <- sendForwardResponseBody(stream, httpResp.Body)
 	}()
 
 	// 10. Wait for the body goroutine, then the response reader.
 	// Order mirrors v1 (forward.go:391-432).
 	bodyErr := <-bodyErrCh
 	streamErr := <-streamErrCh
+	bridgeStreamEnded = streamErr == nil
 	if streamErr == nil && len(httpResp.Trailer) > 0 {
 		finalTrailers := make([]*vmmdpb.Header, 0, len(httpResp.Trailer))
 		for k, vs := range httpResp.Trailer {
@@ -2431,5 +2434,46 @@ func waitForUnixSock(path string, cap time.Duration) error {
 			return fmt.Errorf("timeout waiting for %s: %w", path, err)
 		}
 		time.Sleep(min(2*time.Millisecond, remaining))
+	}
+}
+
+// forwardResponseBodyBuffers holds the 8 KiB read buffers of response-body
+// pumps. A buffer per response was vmmd's largest allocation per request
+// (2026-11-06 allocs profile), mostly for bodies of a few bytes.
+var forwardResponseBodyBuffers = sync.Pool{New: func() any {
+	buf := make([]byte, 8*1024)
+	return &buf
+}}
+
+// forwardResponseSender is the response half of a ForwardHTTPStream.
+type forwardResponseSender interface {
+	Send(*vmmdpb.ForwardHTTPStreamResponse) error
+}
+
+// sendForwardResponseBody streams body to the gateway in chunks of at most
+// 8 KiB, as each read returns them, and reports nil at EOF. Each chunk is a
+// copy: gRPC may still hold a sent message, so the read buffer is reused only
+// for the next read.
+func sendForwardResponseBody(stream forwardResponseSender, body io.Reader) error {
+	pooled := forwardResponseBodyBuffers.Get().(*[]byte)
+	defer forwardResponseBodyBuffers.Put(pooled)
+	buf := *pooled
+	for {
+		n, rerr := body.Read(buf)
+		if n > 0 {
+			if serr := stream.Send(&vmmdpb.ForwardHTTPStreamResponse{
+				Frame: &vmmdpb.ForwardHTTPStreamResponse_BodyChunk{
+					BodyChunk: append([]byte(nil), buf[:n]...),
+				},
+			}); serr != nil {
+				return status.Errorf(codes.Internal, "send body chunk: %v", serr)
+			}
+		}
+		if errors.Is(rerr, io.EOF) {
+			return nil
+		}
+		if rerr != nil {
+			return status.Errorf(codes.Internal, "read body: %v", rerr)
+		}
 	}
 }

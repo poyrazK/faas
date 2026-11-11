@@ -44,6 +44,28 @@ func TestApplyRolloutFlag(t *testing.T) {
 	if err := main.ApplyRolloutFlag("fast", map[string]bool{"rollout": true, "no-traffic": true}, &safe, &preset); err != nil {
 		t.Fatalf("--rollout with --no-traffic is left to deploy's own check, got %v", err)
 	}
+	// --rollback-on-5xx adds the 5xx rollback to any rollout (#6121).
+	for _, rollout := range []string{"immediate", "fast", "safe"} {
+		if err := main.ApplyRolloutFlag(rollout, map[string]bool{"rollout": true, "rollback-on-5xx": true}, &safe, &preset); err != nil {
+			t.Fatalf("--rollout %s with --rollback-on-5xx = %v, want it accepted", rollout, err)
+		}
+	}
+}
+
+// TestSafeFlagNameNamesTheFlagTyped: a refusal of `--rollout safe` must not
+// blame --safe, which the person never typed (Hunt 31 H31-1).
+func TestSafeFlagNameNamesTheFlagTyped(t *testing.T) {
+	for _, tc := range []struct {
+		explicit map[string]bool
+		want     string
+	}{
+		{explicit: map[string]bool{"safe": true}, want: "--safe"},
+		{explicit: map[string]bool{"rollout": true, "safe": true}, want: "--rollout safe"},
+	} {
+		if got := main.SafeFlagName(tc.explicit); got != tc.want {
+			t.Errorf("SafeFlagName(%v) = %q, want %q", tc.explicit, got, tc.want)
+		}
+	}
 }
 
 // TestFollowRolloutOnlyForAPersonAtATerminal: JSON and non-interactive runs

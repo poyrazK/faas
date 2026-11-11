@@ -41,6 +41,20 @@ func TestMemoryShadow(t *testing.T) {
 	}
 }
 
+// adr: 20261031143521 — a frozen instance is charged with the frozen floor
+// (8 MB), a running one with the measured floor (64 MB).
+func TestMemoryShadowChargesFrozenInstancesTheirFrozenFloor(t *testing.T) {
+	instances := []state.Instance{
+		{ID: "frozen", NodeID: "n1", State: string(state.StateFrozen), RAMMB: 1024},
+		{ID: "running", NodeID: "n1", State: string(state.StateRunning), RAMMB: 1024},
+	}
+	rows := []InstanceStat{{InstanceID: "frozen", RSSMB: 4}, {InstanceID: "running", RSSMB: 4}}
+	got := memoryShadow(instances, rows, nil)
+	if want := 10 + 80; got["n1"].MeasuredMB != want {
+		t.Fatalf("measured = %d MB, want %d (a compressed frozen VM at 10, a running one at 80)", got["n1"].MeasuredMB, want)
+	}
+}
+
 func TestReaderMeasuredMB(t *testing.T) {
 	r := NewReader()
 	now := time.Unix(1_800_000_000, 0)
@@ -71,6 +85,55 @@ func TestReaderMeasuredMB(t *testing.T) {
 	}
 }
 
+// adr: 20261031190030 — a frozen instance is charged its latest sample: a
+// running one keeps the window's p95, but the memory a compression frees from
+// a paused VM reached admission only ten minutes later.
+func TestFrozenInstancesSkipThePeakHold(t *testing.T) {
+	r := NewReader()
+	p := &Poller{Reader: r}
+	t0 := time.Unix(1_800_000_000, 0)
+	tick := func(at time.Time, runningMB, frozenMB float64) {
+		p.publishMemoryShadow([]state.Instance{
+			{ID: "a", NodeID: "n1", State: string(state.StateRunning), RAMMB: 1024},
+			{ID: "b", NodeID: "n1", State: string(state.StateFrozen), RAMMB: 1024},
+		}, []InstanceStat{{InstanceID: "a", RSSMB: runningMB}, {InstanceID: "b", RSSMB: frozenMB}}, at)
+	}
+	tick(t0, 400, 400)
+	at := t0.Add(2 * time.Duration(api.MeasuredChargeSampleSeconds) * time.Second)
+	tick(at, 100, 40) // b was compressed
+	// a: the p95 of 400 and 100 is 400, x1.25 = 500. b: 40 x 1.25 = 50.
+	if mb, _, ok := r.MeasuredMB("n1", at); !ok || mb != 500+50 {
+		t.Fatalf("MeasuredMB = %d, %v; want 550", mb, ok)
+	}
+}
+
+// adr: 20261101091815 — an instance that misses samples keeps its recent
+// charge for MeasuredChargeHoldSeconds instead of its full reservation, so a
+// stream gap does not refuse every wake on a node booked past its ceiling; the
+// report counts the node's frozen instances.
+func TestMissedSamplesHoldTheRecentCharge(t *testing.T) {
+	r := NewReader()
+	p := &Poller{Reader: r}
+	instances := []state.Instance{
+		{ID: "a", NodeID: "n1", State: string(state.StateRunning), RAMMB: 1024},
+		{ID: "f", NodeID: "n1", State: string(state.StateFrozen), RAMMB: 1024},
+	}
+	t0 := time.Unix(1_800_000_000, 0)
+	p.publishMemoryShadow(instances, []InstanceStat{{InstanceID: "a", RSSMB: 400}, {InstanceID: "f", RSSMB: 40}}, t0)
+	gap := t0.Add(10 * time.Second)
+	p.publishMemoryShadow(instances, nil, gap) // no samples this tick
+	// a: 400 x 1.25 = 500; f: 40 x 1.25 = 50.
+	if mb, frozen, _, ok := r.MemoryReport("n1", gap); !ok || mb != 550 || frozen != 1 {
+		t.Fatalf("during the gap MemoryReport = %d MB, %d frozen, %v; want 550, 1", mb, frozen, ok)
+	}
+	late := t0.Add(time.Duration(api.MeasuredChargeHoldSeconds+1) * time.Second)
+	p.publishMemoryShadow(instances, nil, late)
+	// Past the hold both book their full 1032 MB reservation.
+	if mb, _, _, ok := r.MemoryReport("n1", late); !ok || mb != 2*1032 {
+		t.Fatalf("after the hold MemoryReport = %d MB, %v; want 2064", mb, ok)
+	}
+}
+
 // adr: 20261017 connection survival, §2 memory (the ADR-909 amendment):
 // a node's instance bridges add to its measured charge and reserve nothing.
 func TestMemoryShadowChargesInstanceBridges(t *testing.T) {
@@ -88,5 +151,32 @@ func TestMemoryShadowChargesInstanceBridges(t *testing.T) {
 	}
 	if _, ok := got["n3"]; ok {
 		t.Fatal("charged a negative bridge sample")
+	}
+}
+
+// adr: 20261107122928 — an instance vmmd holds at the idle ladder's freeze
+// level is charged with the frozen floor (8 MB); one held at quiet pause, or
+// running, keeps the measured floor (64 MB). Its sample is still the window's
+// charge, because a request resumes it without admission.
+func TestMemoryShadowChargesIdleLadderFreezeTheFrozenFloor(t *testing.T) {
+	instances := []state.Instance{
+		{ID: "l2", NodeID: "n1", State: string(state.StateRunning), RAMMB: 1024},
+		{ID: "l1", NodeID: "n1", State: string(state.StateRunning), RAMMB: 1024},
+		{ID: "l2-unsampled", NodeID: "n1", State: string(state.StateRunning), RAMMB: 256},
+	}
+	rows := []InstanceStat{
+		{InstanceID: "l2", RSSMB: 20, QuietPaused: true, IdleLadderLevel: api.IdleLadderFreezeLevel},
+		{InstanceID: "l1", RSSMB: 20, QuietPaused: true, IdleLadderLevel: 1},
+		{InstanceID: "l2-unsampled", RSSMB: math.NaN(), QuietPaused: true, IdleLadderLevel: api.IdleLadderFreezeLevel},
+	}
+	got := memoryShadow(instances, rows, nil)["n1"]
+	// l2: ceil(max(20, 8) × 1.25) = 25; l1: ceil(max(20, 64) × 1.25) = 80;
+	// a missing sample books the full reservation either way.
+	want := api.FrozenChargeMB(1024, 20) + api.MeasuredChargeMB(1024, 20) + api.BillableRAMMB(256)
+	if got.MeasuredMB != want || got.MeasuredMB != 25+80+264 {
+		t.Fatalf("measured = %d MB, want %d", got.MeasuredMB, want)
+	}
+	if got.Frozen != 0 {
+		t.Fatalf("frozen = %d, want 0: a ladder freeze is not a schedd freeze", got.Frozen)
 	}
 }

@@ -18,6 +18,7 @@ import (
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/agentd"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -31,6 +32,10 @@ func main() {
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	// ADR 20261029202403 amendment 1: the uploads credential ring: agentd issues object upload grants.
+	if err := credhash.Install(os.Getenv, credhash.FamilyUploads); err != nil {
+		return fmt.Errorf("agentd: %w", err)
+	}
 	if strings.TrimSpace(os.Getenv("FAAS_AGENTD_AGENT_RUNS")) != "1" {
 		log.Info("agentd: agent runs are off (FAAS_AGENTD_AGENT_RUNS); idle")
 		<-ctx.Done()
@@ -66,6 +71,23 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	defer closeDeps()
+	// ADR-20261027090013: sandbox sessions, off unless their own switch is on.
+	if strings.TrimSpace(os.Getenv("FAAS_AGENTD_SANDBOXES")) == "1" {
+		var scfg agentd.SandboxConfig
+		// Step 7: persisted workspaces, off unless their own switch is on.
+		if strings.TrimSpace(os.Getenv("FAAS_AGENTD_SANDBOX_WORKSPACES")) == "1" {
+			if scfg.Workspaces, err = storage.BackendFromEnvContext(ctx); err != nil {
+				return fmt.Errorf("agentd: artifact store for sandbox workspaces: %w", err)
+			}
+		}
+		sandboxes := replica.NewSandboxes(store, scheddpb.NewScheddClient(conn), scfg)
+		go func() {
+			if err := sandboxes.Run(ctx); err != nil {
+				log.Error("agentd: sandbox sessions stopped", "err", err)
+			}
+		}()
+		log.Info("agentd: running sandbox sessions", "owner", cfg.Owner, "workspaces", scfg.Workspaces != nil)
+	}
 	log.Info("agentd: running agent runs", "owner", cfg.Owner, "schedd", target, "concurrency", cfg.Concurrency)
 	return replica.Run(ctx)
 }

@@ -32,6 +32,9 @@ import (
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
+	"github.com/onebox-faas/faas/pkg/sandboxtoken"
+	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -51,11 +54,47 @@ type authStore interface {
 type authReceiver struct {
 	apidpb.UnimplementedAuthServer
 	store authStore
+	// tracing decides the tracing capability for an OTLP key's subject;
+	// nil releases everyone.
+	tracing TracingReleased
+	// sessions opens dashboard session cookies for VerifySession; nil
+	// answers Unavailable.
+	sessions SessionOpener
+	// sandboxKey verifies sandbox session tokens, derived from the session
+	// key when sessions has one; nil answers SandboxTokenKeys Unavailable.
+	sandboxKey *sandboxtoken.PublicKey
+}
+
+// sessionKeyHolder is a SessionOpener that can derive keys:
+// *session.Manager.
+type sessionKeyHolder interface {
+	BindingKey() []byte
+}
+
+// SessionOpener opens a dashboard session cookie: apid's *session.Manager.
+type SessionOpener interface {
+	Verify(value string) (session.Envelope, error)
 }
 
 // newAuthReceiver wires a production receiver.
-func newAuthReceiver(store authStore) *authReceiver {
-	return &authReceiver{store: store}
+func newAuthReceiver(store authStore, tracing TracingReleased, sessions SessionOpener) *authReceiver {
+	r := &authReceiver{store: store, tracing: tracing, sessions: sessions}
+	if holder, ok := sessions.(sessionKeyHolder); ok && holder != nil {
+		if issuer, err := sandboxtoken.NewIssuer(holder.BindingKey()); err == nil {
+			pub := issuer.PublicKey()
+			r.sandboxKey = &pub
+		}
+	}
+	return r
+}
+
+// SandboxTokenKeys returns the public key that verifies sandbox session
+// tokens; it mints nothing.
+func (r *authReceiver) SandboxTokenKeys(context.Context, *apidpb.SandboxTokenKeysRequest) (*apidpb.SandboxTokenKeysResponse, error) {
+	if r.sandboxKey == nil {
+		return nil, status.Error(codes.Unavailable, "sandbox tokens are not configured")
+	}
+	return &apidpb.SandboxTokenKeysResponse{Keys: []*apidpb.SandboxTokenKey{{Id: r.sandboxKey.ID, PublicKey: r.sandboxKey.Key}}}, nil
 }
 
 // AuthenticateKey resolves the bearer token to (account_id, plan).
@@ -81,7 +120,7 @@ func (r *authReceiver) AuthenticateKey(ctx context.Context, req *apidpb.Authenti
 	if tok == "" {
 		return nil, status.Error(codes.InvalidArgument, "empty token")
 	}
-	acct, _, err := r.store.AuthenticateKey(ctx, api.HashAPIKey(tok))
+	acct, key, err := r.store.AuthenticateKey(ctx, api.HashAPIKey(tok))
 	if err != nil {
 		// Hash miss + IAM-5 expired/revoked keys are all
 		// authenticated-shape errors from the gateway's POV:
@@ -101,10 +140,7 @@ func (r *authReceiver) AuthenticateKey(ctx context.Context, req *apidpb.Authenti
 		// Generic store-side error: same shape — Internal.
 		return nil, status.Errorf(codes.Internal, "apid auth lookup: %v", err)
 	}
-	return &apidpb.AuthenticateKeyResponse{
-		AccountId: acct.ID,
-		Plan:      string(acct.Plan),
-	}, nil
+	return r.traceKeyPrincipal(ctx, acct, key)
 }
 
 // AuthenticateCredential resolves a credential for a gateway that cannot
@@ -149,21 +185,48 @@ func (r *authReceiver) AuthenticateCredential(ctx context.Context, req *apidpb.A
 
 // MatchCredential answers whether a stored credential hash a gateway read
 // is the one the presented token may hold (ADR 20261029202403). It answers
-// only yes or no, and only for the columns gateways check.
+// only yes or no, and only for the columns gateways check, under apid's
+// policy for the column's family (amendment 1, decision 2).
 func (r *authReceiver) MatchCredential(_ context.Context, req *apidpb.MatchCredentialRequest) (*apidpb.MatchCredentialResponse, error) {
-	tag, ok := state.GatewayCheckedCredential(req.GetColumn())
+	tag, family, ok := state.GatewayCheckedCredential(req.GetColumn())
 	if !ok {
 		return nil, status.Error(codes.InvalidArgument, "column is not a gateway-checked credential")
 	}
 	if len(req.GetSha256()) != sha256.Size {
 		return nil, status.Error(codes.InvalidArgument, "sha256 must be 32 bytes")
 	}
-	return &apidpb.MatchCredentialResponse{Match: state.CredentialMatches(tag, req.GetSha256(), req.GetStored())}, nil
+	return &apidpb.MatchCredentialResponse{Match: credhash.For(family).Matches(tag, req.GetSha256(), req.GetStored())}, nil
+}
+
+// VerifySession opens a dashboard session cookie for a gateway that holds
+// no session key (ADR-20261102191500). A malformed, forged or expired
+// cookie is an outcome, not an error. The cookie is never logged.
+func (r *authReceiver) VerifySession(_ context.Context, req *apidpb.VerifySessionRequest) (*apidpb.VerifySessionResponse, error) {
+	if req.GetCookie() == "" {
+		return nil, status.Error(codes.InvalidArgument, "cookie is required")
+	}
+	if r.sessions == nil {
+		return nil, status.Error(codes.Unavailable, "sessions are not configured")
+	}
+	env, verifyErr := r.sessions.Verify(req.GetCookie())
+	switch {
+	case errors.Is(verifyErr, session.ErrInvalid):
+		return &apidpb.VerifySessionResponse{}, nil
+	case verifyErr != nil:
+		return nil, status.Error(codes.Internal, "open session cookie")
+	}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "encode session envelope")
+	}
+	return &apidpb.VerifySessionResponse{Valid: true, Envelope: raw}, nil
 }
 
 // RegisterAuthReceiver binds the AuthServer onto a gRPC server.
 // Called from runAuthServer in main.go alongside the other gRPC
-// services.
-func RegisterAuthReceiver(s *grpc.Server, store authStore) {
-	apidpb.RegisterAuthServer(s, newAuthReceiver(store))
+// services. tracing gates OTLP keys on the tracing capability; nil
+// releases everyone. sessions answers VerifySession; nil answers
+// Unavailable.
+func RegisterAuthReceiver(s *grpc.Server, store authStore, tracing TracingReleased, sessions SessionOpener) {
+	apidpb.RegisterAuthServer(s, newAuthReceiver(store, tracing, sessions))
 }

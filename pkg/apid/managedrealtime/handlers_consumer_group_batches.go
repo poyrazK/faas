@@ -17,7 +17,7 @@ func (s *Service) ClaimRealtimeConsumerGroupBatch(w http.ResponseWriter, r *http
 		api.WriteProblem(w, api.ErrRealtimeInvalid("invalid batch claim request"))
 		return
 	}
-	s.writeRealtimeGroupBatch(w, r, ep.ID, r.PathValue("channel"), r.PathValue("group"), req)
+	s.writeRealtimeGroupBatch(w, r, acct.ID, ep.ID, r.PathValue("channel"), r.PathValue("group"), req)
 }
 func (s *Service) RealtimeWorkerClaimBatch(w http.ResponseWriter, r *http.Request) {
 	g, _, ok := s.loadRealtimeWorker(w, r, "claim")
@@ -35,15 +35,15 @@ func (s *Service) RealtimeWorkerClaimBatch(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	req.Worker = g.Info.Name
-	s.writeRealtimeGroupBatch(w, r, g.EndpointID, g.Channel, g.Group, req)
+	s.writeRealtimeGroupBatch(w, r, g.AccountID, g.EndpointID, g.Channel, g.Group, req)
 }
-func (s *Service) writeRealtimeGroupBatch(w http.ResponseWriter, r *http.Request, ep, ch, group string, req state.RealtimeConsumerGroupBatchRequest) {
+func (s *Service) writeRealtimeGroupBatch(w http.ResponseWriter, r *http.Request, account, ep, ch, group string, req state.RealtimeConsumerGroupBatchRequest) {
 	_, ok := s.Host.Store().(state.RealtimeConsumerGroupBatchStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("batch claims unavailable"))
 		return
 	}
-	batch, err := s.waitRealtimeGroupBatch(r, ep, ch, group, req.Worker, req.Limit, req.WaitSeconds)
+	batch, err := s.waitRealtimeGroupBatch(r, account, ep, ch, group, req.Worker, req.Limit, req.WaitSeconds)
 	if err != nil {
 		s.writeRealtimeWorkerOperationError(w, r, err)
 		return

@@ -49,6 +49,9 @@ func (m *MemStore) EnvironmentWorkloadIntentByJob(_ context.Context, accountID, 
 	if accountID == "" || jobID == "" {
 		return EnvironmentWorkloadIntent{}, ErrInvalidArgument
 	}
+	if !m.environmentGitOpsManagedJobLocked(jobID) {
+		return EnvironmentWorkloadIntent{}, ErrNotFound
+	}
 	var found *EnvironmentWorkloadIntent
 	for _, row := range m.appEnvironmentWorkloadIntents {
 		if row.AccountID != accountID || row.JobID != jobID {

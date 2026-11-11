@@ -12,9 +12,26 @@ import (
 )
 
 var (
-	debugEvidenceQuotedLiteral  = regexp.MustCompile(`'(?:''|[^'])*'`)
-	debugEvidenceNumericLiteral = regexp.MustCompile(`\b\d+(?:\.\d+)?\b`)
+	debugEvidenceQuotedLiteral = regexp.MustCompile(`'(?:''|\\.|[^'\\])*'`)
+	debugEvidenceJSONValue     = regexp.MustCompile(`(:\s*)"(?:\\.|[^"\\])*"`)
+	// A number not preceded by `$`, so Postgres placeholders ($1) stay.
+	debugEvidenceNumericLiteral = regexp.MustCompile(`(^|[^$\w.])\d+(?:\.\d+)?\b`)
+	debugEvidenceHexLiteral     = regexp.MustCompile(`(?i)\b0x[0-9a-f]+\b`)
+	// Double-quoted text is an identifier in standard SQL but a string in
+	// MySQL's default mode. It is scrubbed where only a value can stand:
+	// after a comparison, and inside IN (...) and VALUES (...) lists.
+	debugEvidenceDoubleQuoted        = regexp.MustCompile(`"(?:""|\\.|[^"\\])*"`)
+	debugEvidenceComparedDoubleQuote = regexp.MustCompile(`(?i)((?:=|<>|!=|<=|>=|<|>|\bLIKE|\bILIKE)\s*)"(?:""|\\.|[^"\\])*"`)
+	debugEvidenceValueList           = regexp.MustCompile(`(?i)\b(?:IN|VALUES)\s*\([^()]*\)(?:\s*,\s*\([^()]*\))*`)
+	// In a JSON document (a MongoDB command) every string that is not a key
+	// is a value, including those inside arrays.
+	debugEvidenceJSONString = regexp.MustCompile(`"(?:\\.|[^"\\])*"(\s*:)?`)
 )
+
+// commandStatementSystems record a statement as a command and its arguments
+// (`SET session:42 <token>`), with no quoting to tell keys and values apart.
+// Only the command is kept.
+var commandStatementSystems = map[string]bool{"redis": true, "valkey": true, "keydb": true, "dragonfly": true, "memcached": true}
 
 type StoredSpan struct {
 	TraceID           string            `json:"trace_id"`
@@ -170,10 +187,89 @@ func sanitizeDebugErrorType(status, errorType string) string {
 }
 
 func sanitizeDebugDBStatement(statement string) string {
-	statement = debugEvidenceQuotedLiteral.ReplaceAllString(statement, "?")
-	statement = debugEvidenceNumericLiteral.ReplaceAllString(statement, "?")
+	statement = ScrubStatementLiterals(statement)
 	statement = strings.Join(strings.Fields(statement), " ")
 	return boundDebugEvidenceText(statement, 512)
+}
+
+// ScrubStatementLiterals replaces the literal values in a database statement
+// with "?": single-quoted strings (doubled ” and backslash escapes), JSON
+// string values (Mongo-style documents, `"key": "value"`) and numbers.
+// Double-quoted SQL identifiers stay, so table names survive. Span ingest
+// applies it so stored spans keep no customer values (docs/tracing.md); the
+// read path applies it again for rows stored before.
+//
+// Also scrubbed: PostgreSQL dollar-quoted strings ($$…$$, $tag$…$tag$), hex
+// literals (0x…), double-quoted strings where only a value can stand (MySQL
+// strings after a comparison or in IN/VALUES lists), and, in a JSON document,
+// every string that is not a key, array members included.
+func ScrubStatementLiterals(statement string) string {
+	statement = scrubDollarQuoted(statement)
+	statement = debugEvidenceQuotedLiteral.ReplaceAllString(statement, "?")
+	if trimmed := strings.TrimSpace(statement); strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") || strings.Contains(trimmed, `{"`) {
+		statement = debugEvidenceJSONString.ReplaceAllStringFunc(statement, func(match string) string {
+			if strings.HasSuffix(match, ":") {
+				return match // a key
+			}
+			return "?"
+		})
+	} else {
+		statement = debugEvidenceJSONValue.ReplaceAllString(statement, "$1?")
+		statement = debugEvidenceComparedDoubleQuote.ReplaceAllString(statement, "$1?")
+		statement = debugEvidenceValueList.ReplaceAllStringFunc(statement, func(list string) string {
+			return debugEvidenceDoubleQuoted.ReplaceAllString(list, "?")
+		})
+	}
+	statement = debugEvidenceHexLiteral.ReplaceAllString(statement, "?")
+	return debugEvidenceNumericLiteral.ReplaceAllString(statement, "${1}?")
+}
+
+// ScrubStatementForSystem scrubs a statement recorded by a db.system. Command
+// stores (Redis and the like) keep only the command; every argument, keys
+// included, becomes "?". Other systems get ScrubStatementLiterals.
+func ScrubStatementForSystem(statement, system string) string {
+	if !commandStatementSystems[strings.ToLower(strings.TrimSpace(system))] {
+		return ScrubStatementLiterals(statement)
+	}
+	fields := strings.Fields(statement)
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.ToUpper(fields[0]) + strings.Repeat(" ?", len(fields)-1)
+}
+
+// scrubDollarQuoted replaces PostgreSQL dollar-quoted strings with "?". A
+// positional parameter ($1) is not a quote: a tag starts with a letter or
+// underscore, or is empty ($$).
+func scrubDollarQuoted(statement string) string {
+	var out strings.Builder
+	for i := 0; i < len(statement); {
+		if statement[i] != '$' {
+			out.WriteByte(statement[i])
+			i++
+			continue
+		}
+		end := i + 1
+		for end < len(statement) && (statement[end] == '_' || statement[end] >= 'a' && statement[end] <= 'z' ||
+			statement[end] >= 'A' && statement[end] <= 'Z' || end > i+1 && statement[end] >= '0' && statement[end] <= '9') {
+			end++
+		}
+		if end >= len(statement) || statement[end] != '$' {
+			out.WriteByte('$')
+			i++
+			continue
+		}
+		tag := statement[i : end+1]
+		closing := strings.Index(statement[end+1:], tag)
+		if closing < 0 {
+			out.WriteByte('$')
+			i++
+			continue
+		}
+		out.WriteByte('?')
+		i = end + 1 + closing + len(tag)
+	}
+	return out.String()
 }
 
 func minDebugDependencyDuration(duration uint64) uint64 {

@@ -51,6 +51,7 @@ func UnitVmmd() daemonunit.Unit {
 			"faas-tenant-pro.slice", "faas-tenant-scale.slice",
 			// Spec §11 fence pins: keep the per-VM cgroup controllers
 			// enabled across systemd reloads (roles/systemd_slices).
+			"faas-tenant-fence.slice",
 			"faas-tenant-free-fence.slice", "faas-tenant-hobby-fence.slice",
 			"faas-tenant-pro-fence.slice", "faas-tenant-scale-fence.slice",
 			"faas-cp-build-fence.slice",
@@ -62,6 +63,7 @@ func UnitVmmd() daemonunit.Unit {
 			"faas-tenant-pro.slice", "faas-tenant-scale.slice",
 			// Spec §11 fence pins: keep the per-VM cgroup controllers
 			// enabled across systemd reloads (roles/systemd_slices).
+			"faas-tenant-fence.slice",
 			"faas-tenant-free-fence.slice", "faas-tenant-hobby-fence.slice",
 			"faas-tenant-pro-fence.slice", "faas-tenant-scale-fence.slice",
 			"faas-cp-build-fence.slice",
@@ -175,8 +177,9 @@ func UnitVmmd() daemonunit.Unit {
 		// So: no MemoryHigh (it cannot do its job against unreclaimable
 		// shmem), and MemoryMax deliberately equal to the slice ceiling —
 		// vmmd is bounded BY ITS SLICE, not by a tighter per-unit cap that
-		// would really be a cap on jail residency. imaged sets 4G on the
-		// same reasoning. The CI hardening gate still sees a MemoryMax.
+		// would really be a cap on jail residency. imaged also takes the
+		// slice ceiling, for its scanner's page cache. The CI hardening
+		// gate still sees a MemoryMax.
 		//
 		// The remaining design smell is that jail tmpfs is charged to a
 		// control-plane slice at all; sizing that properly (or moving

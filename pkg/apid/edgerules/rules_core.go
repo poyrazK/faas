@@ -126,6 +126,9 @@ func (s *Service) ruleForUpdate(ctx context.Context, acct state.Account, id stri
 	if err != nil || row.AccountID != acct.ID {
 		return state.EdgeRule{}, notFound
 	}
+	if prob := s.StoredRuleReachProblem(ctx, row); prob != nil {
+		return state.EdgeRule{}, prob
+	}
 	if row.AttackMode() {
 		return state.EdgeRule{}, api.ErrEdgeRuleConflict("this is the app's attack-mode rule; extend it or switch it off with " +
 			"PUT or DELETE /v1/apps/{slug}/edge-protection/attack-mode (gregale edge-rules attack-mode)")
@@ -156,16 +159,23 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 	if prob := ValidateEdgeRuleBody(&req, acct.Plan); prob != nil {
 		return m, prob
 	}
+	if prob := s.AppBoundHostProblem(ctx, app, req.MatchHost); prob != nil {
+		return m, prob
+	}
 	if prob := s.createReleaseProblem(acct, req); prob != nil {
 		return m, prob
 	}
-	if prob := s.validateEdgeRuleMatchLists(ctx, acct.ID, req.Match); prob != nil {
+	if prob := s.validateEdgeRuleMatchLists(ctx, acct.ID, app, req.Match); prob != nil {
+		return m, prob
+	}
+	presetID := corsPresetRef(req.Kind, req.Action)
+	if prob := s.CorsPresetRefProblem(ctx, acct.ID, app, presetID); prob != nil {
 		return m, prob
 	}
 	if prob := s.ValidateEdgeRuleAsyncDestinations(ctx, app.ID, acct.ID, req.Kind, req.Action); prob != nil {
 		return m, prob
 	}
-	if prob := s.RouteTargetProblem(ctx, acct.ID, req.Kind, req.Action); prob != nil {
+	if prob := s.RouteTargetProblem(ctx, acct.ID, app.ID, req.Kind, req.Action); prob != nil {
 		return m, prob
 	}
 	// Default priority=100, enabled=true when unset.
@@ -184,6 +194,10 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok {
 		return m, api.ErrCapacity("plan limits not loaded")
+	}
+	action := withPenalty(ActionFromBody(req.Kind, req.Action), req.Penalty)
+	if prob := s.sealHeaderSecrets(ctx, app, &action, nil); prob != nil {
+		return m, prob
 	}
 	convergence, err := s.PrepareEdgeRuleMutation(ctx, app.ID, "", "created", req.MatchHost)
 	if err != nil {
@@ -207,7 +221,8 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 		Priority:     priority,
 		Enabled:      enabled,
 		Kind:         state.EdgeRuleKind(req.Kind),
-		Action:       withPenalty(ActionFromBody(req.Kind, req.Action), req.Penalty),
+		Action:       action,
+		CorsPresetID: presetID,
 		// ValidateMode (ADR-128 D1): the top-level wire
 		// field is the source of truth for kind=validate.
 		// If the wire field is empty (client didn't send
@@ -275,6 +290,9 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		if prob := api.ValidateEdgeRuleMatchHost(*req.MatchHost); prob != nil {
 			return m, prob
 		}
+		if prob := s.appBoundUpdateHostProblem(ctx, row.AppID, *req.MatchHost); prob != nil {
+			return m, prob
+		}
 	}
 	if req.MatchPath != nil {
 		if !strings.HasPrefix(*req.MatchPath, "/") || len(*req.MatchPath) > 2048 {
@@ -315,7 +333,7 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 	if prob := api.ValidateEdgeRuleMatch(req.Match); prob != nil {
 		return m, prob
 	}
-	if prob := s.validateEdgeRuleMatchLists(ctx, acct.ID, req.Match); prob != nil {
+	if prob := s.updateReferencesProblem(ctx, acct, row, req); prob != nil {
 		return m, prob
 	}
 	if req.Mode != nil {
@@ -341,13 +359,24 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		if prob := s.ValidateEdgeRuleAsyncDestinations(ctx, row.AppID, acct.ID, string(row.Kind), *req.Action); prob != nil {
 			return m, prob
 		}
-		if prob := s.RouteTargetProblem(ctx, acct.ID, string(row.Kind), *req.Action); prob != nil {
+		if prob := s.RouteTargetProblem(ctx, acct.ID, row.AppID, string(row.Kind), *req.Action); prob != nil {
 			return m, prob
 		}
-	} else if req.MatchPath != nil && row.Action.Validate != nil && row.Action.Validate.Parameters != nil {
-		// A path-only update must keep the stored path parameters aligned.
-		if prob := row.Action.Validate.Parameters.Validate(matchPath); prob != nil {
-			return m, prob
+	} else {
+		if req.MatchPath != nil && row.Action.Validate != nil && row.Action.Validate.Parameters != nil {
+			// A path-only update must keep the stored path parameters aligned.
+			if prob := row.Action.Validate.Parameters.Validate(matchPath); prob != nil {
+				return m, prob
+			}
+		}
+		// An app-bound credential may not re-point, widen or re-enable a
+		// stored route rule to another app either (ADR-091 amendment
+		// 2026-11-03, review round 9): changing only match_path, methods,
+		// headers or enabled would carry an account credential's route on.
+		if row.Kind == state.EdgeRuleKindRoute && row.Action.Route != nil {
+			if prob := s.appBoundRouteTargetProblem(ctx, row.AppID, row.Action.Route.TargetAppSlug); prob != nil {
+				return m, prob
+			}
 		}
 	}
 	if row.Kind == state.EdgeRuleKindJWT {
@@ -397,6 +426,16 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 	if req.MatchHost != nil {
 		hosts = append(hosts, *req.MatchHost)
 	}
+	params := penaltyUpdateParams(row, req, edgeRuleUpdateParamsFrom(req, row.Kind))
+	if params.Action != nil {
+		app, appErr := s.Host.Store().AppByID(ctx, row.AppID)
+		if appErr != nil {
+			return m, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
+		}
+		if prob := s.sealHeaderSecrets(ctx, app, params.Action, &row); prob != nil {
+			return m, prob
+		}
+	}
 	convergence, err := s.PrepareEdgeRuleMutation(ctx, row.AppID, row.ID, "updated", hosts...)
 	if err != nil {
 		return m, api.ErrCapacity("edge-rule fleet convergence is unavailable; the rule was not updated")
@@ -409,7 +448,7 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 			return m, checkProb
 		}
 	}
-	updated, err := s.Host.Store().UpdateEdgeRule(ctx, row.ID, penaltyUpdateParams(row, req, edgeRuleUpdateParamsFrom(req, row.Kind)))
+	updated, err := s.Host.Store().UpdateEdgeRule(ctx, row.ID, params)
 	if err != nil {
 		convergence.Abort(ctx)
 		if errors.Is(err, state.ErrNotFound) {

@@ -2,7 +2,7 @@ package state
 
 import (
 	"context"
-	"errors"
+	"time"
 )
 
 type promotionWorkloadActivation struct {
@@ -65,6 +65,12 @@ func (m *MemStore) promotionWorkloadActivationsLocked(promotion ProjectEnvironme
 		if hash != targetHash {
 			projected.ScalingPolicyRevision++
 		}
+		if projected.ScalingRevision < 1 {
+			projected.ScalingRevision = 1
+		}
+		if scalingSettings(projected) != scalingSettings(app) {
+			projected.ScalingRevision++
+		}
 		changes = append(changes, promotionWorkloadActivation{environmentID: prepared.EnvironmentID,
 			appID: app.ID, specID: targetID, app: projected, projectApp: promotion.ToEnvironment == "production"})
 	}
@@ -93,7 +99,7 @@ func (m *MemStore) applyPromotionWorkloadActivationsLocked(changes []promotionWo
 		if change.specID == "" {
 			delete(m.projectEnvironmentWorkloadHeads, key)
 		} else {
-			m.projectEnvironmentWorkloadHeads[key] = change.specID
+			m.putWorkloadSpecHeadLocked(m.projectEnvironmentWorkloadSpecs[change.specID])
 		}
 		if change.projectApp {
 			m.apps[change.appID] = change.app
@@ -102,36 +108,50 @@ func (m *MemStore) applyPromotionWorkloadActivationsLocked(changes []promotionWo
 }
 
 func (m *MemStore) syncProductionWorkloadSpecLocked(app App, params UpdateAppParams) (App, error) {
+	updated, spec, err := m.prepareProductionWorkloadSpecLocked(app, params)
+	if err == nil && spec.ID != "" {
+		m.projectEnvironmentWorkloadSpecs[spec.ID] = spec
+		m.putWorkloadSpecHeadLocked(spec)
+	}
+	return updated, err
+}
+
+// Preparation is pure so atomic project reconciliation can validate every app
+// and cron before publishing any new workload settings heads.
+func (m *MemStore) prepareProductionWorkloadSpecLocked(app App, params UpdateAppParams) (App, ProjectEnvironmentWorkloadSpec, error) {
 	if app.ProjectID == "" {
-		return app, nil
+		return app, ProjectEnvironmentWorkloadSpec{}, nil
 	}
-	env, err := m.workloadSpecEnvironmentLocked(app.AccountID, app.ProjectID, "production", app.ID)
-	if errors.Is(err, ErrNotFound) {
-		return app, nil
-	}
-	if err != nil {
-		return App{}, err
+	var env ProjectEnvironment
+	for _, candidate := range m.projectEnvironments {
+		if candidate.AccountID == app.AccountID && candidate.ProjectID == app.ProjectID && candidate.Slug == "production" {
+			env = candidate
+			break
+		}
 	}
 	current, found := m.projectEnvironmentWorkloadSpecs[m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(env.ID, app.ID)]]
 	if !found {
-		return app, nil
+		return app, ProjectEnvironmentWorkloadSpec{}, nil
 	}
 	prior, err := current.Settings.ApplyTo(app)
 	if err != nil {
-		return App{}, err
+		return App{}, ProjectEnvironmentWorkloadSpec{}, err
 	}
 	settings, err := WorkloadSettingsFromApp(applyAppConfigurationParams(prior, params))
 	if err != nil {
-		return App{}, err
+		return App{}, ProjectEnvironmentWorkloadSpec{}, err
 	}
 	settings.WorkPolicies = current.Settings.WorkPolicies
 	settings.QueueBindings = current.Settings.QueueBindings
 	hash, err := WorkloadSettingsHash(settings)
 	if err != nil {
-		return App{}, err
+		return App{}, ProjectEnvironmentWorkloadSpec{}, err
 	}
-	if _, err := m.putWorkloadSpecLocked(env, app.ID, current.Revision, settings, hash); err != nil {
-		return App{}, err
+	updated, err := settings.ApplyTo(app)
+	if err != nil || hash == current.Hash {
+		return updated, ProjectEnvironmentWorkloadSpec{}, err
 	}
-	return settings.ApplyTo(app)
+	return updated, ProjectEnvironmentWorkloadSpec{ID: newID(), AccountID: app.AccountID,
+		ProjectID: app.ProjectID, EnvironmentID: env.ID, EnvironmentSlug: env.Slug, AppID: app.ID,
+		Revision: m.nextWorkloadSpecRevisionLocked(env.ID, app.ID), Hash: hash, Settings: settings, CreatedAt: time.Now().UTC()}, nil
 }

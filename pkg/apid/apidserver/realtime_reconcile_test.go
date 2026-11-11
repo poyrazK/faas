@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,7 +19,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// The reconciler registers endpoints in parallel (#6497), so the fake
+// serializes its writes.
 type reconcileRealtimeRegistrar struct {
+	mu         sync.Mutex
 	registered []realtime.Endpoint
 	removed    []string
 	fail       map[string]error
@@ -30,6 +34,8 @@ func (r *reconcileRealtimeRegistrar) ListEndpointInventory(context.Context) (rea
 }
 
 func (r *reconcileRealtimeRegistrar) RegisterEndpoint(_ context.Context, endpoint realtime.Endpoint) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if err := r.fail[endpoint.ID]; err != nil {
 		return err
 	}
@@ -38,6 +44,8 @@ func (r *reconcileRealtimeRegistrar) RegisterEndpoint(_ context.Context, endpoin
 }
 
 func (r *reconcileRealtimeRegistrar) RemoveEndpoint(_ context.Context, endpointID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.removed = append(r.removed, endpointID)
 	return nil
 }
@@ -189,7 +197,7 @@ func TestReapManagedRealtimeConnectionOwnersRemovesOnlyExpiredRows(t *testing.T)
 func TestReconcileManagedRealtimeEndpointsFollowsOwnerLifecycle(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	endpointFor := func(name string, status state.AccountStatus, deleteApp bool) string {
+	endpointFor := func(name string, status state.AccountStatus, deleteApp bool, plan ...api.Plan) string {
 		t.Helper()
 		account, err := store.CreateAccount(ctx, name+"-"+uuid.NewString()+"@example.com", api.PlanPro)
 		if err != nil {
@@ -216,12 +224,20 @@ func TestReconcileManagedRealtimeEndpointsFollowsOwnerLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		// A cancelled subscription moves an active account to Free after
+		// its endpoints exist.
+		for _, p := range plan {
+			if err := store.UpdateAccountPlan(ctx, account.ID, p); err != nil {
+				t.Fatal(err)
+			}
+		}
 		return row.ID
 	}
 	active := endpointFor("active", state.AccountActive, false)
 	pastDue := endpointFor("pastdue", state.AccountPastDue, false)
 	suspended := endpointFor("suspended", state.AccountSuspended, false)
 	deletedApp := endpointFor("deletedapp", state.AccountActive, true)
+	downgraded := endpointFor("downgraded", state.AccountActive, false, api.PlanFree)
 
 	registrar := &reconcileRealtimeRegistrar{}
 	srv := apidserver.NewServer(store, apidserver.DiscardLogger(), "gregale.dev", apidserver.NoopNotifier{})
@@ -242,7 +258,7 @@ func TestReconcileManagedRealtimeEndpointsFollowsOwnerLifecycle(t *testing.T) {
 			t.Errorf("endpoint %s: registered=%v removed=%v, want served", id, registered[id], removed[id])
 		}
 	}
-	for _, id := range []string{suspended, deletedApp} {
+	for _, id := range []string{suspended, deletedApp, downgraded} {
 		if registered[id] || !removed[id] {
 			t.Errorf("endpoint %s: registered=%v removed=%v, want withdrawn", id, registered[id], removed[id])
 		}

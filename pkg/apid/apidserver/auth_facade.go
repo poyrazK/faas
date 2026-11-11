@@ -55,7 +55,7 @@ import (
 // mfa_pending session legitimately needs are in the middleware's MFA
 // allowlist; bearer principals are unaffected.
 func (s *server) auth(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(s.requireMFA(s.authorizeAppResource(next))))
+	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next)))))
 	return s.authMw.RequireSession(pkgNext)
 }
 
@@ -66,14 +66,14 @@ func (s *server) auth(next accountHandler) http.HandlerFunc {
 // the wrapping because the spec §11 "10/min/IP" rule is a
 // middleware-level concern, not a per-daemon configuration detail.
 func (s *server) authLimited(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.authorizeAppResource(next))))))
+	pkgNext := middleware.AccountHandler(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next)))))))
 	return s.authMw.RequireLimited(pkgNext)
 }
 
 // Project publishing checks the human's verification before resolving the
 // project, so a missing resource cannot bypass the verification response.
 func (s *server) authVerifiedLimited(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerifiedEmail(s.authorizeAppResource(next)))))))
+	pkgNext := middleware.AccountHandler(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.requireVerifiedEmail(s.authorizeAppResource(next))))))))
 	return s.authMw.RequireLimited(pkgNext)
 }
 
@@ -311,11 +311,26 @@ func (s *server) requireStepUpStrict(ttl time.Duration) func(accountHandler) acc
 	return s.requireStepUpVariant(ttl, s.authMw.RequireStepUpStrict)
 }
 
+// Invitations need the invitee's browser session. Its MFA policy remains
+// optional, while a bearer key never substitutes for interactive acceptance.
+func (s *server) requireInvitationSession(ttl time.Duration) func(accountHandler) accountHandler {
+	return func(next accountHandler) accountHandler {
+		strict, customer := s.requireStepUpStrict(ttl)(next), s.requireStepUp(ttl)(next)
+		return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+			if _, key, ok := middleware.AccountFromContext(r); !ok || key != nil {
+				strict(w, r, acct)
+				return
+			}
+			customer(w, r, acct)
+		}
+	}
+}
+
 // requireAdminMutation is the single authentication policy for provider
 // control-plane writes. Unlike the legacy RequireMFA/RequireStepUp pair, the
 // strict step-up gate rejects bearer/API-key principals instead of treating a
 // key as an equivalent proof. Provider mutations must be performed from a
-// verified operator session with a recent TOTP step-up.
+// verified operator session with recent MFA proof.
 //
 // Keep this helper next to the auth facade so adding a new /v1/admin mutation
 // requires choosing this policy explicitly at the route table rather than
@@ -332,6 +347,16 @@ func (s *server) requireAdminMutation(next accountHandler) accountHandler {
 // Recovery submissions own their atomic, non-expiring idempotency contract
 // (ADR-1524). Keep exactly the same authentication gates on every replay.
 func (s *server) requireAdminRecoveryMutation(next accountHandler) accountHandler {
+	return s.requireAdminMutationPolicy(next)
+}
+
+// Hosting site credentials outlive the session that issues them: an
+// automation credential deploys to a site and an OIDC trust lets a GitHub
+// workflow obtain one. Issuing or revoking either needs the same fresh
+// operator step-up as other provider writes. They stay outside generic
+// replay: a minted token is returned once and never stored in an idempotency
+// receipt (ADR-202610170925, ADR-202610171028), so clients send no key.
+func (s *server) requireAdminCredentialMutation(next accountHandler) accountHandler {
 	return s.requireAdminMutationPolicy(next)
 }
 
@@ -502,7 +527,26 @@ func (s *server) requireStepUpVariant(
 // through sessionAuth → http.Handler, not through AccountHandler).
 // Same TTL semantics as requireStepUp.
 func (s *server) requireStepUpHandler(ttl time.Duration) func(http.Handler) http.Handler {
-	return s.authMw.RequireStepUpHandler(ttl)
+	return s.authMw.RequireStepUpHandlerWithRedirect(ttl, dashboardStepUpRedirect)
+}
+
+// Return to the confirmation page after verification; never replay a write.
+func dashboardStepUpRedirect(r *http.Request) string {
+	if !strings.Contains(r.Header.Get("Accept"), "text/html") {
+		return ""
+	}
+	next := "/dashboard/account"
+	switch r.URL.Path {
+	case "/dashboard/upgrade":
+		next = "/dashboard/upgrade?plan=" + url.QueryEscape(r.FormValue("plan"))
+	case "/dashboard/postgres/overage":
+		next = "/dashboard/postgres"
+	case "/dashboard/raise-overage-cap":
+		next = "/dashboard/billing"
+	case "/dashboard/account/delete":
+		next = "/dashboard/account/delete"
+	}
+	return dashboardMFAPath + "?next=" + url.QueryEscape(next)
 }
 
 // requireScope delegates to pkg/auth.Middleware.RequireScope. Same

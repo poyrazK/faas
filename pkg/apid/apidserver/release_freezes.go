@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/approval"
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -251,10 +252,22 @@ func (s *server) releaseFreezeStatus(ctx context.Context, app state.App) (api.Re
 	return status, nil
 }
 
+// freezeReadProblem refuses a release whose app's freezes could not be read
+// (ADR-20261019071733 amendment 13). Releasing past an unreadable freeze let
+// a database error lift an admin's freeze; the caller retries instead, as a
+// scheduled release, a runtime upgrade and a rollback to a never-served
+// release already did.
+func (s *server) freezeReadProblem(app state.App, err error) *api.Problem {
+	s.log.Warn("deploy freeze: could not read freezes; refusing", "app", app.ID, "err", err)
+	return api.ErrCapacity("Gregale could not read this app's deploy freezes, so it did not release.").
+		WithHint("Retry in a moment.")
+}
+
 // releaseFreezeProblem refuses a production release while a freeze covers
 // the app, unless override carries a reason; an override is audited. A
-// store that cannot read freezes lets the release through: a freeze is a
-// guard rail, not an availability dependency.
+// store that cannot read freezes refuses the release with a retryable 503
+// (ADR-20261019071733 amendment 13): a freeze an admin set must hold even
+// while its row cannot be read.
 func (s *server) releaseFreezeProblem(r *http.Request, acct state.Account, app state.App, scope, override string) *api.Problem {
 	p, overridden := s.checkReleaseFreeze(r, acct, app, scope, override)
 	if overridden != nil {
@@ -272,8 +285,7 @@ func (s *server) checkReleaseFreeze(r *http.Request, acct state.Account, app sta
 	now := time.Now().UTC()
 	active, err := freeze.ActiveFor(r.Context(), s.store, app, scope, now)
 	if err != nil {
-		s.log.Warn("deploy freeze: could not read freezes; releasing", "app", app.ID, "err", err)
-		return nil, nil
+		return s.freezeReadProblem(app, err), nil
 	}
 	if len(active) == 0 {
 		return nil, nil
@@ -285,6 +297,12 @@ func (s *server) checkReleaseFreeze(r *http.Request, acct state.Account, app sta
 	if prob := freeze.ValidateReason("override_freeze", override); prob != nil {
 		return prob, nil
 	}
+	for _, f := range active {
+		if prob := s.freezeOverrideProblem(r, acct, f); prob != nil {
+			s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
+			return prob, nil
+		}
+	}
 	s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "overridden")
 	ids := make([]string, 0, len(active))
 	for _, f := range active {
@@ -295,6 +313,28 @@ func (s *server) checkReleaseFreeze(r *http.Request, acct state.Account, app sta
 		overridden["org_id"] = orgID
 	}
 	return nil, overridden
+}
+
+// freezeOverrideProblem holds overriding a company organization's freeze to
+// the right to lift it (ADR-20261019071733 amendment 5): an owner or admin,
+// or the member who created a window, signed in or with an admin-scoped key.
+// A member's deploy:write key, as CI holds, could otherwise ship past a freeze
+// an admin set for the whole company. An account's own freezes keep the open
+// override: one person both sets and overrides them.
+func (s *server) freezeOverrideProblem(r *http.Request, acct state.Account, f state.ReleaseFreeze) *api.Problem {
+	if f.OrgID == "" {
+		return nil
+	}
+	if p, ok := principalFrom(r); ok && p.Key != nil && !httpkit.APIKeyCarriesScope(*p.Key, api.ScopeAdmin) {
+		return api.ErrReleaseFreezeOverrideNotAllowed(f.ID,
+			"Overriding a company's freeze needs a signed-in person or an admin key; this key can only deploy.")
+	}
+	owner := state.ReleaseFreezeOwner{OrgID: f.OrgID}
+	if prob := s.freezeLiftProblem(r, owner, f, configActor(r, actorAccount(r, acct))); prob != nil {
+		return api.ErrReleaseFreezeOverrideNotAllowed(f.ID,
+			"Only a member who may lift this freeze can override it: an owner or admin, or the member who created the window.")
+	}
+	return nil
 }
 
 // pendingFreezeOverrideKey carries an accepted deploy override until the
@@ -330,13 +370,17 @@ func (s *server) retryReleaseProblem(ctx context.Context, app state.App, dep sta
 	now := time.Now().UTC()
 	active, err := freeze.ActiveFor(ctx, s.store, app, dep.Scope, now)
 	if err != nil {
-		s.log.Warn("deploy freeze: could not read freezes; retrying", "app", app.ID, "err", err)
+		return s.freezeReadProblem(app, err)
 	} else if len(active) > 0 {
 		s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
 		return api.ErrReleaseFrozen(app.Slug, s.freezeViews(ctx, active, now)).
 			WithHint("A retry cannot override a freeze. Wait for it to end, lift it with `gregale freeze lift`, or deploy again with --override-freeze REASON; the override is audited.")
 	}
-	if dep.CanaryTotalSteps > 0 || (dep.TrafficPercentExplicit && dep.TrafficPercent == 0) {
+	percent, explicit, err := dep.RetryTrafficIntent()
+	if err != nil {
+		return api.AsProblem(retryTrafficProblem(err))
+	}
+	if dep.CanaryTotalSteps > 0 || (explicit && percent == 0) {
 		return nil
 	}
 	required, err := approval.CanaryRequired(ctx, s.store, app, dep.Scope, "")
@@ -351,6 +395,26 @@ func (s *server) retryReleaseProblem(ctx context.Context, app state.App, dep sta
 	return nil
 }
 
+// darkReleasePauseProblem refuses the first traffic of a release deployed
+// without traffic, or parked for its schedule, while the break-glass release
+// pause is on (ADR 20261022140000 amendment 1). The pause refuses creating
+// releases, but one built before it could otherwise ship during it through
+// `traffic`, promote or a rollback to it. A release that served before is a
+// rollback target, which the pause never holds.
+func (s *server) darkReleasePauseProblem(d state.Deployment) *api.Problem {
+	if !neverServedDark(d) {
+		return nil
+	}
+	return s.platformReleasePauseProblem()
+}
+
+// neverServedDark reports whether d is live at 0% of traffic by choice and
+// has never completed a rollout: a release deployed with no traffic, or one
+// parked for its schedule.
+func neverServedDark(d state.Deployment) bool {
+	return d.Status == state.DeployLive && d.TrafficPercent == 0 && d.TrafficPercentExplicit && d.RolloutCompletedAt == nil
+}
+
 // darkReleaseFreezeProblem refuses traffic for a release deployed without
 // traffic before the active freeze began (ADR-20261019071733 amendment 3). A
 // freeze refuses creating production releases, but a release parked dark the
@@ -360,14 +424,13 @@ func (s *server) retryReleaseProblem(ctx context.Context, app state.App, dep sta
 // override, when it was created; one that completed a rollout served before
 // and is a rollback target, which freezes never refuse.
 func (s *server) darkReleaseFreezeProblem(ctx context.Context, app state.App, d state.Deployment) *api.Problem {
-	if d.Status != state.DeployLive || d.TrafficPercent != 0 || !d.TrafficPercentExplicit || d.RolloutCompletedAt != nil {
+	if !neverServedDark(d) {
 		return nil
 	}
 	now := time.Now().UTC()
 	active, err := freeze.ActiveFor(ctx, s.store, app, d.Scope, now)
 	if err != nil {
-		s.log.Warn("deploy freeze: could not read freezes; releasing", "app", app.ID, "err", err)
-		return nil
+		return s.freezeReadProblem(app, err)
 	}
 	var predate []state.ReleaseFreeze
 	for _, f := range active {

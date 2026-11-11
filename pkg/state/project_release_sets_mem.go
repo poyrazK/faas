@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"maps"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -107,9 +108,13 @@ func (m *MemStore) publishProjectReleaseWithIDLocked(ctx context.Context, accoun
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	environmentApps := m.projectEnvironmentAppIDsLocked(accountID, projectID, environment)
 	count := 0
 	for _, app := range m.apps {
 		if app.ProjectID != projectID || app.AccountID != accountID || app.Status == AppDeleted || app.PreviewOfSlug != "" {
+			continue
+		}
+		if !slices.Contains(environmentApps, app.ID) {
 			continue
 		}
 		if omitted[app.ID] {
@@ -171,6 +176,9 @@ func (m *MemStore) publishProjectReleaseWithIDLocked(ctx context.Context, accoun
 			return ProjectReleaseSet{}, err
 		}
 	}
+	if err := m.checkProjectRollbackReleasesLocked(projectID, environment, previousID, members, false); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	if previousID != "" {
 		previous := m.projectReleaseSets[previousID]
 		previous.Active = false
@@ -195,6 +203,10 @@ func (m *MemStore) publishProjectReleaseWithIDLocked(ctx context.Context, accoun
 	}
 	if recovering {
 		release.RollbackSourceReleaseID, release.RollbackPreviousReleaseID = rollback.source, rollback.previous
+	}
+	release.fallbackSince = now
+	if previousID != "" {
+		release.fallbackSince = m.projectReleaseSets[previousID].fallbackSince
 	}
 	m.projectReleaseSets[release.ID] = release
 	m.activeProjectReleaseSets[key] = release.ID
@@ -242,6 +254,9 @@ func (m *MemStore) deactivateProjectReleaseSet(ctx context.Context, accountID, p
 	if err := m.validateProjectReleaseFallbackLocked(projectID, environment, expectedFallback); err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	if err := m.checkProjectRollbackReleasesLocked(projectID, environment, activeID, expectedFallback, true); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	checked, _ := ctx.Value(checkedReleaseDeactivationKey{}).(bool)
 	if checked {
 		if err := m.checkCheckedDeactivationLocked(ctx, accountID, projectID, environment, expectedFallback); err != nil {
@@ -271,12 +286,7 @@ func (m *MemStore) deactivateProjectReleaseSet(ctx context.Context, accountID, p
 }
 
 func (m *MemStore) validateProjectReleaseFallbackLocked(projectID, environment string, expected []ProjectReleaseMember) error {
-	appIDs := make([]string, 0)
-	for _, app := range m.apps {
-		if app.ProjectID == projectID && app.Status != AppDeleted && app.PreviewOfSlug == "" {
-			appIDs = append(appIDs, app.ID)
-		}
-	}
+	appIDs := m.projectEnvironmentAppIDsLocked(m.projects[projectID].AccountID, projectID, environment)
 	return m.validateProjectReleaseFallbackForAppsLocked(appIDs, environment, expected)
 }
 
@@ -362,9 +372,13 @@ func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environm
 	if allowGitOpsReplacement {
 		excluded = m.workloadReleaseExclusionsLocked(EnvironmentGitSource{AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment})
 	}
+	environmentApps := m.projectEnvironmentAppIDsLocked(accountID, projectID, environment)
 	count := 0
 	for _, app := range m.apps {
 		if excluded[app.ID] || app.ProjectID != projectID || app.AccountID != accountID || app.Status == AppDeleted || app.PreviewOfSlug != "" {
+			continue
+		}
+		if !slices.Contains(environmentApps, app.ID) {
 			continue
 		}
 		count++
@@ -405,6 +419,12 @@ func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environm
 			return ProjectReleaseSet{}, err
 		}
 	}
+	if !allowGitOpsReplacement {
+		if err := m.checkProjectRollbackReleasesLocked(projectID, environment, previousID, members, false); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+	}
+
 	if previousID != "" {
 		previous := m.projectReleaseSets[previousID]
 		previous.Active = false
@@ -423,6 +443,10 @@ func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environm
 	now := time.Now().UTC()
 	release := ProjectReleaseSet{ID: uuid.NewString(), AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment, Active: true,
 		TTLSeconds: ttlSeconds, CreatedAt: now, Members: append([]ProjectReleaseMember(nil), members...)}
+	release.fallbackSince = now
+	if previousID != "" {
+		release.fallbackSince = m.projectReleaseSets[previousID].fallbackSince
+	}
 	m.projectReleaseSets[release.ID] = release
 	m.activeProjectReleaseSets[key] = release.ID
 	return release, nil
@@ -438,7 +462,7 @@ func (m *MemStore) validateGitOpsReleaseMembersLocked(activeID string, proposed 
 	}
 	for _, member := range active.Members {
 		deployment, exists := m.deployments[member.DeploymentID]
-		if exists && deployment.EnvironmentWorkloadManaged() && proposed[member.AppID] != member.DeploymentID {
+		if exists && m.environmentGitOpsOwnsDeploymentLocked(deployment) && proposed[member.AppID] != member.DeploymentID {
 			return ErrConflict
 		}
 	}
@@ -447,7 +471,7 @@ func (m *MemStore) validateGitOpsReleaseMembersLocked(activeID string, proposed 
 
 func (m *MemStore) releaseSetHasManagedMembersLocked(release ProjectReleaseSet) bool {
 	for _, member := range release.Members {
-		if deployment, ok := m.deployments[member.DeploymentID]; ok && deployment.EnvironmentWorkloadManaged() {
+		if deployment, ok := m.deployments[member.DeploymentID]; ok && m.environmentGitOpsOwnsDeploymentLocked(deployment) {
 			return true
 		}
 	}

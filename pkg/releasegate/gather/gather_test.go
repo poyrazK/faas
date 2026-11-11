@@ -26,7 +26,7 @@ func (latestValueEvidence) ReleaseGateNewErrorGroups(context.Context, string, st
 	return nil, nil
 }
 
-func (latestValueEvidence) ReleaseGateCustomMetricWindow(context.Context, string, string, time.Time, time.Time) (int64, float64, error) {
+func (latestValueEvidence) ReleaseGateCustomMetricWindow(context.Context, string, string, string, time.Time, time.Time) (int64, float64, error) {
 	return 1, 1, nil
 }
 
@@ -38,10 +38,11 @@ type history struct {
 	samples int64
 	average float64
 	asked   string
+	series  string
 }
 
-func (h *history) CustomMetricWindow(_ context.Context, _, name string, _, _ time.Time) (int64, float64, error) {
-	h.asked = name
+func (h *history) CustomMetricWindow(_ context.Context, _, name, seriesKey string, _, _ time.Time) (int64, float64, error) {
+	h.asked, h.series = name, seriesKey
 	return h.samples, h.average, nil
 }
 
@@ -73,5 +74,68 @@ func TestCustomMetricGateReadsTheMetricHistory(t *testing.T) {
 	}
 	if h.asked != "orders_per_minute" {
 		t.Fatalf("history asked for %q, want orders_per_minute", h.asked)
+	}
+}
+
+// windowHistory answers each window, keyed by its end, from the history.
+type windowHistory map[time.Time]releasegate.MetricWindow
+
+func (h windowHistory) CustomMetricWindow(_ context.Context, _, _, _ string, _, until time.Time) (int64, float64, error) {
+	w := h[until]
+	return w.Samples, w.Average, nil
+}
+
+// adr: 20261022082305 — a metric_change gate reads both its windows from the
+// metric's history, like a custom_metric gate: the stored latest value never
+// fills the window before the rollout.
+func TestMetricChangeGateReadsBothWindowsFromTheMetricHistory(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	now := time.Now()
+	if _, err := store.CreateReleaseGate(ctx, state.ReleaseGate{AppID: "app-1", AccountID: "acct-1", Name: "orders-drop", Kind: releasegate.KindMetricChange,
+		MetricName: "orders_per_minute", Comparison: "below", MaxChangePercent: 30, MinSamples: 20}, 10, now); err != nil {
+		t.Fatal(err)
+	}
+	release := gather.Window{Since: now.Add(-5 * time.Minute), Until: now}
+	prior := gather.Window{Since: now.Add(-10 * time.Minute), Until: release.Since}
+	req := gather.Request{AppID: "app-1", ReleaseID: "dep-2", BaselineID: "dep-1", ReleaseWindow: release, BaselineWindow: release,
+		PriorWindow: prior, Canary: true, Evidence: latestValueEvidence{}}
+
+	verdict, err := gather.Verdict(ctx, store, req)
+	if err != nil || verdict.Failed != nil {
+		t.Fatalf("without history = %+v, %v; want the gate not judged on one stored value", verdict, err)
+	}
+
+	req.CustomMetrics = windowHistory{
+		prior.Until:   {Samples: 25, Average: 50},
+		release.Until: {Samples: 25, Average: 20},
+	}
+	verdict, err = gather.Verdict(ctx, store, req)
+	if err != nil || verdict.Failed == nil || verdict.Failed.Name != "orders-drop" || verdict.Failed.Observed != -60 {
+		t.Fatalf("with history = %+v, %v; want orders-drop failed on a 60%% drop", verdict, err)
+	}
+}
+
+// adr: 20261108160000 slice C2 — a gate with labels reads the one series
+// with exactly those labels, named by its canonical key.
+func TestLabelledCustomMetricGateReadsItsSeries(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	now := time.Now()
+	if _, err := store.CreateReleaseGate(ctx, state.ReleaseGate{AppID: "app-1", AccountID: "acct-1", Name: "eu-orders", Kind: releasegate.KindCustomMetric,
+		MetricName: "orders_per_minute", Comparison: "below", Threshold: 5, MinSamples: 20,
+		MetricLabels: map[string]string{"tier": "gold", "region": "eu"}}, 10, now); err != nil {
+		t.Fatal(err)
+	}
+	window := gather.Window{Since: now.Add(-5 * time.Minute), Until: now}
+	h := &history{samples: 25, average: 2}
+	req := gather.Request{AppID: "app-1", ReleaseID: "dep-2", BaselineID: "dep-1", ReleaseWindow: window, BaselineWindow: window,
+		Evidence: latestValueEvidence{}, CustomMetrics: h}
+	verdict, err := gather.Verdict(ctx, store, req)
+	if err != nil || verdict.Failed == nil || verdict.Failed.Name != "eu-orders" {
+		t.Fatalf("verdict = %+v, %v; want eu-orders failed", verdict, err)
+	}
+	if h.asked != "orders_per_minute" || h.series != "region=eu,tier=gold" {
+		t.Fatalf("history asked for %q series %q, want orders_per_minute region=eu,tier=gold", h.asked, h.series)
 	}
 }

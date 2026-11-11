@@ -26,6 +26,7 @@ type Account struct {
 	PastDueAt                       pgtype.Timestamptz
 	SuspendedReason                 pgtype.Text
 	DeletionIncludesManagedPostgres bool
+	MfaTotpLastStep                 pgtype.Int8
 	PasswordResetRevision           int64
 	MfaRevision                     int64
 	BillingMailRevision             int64
@@ -248,6 +249,28 @@ type ManagedPostgresCapEvent struct {
 	CeilingUnitSeconds   int64
 	OverageEnabled       bool
 	MailIntentID         pgtype.UUID
+}
+
+type ManagedPostgresDatabase struct {
+	ID pgtype.UUID
+}
+
+// Notices for managed PostgreSQL databases suspended past their plan; written only by apid (ADR-20261102125208).
+type ManagedPostgresPlanExcessNotice struct {
+	DatabaseID   pgtype.UUID
+	Reason       string
+	RecordedAt   pgtype.Timestamptz
+	MailIntentID pgtype.UUID
+}
+
+// Restore slot notices for a managed PostgreSQL copy (ending soon, delete scheduled); written only by apid (ADR-20261031123259).
+type ManagedPostgresRestoreSlotNotice struct {
+	DatabaseID      pgtype.UUID
+	Kind            string
+	SlotUntil       pgtype.Timestamptz
+	RestorableUntil pgtype.Timestamptz
+	RecordedAt      pgtype.Timestamptz
+	MailIntentID    pgtype.UUID
 }
 
 type MfaDisableRequest struct {

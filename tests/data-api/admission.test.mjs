@@ -69,6 +69,8 @@ test('real SQL saturation never executes expired or cancelled queued writes and 
   const config = runtimeConfig({ DATABASE_URL: loginURL.toString(), DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' })
   const snapshot = await inspect(config.connection, config.schemas)
   config.snapshot = snapshot; config.fingerprint = fingerprint(snapshot); config.functions = snapshot.functions
+  // These checks observe each saturation and recovery as it happens.
+  config.healthCacheMs = 0
   const upstreamPort = await port(), readyPort = await port()
   child = spawn(process.env.DATA_API_POSTGREST_BIN, [], { env: { ...process.env, ...config.postgrestEnv, PGRST_SERVER_PORT: String(upstreamPort), PGRST_ADMIN_SERVER_PORT: String(readyPort) }, stdio: 'ignore' })
   await until(async () => {

@@ -3,7 +3,7 @@ import https from 'node:https'
 import { closeSync, openSync, readSync } from 'node:fs'
 import { createHash, createHmac, randomBytes } from 'node:crypto'
 import pg from 'pg'
-import { limits } from './config.mjs'
+import { limits, UnsafeConfiguration } from './config.mjs'
 import { addResponseBytes } from './usage.mjs'
 
 // File storage (ADR-20261021101510). Rows in <schema>.storage_objects record
@@ -154,12 +154,12 @@ export function unsafeStorageTable(row) {
 }
 
 export async function checkStorageTable(connection, schema) {
-  const client = new pg.Client({ connectionString: connection, statement_timeout: limits.queryMs, connectionTimeoutMillis: limits.healthProbeMs })
+  const client = new pg.Client({ connectionString: connection, statement_timeout: limits.queryMs, connectionTimeoutMillis: limits.queryMs })
   await client.connect()
   try {
     const { rows } = await client.query(storageTableQuery, [schema, storageTable])
     const unsafe = unsafeStorageTable(rows[0])
-    if (unsafe) throw new Error(`File storage is not installed: ${unsafe}`)
+    if (unsafe) throw new UnsafeConfiguration(`File storage is not installed: ${unsafe}`)
   } finally { await client.end() }
 }
 
@@ -206,12 +206,24 @@ function refused(ctx, result) {
 // transfer runs an object request after the caller is authorized: it releases
 // the SQL admission slot and the request deadline, and takes one of the
 // instance's transfer slots for at most storageTransferMs.
+//
+// One client (a signed-in subject or an anonymous visitor, ctx.client) holds
+// at most storageTransfersPerClient of them, so a slow client cannot keep the
+// instance's storage busy for everyone; server keys (ctx.client null) are
+// bounded by the instance total only.
 async function transfer(ctx, work) {
+  const clients = ctx.transfers.clients ??= new Map()
+  const key = ctx.client == null ? null : JSON.stringify(ctx.client)
+  if (key !== null && (clients.get(key) ?? 0) >= limits.storageTransfersPerClient) {
+    ctx.res.setHeader('Retry-After', '1')
+    return ctx.problem(ctx.res, 429, 'storage_client_busy', { limit: limits.storageTransfersPerClient, observed: clients.get(key) })
+  }
   if (ctx.transfers.active >= limits.storageTransfers) {
     ctx.res.setHeader('Retry-After', '1')
     return ctx.problem(ctx.res, 503, 'storage_busy')
   }
   ctx.transfers.active++
+  if (key !== null) clients.set(key, (clients.get(key) ?? 0) + 1)
   ctx.release()
   ctx.deadline.stop()
   const controller = new AbortController()
@@ -223,6 +235,11 @@ async function transfer(ctx, work) {
     clearTimeout(timer)
     ctx.res.removeListener('close', abort)
     ctx.transfers.active--
+    if (key !== null) {
+      const held = clients.get(key) - 1
+      if (held > 0) clients.set(key, held)
+      else clients.delete(key)
+    }
   }
 }
 
@@ -279,6 +296,12 @@ async function upload(ctx) {
     } catch { await discard(binding, key); return ctx.problem(res, 502, 'storage_backend_unavailable') }
     await drain(stored)
     if (stored.statusCode < 200 || stored.statusCode > 299 || sent !== size) { await discard(binding, key); return ctx.problem(res, 502, 'storage_backend_unavailable') }
+    // An upload that committed while these bytes streamed replaced the version
+    // read above; read it again just before committing, so its bytes go too
+    // and are not left unreferenced (amendment 2). Only the moment between
+    // this read and the commit remains a race.
+    const latest = await rows(ctx, { method: 'GET', query: `${rowFilter(route)}&${columns}`, token: await ctx.token(false), signal })
+    const replaced = latest.status === 200 && Array.isArray(latest.json) && latest.json.length === 1 ? storedKey(latest.json[0]) : null
     const committed = await rows(ctx, { ...upsert, prefer: 'resolution=merge-duplicates,return=representation', token: await ctx.token(true), signal })
     if (committed.status < 200 || committed.status > 299 || !Array.isArray(committed.json) || committed.json.length !== 1) {
       // A refused commit, such as a racing upload the policies reject, loses
@@ -286,7 +309,7 @@ async function upload(ctx) {
       await discard(binding, key)
       return committed.status === 401 || committed.status === 403 ? refused(ctx, committed) : ctx.problem(res, 503, 'storage_commit_failed')
     }
-    if (previous !== null && previous !== key) await discard(binding, previous)
+    for (const old of new Set([previous, replaced])) if (old !== null && old !== key) await discard(binding, old)
     sendJSON(res, 200, publicRow(committed.json[0]))
   })
 }
@@ -351,16 +374,17 @@ async function remove(ctx) {
   if (dry.status !== 200 || !Array.isArray(dry.json)) return refused(ctx, dry)
   if (dry.json.length !== 1) return ctx.problem(res, 404, 'storage_not_found')
   const binding = config.storage.buckets.get(route.bucket)
-  const key = storedKey(dry.json[0])
+  // The row goes first: a removal whose commit fails or is refused leaves the
+  // file whole, never a row without its bytes. The bytes the committed
+  // removal stopped referencing, including a newer version an upload committed
+  // after the dry run, are then deleted best effort; a failed deletion leaves
+  // them unreferenced, like a replaced upload's.
   return transfer(ctx, async signal => {
-    let deleted
-    try { deleted = await objectRequest(binding, 'DELETE', key, { signal }) } catch { return ctx.problem(res, 502, 'storage_backend_unavailable') }
-    await drain(deleted)
-    if (deleted.statusCode !== 204 && deleted.statusCode !== 200 && deleted.statusCode !== 404) return ctx.problem(res, 502, 'storage_backend_unavailable')
     const committed = await rows(ctx, { method: 'DELETE', query, prefer: 'return=representation', token: await ctx.token(true), signal })
-    if (committed.status !== 200) return ctx.problem(res, 503, 'storage_commit_failed')
-    // An upload that committed after the dry run left a newer version.
-    for (const removed of Array.isArray(committed.json) ? committed.json : []) if (storedKey(removed) !== key) await discard(binding, storedKey(removed))
+    if (committed.status === 401 || committed.status === 403) return refused(ctx, committed)
+    if (committed.status !== 200 || !Array.isArray(committed.json)) return ctx.problem(res, 503, 'storage_commit_failed')
+    if (!committed.json.length) return ctx.problem(res, 404, 'storage_not_found')
+    for (const removed of new Set(committed.json.map(storedKey))) await discard(binding, removed)
     res.writeHead(204, { 'Cache-Control': 'no-store' })
     res.end()
   })
@@ -385,7 +409,8 @@ export function handleStorage(ctx) {
 export function storageAnonymousTarget(route, config) {
   if (route.write) return { code: 'token_required' }
   const listed = config.publicRead?.some(r => r.schema === config.storage.schema && r.relation === storageTable)
-  return listed ? {} : { code: 'public_read_not_allowed' }
+  if (!listed) return { code: 'public_read_not_allowed' }
+  return config.unsafePublicRead?.has(`${config.storage.schema}.${storageTable}`) ? { code: 'data_api_public_read_unsafe' } : {}
 }
 
 // storageServerKeyAllows applies a restricted key: its relations must list

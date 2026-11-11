@@ -28,14 +28,30 @@ type ChannelRule struct {
 
 // NotificationChannelInUseError refuses deleting a channel that is the only
 // destination of these rules: they have no webhook and no other channel, so
-// they would fire into nothing (ADR-20261029203000). Rules is at most
-// channelInUseMaxRules long.
+// they would fire into nothing (ADR-20261029203000). Releases names the
+// release approval policies and pending scheduled releases it is the last
+// channel of, which would then wait, start or be blocked unannounced
+// (ADR-20261020085706 amendment 7). Each list is at most channelInUseMaxRules
+// long.
 type NotificationChannelInUseError struct {
-	Rules []ChannelRule
+	Rules    []ChannelRule
+	Releases []string
 }
 
 func (e *NotificationChannelInUseError) Error() string {
-	return fmt.Sprintf("state: notification channel is the only destination of %d alert rule(s)", len(e.Rules))
+	return fmt.Sprintf("state: notification channel is the only destination of %d alert rule(s) and %d release notice(s)", len(e.Rules), len(e.Releases))
+}
+
+// ReleaseApprovalPolicyChannelUse names an approval policy in a refused
+// channel delete.
+func ReleaseApprovalPolicyChannelUse(appSlug string) string {
+	return "the release approval policy of " + appSlug
+}
+
+// ScheduledReleaseChannelUse names a pending schedule in a refused channel
+// delete.
+func ScheduledReleaseChannelUse(appSlug string, revision int) string {
+	return fmt.Sprintf("the scheduled release v%d of %s", revision, appSlug)
 }
 
 // NotificationChannel is an alert destination (ADR-749). TargetSealed holds
@@ -70,6 +86,80 @@ type NotificationChannelStore interface {
 	// errMsg is a success.
 	RecordNotificationChannelDelivery(ctx context.Context, id string, at time.Time, errMsg string) error
 }
+
+// UpdateNotificationChannelParams is a channel update: nil keeps a field.
+// TargetSealed and TargetHint change together.
+type UpdateNotificationChannelParams struct {
+	Name            *string
+	TargetSealed    []byte
+	TargetHint      *string
+	PagerDutyRegion *string
+}
+
+// NotificationChannelUpdateStore renames a channel or replaces its sealed
+// destination (ADR-20261104142830). Optional on Store; callers type-assert.
+// ErrNotFound when the account has no such channel, ErrConflict when the
+// name is taken.
+type NotificationChannelUpdateStore interface {
+	UpdateNotificationChannel(ctx context.Context, accountID, id string, p UpdateNotificationChannelParams) (NotificationChannel, error)
+}
+
+func (s *PgStore) UpdateNotificationChannel(ctx context.Context, accountID, id string, p UpdateNotificationChannelParams) (NotificationChannel, error) {
+	acct, key, err := channelKeys(accountID, id)
+	if err != nil {
+		return NotificationChannel{}, err
+	}
+	text := func(v *string) pgtype.Text {
+		if v == nil {
+			return pgtype.Text{}
+		}
+		return pgtype.Text{String: *v, Valid: true}
+	}
+	row, err := sqlc.New().UpdateNotificationChannel(ctx, s.pool, sqlc.UpdateNotificationChannelParams{
+		Name: text(p.Name), TargetSealed: p.TargetSealed, TargetHint: text(p.TargetHint),
+		PagerdutyRegion: text(p.PagerDutyRegion), AccountID: acct, ID: key,
+	})
+	if err != nil {
+		return NotificationChannel{}, mapErr(err)
+	}
+	return channelFromRow(row), nil
+}
+
+func (m *MemStore) UpdateNotificationChannel(_ context.Context, accountID, id string, p UpdateNotificationChannelParams) (NotificationChannel, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	chans := m.notificationChannels[accountID]
+	for i, c := range chans {
+		if c.ID != id {
+			continue
+		}
+		if p.Name != nil {
+			for _, other := range chans {
+				if other.ID != id && other.Name == *p.Name {
+					return NotificationChannel{}, ErrConflict
+				}
+			}
+			c.Name = *p.Name
+		}
+		if p.TargetSealed != nil {
+			c.TargetSealed, c.LastError, c.LastErrorAt = p.TargetSealed, "", time.Time{}
+		}
+		if p.TargetHint != nil {
+			c.TargetHint = *p.TargetHint
+		}
+		if p.PagerDutyRegion != nil {
+			c.PagerDutyRegion = *p.PagerDutyRegion
+		}
+		chans[i] = c
+		return c, nil
+	}
+	return NotificationChannel{}, ErrNotFound
+}
+
+var (
+	_ NotificationChannelUpdateStore = (*PgStore)(nil)
+	_ NotificationChannelUpdateStore = (*MemStore)(nil)
+)
 
 func channelFromRow(row sqlc.NotificationChannel) NotificationChannel {
 	return NotificationChannel{
@@ -167,11 +257,25 @@ func (s *PgStore) DeleteNotificationChannel(ctx context.Context, accountID, id s
 		if err != nil {
 			return fmt.Errorf("state: rules notifying channel %s: %w", id, err)
 		}
-		if len(rows) > 0 {
-			inUse := &NotificationChannelInUseError{Rules: make([]ChannelRule, 0, len(rows))}
-			for _, row := range rows {
-				inUse.Rules = append(inUse.Rules, ChannelRule{ID: row.ID, Name: row.Name})
-			}
+		inUse := &NotificationChannelInUseError{}
+		for _, row := range rows {
+			inUse.Rules = append(inUse.Rules, ChannelRule{ID: row.ID, Name: row.Name})
+		}
+		policies, err := q.ListReleaseApprovalPoliciesOnlyNotifyingChannel(ctx, tx, sqlc.ListReleaseApprovalPoliciesOnlyNotifyingChannelParams{ChannelID: key, MaxRows: channelInUseMaxRules})
+		if err != nil {
+			return fmt.Errorf("state: approval policies notifying channel %s: %w", id, err)
+		}
+		for _, slug := range policies {
+			inUse.Releases = append(inUse.Releases, ReleaseApprovalPolicyChannelUse(slug))
+		}
+		schedules, err := q.ListScheduledReleasesOnlyNotifyingChannel(ctx, tx, sqlc.ListScheduledReleasesOnlyNotifyingChannelParams{ChannelID: key, MaxRows: channelInUseMaxRules})
+		if err != nil {
+			return fmt.Errorf("state: scheduled releases notifying channel %s: %w", id, err)
+		}
+		for _, row := range schedules {
+			inUse.Releases = append(inUse.Releases, ScheduledReleaseChannelUse(row.Slug, int(row.Revision)))
+		}
+		if len(inUse.Rules) > 0 || len(inUse.Releases) > 0 {
 			return inUse
 		}
 		if _, err := q.DeleteNotificationChannel(ctx, tx, sqlc.DeleteNotificationChannelParams{AccountID: acct, ID: key}); err != nil {
@@ -250,6 +354,8 @@ func (m *MemStore) DeleteNotificationChannel(_ context.Context, accountID, id st
 			return inUse
 		}
 		m.notificationChannels[accountID] = append(chans[:i:i], chans[i+1:]...)
+		m.clearAlertChannelResolveRetriesLocked(func(k alertChannelRetryKey) bool { return k.channel == id })
+		m.clearAlertChannelStandDownsLocked(func(k alertChannelRetryKey) bool { return k.channel == id })
 		return nil
 	}
 	return ErrNotFound
@@ -276,7 +382,8 @@ func (m *MemStore) rulesOnlyNotifying(accountID, channelID string) *Notification
 			rules = append(rules, ChannelRule{ID: r.ID, Name: r.Name})
 		}
 	}
-	if len(rules) == 0 {
+	releases := m.releaseNoticesOnlyNotifying(accountID, channelID)
+	if len(rules) == 0 && len(releases) == 0 {
 		return nil
 	}
 	sort.Slice(rules, func(i, j int) bool {
@@ -285,7 +392,59 @@ func (m *MemStore) rulesOnlyNotifying(accountID, channelID string) *Notification
 		}
 		return rules[i].ID < rules[j].ID
 	})
-	return &NotificationChannelInUseError{Rules: rules[:min(len(rules), channelInUseMaxRules)]}
+	return &NotificationChannelInUseError{Rules: rules[:min(len(rules), channelInUseMaxRules)], Releases: releases}
+}
+
+// releaseNoticesOnlyNotifying mirrors ListReleaseApprovalPoliciesOnlyNotifyingChannel
+// and ListScheduledReleasesOnlyNotifyingChannel; m.mu is held.
+func (m *MemStore) releaseNoticesOnlyNotifying(accountID, channelID string) []string {
+	others := map[string]bool{}
+	for _, c := range m.notificationChannels[accountID] {
+		if c.ID != channelID && c.Kind != "pagerduty" {
+			others[c.ID] = true
+		}
+	}
+	lastChannel := func(ids []string) bool {
+		named := false
+		for _, id := range ids {
+			if others[id] {
+				return false
+			}
+			named = named || id == channelID
+		}
+		return named
+	}
+	var policies []string
+	for _, p := range m.releaseApprovalPolicies {
+		if lastChannel(p.NotifyChannelIDs) {
+			policies = append(policies, m.apps[p.AppID].Slug)
+		}
+	}
+	sort.Strings(policies)
+	type pending struct {
+		sr   ScheduledRelease
+		slug string
+	}
+	var schedules []pending
+	for _, sr := range m.scheduledReleases {
+		if sr.State == ScheduledReleasePending && lastChannel(sr.NotifyChannelIDs) {
+			schedules = append(schedules, pending{sr: sr, slug: m.apps[sr.AppID].Slug})
+		}
+	}
+	sort.Slice(schedules, func(i, j int) bool {
+		if !schedules[i].sr.ReleaseAt.Equal(schedules[j].sr.ReleaseAt) {
+			return schedules[i].sr.ReleaseAt.Before(schedules[j].sr.ReleaseAt)
+		}
+		return schedules[i].sr.ID < schedules[j].sr.ID
+	})
+	out := make([]string, 0, len(policies)+len(schedules))
+	for _, slug := range policies[:min(len(policies), channelInUseMaxRules)] {
+		out = append(out, ReleaseApprovalPolicyChannelUse(slug))
+	}
+	for _, s := range schedules[:min(len(schedules), channelInUseMaxRules)] {
+		out = append(out, ScheduledReleaseChannelUse(s.slug, int(s.sr.Revision)))
+	}
+	return out
 }
 
 // RecordNotificationChannelDelivery mirrors PgStore.

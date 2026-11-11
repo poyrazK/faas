@@ -44,10 +44,20 @@ func TestUnitVmmd_NoMemoryHigh(t *testing.T) {
 // TestUnitVmmd_NoMemoryHigh), so it would OOM-kill vmmd as a function
 // of how many instances are live — the exact failure that took a node
 // out of rotation on 2026-09-03. The slice remains the real bound, and
-// the CI hardening gate still sees a MemoryMax= line. imaged sets 4G
-// on the same reasoning.
+// the CI hardening gate still sees a MemoryMax= line. imaged also takes
+// the slice ceiling (TestUnitImaged_MemoryMaxIsSliceCeiling).
 func TestUnitVmmd_MemoryMaxIsSliceCeiling(t *testing.T) {
 	if got := UnitVmmd().MemoryMax; got != FaasCPSliceMemoryMax {
 		t.Errorf("vmmd: MemoryMax = %q, want %q (the slice ceiling)", got, FaasCPSliceMemoryMax)
+	}
+}
+
+// TestUnitImaged_MemoryMaxIsSliceCeiling pins imaged's cap to its slice. A
+// tighter cap evicts the Grype database from imaged's page cache, and every
+// scan reads it from disk again (2026-10-31: p50 78 s at 4G, 8.9 s bounded
+// by the slice).
+func TestUnitImaged_MemoryMaxIsSliceCeiling(t *testing.T) {
+	if got := UnitImaged().MemoryMax; got != FaasCPSliceMemoryMax {
+		t.Errorf("imaged: MemoryMax = %q, want %q (the slice ceiling)", got, FaasCPSliceMemoryMax)
 	}
 }

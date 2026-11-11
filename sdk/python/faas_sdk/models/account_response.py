@@ -15,6 +15,8 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.account_abuse_hold import AccountAbuseHold
     from ..models.account_limits import AccountLimits
+    from ..models.app_agent_binding import AppAgentBinding
+    from ..models.key_org import KeyOrg
 
 
 T = TypeVar("T", bound="AccountResponse")
@@ -38,6 +40,8 @@ class AccountResponse:
     app_count: int
     developer_app_count: int
     """Live `gregale dev` environments; these do not consume deployed_apps slots."""
+    display_name: str | Unset = UNSET
+    """Optional display name; absent when unset."""
     email_verification_grace_ends_at: datetime.datetime | Unset = UNSET
     """30-day verification deadline; present only while email_verified is false."""
     github_install_id: None | str | Unset = UNSET
@@ -53,6 +57,12 @@ class AccountResponse:
     key_scopes: list[str] | Unset = UNSET
     """Scopes of the API key that authenticated this request; absent for a dashboard session. An agent key (scope
     agent) lists the tools the hosted MCP server offers it."""
+    key_app: AppAgentBinding | Unset = UNSET
+    """Immutable app binding of an app-scoped headless agent credential; absent for account keys."""
+    key_org: KeyOrg | Unset = UNSET
+    """The shared organization an API key acts in."""
+    key_projects: list[str] | Unset = UNSET
+    """Slugs of the projects the authenticating key is limited to; absent when the key reaches every project."""
     abuse_hold: AccountAbuseHold | Unset = UNSET
     """Present while the account is on an abuse hold: outbound traffic from its workloads matched a scanning or
     abuse pattern, so nothing runs or deploys until an operator releases it."""
@@ -76,6 +86,8 @@ class AccountResponse:
         app_count = self.app_count
 
         developer_app_count = self.developer_app_count
+
+        display_name = self.display_name
 
         email_verification_grace_ends_at: str | Unset = UNSET
         if not isinstance(self.email_verification_grace_ends_at, Unset):
@@ -107,6 +119,18 @@ class AccountResponse:
         if not isinstance(self.key_scopes, Unset):
             key_scopes = self.key_scopes
 
+        key_app: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.key_app, Unset):
+            key_app = self.key_app.to_dict()
+
+        key_org: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.key_org, Unset):
+            key_org = self.key_org.to_dict()
+
+        key_projects: list[str] | Unset = UNSET
+        if not isinstance(self.key_projects, Unset):
+            key_projects = self.key_projects
+
         abuse_hold: dict[str, Any] | Unset = UNSET
         if not isinstance(self.abuse_hold, Unset):
             abuse_hold = self.abuse_hold.to_dict()
@@ -126,6 +150,8 @@ class AccountResponse:
                 "developer_app_count": developer_app_count,
             }
         )
+        if display_name is not UNSET:
+            field_dict["display_name"] = display_name
         if email_verification_grace_ends_at is not UNSET:
             field_dict["email_verification_grace_ends_at"] = email_verification_grace_ends_at
         if github_install_id is not UNSET:
@@ -144,6 +170,12 @@ class AccountResponse:
             field_dict["tax_id"] = tax_id
         if key_scopes is not UNSET:
             field_dict["key_scopes"] = key_scopes
+        if key_app is not UNSET:
+            field_dict["key_app"] = key_app
+        if key_org is not UNSET:
+            field_dict["key_org"] = key_org
+        if key_projects is not UNSET:
+            field_dict["key_projects"] = key_projects
         if abuse_hold is not UNSET:
             field_dict["abuse_hold"] = abuse_hold
 
@@ -153,6 +185,8 @@ class AccountResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.account_abuse_hold import AccountAbuseHold
         from ..models.account_limits import AccountLimits
+        from ..models.app_agent_binding import AppAgentBinding
+        from ..models.key_org import KeyOrg
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -172,6 +206,8 @@ class AccountResponse:
         app_count = d.pop("app_count")
 
         developer_app_count = d.pop("developer_app_count")
+
+        display_name = d.pop("display_name", UNSET)
 
         _email_verification_grace_ends_at = d.pop("email_verification_grace_ends_at", UNSET)
         email_verification_grace_ends_at: datetime.datetime | Unset
@@ -213,6 +249,22 @@ class AccountResponse:
 
         key_scopes = cast(list[str], d.pop("key_scopes", UNSET))
 
+        _key_app = d.pop("key_app", UNSET)
+        key_app: AppAgentBinding | Unset
+        if isinstance(_key_app, Unset):
+            key_app = UNSET
+        else:
+            key_app = AppAgentBinding.from_dict(_key_app)
+
+        _key_org = d.pop("key_org", UNSET)
+        key_org: KeyOrg | Unset
+        if isinstance(_key_org, Unset):
+            key_org = UNSET
+        else:
+            key_org = KeyOrg.from_dict(_key_org)
+
+        key_projects = cast(list[str], d.pop("key_projects", UNSET))
+
         _abuse_hold = d.pop("abuse_hold", UNSET)
         abuse_hold: AccountAbuseHold | Unset
         if isinstance(_abuse_hold, Unset):
@@ -230,6 +282,7 @@ class AccountResponse:
             usage_gb_hours=usage_gb_hours,
             app_count=app_count,
             developer_app_count=developer_app_count,
+            display_name=display_name,
             email_verification_grace_ends_at=email_verification_grace_ends_at,
             github_install_id=github_install_id,
             plan_change_status=plan_change_status,
@@ -239,6 +292,9 @@ class AccountResponse:
             billing_address=billing_address,
             tax_id=tax_id,
             key_scopes=key_scopes,
+            key_app=key_app,
+            key_org=key_org,
+            key_projects=key_projects,
             abuse_hold=abuse_hold,
         )
 

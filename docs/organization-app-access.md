@@ -47,7 +47,12 @@ attempting to access a teammate's app receives 409 `org_api_key_requires_org`.
 The first shared surface covers app detail/configuration, env and secret
 management, security/publishers, image or multipart deployment creation,
 deployment list/latest/summary/cancellation/retry, deployment/build evidence,
-and live/archive logs. The exact reviewed routes are in
+and live/archive logs, and edge rules: members who can read the app read its
+rules, history, events, stats and traces, and owners and admins create,
+change and delete them, roll them back and switch attack mode (purging cached
+responses takes the deploy permission). Edge-rule lists and CORS presets stay
+with the account that holds the app's rules; the app's dashboard page manages
+the lists its rules use. The exact reviewed routes are in
 [`routes.go`](../pkg/apid/appaccess/routes.go). Additional operations require a
 permission review before teammates can use them. Account-wide inventories remain
 creator-scoped and filter apps the caller can no longer read; select the
@@ -62,7 +67,8 @@ it does not delete existing applications.
 
 Other per-account plan allowances follow the app's billing subject
 (ADR-202610171904): API consumer keys, log drains, realtime endpoints, inbound
-and outbound webhooks, alert rules, CORS presets, triggers, captured and imported OpenAPI
+and outbound webhooks, alert rules, CORS presets, triggers, pending custom domain
+claims, captured and imported OpenAPI
 documents, crons (created
 singly, by a deploy or by a project apply) and reserved
 (`eviction_priority: reserved`) apps. Once an
@@ -79,7 +85,14 @@ request budgets and future usage billing. Human verification, audit attribution
 and credential revocation continue to use the actual caller. Organizations do
 not become login accounts.
 
-Free organizations own resources immediately. Existing paid organizations adopt
+Free organizations own resources immediately, so each has its own Free app and
+allowance. An account may own one organization on the Free plan
+(`api.FreeOrganizationsOwnedMax`); creating another answers `403
+org_free_limit_exceeded` until one is upgraded or deleted
+(ADR-20261031090658). Ownership transfers also check the new owner's Free
+capacity atomically with creation and other transfers. A refused transfer keeps
+both roles unchanged; making room permits a retry. Paid organizations consume
+no Free ownership slot. Existing paid organizations adopt
 ownership when their own provider-qualified subscription is confirmed; a customer
 ID or cached subscription handle alone does not activate it. Until then, existing
 billing remains in place and creator erasure returns 409. Personal provider IDs
@@ -101,6 +114,7 @@ Organization financial APIs are scoped by URL:
 - `GET /v1/orgs/{slug}/billing/status` and `GET /v1/orgs/{slug}/usage` require organization view permission.
 - `GET /v1/orgs/{slug}/invoices` requires billing permission.
 - `GET /v1/orgs/{slug}/billing/portal` and `PATCH /v1/orgs/{slug}/plan` require the owner, admin credential scope and the existing verification/step-up posture.
+- `PUT /v1/orgs/{slug}/billing/email` uses the same owner permissions and moves the provider customer before saving the email. Overlapping changes keep the provider and saved email in the same order; a provider refusal preserves the saved email.
 - `GET /v1/orgs/{slug}/overage-cap` requires organization view permission; `POST /v1/orgs/{slug}/overage-cap` sets or clears the organization's monthly spend cap and requires the owner like a plan change. The organization's apps stop at its cap, not at a member's (ADR-20261030093512).
 
 The Go client exposes `GetOrgBillingStatus`, `GetOrgUsage`, `ListOrgInvoices`,
@@ -136,7 +150,15 @@ sealed configuration and storage paths remain stable after creator erasure.
 | Project/environment deletion | yes | yes | no | no | no |
 
 API-key scopes and human MFA/verification still apply. App-scoped deploy tokens
-cannot administer an entire project. A company key cannot access personal
+cannot administer an entire project. A deploy token acts as the member who
+minted or last rotated it, with that member's current role, so it stops working
+when they leave; tokens minted before 2026-11-10 act as the app's creator
+(ADR-20261110190000). Only a key's holder can rotate an organization key,
+because rotation returns the new key's plaintext; owners and admins can still
+revoke anyone's. An organization key cannot manage its holder's personal
+account, keys or sessions (`/v1/keys`, `/v1/auth/sessions`, account deletion,
+restore, export, email, MFA, sign-in methods, billing and plan); it can still
+read `GET /v1/account`. A company key cannot access personal
 projects or another company's project, even when its human belongs to both.
 The API rechecks current membership before replaying responses; promotion and
 rollback operation keys are partitioned by actor and credential.
@@ -156,14 +178,34 @@ After billing adoption, deployment-rate admission shares the company's budget
 across these resource namespaces. Existing personal deployment windows stay with
 the individual account.
 
-The remaining reviewed project/environment paths mirror the existing APIs below
+Every reviewed project/environment path is also served below
 `/v1/orgs/{organization}/projects/{slug}`: environment inventories and creation,
-configuration/diffs, release sets, qualifications, promotion previews, approvals,
-promotions, rollbacks, source settings and deletion. The exact permission list is
+configuration/diffs, shared secrets, release sets (publish, activate,
+deactivate, rollback, staging and verification runs), feature flags, release
+secrets, deployment readiness, qualifications, promotion previews, approvals,
+promotions, rollbacks, source settings and deletion. Use these paths for a
+company project: `/v1/projects/{slug}` resolves the slug in your own
+namespace, which never holds an adopted company's projects. A key limited to
+projects reaches its company projects through these paths and the
+organization project list. The exact permission list is
 [`projectaccess/routes.go`](../pkg/apid/projectaccess/routes.go). Legacy project
 URLs and dashboard lists also enforce departure and role changes.
 
-GitHub/GitOps administration, async-route manifest bindings, resource/environment
+A company project links its repository through the company's own GitHub
+installation, never a member's personal one
+([ADR-20261110200000](adr/20261110200000-organization-owned-github-installations.md)).
+An owner or admin connects it from the GitHub section of the organization's
+dashboard page (Connect GitHub for the company); the role is checked again
+when GitHub returns. The same section lists the company's installations to
+every member and lets owners and admins disconnect one, which unlinks every
+company project bound through it. An installation belongs to one Gregale owner, so disconnect it from a
+personal account before connecting it for the company. Owners and admins then
+set `repo_full_name` with `PATCH /v1/orgs/{organization}/projects/{slug}`;
+members list the company's installations at
+`GET /v1/orgs/{organization}/github/installations`. A member leaving does not
+disconnect it.
+
+Other GitHub/GitOps administration, async-route manifest bindings, resource/environment
 cloning, browser approval exchange and other unreviewed integrations remain
 outside the reviewed project surface. Shared uploads reject async-route bindings
 before resolving personal services. Managed PostgreSQL bindings use the company
@@ -174,6 +216,11 @@ Go clients provide organization project methods such as `GetOrgProject`,
 `CreateOrgProjectEnvironment`, `DeployOrgProject`, `PromoteOrgProjectEnvironment`
 and `RollbackOrgProjectEnvironmentPromotion`. Generated Node/Python project
 clients include the organization routes. Personal clients retain their URLs.
+`Client.WithProjectOrganization("acme")` sends every project call of an existing
+client to the company's routes. In the CLI, put `--org` before the command:
+`gregale --org acme deploy --project`, `gregale --org acme projects list`. The
+reviewed-plan (`apply-plan`), safe-release and source-ref scan entry points have
+no company form; with `--org` the CLI refuses them before sending a request.
 See [ADR-202610171905](adr/202610171905-organization-project-ownership.md) for migration and
 acceptance requirements.
 
@@ -226,7 +273,8 @@ for backfill, rollout and acceptance requirements.
 
 `DELETE /v1/orgs/{slug}/members/{user_id}` removes the member and revokes their
 organization API keys (including rotation grace keys), deploy tokens for the
-organization's apps, and outstanding invitations to their email in the org, in
+organization's apps (those on apps they created and those they minted on
+teammates' apps), and outstanding invitations to their email in the org, in
 one transaction. Personal sessions/credentials and other organizations' keys
 remain valid. Company applications and already accepted workloads keep running.
 
@@ -282,16 +330,20 @@ for offboarding and its acceptance contract.
 
 ## Object storage
 
-Company buckets stay attached to their existing app and environment. Use
-`/v1/orgs/{organization}/apps/{slug}/buckets` for inventory, creation and deletion;
-its bucket paths provide object listing, API-key grants, user S3 keys and compute
-bindings. The existing app URLs enforce the same company permissions. Aggregate
+Company buckets stay attached to their existing app and environment. Every
+storage route under `/v1/apps/{slug}/` that has a reviewed company permission
+is also served under `/v1/orgs/{organization}/apps/{slug}/`: buckets, objects
+and versions, tags and protection, versioning, lifecycle, CORS, encryption,
+object lock, notifications and compute triggers, multipart uploads, signed
+URLs, write receipts, capacity reconciliations, S3 keys and their copy
+sources, API-key grants, compute bindings and upload routes. The existing app
+URLs enforce the same company permissions. Aggregate
 usage is at `GET /v1/orgs/{organization}/object-storage-usage`.
 
 | Storage operation | Owner | Admin | Developer | Viewer | Billing |
 |---|---|---|---|---|---|
 | Bucket, object listing and binding metadata | yes | yes | yes | yes | no |
-| Create/delete buckets and manage user S3 keys/API-key grants | yes | yes | no | no | no |
+| Create/delete buckets, change bucket settings, objects and multipart uploads, sign URLs, manage upload routes, user S3 keys and API-key grants | yes | yes | no | no | no |
 | Attach/detach application bindings | yes | yes | yes | no | no |
 | Rotate application binding credentials | yes | yes | no | no | no |
 | Aggregate storage usage | yes | yes | yes | yes | yes |
@@ -299,8 +351,8 @@ usage is at `GET /v1/orgs/{organization}/object-storage-usage`.
 Credential scopes and MFA still apply. A storage read key needs a bucket read
 grant to list objects. Grants target current members' keys in the same company;
 company keys cannot reach personal storage. Company storage mutations require
-billing adoption. Unreviewed shared settings, signed-URL control APIs, upload-route
-administration, source-manifest creation and environment cloning remain closed.
+billing adoption. Source-manifest creation and environment cloning remain
+closed.
 Existing app credentials and upload routes keep their durable application authority.
 
 Removing a member or changing their role revokes their human S3 keys. A request

@@ -874,6 +874,7 @@ func TestEveryCodeHasWhycopyEntry(t *testing.T) {
 		api.CodeDepInstallFailed,
 		api.CodeAppStartupTimeout,
 		api.CodeAppStartupCrash,
+		api.CodeFunctionInitFailed,
 		api.CodeExecutionModeConflict,
 		api.CodeStatelessOnlyViolation,
 		// ADR-117 §Production-ready follow-on: per-stage failure
@@ -886,6 +887,7 @@ func TestEveryCodeHasWhycopyEntry(t *testing.T) {
 		api.CodeStageImageBuildTimeout,
 		api.CodeBuildFailed,
 		api.CodeBuildInfrastructure,
+		api.CodeReleaseInfrastructure,
 		api.CodeAppLayerTooBig,
 		api.CodeStageSecurityScanFindings,
 		api.CodeStageSnapshotPrepareTimeout,

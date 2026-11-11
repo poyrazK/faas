@@ -28,7 +28,21 @@ func (s *PgStore) ApplyIssueSlackInteraction(ctx context.Context, app string, in
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	if _, err = q.IssueLockApp(ctx, tx, issueUUID(app)); err != nil {
+	identityArgs := sqlc.IssueSlackIdentityGetParams{AppID: issueUUID(app), SlackUserID: in.UserID}
+	initialIdentity, identityErr := q.IssueSlackIdentityGet(ctx, tx, identityArgs)
+	hadIdentity := identityErr == nil
+	if identityErr != nil && !errors.Is(identityErr, pgx.ErrNoRows) {
+		return out, identityErr
+	}
+	if hadIdentity {
+		appPolicy, err := q.IssuePolicyApp(ctx, tx, issueUUID(app))
+		if err != nil {
+			return out, mapErr(err)
+		}
+		if _, err = lockIssueResponseActor(ctx, tx, app, issueID(appPolicy.AccountID), issueID(initialIdentity.AccountID)); err != nil {
+			return out, err
+		}
+	} else if _, err = q.IssueLockApp(ctx, tx, issueUUID(app)); err != nil {
 		return out, mapErr(err)
 	}
 	c, err := q.IssueSlackActionContext(ctx, tx, sqlc.IssueSlackActionContextParams{AppID: issueUUID(app), DeliveryID: issueUUID(in.DeliveryID), ChannelID: in.ChannelID, MessageTs: in.MessageTS, PolicyRevision: in.PolicyRevision, EntitledPlans: issueSlackEntitledPlans()})
@@ -48,19 +62,27 @@ func (s *PgStore) ApplyIssueSlackInteraction(ctx context.Context, app string, in
 	// the original click cannot execute an action after the user confirms linking.
 	ch, err := q.IssueSlackChallengeGet(ctx, tx, sqlc.IssueSlackChallengeGetParams{AppID: c.AppID, RequestKey: in.RequestKey})
 	if err == nil {
-		out.Status = "link_required"
-		out.LinkToken = ch.Token
 		if ch.ConsumedAt.Valid {
 			out.Status = "linked"
-			out.LinkToken = ""
+			return out, tx.Commit(ctx)
 		}
+		// Only the token's hash is stored, so a retried click gets a new
+		// link and the one it replaces stops working.
+		out.LinkToken, err = rotateSlackLinkChallenge(ctx, q, tx, c.AppID, in.RequestKey)
+		if err != nil {
+			return out, err
+		}
+		out.Status = "link_required"
 		return out, tx.Commit(ctx)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return out, err
 	}
-	identity, err := q.IssueSlackIdentityGet(ctx, tx, sqlc.IssueSlackIdentityGetParams{AppID: c.AppID, SlackUserID: in.UserID})
+	identity, err := q.IssueSlackIdentityGet(ctx, tx, identityArgs)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if hadIdentity {
+			return out, ErrNotFound
+		}
 		out.LinkToken, err = createSlackLinkChallenge(ctx, q, tx, c.AppID, in)
 		if err != nil {
 			return out, err
@@ -70,6 +92,9 @@ func (s *PgStore) ApplyIssueSlackInteraction(ctx context.Context, app string, in
 	}
 	if err != nil {
 		return out, err
+	}
+	if !hadIdentity || identity.AccountID != initialIdentity.AccountID {
+		return out, ErrNotFound
 	}
 	actor := issueID(identity.AccountID)
 	scope, err := applicationTriageScope(ctx, q, tx, app, issueID(c.AccountID), actor, issueID(c.IssueID))
@@ -106,16 +131,34 @@ func createSlackLinkChallenge(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, a
 	if n >= api.IssueSlackLinkChallengesMax {
 		return "", api.ErrCapacity("Slack account linking is busy; try again shortly")
 	}
-	raw := make([]byte, api.IssueSlackLinkNonceBytes)
-	if _, err = rand.Read(raw); err != nil {
+	token, err := newSlackLinkToken()
+	if err != nil {
 		return "", err
 	}
-	token := hex.EncodeToString(raw)
 	// Use database time for the expiry as well as response mutation.
 	now, err := q.IssueSlackInteractionNow(ctx, tx)
 	if err != nil {
 		return "", err
 	}
-	err = q.IssueSlackChallengePut(ctx, tx, sqlc.IssueSlackChallengePutParams{Token: token, AppID: appID, DeliveryID: issueUUID(in.DeliveryID), RequestKey: in.RequestKey, SlackUserID: in.UserID, PolicyRevision: in.PolicyRevision, ExpiresAt: issueTime(now.Time.Add(api.IssueSlackLinkTTL))})
+	err = q.IssueSlackChallengePut(ctx, tx, sqlc.IssueSlackChallengePutParams{Token: slackLinkTokenHash(token), AppID: appID, DeliveryID: issueUUID(in.DeliveryID), RequestKey: in.RequestKey, SlackUserID: in.UserID, PolicyRevision: in.PolicyRevision, ExpiresAt: issueTime(now.Time.Add(api.IssueSlackLinkTTL))})
 	return token, err
+}
+
+// rotateSlackLinkChallenge gives the unconsumed challenge for requestKey a
+// new token, keeping its expiry, and returns the token.
+func rotateSlackLinkChallenge(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, appID pgtype.UUID, requestKey string) (string, error) {
+	token, err := newSlackLinkToken()
+	if err != nil {
+		return "", err
+	}
+	err = q.IssueSlackChallengeRotate(ctx, tx, sqlc.IssueSlackChallengeRotateParams{AppID: appID, RequestKey: requestKey, Token: slackLinkTokenHash(token)})
+	return token, err
+}
+
+func newSlackLinkToken() (string, error) {
+	raw := make([]byte, api.IssueSlackLinkNonceBytes)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(raw), nil
 }

@@ -232,7 +232,7 @@ func (s *Managed) HistoryPlan(w http.ResponseWriter, r *http.Request, acct state
 		problem(w, err)
 		return
 	}
-	httpkit.WriteJSON(w, http.StatusOK, HistoricalPlanResponse{Plan: p, Execution: execution})
+	writePlanJSON(w, HistoricalPlanResponse{Plan: p, Execution: execution})
 }
 
 func (s *Managed) HistoryVerify(w http.ResponseWriter, r *http.Request, acct state.Account) {

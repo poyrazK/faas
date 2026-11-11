@@ -39,6 +39,7 @@ func (s *fixtureSMTP) Submit(context.Context, internalmail.Envelope) (string, st
 func TestPGProducerOutboxRealMaildLostAcknowledgementDoesNotDuplicate(t *testing.T) {
 	pool := pgtest.Open(t)
 	if _, err := pool.Exec(t.Context(), `CREATE TABLE accounts(id uuid PRIMARY KEY,email text NOT NULL,status text NOT NULL,plan text NOT NULL DEFAULT 'free',provider_customer_id text,stripe_subscription_item text,last_quota_warning_at timestamptz,deletion_requested_at timestamptz,email_verified_at timestamptz,abuse_hold_at timestamptz,mfa_enrolled_at timestamptz,mfa_recovery_codes_hash bytea[],mfa_secret_encrypted bytea,mfa_required boolean NOT NULL DEFAULT false,past_due_at timestamptz,suspended_reason text,deletion_includes_managed_postgres boolean NOT NULL DEFAULT false);
+ALTER TABLE accounts ADD COLUMN mfa_totp_last_step bigint;
 CREATE TABLE usage_minutes(account_id uuid NOT NULL,minute timestamptz NOT NULL,mb_seconds bigint NOT NULL);
 CREATE TABLE login_tokens(token_hash bytea PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,expires_at timestamptz NOT NULL,consumed_at timestamptz);
 CREATE TABLE mfa_disable_requests(token_hash bytea PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,requested_at timestamptz NOT NULL,consumed_at timestamptz);
@@ -51,6 +52,7 @@ CREATE TABLE deployments(id uuid PRIMARY KEY,app_id uuid NOT NULL REFERENCES app
 CREATE TABLE org_memberships(org_id uuid NOT NULL,account_id uuid NOT NULL,role text NOT NULL,removed_at timestamptz,PRIMARY KEY(org_id,account_id));
 CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz);
 CREATE TABLE resource_namespaces(id uuid PRIMARY KEY);
+CREATE TABLE managed_postgres_databases(id uuid PRIMARY KEY);
 CREATE TABLE agents(id uuid PRIMARY KEY,account_id uuid NOT NULL,name text NOT NULL);
 CREATE TABLE agent_runs(id uuid PRIMARY KEY,account_id uuid NOT NULL,agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE);
 CREATE TABLE agent_deliveries(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),account_id uuid NOT NULL,run_id uuid NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,destination text NOT NULL,state text NOT NULL DEFAULT 'pending',body text NOT NULL DEFAULT '',body_truncated boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),deadline_at timestamptz NOT NULL DEFAULT now()+interval '15 minutes');

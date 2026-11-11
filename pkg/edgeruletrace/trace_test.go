@@ -191,6 +191,34 @@ func TestSimulateValidateRuleParameters(t *testing.T) {
 			t.Fatalf("trace result echoed the query string %q", query)
 		}
 	}
+	// An undecodable escape is a query mismatch, as the gateway answers it
+	// (422), and only a rule with a query schema checks the query.
+	for _, tc := range []struct {
+		name    string
+		params  *api.EdgeRuleValidateParameters
+		outcome string
+	}{
+		{name: "query schema", params: &withQuery, outcome: "validation_failed"},
+		{name: "no query schema", params: params, outcome: "validated"},
+	} {
+		in := input("/users/7", "t1")
+		in.Query = "limit=%zz"
+		result, err := edgeruletrace.Simulate(in, []api.EdgeRuleResponse{rule(tc.params)})
+		if err != nil || result.Simulation.Steps[0].Outcome != tc.outcome {
+			t.Fatalf("%s: undecodable query simulation = %#v, err=%v; want %s", tc.name, result.Simulation, err, tc.outcome)
+		}
+	}
+	// Array headers split on commas, as the gateway reads them.
+	withList := *params
+	withList.Headers = json.RawMessage(`{"type":"object","properties":{"x-tenant":{"type":"string"},"x-ids":{"type":"array","items":{"type":"integer"},"maxItems":2}},"required":["x-tenant"]}`)
+	for ids, outcome := range map[string]string{"1, 2": "validated", "1,2,3": "validation_failed", "1,x": "validation_failed"} {
+		in := input("/users/7", "t1")
+		in.Headers.Set("X-Ids", ids)
+		result, err := edgeruletrace.Simulate(in, []api.EdgeRuleResponse{rule(&withList)})
+		if err != nil || result.Simulation.Steps[0].Outcome != outcome {
+			t.Fatalf("x-ids %q simulation = %#v, err=%v; want %s", ids, result.Simulation, err, outcome)
+		}
+	}
 }
 
 func TestSimulateValidateRuleModes(t *testing.T) {
@@ -1785,5 +1813,72 @@ func corsTraceRule(t *testing.T, id string, matchMethods []string, action api.Ed
 	return api.EdgeRuleResponse{
 		ID: id, Enabled: true, Kind: "cors", MatchHost: "*", MatchPath: "*",
 		MatchMethods: matchMethods, Action: encodedAction,
+	}
+}
+
+// adr: 091 — access gates match the client's path before the rewritten one,
+// so an ip rule on /api/** still applies after a rewrite takes /api away
+// (amendment 2026-11-02, review round 8).
+func TestSimulateAccessGateMatchesOriginalPathAfterRewrite(t *testing.T) {
+	rewrite := api.EdgeRuleResponse{
+		ID: "rewrite", Enabled: true, Kind: "rewrite", MatchHost: "*", MatchPath: "/api/**", Priority: 10,
+		Action: json.RawMessage(`{"rewrite":{"from":"/api","to":"/"}}`),
+	}
+	gate := api.EdgeRuleResponse{
+		ID: "api-ip", Enabled: true, Kind: "ip", MatchHost: "*", MatchPath: "/api/**", Priority: 20,
+		Action: json.RawMessage(`{"ip":{"deny":["203.0.113.0/24"]}}`),
+	}
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/api/users", Method: http.MethodGet,
+		AppMaintenanceLoaded: true, ClientIP: "203.0.113.9",
+	}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rewrite, gate})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	var ipStep *edgeruletrace.SimulationStep
+	for i := range result.Simulation.Steps {
+		if result.Simulation.Steps[i].Phase == "ip" {
+			ipStep = &result.Simulation.Steps[i]
+		}
+	}
+	if result.Simulation.FinalPath != "/users" || ipStep == nil || ipStep.RuleID != "api-ip" {
+		t.Fatalf("simulation = %#v, want the /api/** ip rule applied after the rewrite to /users", result.Simulation)
+	}
+}
+
+// adr: 091 — when both the client's path and the rewritten path have an
+// access-gate rule, the trace applies both, client path first (amendment
+// 2026-11-03, review round 9): the rewritten path's deny still blocks after
+// the client path's allow passes.
+func TestSimulateAccessGateAppliesBothPathsRulesAfterRewrite(t *testing.T) {
+	rewrite := api.EdgeRuleResponse{
+		ID: "rewrite", Enabled: true, Kind: "rewrite", MatchHost: "*", MatchPath: "/legacy/**", Priority: 10,
+		Action: json.RawMessage(`{"rewrite":{"from":"/legacy","to":"/internal"}}`),
+	}
+	legacy := api.EdgeRuleResponse{
+		ID: "legacy-ip", Enabled: true, Kind: "ip", MatchHost: "*", MatchPath: "/legacy/**", Priority: 20,
+		Action: json.RawMessage(`{"ip":{"allow":["203.0.113.0/24"]}}`),
+	}
+	internal := api.EdgeRuleResponse{
+		ID: "internal-ip", Enabled: true, Kind: "ip", MatchHost: "*", MatchPath: "/internal/**", Priority: 30,
+		Action: json.RawMessage(`{"ip":{"deny":["203.0.113.0/24"]}}`),
+	}
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/legacy/users", Method: http.MethodGet,
+		AppMaintenanceLoaded: true, ClientIP: "203.0.113.9",
+	}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rewrite, legacy, internal})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	var ipRules []string
+	for _, step := range result.Simulation.Steps {
+		if step.Phase == "ip" {
+			ipRules = append(ipRules, step.RuleID+":"+step.Outcome)
+		}
+	}
+	if len(ipRules) != 2 || ipRules[0] != "legacy-ip:allow" || ipRules[1] != "internal-ip:block" || result.Simulation.Outcome != "blocked" {
+		t.Fatalf("ip steps = %v, outcome %q; want legacy-ip allowed then internal-ip blocking", ipRules, result.Simulation.Outcome)
 	}
 }

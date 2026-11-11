@@ -9,6 +9,18 @@ reached githubd for weeks and nothing alerted. This page is the contract; the
 `FaasGithubApp*` alerts ([runbook](../runbooks/FaasGithubAppWebhook.md)) catch
 drift from it.
 
+## Deployment connections and sign-in
+
+The same GitHub App installation may be authorized independently by multiple
+Gregale accounts for deployments. Each must complete Connect GitHub and pass
+the personal-owner or organization-admin checks. Repository access and project
+ownership remain scoped to the Gregale account. GitHub sign-in identities
+remain associated with exactly one Gregale account; deployment connections do
+not move those identities. Uninstalling or suspending the App on GitHub revokes
+every Gregale connection derived from that installation. See
+[ADR-20261106203000](../adr/20261106203000-shared-github-deployment-connections.md)
+for migration and rollout requirements.
+
 ## Webhook
 
 | Setting | Value |
@@ -36,13 +48,16 @@ signed with any other secret with 401 and counts it as
 |---|---|
 | Pull request | PR previews: create on open and reopen, rebuild on push, tear down on close |
 | Push | Push-to-deploy on the production branch, deployment skips, CI sources |
-| Repository | Keeping bindings when a repository is renamed, transferred, archived or deleted. Without it a rename detaches the binding at the next installation sync. |
-| Issues | Only for issue-tracker callbacks (ADR-1476) |
+| Repository | Keeping bindings and projects when a repository is renamed, transferred or deleted. Without it a rename reaches Gregale only at the next hourly installation sync, which matches by repository ID, and pushes in between are not deployed. |
+| Issues | Issue-tracker callbacks (ADR-1476) |
 
-GitHub sends installation events (`installation`, `installation_repositories`)
-to every App without a subscription. githubd answers any other subscribed event
-with `202 {"status":"ignored"}`, so extra subscriptions are harmless but
-useless.
+GitHub sends installation events (`installation`, `installation_repositories`,
+and `installation_target` when a user or organization is renamed) to every App
+without a subscription. githubd answers any other subscribed event with
+`202 {"status":"ignored"}`, so extra subscriptions are harmless but useless.
+
+`FaasGithubAppConfigDrift` fires when GitHub reports the App without one of
+these events or one of the permissions below (ADR-20261101160300).
 
 ## Permissions
 
@@ -54,6 +69,23 @@ useless.
 | Issues | Read and write | The preview status comment on the PR (PR comments use the Issues API), issue-tracker callbacks |
 | Metadata | Read-only | Required by GitHub for every App |
 | Pull requests | Read-only | Current PR head checks before acting on a delivery |
+| Organization → Members | Read-only | Connect GitHub checks that whoever connects an organization's installation is an active admin of it |
+
+## Connect GitHub URLs
+
+| Setting | Value |
+|---|---|
+| Callback URL | `<console origin>/oauth/code-callback`: apid's `cli_auth_url_base` (`FAAS_CLI_AUTH_URL_BASE`) plus the path, or `FAAS_GITHUB_APP_REDIRECT_URI` when set. The two must match exactly. |
+| Request user authorization (OAuth) during installation | on |
+| Setup URL | `<console origin>/oauth/callback` (used only when the option above is off) |
+| Redirect on update | on |
+
+Connect GitHub sends the customer to GitHub's user authorization. When the
+GitHub user has no installation of the App, Gregale sends them to install it;
+with user authorization during installation on, GitHub returns to the
+Callback URL and the connection completes in one pass. Both callbacks work for
+every Gregale sign-in provider: GitHub proves that the authorizing user owns
+the personal installation or administers the organization.
 
 Adding a permission makes GitHub ask every installation's owner to approve it;
 until they do, those installations keep the old permission set.
@@ -82,3 +114,29 @@ githubd also uses the private key to read the App's delivery log for the
    or `pull_request` delivery and confirm `202`.
 2. Within five minutes `githubd_github_hook_latest_delivery_failed` reads 0.
 3. `gregalectl github status --status dead` shows nothing new.
+
+
+### Account connections and missed deliveries
+
+Customers manage deployment connections in Settings → Integrations. “Verify
+access” shows the installation owner type, repository selection, current
+permission grants, repository count, and verification time. Apps can select a
+personal or organization installation independently. “Disconnect” there removes
+only the signed-in Gregale account's access; uninstalling the App on GitHub
+still revokes every Gregale connection to that installation.
+
+The monitor automatically repairs recent transport failures through GitHub's
+[App webhook redelivery endpoint](https://docs.github.com/en/rest/apps/webhooks#redeliver-a-delivery-for-an-app-webhook).
+It scans at most 500 attempts from the past hour, waits two minutes, and caps
+redelivery at three attempts per GUID with backoff and ten requests per poll.
+Already accepted inbox events retain their normal worker retry and dead-letter
+policy. A 401/403/404 delivery needs configuration or permission repair; it is
+not automatically replayed. A provider rate-limit response pauses all repair
+requests using durable state. The existing delivery gauges and worker logs
+remain the operator diagnostic surface.
+
+GitHub check names now include a stable account suffix. Update repository
+branch-protection required checks to the intended account's new name after the
+first deployment. Do not use another Gregale account's check as the required
+status. Apply the expansion and batched backfill first; activate sharing only
+in a full release after every githubd worker runs the account-aware code.

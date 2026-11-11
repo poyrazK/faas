@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.request import Request,urlopen
 from urllib.error import HTTPError
 from server import DrainingHTTPServer,MCPHandler,load_config
-from auth import Authenticator,AuthConfigurationError
+from auth import Authenticator,AuthConfigurationError,AuthFailure
 
 class MCPStarterTests(unittest.TestCase):
     def setUp(self):
@@ -45,6 +45,10 @@ class MCPStarterTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as failure:
             urlopen(Request(self.base+"/healthz",headers={"Origin":"https://untrusted.example"}),timeout=3)
         self.assertEqual(failure.exception.code,403)
+    def test_health_names_serving_instance(self):
+        # Instances restored from one snapshot share their boot env.
+        with urlopen(Request(self.base+"/healthz",headers={"X-Faas-Instance-Id":"inst-restored"}),timeout=3) as response:
+            self.assertEqual(json.load(response)["instance_id"],"inst-restored")
     def test_draining_rejects_new_work(self):
         self.http.draining.set()
         with self.assertRaises(HTTPError) as failure:urlopen(self.base+"/healthz",timeout=3)
@@ -54,6 +58,63 @@ class MCPStarterTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory:
                 path=Path(directory)/"gregale-mcp.json";path.write_text(json.dumps({**self.config,**change}))
                 with self.assertRaises(AuthConfigurationError):load_config(path)
+
+
+class MCPKeepAliveFramingTests(unittest.TestCase):
+    setUp = MCPStarterTests.setUp
+    tearDown = MCPStarterTests.tearDown
+
+    def post(self, connection, headers=None, path="/mcp"):
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        connection.request("POST", path, body, headers={
+            "Content-Type": "application/json", "MCP-Protocol-Version": "2026-07-28",
+            "Mcp-Method": "tools/list", **(headers or {}),
+        })
+        response = connection.getresponse()
+        response.read()
+        return response
+
+    def assert_retry_reconnects(self, status, headers=None, path="/mcp", reset=lambda: None):
+        connection = http.client.HTTPConnection(*self.http.server_address, timeout=3)
+        try:
+            rejected = self.post(connection, headers, path)
+            self.assertEqual(rejected.status, status)
+            self.assertEqual(rejected.getheader("Connection"), "close")
+            self.assertTrue(rejected.will_close)
+            reset()
+            # HTTPConnection automatically reconnects after the close response.
+            self.assertEqual(self.post(connection).status, 200)
+        finally:
+            connection.close()
+
+    def test_content_type_retry_reconnects(self):
+        self.assert_retry_reconnects(415, {"Content-Type": "text/plain"})
+
+    def test_auth_challenge_retry_reconnects(self):
+        original = self.http.authenticator.authenticate
+        def require_auth(_authorization):
+            raise AuthFailure(401, "authentication_required", challenge=False)
+        self.http.authenticator.authenticate = require_auth
+        self.assert_retry_reconnects(401, reset=lambda: setattr(self.http.authenticator, "authenticate", original))
+
+    def test_other_early_rejections_close_unread_bodies(self):
+        self.assert_retry_reconnects(403, {"Origin": "https://untrusted.example"})
+        self.assert_retry_reconnects(404, path="/unknown")
+        self.http.draining.set()
+        self.assert_retry_reconnects(503, reset=self.http.draining.clear)
+        self.http.expected_catalog_sha256 = "f" * 64
+        self.assert_retry_reconnects(503, reset=lambda: setattr(self.http, "expected_catalog_sha256", ""))
+
+    def test_successful_requests_keep_the_connection(self):
+        connection = http.client.HTTPConnection(*self.http.server_address, timeout=3)
+        try:
+            self.assertFalse(self.post(connection).will_close)
+            first = connection.sock
+            self.assertFalse(self.post(connection).will_close)
+            self.assertIs(connection.sock, first)
+            self.assertTrue(self.post(connection, {"Connection": "close"}).will_close)
+        finally:
+            connection.close()
 
 
 class MCPCORSTests(unittest.TestCase):
@@ -104,4 +165,78 @@ class MCPCORSTests(unittest.TestCase):
             self.assertEqual(response.headers["Access-Control-Allow-Origin"],"https://trusted.example")
             self.assertEqual(response.headers["Access-Control-Expose-Headers"],"WWW-Authenticate, MCP-Protocol-Version, Streaming-Status")
 
-if __name__=="__main__":unittest.main()
+
+
+class MCPProtocolHeaderTests(unittest.TestCase):
+    setUp = MCPStarterTests.setUp
+    tearDown = MCPStarterTests.tearDown
+
+    def post(self, message, version="2026-07-28", extra=()):
+        connection = http.client.HTTPConnection("127.0.0.1", self.http.server_address[1], timeout=3)
+        body = json.dumps(message).encode()
+        try:
+            connection.putrequest("POST", "/mcp")
+            for name, value in [("Content-Type", "application/json"), ("Content-Length", str(len(body))), ("MCP-Protocol-Version", version), *extra]:
+                connection.putheader(name, value)
+            connection.endheaders(body)
+            response = connection.getresponse()
+            return response.status, response.read()
+        finally:
+            connection.close()
+
+    def test_legacy_setting_controls_negotiation_discovery_and_notifications(self):
+        for legacy in (False, True):
+            self.config["legacy"] = legacy
+            for version in ("2026-07-28", "2025-11-25"):
+                status, _ = self.post({"jsonrpc":"2.0", "id":1, "method":"initialize", "params":{"protocolVersion":version}}, version, [("MCP-Method", "initialize")])
+                self.assertEqual(status, 200 if legacy or version=="2026-07-28" else 400)
+            status, _ = self.post({"jsonrpc":"2.0", "id":1, "method":"initialize", "params":{"protocolVersion":"2025-11-25"}}, extra=[("MCP-Method", "initialize")])
+            self.assertEqual(status, 200 if legacy else 400)
+            status, body = self.post({"jsonrpc":"2.0", "id":1, "method":"server/discover"}, extra=[("MCP-Method", "server/discover")])
+            self.assertEqual(status, 200)
+            self.assertEqual("2025-11-25" in json.loads(body)["result"]["supportedVersions"], legacy)
+            status, _ = self.post({"jsonrpc":"2.0", "method":"notifications/initialized"}, "2025-11-25")
+            self.assertEqual(status, 202 if legacy else 400)
+
+    def test_resource_routing_accepts_encoded_uri(self):
+        status, body = self.post({"jsonrpc":"2.0", "id":1, "method":"resources/read", "params":{"uri":"greeting://welcome"}},
+            extra=[("MCP-Method", "resources/read"), ("MCP-Name", "=?base64?Z3JlZXRpbmc6Ly93ZWxjb21l?=")])
+        self.assertEqual(status, 200, body)
+
+    def test_invalid_headers_never_execute_tool(self):
+        from server import MCP_CATALOG
+        calls = []
+        self.config["auth"]["tool_scopes"]["header_probe"] = []
+        self.http.authenticator = Authenticator(self.config)
+        MCP_CATALOG.register("tool", {"name":"header_probe", "inputSchema":{"type":"object", "properties":{"region":{"type":"string", "x-mcp-header":"region"}}}},
+                             lambda args, caller: calls.append(args) or {"content":[]})
+        self.addCleanup(lambda: MCP_CATALOG.remove("tool", "header_probe"))
+        for method, name, value, meta, duplicate, wanted in [
+            ("tools/call", "header_probe", "us-east", "2026-07-28", False, 200),
+            ("", "header_probe", "us-east", "2026-07-28", False, 400),
+            ("tools/list", "header_probe", "us-east", "2026-07-28", False, 400),
+            ("tools/call", "header_probe", "us-east", "2026-07-28", True, 400),
+            ("tools/call", "", "us-east", "2026-07-28", False, 400),
+            ("tools/call", "greet", "us-east", "2026-07-28", False, 400),
+            ("tools/call", "header_probe", "", "2026-07-28", False, 400),
+            ("tools/call", "header_probe", "eu-west", "2026-07-28", False, 400),
+            ("tools/call", "header_probe", "=?base64?!!!?=", "2026-07-28", False, 400),
+            ("tools/call", "header_probe", "=?base64?dXMtZWFzdA==?=", "2026-07-28", False, 200),
+            ("tools/call", "header_probe", "us-east", "2025-11-25", False, 400),
+        ]:
+            with self.subTest(method=method, name=name, value=value, meta=meta, duplicate=duplicate):
+                extra = [(key, item) for key, item in [("MCP-Method",method), ("MCP-Name",name), ("MCP-Param-Region",value)] if item]
+                if duplicate:
+                    extra.append(("MCP-Method",method))
+                before = len(calls)
+                status, body = self.post({"jsonrpc":"2.0", "id":1, "method":"tools/call", "params":{"name":"header_probe", "arguments":{"region":"us-east"}, "_meta":{"io.modelcontextprotocol/protocolVersion":meta}}}, extra=extra)
+                self.assertEqual(status, wanted, body)
+                self.assertEqual(len(calls), before + (wanted==200))
+                if wanted==400:
+                    self.assertEqual(json.loads(body)["error"]["code"], -32020)
+        status, _ = self.post({"jsonrpc":"2.0", "method":"notifications/initialized"})
+        self.assertEqual(status, 202)
+
+
+if __name__ == "__main__":
+    unittest.main()

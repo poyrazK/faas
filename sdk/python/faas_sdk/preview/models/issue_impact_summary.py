@@ -6,6 +6,8 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="IssueImpactSummary")
 
 
@@ -16,6 +18,8 @@ class IssueImpactSummary:
     identified_customers: int
     observed_events: int
     unattributed_events: int
+    unknown_http_batches: int | Unset = UNSET
+    """Legacy HTTP records with unknown folded weights; observed event counts are lower bounds."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -24,6 +28,8 @@ class IssueImpactSummary:
         observed_events = self.observed_events
 
         unattributed_events = self.unattributed_events
+
+        unknown_http_batches = self.unknown_http_batches
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -34,6 +40,8 @@ class IssueImpactSummary:
                 "unattributed_events": unattributed_events,
             }
         )
+        if unknown_http_batches is not UNSET:
+            field_dict["unknown_http_batches"] = unknown_http_batches
 
         return field_dict
 
@@ -46,10 +54,13 @@ class IssueImpactSummary:
 
         unattributed_events = d.pop("unattributed_events")
 
+        unknown_http_batches = d.pop("unknown_http_batches", UNSET)
+
         issue_impact_summary = cls(
             identified_customers=identified_customers,
             observed_events=observed_events,
             unattributed_events=unattributed_events,
+            unknown_http_batches=unknown_http_batches,
         )
 
         issue_impact_summary.additional_properties = d

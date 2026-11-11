@@ -1,4 +1,5 @@
 // adr: 623 — customer admission, durable progress and secret-free projections.
+// adr: 1027 — storage limits grow through the same resize, within the plan.
 package apidserver_test
 
 import (
@@ -12,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -21,6 +23,7 @@ func (resizeAPIProvider) Capabilities() managedpostgres.Capabilities {
 	c := capabilityOnlyProvider{}.Capabilities()
 	c.ClassResize = true
 	c.ScaleToZeroUpdate = true
+	c.StorageResize, c.MaxStorageBytes = true, 100<<30
 	return c
 }
 func (resizeAPIProvider) Provision(_ context.Context, r managedpostgres.ProvisionRequest) (managedpostgres.ObservedDatabase, error) {
@@ -118,5 +121,84 @@ func TestManagedPostgresResizeValidationAndPlan(t *testing.T) {
 		if rec := e.Do(t, http.MethodPost, path, tc.body, nil); rec.Code != tc.status {
 			t.Fatal("validation", tc.body, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// Storage growth is a preview: outside its accounts the field is unknown
+// and nothing mentions storage.
+func TestManagedPostgresStorageResizeHiddenOutsideThePreview(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	service, d, _ := resizeAPIService(t, (*e.Acct()).ID)
+	(*(*e.S()).ManagedPostgres()) = service
+	if rec := e.Do(t, http.MethodGet, "/v1/postgres/capabilities", nil, nil); rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "storage_resize") {
+		t.Fatal("capabilities mention storage growth", rec.Code, rec.Body.String())
+	}
+	path := "/v1/postgres/databases/" + d.ID + "/resize"
+	unknown := e.Do(t, http.MethodPost, path, map[string]any{"request_id": uuid.NewString(), "service_class": "burstable", "no_such_field": 1}, nil)
+	for _, body := range []map[string]any{
+		{"request_id": uuid.NewString(), "storage_limit_bytes": 2 << 30},
+		{"request_id": uuid.NewString(), "service_class": "burstable", "storage_limit_bytes": 0},
+	} {
+		if rec := e.Do(t, http.MethodPost, path, body, nil); rec.Code != unknown.Code || rec.Body.String() != unknown.Body.String() {
+			t.Fatal("storage outside the preview", body, rec.Code, rec.Body.String(), "want", unknown.Code, unknown.Body.String())
+		}
+	}
+	rec := e.Do(t, http.MethodPost, path, map[string]any{"request_id": uuid.NewString(), "service_class": "burstable"}, nil)
+	if rec.Code != http.StatusAccepted || strings.Contains(rec.Body.String(), "storage") {
+		t.Fatal("a class resize view mentions storage", rec.Code, rec.Body.String())
+	}
+}
+
+func TestManagedPostgresStorageResize(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	service, d, _ := resizeAPIService(t, (*e.Acct()).ID)
+	(*(*e.S()).ManagedPostgres()) = service
+	var err error
+	if *(*e.S()).PostgresStorage(), err = managedpg.ParseRollout("TEST", (*e.Acct()).ID); err != nil {
+		t.Fatal(err)
+	}
+	var support api.ManagedPostgresCapabilities
+	if err := json.Unmarshal(e.Do(t, http.MethodGet, "/v1/postgres/capabilities", nil, nil).Body.Bytes(), &support); err != nil || !support.StorageResize {
+		t.Fatal("storage resize not discoverable", err)
+	}
+	path := "/v1/postgres/databases/" + d.ID + "/resize"
+	for _, tc := range []struct {
+		name   string
+		body   map[string]any
+		status int
+	}{
+		{"nothing to change", map[string]any{"request_id": uuid.NewString()}, 400},
+		{"negative", map[string]any{"request_id": uuid.NewString(), "storage_limit_bytes": -1}, 400},
+		{"shrink", map[string]any{"request_id": uuid.NewString(), "storage_limit_bytes": 1 << 29}, 400},
+	} {
+		if rec := e.Do(t, http.MethodPost, path, tc.body, nil); rec.Code != tc.status {
+			t.Fatal(tc.name, rec.Code, rec.Body.String())
+		}
+	}
+	limits, ok := api.ManagedPostgresLimitsFor(api.PlanPro)
+	if !ok {
+		t.Fatal("no managed Postgres limits for Pro")
+	}
+	above := limits.StorageLimitBytes + 1<<30
+	rec := e.Do(t, http.MethodPost, path, map[string]any{"request_id": uuid.NewString(), "storage_limit_bytes": above}, nil)
+	var problem api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil || rec.Code != http.StatusForbidden || problem.Limit == nil || *problem.Limit != limits.StorageLimitBytes ||
+		problem.Observed == nil || *problem.Observed != above || problem.DocsURL == "" {
+		t.Fatal("plan storage limit", rec.Code, rec.Body.String())
+	}
+	id := uuid.NewString()
+	rec = e.Do(t, http.MethodPost, path, map[string]any{"request_id": id, "storage_limit_bytes": 2 << 30}, nil)
+	var view api.ManagedPostgresResize
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil || rec.Code != http.StatusAccepted || view.FromClass != "development" || view.TargetClass != "development" ||
+		view.FromStorageLimitBytes != 1<<30 || view.TargetStorageLimitBytes != 2<<30 {
+		t.Fatal("storage resize", rec.Code, rec.Body.String())
+	}
+	result, err := service.Reconcile(t.Context(), (*e.Acct()).ID, d.ID)
+	if err != nil || result.Spec.StorageLimitBytes != 2<<30 {
+		t.Fatal("reconcile", result, err)
+	}
+	rec = e.Do(t, http.MethodGet, "/v1/postgres/databases/"+d.ID+"/resizes/"+id, nil, nil)
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil || rec.Code != http.StatusOK || view.State != "succeeded" || view.TargetStorageLimitBytes != 2<<30 {
+		t.Fatal("progress", rec.Code, rec.Body.String())
 	}
 }

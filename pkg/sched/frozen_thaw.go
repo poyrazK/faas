@@ -125,7 +125,7 @@ type frozenCandidate struct {
 // Rows whose shape no longer matches the app, or whose node is gone, stale
 // or leaving (draining, maintenance), are parked. Each node is read once however many candidates it holds.
 func (e *Engine) frozenCandidates(ctx context.Context, app state.App, dep state.Deployment) ([]frozenCandidate, error) {
-	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
+	instances, err := e.liveInstancesForApp(ctx, app.ID)
 	if err != nil {
 		return nil, fmt.Errorf("sched: frozen thaw: list candidates: %w", err)
 	}
@@ -233,7 +233,8 @@ func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app sta
 		return WakeResult{}, false, nil
 	}
 	bookkeeping := e.publicationBookkeeping(frozen.ID, app.ID, frozen.WakeID, state.StateFrozen, state.StateRunning, "frozen_thaw")
-	fresh, publishErr := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
+	publishCtx := e.thawAdmissionContext(ctx, frozen.NodeID)
+	fresh, publishErr := e.store.PublishOwnedInstanceRuntime(publishCtx, state.RuntimeInstancePublication{
 		AccountID: acct.ID, AppID: app.ID, InstanceID: frozen.ID, NodeID: frozen.NodeID, WakeID: frozen.WakeID,
 		ExpectedState: string(state.StateFrozen), Fence: captured.SecretFence, ConfigFence: captured,
 		Netns: frozen.Netns, HostIP: frozen.HostIP, GuestUID: frozen.GuestUID, Bookkeeping: bookkeeping,
@@ -241,7 +242,7 @@ func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app sta
 	timing.published = time.Now()
 	if publishErr != nil {
 		e.log.Warn("sched: frozen thaw: publish RUNNING", "instance", frozen.ID, "err", publishErr)
-		e.abandonThawPublication(ctx, frozen)
+		e.abandonThawPublication(ctx, frozen, publishErr)
 		return WakeResult{}, false, nil
 	}
 	return e.answerThaw(ctx, plan, fresh, bookkeeping, timing, "success"), true, nil
@@ -256,7 +257,7 @@ func (e *Engine) readmitFrozenLocked(ctx context.Context, plan frozenThawPlan) b
 	if err := e.ledger.Admit(Request{
 		Instance: frozen.ID, AppID: plan.app.ID, DeploymentID: plan.dep.ID, DeploymentScope: plan.dep.Scope, Plan: plan.acct.Plan,
 		EnvironmentKey: plan.environmentKey, ProductionEnvironment: plan.production,
-		RAMMB: plan.app.RAMMB, VCPU: plan.limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(plan.app), MaxConcurrency: plan.app.MaxConcurrency,
+		RAMMB: plan.app.RAMMB, VCPU: appVCPUs(plan.app), CPUMillicores: appCPUBookingMillicores(plan.app), MaxConcurrency: plan.app.MaxConcurrency,
 		NodeID: frozen.NodeID, NodeCeilingMB: plan.node.ceilingMB, VCPUBudget: plan.node.vcpuBudget,
 		CPUBudgetMillicores: plan.node.cpuBudgetMillicores,
 	}); err != nil {
@@ -293,14 +294,31 @@ func (e *Engine) thawFrozenVM(ctx context.Context, thawer FrozenVMM, plan frozen
 
 // abandonThawPublication cleans up after a thawed VM's publication failed:
 // a row still FROZEN parks with its VM; otherwise the reservation goes and
-// the wake path reads the row's actual state.
-func (e *Engine) abandonThawPublication(ctx context.Context, frozen state.Instance) {
+// the wake path reads the row's actual state. A node the durable reservation
+// found full (ADR 20261102072403) parks it as a refused re-admission does.
+func (e *Engine) abandonThawPublication(ctx context.Context, frozen state.Instance, cause error) {
+	reason, outcome := "publish_failed", "failed"
+	if errors.Is(cause, state.ErrNodeCapacity) {
+		reason, outcome = "no_capacity", "no_capacity"
+	}
 	if current, loadErr := e.store.InstanceByID(ctx, frozen.ID); loadErr == nil && state.State(current.State) == state.StateFrozen {
-		e.parkFrozenLocked(ctx, frozen, "publish_failed")
+		e.parkFrozenLocked(ctx, frozen, reason)
 	} else {
 		e.ledger.Release(frozen.ID)
 	}
-	e.observeThaw("failed")
+	e.observeThaw(outcome)
+}
+
+// thawAdmissionContext binds what a thaw books on its node for the durable
+// reservation its publication runs (ADR 20261102072403): the allowance and
+// discount this scheduler admits by. A frozen row is outside the node's
+// bookings, so without it a thaw put the VM's plan RAM back past the node's
+// cap unchecked. Memory is the only limit it checks (ADR-20261109172421).
+func (e *Engine) thawAdmissionContext(ctx context.Context, nodeID string) context.Context {
+	return state.WithThawAdmission(ctx, state.NodeAdmission{
+		NodeID: nodeID, ReservationPercent: e.ledger.ReservationPercent(nodeID),
+		ReservationDiscountMB: e.ledger.ReservationDiscountMB(nodeID),
+	})
 }
 
 // answerThaw finishes a published thaw and answers the gateway, as a

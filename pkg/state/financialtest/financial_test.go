@@ -38,7 +38,77 @@ func TestFinancialStores(t *testing.T) {
 			t.Run("interval_plan_identity", func(t *testing.T) { financialIntervalPlanSuite(t, store) })
 			t.Run("sampling_coverage", func(t *testing.T) { financialSamplingSuite(t, store) })
 			t.Run("adjustment_lineage", func(t *testing.T) { financialAdjustmentSuite(t, store) })
+			t.Run("hourly_usage", func(t *testing.T) { financialHourlySuite(t, store) })
 		})
+	}
+}
+
+// adr: 20261019193600 — the ledger's evidence sums by UTC hour per meter,
+// through a fixed head and inside the window, for the dual run's hour rules.
+func financialHourlySuite(t *testing.T, store financialTestStore) {
+	reader, ok := store.(state.FinancialHourlyUsageReader)
+	if !ok {
+		t.Fatalf("%T reads no hourly evidence", store)
+	}
+	a, other := financialAccount(t, store), financialAccount(t, store)
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: a.ID, Slug: "hourly", Type: state.AppTypeApp, Runtime: "node22", RAMMB: 256, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, end := financialPeriod()
+	appendUsage := func(account string, at time.Time, mbSeconds, egress int64) {
+		t.Helper()
+		if err := store.AppendUsage(t.Context(), account, app.ID, uuid.NewString(), at, mbSeconds, 0, 0, 0, egress, 0, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hour := start.Add(5 * time.Hour)
+	appendUsage(a.ID, hour, 60, 1000)
+	appendUsage(a.ID, hour.Add(59*time.Minute), 60, 24)
+	appendUsage(a.ID, hour.Add(2*time.Hour+time.Minute), 0, 7)
+	appendUsage(other.ID, hour, 60, 5000)
+	appendUsage(a.ID, end.Add(time.Minute), 60, 9) // next month
+	head, err := store.FinancialEvidenceHead(t.Context(), a.ID, start, end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendUsage(a.ID, hour.Add(3*time.Hour), 0, 99) // after the head
+	got, err := reader.FinancialHourlyUsage(t.Context(), a.ID, "egress", start, end, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []state.HourQuantity{{Hour: hour, Quantity: 1024}, {Hour: hour.Add(2 * time.Hour), Quantity: 7}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("hourly egress = %+v, want %+v", got, want)
+	}
+	if got, err := reader.FinancialHourlyUsage(t.Context(), a.ID, "compute", start, end, head); err != nil || len(got) != 1 || got[0].Quantity != 120 {
+		t.Fatalf("hourly compute = %+v, %v; want 120 MB-s in one hour", got, err)
+	}
+	if got, err := reader.FinancialHourlyUsage(t.Context(), a.ID, "egress", hour.Add(time.Hour), end, head); err != nil || len(got) != 1 || got[0].Quantity != 7 {
+		t.Fatalf("hourly egress from the next hour = %+v, %v; want only the 7 bytes", got, err)
+	}
+	if _, err := reader.FinancialHourlyUsage(t.Context(), a.ID, "egress", end, start, head); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("inverted range: %v", err)
+	}
+
+	// usage_minutes by hour, the pusher's source: no evidence head.
+	usage, ok := store.(state.HourlyMeterUsageReader)
+	if !ok {
+		t.Fatalf("%T reads no hourly usage", store)
+	}
+	got, err = usage.HourlyMeterUsage(t.Context(), a.ID, state.BillingMeterEgress, start, end)
+	want = []state.HourQuantity{{Hour: hour, Quantity: 1024}, {Hour: hour.Add(2 * time.Hour), Quantity: 7}, {Hour: hour.Add(3 * time.Hour), Quantity: 99}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("hourly usage egress = %+v, %v; want %+v", got, err, want)
+	}
+	if got, err := usage.HourlyMeterUsage(t.Context(), a.ID, state.BillingMeterCompute, start, end); err != nil || !reflect.DeepEqual(got, []state.HourQuantity{{Hour: hour, Quantity: 120}}) {
+		t.Fatalf("hourly usage compute = %+v, %v; want 120 MB-s in one hour", got, err)
+	}
+	if got, err := usage.HourlyMeterUsage(t.Context(), a.ID, state.BillingMeterEgress, hour.Add(30*time.Minute), hour.Add(3*time.Hour)); err != nil || !reflect.DeepEqual(got, []state.HourQuantity{{Hour: hour, Quantity: 24}, {Hour: hour.Add(2 * time.Hour), Quantity: 7}}) {
+		t.Fatalf("hourly usage from mid-hour = %+v, %v; want the 24 bytes after the half hour and the 7", got, err)
+	}
+	if _, err := usage.HourlyMeterUsage(t.Context(), a.ID, "requests", start, end); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("unknown meter: %v", err)
 	}
 }
 
@@ -123,6 +193,14 @@ func financialRows(t *testing.T, store state.FinancialStore, account string, hea
 func financialRowsWithContext(t *testing.T, ctx context.Context, store state.FinancialStore, account string, head int64) []state.FinancialUsageRecord {
 	t.Helper()
 	start, end := financialPeriod()
+	return financialRowsInPeriod(t, ctx, store, account, start, end, head)
+}
+
+// financialRowsInPeriod pages an account's evidence in [start, end). Tests
+// that bill at the wall clock read their own period, not financialPeriod's
+// fixed month.
+func financialRowsInPeriod(t *testing.T, ctx context.Context, store state.FinancialStore, account string, start, end time.Time, head int64) []state.FinancialUsageRecord {
+	t.Helper()
 	var all []state.FinancialUsageRecord
 	var after int64
 	for {

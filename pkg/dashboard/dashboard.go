@@ -97,7 +97,7 @@ type DPAView struct {
 // MFAChallengeData is the /dashboard/mfa payload: the TOTP challenge an
 // mfa_pending session must pass before any other dashboard page. Enrolled
 // is false for an account an explicit policy requires to enroll; it has
-// no code to enter yet and is pointed at the CLI enrollment.
+// no code to enter yet and is linked to browser enrollment.
 type MFAChallengeData struct {
 	CSRFToken string
 	Failed    bool
@@ -108,6 +108,8 @@ type MFAChallengeData struct {
 	// Next is where a passed challenge continues (already validated as a
 	// same-origin dashboard or CLI-approval path).
 	Next string
+	// OfferRemember shows "Remember this browser" at the sign-in check.
+	OfferRemember bool
 }
 
 // IndexData is the /dashboard/ overview payload.
@@ -208,6 +210,23 @@ type AppListItem struct {
 	// IsPreview is false. Pre-formatted at the handler edge so
 	// the template stays a pure renderer.
 	Scope string
+	// Labels are the app's labels (ADR-20261031100025); nil while the
+	// account does not have resource labels.
+	Labels map[string]string
+}
+
+// AppsListData backs /dashboard/apps.
+type AppsListData struct {
+	Items []AppListItem
+	// LabelsOn is true while the account has resource labels
+	// (ADR-20261031100025): the list shows each app's labels and takes a
+	// selector.
+	LabelsOn bool
+	// Selector is the label selector the list is filtered by, as typed.
+	Selector string
+	// SelectorError explains a selector the list could not apply; Items
+	// is empty then.
+	SelectorError string
 }
 
 // PreviewListItem is one row on /dashboard/previews (issue #961
@@ -763,10 +782,13 @@ type AppLogDrainsData struct {
 }
 
 type LogDrainPageItem struct {
-	ID                      string
-	Kind                    string
-	TargetURL               string
-	Enabled                 bool
+	ID        string
+	Kind      string
+	TargetURL string
+	Enabled   bool
+	// PlanPaused marks an enabled drain the app owner's plan does not cover,
+	// which delivery leaves out until the plan covers it again.
+	PlanPaused              bool
 	Status                  string
 	Active                  bool
 	QueueDepth              int
@@ -1455,6 +1477,9 @@ type CronItem struct {
 	Occurrences           []ScheduleOccurrencePageItem
 	OccurrencesCount      int
 	HistoryAvailable      bool
+	// Labels are the cron's labels (ADR-20261031100025); nil while the
+	// account does not have resource labels.
+	Labels map[string]string
 }
 
 // CronRunRow is one projected row inside CronItem.Runs. Pre-formatted
@@ -1645,6 +1670,7 @@ type AppDetailData struct {
 	// dashboard cron fire-now POST. Values:
 	//   "ok"    — handler redirected with ?fired=1
 	//   "error" — handler redirected with ?fired=error
+	//   "disabled", "busy", "suspended", "plan" — a refusal with its reason
 	// Empty string → no banner. The template's empty-state branch
 	// suppresses the banner entirely so a fresh page load renders
 	// the section without any success/error chrome.
@@ -2432,6 +2458,9 @@ type RequestAnalyticsView struct {
 	ErrorSparklineHTML    template.HTML
 	ColdBootSparkline     []appmetrics.SparklinePoint
 	ColdBootSparklineHTML template.HTML
+	// TelemetryGaps lists why the window may be missing requests; empty
+	// when every gateway delivered it or when it could not be judged.
+	TelemetryGaps []string
 }
 
 type RequestAnalyticsComputeCostView struct {
@@ -2768,6 +2797,10 @@ type DebugCoverageView struct {
 	GuestEvidence       DebugCoverageSignalView
 	OldestTelemetryAt   string
 	LatestTelemetryAt   string
+	// RequestsNotRetained is the requests analytics counted that the
+	// debugger did not keep; 0 when none or unknown (ADR-127 amendment
+	// 2026-11-05).
+	RequestsNotRetained int64
 }
 
 type DebugCoverageSignalView struct {
@@ -3376,6 +3409,10 @@ type BillingData struct {
 	CanCheckout    bool
 	UpgradeOptions []UpgradeOption
 	UpgradeNotice  string
+	// ScheduledChange describes the subscription's scheduled cancellation
+	// or downgrade; the template links to /dashboard/upgrade, which can
+	// undo it (ADR-20261103131742 amendment 1).
+	ScheduledChange string
 }
 
 // UpgradeOption is one paid plan the account can upgrade to. Money is
@@ -3413,8 +3450,16 @@ type UpgradeData struct {
 	Provider      string
 	ProviderLabel string
 	// PortalURL is the fallback for accounts that already have a
-	// subscription (the provider portal owns product changes).
+	// subscription when the provider cannot change it through its API.
 	PortalURL string
+	// SubscriptionChange is true when the account already has a
+	// subscription: the form upgrades it in place and the provider charges
+	// the prorated difference now (ADR-20261103131742).
+	SubscriptionChange bool
+	// ScheduledChange describes the subscription's scheduled cancellation
+	// or downgrade; the page then offers Keep subscription, which posts
+	// CurrentPlan (ADR-20261103131742 amendment 1).
+	ScheduledChange string
 	// ConfirmToken is the (action="upgrade_plan", account_id) CSRF
 	// envelope minted by renderUpgrade.
 	ConfirmToken string
@@ -3545,6 +3590,42 @@ type AccountData struct {
 	// a dedicated cookie name because the account page renders several
 	// independently action-bound forms at once.
 	PlanConfirmToken string
+	// VerifyResendConfirmToken backs the "send a new verification link"
+	// form shown while the account's address is unverified.
+	VerifyResendConfirmToken string
+	// EmailChangeConfirmToken backs the change-sign-in-email form;
+	// EmailChangeNeedsPassword asks for the current password when the
+	// account has one and no second factor.
+	EmailChangeConfirmToken  string
+	EmailChangeNeedsPassword bool
+	// DisplayName and DisplayNameConfirmToken back the profile name form.
+	DisplayName             string
+	DisplayNameConfirmToken string
+	// Sessions lists signed-in browsers; SessionRevokeConfirmToken backs
+	// their "Sign out" buttons.
+	Sessions []AccountSessionRow
+	// Activity is the newest security activity; MoreActivity says the
+	// CLI or API has older rows (gregale account activity list).
+	Activity                  []AccountActivityRow
+	MoreActivity              bool
+	SessionRevokeConfirmToken string
+	// Providers lists linked Google/GitHub sign-ins; HasPassword and
+	// ProviderUnlinkConfirmToken back their "Remove" buttons.
+	Providers                  []AccountProviderRow
+	HasPassword                bool
+	MFAEnabled                 bool
+	ProviderUnlinkConfirmToken string
+	// LinkProviders are the enabled providers not yet linked. Linking
+	// signs in with the provider from this signed-in browser and attaches
+	// the identity to this account whatever its email; it is the only way
+	// to link one the owner removed. ProviderLinkConfirmToken backs the
+	// forms.
+	LinkProviders            []AccountLinkOption
+	ProviderLinkConfirmToken string
+	// TrustedBrowsers are the browsers that skip the authenticator check
+	// at sign-in; TrustedBrowserForgetToken backs the Forget forms.
+	TrustedBrowsers           []AccountTrustedBrowserRow
+	TrustedBrowserForgetToken string
 	// FlashSurface holds "scheduled for deletion" / "restored" banners
 	// the dashboard reads from ?deleted=1 / ?restored=1 in the URL.
 	// Kept here (not Page.Flash) so the danger-zone partial stays a
@@ -3572,6 +3653,47 @@ type AccountData struct {
 	// window-selector nav; AsOf is the pre-formatted
 	// timestamp.
 	SLODuration views.SLOStamp
+}
+
+// AccountSessionRow is one signed-in browser on the account page.
+type AccountSessionRow struct {
+	ID        string
+	IssuedAt  string
+	IssuedIP  string
+	IssuedUA  string
+	LastSeen  string
+	IsCurrent bool
+}
+
+// AccountTrustedBrowserRow is one remembered browser on the account page.
+type AccountTrustedBrowserRow struct {
+	ID         string
+	Browser    string
+	IP         string
+	Remembered string
+	LastUsed   string
+	Expires    string
+}
+
+// AccountActivityRow is one security event on the account page.
+type AccountActivityRow struct {
+	At      string
+	Summary string
+	IP      string
+	Detail  string
+}
+
+// AccountLinkOption is one "Link" button on the account page.
+type AccountLinkOption struct {
+	Provider string // "google"
+	Name     string // "Google"
+}
+
+// AccountProviderRow is one linked Google or GitHub sign-in.
+type AccountProviderRow struct {
+	Provider string
+	Email    string
+	LinkedAt string
 }
 
 // ManagedPostgresData is the customer-facing database overview payload.
@@ -3617,6 +3739,18 @@ type ManagedPostgresDatabaseItem struct {
 	// RestorableUntil is when a scheduled delete becomes final
 	// (ADR-20261029174950); empty when no delete is scheduled.
 	RestorableUntil string
+	// RestoreFrom is the earliest point a restore can target now; empty
+	// while the database cannot be restored from.
+	RestoreFrom string
+	// RestoreSlotUntil is set while a restored copy is past the plan's
+	// database limit (ADR-20261031123259).
+	RestoreSlotUntil string
+	// PlanExcess is database_limit or service_class while the plan no
+	// longer includes the database and it is suspended (ADR-20261102125208).
+	PlanExcess string
+	// Labels are the database's labels (ADR-20261031100025); nil while the
+	// account does not have resource labels.
+	Labels map[string]string
 }
 
 // ManagedPostgresBindingItem is the safe metadata shown for an app binding.
@@ -3641,6 +3775,10 @@ type ManagedPostgresBindingItem struct {
 type AuthCapabilitiesView struct {
 	GoogleEnabled bool
 	GitHubEnabled bool
+	// TermsPublished shows the "by continuing you agree" notice linking
+	// /terms and /privacy (pkg/legal). Continuing with Google or GitHub
+	// creates an account, which records the Terms version it accepted.
+	TermsPublished bool
 }
 
 // AdminData carries operator-only repair health and durable TLS cutover state.
@@ -4030,6 +4168,25 @@ type OrgDetailData struct {
 	ActivityError      string
 	CallersRole        string
 	Error              string
+	// GitHub is the company's own GitHub installations (ADR-20261110200000).
+	GitHub *OrgGitHubSection
+}
+
+// OrgGitHubSection is the organization page's GitHub panel.
+type OrgGitHubSection struct {
+	Installations   []OrgGitHubInstallItem
+	CanManage       bool   // owner or admin: connect and disconnect
+	Unavailable     string // why the organization cannot own an installation
+	Error           string
+	ConnectToken    string
+	DisconnectToken string
+}
+
+// OrgGitHubInstallItem is one installation the company owns.
+type OrgGitHubInstallItem struct {
+	ID          int64
+	ConnectedBy string
+	ConnectedAt string
 }
 
 // OrgActivityItem is one safe, display-ready row in the organization

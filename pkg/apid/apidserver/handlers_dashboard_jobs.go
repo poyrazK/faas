@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -197,7 +198,7 @@ func (s *server) renderJobsQueues(w http.ResponseWriter, r *http.Request, log *s
 }
 
 func (s *server) projectDashboardQueue(ctx context.Context, log *slog.Logger, acct state.Account, app state.App) (dashboard.QueuePageItem, bool) {
-	stats, err := s.store.QueueState(ctx, app.ID)
+	stats, err := s.store.QueueAppTelemetry(ctx, app.ID, api.QueueStatusCountLimit)
 	if err != nil {
 		log.Warn("dashboard jobs: queue state", "account_id", acct.ID, "app_id", app.ID, "err", err)
 		return dashboard.QueuePageItem{}, false
@@ -390,6 +391,10 @@ func (s *server) dashboardQueueDeadLetterReplay(w http.ResponseWriter, r *http.R
 	if _, err := s.store.RetryQueueDeadLetter(r.Context(), acct.ID, id); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.ErrInvocationNotFound(id))
+			return
+		}
+		if problem := appevents.QueueCapProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("queue dead-letter replay"))

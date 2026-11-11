@@ -13,7 +13,8 @@
 //                code against the sealed secret, stamps
 //                mfa_enrolled_at, clears mfa_required, and
 //                re-issues the session cookie without
-//                mfa_pending. Idempotent on retry.
+//                mfa_pending. The code is spent atomically with enrollment;
+//                an already-enrolled account must use /verify instead.
 //
 //   - /verify  — step up an mfa_pending session. Body {totp}.
 //                Same verify path as /confirm but does NOT
@@ -80,7 +81,9 @@ type MFAEnrollResponse struct {
 }
 
 // MFAConfirmRequest is the body for /confirm. Totp is the
-// 6-digit code from the customer's authenticator app.
+// 6-digit code from the customer's authenticator app. Accounts with a
+// password must also supply CurrentPassword: a secret just issued to this
+// session cannot replace proof of the account's existing sign-in factor.
 //
 // CSRFToken is the dashboard's CSRF token (issue #186 review
 // Finding #7). The /confirm handler does NOT consume it —
@@ -90,8 +93,9 @@ type MFAEnrollResponse struct {
 // "malformed JSON body" instead of a 403 "Invalid CSRF token",
 // which would mask the real attack signal.
 type MFAConfirmRequest struct {
-	Totp      string `json:"totp"`
-	CSRFToken string `json:"csrf_token,omitempty"`
+	Totp            string `json:"totp"`
+	CurrentPassword string `json:"current_password,omitempty"`
+	CSRFToken       string `json:"csrf_token,omitempty"`
 }
 
 // MFAVerifyRequest is the body for /verify. Same shape as

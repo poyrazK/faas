@@ -3,8 +3,9 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { createHash } from 'node:crypto'
 import { createServer } from '../server.mjs'
-import { runtimeConfig, storageConfig, storageBindings, limits } from '../config.mjs'
-import { storageRoute, storageContentType, presign, signHeaders, objectURL, unsafeStorageTable, newObjectKey, storedKey } from '../storage.mjs'
+import { runtimeConfig, storageConfig, storageBindings, limits, UnsafeConfiguration } from '../config.mjs'
+import { storageRoute, storageContentType, presign, signHeaders, objectURL, unsafeStorageTable, newObjectKey, storedKey, checkStorageTable } from '../storage.mjs'
+import { checkPublicRelations, checkPublicFunctions } from '../access.mjs'
 
 // File storage (ADR-20261021101510).
 
@@ -76,6 +77,20 @@ test('startup refuses a storage table without RLS, its guard trigger or object k
   assert.match(unsafeStorageTable({ kind: 'r', rls: true, guarded: false, versioned: true }), /guard trigger/)
   assert.match(unsafeStorageTable({ kind: 'r', rls: true, guarded: true, versioned: false }), /storage sql --upgrade/)
   assert.equal(unsafeStorageTable({ kind: 'r', rls: true, guarded: true, versioned: true }), null)
+})
+
+test('a database the boot checks cannot reach is not reported as an unsafe configuration', async () => {
+  // A closed port refuses at once; a database it cannot reach must fail the
+  // boot rather than disable storage in the snapshot (UnsafeConfiguration is
+  // reserved for a table or policy the database itself refused).
+  const unreachable = 'postgres://data_api@127.0.0.1:1/app'
+  for (const check of [
+    () => checkStorageTable(unreachable, 'api'),
+    () => checkPublicRelations(unreachable, [{ schema: 'api', relation: 'notes' }]),
+    () => checkPublicFunctions(unreachable, [{ schema: 'api', name: 'search' }], []),
+  ]) {
+    await assert.rejects(check(), error => !(error instanceof UnsafeConfiguration))
+  }
 })
 
 test('object keys are fresh kernel randomness; rows without one name their bytes', () => {
@@ -159,6 +174,7 @@ function fakePostgREST(state) {
       const [bucket, name] = filter(req.url)
       const row = state.rows.get(`${bucket}/${name}`)
       const found = row && visible(row, claims) && (req.method === 'GET' || row.owner === claims.sub) ? [row] : []
+      if (req.method === 'DELETE' && !rollback && state.failCommit) return json(503, { code: 'PGRST000', message: 'connection lost' })
       if (req.method === 'DELETE' && found.length && !rollback) state.rows.delete(`${bucket}/${name}`)
       return json(200, found)
     })
@@ -208,10 +224,12 @@ test('an upload is authorized as the caller, streamed with its signed length, th
   const uploaded = await send('/storage/v1/object/uploads/alice/notes.txt', { method: 'PUT', headers: { ...as('alice'), 'content-type': 'text/plain' }, body: 'hello world' })
   assert.equal(uploaded.status, 200, uploaded.body)
   assert.deepEqual(JSON.parse(uploaded.body), { bucket: 'uploads', name: 'alice/notes.txt', size: 11, content_type: 'text/plain', owner: 'alice', created_at: 'now', updated_at: 'now' })
-  const [dry, current, commit] = state.calls
+  const [dry, current, latest, commit] = state.calls
   assert.match(dry.prefer, /tx=rollback/)
-  assert.equal(current.method, 'GET')
-  assert.equal(current.claims.gregale_storage, undefined, 'the replaced version is read without the write claim')
+  for (const read of [current, latest]) {
+    assert.equal(read.method, 'GET')
+    assert.equal(read.claims.gregale_storage, undefined, 'the replaced version is read without the write claim')
+  }
   assert.doesNotMatch(commit.prefer, /tx=rollback/)
   for (const call of [dry, commit]) {
     assert.equal(call.method, 'POST')
@@ -243,6 +261,24 @@ test('an overwrite writes a new version and deletes the one it replaced after co
   await send('/storage/v1/object/uploads/alice/seeded.txt', { method: 'PUT', headers: as('alice'), body: 'mine' })
   assert.ok(!s3.objects.has('/real-uploads/alice/seeded.txt'))
   assert.equal((await send('/storage/v1/object/uploads/alice/seeded.txt', { headers: as('alice') })).body, 'mine')
+})
+
+test('an upload that committed while another streamed loses its bytes when the other commits', async t => {
+  const { state, s3, send } = await fixture(t)
+  await send('/storage/v1/object/uploads/alice/notes.txt', { method: 'PUT', headers: as('alice'), body: 'first' })
+  const first = state.rows.get('uploads/alice/notes.txt').object_key
+  // A second upload of the name commits while this one's bytes are in flight.
+  const raced = `_gregale/objects/${'b'.repeat(32)}`
+  s3.onPut = () => {
+    s3.onPut = null
+    state.rows.set('uploads/alice/notes.txt', { ...state.rows.get('uploads/alice/notes.txt'), object_key: raced })
+    s3.objects.set(`/real-uploads/${raced}`, { body: Buffer.from('raced'), type: 'text/plain' })
+  }
+  const last = await send('/storage/v1/object/uploads/alice/notes.txt', { method: 'PUT', headers: as('alice'), body: 'third' })
+  assert.equal(last.status, 200, last.body)
+  const third = state.rows.get('uploads/alice/notes.txt').object_key
+  assert.ok(![first, raced].includes(third))
+  assert.deepEqual([...s3.objects.keys()], [`/real-uploads/${third}`], 'neither replaced version is left unreferenced')
 })
 
 test('a racing upload the policies refuse at commit never touches the committed bytes', async t => {
@@ -330,18 +366,30 @@ test('signed links and anonymous reads follow the public-read allowlist and RLS'
   assert.equal((await listed.send('/storage/v1/object/avatars/alice.png', { method: 'DELETE' })).status, 401)
 })
 
-test('removal checks the caller, deletes the object, then the row', async t => {
+test('removal checks the caller, deletes the row, then the object', async t => {
   const { state, s3, send } = await fixture(t)
   await send('/storage/v1/object/uploads/alice/old.txt', { method: 'PUT', headers: as('alice'), body: 'old' })
   const stored = `/real-uploads/${state.rows.get('uploads/alice/old.txt').object_key}`
   assert.equal((await send('/storage/v1/object/uploads/alice/old.txt', { method: 'DELETE', headers: as('mallory') })).status, 404)
   assert.ok(s3.objects.has(stored))
+  // A commit that fails leaves the file whole: its row and its bytes.
+  state.failCommit = true
+  const failed = await send('/storage/v1/object/uploads/alice/old.txt', { method: 'DELETE', headers: as('alice') })
+  assert.equal(failed.status, 503)
+  assert.equal(JSON.parse(failed.body).code, 'storage_commit_failed')
+  assert.ok(s3.objects.has(stored), 'the bytes stay while their row does')
+  assert.ok(state.rows.has('uploads/alice/old.txt'))
+  assert.equal((await send('/storage/v1/object/uploads/alice/old.txt', { headers: as('alice') })).body, 'old')
+  state.failCommit = false
+  state.calls.length = 0
   const removed = await send('/storage/v1/object/uploads/alice/old.txt', { method: 'DELETE', headers: as('alice') })
   assert.equal(removed.status, 204)
   assert.ok(!s3.objects.has(stored))
   assert.ok(!state.rows.has('uploads/alice/old.txt'))
   const deletes = state.calls.filter(call => call.method === 'DELETE')
-  assert.deepEqual(deletes.map(call => /tx=rollback/.test(call.prefer)), [true, true, false], 'mallory and alice dry-run; only alice commits')
+  assert.deepEqual(deletes.map(call => /tx=rollback/.test(call.prefer)), [true, false], 'a dry run, then the commit')
+  const bucketDelete = s3.requests.findIndex(request => request.method === 'DELETE')
+  assert.ok(bucketDelete >= 0, 'the bytes are deleted after the row')
 })
 
 test('no token can claim storage writes for itself', async t => {
@@ -366,9 +414,11 @@ test('transfers release the SQL slot and are bounded per instance', async t => {
   let putStarted
   s3.onPut = () => putStarted?.()
   // Each upload sends half its body, then waits inside the bucket transfer.
+  // One client holds at most storageTransfersPerClient of them.
+  const users = Array.from({ length: limits.storageTransfers }, (_, i) => `user${Math.floor(i / limits.storageTransfersPerClient)}`)
   const slow = []
-  for (let i = 0; i < limits.storageTransfers; i++) {
-    const request = open(`/storage/v1/object/uploads/alice/slow-${i}.bin`, { method: 'PUT', headers: { ...as('alice'), 'content-length': '10' } })
+  for (const [i, user] of users.entries()) {
+    const request = open(`/storage/v1/object/uploads/${user}/slow-${i}.bin`, { method: 'PUT', headers: { ...as(user), 'content-length': '10' } })
     request.on('error', () => {})
     const reached = new Promise(resolve => { putStarted = resolve })
     request.write('12345')
@@ -378,6 +428,9 @@ test('transfers release the SQL slot and are bounded per instance', async t => {
   }
   const rest = await send('/rest/v1/notes', { headers: as('alice') })
   assert.equal(rest.status, 200, 'REST is served while every transfer slot is busy')
+  const own = await send('/storage/v1/object/uploads/user0/one-more.bin', { method: 'PUT', headers: as('user0'), body: 'x' })
+  assert.equal(own.status, 429, 'a client at its own bound is refused first')
+  assert.deepEqual([JSON.parse(own.body).code, JSON.parse(own.body).limit], ['storage_client_busy', limits.storageTransfersPerClient])
   const busy = await send('/storage/v1/object/uploads/alice/one-more.bin', { method: 'PUT', headers: as('alice'), body: 'x' })
   assert.equal(busy.status, 503)
   assert.equal(JSON.parse(busy.body).code, 'storage_busy')

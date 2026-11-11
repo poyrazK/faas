@@ -198,7 +198,13 @@ func cachedHiddenCapabilities(token string) ([]string, time.Time, bool) {
 // readHiddenCapabilities asks the API; the client stores the answer in the
 // completion cache on the way.
 func readHiddenCapabilities(token string) ([]string, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), capabilityViewTimeout)
+	return readHiddenCapabilitiesContext(context.Background(), token)
+}
+
+// readHiddenCapabilitiesContext is readHiddenCapabilities bounded by a
+// caller's context as well as capabilityViewTimeout.
+func readHiddenCapabilitiesContext(parent context.Context, token string) ([]string, bool) {
+	ctx, cancel := context.WithTimeout(parent, capabilityViewTimeout)
 	defer cancel()
 	response, err := NewClient(apiBase(), token).GetCapabilities(ctx)
 	if err != nil {
@@ -336,8 +342,19 @@ func (v capabilityView) withoutHiddenFlags(lines []string, flags []cliFlag) []st
 // discoverableCliCommands is the manifest discovery surfaces read: the
 // released commands without those, or the verbs, the capability view hides.
 func discoverableCliCommands() []cliCommand {
-	commands := visibleCliCommands()
-	view := discoveryCapabilityView()
+	return discoveryCapabilityView().discoverableCommands(visibleCliCommands())
+}
+
+// publicReferenceCommands is the manifest the public reference documents:
+// the released commands whose capability is GA or beta. Preview and internal
+// commands are left out because most accounts cannot run them (CLI audit
+// 2026-11-04: 856 of 1,494 documented paths answered "unknown command").
+func publicReferenceCommands() []cliCommand {
+	return capabilityView{tier: true}.discoverableCommands(visibleCliCommands())
+}
+
+// discoverableCommands drops the commands, verbs and flags the view hides.
+func (view capabilityView) discoverableCommands(commands []cliCommand) []cliCommand {
 	if view.all {
 		return commands
 	}

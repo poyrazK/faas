@@ -187,11 +187,11 @@ func (e *EgressDriftSubscriber) reconcileAppCPULimit(ctx context.Context, appID 
 }
 
 func (e *EgressDriftSubscriber) applyCPULimitTarget(ctx context.Context, store state.AppCPUPolicyConvergenceStore, target state.AppCPUPolicyApplyTarget) {
-	var applyErr error
+	// An app instance runs its own CPU value; vmmd runs the default without a
+	// quota (ADR-20261109172421).
+	applyErr := errors.New("app CPU policy update is unsupported by routed VMM")
 	if router, ok := e.router.(appCPULimitPolicyRouter); ok {
 		applyErr = router.UpdateAppCPULimit(ctx, target.NodeID, target.AppID, target.Revision, target.CPUMillicores)
-	} else {
-		applyErr = errors.New("app CPU policy update is unsupported by routed VMM")
 	}
 	if err := store.RecordAppCPUPolicyApply(ctx, target.AppID, target.NodeID, target.Revision, applyErr); err != nil {
 		e.log.Warn("schedd: record app CPU policy apply failed", "app", target.AppID, "node", target.NodeID,
@@ -334,7 +334,7 @@ func (e *EgressDriftSubscriber) fanOut(ctx context.Context, appID, slug string) 
 	// so a vmmd that hosts 3 instances of the app receives
 	// one call, not three — the per-app fan-out on vmmd's
 	// side is the responsibility of pkg/fcvm.Manager.
-	rows, err := e.engine.store.ListInstancesForApp(ctx, appID)
+	rows, err := e.engine.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		e.log.Warn("schedd: egress drift list instances failed",
 			"app", appID, "slug", slug, "err", err)
@@ -417,7 +417,7 @@ func (e *EgressDriftSubscriber) fanOutStaticEgressIP(ctx context.Context, appID,
 		ipStr = ip.String()
 	}
 
-	rows, err := e.engine.store.ListInstancesForApp(ctx, appID)
+	rows, err := e.engine.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		e.log.Warn("schedd: static egress IP drift list instances failed",
 			"app", appID, "slug", slug, "err", err)

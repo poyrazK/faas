@@ -7,11 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"regexp"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/operations"
 )
 
@@ -22,7 +22,7 @@ type operationHistoryCursor struct {
 	ID        string    `json:"id"`
 }
 
-var operationHistoryName = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+var operationHistoryName = lazyregexp.New(`^[a-z][a-z0-9-]*$`)
 
 func prepareOperationHistory(account, tenant string, opts api.OperationListOptions) (api.OperationListOptions, operationHistoryCursor, error) {
 	return prepareOperationHistoryQuery(account, tenant, opts, false)

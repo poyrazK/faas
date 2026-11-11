@@ -149,6 +149,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		_, _ = w.Write(entry.body)
 		rec.status = entry.statusCode
 		rec.Bytes = int64(len(entry.body))
+		h.recordEdgeEgress(r, app, len(entry.body))
 		// Cache hit is a saved wake. Count the metric so the
 		// dashboard reflects "wake-elision". The wakes_avoided
 		// counter is gated on HealthyCount == 0 — only a hit
@@ -195,6 +196,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		_, _ = w.Write(entry.body)
 		rec.status = entry.statusCode
 		rec.Bytes = int64(len(entry.body))
+		h.recordEdgeEgress(r, app, len(entry.body))
 		h.startCacheRefresh(r, app, rule, key)
 		h.observe(r, entry.statusCode, app.ID, string(app.Plan), false, Target{})
 		return true, rule
@@ -237,9 +239,23 @@ func (h *Handler) metricsIncCacheOutcome(appID, outcome string) {
 
 // hasCacheCredentials applies the shared cache's presence-based credential
 // bypass. Header.Get cannot detect an empty first Authorization field followed
-// by a credential in another field, and even an empty field must bypass.
+// by a credential in another field, and even an empty field must bypass. A
+// preview request whose gate credential was withheld from the app still
+// carried one (ADR-20261102100001).
 func hasCacheCredentials(r *http.Request) bool {
-	return r != nil && (len(r.Header.Values("Authorization")) != 0 || hasSessionCookie(r))
+	if r == nil {
+		return false
+	}
+	// APIs commonly take keys in X-API-Key (or behind a proxy that
+	// authenticates with Proxy-Authorization). The key was not part of the
+	// cache key, so a keyed caller's response was served to anonymous ones
+	// unless the app marked it private (ADR-20261103090000).
+	for _, name := range []string{"Authorization", "Proxy-Authorization", "X-API-Key"} {
+		if len(r.Header.Values(name)) != 0 {
+			return true
+		}
+	}
+	return hasSessionCookie(r) || authenticatedFrom(r.Context()).CredentialWithheld
 }
 
 // hasSessionCookie treats any remaining Cookie field as session state. The

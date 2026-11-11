@@ -110,6 +110,17 @@ CREATE TABLE agent_runs (
  workflow_step text,
  workflow_event text
 );
+CREATE TABLE agent_run_callbacks (
+ run_id uuid PRIMARY KEY,
+ account_id uuid NOT NULL,
+ endpoint_id uuid NOT NULL,
+ thread_id text NOT NULL,
+ tool_call_id text NOT NULL,
+ provider_call_id text,
+ issued_at timestamptz NOT NULL,
+ delivered_at timestamptz,
+ created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE agent_run_outputs (
  run_id uuid PRIMARY KEY,
  account_id uuid NOT NULL,
@@ -118,6 +129,21 @@ CREATE TABLE agent_run_outputs (
  log_tail text NOT NULL DEFAULT '',
  log_truncated boolean NOT NULL DEFAULT false,
  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE agent_run_usage (
+ run_id uuid PRIMARY KEY,
+ account_id uuid NOT NULL,
+ method smallint NOT NULL,
+ samples integer NOT NULL,
+ expected_samples integer NOT NULL,
+ measured_ms bigint NOT NULL,
+ paused_ms bigint NOT NULL,
+ private_mb_ms bigint NOT NULL,
+ unpaused_private_mb_ms bigint NOT NULL,
+ billable_mb_ms bigint NOT NULL,
+ peak_private_mb bigint NOT NULL,
+ cold_boot boolean NOT NULL,
+ recorded_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE agent_deliveries (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -167,4 +193,115 @@ CREATE TABLE workflow_events (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  run_id uuid NOT NULL,
  event_name text NOT NULL
+);
+CREATE TABLE agent_callback_revocations (
+ endpoint_id uuid NOT NULL,
+ thread_id text NOT NULL,
+ account_id uuid NOT NULL,
+ revoked_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY (endpoint_id, thread_id)
+);
+CREATE TABLE sandbox_sessions (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ account_id uuid NOT NULL,
+ tenant_id uuid,
+ kind text NOT NULL DEFAULT 'ephemeral',
+ preset text NOT NULL,
+ ram_mb integer NOT NULL,
+ network_mode text NOT NULL DEFAULT 'registries',
+ state text NOT NULL DEFAULT 'queued',
+ idle_timeout_sec integer NOT NULL,
+ expires_at timestamptz NOT NULL,
+ labels jsonb NOT NULL DEFAULT '{}',
+ outcome_code text,
+ outcome_message text,
+ lease_owner text,
+ lease_token text,
+ lease_expires_at timestamptz,
+ node_id text,
+ instance_id text,
+ close_requested_at timestamptz,
+ last_activity_at timestamptz NOT NULL DEFAULT now(),
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ closed_at timestamptz,
+ workspace_snapshot_id uuid,
+ template_id uuid,
+ image_ref text,
+ image_job_id uuid
+);
+CREATE TABLE sandbox_session_usage (
+ sandbox_id uuid PRIMARY KEY,
+ account_id uuid NOT NULL,
+ method smallint NOT NULL,
+ samples integer NOT NULL,
+ expected_samples integer NOT NULL,
+ measured_ms bigint NOT NULL,
+ paused_ms bigint NOT NULL,
+ frozen_ms bigint NOT NULL,
+ private_mb_ms bigint NOT NULL,
+ unpaused_private_mb_ms bigint NOT NULL,
+ billable_mb_ms bigint NOT NULL,
+ peak_private_mb bigint NOT NULL,
+ cold_boot boolean NOT NULL,
+ final boolean NOT NULL DEFAULT false,
+ recorded_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE sandbox_workspace_snapshots (
+ id uuid PRIMARY KEY,
+ account_id uuid NOT NULL,
+ sandbox_id uuid NOT NULL,
+ state text NOT NULL DEFAULT 'pending',
+ storage_key text NOT NULL,
+ reserved_bytes bigint NOT NULL,
+ bytes bigint,
+ sha256 text,
+ expires_at timestamptz NOT NULL,
+ delete_requested_at timestamptz,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ ready_at timestamptz
+);
+CREATE TABLE sandbox_ports (
+ sandbox_id uuid NOT NULL,
+ account_id uuid NOT NULL,
+ port integer NOT NULL,
+ visibility text NOT NULL DEFAULT 'private',
+ created_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY (sandbox_id, port)
+);
+CREATE TABLE jobs (
+ id uuid NOT NULL,
+ account_id uuid NOT NULL,
+ status text NOT NULL,
+ image_storage_key text,
+ image_materialization_status text NOT NULL,
+ image_materialization_error text
+);
+CREATE TABLE apps (
+ id uuid NOT NULL,
+ account_id uuid NOT NULL,
+ slug text NOT NULL,
+ status text NOT NULL,
+ sandbox_template boolean NOT NULL DEFAULT false
+);
+CREATE TABLE deployments (
+ id uuid NOT NULL,
+ app_id uuid NOT NULL,
+ status text NOT NULL,
+ error text,
+ rootfs_key text NOT NULL DEFAULT '',
+ created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE sandbox_templates (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ account_id uuid NOT NULL,
+ name text NOT NULL,
+ app_id uuid NOT NULL UNIQUE,
+ start_cmd text,
+ ready_cmd text,
+ ready_timeout_s integer NOT NULL DEFAULT 60,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ UNIQUE (account_id, name)
 );

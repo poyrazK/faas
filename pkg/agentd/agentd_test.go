@@ -51,12 +51,21 @@ func openStore(t *testing.T) (*pgxpool.Pool, *agentstore.Store) {
 		CREATE TABLE object_buckets (id uuid PRIMARY KEY, account_id uuid NOT NULL, app_id uuid NOT NULL, state text NOT NULL DEFAULT 'ready');
 		CREATE TABLE platform_mail_agent_run_observations (delivery_id uuid PRIMARY KEY, account_id uuid NOT NULL, disposition text NOT NULL);
 		CREATE TABLE workflow_runs (id uuid PRIMARY KEY, status text NOT NULL);
-		CREATE TABLE workflow_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id uuid NOT NULL, event_name text NOT NULL);`); err != nil {
+		CREATE TABLE workflow_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id uuid NOT NULL, event_name text NOT NULL);
+		CREATE TABLE jobs (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account_id uuid NOT NULL, status text NOT NULL DEFAULT 'active',
+			image_storage_key text, image_materialization_status text NOT NULL DEFAULT 'pending', image_materialization_error text);
+		CREATE TABLE apps (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account_id uuid NOT NULL, slug text NOT NULL, status text NOT NULL DEFAULT 'active');
+		CREATE TABLE deployments (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), app_id uuid NOT NULL, status text NOT NULL,
+			error text, rootfs_key text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now());`); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"20261029093503390_agent_runs.sql", "20261029093510563_agent_run_execution.sql",
 		"20261029093517736_agent_run_model_access.sql", "20261029093524909_agent_run_checkout.sql", "20261029093538256_agent_deliveries.sql", "20261029093545429_agent_delivery_destinations.sql", "20261029093606948_agent_run_workflow_steps.sql",
-		"20261030205907043_agent_version_pause_during_model_calls.sql"} {
+		"20261030205907043_agent_version_pause_during_model_calls.sql",
+		"20261031122245453_agent_run_usage.sql", "20261110153935524_sandbox_sessions.sql",
+		"20261110153935557_sandbox_workspace_snapshots.sql", "20261110153935586_sandbox_ports.sql",
+		"20261110153935627_sandbox_session_images.sql", "20261110153935666_sandbox_templates.sql",
+		"20261110153935695_sandbox_session_templates.sql", "20261110153935721_sandbox_session_usage.sql"} {
 		raw, err := migrations.FS.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
@@ -107,6 +116,9 @@ type fakeSchedd struct {
 	start          *scheddpb.AgentRunStart
 	run            agentrunproto.Request
 	proceededFirst bool
+	// usage, when set, is sent after the output: before the result, or
+	// before the error of the "drop-measured" script.
+	usage *scheddpb.AgentRunUsage
 }
 
 func (f *fakeSchedd) RunAgent(stream scheddpb.Schedd_RunAgentServer) error {
@@ -142,6 +154,12 @@ func (f *fakeSchedd) RunAgent(stream scheddpb.Schedd_RunAgentServer) error {
 	}
 	_ = stream.Send(&scheddpb.AgentRunEvent{Frame: &scheddpb.AgentRunEvent_Booted{Booted: &scheddpb.AgentRunBooted{Method: "WAKE_COLD_BOOT", BootMs: 900}}})
 	_ = stream.Send(&scheddpb.AgentRunEvent{Frame: &scheddpb.AgentRunEvent_Output{Output: &scheddpb.AgentRunOutput{Stream: "stdout", Chunk: []byte("working on " + run.Command[1])}}})
+	if f.usage != nil {
+		_ = stream.Send(&scheddpb.AgentRunEvent{Frame: &scheddpb.AgentRunEvent_Usage{Usage: f.usage}})
+	}
+	if run.Command[0] == "drop-measured" {
+		return status.Error(codes.Unavailable, "vmmd went away")
+	}
 	result := agentrunproto.Result{Status: agentrunproto.StatusSucceeded, Result: json.RawMessage(`{"verdict":"ok"}`),
 		Files: []agentrunproto.OutputFile{agentrunproto.NewOutputFile("report.md", []byte("# ok"))}}
 	if run.Command[0] == "comment" {
@@ -426,5 +444,39 @@ func TestRunWithCheckout(t *testing.T) {
 	}
 	if !agentrunproto.ValidInputKey(fake.start.GetInputKey(), account) || fake.run.Checkout == nil || fake.run.Checkout.Bytes < 1 {
 		t.Fatalf("start %+v checkout %+v", fake.start, fake.run.Checkout)
+	}
+}
+
+// vmmd's usage frame is recorded on the run, also when the run fails after
+// it, and counted beside the configured-RAM measure (ADR-20261027090011).
+func TestRunRecordsUsage(t *testing.T) {
+	_, store := openStore(t)
+	reg := prometheus.NewRegistry()
+	metrics, err := agentd.NewMetrics(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeSchedd{usage: &scheddpb.AgentRunUsage{Method: 1, Samples: 9, ExpectedSamples: 10, MeasuredMs: 10_000, PausedMs: 4_000,
+		PrivateMbMs: 3_072_000, UnpausedPrivateMbMs: 1_843_200, BillableMbMs: 1_892_352, PeakPrivateMb: 410, ColdBoot: true}}
+	want := agentstore.Usage{Method: 1, Samples: 9, ExpectedSamples: 10, MeasuredMillis: 10_000, PausedMillis: 4_000,
+		PrivateMBMillis: 3_072_000, UnpausedPrivateMBMillis: 1_843_200, BillableMBMillis: 1_892_352, PeakPrivateMB: 410, ColdBoot: true}
+	a := newAgentd(t, store, fake).WithMetrics(metrics)
+	for script, state := range map[string]string{"ok": agentstore.StateSucceeded, "drop-measured": agentstore.StateFailed} {
+		id := queueRun(t, store, script)
+		if claimed, err := a.ClaimOnce(context.Background()); err != nil || !claimed {
+			t.Fatalf("%s: claim %v %v", script, claimed, err)
+		}
+		if run := runState(t, store, id); run.State != state {
+			t.Fatalf("%s: state %s, want %s", script, run.State, state)
+		}
+		if got, found, err := store.Usage(context.Background(), account, id); err != nil || !found || got != want {
+			t.Fatalf("%s: usage %+v %v %v", script, got, found, err)
+		}
+	}
+	// Two runs of 3,000 MB·s private and 10 s at 1,024 + 8 MB configured.
+	for measure, gbSeconds := range map[string]float64{"private": 6, "unpaused_private": 3.6, "configured": 2 * 10 * 1032.0 / 1024} {
+		if got := counterValue(t, reg, "agent_run_memory_gb_seconds_total", map[string]string{"measure": measure}); got != gbSeconds {
+			t.Errorf("%s = %v GB-s, want %v", measure, got, gbSeconds)
+		}
 	}
 }

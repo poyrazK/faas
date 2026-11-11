@@ -101,7 +101,7 @@ func (s *PgStore) ApplyManagedRealtimeScheduleGroup(ctx context.Context, ep, ch,
 	defer func() { _ = tx.Rollback(ctx) }()
 	// Serialize group membership with schedule creation before locking members.
 	var endpoint string
-	if err = tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 for update`, ep).Scan(&endpoint); err != nil {
+	if err = tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 for no key update`, ep).Scan(&endpoint); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = ErrNotFound
 		}

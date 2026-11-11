@@ -53,11 +53,13 @@ func probeRoute(path string) api.RouteHealthRoute {
 // switch for the safe default (DefaultEnabledEnv) turns them off with it.
 func DefaultProbesEnabled() bool { return defaultEnabled() }
 
-// ProbeTarget is one app's probe round: its ADR-847 selectors when Gated and
-// the default probe when Default.
+// ProbeTarget is one app's probe round: its ADR-847 selectors when Gated,
+// the default probe when Default, and the checks of its synthetic release
+// gates (ADR-20261022082305).
 type ProbeTarget struct {
 	state.RouteProbeTarget
 	Gated, Default bool
+	Synthetic      []state.SyntheticGateProbeTarget
 }
 
 // MergeProbeTargets joins ADR-847 targets with default-probe targets so each
@@ -78,4 +80,42 @@ func MergeProbeTargets(gated, defaults []state.RouteProbeTarget) []ProbeTarget {
 		out = append(out, ProbeTarget{RouteProbeTarget: t, Default: true})
 	}
 	return out
+}
+
+// AddSyntheticGates joins synthetic release gates to the round of their
+// canary, adding a round for a canary nothing else probes. A canary beside
+// several serving predecessors is skipped, as for the default probe.
+func AddSyntheticGates(targets []ProbeTarget, gates []state.SyntheticGateProbeTarget) []ProbeTarget {
+	stables := map[string]map[string]bool{}
+	for _, g := range gates {
+		key := g.AppID + "/" + g.CandidateID
+		if stables[key] == nil {
+			stables[key] = map[string]bool{}
+		}
+		stables[key][g.StableID] = true
+	}
+	index := map[string]int{}
+	for i, t := range targets {
+		index[t.AppID+"/"+t.CandidateID] = i
+	}
+	for _, g := range gates {
+		key := g.AppID + "/" + g.CandidateID
+		if len(stables[key]) != 1 {
+			continue
+		}
+		i, ok := index[key]
+		if !ok {
+			i = len(targets)
+			index[key] = i
+			targets = append(targets, ProbeTarget{RouteProbeTarget: state.RouteProbeTarget{AccountID: g.AccountID, AppID: g.AppID,
+				Slug: g.Slug, CandidateID: g.CandidateID, StableID: g.StableID}})
+		}
+		if targets[i].StableID == "" {
+			targets[i].StableID = g.StableID
+		}
+		if targets[i].StableID == g.StableID {
+			targets[i].Synthetic = append(targets[i].Synthetic, g)
+		}
+	}
+	return targets
 }

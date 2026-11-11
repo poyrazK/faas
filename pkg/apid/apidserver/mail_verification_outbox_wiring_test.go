@@ -93,14 +93,24 @@ func TestVerificationOutboxSignupWiringPreservesResponseAndAtomicIntent(t *testi
 				if bytes.Contains(cipher, raw) || strings.Contains(response.Body.String(), base64.RawURLEncoding.EncodeToString(raw)) {
 					t.Fatal("verification credential leaked into durable storage or auth response")
 				}
-				url := "https://auth.example.test/v1/auth/verify-email?token=" + base64.RawURLEncoding.EncodeToString(raw)
+				target, encoded := "https://auth.example.test/v1/auth/verify-email", base64.RawURLEncoding.EncodeToString(raw)
+				store := *env.Store()
+				acct, err := store.AccountByEmail(t.Context(), "new-verification@example.net")
+				if err != nil {
+					t.Fatal(err)
+				}
+				tok, err := apidserver.MintDashboardSession(t.Context(), store, *server.Sessions(), acct.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				cookie := &http.Cookie{Name: apidserver.SessionCookie, Value: tok}
 				verified := httptest.NewRecorder()
-				handler.ServeHTTP(verified, httptest.NewRequest(http.MethodGet, url, nil))
+				handler.ServeHTTP(verified, verifyEmailPost(target, encoded, cookie))
 				if verified.Code != http.StatusOK {
 					t.Fatal("durable token was not accepted by the existing verification endpoint", verified.Code)
 				}
 				replayed := httptest.NewRecorder()
-				handler.ServeHTTP(replayed, httptest.NewRequest(http.MethodGet, url, nil))
+				handler.ServeHTTP(replayed, verifyEmailPost(target, encoded, cookie))
 				if replayed.Code == http.StatusOK {
 					t.Fatal("durable token could be consumed twice")
 				}

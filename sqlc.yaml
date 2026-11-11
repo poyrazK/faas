@@ -18,6 +18,28 @@ sql:
         sql_package: "pgx/v5"
         emit_methods_with_db_argument: true
         emit_interface: true
+  # The apps domains' certificates, written by edgednsd (ADR-20261103163954 §3).
+  - engine: "postgresql"
+    queries: "pkg/edgecert/certpg/queries.sql"
+    schema: "pkg/edgecert/certpg/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/edgecert/certpg/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+  # signd's build claims and the signatures it records (ADR-20261109170000).
+  - engine: "postgresql"
+    queries: "pkg/signd/signpg/queries.sql"
+    schema: "pkg/signd/signpg/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/signd/signpg/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
   # Hosted management MCP bridge state and lease (ADR-20261026195952).
   - engine: "postgresql"
     queries: "pkg/mcpmanagement/statepg/queries.sql"
@@ -207,13 +229,22 @@ sql:
 
   - engine: "postgresql"
     queries:
+      - "pkg/state/account_flow_queries.sql"
+      - "pkg/state/agent_connection_queries.sql"
+      - "pkg/state/github_connection_queries.sql"
       - "pkg/state/audit_anchor_queries.sql"
       - "pkg/state/audit_outbox_delivery_queries.sql"
-      - "pkg/state/automation_live_queries.sql"
+      - "pkg/state/stored_workflow_live_queries.sql"
       - "pkg/state/billing_run_product_queries.sql"
       - "pkg/state/binding_verification_run_queries.sql"
+      - "pkg/state/build_coalescing_queries.sql"
       - "pkg/state/build_dependency_queries.sql"
       - "pkg/state/config_revision_queries.sql"
+      - "pkg/state/env_batch_queries.sql"
+      - "pkg/state/app_scaling_queries.sql"
+      - "pkg/state/app_resource_inventory_queries.sql"
+      - "pkg/state/cron_delete_queries.sql"
+      - "pkg/state/cron_fire_now_recovery_queries.sql"
       - "pkg/state/cron_history_queries.sql"
       - "pkg/state/data_api_connection_budget_queries.sql"
       - "pkg/state/data_api_runtime_connections_queries.sql"
@@ -224,6 +255,7 @@ sql:
       - "pkg/state/source_spool_queries.sql"
       - "pkg/state/dev_source_patch_queries.sql"
       - "pkg/state/edge_rule_replay_retention_queries.sql"
+      - "pkg/state/credit_discount_queries.sql"
       - "pkg/state/email_verification_queries.sql"
       - "pkg/state/entity_outbox_delivery_queries.sql"
       - "pkg/state/environment_source_job_queries.sql"
@@ -278,6 +310,10 @@ sql:
       - "pkg/state/issue_tracker_callbacks_queries.sql"
       - "pkg/state/issue_tracker_linear_queries.sql"
       - "pkg/state/issue_tracker_links_queries.sql"
+      - "pkg/state/job_log_retention_queries.sql"
+      - "pkg/state/agent_approval_queries.sql"
+      - "pkg/state/agent_activity_queries.sql"
+      - "pkg/state/key_project_limit_queries.sql"
       - "pkg/state/keyed_replay_queries.sql"
       - "pkg/state/managed_postgres_cutover_activation_queries.sql"
       - "pkg/state/managed_postgres_drain_plan_queries.sql"
@@ -285,6 +321,7 @@ sql:
       - "pkg/state/managed_postgres_cap_event_queries.sql"
       - "pkg/state/managed_postgres_egress_queries.sql"
       - "pkg/state/managed_postgres_overage_queries.sql"
+      - "pkg/state/managed_postgres_overage_delivery_queries.sql"
       - "pkg/state/managed_postgres_preflight_queries.sql"
       - "pkg/state/managed_postgres_source_fence_queries.sql"
       - "pkg/state/mcp_access_policy_queries.sql"
@@ -293,6 +330,7 @@ sql:
       - "pkg/state/migration_cutover_queries.sql"
       - "pkg/state/migration_source_queries.sql"
       - "pkg/state/migration_verification_queries.sql"
+      - "pkg/state/org_agent_queries.sql"
       - "pkg/state/native_issue_ticket_queries.sql"
       - "pkg/state/node_admission_queries.sql"
       - "pkg/state/node_lease_queries.sql"
@@ -310,6 +348,10 @@ sql:
       - "pkg/state/operator_recovery_submission_queries.sql"
       - "pkg/state/operator_restart_queries.sql"
       - "pkg/state/org_object_ownership_queries.sql"
+      - "pkg/state/account_billing_queries.sql"
+      - "pkg/state/custom_domain_manual_check_queries.sql"
+      - "pkg/state/domain_plan_queries.sql"
+      - "pkg/state/org_admission_queries.sql"
       - "pkg/state/org_queue_ownership_queries.sql"
       - "pkg/state/password_credential_queries.sql"
       - "pkg/state/plain_replay_queries.sql"
@@ -337,6 +379,8 @@ sql:
       - "pkg/state/project_release_staging_queries.sql"
       - "pkg/state/project_service_queries.sql"
       - "pkg/state/promotion_admission_queries.sql"
+      - "pkg/state/environment_rollback_receipt_queries.sql"
+      - "pkg/state/environment_promotion_receipt_queries.sql"
       - "pkg/state/promotion_control_queries.sql"
       - "pkg/state/promotion_health_queries.sql"
       - "pkg/state/promotion_recovery_queries.sql"
@@ -354,6 +398,8 @@ sql:
       - "pkg/state/release_freeze_queries.sql"
       - "pkg/state/release_gate_queries.sql"
       - "pkg/state/release_review_queries.sql"
+      - "pkg/state/request_analytics_rollup_queries.sql"
+      - "pkg/state/rollback_traffic_queries.sql"
       - "pkg/state/route_advice_queries.sql"
       - "pkg/state/route_alert_queries.sql"
       - "pkg/state/route_awake_queries.sql"
@@ -366,6 +412,7 @@ sql:
       - "pkg/state/scenario_suspend_queries.sql"
       - "pkg/state/scenario_work_queries.sql"
       - "pkg/state/scenario_worker_fault_queries.sql"
+      - "pkg/state/free_dormant_queries.sql"
       - "pkg/state/scheduled_release_queries.sql"
       - "pkg/state/scoped_telemetry_queries.sql"
       - "pkg/state/secret_rekey_queries.sql"
@@ -373,6 +420,7 @@ sql:
       - "pkg/state/service_wake_ahead_queries.sql"
       - "pkg/state/snapshot_recovery_queries.sql"
       - "pkg/state/telemetry_coverage_queries.sql"
+      - "pkg/state/trigger_metrics_queries.sql"
       - "pkg/state/work_admission_queries.sql"
       - "pkg/state/worker_recovery_queries.sql"
       - "pkg/state/workload_oom_queries.sql"
@@ -549,6 +597,26 @@ sql:
       go:
         package: sqlc
         out: pkg/state/appquota/sqlc
+        sql_package: pgx/v5
+        emit_methods_with_db_argument: true
+        omit_unused_structs: true
+  - engine: postgresql
+    queries: pkg/state/resourcelabels/queries.sql
+    schema: pkg/state/resourcelabels/schema.sql
+    gen:
+      go:
+        package: sqlc
+        out: pkg/state/resourcelabels/sqlc
+        sql_package: pgx/v5
+        emit_methods_with_db_argument: true
+        omit_unused_structs: true
+  - engine: postgresql
+    queries: pkg/state/applabels/queries.sql
+    schema: pkg/state/applabels/schema.sql
+    gen:
+      go:
+        package: sqlc
+        out: pkg/state/applabels/sqlc
         sql_package: pgx/v5
         emit_methods_with_db_argument: true
         omit_unused_structs: true

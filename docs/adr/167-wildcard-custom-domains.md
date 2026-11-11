@@ -54,3 +54,88 @@ leave `api.example.com` dark for the account that had proved
 - A live pending row still shadows the broader wildcard, as before. A claim
   made by another account before the wildcard verified can therefore darken
   that name until its 7-day deadline. After that it cannot be renewed.
+
+## Amendment 2 (2026-10-31): a company's wildcard covers every company app
+
+Bug hunt 32 (M5). `ForeignVerifiedWildcard` compared the account that created
+the wildcard's app with the account that created the app asking for a name.
+A company app keeps its creator's account as `account_id`
+(ADR-202610171904), so a member could not attach a name below the company's
+own verified wildcard to a company app they created: `409`, "belongs to
+another account". Once the wildcard's creator left the company, the only apps
+that could take new names under it were the ones that creator had made.
+
+- Names below a verified wildcard belong to its tenant (`state.AppTenantID`):
+  the app's shared organization, else the account that created it (an app
+  with no organization, or one in its creator's personal organization). Any
+  company app may take a name below a company wildcard. The creator's
+  personal apps no longer can; they are another tenant.
+- Managing a company app's domains already follows the organization's roles
+  (ADR-20261026151103 amendment 4). This makes adding names under the
+  company's zone follow them too.
+- The claim takeover by DNS proof is unchanged. It still lets a member move
+  another account's unverified claim, including a colleague's, onto their own
+  app by publishing the takeover record.
+
+## Amendment 3 (2026-11-03): check ownership at publication
+
+Public creates and DNS-proof takeovers repeat the foreign verified-wildcard
+check inside the domain publication transaction, after acquiring its locks.
+The early HTTP check alone leaves a gap in which another tenant's wildcard
+can verify before an unproved child claim is published. Storage now returns
+the same `409` conflict for that case, comparing shared organizations rather
+than app creators.
+
+This guard applies to public requests. ADR-570's internal repair operations
+retain their ability to publish shadow claims. Pending claims published before
+the parent verifies keep the deadline behavior described in the first amendment.
+
+## Amendment 4 (2026-11-03): serialize wildcard and tenant-hostname reservations
+
+Public wildcard claims repeat the tenant-hostname exclusion inside their
+publication transaction. Public tenant-hostname creates and DNS-proof takeovers
+repeat the inverse exclusion under the same traffic binding locks. This includes
+pending reservations and names on other accounts, and excludes deleted surfaces
+and expired, unverified wildcard claims. The existing hierarchical name locks
+serialize overlapping writes with either the fleet-wide or scoped binding guard.
+A conflict returns the existing wildcard/tenant-surface overlap problem. Internal
+repair writes retain their existing ability to represent overlapping claims.
+
+## Amendment 5 (2026-11-04): object-storage hostname resolution
+
+Public bucket mounts and managed uploads use the same custom-domain resolver.
+Verified wildcard claims cover their concrete hosts; a live exact reservation
+takes precedence, an expired pending exact claim permits wildcard fallback,
+and an unverified selected wildcard blocks a broader claim. Wildcard resolution
+also checks the app's current resource owner's plan, including organizations.
+
+## Amendment 6 (2026-11-04): tenant precedence at the storage edge
+
+When tenant surfaces are enabled, storage reads and managed uploads select
+the active verified tenant hostname's app before an older exact or wildcard
+custom-domain claim. A verified hostname linked to a suspended platform tenant
+cannot fall through to that older claim. Pending or inactive surfaces retain
+the application router's legacy fallback behavior.
+
+Public object mounts cache buckets by the selected surface and app identity.
+Every read of a positive custom-host mount rechecks the indexed tenant binding,
+so suspension takes effect while its bucket cache is warm. Compute forwarders
+apply the same check. The edge consumes the durable `tenant_surfaces_enabled`
+runtime flag for local reads, forwarded reads, and uploads; disabling the flag
+retains the legacy custom-domain route.
+
+## Amendment 7 (2026-11-04): canonical hosts and current wildcard plans
+
+Default custom-domain selection and reads follow the current tenant-routing
+flag. An active verified tenant hostname for another app, or a verified
+hostname linked to a suspended platform tenant, cannot be advertised as the
+app's canonical host. The setter returns a conflict without replacing the
+previous default. Reads hide an unusable selection, preserving intent so it
+can become usable again after the binding changes. Single-app, batch, domain
+flags and dashboard Auth origins use this same eligibility rule. Pending,
+inactive and deleted surfaces retain ingress's fallback semantics.
+
+Fresh wildcard ingress routes check the app's current billing owner's plan,
+including company and environment routes. Positive cached wildcard routes
+recheck that owner before reuse, so a downgrade stops routing even before
+invalidation arrives. Exact custom domains remain eligible on every plan.

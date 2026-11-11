@@ -12,6 +12,7 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/retry"
 )
 
 // AIUsageBackend settles AI token usage after a response (ADR-988). It adds
@@ -165,6 +166,9 @@ type aiSettlement struct {
 	// response is the response check's result, filled as the response is
 	// sent (ADR-1435); nil when the response is not checked.
 	response *aiResponseCheck
+	// requestModel is the model the call asked for; it prices an answer
+	// whose own model has no price (ADR 20261027132936).
+	requestModel string
 	// cacheHit marks a response the cache served (ADR-1440).
 	cacheHit bool
 }
@@ -264,7 +268,11 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 		// ADR-1433: a container is charged once per session window.
 		usage.CodeSessionGB = h.aiContainers.charge(integration.ID, observer.containerIDs(), time.Now()) * max(settlement.codeGB, 1)
 	}
-	cost := aiCallCostMillicents(integration, usage)
+	cost, priced := aiSettledCost(integration, usage, settlement.requestModel)
+	if !priced && outcome == AIUsageOutcomeKnown && usage.BudgetTokens() > 0 {
+		// ADR 20261027132936: a call no price counts is visible.
+		h.Metrics.ObserveAIUnpriced(metricIntegrationID)
+	}
 	if estimated, estimatedCost, ok := estimatedAIUsage(outcome, usage, settlement); ok {
 		usage, cost = estimated, estimatedCost
 		span.SetAttributes(attribute.Bool("gregale.ai.usage_estimated", true))
@@ -453,7 +461,9 @@ func (h *Handler) recordAIUsage(ctx context.Context, record AIUsageRecord, metri
 			return alerts, err
 		}
 		h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "retried")
-		time.Sleep(time.Duration(attempt) * aiUsageRecordRetryBackoff)
+		if err := retry.Wait(ctx, aiUsageRecordRetryBackoff, time.Second, attempt); err != nil {
+			return nil, err
+		}
 	}
 }
 

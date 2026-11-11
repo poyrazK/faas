@@ -331,7 +331,7 @@ export class RealtimeProtocolError extends Error {
 
 class SocketSendError extends Error {}
 
-type SocketEvent = { type: 'open' } | { type: 'close' } | { type: 'abort' } | { type: 'timeout' } | { type: 'message'; data: unknown };
+type SocketEvent = { type: 'open' } | { type: 'close'; code?: number } | { type: 'abort' } | { type: 'timeout' } | { type: 'message'; data: unknown };
 
 function eventsFor(socket: RealtimeSocket, signal: AbortSignal | undefined, connectTimeoutMs: number): {
   next(): Promise<SocketEvent>;
@@ -369,7 +369,7 @@ function eventsFor(socket: RealtimeSocket, signal: AbortSignal | undefined, conn
     push({ type: 'open' });
   };
   const message = (event: unknown) => push({ type: 'message', data: (event as { data?: unknown }).data });
-  const close = () => push({ type: 'close' });
+  const close = (event: unknown) => push({ type: 'close', code: (event as { code?: unknown } | undefined)?.code as number | undefined });
   const error = () => push({ type: 'close' });
   const abort = () => {
     push({ type: 'abort' });
@@ -447,6 +447,13 @@ async function createSocket(
 
 function jitteredDelay(delay: number): number {
   return delay <= 1 ? delay : Math.floor(delay * (0.5 + Math.random() * 0.5));
+}
+
+/** Reconnects after a restart close (1001, 1012) spread over this long. */
+const SERVICE_RESTART_SPREAD_MS = 5_000;
+
+function serviceRestartDelay(maxDelay: number): number {
+  return Math.floor(Math.random() * Math.max(SERVICE_RESTART_SPREAD_MS, maxDelay));
 }
 
 function nextRetryDelay(delay: number, initial: number, maximum: number): number {
@@ -857,6 +864,7 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
     const socket = creation.socket;
     const events = eventsFor(socket, options.signal, connectTimeoutMs);
     let connected = false;
+    let serviceRestart = false;
     subscribedCount = 0;
     let inboxSubscribed = false;
     const inboxPushActions: RealtimePushActions = {
@@ -902,6 +910,7 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
     try {
       socketLoop: while (!options.signal?.aborted) {
         const event = await events.next();
+        if (event.type === 'close' && (event.code === 1001 || event.code === 1012)) serviceRestart = true;
         if (event.type === 'abort' || event.type === 'close' || event.type === 'timeout') break;
         if (event.type === 'open') {
           if (connected) continue;
@@ -1270,7 +1279,9 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
       if (activityCleanupFailed) throw activityCleanupError;
     }
     if (options.signal?.aborted) return;
-    await pause(jitteredDelay(delay), options.signal);
+    // A node restarting closes every socket at once; spreading the
+    // reconnects keeps them from arriving together.
+    await pause(serviceRestart ? serviceRestartDelay(maxDelay) : jitteredDelay(delay), options.signal);
     delay = nextRetryDelay(delay, initialDelay, maxDelay);
   }
 }

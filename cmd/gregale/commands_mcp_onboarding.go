@@ -142,14 +142,25 @@ func runMCPInit(options mcpInitOptions) int {
 }
 
 func writeMCPStackRole(root, role string, options mcpInitOptions) error {
-	command := map[string]string{"node": "npm start", "go": "go run .", "python": "python server.py"}[options.Runtime]
+	// A Go build runs its compiled binary; the runtime image has no Go
+	// toolchain, so a Go role declares no start command (Hunt 32 H32-75).
+	// MCP_TASKS_ROLE selects the role inside the one binary.
+	command := map[string]string{"node": "npm start", "python": "python server.py"}[options.Runtime]
 	if options.Runtime == "node" && role != "web" {
 		command = "npm run start:tasks-" + role
 	}
-	manifest := "hosting:\n  start: " + command + "\n"
+	hosting := ""
+	if command != "" {
+		hosting += "  start: " + command + "\n"
+	}
 	if role == "web" {
-		manifest += "  port: 8080\n  health: /healthz\n"
-	} else {
+		hosting += "  port: 8080\n  health: /healthz\n"
+	}
+	manifest := ""
+	if hosting != "" {
+		manifest = "hosting:\n" + hosting
+	}
+	if role != "web" {
 		manifest += "worker:\n  drain_timeout: 45s\n  stop_signal: SIGTERM\n  scale:\n    min: 1\n"
 		if role == "worker" {
 			manifest += "    max: 10\n    metric: custom\n    name: mcp_tasks_outstanding\n    target: 1\n"
@@ -182,7 +193,7 @@ func mcpStackReadme(options mcpInitOptions) string {
 		}
 		guide.WriteString(" --apply\n")
 	}
-	guide.WriteString("```\n\nPrepare PostgreSQL and its schema before deploying. Follow the runtime README for schema initialization: Node uses a separate migration binding; Go/Python currently initialize schema from the application runtime credential. Do not give the observer a write or migration credential.\n\nBind credentials through Gregale secrets, without putting values in `runtime.env` or source:\n\n| Role | Required secrets |\n| --- | --- |\n| web | DATABASE_URL, MCP_TASK_OWNER_KEY |\n| worker | DATABASE_URL, the same MCP_TASK_OWNER_KEY, MCP_TASKS_SCALING_TOKEN |\n| observer | DATABASE_URL with SELECT-only grants, MCP_TASKS_SCALING_TOKEN |\n\nWeb and worker use the same queue database and stable owner key of at least 32 bytes. The observer reads that database through a separate read-only role and does not need an owner key. Both metric tokens must be restricted to `metrics:write` for the worker application. Each starter README describes the credential and schema contracts.\n\nDeploy the worker and observer, then the web application:\n\n```sh\n")
+	guide.WriteString("```\n\nPrepare PostgreSQL and its schema before deploying. Follow the runtime README for schema initialization: Every runtime requires an explicit migration command with a separate schema-owner binding; application runtime credentials need only data access. Do not give the observer a write or migration credential.\n\nBind credentials through Gregale secrets, without putting values in `runtime.env` or source:\n\n| Role | Required secrets |\n| --- | --- |\n| web | DATABASE_URL, MCP_TASK_OWNER_KEY |\n| worker | DATABASE_URL, the same MCP_TASK_OWNER_KEY, MCP_TASKS_SCALING_TOKEN |\n| observer | DATABASE_URL with SELECT-only grants, MCP_TASKS_SCALING_TOKEN |\n\nWeb and worker use the same queue database and stable owner key of at least 32 bytes. The observer reads that database through a separate read-only role and does not need an owner key. Both metric tokens must be restricted to `metrics:write` for the worker application. Each starter README describes the credential and schema contracts.\n\nDeploy the worker and observer, then the web application:\n\n```sh\n")
 	fmt.Fprintf(&guide, "gregale deploy --path ./worker --name %s-worker\ngregale deploy --path ./observer --name %s-observer\ngregale mcp deploy --path ./web --name %s-web", options.Name, options.Name, options.Name)
 	if options.AuthMode == "external-oauth" {
 		guide.WriteString(" --token-env MCP_ACCESS_TOKEN")
@@ -195,6 +206,12 @@ func mcpStackReadme(options mcpInitOptions) string {
 	}
 	guide.WriteString("Verify the observer and queue before requesting scale-to-zero:\n\n```sh\n")
 	fmt.Fprintf(&guide, "gregale mcp observer setup --app %s-observer --worker-app %s-worker --config ./observer/gregale-mcp.json\ngregale mcp tasks setup --app %s-worker --observer-app %s-observer --min 0\n# Apply only after the preview reports a ready observer and fresh heartbeat:\ngregale mcp tasks setup --app %s-worker --observer-app %s-observer --min 0 --apply\n", options.Name, options.Name, options.Name, options.Name, options.Name, options.Name)
-	guide.WriteString("```\n\nThe observer and database remain running when workers reach zero. For later worker replacements, use `gregale mcp server tasks deploy` with a separate candidate worker application and the previous worker apps in the release plan. Keep its journal outside the source directories. Handlers with external side effects must be idempotent by Task ID.\n\nMCP hosting remains preview until native lifecycle and real provider/client qualification evidence is recorded.\n")
+	guide.WriteString("```\n\nThe observer and database remain running when workers reach zero. ")
+	if options.Runtime == "node" {
+		guide.WriteString("For later worker replacements, use `gregale mcp server tasks deploy` with a separate candidate worker application and the previous worker apps in the release plan. Keep its journal outside the source directories. ")
+	} else {
+		guide.WriteString("Go/Python worker replacements require a manual rollout; the automated Task release gate supports Node workers only. Run explicit migrations first, retain the keys and handler versions needed by existing Tasks, and deploy replacement workers into a separate application with at least one replica. Verify fresh worker-handler registrations, queue progress and the observer heartbeat before gracefully retiring previous workers. See the runtime README for upgrade details. ")
+	}
+	guide.WriteString("Handlers with external side effects must be idempotent by Task ID.\n\nMCP hosting remains preview until native lifecycle and real provider/client qualification evidence is recorded.\n")
 	return guide.String()
 }

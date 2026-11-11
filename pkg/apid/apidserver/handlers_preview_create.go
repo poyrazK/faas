@@ -50,6 +50,9 @@ func (s *server) createPreview(w http.ResponseWriter, r *http.Request, acct stat
 	if prob == nil {
 		prob = s.syncPreviewConfiguration(r.Context(), parent, created)
 	}
+	if prob == nil {
+		prob = previewDatabasesProblem(s.preparePreviewDatabases(r.Context(), acct, acct.Plan, parent, created))
+	}
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -220,6 +223,7 @@ func previewAppFromParent(parent state.App, slug string, prNumber int, expiresAt
 		OnlyAllowDeclaredRoutes: parent.OnlyAllowDeclaredRoutes,
 		DeclaredRoutes:          append([]state.DeclaredRoute(nil), parent.DeclaredRoutes...),
 		RequireSigned:           parent.RequireSigned, StartCommand: parent.StartCommand, Manifest: manifest,
+		PlatformTenantRequired: parent.PlatformTenantRequired, SecurityPolicy: parent.SecurityPolicy,
 		WarmSnapshotEnabled: parent.WarmSnapshotEnabled, RequireAuthn: parent.RequireAuthn,
 		PublicAuthMode: parent.PublicAuthMode, ConsumerAuthMode: parent.ConsumerAuthMode,
 		PublicAuthBasicSealed:   append([]byte(nil), parent.PublicAuthBasicSealed...),

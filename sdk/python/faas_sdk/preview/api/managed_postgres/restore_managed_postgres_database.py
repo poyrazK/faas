@@ -69,11 +69,17 @@ def sync_detailed(
 ) -> Response[ManagedPostgresDatabase | Problem]:
     """Restore a database into a new managed PostgreSQL database
 
+     The restored database counts toward the plan's database limit. A restore may go one database past
+    the limit: that copy reports restore_slot_until, 7 days out, and becomes an ordinary database once
+    the account has room; otherwise its delete is scheduled then. A second restore past the limit while
+    a copy holds the slot answers 403 managed_postgres_restore_slot_in_use.
+
     Args:
         id (str):
         idempotency_key (str | Unset):
         body (RestoreManagedPostgresDatabaseRequest): Point-in-time restore request that creates a
-            new database.
+            new database. A restore is a copy-on-write branch of the source where the backend supports
+            it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -105,11 +111,17 @@ def sync(
 ) -> ManagedPostgresDatabase | Problem | None:
     """Restore a database into a new managed PostgreSQL database
 
+     The restored database counts toward the plan's database limit. A restore may go one database past
+    the limit: that copy reports restore_slot_until, 7 days out, and becomes an ordinary database once
+    the account has room; otherwise its delete is scheduled then. A second restore past the limit while
+    a copy holds the slot answers 403 managed_postgres_restore_slot_in_use.
+
     Args:
         id (str):
         idempotency_key (str | Unset):
         body (RestoreManagedPostgresDatabaseRequest): Point-in-time restore request that creates a
-            new database.
+            new database. A restore is a copy-on-write branch of the source where the backend supports
+            it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -136,11 +148,17 @@ async def asyncio_detailed(
 ) -> Response[ManagedPostgresDatabase | Problem]:
     """Restore a database into a new managed PostgreSQL database
 
+     The restored database counts toward the plan's database limit. A restore may go one database past
+    the limit: that copy reports restore_slot_until, 7 days out, and becomes an ordinary database once
+    the account has room; otherwise its delete is scheduled then. A second restore past the limit while
+    a copy holds the slot answers 403 managed_postgres_restore_slot_in_use.
+
     Args:
         id (str):
         idempotency_key (str | Unset):
         body (RestoreManagedPostgresDatabaseRequest): Point-in-time restore request that creates a
-            new database.
+            new database. A restore is a copy-on-write branch of the source where the backend supports
+            it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -170,11 +188,17 @@ async def asyncio(
 ) -> ManagedPostgresDatabase | Problem | None:
     """Restore a database into a new managed PostgreSQL database
 
+     The restored database counts toward the plan's database limit. A restore may go one database past
+    the limit: that copy reports restore_slot_until, 7 days out, and becomes an ordinary database once
+    the account has room; otherwise its delete is scheduled then. A second restore past the limit while
+    a copy holds the slot answers 403 managed_postgres_restore_slot_in_use.
+
     Args:
         id (str):
         idempotency_key (str | Unset):
         body (RestoreManagedPostgresDatabaseRequest): Point-in-time restore request that creates a
-            new database.
+            new database. A restore is a copy-on-write branch of the source where the backend supports
+            it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

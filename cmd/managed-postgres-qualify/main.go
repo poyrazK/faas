@@ -18,7 +18,6 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
-	"github.com/onebox-faas/faas/pkg/managedpostgres/neon"
 )
 
 type qualificationOutput struct {
@@ -107,7 +106,7 @@ func runConfigurationPreflight(getenv func(string) string, output, errorOutput i
 	if configPath == "" {
 		return writeConfigurationPreflight(result, failed, errorOutput, output)
 	}
-	registry, err := managedpostgres.Load(getenv, map[string]managedpostgres.Factory{"neon": neon.New})
+	registry, err := managedpostgres.Load(getenv, describeFactories())
 	addCheck("configuration_valid", err == nil && registry != nil, "configuration_invalid")
 	if err != nil || registry == nil {
 		return writeConfigurationPreflight(result, failed, errorOutput, output)
@@ -230,6 +229,9 @@ type liveQualification struct {
 	resourceID string
 	spec       managedpostgres.Spec
 	timeout    time.Duration
+	// close releases the native backend's control-plane pool; the caller
+	// defers it once the run is over.
+	close func()
 }
 
 func loadLiveQualification(getenv func(string) string, errorOutput io.Writer) (liveQualification, bool) {
@@ -237,7 +239,18 @@ func loadLiveQualification(getenv func(string) string, errorOutput io.Writer) (l
 		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification requires FAAS_ENVIRONMENT=staging and FAAS_MANAGED_POSTGRES_QUALIFY_LIVE=true")
 		return liveQualification{}, false
 	}
-	registry, err := managedpostgres.Load(getenv, map[string]managedpostgres.Factory{"neon": neon.New})
+	factories, closeFactories, err := liveFactories(context.Background(), getenv)
+	if err != nil {
+		_, _ = fmt.Fprintln(errorOutput, nativeDatabaseURLEnv+" is invalid")
+		return liveQualification{}, false
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			closeFactories()
+		}
+	}()
+	registry, err := managedpostgres.Load(getenv, factories)
 	if err != nil || registry == nil {
 		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification configuration is unavailable")
 		return liveQualification{}, false
@@ -256,12 +269,17 @@ func loadLiveQualification(getenv func(string) string, errorOutput io.Writer) (l
 		_, _ = fmt.Fprintln(errorOutput, "qualification region has no configured backend")
 		return liveQualification{}, false
 	}
+	if !liveNativeReady(getenv, backend) {
+		_, _ = fmt.Fprintln(errorOutput, "qualifying the native backend requires "+nativeDatabaseURLEnv+", the database pgproxyd reads role verifiers from")
+		return liveQualification{}, false
+	}
 	spec, err := qualificationSpec(backend, region)
 	if err != nil {
 		_, _ = fmt.Fprintln(errorOutput, "configured backend cannot produce a qualification spec")
 		return liveQualification{}, false
 	}
-	timeout := 20 * time.Minute
+	// The usage check waits for the hour the resource was created in to close.
+	timeout := 90 * time.Minute
 	if value := strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT")); value != "" {
 		timeout, err = time.ParseDuration(value)
 		if err != nil || timeout <= 0 {
@@ -269,8 +287,15 @@ func loadLiveQualification(getenv func(string) string, errorOutput io.Writer) (l
 			return liveQualification{}, false
 		}
 	}
-	return liveQualification{registry: registry, backend: backend, resourceID: resourceID, spec: spec, timeout: timeout}, true
+	ok = true
+	return liveQualification{registry: registry, backend: backend, resourceID: resourceID, spec: spec, timeout: timeout, close: closeFactories}, true
 }
+
+// computeCapQualifyTimeout covers the compute cap probe (about 20 minutes:
+// a 12-minute report reading and the hold) on top of provisioning and the
+// usage checks, which took about 50 minutes in production on 2026-11-05.
+// FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT still overrides it.
+const computeCapQualifyTimeout = 120 * time.Minute
 
 // runComputeCap qualifies compute caps (ADR-20261025094915 decision 10) on a
 // disposable resource and writes the artifact that
@@ -281,13 +306,19 @@ func runComputeCap(getenv func(string) string, output, errorOutput io.Writer) in
 	if !ok {
 		return 2
 	}
+	defer live.close()
+	timeout := live.timeout
+	if strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT")) == "" {
+		timeout = computeCapQualifyTimeout
+	}
 	report, qualificationErr := managedpostgres.QualifyProvider(context.Background(), live.backend.Provider, managedpostgres.QualificationOptions{
 		ProviderName: live.backend.Driver,
 		ResourceID:   live.resourceID,
 		Spec:         live.spec,
-		Timeout:      live.timeout,
+		Timeout:      timeout,
 		Mutating:     true,
 		ComputeCap:   true,
+		WaitForUsage: true,
 	})
 	artifact := managedpostgres.ComputeCapQualification{
 		Version: managedpostgres.ComputeCapQualificationVersion, BackendID: live.backend.ID,
@@ -316,6 +347,7 @@ func runStorageCap(getenv func(string) string, output, errorOutput io.Writer) in
 	if !ok {
 		return 2
 	}
+	defer live.close()
 	report, qualificationErr := managedpostgres.QualifyProvider(context.Background(), live.backend.Provider, managedpostgres.QualificationOptions{
 		ProviderName: live.backend.Driver,
 		ResourceID:   live.resourceID,
@@ -323,6 +355,7 @@ func runStorageCap(getenv func(string) string, output, errorOutput io.Writer) in
 		Timeout:      live.timeout,
 		Mutating:     true,
 		StorageCap:   true,
+		WaitForUsage: true,
 	})
 	artifact := managedpostgres.StorageCapQualification{
 		Version: managedpostgres.StorageCapQualificationVersion, BackendID: live.backend.ID,
@@ -348,6 +381,7 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 	if !ok {
 		return 2
 	}
+	defer live.close()
 	registry, backend, resourceID, spec, timeout := live.registry, live.backend, live.resourceID, live.spec, live.timeout
 	approvalTTL, err := parseQualificationApprovalTTL(getenv)
 	if err != nil {
@@ -381,6 +415,7 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 		Timeout:                   timeout,
 		Mutating:                  true,
 		ContinueAfterUsageFailure: continueAfterUsageFailure,
+		WaitForUsage:              true,
 	})
 	result := qualificationOutput{BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, Spec: spec, Report: report}
 	if qualificationErr == nil && durableQualificationEnabled(getenv) {
@@ -529,7 +564,7 @@ func runVerify(getenv func(string) string, path string, output, errorOutput io.W
 		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification approval artifact is unavailable")
 		return 2
 	}
-	registry, err := managedpostgres.Load(getenv, map[string]managedpostgres.Factory{"neon": neon.New})
+	registry, err := managedpostgres.Load(getenv, describeFactories())
 	if err != nil || registry == nil {
 		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification configuration is unavailable")
 		return 2

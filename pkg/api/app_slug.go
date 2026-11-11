@@ -1,11 +1,13 @@
 package api
 
 import (
-	"regexp"
 	"strings"
+	"sync/atomic"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
-var appSlugRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
+var appSlugRE = lazyregexp.New(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
 
 var reservedAppSlugs = map[string]struct{}{
 	"account": {}, "admin": {}, "api": {}, "assets": {}, "billing": {},
@@ -39,7 +41,55 @@ func IsPlatformReservedSlug(slug string) bool {
 // every public allocation path must reject these names.
 func IsReservedAppSlug(slug string) bool {
 	_, ok := reservedAppSlugs[slug]
-	return ok || IsPreviewAppSlug(slug)
+	return ok || IsPreviewAppSlug(slug) || IsSandboxTemplateAppSlug(slug) || isOperatorReservedSlug(slug)
+}
+
+// operatorReservedSlugs holds the cell's own reserved labels
+// (SetOperatorReservedAppSlugs).
+var operatorReservedSlugs atomic.Pointer[map[string]struct{}]
+
+// SetOperatorReservedAppSlugs reserves this cell's extra app names: the
+// labels of the host names edgednsd manages under the apps domain, such as a
+// direct-entry pilot host (ADR-20261107180000). A customer app with such a
+// name would be served at that platform-managed host. Like the fixed list,
+// it binds only allocation: an app that already has the name keeps
+// routing. apid calls it once at start with its configured list.
+func SetOperatorReservedAppSlugs(slugs []string) {
+	set := make(map[string]struct{}, len(slugs))
+	for _, s := range slugs {
+		if s = strings.ToLower(strings.TrimSpace(s)); s != "" {
+			set[s] = struct{}{}
+		}
+	}
+	operatorReservedSlugs.Store(&set)
+}
+
+func isOperatorReservedSlug(slug string) bool {
+	set := operatorReservedSlugs.Load()
+	if set == nil {
+		return false
+	}
+	_, ok := (*set)[slug]
+	return ok
+}
+
+// SandboxTemplateAppSlugPrefix starts a sandbox template build app's slug:
+// sbt- and 12 lowercase hex digits (ADR-20261027090013). Only apid names
+// such apps; customers cannot take the shape.
+const SandboxTemplateAppSlugPrefix = "sbt-"
+
+// IsSandboxTemplateAppSlug reports a template build app's slug.
+func IsSandboxTemplateAppSlug(slug string) bool {
+	hex, ok := strings.CutPrefix(slug, SandboxTemplateAppSlugPrefix)
+	if !ok || len(hex) != 12 {
+		return false
+	}
+	for _, c := range hex {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // PreviewAppSlugMaxLen is the longest PR preview slug: one DNS label. The

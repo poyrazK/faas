@@ -61,13 +61,17 @@ func (s *PgStore) AdvanceManagedRealtimeReadProgress(ctx context.Context, ep, pr
 		return ManagedRealtimeReadProgress{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var locked string
-	err = tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 for update`, ep).Scan(&locked)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ManagedRealtimeReadProgress{}, ErrNotFound
-	}
-	if err != nil {
+	// Readers advance markers many times a second (ADR-1323, amendment of
+	// 2026-11-03). A repeated or older sequence answers without a lock or a
+	// write, and a marker that already counts toward the endpoint's cap is
+	// advanced under its own row lock. Only a new marker takes the endpoint
+	// lock that keeps the cap exact.
+	var endpointExists bool
+	if err = tx.QueryRow(ctx, `select exists(select 1 from managed_realtime_endpoints where id=$1)`, ep).Scan(&endpointExists); err != nil {
 		return ManagedRealtimeReadProgress{}, err
+	}
+	if !endpointExists {
+		return ManagedRealtimeReadProgress{}, ErrNotFound
 	}
 	current, err := readProgressPG(ctx, tx, key)
 	if err != nil {
@@ -79,14 +83,44 @@ func (s *PgStore) AdvanceManagedRealtimeReadProgress(ctx context.Context, ep, pr
 	if sequence <= current.Sequence {
 		return current, nil
 	}
-	var exists bool
-	var count int
-	err = tx.QueryRow(ctx, `select exists(select 1 from managed_realtime_read_progress where endpoint_id=$1 and principal=$2 and stream=$3 and inbox=$4),(select count(*) from managed_realtime_read_progress where endpoint_id=$1)`, ep, key.principal, key.stream, inbox).Scan(&exists, &count)
-	if err != nil {
+	var live bool
+	err = tx.QueryRow(ctx, `select true from managed_realtime_read_progress where endpoint_id=$1 and principal=$2 and stream=$3 and inbox=$4 and updated_at >= clock_timestamp() - make_interval(secs => $5::double precision) for update`, ep, key.principal, key.stream, inbox, ManagedRealtimeReadMarkerRetention.Seconds()).Scan(&live)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return current, err
 	}
-	if !exists && count >= ManagedRealtimeMaxReadMarkers {
-		return current, ErrManagedRealtimeDurableCursorLimit
+	if !live {
+		var locked string
+		err = tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 for no key update`, ep).Scan(&locked)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ManagedRealtimeReadProgress{}, ErrNotFound
+		}
+		if err != nil {
+			return ManagedRealtimeReadProgress{}, err
+		}
+		var exists bool
+		var count int
+		// Only markers updated within the retention count; the reaper deletes the
+		// rest (ADR-1323, amendment of 2026-10-31).
+		err = tx.QueryRow(ctx, `select exists(select 1 from managed_realtime_read_progress where endpoint_id=$1 and principal=$2 and stream=$3 and inbox=$4 and updated_at >= clock_timestamp() - make_interval(secs => $5::double precision)),(select count(*) from managed_realtime_read_progress where endpoint_id=$1 and updated_at >= clock_timestamp() - make_interval(secs => $5::double precision))`, ep, key.principal, key.stream, inbox, ManagedRealtimeReadMarkerRetention.Seconds()).Scan(&exists, &count)
+		if err != nil {
+			return current, err
+		}
+		if !exists && count >= ManagedRealtimeMaxReadMarkers {
+			return current, ErrManagedRealtimeDurableCursorLimit
+		}
+	}
+	// The row lock (or the endpoint lock) orders concurrent advances, so
+	// the webhook's previous sequence is the one this advance replaced.
+	var stored int64
+	err = tx.QueryRow(ctx, `select sequence from managed_realtime_read_progress where endpoint_id=$1 and principal=$2 and stream=$3 and inbox=$4`, ep, key.principal, key.stream, inbox).Scan(&stored)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return current, err
+	}
+	if err == nil && stored > current.Sequence {
+		if sequence <= stored {
+			return readProgressPG(ctx, tx, key)
+		}
+		current.Sequence = stored
 	}
 	_, err = tx.Exec(ctx, `insert into managed_realtime_read_progress(endpoint_id,principal,stream,inbox,sequence) values($1,$2,$3,$4,$5) on conflict(endpoint_id,principal,stream,inbox) do update set sequence=greatest(managed_realtime_read_progress.sequence,excluded.sequence),updated_at=clock_timestamp()`, ep, key.principal, key.stream, inbox, sequence)
 	if err != nil {
@@ -106,4 +140,25 @@ func (s *PgStore) AdvanceManagedRealtimeReadProgress(ctx context.Context, ep, pr
 	}
 	err = tx.Commit(ctx)
 	return result, err
+}
+
+func (s *PgStore) PruneExpiredManagedRealtimeReadMarkers(ctx context.Context, batch int) (int64, error) {
+	if batch < 1 || batch > 1000 {
+		return 0, ErrManagedRealtimeDurableCursorInvalid
+	}
+	tag, err := s.pool.Exec(ctx, `
+		with expired as (
+			select ctid from managed_realtime_read_progress
+			where updated_at < clock_timestamp() - make_interval(secs => $2::double precision)
+			order by updated_at
+			limit $1
+			for update skip locked
+		)
+		delete from managed_realtime_read_progress p
+		where p.ctid in (select ctid from expired)
+	`, batch, ManagedRealtimeReadMarkerRetention.Seconds())
+	if err != nil {
+		return 0, fmt.Errorf("state: prune expired realtime read markers: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }

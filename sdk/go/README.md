@@ -122,6 +122,23 @@ log.Fatal(http.ListenAndServe(":"+os.Getenv("PORT"), tracing.Handler(mux)))
 Pass the request's context to outgoing calls so they appear under the
 request. See [`docs/tracing.md`](../../docs/tracing.md#go).
 
+## Profiling
+
+The `preview/profiling` package (on-demand profile captures are a preview
+capability) answers CPU, heap, goroutine, block and mutex captures and, when
+the app sets `profiling.enabled`, sends continuous CPU and heap profiles,
+using only the standard library:
+
+```go
+import "github.com/poyrazK/faas/sdk/go/preview/profiling"
+
+profiling.Start(appContext) // does nothing outside a profiled deployment
+log.Fatal(http.ListenAndServe(":"+os.Getenv("PORT"), profiling.ServeMux(mux)))
+```
+
+`ServeMux` labels CPU with the matched route. See
+[`docs/profiling.md`](../../docs/profiling.md#capture-a-running-instance-on-demand).
+
 ## Gregale Issues exception reporting
 
 Create a deployment-bound issue ingest token with `gregale issues create-token`
@@ -395,7 +412,8 @@ check these fields against Node, Python and OpenAPI in CI.
 ## Project release context
 
 For app-to-app calls, capture the inbound release once and let the SDK
-transport forward it to managed `*.svc.gregale` hosts. The transport strips
+transport forward it to managed `*.svc.gregale` hosts and declared
+`*.internal` aliases. The transport strips
 `X-Gregale-Revision` on those hops because a revision pin is scoped to the
 caller app:
 
@@ -423,6 +441,24 @@ Wrap only the app handlers that receive Gregale ingress. The platform still
 validates that the caller deployment belongs to the selected release; these
 helpers preserve request context and do not grant deployment-selection
 authority to the guest.
+
+For ordinary HTTP requests (not WebSocket upgrades), the middleware also
+captures Gregale's signed `X-Gregale-Request-Deadline` for participating
+chains (ADR-570). Managed calls carry the current request's token even if a
+downstream header tries to override it; the gateway verifies it before wake.
+The transport removes the token from external calls, including each external
+redirect hop, since `http.Client` calls the transport again for every hop.
+`faas.GregaleRequestDeadlineFromContext(ctx)` returns it; never edit its bytes.
+See [the deadline contract](../../docs/ops/traffic-total-deadline.md).
+
+The middleware also captures `X-Faas-Deadline-Ms`, the time Gregale gives the
+request to run, and the transport sends the time still left on each managed
+call, so the service proxy ends a downstream call when the caller's request
+runs out (ADR-20261102082606). It only shortens: a smaller value you set on the
+call is kept, and a request with no time left sends `1`, which the proxy
+refuses without waking the target. `faas.GregaleDeadlineFromContext(ctx)`
+returns the captured deadline; it does not cancel the context. The proxy
+honours the header once the platform enables service-call deadlines.
 
 For a long-lived native client, use the client transport to capture a release
 from its first managed API response and pin later calls from that transport

@@ -657,7 +657,7 @@ func TestNamedQueueReceiptFollowsPendingWorkPolicyTerminalState(t *testing.T) {
 					t.Fatalf("stale receipt claim completed cancelled work: %v", err)
 				}
 			}
-			if err := store.RetryTriggerRecordByOperator(ctx, recordID); !errors.Is(err, state.ErrNotFound) {
+			if err := store.RetryTriggerRecordByOperator(ctx, app.ID, trigger.ID.String(), recordID); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("operator revived policy-terminal receipt: %v", err)
 			}
 			if result := poller.Poll(ctx, trigger); result.Error != nil || len(result.Records) != 0 {

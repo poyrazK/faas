@@ -227,7 +227,21 @@ type Admission struct {
 	GitHub    *GitHubTarget
 	// Workflow links a run an automation's agent step admitted to its step.
 	Workflow *WorkflowLink
+	// Callback links a run gregale_run admitted to the thread and tool call
+	// it answers (ADR-20261030125501 §4).
+	Callback *RunCallback
 	Limits   AdmitLimits
+}
+
+// RunCallback is the stateless agent thread and tool call a run answers when
+// it finishes. IssuedAt is the issue time of the callback URL the call
+// carried: a thread revoked since then receives nothing.
+type RunCallback struct {
+	EndpointID     string
+	ThreadID       string
+	ToolCallID     string
+	ProviderCallID string
+	IssuedAt       time.Time
 }
 
 // WorkflowLink is the workflow run, step and reserved event of an agent
@@ -461,7 +475,7 @@ func (s *Store) AdmitRun(ctx context.Context, a Admission) (run Run, existing bo
 			found, err := s.q.FindDedupedRun(ctx, tx, sqlc.FindDedupedRunParams{AgentID: agent.ID, TenantID: optText(a.TenantID), DedupeKey: a.DedupeKey})
 			if err == nil {
 				id, existing = found, true
-				return nil
+				return s.linkCallback(ctx, tx, a, id)
 			}
 			if !errors.Is(err, pgx.ErrNoRows) {
 				return fmt.Errorf("find deduped run: %w", err)
@@ -488,14 +502,32 @@ func (s *Store) AdmitRun(ctx context.Context, a Admission) (run Run, existing bo
 		if err := s.resolveDeliveryTargets(ctx, tx, &a, version); err != nil {
 			return err
 		}
-		id, err = s.insertRun(ctx, tx, a, agent.ID, version)
-		return err
+		if id, err = s.insertRun(ctx, tx, a, agent.ID, version); err != nil {
+			return err
+		}
+		return s.linkCallback(ctx, tx, a, id)
 	})
 	if err != nil {
 		return Run{}, false, err
 	}
 	run, err = s.Run(ctx, a.AccountID, id)
 	return run, existing, err
+}
+
+// linkCallback records a gregale_run run's thread and tool call in the
+// admitting transaction, so a run admitted is always answered.
+func (s *Store) linkCallback(ctx context.Context, tx pgx.Tx, a Admission, runID string) error {
+	c := a.Callback
+	if c == nil {
+		return nil
+	}
+	err := s.q.InsertAgentRunCallback(ctx, tx, sqlc.InsertAgentRunCallbackParams{RunID: runID, AccountID: a.AccountID,
+		EndpointID: c.EndpointID, ThreadID: c.ThreadID, ToolCallID: c.ToolCallID, ProviderCallID: optText(c.ProviderCallID),
+		IssuedAt: pgtype.Timestamptz{Time: c.IssuedAt, Valid: true}})
+	if err != nil {
+		return fmt.Errorf("link run callback: %w", err)
+	}
+	return nil
 }
 
 // resolveCheckout fixes the installation that fetches a checkout at
@@ -578,20 +610,8 @@ func (s *Store) insertRun(ctx context.Context, tx pgx.Tx, a Admission, agentID s
 // The plan may have changed since the version was written, so its size and
 // timeout are checked again here.
 func (s *Store) checkAdmission(ctx context.Context, tx pgx.Tx, a Admission, v Version) error {
-	if a.TenantID != "" {
-		if !isUUID(a.TenantID) {
-			return ErrTenantNotFound
-		}
-		status, err := s.q.GetTenantStatus(ctx, tx, sqlc.GetTenantStatusParams{TenantID: a.TenantID, AccountID: a.AccountID})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrTenantNotFound
-		}
-		if err != nil {
-			return fmt.Errorf("read tenant: %w", err)
-		}
-		if status != "active" {
-			return ErrTenantInactive
-		}
+	if err := s.checkTenant(ctx, tx, a.AccountID, a.TenantID); err != nil {
+		return err
 	}
 	if v.TimeoutSec > a.Limits.TimeoutMaxSec {
 		return &LimitError{Limit: "AgentRunTimeoutMaxSec", Max: a.Limits.TimeoutMaxSec, Observed: v.TimeoutSec}

@@ -3,11 +3,14 @@ package apidgrpc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/state"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -32,6 +35,7 @@ type realtimeFleetPresenceResponse struct {
 	Members     []realtime.PresenceMember `json:"members"`
 	OwnMemberID string                    `json:"own_member_id,omitempty"`
 	ObservedAt  *time.Time                `json:"observed_at,omitempty"`
+	Renewed     bool                      `json:"renewed,omitempty"`
 }
 
 type realtimeFleetRelayRequest struct {
@@ -81,6 +85,33 @@ func (c *RealtimeHistoryClientImpl) DeletePresence(ctx context.Context, endpoint
 func (c *RealtimeHistoryClientImpl) ReadPresenceSnapshot(ctx context.Context, endpointID, channel string) ([]realtime.PresenceMember, error) {
 	_, members, _, err := c.presenceOperation(ctx, realtimeFleetPresenceRequest{Action: "snapshot", EndpointID: endpointID, Channel: channel})
 	return members, err
+}
+
+// RenewPresence extends this node's live presence lease for a connection
+// without a snapshot. It reports false when apid has no live lease (upsert
+// again) and realtime.ErrPresenceRenewUnsupported from an apid without
+// renewals.
+func (c *RealtimeHistoryClientImpl) RenewPresence(ctx context.Context, endpointID, channel, connectionID string) (bool, error) {
+	if c == nil || c.conn == nil {
+		return false, fmt.Errorf("apidgrpc: realtime fleet client is unavailable")
+	}
+	data, err := json.Marshal(realtimeFleetPresenceRequest{Action: "renew", NodeName: c.nodeName, EndpointID: endpointID, Channel: channel, ConnectionID: connectionID})
+	if err != nil {
+		return false, fmt.Errorf("apidgrpc: encode realtime presence renewal: %w", err)
+	}
+	response := new(wrapperspb.BytesValue)
+	if err := c.conn.Invoke(ctx, realtimeFleetPresenceMethod, wrapperspb.Bytes(data), response); err != nil {
+		// An apid without renewals refuses the action itself.
+		if st := status.Convert(err); st.Code() == codes.InvalidArgument && st.Message() == "invalid realtime presence operation" {
+			return false, errors.Join(realtime.ErrPresenceRenewUnsupported, err)
+		}
+		return false, fmt.Errorf("apidgrpc: realtime presence renewal: %w", err)
+	}
+	var decoded realtimeFleetPresenceResponse
+	if err := json.Unmarshal(response.GetValue(), &decoded); err != nil {
+		return false, fmt.Errorf("apidgrpc: decode realtime presence renewal: %w", err)
+	}
+	return decoded.Renewed, nil
 }
 
 func (c *RealtimeHistoryClientImpl) presenceOperation(ctx context.Context, request realtimeFleetPresenceRequest) (string, []realtime.PresenceMember, time.Time, error) {

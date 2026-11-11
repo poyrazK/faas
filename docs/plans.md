@@ -2,16 +2,16 @@
 
 <!-- GENERATED — do not edit by hand; regenerate with `make pricing-md`. -->
 
-Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly and shown in US dollars. Usage beyond the included GB-RAM-hours is billed at $0.01 per GB-RAM-hour on paid plans.
+Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly, shown in US dollars and before tax: the billing provider adds any sales tax or VAT that applies where you live at checkout. Usage beyond the included GB-RAM-hours is billed at $0.05 per GB-RAM-hour on paid plans.
 
 ## At a glance
 
-| Plan | Monthly | Deployed apps | PR preview environments | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App layer | Idle timeout | Max request timeout |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **Free** | $0 | 1 | 1 | 1 | 1 | 256 MB | 20 | 256 MB | 1m | 30s |
-| **Hobby** | $10 | 5 | 2 | 2 | 2 | 512 MB | 200 | 512 MB | 1m | 1m |
-| **Pro** | $30 | 25 | 5 | 5 | 5 | 1024 MB | 1000 | 1024 MB | 5m | 5m |
-| **Scale** | $99 | 100 | 20 | 10 | 20 | 2048 MB | 3000 | 2048 MB | 10m | 15m |
+| Plan | Monthly | Deployed apps | PR preview environments | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App egress / month | App layer | Idle timeout | Max request timeout |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **Free** | $0 | 1 | 1 | 1 | 1 | 256 MB | 20 | 10 GiB | 256 MB | 1m | 30s |
+| **Hobby** | $10 | 5 | 2 | 2 | 2 | 512 MB | 200 | 100 GiB | 512 MB | 1m | 1m |
+| **Pro** | $30 | 25 | 5 | 5 | 5 | 1024 MB | 1000 | 500 GiB | 1024 MB | 5m | 5m |
+| **Scale** | $99 | 100 | 20 | 10 | 20 | 2048 MB | 3000 | 2,000 GiB | 2048 MB | 10m | 15m |
 
 ## What each limit means
 
@@ -19,9 +19,12 @@ Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go)
 - **PR preview environments** is the separate limit for temporary pull-request previews: one per open pull request, however many workloads it runs. One environment runs at most as many workloads as the plan can deploy, and a closed pull request frees its environment at once. See [PR preview environments](preview-environments.md#quota).
 - **Concurrent instances** is the per-app wake/instance ceiling; request concurrency inside one VM is separately bounded by the plan.
 - **RAM / app** and **app layer** are hard build/runtime ceilings. Smaller resource profiles remain available where the plan permits them.
-- **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate, up to a [spend cap](billing.md#spend-cap). A paid plan starts with a cap of one more allowance of overage (Hobby $2, Pro $10, Scale $30); `gregale billing spend-cap` raises or clears it.
+- **CPU** follows each instance's RAM, whatever the plan: one vCPU per GB, at least one (a 1024 MB instance has one vCPU, a 2048 MB instance two). An instance can use any CPU its host has idle; when the host is busy, CPU is shared in proportion to RAM. An app can cap itself at 250 or 500 millicores (`gregale app update APP --cpu-millicores 500`). CPU is not billed separately: compute is billed by RAM and time.
+- **After a plan ends or shrinks**, for example when a subscription lapses, the plan's limits still bind: your oldest deployed apps up to its deployed-app limit keep serving, and other apps, or any app set above its RAM, park and stop waking until they fit. Delete apps, lower an app's RAM (`gregale app APP --ram MB`) or upgrade. A downgrade you request is refused until your apps fit.
+- **App egress / month** is the data your apps send each month, including what Gregale sends for them without waking an instance: responses served from the [response cache](cache.md), fixed edge responses, [log drain](logs.md) deliveries and [realtime](#managed-realtime) messages to subscribers. Free stops serving at it until the month ends or it upgrades. A paid plan stops at it too, unless the account or organization turns on egress overage (`gregale billing egress-overage on`): egress beyond the plan's then costs $0.03 per GiB, up to the [spend cap](billing.md#spend-cap). Each hour's egress counts against the plan in force that hour; see [egress overage](billing.md#egress-overage). Your [managed PostgreSQL](managed-postgres.md) databases' egress counts toward the same allowance: once your apps and databases together reach it, the databases stop until the month ends or the plan grows, also with egress overage on.
+- **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate, up to a [spend cap](billing.md#spend-cap). A paid plan starts with a cap of one more allowance of overage (Hobby $10, Pro $50, Scale $150); `gregale billing spend-cap` changes it, up to Hobby $75, Pro $200 or Scale $1,000.
 - **Idle timeout** is when an inactive app is parked. A later request wakes it from its snapshot; see [scale-to-zero](cold-wake.md). Functions default to 30s on every plan; any app or function can set its own value from 10s up to twice the plan default.
-- **Max request timeout** is the longest `request_timeout_s` an app or function may set (`gregale app APP --request-timeout SECONDS`). Without one, a function request must start its response within 3s and an app request within 30s; a function's whole invocation, a streamed response included, may then run for the longer of its timeout and 30s.
+- **Max request timeout** is the longest `request_timeout_s` an app or function may set (`gregale app APP --request-timeout SECONDS`). Without one, a function request must start its response within 30s and an app request within 30s; a function's whole invocation, a streamed response included, may then run for the longer of its timeout and 30s.
 
 ## Developer environments
 
@@ -33,6 +36,17 @@ Each [`gregale dev`](gregale-dev.md) environment keeps a lease that every sync r
 | **Hobby** | 2 | 72h |
 | **Pro** | 5 | 168h |
 | **Scale** | 10 | 336h |
+
+## Builds
+
+Builds are free. Each plan includes builder time per UTC month, shared by every app of the account or organization that pays for them; a running build counts up to now, and no build counts past the 15-minute build timeout. A build that would start past it is refused with `plan_limit_build_minutes` until the month ends or the plan grows. Deploying a prebuilt image builds nothing and still works.
+
+| Plan | Build minutes / month |
+|---|---:|
+| **Free** | 200 |
+| **Hobby** | 1,000 |
+| **Pro** | 3,000 |
+| **Scale** | 6,000 |
 
 ## Managed realtime
 
@@ -49,16 +63,16 @@ The connection limit counts open WebSocket and SSE connections across all of an 
 
 ## Object storage
 
-Object storage bills the bytes it holds. Each plan includes an average amount of stored data per month; storage beyond it costs $0.03 per GiB-month. Requests and egress are not charged. Free stops at its included storage.
+Object storage bills the bytes it holds. Each plan includes an average amount of stored data per month; storage beyond it costs $0.03 per GiB-month, up to the plan's storage ceiling. Requests and egress are not charged. Free stops at its included storage. Each plan limits the data you read out of your buckets each month to 10 times its included storage.
 
-| Plan | Included storage | Beyond the included storage |
-|---|---:|---|
-| **Free** | 1 GiB | stops at 1 GiB |
-| **Hobby** | 10 GiB | $0.03 per GiB-month |
-| **Pro** | 50 GiB | $0.03 per GiB-month |
-| **Scale** | 200 GiB | $0.03 per GiB-month |
+| Plan | Included storage | Beyond the included storage | Most stored | Egress each month | Requests each month |
+|---|---:|---|---:|---:|---:|
+| **Free** | 1 GiB | stops at 1 GiB | 1 GiB | 10 GiB | 50,000 |
+| **Hobby** | 10 GiB | $0.03 per GiB-month | 20 GiB | 100 GiB | 500,000 |
+| **Pro** | 50 GiB | $0.03 per GiB-month | 250 GiB | 500 GiB | 2,500,000 |
+| **Scale** | 200 GiB | $0.03 per GiB-month | 1,000 GiB | 2,000 GiB | 10,000,000 |
 
-Included storage is the average over the month, so 20 GiB held for half a month uses 10 GiB of it. See [object storage](object-storage.md).
+Included storage is the average over the month, so 20 GiB held for half a month uses 10 GiB of it. A lower spend cap lowers how much a paid plan stores: a $0 cap stops at the included storage. Need more than the plan stores? Ask support to raise your account's ceiling; your spend cap still applies. At the ceiling, uploads are refused, and downloads stop while you store more than it until you delete objects. A downgrade waits until your data fits. Every plan stores up to 1,000,000 objects per account, counting retained versions. Egress counts the bytes Gregale serves from your buckets, through `s3.gregale.dev`, signed URLs and public buckets; a public object served from the CDN's cache does not count. At the egress limit, requests other than deletes are refused until the month ends; at the request limit, every request is refused until the month ends. See [object storage](object-storage.md#limits).
 
 ## Choose a plan
 

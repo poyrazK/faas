@@ -25,3 +25,27 @@ Environment=FAAS_GATEWAYD_ROLE={{ faas_box_role }}
 # instance-health breaker shared by the public path and the service proxy.
 Environment=FAAS_GATEWAY_RETRY={{ 'true' if (faas_gateway_retry | default(true) | bool) else 'false' }}
 Environment=FAAS_GATEWAY_CIRCUIT_BREAKER={{ 'true' if (faas_gateway_circuit_breaker | default(true) | bool) else 'false' }}
+{% if (faas_gateway_edge_local_first | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+
+# ADR-20261102081618 §5: requests a compute edge forwarded use this node's
+# instances first; responses name every node of the app.
+Environment=FAAS_GATEWAY_EDGE_LOCAL_FIRST=1
+{% endif %}
+{% if (faas_request_id_journal_local | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+
+# ADR-20261101085552 step 4: request IDs are journaled on this node, not in
+# the control plane's request_id_journal (manifest hot_path).
+Environment=FAAS_REQUEST_ID_JOURNAL_LOCAL=1
+{% endif %}
+{% if (faas_request_telemetry_minute_collapse | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+
+# ADR-20261101085552 step 1: one request-telemetry row per app, route, status
+# and minute (manifest hot_path).
+Environment=FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE=1
+{% endif %}
+{% if (faas_gateway_local_vmmd_socket | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+
+# Reach this node's vmmd on its local data socket instead of mTLS over TCP;
+# rendered only with vmmd's local_data_socket (manifest hot_path).
+Environment=FAAS_GATEWAY_LOCAL_VMMD_SOCKET=1
+{% endif %}

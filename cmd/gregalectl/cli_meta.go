@@ -228,6 +228,18 @@ var cliCommands = []cliCommand{
 					{Name: "refresh", Short: "fetch from shared storage and replace the local cache"},
 				},
 			},
+			{
+				Name:  "resign",
+				Short: "Convert stored layers' v1 signatures to key-bound v2 ones (ADR-20261109170000)",
+				Flags: []cliFlag{
+					{Name: "env-file", Short: "storage.env path (required)"},
+					{Name: "pg-dsn", Short: "PostgreSQL DSN"},
+					{Name: "db-env", Short: "database environment file"},
+					{Name: "sign-key", Short: "the fleet signing key signd holds"},
+					{Name: "dry-run", Short: "verify and count, write nothing"},
+					{Name: "json", Short: "emit a machine-readable report"},
+				},
+			},
 		},
 	},
 	{
@@ -330,6 +342,44 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "keygen", Short: "Write apid's account credential key ring", Flags: []cliFlag{{Name: "out", Short: "new ring path", Req: true}, {Name: "rotate-from", Short: "existing ring whose keys follow the new one"}}},
 			{Name: "status", Short: "Count stored credential hashes by key", Flags: []cliFlag{{Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+		},
+	},
+	{
+		// ADR-1027: native managed-PostgreSQL database nodes. A node's
+		// lifecycle lives in the manifest; moving one database is a
+		// durable operator intent schedd's database scheduler runs.
+		Name:    dispatchDatabaseNodes,
+		DocSlug: "database-nodes",
+		Short:   "Native managed-PostgreSQL database nodes (database-nodes move, restart, switchover)",
+		Subcommands: []cliSub{
+			{
+				Name:  "move",
+				Short: "Move a native database to another database node (POST /v1/admin/ops/databases/{id}/move; durable operator intent)",
+				Flags: []cliFlag{
+					{Name: "database", Short: "the native database's id (required)"},
+					{Name: "node", Short: "target database node (default: the active node with the most free volume capacity)"},
+					{Name: "reason", Short: "audit reason ([a-z0-9_]{1,64}; defaults to operator_database_move)"},
+					{Name: "timeout", Short: "maximum wait for the move to be recorded (default 1m)"},
+				},
+			},
+			{
+				Name:  "restart",
+				Short: "Restart a running native database in place onto its node's current base (POST /v1/admin/ops/databases/{id}/restart; durable operator intent)",
+				Flags: []cliFlag{
+					{Name: "database", Short: "the native database's id (required)"},
+					{Name: "reason", Short: "audit reason ([a-z0-9_]{1,64}; defaults to operator_database_restart)"},
+					{Name: "timeout", Short: "maximum wait for the restart (default 2m)"},
+				},
+			},
+			{
+				Name:  "switchover",
+				Short: "Hand a production-class native database to its synchronized standby, losing nothing (POST /v1/admin/ops/databases/{id}/switchover; durable operator intent)",
+				Flags: []cliFlag{
+					{Name: "database", Short: "the native database's id (required)"},
+					{Name: "reason", Short: "audit reason ([a-z0-9_]{1,64}; defaults to operator_database_switchover)"},
+					{Name: "timeout", Short: "maximum wait for the switchover (default 2m)"},
+				},
+			},
 		},
 	},
 	{
@@ -711,6 +761,16 @@ var cliCommands = []cliCommand{
 			{
 				Name:  "revoke-sessions",
 				Short: "Revoke every active session for an account",
+				Flags: accountMutationCLIFlags(),
+			},
+			{
+				Name:  "reset-mfa",
+				Short: "Clear a customer's two-factor authentication after verified recovery",
+				Flags: accountMutationCLIFlags(),
+			},
+			{
+				Name:  "revert-email",
+				Short: "Move a customer back to the email address their last confirmed change replaced",
 				Flags: accountMutationCLIFlags(),
 			},
 		},

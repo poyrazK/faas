@@ -425,7 +425,7 @@ func TestUnitS3Gateway_OptionalShape(t *testing.T) {
 }
 
 func TestOptionalRegistry_ExplicitlyConfiguredDataPlanes(t *testing.T) {
-	want := []string{"s3-gatewayd", "bridged", "apid-clone-worker", "maild", "livequeryd", "mcp-bridge", "agentd", "gatewayd-public-edge"}
+	want := []string{"s3-gatewayd", "bridged", "apid-clone-worker", "apid-data-pipeline-worker", "apid-data-pipeline-alert-worker", "maild", "livequeryd", "mcp-bridge", "agentd", "edgednsd", "signd", "gatewayd-public-edge", "s3-gatewayd-compute", "pgproxyd", "dbbackupd"}
 	got := make([]string, 0, len(OptionalRegistry))
 	for _, entry := range OptionalRegistry {
 		got = append(got, entry.Name)

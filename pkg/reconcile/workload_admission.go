@@ -31,6 +31,24 @@ func validatePlatformTenantPolicy(plan api.Plan, workloads []reposcan.Workload) 
 	return nil
 }
 
+// WorkloadPlanAdmissionReasons are the plan gates a project deploy applies to
+// workloads before it writes them: declared resources, image processes,
+// lifecycle settings and platform-tenant-required apps. PR previews apply
+// them to the workloads a pull request builds; a head the plan refuses at
+// merge must not run as a preview (ADR-20261031180000).
+func WorkloadPlanAdmissionReasons(plan api.Plan, workloads []reposcan.Workload) []string {
+	reasons := ProjectImageLifecycleAdmissionReasons(plan, workloads)
+	if plan.ConsumerKeysPerApp() > 0 {
+		return reasons
+	}
+	for _, workload := range workloads {
+		if workload.PlatformTenantRequired != nil && *workload.PlatformTenantRequired {
+			reasons = append(reasons, fmt.Sprintf("workload %q: the %s plan does not include platform-tenant-required apps", workload.Name, plan))
+		}
+	}
+	return reasons
+}
+
 // ProjectImageLifecycleAdmissionReasons keeps background image workloads, and
 // built workers, on their worker/job lifecycle and applies the same plan gate
 // as standalone apps.
@@ -38,6 +56,9 @@ func ProjectImageLifecycleAdmissionReasons(plan api.Plan, workloads []reposcan.W
 	var reasons []string
 	for _, workload := range workloads {
 		reasons = append(reasons, composeResourcesAdmissionReasons(plan, workload)...)
+		if workload.AppProtocol != "" && !plan.AppProtocolAllowed(workload.AppProtocol) {
+			reasons = append(reasons, fmt.Sprintf("workload %q: the %s plan does not include x-gregale-app-protocol %s", workload.Name, plan, workload.AppProtocol))
+		}
 		// Built services carry Compose process overrides too (ADR-20261022160000).
 		if err := workload.ImageProcess.ValidatePlan(plan); err != nil {
 			reasons = append(reasons, fmt.Sprintf("workload %q: image process: %s", workload.Name, err))
@@ -143,7 +164,7 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 			continue
 		}
 		seen[slug] = workload.RootDir
-		if app, exists := bySlug[slug]; exists &&
+		if app, exists := bySlug[slug]; exists && !adoptableFunctionApp(app, workload) &&
 			(projectID == "" || app.ProjectID != projectID || !member(app, workload) || app.PreviewOfSlug != "") {
 			reasons = append(reasons, fmt.Sprintf(
 				"workload %q conflicts with existing app slug %q outside this project member",
@@ -186,4 +207,12 @@ func validateWorkloadAdmissionWithManaged(workloads []reposcan.Workload, managed
 		return nil
 	}
 	return fmt.Errorf("%w: %s", ErrInvalidWorkloadPlan, strings.Join(reasons, "; "))
+}
+
+// adoptableFunctionApp reports whether app is a function app of the
+// account outside any project that a function workload takes over: the app
+// `gregale deploy` made under the same slug (ADR-20261108160000 §1).
+func adoptableFunctionApp(app state.App, workload reposcan.Workload) bool {
+	return workload.Function != nil && app.Type == state.AppTypeFunction && app.ProjectID == "" &&
+		app.Status != state.AppDeleted && app.PreviewOfSlug == ""
 }

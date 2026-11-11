@@ -46,6 +46,9 @@
 //	FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE  off | shadow | live; default off
 //	FAAS_POLAR_OBJECT_STORAGE_BILLING_FROM  UTC-month activation boundary for shadow/live
 //	FAAS_POLAR_OBJECT_STORAGE_METER_ID      separate charge_millicents meter for shadow/live
+//	FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE  off | shadow | live; default off (ADR-20261031110037)
+//	FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM  UTC-month activation boundary for shadow/live
+//	FAAS_POLAR_MANAGED_POSTGRES_METER_ID      separate charge_millicents meter for shadow/live
 //	FAAS_POLAR_BASE_URL    optional; private API proxy / contract-test endpoint
 //
 // TOML config precedence: env > TOML > Defaults. The daemon's
@@ -57,10 +60,12 @@ package loader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/billing"
@@ -118,6 +123,23 @@ func resolveSandbox(envVal string, tomlVal bool) bool {
 	default:
 		return tomlVal
 	}
+}
+
+// ErrPolarSandboxInProduction refuses a production deployment configured for
+// Polar's sandbox: a sandbox checkout pays with a test card and still grants a
+// paid plan, so a flag left over from the launch checklist's sandbox walk would
+// give paid plans away.
+var ErrPolarSandboxInProduction = errors.New("billing/loader: Polar sandbox is refused when FAAS_ENVIRONMENT=production; unset FAAS_POLAR_SANDBOX and use production credentials")
+
+// productionSafePolarConfig resolves the Polar config and refuses the sandbox
+// in a production deployment (FAAS_ENVIRONMENT=production).
+func productionSafePolarConfig(cfg *RootBillingConfig, env func(string) string) (polar.Config, error) {
+	out := resolvedPolarConfig(cfg, env)
+	if strings.EqualFold(strings.TrimSpace(env("FAAS_ENVIRONMENT")), "production") &&
+		(out.Sandbox || strings.Contains(strings.ToLower(out.BaseURL), "sandbox")) {
+		return polar.Config{}, ErrPolarSandboxInProduction
+	}
+	return out, nil
 }
 
 func resolvedPolarConfig(cfg *RootBillingConfig, env func(string) string) polar.Config {
@@ -199,6 +221,18 @@ func resolvedPolarConfig(cfg *RootBillingConfig, env func(string) string) polar.
 	}
 	if v := env("FAAS_POLAR_OBJECT_STORAGE_METER_ID"); v != "" {
 		out.ObjectStorageMeterID = v
+	}
+	if v := env("FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE"); v != "" {
+		out.ManagedPostgresBillingMode = v
+	}
+	if v := env("FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM"); v != "" {
+		out.ManagedPostgresBillingFrom = v
+	}
+	if v := env("FAAS_POLAR_MANAGED_POSTGRES_USAGE_EVENT_NAME"); v != "" {
+		out.ManagedPostgresUsageEventName = v
+	}
+	if v := env("FAAS_POLAR_MANAGED_POSTGRES_METER_ID"); v != "" {
+		out.ManagedPostgresMeterID = v
 	}
 	if v := env("FAAS_POLAR_SUCCESS_URL"); v != "" {
 		out.SuccessURL = v
@@ -385,16 +419,26 @@ func Providers() []ProviderMeta {
 				"FAAS_POLAR_SCALE_INCLUDED_EGRESS_GIB",
 				"FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE", "FAAS_POLAR_OBJECT_STORAGE_BILLING_FROM",
 				"FAAS_POLAR_OBJECT_STORAGE_USAGE_EVENT_NAME", "FAAS_POLAR_OBJECT_STORAGE_METER_ID",
+				"FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE", "FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM",
+				"FAAS_POLAR_MANAGED_POSTGRES_USAGE_EVENT_NAME", "FAAS_POLAR_MANAGED_POSTGRES_METER_ID",
 			},
 			BuildAPID: func(cfg *RootBillingConfig, env func(string) string, log *slog.Logger) (any, error) {
-				p, err := polar.NewProvider(resolvedPolarConfig(cfg, env), log)
+				pc, err := productionSafePolarConfig(cfg, env)
+				if err != nil {
+					return nil, err
+				}
+				p, err := polar.NewProvider(pc, log)
 				if err != nil {
 					return nil, fmt.Errorf("billing/loader: build Polar provider for apid: %w", err)
 				}
 				return p, nil
 			},
 			BuildMeterd: func(cfg *RootBillingConfig, env func(string) string, store state.Store, log *slog.Logger) (any, error) {
-				p, err := polar.NewProviderWithDedupe(resolvedPolarConfig(cfg, env), log, store)
+				pc, err := productionSafePolarConfig(cfg, env)
+				if err != nil {
+					return nil, err
+				}
+				p, err := polar.NewProviderWithDedupe(pc, log, store)
 				if err != nil {
 					return nil, fmt.Errorf("billing/loader: build Polar provider for meterd: %w", err)
 				}
@@ -482,13 +526,16 @@ func LoadProviderForAPID(ctx context.Context, cfg *RootBillingConfig, env func(s
 		// planOverage). The call is bounded by the SDK's HTTP timeout
 		// and the supplied ctx so a daemon shutdown can cancel it.
 		//
+		if m.Name == providerPolar {
+			if err := polarBootPreflight(ctx, bp, "apid", log); err != nil {
+				return nil, m.Name, err
+			}
+			return bp, m.Name, nil
+		}
 		bootCtx, cancel := context.WithTimeout(ctx, providerBootHydrationTimeout)
 		err = bp.EnsurePlanProducts(bootCtx)
 		cancel()
 		if err != nil {
-			if m.Name == providerPolar {
-				return nil, m.Name, fmt.Errorf("billing: Polar catalog preflight failed: %w", err)
-			}
 			log.Warn("billing: EnsurePlanProducts failed at boot — upgrade 402 will degrade to 500 until next run",
 				"provider", m.Name, "err", err)
 		}
@@ -556,14 +603,67 @@ func LoadProviderForMeterd(cfg *RootBillingConfig, env func(string) string, stor
 			// not lazily discovered data. Refuse to start meterd when the
 			// catalog cannot satisfy the billing contract; otherwise the box
 			// would sample usage forever while every checkout/push is unusable.
-			preflightCtx, cancel := context.WithTimeout(context.Background(), providerBootHydrationTimeout)
-			err := bp.EnsurePlanProducts(preflightCtx)
-			cancel()
-			if err != nil {
-				return nil, m.Name, fmt.Errorf("billing: Polar catalog preflight failed for meterd: %w", err)
+			if err := polarBootPreflight(context.Background(), bp, "meterd", log); err != nil {
+				return nil, m.Name, err
 			}
 		}
 		return bp, m.Name, nil
 	}
 	return nil, "", fmt.Errorf("billing: unknown FAAS_BILLING_PROVIDER=%q", name)
+}
+
+// Polar preflight retry after a transient boot failure. Variables so tests
+// can shorten them.
+var (
+	polarPreflightRetryMin = 30 * time.Second
+	polarPreflightRetryMax = 5 * time.Minute
+)
+
+// polarBootPreflight checks the Polar catalog and organization at boot. A
+// configuration the billing contract cannot use refuses to start the daemon.
+// A Polar or network failure does not: apid and meterd do far more than
+// billing, so an outage at a deploy or restart must not take them down. The
+// daemon starts, and the check is retried in the background until it passes;
+// pushes and checkouts meanwhile fail and retry on their own paths
+// (ADR-20261031100000).
+func polarBootPreflight(ctx context.Context, bp billing.Provider, daemon string, log *slog.Logger) error {
+	bootCtx, cancel := context.WithTimeout(ctx, providerBootHydrationTimeout)
+	err := bp.EnsurePlanProducts(bootCtx)
+	cancel()
+	if err == nil {
+		return nil
+	}
+	if !polar.IsTransient(err) {
+		return fmt.Errorf("billing: Polar catalog preflight failed for %s: %w", daemon, err)
+	}
+	log.Warn("billing: Polar unreachable at boot; starting and retrying the catalog preflight", "daemon", daemon, "err", err)
+	go retryPolarPreflight(ctx, bp, daemon, log)
+	return nil
+}
+
+// retryPolarPreflight retries the catalog preflight with backoff until it
+// passes or ctx ends. A configuration failure found now cannot stop a running
+// daemon, so it is logged as an error on every attempt until it is fixed.
+func retryPolarPreflight(ctx context.Context, bp billing.Provider, daemon string, log *slog.Logger) {
+	delay := polarPreflightRetryMin
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		attemptCtx, cancel := context.WithTimeout(ctx, providerBootHydrationTimeout)
+		err := bp.EnsurePlanProducts(attemptCtx)
+		cancel()
+		if err == nil {
+			log.Info("billing: Polar catalog preflight passed", "daemon", daemon)
+			return
+		}
+		if polar.IsTransient(err) {
+			log.Warn("billing: Polar catalog preflight still unavailable", "daemon", daemon, "err", err)
+		} else {
+			log.Error("billing: Polar catalog does not satisfy the billing contract; fix the Polar configuration", "daemon", daemon, "err", err)
+		}
+		delay = min(delay*2, polarPreflightRetryMax)
+	}
 }

@@ -91,6 +91,18 @@
     group: root
     mode: "0644"
 
+# Manifest hot_path: these switches were first turned on by hand on
+# production (2026-11-06). 99-faas-role.conf now carries them, so the hand-made
+# drop-ins go; left behind they would keep a switch on after the manifest
+# turned it off.
+- name: vmmd_service — remove the hand-made hot-path drop-ins
+  notify: restart faas-vmmd
+  ansible.builtin.file:
+    path: "/etc/systemd/system/faas-vmmd.service.d/{{ item }}"
+    state: absent
+  loop:
+    - 63-faas-vmmd-local-data-socket.conf
+
 - name: vmmd_service — set developer live patch gate (ADR-740)
   ansible.builtin.template:
     src: 99-faas-dev-patch.conf.j2
@@ -398,3 +410,9 @@
 # provisioned via `gregalectl secrets init`).
 - name: vmmd_service — sealed.env split perm-asserts (issue # 585 / ADR-127)
   ansible.builtin.include_tasks: ../../_shared/tasks/sealed_env_split_perm_asserts.yml
+
+- name: vmmd_service — attach credential ring (ADR 20261029202403 amendment 1)
+  ansible.builtin.include_tasks: ../../_shared/tasks/credential_ring.yml
+  vars:
+    credential_family: attach
+    credential_units: [faas-vmmd]

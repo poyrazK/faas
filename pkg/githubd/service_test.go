@@ -405,6 +405,29 @@ func TestHandlePushRequest_TagUsesConfiguredProductionBranch(t *testing.T) {
 	}
 }
 
+// A project's annotated release tag builds the commit the tag points at,
+// not the tag object GitHub names in the push's `after`.
+func TestHandlePushRequest_AnnotatedTagBuildsItsCommit(t *testing.T) {
+	const tagObject, commit = "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222"
+	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
+	rig.seedProject(t, "octo/api", "main")
+	svc := newServiceForRig(t, rig)
+	rec := &recordingEnqueuer{}
+	svc.Enqueuer = rec
+	body := []byte(`{"ref":"refs/tags/v1.3.0","before":"0000000000000000000000000000000000000000","after":"` + tagObject + `","created":true,"head_commit":{"id":"` + commit + `"},"repository":{"full_name":"octo/api","name":"api","default_branch":"main"},"installation":{"id":42},"pusher":{"name":"alice"}}`)
+	if _, err := svc.HandlePushRequest(context.Background(), body); err != nil {
+		t.Fatalf("annotated tag push: %v", err)
+	}
+	if len(rec.calls) == 0 {
+		t.Fatal("the annotated tag built nothing")
+	}
+	for _, call := range rec.calls {
+		if call.commitSHA != commit || call.tag != "v1.3.0" {
+			t.Fatalf("built %+v, want the tagged commit %s under tag v1.3.0", call, commit)
+		}
+	}
+}
+
 func TestHandlePushRequest_TagDeletionIsIgnored(t *testing.T) {
 	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
 	rig.seedProject(t, "octo/api", "main")
@@ -510,6 +533,7 @@ type enqueueCall struct {
 	tag                string
 	githubSourceRef    string
 	githubInstallation int64
+	addresses          map[string]string
 }
 
 func (r *recordingEnqueuer) Enqueue(_ context.Context, spec BuildSpec) (state.Build, error) {
@@ -523,6 +547,7 @@ func (r *recordingEnqueuer) Enqueue(_ context.Context, spec BuildSpec) (state.Bu
 		tag:                spec.Tag,
 		githubSourceRef:    spec.GitHubSourceRef,
 		githubInstallation: spec.GitHubInstallationID,
+		addresses:          spec.ComposeServiceAddresses,
 	})
 	if r.err != nil {
 		return state.Build{}, r.err
@@ -1239,6 +1264,16 @@ func TestFilterByPath_Unit(t *testing.T) {
 			mode:      "paths",
 			wantIDs:   []string{"root"},
 			wantSkips: []string{"auth", "billing"},
+		},
+		{
+			// The root gregale.yaml declares every function of a
+			// functions project (ADR-20261108160000 §3): it rebuilds
+			// every member, a root-dir workload included.
+			name:    "paths mode + root gregale.yaml rebuilds every member",
+			apps:    appsWithRoot,
+			files:   []string{"gregale.yaml"},
+			mode:    "paths",
+			wantIDs: []string{"auth", "billing", "root"},
 		},
 		{
 			// Lockfile fallback (no member touched, no root-dir

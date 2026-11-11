@@ -8,7 +8,17 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+)
+
+var (
+	// errRuntimeRefreshIdle reports an app with no live deployment and no
+	// resident instance: nothing runs the previous configuration.
+	errRuntimeRefreshIdle = errors.New("sched: runtime config restart: no live deployment and no resident instance")
+	// errRuntimeRefreshAwaitingLive reports resident instances of a
+	// deployment that is not live yet.
+	errRuntimeRefreshAwaitingLive = errors.New("sched: runtime config restart: resident instances await a live deployment")
 )
 
 // refreshRuntimeConfigRolling is the durable apply-now path for env and secret
@@ -42,7 +52,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 	if err != nil {
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: list deployments for %s: %w", appID, err)
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: list initial instances for %s: %w", appID, err)
 	}
@@ -79,7 +89,17 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 		}
 	}
 	if len(live) == 0 {
-		return CoordOutcome{}, errors.New("sched: runtime config restart: no resident live deployment in selected environment")
+		// No live deployment (ADR-20261110120000). With nothing resident, no
+		// runtime holds a previous credential and the refresh is complete.
+		// Instances of a deployment that is not live yet (a first deploy
+		// still snapshotting) keep the old value until it goes live, so the
+		// refresh waits for it instead of failing on every delivery.
+		for _, instance := range instances {
+			if runtimeConfigResident(instance) {
+				return CoordOutcome{}, errors.Join(db.ErrNotificationDeferred, errRuntimeRefreshAwaitingLive)
+			}
+		}
+		return CoordOutcome{}, errRuntimeRefreshIdle
 	}
 	// A live deployment staged at 0% traffic (deploy --no-traffic) serves no
 	// production requests. Replacing it boots a VM nothing routes to and, under
@@ -188,7 +208,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 				// owns any remaining serving rows; do not create more VMs.
 				return CoordOutcome{}, nil
 			}
-			instances, listErr := e.store.ListInstancesForApp(ctx, appID)
+			instances, listErr := e.liveInstancesForApp(ctx, appID)
 			if listErr != nil {
 				return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: list instances for %s: %w", appID, listErr)
 			}
@@ -302,7 +322,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 
 	// Retire stale instances from superseded/preview deployments only after
 	// every live scope has at least its fresh configured serving capacity.
-	instances, err = e.store.ListInstancesForApp(ctx, appID)
+	instances, err = e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: list final stale instances for %s: %w", appID, err)
 	}
@@ -324,7 +344,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 			}
 		}
 	}
-	instances, err = e.store.ListInstancesForApp(ctx, appID)
+	instances, err = e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: verify refreshed instances for %s: %w", appID, err)
 	}

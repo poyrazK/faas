@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 var (
@@ -60,6 +62,7 @@ func TestMagicLinkFromSignupEndpointSignsIn(t *testing.T) {
 		t.Fatalf("magic-link request = %d", rec.Code)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/auth/verify?token="+lastMailToken(t, mailer, magicLinkTokenPattern), nil)
+	req.Header.Set("Sec-Fetch-Site", "none")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusFound || rec.Header().Get("Set-Cookie") == "" {
@@ -83,6 +86,7 @@ func TestEmailOwnershipClaimRevokesPreVerificationCredentials(t *testing.T) {
 		t.Fatalf("magic-link request = %d", rec.Code)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/auth/verify?token="+lastMailToken(t, mailer, magicLinkTokenPattern), nil)
+	req.Header.Set("Sec-Fetch-Site", "none")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusFound {
@@ -108,7 +112,7 @@ func TestEmailOwnershipClaimRevokesPreVerificationCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv2.verifyOAuthAccountEmail(context.Background(), acct2); err != nil {
+	if _, err := srv2.verifyOAuthAccountEmail(context.Background(), acct2, acct2.Email); err != nil {
 		t.Fatal(err)
 	}
 	if code := bearerStatus(h2, key2); code != http.StatusUnauthorized {
@@ -132,7 +136,7 @@ func TestEmailOwnershipClaimClearsPreVerificationTOTP(t *testing.T) {
 	if err := store.MarkMFAEnrolled(context.Background(), acct.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.verifyOAuthAccountEmail(context.Background(), acct); err != nil {
+	if _, err := srv.verifyOAuthAccountEmail(context.Background(), acct, acct.Email); err != nil {
 		t.Fatal(err)
 	}
 	after, err := store.AccountByID(context.Background(), acct.ID)
@@ -144,23 +148,101 @@ func TestEmailOwnershipClaimClearsPreVerificationTOTP(t *testing.T) {
 	}
 }
 
-// The verify-email link goes to the address that set the password, so it
-// proves the password creator owns the address: credentials survive it.
+// The verify-email link verifies only from a browser signed in to the
+// account it was sent for: a signup squatter who set the password cannot get
+// the owner to verify the squatter's account by mailing them the link, and
+// the owner's own click from a signed-in browser keeps the credentials
+// (ADR 20261109120000).
 func TestVerifyEmailLinkKeepsSignupCredentials(t *testing.T) {
-	srv, mailer, _ := v1AuthTestHarness(t)
+	srv, mailer, store := v1AuthTestHarness(t)
 	h := srv.handler()
 	key := signupWithPassword(t, h, "owner@example.com", "owner-password-123!")
-	req := httptest.NewRequest(http.MethodGet, "/v1/auth/verify-email?token="+lastMailToken(t, mailer, verifyEmailTokenPattern), nil)
+	acct, err := store.AccountByEmail(context.Background(), "owner@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := mintDashboardSession(context.Background(), store, srv.sessions, acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/verify-email", strings.NewReader("token="+lastMailToken(t, mailer, verifyEmailTokenPattern)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: tok})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code >= 400 {
 		t.Fatalf("verify-email = %d: %s", rec.Code, rec.Body.String())
+	}
+	if after, err := store.AccountByID(context.Background(), acct.ID); err != nil || !after.EmailVerified() {
+		t.Fatalf("account not verified after signed-in verify: %v", err)
 	}
 	if code := bearerStatus(h, key); code != http.StatusOK {
 		t.Errorf("signup key after the owner's own verify-email link = %d, want 200", code)
 	}
 	if rec := v1AuthJSONRequest(t, h, "/v1/auth/login", `{"email":"owner@example.com","password":"owner-password-123!"}`); rec.Code != http.StatusOK {
 		t.Errorf("owner password after verify-email = %d, want 200", rec.Code)
+	}
+}
+
+func TestVerifyEmailLinkNeedsTheAccountsBrowser(t *testing.T) {
+	srv, mailer, store := v1AuthTestHarness(t)
+	h := srv.handler()
+	signupWithPassword(t, h, "squatted@example.com", "squatter-password-123!")
+	token := lastMailToken(t, mailer, verifyEmailTokenPattern)
+	signupWithPassword(t, h, "other@example.com", "other-password-123!")
+	other, err := store.AccountByEmail(context.Background(), "other@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherTok, err := mintDashboardSession(context.Background(), store, srv.sessions, other.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name     string
+		accept   string
+		cookie   string
+		wantCode int
+	}{
+		{"no session, JSON", "application/json", "", http.StatusUnauthorized},
+		{"no session, browser", "text/html", "", http.StatusSeeOther},
+		{"another account's session", "application/json", otherTok, http.StatusUnauthorized},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/v1/auth/verify-email", strings.NewReader("token="+token))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("Accept", tc.accept)
+			if tc.cookie != "" {
+				req.AddCookie(&http.Cookie{Name: sessionCookie, Value: tc.cookie})
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("verify-email = %d %s, want %d", rec.Code, rec.Body.String(), tc.wantCode)
+			}
+			if tc.wantCode == http.StatusSeeOther {
+				loc := rec.Header().Get("Location")
+				want := loginPath + "?verify=1&next=" + url.QueryEscape(emailVerificationPath+"?token="+url.QueryEscape(token))
+				if loc != want {
+					t.Errorf("redirect = %q, want the login page carrying the link", loc)
+				}
+			}
+		})
+	}
+	acct, err := store.AccountByEmail(context.Background(), "squatted@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acct.EmailVerified() {
+		t.Fatal("a click without the account's session verified it")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.(state.EmailVerificationPeekStore).EmailVerificationTokenAccount(context.Background(), api.HashToken(raw)); err != nil {
+		t.Errorf("a refused click spent the token: %v", err)
 	}
 }
 
@@ -207,5 +289,31 @@ func TestMagicLinkFromAnotherSiteNeedsAConfirmFromGregale(t *testing.T) {
 	h.ServeHTTP(rec, logout)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("logout posted from a sibling app host = %d, want 403", rec.Code)
+	}
+}
+
+// A mail scanner or link preview fetches the link without Sec-Fetch-Site. It
+// gets the confirm page, and the token still signs the customer in when they
+// open the link themselves (bug hunt H19).
+func TestMagicLinkPrefetchWithoutFetchMetadataKeepsTheToken(t *testing.T) {
+	srv, mailer, _ := v1AuthTestHarness(t)
+	h := srv.handler()
+	if rec := v1AuthJSONRequest(t, h, "/v1/auth/signup/magic-link", `{"email":"magic-scanner@example.com"}`); rec.Code != http.StatusOK {
+		t.Fatalf("magic-link request = %d", rec.Code)
+	}
+	token := lastMailToken(t, mailer, magicLinkTokenPattern)
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/auth/verify?token="+token, nil))
+		if rec.Code != http.StatusOK || rec.Header().Get("Set-Cookie") != "" || !strings.Contains(rec.Body.String(), `action="/auth/verify"`) {
+			t.Fatalf("prefetch %d = %d (Set-Cookie %q), want the confirm page: %s", i, rec.Code, rec.Header().Get("Set-Cookie"), rec.Body.String())
+		}
+	}
+	open := httptest.NewRequest(http.MethodGet, "/auth/verify?token="+token, nil)
+	open.Header.Set("Sec-Fetch-Site", "none")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, open)
+	if rec.Code != http.StatusFound || rec.Header().Get("Set-Cookie") == "" {
+		t.Fatalf("link opened after prefetch = %d, want a signed-in redirect: %s", rec.Code, rec.Body.String())
 	}
 }

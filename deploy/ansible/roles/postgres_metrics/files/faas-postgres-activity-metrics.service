@@ -19,3 +19,6 @@ PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/var/lib/node_exporter/textfile_collector
+# Statement labels by queryid, so a run reads pg_stat_statements' query text
+# only when a top statement is new to it.
+StateDirectory=faas-postgres-activity-metrics

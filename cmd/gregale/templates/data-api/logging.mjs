@@ -6,7 +6,17 @@ const codes = new Set(['origin_not_allowed', 'not_found', 'invalid_path', 'metho
   'token_required', 'token_invalid', 'read_only_identity', 'serving_contract_unavailable', 'data_api_unavailable',
   'data_api_refresh_paused', 'data_api_refresh_unavailable', 'data_api_overloaded', 'data_api_rate_limited', 'data_api_concurrency_limited',
   'request_too_large', 'response_too_large', 'query_timeout', 'request_deadline_exceeded', 'schema_document_too_large', 'schema_contract_mismatch', 'upstream_error',
-  'public_read_not_allowed', 'public_rpc_requires_get', 'server_key_browser_forbidden', 'server_key_permission_denied', 'data_api_monthly_cap_reached', 'rls_required'])
+  'public_read_not_allowed', 'public_rpc_requires_get', 'server_key_browser_forbidden', 'server_key_permission_denied', 'data_api_monthly_cap_reached', 'rls_required',
+  'data_api_public_read_unsafe', 'data_api_public_rpc_unsafe', 'data_api_change_hooks_off', 'data_api_change_hooks_unavailable', 'data_api_change_hooks_not_production',
+  'storage_unavailable', 'storage_busy', 'storage_client_busy', 'storage_backend_unavailable', 'storage_commit_failed', 'storage_forbidden', 'storage_rejected',
+  'storage_not_found', 'storage_bucket_not_found', 'storage_invalid_name', 'storage_invalid_content_type', 'storage_invalid_length', 'storage_length_required',
+  'storage_object_too_large', 'storage_range_not_satisfiable'])
+
+// Unavailable codes say the runtime or a backend could not serve; busy codes
+// say it shed load.
+const unavailableCodes = new Set(['data_api_unavailable', 'data_api_refresh_unavailable', 'serving_contract_unavailable', 'data_api_change_hooks_unavailable',
+  'storage_unavailable', 'storage_backend_unavailable', 'storage_commit_failed'])
+const overloadedCodes = new Set(['data_api_overloaded', 'storage_busy', 'storage_client_busy'])
 
 function route(url) {
   if (url === '/healthz' || url === '/livez') return 'health'
@@ -14,14 +24,17 @@ function route(url) {
   if (url === '/openapi.json') return 'openapi'
   if (url.startsWith('/rest/v1/rpc/')) return 'rpc'
   if (url.startsWith('/rest/v1/')) return 'rest'
+  if (url.startsWith('/storage/v1/')) return 'storage'
+  if (url.startsWith('/__gregale/hooks/')) return 'hooks'
+  if (url.startsWith('/__gregale/lifecycle/')) return 'lifecycle'
   return 'unknown'
 }
 
 function outcome(code, status) {
   if (code === 'token_required' || code === 'token_invalid') return 'authentication_failed'
   if (code === 'query_timeout' || code === 'request_deadline_exceeded') return 'query_timeout'
-  if (code === 'data_api_overloaded') return 'overloaded'
-  if (code === 'data_api_unavailable' || code === 'data_api_refresh_unavailable' || code === 'serving_contract_unavailable') return 'unavailable'
+  if (overloadedCodes.has(code)) return 'overloaded'
+  if (unavailableCodes.has(code)) return 'unavailable'
   if (code === 'upstream_error') return 'upstream_error'
   return status >= 400 ? 'rejected' : 'completed'
 }
@@ -96,9 +109,29 @@ export function markDatabaseTimings(res, timings) {
 
 export function requestID(res) { return res[trace]?.id }
 
-export function runtimeFailure(event) {
-  const allowed = ['data_api_configuration_invalid', 'data_api_postgrest_start_failed', 'data_api_public_read_unsafe', 'data_api_public_rpc_unsafe', 'data_api_storage_unsafe']
-  try { writeLog({ time: new Date().toISOString(), level: 'error', event: allowed.includes(event) ? event : 'data_api_runtime_failed' }) } catch {}
+const failureStages = new Set(['configuration', 'engine', 'database', 'inspection', 'startup'])
+// Configuration errors name a setting, never its value ("Invalid
+// DATABASE_URL"). A message is logged only when it is plain text of that
+// shape; otherwise only the error's code (a SQLSTATE or ECONNREFUSED) or
+// class name is, so driver text that may quote a host, user or URL never is.
+export function failureReason(error) {
+  const message = typeof error?.message === 'string' ? error.message : ''
+  if (/^[A-Za-z0-9_ ,.()-]{1,160}$/.test(message)) return message
+  const code = typeof error?.code === 'string' ? error.code : ''
+  if (/^[A-Za-z0-9_]{1,40}$/.test(code)) return code
+  const name = typeof error?.name === 'string' ? error.name : ''
+  return /^[A-Za-z]{1,40}$/.test(name) ? name : 'Error'
+}
+
+// runtimeFailure logs an allowlisted event. stage and reason say why startup
+// failed: without them every snapshot_prepare crash read only
+// data_api_configuration_invalid (ChronoLake finding 19).
+export function runtimeFailure(event, { stage, error } = {}) {
+  const allowed = ['data_api_configuration_invalid', 'data_api_database_unavailable', 'data_api_postgrest_start_failed', 'data_api_public_read_unsafe', 'data_api_public_rpc_unsafe', 'data_api_storage_unsafe', 'data_api_change_events_unavailable', 'data_api_change_event_rejected', 'data_api_change_events_unsettled', 'data_api_change_hooks_not_production', 'data_api_change_hooks_unbounded', 'data_api_access_recheck_unavailable']
+  const record = { time: new Date().toISOString(), level: 'error', event: allowed.includes(event) ? event : 'data_api_runtime_failed' }
+  if (failureStages.has(stage)) record.stage = stage
+  if (error !== undefined) record.reason = failureReason(error)
+  try { writeLog(record) } catch {}
 }
 
 const identifier = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/

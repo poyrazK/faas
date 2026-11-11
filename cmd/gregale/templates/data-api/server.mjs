@@ -7,7 +7,7 @@ import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
 import { traceRequest, markRequest, markAccess, markQueryShape, markDatabaseTimings, requestID, runtimeFailure } from './logging.mjs'
 import { parseDatabaseTimings, unknownDatabaseTimings } from './database-timing.mjs'
 import { inspect, fingerprint, enrichOpenAPI } from './types.mjs'
-import { runtimeConfig, servingContracts, limits, enginePool } from './config.mjs'
+import { runtimeConfig, servingContracts, limits, enginePool, sqlDeadlineExpiry, UnsafeConfiguration } from './config.mjs'
 import { createAdmission } from './admission.mjs'
 import { createHealth } from './health.mjs'
 import { createDeadline } from './deadline.mjs'
@@ -19,13 +19,15 @@ import { qualifiedConnectionEngine, startConnectionReporter } from './connection
 import { createPoolObservation } from './pool.mjs'
 import { createUsage, addResponseBytes, accessReport } from './usage.mjs'
 import { storageRoute, handleStorage, storageAnonymousTarget, storageServerKeyAllows, checkStorageTable } from './storage.mjs'
-import { createEngine, lifecyclePaths } from './engine.mjs'
-import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, anonymousClient, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial } from './access.mjs'
+import { createEngine, lifecyclePaths, engineStopGraceMs } from './engine.mjs'
+import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, anonymousClient, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial, createAccessSafety } from './access.mjs'
+import { relayTables, changeHooksDrainPath, createChangeRelay, checkChangeEvents } from './changes.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
   const acceptedFingerprints = servingContracts(config)
-  const health = createHealth(config, upstreamPort, readyPort)
+  // Tests drive the health cache with config.healthClock.
+  const health = createHealth(config, upstreamPort, readyPort, config.healthClock ? { monotonic: config.healthClock } : {})
   const rateLimiter = createRateLimiter(config.rateLimit)
   // Anonymous clients always have a budget and never use subject tracking slots.
   const anonymousLimiter = config.publicRead || config.publicRpc ? createRateLimiter(config.rateLimit ?? { perSecond: limits.rateLimitDefaultPerSecond, burst: limits.rateLimitDefaultBurst }) : null
@@ -37,6 +39,8 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     problem(res, 503, 'data_api_overloaded')
   })
   const usage = createUsage(config.usage, { access: accessReport(config) })
+  // Change hooks (ADR-20261022121642) borrow free engine slots, never queue.
+  const changes = createChangeRelay(config, { upstreamPort, tryAcquire: admitted.tryAcquire })
   const transfers = { active: 0 }
   const server = http.createServer(async (req, res) => {
     const guarded = /^\/__gregale\/contract\/([a-f0-9]{64})(\/rest\/v1\/.*)$/.exec(req.url)
@@ -76,8 +80,22 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       res.writeHead(204)
       return res.end()
     }
+    // A drain schedule's platform cron (ADR-20261022121642 amendment 1) wakes
+    // a parked API so changes other writers recorded meanwhile publish. Only
+    // invocations the platform dispatches carry x-faas-cron; the answer is
+    // delivery counts, and a drain publishes nothing that would not publish.
+    if (req.method === 'POST' && req.url === changeHooksDrainPath && req.headers['x-faas-cron'] === 'true') {
+      if (!changes) return problem(res, 409, 'data_api_change_hooks_off')
+      const state = await changes.drain(limits.changeHooksDrainWaitMs)
+      if (!state) return problem(res, 503, 'data_api_change_hooks_unavailable')
+      if (state.refused) return problem(res, 409, 'data_api_change_hooks_not_production')
+      return healthResponse(res, state.publishing === 'retrying' ? 503 : 200, { version: 1, pending: state.pending, failed: state.failed, publishing: state.publishing,
+        ...(state.oldestPendingAt ? { oldest_pending_at: state.oldestPendingAt } : {}) })
+    }
     // Health checks and preflights are not usage.
     const counted = usage?.start(res)
+    // Keep the access gate current with the owner's migrations (amendment 1).
+    config.accessSafety?.maybeRefresh()
     // File storage (ADR-20261021101510) shares REST's credentials and admission.
     let storage = null
     if (config.storage && req.url.startsWith('/storage/v1/') && !guarded) {
@@ -87,11 +105,15 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       if (storage.code) return problem(res, storage.status, storage.code)
     } else if (!req.url.startsWith('/rest/v1/') && req.url !== '/openapi.json' && req.url !== '/__gregale/schema') return problem(res, 404, 'not_found')
     const writes = storage ? storage.write : !['GET', 'HEAD'].includes(req.method)
+    // A committed write may have recorded changes: publish them promptly.
+    if (changes && writes) res.once('finish', () => { if (res.statusCode < 300) changes.kick() })
     let rpc
     if (req.url.startsWith('/rest/v1/')) {
       const raw = req.url.slice('/rest/v1/'.length).split('?')[0]
       let path
       try { path = decodeURIComponent(raw) } catch { return problem(res, 400, 'invalid_path') }
+      // Only the change event relay reads its tables, over loopback.
+      if (relayTables.includes(path)) return problem(res, 404, 'not_found')
       if (path.includes('/')) {
         const match = /^rpc\/([a-z][a-z0-9_]{0,62})$/.exec(path)
         const read = ['GET', 'HEAD'].includes(req.method)
@@ -111,7 +133,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       // Never downgrade a present but invalid credential to anonymous access.
       const target = storage ? storageAnonymousTarget(storage, config) : rpc ? publicRpcTarget(req, config, rpc) : publicReadTarget(req, config)
       if (target.code === 'public_rpc_requires_get') res.setHeader('Allow', 'GET, HEAD')
-      if (target.code) return problem(res, { public_read_not_allowed: 403, public_rpc_requires_get: 405 }[target.code] ?? 401, target.code)
+      if (target.code) return problem(res, { public_read_not_allowed: 403, public_rpc_requires_get: 405, data_api_public_read_unsafe: 503, data_api_public_rpc_unsafe: 503 }[target.code] ?? 401, target.code)
       access = 'anonymous'
       publicCache = storage ? null : publicReadCache(req, config, target)
     } else if (!token) return problem(res, 401, 'token_required')
@@ -125,7 +147,6 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       serverKeyPermissions = config.serverKeys.find(entry => entry.slot === serverKeySlot).permissions
     }
     markAccess(res, { kind: access, ...(serverKeySlot ? { server_key_slot: serverKeySlot, ...(serverKeyPermissions ? { server_key_restricted: true } : {}) } : {}) })
-    if (counted) counted.access = access
     if (serverKeyPermissions && !(storage ? storageServerKeyAllows(storage, serverKeyPermissions, config) : serverKeyAllows(req, serverKeyPermissions, config, rpc))) return problem(res, 403, 'server_key_permission_denied')
     if (access === 'server' && config.readOnly === true && writes) return problem(res, 403, 'read_only_identity')
     // Server keys skip per-user budgets but have their own (ADR-20261021180534).
@@ -186,6 +207,11 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           userLease = admitUserConcurrency(userConcurrency, concurrencyKey, req, res, problem)
           if (userLease === false) return
         }
+        // Only an admitted request counts toward usage and monthly caps
+        // (ADR 20261019102108): one past its credential, rate, row-security
+        // and concurrency checks. Refusals before here count as rejected, so
+        // invalid tokens or a throttled flood cannot use up an owner's cap.
+        if (counted) counted.access = access
         if (req.url.startsWith('/rest/v1/')) markQueryShape(req, res, config)
         if (req.url === '/__gregale/schema') {
           if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
@@ -217,7 +243,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
         if (serverKeySlot) claims.gregale_server_key = serverKeySlot
         // A caller cannot extend or enable the internal SQL retry deadline.
         delete claims.gregale_sql_deadline
-        if (config.sqlDeadline) claims.gregale_sql_deadline = { version: 1, expires_at_ms: deadline.expiresAt, coordinated_refresh: config.coordinatedRefresh === true }
+        if (config.sqlDeadline) claims.gregale_sql_deadline = { version: 1, expires_at_ms: sqlDeadlineExpiry(deadline.expiresAt), coordinated_refresh: config.coordinatedRefresh === true }
         // Never accept reserved coordination claims from an application JWT.
         if (config.coordinatedRefresh) {
           delete claims.gregale_refresh_hash
@@ -232,11 +258,11 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           // each call gets a fresh token and SQL deadline.
           const token = write => {
             const fresh = { ...claims, exp: Math.ceil(Date.now() / 1000) + Math.ceil(limits.queryMs / 1000) + 5, ...(write ? { gregale_storage: 'write' } : {}) }
-            if (fresh.gregale_sql_deadline) fresh.gregale_sql_deadline = { ...fresh.gregale_sql_deadline, expires_at_ms: Date.now() + limits.queryMs }
+            if (fresh.gregale_sql_deadline) fresh.gregale_sql_deadline = { ...fresh.gregale_sql_deadline, expires_at_ms: sqlDeadlineExpiry(Date.now() + limits.queryMs) }
             return new SignJWT(fresh).setProtectedHeader({ alg: 'HS256' }).sign(key)
           }
           if (!deadline.enter('upstream')) return
-          return await handleStorage({ req, res, route: storage, config, token, deadline, release, transfers, upstreamPort, problem })
+          return await handleStorage({ req, res, route: storage, config, token, deadline, release, transfers, client: concurrencyKey, upstreamPort, problem })
         }
         const internal = await new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(key)
         if (!deadline.check()) return
@@ -246,7 +272,11 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     }).finally(() => serverKeyLease?.settled())
   })
   server.usage = usage
-  server.on('close', () => usage?.stop())
+  server.changes = changes
+  // The engine's owner calls this when the engine stops, starts, reloads or
+  // is restored, so /healthz never answers for an engine that is gone.
+  server.invalidateHealth = () => health.invalidate()
+  server.on('close', () => { usage?.stop(); changes?.stop() })
   return server
 }
 
@@ -353,6 +383,12 @@ function openAPISpec(response, res, config, restBasePath, deadline) {
       delete document.schemes
       document.basePath = restBasePath
       const schema = response.req.getHeader('accept-profile') ?? config.schemas[0]
+      // The change event tables are the relay's, never part of the API.
+      for (const table of relayTables) {
+        delete document.paths?.[`/${table}`]
+        delete document.definitions?.[table]
+        for (const name of Object.keys(document.parameters ?? {})) if (name === `body.${table}` || name.startsWith(`rowFilter.${table}.`)) delete document.parameters[name]
+      }
       for (const path of Object.keys(document.paths ?? {})) if (path.startsWith('/rpc/')) {
         if (!config.functions?.some(f => f.schema === schema && f.name === path.slice(5))) delete document.paths[path]
         else for (const method of Object.keys(document.paths[path])) if (method !== 'post' && method !== 'parameters' && !(method === 'get' && publicRpcListed(config, { schema, name: path.slice(5) }))) delete document.paths[path][method]
@@ -368,36 +404,54 @@ function openAPISpec(response, res, config, restBasePath, deadline) {
 }
 
 export async function main(env = process.env) {
-  const config = runtimeConfig(env)
+  const config = await startupStage('configuration', 'data_api_configuration_invalid', () => runtimeConfig(env))
   if (config.connectionObservation || config.sqlDeadline) {
-    const { stdout } = await promisify(execFile)(env.DATA_API_POSTGREST_BIN || '/usr/local/bin/postgrest', ['--version'], { timeout: limits.connectionReportMs, maxBuffer: limits.healthBytes })
-    if (!qualifiedConnectionEngine(stdout)) throw new Error('Unsupported connection observation engine')
+    await startupStage('engine', 'data_api_configuration_invalid', async () => {
+      const { stdout } = await promisify(execFile)(env.DATA_API_POSTGREST_BIN || '/usr/local/bin/postgrest', ['--version'], { timeout: limits.connectionReportMs, maxBuffer: limits.healthBytes })
+      if (!qualifiedConnectionEngine(stdout)) throw new Error('Unsupported connection observation engine')
+    })
   }
-  if (config.sqlDeadline) await checkSQLDeadlineConnection(config.connection, { coordinatedRefresh: config.coordinatedRefresh })
-  if (config.publicRead) {
-    try { await checkPublicRelations(config.connection, config.publicRead) } catch (error) {
-      runtimeFailure('data_api_public_read_unsafe')
-      throw Object.assign(new Error('Unsafe public read configuration'), { cause: error, reported: true })
-    }
-  }
+  if (config.sqlDeadline) await startupStage('database', 'data_api_configuration_invalid', () => checkSQLDeadlineConnection(config.connection, { coordinatedRefresh: config.coordinatedRefresh }))
+  // Inspection connects first, with the full query budget, so a suspended
+  // database is awake before the configuration checks run.
+  const snapshot = await startupStage('inspection', 'data_api_configuration_invalid', () => inspect(config.connection, config.schemas))
+  config.snapshot = snapshot
+  config.functions = snapshot.functions
+  if (config.publicRead) await bootCheck(() => checkPublicRelations(config.connection, config.publicRead), 'data_api_public_read_unsafe', 'Unsafe public read configuration')
   if (config.storage) {
-    // Storage fails closed on its own: REST keeps serving while the owner's
-    // migration adds or repairs storage_objects.
-    try { await checkStorageTable(config.connection, config.storage.schema) } catch {
+    // An unsafe table disables storage on its own: REST keeps serving while
+    // the owner's migration adds or repairs storage_objects. An unreachable
+    // database fails the boot instead, because a disabled storage would be
+    // captured in the snapshot every wake restores.
+    try { await checkStorageTable(config.connection, config.storage.schema) } catch (error) {
+      if (!(error instanceof UnsafeConfiguration)) {
+        runtimeFailure('data_api_database_unavailable')
+        throw Object.assign(new Error('Database unavailable during startup'), { cause: error, reported: true })
+      }
       runtimeFailure('data_api_storage_unsafe')
       config.storageUnavailable = true
     }
   }
-  const snapshot = await inspect(config.connection, config.schemas)
-  config.snapshot = snapshot
-  config.functions = snapshot.functions
-  config.rowSecurity = await loadRowSecurity(config.connection, config.schemas)
-  if (config.publicRpc) {
-    try { await checkPublicFunctions(config.connection, config.publicRpc, snapshot.functions) } catch (error) {
-      runtimeFailure('data_api_public_rpc_unsafe')
-      throw Object.assign(new Error('Unsafe public RPC configuration'), { cause: error, reported: true })
+  if (config.changeEvents) {
+    // Like storage, change hooks fail closed alone: an unsafe outbox turns
+    // them off, the API keeps serving and recorded changes wait in the table.
+    // An unreachable database fails the boot instead, because hooks turned
+    // off here would be captured in the snapshot every wake restores.
+    try {
+      const { bounded } = await checkChangeEvents(config.connection, config.changeEvents.schema)
+      // Hooks installed before the backlog bound still publish; say so once.
+      if (!bounded) runtimeFailure('data_api_change_hooks_unbounded')
+    } catch (error) {
+      if (!(error instanceof UnsafeConfiguration)) {
+        runtimeFailure('data_api_database_unavailable')
+        throw Object.assign(new Error('Database unavailable during startup'), { cause: error, reported: true })
+      }
+      runtimeFailure('data_api_change_events_unavailable')
+      config.changeEventsUnavailable = true
     }
   }
+  config.rowSecurity = await loadRowSecurity(config.connection, config.schemas)
+  if (config.publicRpc) await bootCheck(() => checkPublicFunctions(config.connection, config.publicRpc, snapshot.functions), 'data_api_public_rpc_unsafe', 'Unsafe public RPC configuration')
   config.fingerprint = fingerprint(snapshot)
   // Reject stale owner policies before starting an engine process.
   servingContracts(config)
@@ -422,10 +476,23 @@ export async function main(env = process.env) {
       server.close()
     } })
   // A snapshot must not capture SQL sessions (lifecycle hooks set by the CLI).
+  // The access gate read at boot is rechecked while serving and after every
+  // restore, so a migration since cannot leave it stale (amendment 1).
+  config.accessSafety = createAccessSafety(config)
+  // The CLI registers the hooks with a 2 s budget (api.SetDataAPILifecycle);
+  // the engine stops within engineStopGraceMs of it.
+  const checkpointFlushMs = engineStopGraceMs
   config.lifecycle = {
-    ready: waitMs => engine.ready(waitMs),
-    beforeCheckpoint: () => Promise.all([engine.stop(), refresh?.release()]),
-    afterRestore: () => engine.start(),
+    ready: async waitMs => {
+      const started = Date.now()
+      return await engine.ready(waitMs) && await config.accessSafety.ready(waitMs - (Date.now() - started))
+    },
+    // Usage counted since the last report would be dropped by the restore
+    // check, so it is reported before the snapshot, within the hook's budget;
+    // a report still in flight keeps its id and is applied once.
+    // The snapshot carries no health answer: the engine it described stops here.
+    beforeCheckpoint: () => { server?.invalidateHealth(); return Promise.all([engine.stop(), refresh?.release(), server?.usage?.flush(checkpointFlushMs)]) },
+    afterRestore: () => { server?.invalidateHealth(); engine.start(); config.accessSafety.restored() },
   }
   engine.start()
   server = createServer(config, verify)
@@ -439,13 +506,37 @@ export async function main(env = process.env) {
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { stopping = true; void server.usage?.flush(); server.close(); void engine.stop() })
   process.on('SIGUSR1', () => {
     if (config.coordinatedRefresh) runtimeFailure('data_api_uncoordinated_reload_rejected')
-    else engine.signal('SIGUSR1')
+    else { engine.signal('SIGUSR1'); server.invalidateHealth() }
   })
   server.listen(Number(env.PORT || 8080), '0.0.0.0')
+}
+
+// bootCheck runs a startup check, reporting an unsafe configuration apart
+// from a database the runtime could not reach.
+async function bootCheck(check, unsafeEvent, unsafeMessage) {
+  try { await check() } catch (error) {
+    const unsafe = error instanceof UnsafeConfiguration
+    runtimeFailure(unsafe ? unsafeEvent : 'data_api_database_unavailable', { stage: 'database', error })
+    throw Object.assign(new Error(unsafe ? unsafeMessage : 'Database unavailable during startup'), { cause: error, reported: true })
+  }
+}
+
+// startupStage reports which startup step failed and a safe reason before the
+// process exits, so a crash during snapshot_prepare is diagnosable from the
+// deployment log (ChronoLake finding 19). The event stays
+// data_api_configuration_invalid, as before; stage and reason are added.
+async function startupStage(stage, event, step) {
+  try { return await step() } catch (error) {
+    if (error?.reported !== true) {
+      runtimeFailure(event, { stage, error })
+      if (error && typeof error === 'object') error.reported = true
+    }
+    throw error
+  }
 }
 
 export function tokenVerifier(auth, keys) {
   return async token => (await jwtVerify(token, keys, { issuer: auth.issuer, audience: auth.audience, algorithms: ['RS256', 'ES256'], requiredClaims: ['sub', 'exp'] })).payload
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { if (error?.reported !== true) runtimeFailure('data_api_configuration_invalid'); process.exitCode = 1 })
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { if (error?.reported !== true) runtimeFailure('data_api_configuration_invalid', { stage: 'startup', error }); process.exitCode = 1 })

@@ -12,6 +12,9 @@
 # and thawed VMs cleanly (schedd_frozen_compress_total, FaasFrozenTier).
 faas_zswap_canary_nodes:
   - fsn-3.faas
+  # fsn-2 joined 2026-11-07 for the frozen-compression thaw measurements; the
+  # role was applied to it by hand the same day, so this keeps it converged.
+  - fsn-2.faas
 faas_zswap_enabled: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in faas_zswap_canary_nodes }}"
 
 # The swapfile only provides zswap's slots and is never written, but a

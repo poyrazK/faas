@@ -236,3 +236,35 @@ the whole chunk before its bookkeeping, and at the supported 512 KiB/s a
 16 MiB chunk takes 32 s, so once the chunk is received its session reload
 and offset advance run detached from the budget under the 15 s upload
 bookkeeping bound. The 5 s default for every other apid route is unchanged.
+
+## Amendment 2026-11-01: the default override header only shortens a budget
+
+A `kind=budget` rule with no `allow_override_header` read the default
+`x-faas-budget-ms` header, and its value replaced the rule's budget up to the
+plan ceiling. Any caller can send that header, so an anonymous client could
+lift an owner's 1 s budget to 15 minutes on Scale and hold the app's instances
+(and the owner's billed running seconds) that long.
+
+The default header now only lowers the rule's budget; a larger value is
+ignored (`override_status: ignored_raise`). A rule that names a header in
+`allow_override_header`, including `x-faas-budget-ms` itself, still lets that
+header raise the budget within the plan ceiling: naming it is the owner's
+opt-in. Neither header extends `total_deadline_ms`.
+
+## Amendment 2026-11-10: a source-ref deploy runs under the upload commit's bound
+
+`POST /v1/apps/{slug}/deployments/source-ref` downloads the repository
+archive from GitHub through githubd, scans it, hashes it and publishes it
+before it records the deployment, all under the deploy-submission budget
+(`RequestBudgetMax`, 30 s). The upload commit moved off that budget in hunt
+#10 (H10-26) after a 243 MiB source failed every retry on the deadline; a
+source-ref deploy of a large repository (up to the Pro and Scale 250 MB cap)
+had the same exposure (deploy review 2026-11-10, E1). From the GitHub fetch
+on, the handler runs under `reqbudget.Detached` with the upload commit's
+bound (`uploadCommitProcessTimeout`, a 60 s floor plus 1 s per 2 MiB), sized
+by the plan's source cap because the archive's size is unknown until it
+arrives, and detached from client cancellation; `idempotentDeploy` replays
+the outcome to a client that stopped waiting. Production had one source-ref
+deploy in the 30 days before this change, so the exposure was latent.
+Validation: `TestSourceRef_HappyPath` asserts the fetch deadline exceeds
+`RequestBudgetMax`.

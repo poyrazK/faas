@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -37,16 +38,21 @@ func directCloneFailure(op state.ProjectEnvironmentCloneOperation, stepErr error
 		return ""
 	}
 	deadline := projectEnvironmentCloneDatalessDeadline
-	if state.ProjectEnvironmentCloneHasManagedDatabases(op) {
+	if state.ProjectEnvironmentCloneHasManagedDatabases(op) || cloneOperationHasObjectResources(op) {
 		deadline = projectEnvironmentCloneDatabaseDeadline
 	}
+	var copySize *objectstorage.SnapshotCopySizeError
 	switch {
+	case errors.As(stepErr, &copySize):
+		return state.CloneFailureObjectCopySize
 	case errors.Is(stepErr, errCloneTargetDeploymentFailed):
 		return state.CloneFailureTargetDeployment
 	case errors.Is(stepErr, errCloneTargetDatabaseFailed):
 		return state.CloneFailureTargetDatabase
 	case errors.Is(stepErr, state.ErrProjectEnvironmentCloneSourceChanged):
 		return state.CloneFailureSourceChanged
+	case errors.Is(stepErr, state.ErrObjectCapacity):
+		return state.CloneFailureObjectCapacity
 	case !op.CreatedAt.IsZero() && now.Sub(op.CreatedAt) > deadline:
 		return state.CloneFailureDeadline
 	}
@@ -96,6 +102,13 @@ func (s *server) compensateDirectProjectEnvironmentClone(ctx context.Context, le
 		if err != nil {
 			return lease, fmt.Errorf("delete clone target database: %w", err)
 		}
+	}
+	buckets, err := s.retireCloneTargetBuckets(ctx, lease)
+	if err != nil {
+		return lease, fmt.Errorf("delete clone target buckets: %w", err)
+	}
+	if buckets > 0 {
+		return lease, errCloneTargetBucketsDeleting
 	}
 	finished, err := store.FinishProjectEnvironmentCloneDirectCompensationForLease(ctx, lease)
 	if err != nil {

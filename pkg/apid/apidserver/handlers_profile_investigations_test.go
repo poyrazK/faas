@@ -134,6 +134,11 @@ func TestCPUProfileSavedInvestigationExpiryAndPlanDowngrade(t *testing.T) {
 	for _, plan := range []api.Plan{api.PlanHobby, api.PlanFree} {
 		acct := (*e.Acct())
 		acct.Plan = plan
+		// Profiling follows the app owner's stored plan (ADR-1155), so the
+		// downgrade is the account's, not only the caller's copy.
+		if err := (*e.Store()).UpdateAccountPlan(t.Context(), acct.ID, plan); err != nil {
+			t.Fatal(err)
+		}
 		out := (*e.S()).ProfileInvestigationResponse(t.Context(), acct, app, row)
 		want := "expired"
 		if plan == api.PlanFree {
@@ -154,6 +159,9 @@ func TestCPUProfileSavedInvestigationExpiryAndPlanDowngrade(t *testing.T) {
 		if problem != nil || row.Investigation.Notes != req.Investigation.Notes {
 			t.Fatal("commentary locked after expiry", problem)
 		}
+	}
+	if err := (*e.Store()).UpdateAccountPlan(t.Context(), (*e.Acct()).ID, (*e.Acct()).Plan); err != nil {
+		t.Fatal(err)
 	}
 	got := e.Do(t, "GET", path+"/"+row.ID, nil, nil)
 	if got.Code != 200 || !strings.Contains(got.Body.String(), `"status":"expired"`) {

@@ -51,7 +51,8 @@ type instanceOwnership interface {
 // layerCloneOwnershipGate reports an instance as live whenever anything still
 // owns it: this Manager, a resource-journal record (verified recovery owns
 // those, ADR-477), or durable state. Only a clone that nothing owns may be
-// reclaimed by its name.
+// reclaimed by its name. The startup jail reaper uses it too, so it never
+// kills a guest this vmmd adopted.
 func layerCloneOwnershipGate(durable fcvm.LiveInstanceFunc, mgr instanceOwnership, journal *fcvm.ResourceJournal) fcvm.LiveInstanceFunc {
 	return func(ctx context.Context, instanceID string) (bool, error) {
 		if mgr != nil && mgr.HasInstanceOwnership(instanceID) {

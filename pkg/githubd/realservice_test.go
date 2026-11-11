@@ -30,7 +30,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -105,11 +104,6 @@ func (m *memStoreInstalls) Upsert(_ context.Context, inst state.GitHubInstall) e
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, existing := range m.items {
-		if existing.InstallationID == inst.InstallationID && existing.AccountID != inst.AccountID {
-			return state.ErrConflict
-		}
-	}
 	inst.SealedAt = time.Now()
 	m.items[inst.AccountID+"\x00"+strconv.FormatInt(inst.InstallationID, 10)] = inst
 	return nil
@@ -177,15 +171,29 @@ func TestRealService_BindAndLookup(t *testing.T) {
 	}
 }
 
-func TestRealService_BindDefaultsToMain(t *testing.T) {
-	svc, fake := newTestBindableRealService(t, "acct-1", testInstallableRepo())
+// A bind without a branch takes the repository's default branch; "main"
+// bound repositories that deploy from another branch to one that never
+// receives pushes (ADR-20261101160300). A repository without one keeps main.
+func TestRealService_BindDefaultsToRepositoryDefaultBranch(t *testing.T) {
+	repos := testInstallableRepo()
+	repos[0]["default_branch"] = "trunk"
+	svc, fake := newTestBindableRealService(t, "acct-1", repos)
 	defer fake.Close()
 	if _, err := svc.BindAppRepo("app-2", "acct-1", 1, "octo/api", ""); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := svc.GetAppBinding("app-2", "acct-1")
-	if b.ProductionBranch != "main" {
-		t.Errorf("default branch = %q, want main", b.ProductionBranch)
+	if b.ProductionBranch != "trunk" {
+		t.Errorf("default branch = %q, want the repository's trunk", b.ProductionBranch)
+	}
+
+	bare, fake := newTestBindableRealService(t, "acct-1", testInstallableRepo())
+	defer fake.Close()
+	if _, err := bare.BindAppRepo("app-3", "acct-1", 1, "octo/api", ""); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := bare.GetAppBinding("app-3", "acct-1"); b.ProductionBranch != "main" {
+		t.Errorf("default branch without a repository default = %q, want main", b.ProductionBranch)
 	}
 }
 
@@ -287,8 +295,8 @@ func TestRealService_ExchangeOAuthCode_MakesRealAPICall(t *testing.T) {
 	if instID != "4242" {
 		t.Errorf("installation_id = %q, want 4242", instID)
 	}
-	if branch == "" {
-		t.Error("default_branch empty, want non-empty")
+	if branch != "" {
+		t.Errorf("default_branch = %q, want empty: an installation has no default branch (ADR-20261101160300)", branch)
 	}
 
 	// Audit fired with the right event.
@@ -332,10 +340,9 @@ func TestRealService_ExchangeOAuthCode_MakesRealAPICall(t *testing.T) {
 	}
 }
 
-// A verified GitHub installation still cannot be reassigned to another
-// Gregale account by reconnecting it. Failure must leave storage and caches
-// unchanged and must not report a successful connection.
-func TestRealService_ExchangeOAuthCode_AccountConflict(t *testing.T) {
+// Each verified account may connect the same installation independently.
+// Connecting another account never overwrites the first account's credentials.
+func TestRealService_ExchangeOAuthCode_SharedDeploymentInstallation(t *testing.T) {
 	ident, recipient := newTestAgeKeypair(t)
 	fake := newFakeGithubServer(t, fakeGithubOpts{
 		accessToken: "user-token", installToken: "installation-token", appID: "100",
@@ -353,22 +360,20 @@ func TestRealService_ExchangeOAuthCode_AccountConflict(t *testing.T) {
 	auth := newTestAppAuth(t, "100", fake.URL)
 	svc := NewRealService(auth, NewTokenCache(auth, time.Minute), nil, newMemBindingsStore(), store, recipient, ident, audit.AuditEvent)
 	installID, branch, err := svc.ExchangeOAuthCode("other", "oauth-code", "state")
-	p := api.AsProblem(err)
-	if p == nil || p.Code != api.CodeGitHubAccountConflict || p.Status != http.StatusConflict || installID != "" || branch != "" {
-		t.Fatalf("conflicting OAuth exchange = (%q, %q, %v), want account conflict", installID, branch, err)
+	if err != nil || installID != "4242" || branch != "" {
+		t.Fatalf("shared OAuth exchange = (%q, %q, %v)", installID, branch, err)
 	}
 	got, err := store.ForAccount(context.Background(), "original")
 	if err != nil || string(got.SealedToken) != "original-seal" {
 		t.Fatalf("original binding changed: %v", err)
 	}
-	st, _, _, err := svc.GetInstallState("other")
-	if err != nil || st != githubdgrpc.InstallStateUnspecified {
-		t.Fatalf("rejected account appears connected: %v, %v", st, err)
+	st, gotID, _, err := svc.GetInstallState("other")
+	if err != nil || st != githubdgrpc.InstallStateInstalled || gotID != "4242" {
+		t.Fatalf("second account not connected: %v, %v, %v", st, gotID, err)
 	}
-	for _, event := range audit.events {
-		if event.event == "auth.install.token_sealed" {
-			t.Fatal("rejected reconnect emitted a successful connection audit")
-		}
+	second, err := store.ForAccount(context.Background(), "other")
+	if err != nil || second.AccountID != "other" || len(second.SealedToken) == 0 {
+		t.Fatalf("missing independent credentials: %v", err)
 	}
 }
 
@@ -1047,3 +1052,16 @@ func newRecordingAuditFn() *recordingAuditFn {
 
 // _ pins the closure shape: AuditEvent is func(string, string, map[string]any).
 var _ AuditEvent = (&recordingAuditFn{}).AuditEvent
+
+func (m *memStoreInstalls) RefreshToken(_ context.Context, previous []byte, inst state.GitHubInstall) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := inst.AccountID + "\x00" + strconv.FormatInt(inst.InstallationID, 10)
+	current, ok := m.items[key]
+	if !ok || string(current.SealedToken) != string(previous) {
+		return state.ErrConflict
+	}
+	inst.SealedAt = time.Now()
+	m.items[key] = inst
+	return nil
+}

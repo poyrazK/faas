@@ -43,9 +43,11 @@ const (
 	Githubd_EnqueueBuild_FullMethodName               = "/onebox.faas.githubd.v1.Githubd/EnqueueBuild"
 	Githubd_WriteCheck_FullMethodName                 = "/onebox.faas.githubd.v1.Githubd/WriteCheck"
 	Githubd_VerifyInstallation_FullMethodName         = "/onebox.faas.githubd.v1.Githubd/VerifyInstallation"
+	Githubd_GetInstallationAccess_FullMethodName      = "/onebox.faas.githubd.v1.Githubd/GetInstallationAccess"
 	Githubd_MintInstallationToken_FullMethodName      = "/onebox.faas.githubd.v1.Githubd/MintInstallationToken"
 	Githubd_StreamSourceRef_FullMethodName            = "/onebox.faas.githubd.v1.Githubd/StreamSourceRef"
 	Githubd_GetBranchHead_FullMethodName              = "/onebox.faas.githubd.v1.Githubd/GetBranchHead"
+	Githubd_GetInstallationRepository_FullMethodName  = "/onebox.faas.githubd.v1.Githubd/GetInstallationRepository"
 	Githubd_GetCIPullRequest_FullMethodName           = "/onebox.faas.githubd.v1.Githubd/GetCIPullRequest"
 	Githubd_GetCIChangedFiles_FullMethodName          = "/onebox.faas.githubd.v1.Githubd/GetCIChangedFiles"
 	Githubd_GetProtectedBranchEvidence_FullMethodName = "/onebox.faas.githubd.v1.Githubd/GetProtectedBranchEvidence"
@@ -146,6 +148,7 @@ type GithubdClient interface {
 	// install-belongs-to-the-app half; the install-belongs-to-the-user
 	// half lands here).
 	VerifyInstallation(ctx context.Context, in *VerifyInstallationRequest, opts ...grpc.CallOption) (*VerifyInstallationResponse, error)
+	GetInstallationAccess(ctx context.Context, in *GetInstallationAccessRequest, opts ...grpc.CallOption) (*GetInstallationAccessResponse, error)
 	// MintInstallationToken returns a fresh installation token for
 	// the given (account, installation_id). The token is the canonical
 	// shape githubd's TokenCache hands out (pkg/githubd/tokencache.go)
@@ -192,6 +195,12 @@ type GithubdClient interface {
 	// requested ref is not a branch (source-ref also accepts tags and SHAs).
 	// imaged uses this immediately before promoting branch-backed deployments.
 	GetBranchHead(ctx context.Context, in *GetBranchHeadRequest, opts ...grpc.CallOption) (*GetBranchHeadResponse, error)
+	// GetInstallationRepository returns the repository an account's
+	// installation sees under a name, with its immutable IDs. NOT_FOUND means
+	// the installation sees no repository of that name. apid confirms a
+	// project's repository with it before a GitHub Actions OIDC exchange
+	// (ADR-20261101160300, amendment 2).
+	GetInstallationRepository(ctx context.Context, in *GetInstallationRepositoryRequest, opts ...grpc.CallOption) (*GetInstallationRepositoryResponse, error)
 	// Fresh PR identity for internal CI admission. Account installation authority
 	// is verified by githubd. This read is served only on the local socket.
 	GetCIPullRequest(ctx context.Context, in *GetCIPullRequestRequest, opts ...grpc.CallOption) (*GetCIPullRequestResponse, error)
@@ -366,6 +375,16 @@ func (c *githubdClient) VerifyInstallation(ctx context.Context, in *VerifyInstal
 	return out, nil
 }
 
+func (c *githubdClient) GetInstallationAccess(ctx context.Context, in *GetInstallationAccessRequest, opts ...grpc.CallOption) (*GetInstallationAccessResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetInstallationAccessResponse)
+	err := c.cc.Invoke(ctx, Githubd_GetInstallationAccess_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *githubdClient) MintInstallationToken(ctx context.Context, in *MintInstallationTokenRequest, opts ...grpc.CallOption) (*MintInstallationTokenResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(MintInstallationTokenResponse)
@@ -399,6 +418,16 @@ func (c *githubdClient) GetBranchHead(ctx context.Context, in *GetBranchHeadRequ
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetBranchHeadResponse)
 	err := c.cc.Invoke(ctx, Githubd_GetBranchHead_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *githubdClient) GetInstallationRepository(ctx context.Context, in *GetInstallationRepositoryRequest, opts ...grpc.CallOption) (*GetInstallationRepositoryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetInstallationRepositoryResponse)
+	err := c.cc.Invoke(ctx, Githubd_GetInstallationRepository_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -593,6 +622,7 @@ type GithubdServer interface {
 	// install-belongs-to-the-app half; the install-belongs-to-the-user
 	// half lands here).
 	VerifyInstallation(context.Context, *VerifyInstallationRequest) (*VerifyInstallationResponse, error)
+	GetInstallationAccess(context.Context, *GetInstallationAccessRequest) (*GetInstallationAccessResponse, error)
 	// MintInstallationToken returns a fresh installation token for
 	// the given (account, installation_id). The token is the canonical
 	// shape githubd's TokenCache hands out (pkg/githubd/tokencache.go)
@@ -639,6 +669,12 @@ type GithubdServer interface {
 	// requested ref is not a branch (source-ref also accepts tags and SHAs).
 	// imaged uses this immediately before promoting branch-backed deployments.
 	GetBranchHead(context.Context, *GetBranchHeadRequest) (*GetBranchHeadResponse, error)
+	// GetInstallationRepository returns the repository an account's
+	// installation sees under a name, with its immutable IDs. NOT_FOUND means
+	// the installation sees no repository of that name. apid confirms a
+	// project's repository with it before a GitHub Actions OIDC exchange
+	// (ADR-20261101160300, amendment 2).
+	GetInstallationRepository(context.Context, *GetInstallationRepositoryRequest) (*GetInstallationRepositoryResponse, error)
 	// Fresh PR identity for internal CI admission. Account installation authority
 	// is verified by githubd. This read is served only on the local socket.
 	GetCIPullRequest(context.Context, *GetCIPullRequestRequest) (*GetCIPullRequestResponse, error)
@@ -736,6 +772,9 @@ func (UnimplementedGithubdServer) WriteCheck(context.Context, *WriteCheckRequest
 func (UnimplementedGithubdServer) VerifyInstallation(context.Context, *VerifyInstallationRequest) (*VerifyInstallationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method VerifyInstallation not implemented")
 }
+func (UnimplementedGithubdServer) GetInstallationAccess(context.Context, *GetInstallationAccessRequest) (*GetInstallationAccessResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetInstallationAccess not implemented")
+}
 func (UnimplementedGithubdServer) MintInstallationToken(context.Context, *MintInstallationTokenRequest) (*MintInstallationTokenResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MintInstallationToken not implemented")
 }
@@ -744,6 +783,9 @@ func (UnimplementedGithubdServer) StreamSourceRef(*StreamSourceRefRequest, grpc.
 }
 func (UnimplementedGithubdServer) GetBranchHead(context.Context, *GetBranchHeadRequest) (*GetBranchHeadResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetBranchHead not implemented")
+}
+func (UnimplementedGithubdServer) GetInstallationRepository(context.Context, *GetInstallationRepositoryRequest) (*GetInstallationRepositoryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetInstallationRepository not implemented")
 }
 func (UnimplementedGithubdServer) GetCIPullRequest(context.Context, *GetCIPullRequestRequest) (*GetCIPullRequestResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetCIPullRequest not implemented")
@@ -994,6 +1036,24 @@ func _Githubd_VerifyInstallation_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Githubd_GetInstallationAccess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetInstallationAccessRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).GetInstallationAccess(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_GetInstallationAccess_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).GetInstallationAccess(ctx, req.(*GetInstallationAccessRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Githubd_MintInstallationToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MintInstallationTokenRequest)
 	if err := dec(in); err != nil {
@@ -1037,6 +1097,24 @@ func _Githubd_GetBranchHead_Handler(srv interface{}, ctx context.Context, dec fu
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(GithubdServer).GetBranchHead(ctx, req.(*GetBranchHeadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Githubd_GetInstallationRepository_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetInstallationRepositoryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).GetInstallationRepository(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_GetInstallationRepository_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).GetInstallationRepository(ctx, req.(*GetInstallationRepositoryRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1273,12 +1351,20 @@ var Githubd_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Githubd_VerifyInstallation_Handler,
 		},
 		{
+			MethodName: "GetInstallationAccess",
+			Handler:    _Githubd_GetInstallationAccess_Handler,
+		},
+		{
 			MethodName: "MintInstallationToken",
 			Handler:    _Githubd_MintInstallationToken_Handler,
 		},
 		{
 			MethodName: "GetBranchHead",
 			Handler:    _Githubd_GetBranchHead_Handler,
+		},
+		{
+			MethodName: "GetInstallationRepository",
+			Handler:    _Githubd_GetInstallationRepository_Handler,
 		},
 		{
 			MethodName: "GetCIPullRequest",

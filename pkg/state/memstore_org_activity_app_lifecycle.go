@@ -93,6 +93,7 @@ func (m *MemStore) scheduleAppDeletion(ctx context.Context, id string, graceUnti
 		}
 	}
 	m.cancelAppTasksForAppLocked(id, now)
+	m.cancelDeletedAppPipelineLocked(id, now)
 	if !wasDeleted {
 		delete(m.appDeletionClaims, id)
 	}

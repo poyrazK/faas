@@ -24,6 +24,7 @@ var queueActions = map[string]OrgAction{
 	"GET /v1/apps/{slug}/queues/peek":                     OrgActionOperateQueues,
 	"GET /v1/apps/{slug}/queues/dead_letter":              OrgActionOperateQueues,
 	"POST /v1/apps/{slug}/queues/send":                    OrgActionOperateQueues,
+	"POST /v1/apps/{slug}/queues/send-batch":              OrgActionOperateQueues,
 	"POST /v1/apps/{slug}/queues/receive":                 OrgActionOperateQueues,
 	"POST /v1/apps/{slug}/queues/{id}/ack":                OrgActionOperateQueues,
 	"POST /v1/apps/{slug}/queues/{queue}/leases":          OrgActionOperateQueues,
@@ -31,4 +32,8 @@ var queueActions = map[string]OrgAction{
 	"POST /v1/apps/{slug}/queues/{queue}/leases:nack":     OrgActionOperateQueues,
 	"POST /v1/apps/{slug}/queues/{queue}/leases:extend":   OrgActionOperateQueues,
 	"POST /v1/apps/{slug}/queues/dead_letter/{id}/replay": OrgActionReplayQueues,
+	// Reviewed in bug hunt 37: in no map, so every member was refused it.
+	"PUT /v1/apps/{slug}/queue-workload": OrgActionConfigureQueues,
+	// The dashboard's dead-letter replay, as its /v1 twin.
+	"POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay": OrgActionReplayQueues,
 }

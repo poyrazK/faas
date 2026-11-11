@@ -98,7 +98,11 @@ func cmdDeployResume(ctx context.Context, args []string) int {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			exit = 130
 		}
-		return printErr("Deploy resume stopped before completion", &deployRecoveryError{err: waitCtx.Err(), recovery: s.recovery(stage), exit: exit})
+		err := deploymentWaitDeadlineError(deadline)
+		if exit == 130 {
+			err = context.Canceled
+		}
+		return printErr("Deploy resume stopped before completion", &deployRecoveryError{err: err, recovery: s.recoveryWithTimeout(stage, deadline), exit: exit})
 	}
 	if final.Status != statusLive || (s.record.WaitForRollout && final.RolloutState == rolloutStateAborted) {
 		return terminalExitForDeploymentWithFailureContext(ctx, c, final, s.record.AppSlug, nil)

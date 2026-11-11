@@ -36,13 +36,19 @@ class TaskSchemaPostgresTests(unittest.TestCase):
                 with ConnectionPool(make_conninfo(url,options=options),min_size=1,max_size=1,kwargs={"row_factory":dict_row}) as migration:
                     with self.assertRaises(Exception):check_task_schema(migration)
                     migrate_task_schema(migration)
+                    from tasks import _derive_key
+                    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+                    task_id=str(uuid.uuid4())
+                    nonce=os.urandom(12)
+                    sealed=AESGCM(_derive_key(b"x"*32,"gregale-mcp-task-payload:v1")).encrypt(nonce,b"{}",("gregale-mcp-task:v1:parity:"+task_id+":arguments").encode())
+                    payload=b"\x01"+nonce+sealed[-16:]+sealed[:-16]
                     with migration.connection() as connection:
-                        connection.execute("INSERT INTO gregale_mcp_tasks (namespace,task_id,owner_hash,tool_name,handler_version,arguments_encrypted,status,expires_at) VALUES ('parity',%s,%s,'migration_probe','1',%s,'completed',clock_timestamp()+interval '1 hour')",(uuid.uuid4(),b"x",b"x"))
+                        connection.execute("INSERT INTO gregale_mcp_tasks (namespace,task_id,owner_hash,tool_name,handler_version,arguments_encrypted,status,expires_at) VALUES ('parity',%s,%s,'migration_probe','1',%s,'completed',clock_timestamp()+interval '1 hour')",(task_id,b"x",payload))
                     migrate_task_schema(migration)
                     with migration.connection() as connection:
                         self.assertEqual(connection.execute("SELECT count(*) AS count FROM gregale_mcp_tasks").fetchone()["count"],1)
                     admin.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(identifier,identifier))
-                    for table in ["gregale_mcp_tasks","gregale_mcp_task_worker_handlers"]:
+                    for table in ["gregale_mcp_tasks","gregale_mcp_task_worker_handlers","gregale_mcp_task_owners","gregale_mcp_task_workers"]:
                         admin.execute(sql.SQL("GRANT SELECT,INSERT,UPDATE,DELETE ON {}.{} TO {}").format(identifier,sql.Identifier(table),identifier))
                     admin.execute(sql.SQL("GRANT SELECT ON {}.gregale_mcp_task_starter_schema TO {}").format(identifier,identifier))
                     runtime_url=make_conninfo(url,user=name,password="mcp-parity-test-only",options=options)
@@ -54,6 +60,12 @@ class TaskSchemaPostgresTests(unittest.TestCase):
                             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                                 with runtime.pool.connection() as connection:connection.execute("ALTER TABLE gregale_mcp_tasks ADD COLUMN forbidden integer")
                             check_task_schema(runtime.pool)
+                            for table in ["gregale_mcp_tasks","gregale_mcp_task_worker_handlers","gregale_mcp_task_owners","gregale_mcp_task_workers"]:
+                                admin.execute(sql.SQL("REVOKE INSERT,UPDATE,DELETE ON {}.{} FROM {}").format(identifier,sql.Identifier(table),identifier))
+                            runtime._assert_read_only()
+                            admin.execute(sql.SQL("GRANT INSERT ON {}.gregale_mcp_task_owners TO {}").format(identifier,identifier))
+                            with self.assertRaises(ValueError):runtime._assert_read_only()
+                            admin.execute(sql.SQL("REVOKE INSERT ON {}.gregale_mcp_task_owners FROM {}").format(identifier,identifier))
                             with migration.connection() as connection:connection.execute("UPDATE gregale_mcp_task_starter_schema SET version=2")
                             with self.assertRaises(ValueError):migrate_task_schema(migration)
                             with self.assertRaises(ValueError):check_task_schema(runtime.pool)

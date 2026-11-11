@@ -51,6 +51,8 @@ func Run(t *testing.T, open Open) {
 	}{
 		{"operator_alert_triage_and_retention_are_durable", testOperatorAlertTriageRetention},
 		{"operator_evidence_projections_are_exact", testOperatorEvidenceProjections},
+		{"operator_actions_reach_the_audit_log_under_the_operator", testOperatorActionsReachAuditLog},
+		{"operator_events_list_newest_first_with_a_literal_prefix", testOperatorEventsNewestFirst},
 		{"operator_queue_count_excludes_running_and_terminal_builds", testOperatorQueuedBuildsCount},
 		{"operator_queue_snapshot_preserves_wait_across_requeue", testOperatorBuildQueueSnapshot},
 		{"operator_build_recovery_snapshot_preserves_cleanup_age", testOperatorBuildRecoverySnapshot},
@@ -62,13 +64,20 @@ func Run(t *testing.T, open Open) {
 		{"sidecar_secret_reload_signal_controls_target_support", testSidecarSecretReloadSignal},
 		{"non_uuid_invocation_identity_is_unowned", testNonUUIDInvocationIdentityIsUnowned},
 		{"deployment_secret_reload_signal_survives_read", testDeploymentSecretReloadSignalSurvivesRead},
+		{"deployment_before_checkpoint_hook_survives_read", testDeploymentBeforeCheckpointHookSurvivesRead},
 		{"rollback_on_5xx_candidates_track_the_opt_in", testRollbackOn5xxCandidates},
+		{"reverted_release_is_not_a_rollback_target", testRevertedReleaseIsNotARollbackTarget},
 		{"config_revisions_and_guards_track_each_write", testConfigRevisionsAndGuards},
+		{"config_restore_is_atomic_and_compares_observed_state", testAtomicConfigRestore},
+		{"config_restore_guard_commits_secrets_and_outcome", testAtomicGuardRestore},
+		{"config_guard_cursor_visits_later_guards", testConfigGuardCursor},
+		{"automatic_rollback_keeps_a_newer_release", testAutomaticRollbackCurrent},
 		{"post_release_watch_candidates_follow_the_newest_release", testPostReleaseWatchCandidates},
 		{"release_freezes_limit_list_and_lift", testReleaseFreezes},
 		{"org_release_freezes_keep_to_their_owner", testOrgReleaseFreezes},
 		{"edge_rule_targeted_reads_return_only_what_they_name", testEdgeRuleTargetedReads},
 		{"release_gates_round_trip_and_follow_their_slo", testReleaseGates},
+		{"release_gate_probes_count_per_gate_revision_and_minute", testReleaseGateProbes},
 		{"release_approvals_policy_and_one_decision_per_person", testReleaseApprovals},
 		{"release_approval_events_once_due_and_retried", testReleaseApprovalEvents},
 		{"scheduled_releases_one_pending_and_start_in_the_traffic_change", testScheduledReleases},
@@ -76,6 +85,8 @@ func Run(t *testing.T, open Open) {
 		{"database_switch_cancel_hold_and_account_cap", testDatabaseSwitchCancelHoldAndAccountCap},
 		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
+		{"custom_metric_deltas_accumulate", testCustomMetricDeltaContract},
+		{"custom_metric_series_aggregate", testCustomMetricSeriesContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
 		{"queued_build_claim_is_exactly_once", testQueuedBuildClaimIsExactlyOnce},
 		{"targeted_build_claim_fences_a_second_claimer", testTargetedBuildClaimFencesASecondClaimer},
@@ -98,7 +109,7 @@ func Run(t *testing.T, open Open) {
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
 		{"deployment_live_pointer_swaps_atomically", testDeploymentLivePointer},
 		{"github_deployment_promotion_fences_stale_revisions", testGitHubDeploymentPromotionFence},
-		{"github_installation_ownership_is_exclusive", testGitHubInstallationOwnership},
+		{"github_deployment_connections_are_shared_and_login_is_exclusive", testGitHubDeploymentConnections},
 		{"git_driven_deployment_promotion_is_scope_and_revision_fenced", testGitDrivenDeploymentPromotionFence},
 		{"image_deployment_promotion_is_scope_and_revision_fenced", testImageDeploymentPromotionFence},
 		{"image_runtime_profile_is_persisted_before_prime", testImageRuntimeProfile},
@@ -121,6 +132,7 @@ func Run(t *testing.T, open Open) {
 		{"scenario_rehearsal_reads_for_unenrolled_app", testScenarioRehearsalReadsForUnenrolledApp},
 		{"rehearsal_apps_leave_account_alerts", testRehearsalAppsLeaveAccountAlerts},
 		{"rehearsal_app_logs_stay_inside_the_run", testRehearsalAppLogsStayInsideTheRun},
+		{"log_drains_deliver_only_what_the_plan_covers", testLogDrainsDeliverOnlyWhatThePlanCovers},
 		{"rehearsal_apps_never_poll_real_brokers", testRehearsalAppsNeverPollRealBrokers},
 		{"rehearsal_crons_never_fire_from_the_clock", testRehearsalCronsNeverFireFromTheClock},
 		{"rehearsal_apps_receive_no_account_events", testRehearsalAppsReceiveNoAccountEvents},
@@ -144,6 +156,7 @@ func Run(t *testing.T, open Open) {
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
 		{"overage_cap_default_follows_the_plan", testOverageCapDefaultFollowsThePlan},
 		{"organization_billing_subject_has_its_own_spend_cap", testOrgSpendCap},
+		{"pending_billing_skips_free_subjects", testPendingBillingSkipsFreeSubjects},
 		{"account_lifecycle_leaves_the_dunning_ladder", testAccountLifecycleLeavesTheDunningLadder},
 		{"dunning_deletion_is_scheduled_and_paid_back", testDunningDeletionIsScheduledAndPaidBack},
 		{"self_service_deletion_only_from_active", testSelfServiceDeletionOnlyFromActive},
@@ -171,8 +184,10 @@ func Run(t *testing.T, open Open) {
 		{"oidc_empty_subject_pattern_binds_nothing", testOIDCEmptySubjectPatternBindsNothing},
 		{"oidc_repository_binding_resolution", testOIDCRepositoryBindingResolution},
 		{"oidc_repository_ids_for_subject", testOIDCRepositoryIDsForSubject},
+		{"oidc_project_repository_bindings", testOIDCProjectRepositoryBindings},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
+		{"project_reconcile_adopts_cli_function_app", testProjectReconcileAdoptsFunctionApp},
 		{"project_binding_update_is_scoped", testProjectBindingUpdate},
 		{"project_environment_registry_is_scoped_and_protected", testProjectEnvironmentRegistry},
 		{"project_environment_route_policy_is_scoped_and_replaceable", testProjectEnvironmentRoutePolicy},
@@ -184,6 +199,10 @@ func Run(t *testing.T, open Open) {
 		{"deployment_revisions_are_monotonic_and_addressable", testDeploymentRevisions},
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
 		{"deployment_outcomes_exclude_customer_caused_failures", testDeploymentOutcomesExcludeCustomerCausedFailures},
+		{"deployment_served_before_tracks_traffic", testDeploymentServedBefore},
+		{"outpaced_release_is_superseded_before_its_command", testSupersedeOutpacedRelease},
+		{"release_commands_run_one_at_a_time_per_scope", testReleaseCommandOrder},
+		{"outpaced_queued_release_command_is_cancelled", testOutpacedQueuedReleaseCancelled},
 		{"active_job_runs_are_scoped_and_terminal_safe", testActiveJobRuns},
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
 		{"keyed_invocation_replacement_and_completion_are_fenced", testKeyedInvocationReplacementAndCompletion},
@@ -199,6 +218,10 @@ func Run(t *testing.T, open Open) {
 		{"queue_binding_retirement_holds_work_and_retains_receipts", testQueueBindingRetirement},
 		{"queue_binding_identity_survives_rename_replacement_and_replay", testInvocationQueueBindingIdentity},
 		{"queue_dead_letter_replay_rearms_original_receipt", testQueueReplayReceipt},
+		{"completed_queue_payloads_are_trimmed_after_their_retention", testQueuePayloadTrim},
+		{"trigger_record_states_by_items", testTriggerRecordStatesByItems},
+		{"trigger_record_claims_renew_while_dispatching", testTriggerRecordClaimRenewal},
+		{"trigger_record_operator_verbs_are_scoped", testTriggerRecordOperatorScope},
 		{"queue_dead_letter_message_is_one_entry", testQueueDeadLetterSingleEntry},
 		{"queue_consumer_and_trigger_share_account_quota", testQueueConsumerAccountQuota},
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},
@@ -215,6 +238,7 @@ func Run(t *testing.T, open Open) {
 		{"execution_intent_lifecycle_is_leased_and_bounded", testExecutionIntentLifecycle},
 		{"app_task_lifecycle_pins_deployment_and_fences_replay", testAppTaskLifecycle},
 		{"app_task_attach_session_is_atomic_and_lease_fenced", testAppTaskAttachSession},
+		{"app_task_claim_respects_node_ownership", testAppTaskClaimRespectsNodeOwnership},
 		{"workflow_admission_recovery_and_cancel_are_atomic", testWorkflowAdmissionRecoveryAndCancel},
 		{"workflow_run_creation_is_idempotent_and_quota_safe", testWorkflowRunCreateIdempotency},
 		{"workflow_concurrency_limit_queues_and_releases_runs", testWorkflowConcurrencyLimitQueues},
@@ -4285,10 +4309,13 @@ func testAccountCredits(t *testing.T, fx *Fixture) {
 // into a Go zero would report "no overage allowed" for an account that
 // never set a cap, and stop billing that should happen.
 func testOverageCap(t *testing.T, fx *Fixture) {
-	if _, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
+	// An unset cap reads as the plan's effective cap: none on Free, the
+	// plan's self-service ceiling on a paid plan (ADR-20261105120000).
+	unsetCents, unsetOK := state.EffectiveOverageCapCents(fx.Account.Plan, nil)
+	if cents, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
 		t.Fatalf("GetAccountOverageCapCents(unset): %v", err)
-	} else if ok {
-		t.Error("a fresh account reported a cap; want ok=false (no cap)")
+	} else if ok != unsetOK || (ok && cents != unsetCents) {
+		t.Errorf("a fresh account reported (%d, %v); want the plan's effective cap (%d, %v)", cents, ok, unsetCents, unsetOK)
 	}
 
 	zero := int64(0)
@@ -4316,10 +4343,10 @@ func testOverageCap(t *testing.T, fx *Fixture) {
 	if err := fx.Store.UpdateAccountOverageCapCents(fx.Ctx, fx.Account.ID, nil); err != nil {
 		t.Fatalf("UpdateAccountOverageCapCents(nil): %v", err)
 	}
-	if _, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
+	if cents, ok, err := fx.Store.GetAccountOverageCapCents(fx.Ctx, fx.Account.ID); err != nil {
 		t.Fatalf("GetAccountOverageCapCents(cleared): %v", err)
-	} else if ok {
-		t.Error("cap still reported after clearing with nil; want ok=false")
+	} else if ok != unsetOK || (ok && cents != unsetCents) {
+		t.Errorf("cleared cap read back as (%d, %v); want the plan's effective cap (%d, %v)", cents, ok, unsetCents, unsetOK)
 	}
 }
 
@@ -4542,6 +4569,172 @@ func testCustomMetricsContract(t *testing.T, fx *Fixture) {
 	// intent is "this metric is gone", which is already true.
 	if err := fx.Store.DeleteCustomMetric(fx.Ctx, fx.App.ID, "never_existed"); err != nil {
 		t.Errorf("delete of a missing name = %v, want nil", err)
+	}
+}
+
+// testCustomMetricSeriesContract pins ADR-20261108160000 slice C on both
+// stores: series aggregate into the metric row (counters summed, gauges the
+// max of fresh series), deltas add per series, the caps refuse new series
+// and names, a kind change drops the old series, and deleting the metric
+// removes its series.
+func testCustomMetricSeriesContract(t *testing.T, fx *Fixture) {
+	t.Helper()
+	store, ok := fx.Store.(state.CustomMetricSeriesStore)
+	if !ok {
+		t.Fatal("store does not implement CustomMetricSeriesStore")
+	}
+	at := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	lim := state.CustomMetricSeriesLimits{Names: 2, SeriesPerMetric: 2, SeriesPerApp: 4, GaugeFreshness: 5 * time.Minute}
+	put := func(name, kind, key string, value float64, delta bool, when time.Time) error {
+		var labels map[string]string
+		if key != "" {
+			k, v, _ := strings.Cut(key, "=")
+			labels = map[string]string{k: v}
+		}
+		return store.PutCustomMetricSeries(fx.Ctx, fx.App.ID, state.CustomMetricSeriesWrite{
+			Name: name, SeriesKey: key, Labels: labels, Kind: kind, Value: value, Delta: delta, ObservedAt: when,
+		}, lim)
+	}
+	metric := func(name string) state.CustomMetric {
+		t.Helper()
+		rows, err := fx.Store.ListCustomMetrics(fx.Ctx, fx.App.ID)
+		if err != nil {
+			t.Fatalf("ListCustomMetrics: %v", err)
+		}
+		for _, row := range rows {
+			if row.Name == name {
+				return row
+			}
+		}
+		t.Fatalf("%s not stored", name)
+		return state.CustomMetric{}
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Counter series sum; deltas add per series.
+	must(put("jobs_total", state.CustomMetricKindCounter, "queue=emails", 3, true, at))
+	must(put("jobs_total", state.CustomMetricKindCounter, "queue=emails", 4, true, at.Add(time.Second)))
+	must(put("jobs_total", state.CustomMetricKindCounter, "queue=billing", 10, false, at))
+	if got := metric("jobs_total"); got.Value != 17 || !got.Labelled || got.Kind != state.CustomMetricKindCounter || !got.ObservedAt.UTC().Equal(at.Add(time.Second)) {
+		t.Fatalf("counter aggregate = %+v, want 17 labelled at the newest series", got)
+	}
+	// Per-metric cap.
+	if err := put("jobs_total", state.CustomMetricKindCounter, "queue=other", 1, false, at); !errors.Is(err, state.ErrCustomMetricSeriesLimit) {
+		t.Fatalf("third series of a metric = %v, want ErrCustomMetricSeriesLimit", err)
+	}
+
+	// Gauge series: the max of fresh series; a stale one stops counting.
+	must(put("depth", state.CustomMetricKindGauge, "queue=a", 50, false, at))
+	must(put("depth", state.CustomMetricKindGauge, "queue=b", 8, false, at.Add(10*time.Minute)))
+	if got := metric("depth"); got.Value != 8 {
+		t.Fatalf("gauge aggregate = %v, want 8 (the 50 is stale)", got.Value)
+	}
+	// Per-app cap: a fifth series is refused even with room in the metric.
+	lim.SeriesPerMetric = 10
+	if err := put("depth", state.CustomMetricKindGauge, "queue=c", 1, false, at); !errors.Is(err, state.ErrCustomMetricSeriesLimit) {
+		t.Fatalf("series beyond the app cap = %v, want ErrCustomMetricSeriesLimit", err)
+	}
+	lim.SeriesPerMetric = 2
+	// Name cap applies to a labelled write too.
+	if err := put("third_name", state.CustomMetricKindGauge, "k=v", 1, false, at); !errors.Is(err, state.ErrCustomMetricLimit) {
+		t.Fatalf("third name = %v, want ErrCustomMetricLimit", err)
+	}
+
+	series, err := store.ListCustomMetricSeries(fx.Ctx, fx.App.ID)
+	if err != nil || len(series) != 4 || series[0].Name != "depth" || series[0].SeriesKey != "queue=a" || series[0].Labels["queue"] != "a" {
+		t.Fatalf("series = %+v, %v", series, err)
+	}
+	fresh, err := store.ListFreshCustomMetricSeries(fx.Ctx, at.Add(5*time.Minute), 10)
+	// The stale gauge series is left out; counter series always export.
+	if err != nil || len(fresh) != 3 || fresh[0].SeriesKey != "queue=b" || fresh[0].Value != 8 ||
+		fresh[1].Name != "jobs_total" || fresh[2].Name != "jobs_total" {
+		t.Fatalf("fresh series = %+v, %v", fresh, err)
+	}
+
+	// A kind change drops the old series.
+	must(put("depth", state.CustomMetricKindCounter, "queue=a", 2, false, at.Add(11*time.Minute)))
+	if got := metric("depth"); got.Value != 2 || got.Kind != state.CustomMetricKindCounter {
+		t.Fatalf("after kind change = %+v", got)
+	}
+
+	// Deleting the metric deletes its series.
+	must(fx.Store.DeleteCustomMetric(fx.Ctx, fx.App.ID, "jobs_total"))
+	series, err = store.ListCustomMetricSeries(fx.Ctx, fx.App.ID)
+	if err != nil || len(series) != 1 || series[0].Name != "depth" {
+		t.Fatalf("after delete = %+v, %v", series, err)
+	}
+}
+
+// testCustomMetricDeltaContract pins ADR-20261108160000 on both stores: OTLP
+// deltas add to the stored value of the same kind, a kind change restarts
+// it, the total never goes below zero, the newest timestamp is kept, and the
+// distinct-name cap applies as for a plain push.
+func testCustomMetricDeltaContract(t *testing.T, fx *Fixture) {
+	t.Helper()
+	deltas, ok := fx.Store.(state.CustomMetricDeltaStore)
+	if !ok {
+		t.Fatal("store does not implement CustomMetricDeltaStore")
+	}
+	at := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	value := func(name string) state.CustomMetric {
+		t.Helper()
+		rows, err := fx.Store.ListCustomMetrics(fx.Ctx, fx.App.ID)
+		if err != nil {
+			t.Fatalf("ListCustomMetrics: %v", err)
+		}
+		for _, row := range rows {
+			if row.Name == name {
+				return row
+			}
+		}
+		t.Fatalf("%s not stored", name)
+		return state.CustomMetric{}
+	}
+	add := func(name, kind string, delta float64, when time.Time) error {
+		return deltas.AddCustomMetricOfKind(fx.Ctx, fx.App.ID, name, kind, delta, when, 2)
+	}
+
+	if err := add("requests_total", state.CustomMetricKindCounter, 3, at); err != nil {
+		t.Fatalf("first delta: %v", err)
+	}
+	if err := add("requests_total", state.CustomMetricKindCounter, 4, at.Add(time.Minute)); err != nil {
+		t.Fatalf("second delta: %v", err)
+	}
+	// An older export arriving late still adds, but does not move time back.
+	if err := add("requests_total", state.CustomMetricKindCounter, 1, at); err != nil {
+		t.Fatalf("late delta: %v", err)
+	}
+	if got := value("requests_total"); got.Value != 8 || got.Kind != state.CustomMetricKindCounter || !got.ObservedAt.UTC().Equal(at.Add(time.Minute)) {
+		t.Fatalf("requests_total = %+v, want counter 8 observed at the newest delta", got)
+	}
+
+	// A delta up-down counter moves a gauge and stops at zero.
+	if err := add("connections", state.CustomMetricKindGauge, 2, at); err != nil {
+		t.Fatalf("gauge delta: %v", err)
+	}
+	if err := add("connections", state.CustomMetricKindGauge, -5, at.Add(time.Second)); err != nil {
+		t.Fatalf("negative gauge delta: %v", err)
+	}
+	if got := value("connections"); got.Value != 0 {
+		t.Fatalf("connections = %v, want floored at 0", got.Value)
+	}
+
+	// The cap counts names as a plain push does.
+	if err := add("third_name", state.CustomMetricKindCounter, 1, at); !errors.Is(err, state.ErrCustomMetricLimit) {
+		t.Fatalf("third name at cap 2 = %v, want ErrCustomMetricLimit", err)
+	}
+
+	// A kind change restarts the total from the delta.
+	if err := add("connections", state.CustomMetricKindCounter, 6, at.Add(2*time.Second)); err != nil {
+		t.Fatalf("kind change: %v", err)
+	}
+	if got := value("connections"); got.Value != 6 || got.Kind != state.CustomMetricKindCounter {
+		t.Fatalf("after kind change = %+v, want counter 6", got)
 	}
 }
 

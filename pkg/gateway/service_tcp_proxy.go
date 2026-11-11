@@ -58,7 +58,10 @@ type ServiceTCPForward func(ctx context.Context, conn net.Conn, target Target, i
 // guest ServiceProxy whose identity, authorizer and endpoint state the TCP
 // path shares.
 type ServiceTCPProxyConfig struct {
-	Services            *ServiceProxy
+	Services *ServiceProxy
+	// ResolvePinnedPorts projects the exact release deployment, including a
+	// retained zero-traffic deployment. Nil preserves the target port list.
+	ResolvePinnedPorts  func(context.Context, string, string) ([]int, error)
 	Resolve             ServiceTCPTargetResolver
 	Forward             ServiceTCPForward
 	OriginalDestination func(net.Conn) (netip.AddrPort, error)
@@ -212,7 +215,7 @@ func (p *ServiceTCPProxy) serve(ctx context.Context, conn net.Conn, session *tcp
 		return "", "unknown_service", nil
 	}
 	session.Bind(target.AccountID)
-	caller, denied, err := p.authorize(ctx, callerAppID, target, int(dst.Port()))
+	caller, denied, err := p.authorize(ctx, callerAppID, target)
 	if denied != "" {
 		return "", denied, err
 	}
@@ -228,6 +231,16 @@ func (p *ServiceTCPProxy) serve(ctx context.Context, conn net.Conn, session *tcp
 	deploymentID, err := p.releaseDeployment(ctx, callerAppID, callerDeploymentID, target.AppID)
 	if err != nil {
 		return "", "release", err
+	}
+	ports := target.TCPPorts
+	if deploymentID != "" && p.cfg.ResolvePinnedPorts != nil {
+		ports, err = p.cfg.ResolvePinnedPorts(ctx, target.AppID, deploymentID)
+		if err != nil {
+			return "", "release", err
+		}
+	}
+	if !slices.Contains(ports, int(dst.Port())) {
+		return "", "undeclared_port", nil
 	}
 	if check := p.cfg.Services.admitRuntime; check != nil {
 		if err := check(ctx, target.AppID, deploymentID); err != nil {
@@ -264,16 +277,16 @@ func (p *ServiceTCPProxy) serve(ctx context.Context, conn net.Conn, session *tcp
 // 4xx, and is not counted; every other refusal after authorization is an
 // error, as a 5xx is on HTTP edges.
 func (p *ServiceTCPProxy) observeEdge(callerAppID, targetAppID, outcome, reason string, woke bool) {
-	if reason == "account_limit" {
+	if reason == "account_limit" || reason == "undeclared_port" {
 		return
 	}
 	p.cfg.Services.metrics.ObserveServiceTCPEdge(callerAppID, targetAppID, reason != "" || outcome == "error", woke)
 }
 
 // authorize applies the HTTP mesh's tenant, binding, caller and preview
-// policy, then the TCP-only rules: a method/path call scope cannot be
-// enforced on raw bytes, and only declared TCP listeners are reachable.
-func (p *ServiceTCPProxy) authorize(ctx context.Context, callerAppID string, target ServiceTCPTarget, port int) (ServiceCaller, string, error) {
+// policy. A method/path call scope cannot be enforced on raw bytes. Port
+// eligibility is checked after resolving the caller's release pin.
+func (p *ServiceTCPProxy) authorize(ctx context.Context, callerAppID string, target ServiceTCPTarget) (ServiceCaller, string, error) {
 	caller, err := p.cfg.Services.authorize(ctx, callerAppID, target.AppID)
 	switch {
 	case errors.Is(err, ErrServiceProxyBindingDenied):
@@ -288,8 +301,6 @@ func (p *ServiceTCPProxy) authorize(ctx context.Context, callerAppID string, tar
 		return caller, "authorization_unavailable", err
 	case caller.CallScope != nil:
 		return caller, "call_scope", nil
-	case !slices.Contains(target.TCPPorts, port):
-		return caller, "undeclared_port", nil
 	}
 	return caller, "", nil
 }

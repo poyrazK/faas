@@ -545,13 +545,24 @@ func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slo
 		latest = nil
 	}
 	view, _ := AccountFrom(ctx)
+	// The account count above stays the whole list; a label selector only
+	// narrows the rows (ADR-20261031100025).
+	accountAppCount := len(apps)
+	data := dashboard.AppsListData{LabelsOn: s.labelsReleased(r, acct)}
+	var labelsByApp map[string]map[string]string
+	if data.LabelsOn {
+		data.Selector = dashboardSelectorValue(r)
+		apps, labelsByApp, data.SelectorError = s.dashboardSelectApps(r, acct, apps)
+	}
 	items := make([]dashboard.AppListItem, 0, len(apps))
 	for _, a := range apps {
 		var last time.Time
 		if d, err := s.store.LatestDeployment(ctx, a.ID); err == nil {
 			last = d.CreatedAt
 		}
-		items = append(items, s.appListItem(ctx, a, latest, last))
+		item := s.appListItem(ctx, a, latest, last)
+		item.Labels = labelsByApp[a.ID]
+		items = append(items, item)
 	}
 	// Finding 6 (issue #314): stamp the per-row quota-cell metadata.
 	// account.Plan is the plan every app in this account sees
@@ -577,7 +588,7 @@ func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slo
 	// issue 100 PromQL calls per render. nil = no badge.
 	badges := s.fetchDashboardSLOBadges(ctx, log, items, acct)
 	attachSLOBadges(items, badges)
-	accountView := dashboardAccountView(view, len(apps))
+	accountView := dashboardAccountView(view, accountAppCount)
 	if snapshot, rateErr := s.readAccountDeployRate(ctx, acct, timeNow().UTC()); rateErr != nil {
 		log.Warn("dashboard renderAppsList: account deploy rate", "account_id", acct.ID, "err", rateErr)
 	} else {
@@ -587,7 +598,8 @@ func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slo
 		accountView.DeployRateResetsAt = snapshot.WindowResetsAt.UTC().Format(time.RFC3339)
 		accountView.DeployRateResetsLabel = snapshot.WindowResetsAt.UTC().Format("15:04 UTC")
 	}
-	page := dashboard.Page{Title: "Apps", Body: "apps_list", Account: accountView, Data: items}
+	data.Items = items
+	page := dashboard.Page{Title: "Apps", Body: "apps_list", Account: accountView, Data: data}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
 	}
@@ -790,6 +802,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		}
 		cronItems = append(cronItems, item)
 	}
+	attachDashboardCronLabels(cronItems, s.dashboardResourceLabels(r, acct, state.LabelKindCron, dashboardCronIDs(cronItems)))
 	workflowItems := s.fetchDashboardWorkflows(ctx, log, app.ID)
 	// Single-app detail page reuses the batched instance map; for
 	// a one-app render that's one extra row fetched but it keeps
@@ -869,6 +882,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		appCount = 0
 	}
 	appRow := s.appListItem(ctx, app, latest, time.Time{})
+	appRow.Labels = s.singleAppLabels(r, acct, app)
 	appRow.Plan = string(acct.Plan)
 	appRow.QuotaLabel = dashboardEmDash
 	// ADR-095 PR-C / issue #272 — preview environments panel. Fetched
@@ -1071,6 +1085,10 @@ func dashboardWorkflowError(err *string) string {
 //
 //	?fired=1       → "ok"     (green banner: "Fire-now enqueued…")
 //	?fired=error   → "error"  (red banner: "Fire-now failed…")
+//	?fired=disabled|busy|suspended|plan → the same value (red banner naming
+//	                 the refusal: a disabled cron, too many manual runs
+//	                 waiting, a suspended cron, or a plan that does not let
+//	                 it run)
 //	?fired= (any other) → ""  (no banner — future variants can grow here)
 //
 // Empty output is the conservative default: a stale "?fired="
@@ -1080,8 +1098,8 @@ func firedFlash(r *http.Request) string {
 	switch r.URL.Query().Get("fired") {
 	case "1":
 		return "ok"
-	case "error":
-		return "error"
+	case "error", "disabled", "busy", "suspended", "plan", "budget":
+		return r.URL.Query().Get("fired")
 	default:
 		return ""
 	}
@@ -1427,8 +1445,14 @@ func (s *server) renderUsage(w http.ResponseWriter, r *http.Request, log *slog.L
 	}
 	perApp := usageAppData(rows, apps, used)
 	daily, dailySparkline := usageDailyView(dailyRows, apps)
-	limits := api.MustLimitsFor(acct.Plan)
-	included := int64(limits.IncludedGBHours)
+	// The month's allowance and billed overage follow its plan history, as
+	// the bill does (ADR-20261101113742).
+	compute, err := s.monthComputeView(r.Context(), acct, month, mbSec)
+	if err != nil {
+		renderProblem(w, log, err)
+		return
+	}
+	included := compute.IncludedGBHours
 	pct := 0.0
 	if included > 0 {
 		pct = used / float64(included) * 100
@@ -1443,7 +1467,7 @@ func (s *server) renderUsage(w http.ResponseWriter, r *http.Request, log *slog.L
 		Month:                 month.Format("2006-01"),
 		UsedGBHours:           used,
 		IncludedGBHours:       included,
-		OverageGBHours:        max(0, used-float64(included)),
+		OverageGBHours:        compute.OverageGBHours,
 		UsedPct:               pct,
 		Requests:              requests,
 		UsedEgressGB:          usedEgressGB,
@@ -1566,6 +1590,13 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 		overageCents = 0
 	} else {
 		overageCents = combinedOverageCents(s.billingProvider, acct.Plan, eligibleEgressBytes, overageCents)
+		// The cap also counts the object-storage charge (ADR-20261027093220),
+		// so the bar reaches 100% when the apps park.
+		if storageCents, err := meter.SpendCapObjectStorageCents(ctx, s.store, acct.ID, time.Now()); err != nil {
+			log.Warn("dashboard renderBilling: object storage charge", "account_id", acct.ID, "err", err)
+		} else {
+			overageCents = saturatingAddCents(overageCents, storageCents)
+		}
 	}
 	var overageRatio float64
 	if capOK && capCents > 0 && overageCents > 0 {
@@ -1611,6 +1642,7 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 	data.CanCheckout = s.canStartCheckout(ctx, acct)
 	data.UpgradeOptions = upgradeOptionsFor(acct)
 	data.UpgradeNotice = upgradeNoticeFor(r.URL.Query().Get("upgrade"))
+	data.ScheduledChange, _ = s.scheduledChangeNotice(ctx, acct)
 
 	// Issue #561 CSRF envelope for the raise-cap form. Mirrors the
 	// renderAccount pattern at line 792 (delete + restore tokens). The
@@ -1916,6 +1948,11 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
 	})
 	data.PlanConfirmToken = planTok
+	if err := s.fillAccountProfileForms(w, r, acct, &data); err != nil {
+		log.Error("dashboard renderAccount: account forms", "err", err, "account_id", view.ID)
+		renderProblem(w, log, err)
+		return
+	}
 	// Wire to .Data.ConnectGithubConfirmToken in account.html; the
 	// form action is /dashboard/install/connect (handlers_oauth_code_callback.go).
 	data.ConnectGithubConfirmToken = connectGithubTok
@@ -1962,6 +1999,9 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		if acct.Plan != api.PlanFree {
 			data.FlashSurface += " " + restoreSubscriptionNotice
 		}
+	}
+	if flash := accountFlowFlash(r); flash != "" {
+		data.FlashSurface = flash
 	}
 	switch r.URL.Query().Get("key_revoked") {
 	case "1":
@@ -2071,7 +2111,7 @@ func dashboardAccountView(acct state.Account, appCount int) *dashboard.AccountVi
 		Plan:                       string(acct.Plan),
 		AppCount:                   n,
 		EmailVerified:              acct.EmailVerified(),
-		EmailVerificationGraceEnds: acct.CreatedAt.Add(emailVerificationGrace).UTC().Format("2006-01-02"),
+		EmailVerificationGraceEnds: verificationDeadline(acct).UTC().Format("2006-01-02"),
 	}
 }
 
@@ -2096,15 +2136,6 @@ func hexPrefix(hash []byte) string {
 		return "000000000000"
 	}
 	return strconv.FormatUint(uint64(hash[0])<<40|uint64(hash[1])<<32|uint64(hash[2])<<24|uint64(hash[3])<<16|uint64(hash[4])<<8|uint64(hash[5]), 16)
-}
-
-// max returns the larger of two non-negative floats. Inline because
-// math.Max forces a non-int return type we don't use anywhere else.
-func max(a, b float64) float64 {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // renderAuditEvents renders /dashboard/audit-events — the
@@ -2773,6 +2804,7 @@ func (s *server) renderOrgDetail(w http.ResponseWriter, r *http.Request, log *sl
 	}
 	populateOrgApps(r.Context(), log, s.store, org, &data)
 	populateOrgActivity(r.Context(), r, log, s.store, org, &data)
+	s.populateOrgGitHub(w, r.Context(), log, acct, org, callerRole, &data)
 
 	page := dashboard.Page{
 		Title:   org.Name,

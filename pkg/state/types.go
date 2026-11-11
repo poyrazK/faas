@@ -1245,6 +1245,12 @@ type APIKey struct {
 	// account/org API keys leave it empty; authz.LoadApp uses it as an
 	// additional tenant boundary when the principal is app-scoped.
 	AppID string
+	// ProjectLimited and ProjectIDs: an agent or mcp-login key limited to
+	// projects of its organization (ADR-20261104085712). The middleware
+	// stamps them on the principal's copy when it authenticates the key;
+	// stores' key reads leave them unset.
+	ProjectLimited bool
+	ProjectIDs     []string
 	// OrgID is the org the key was minted against (issue #190 / IAM-6,
 	// PR 6). Migration 00127 flips api_keys.org_id from NULL to
 	// NOT NULL after the deterministic personal-org backfill, so every
@@ -1300,6 +1306,10 @@ type DeployToken struct {
 	Status        string
 	RevokedAt     *time.Time
 	RotatedFromID *string
+	// CreatedByAccountID is the member who minted or last rotated the
+	// token; "" for a token minted before the column existed. A token
+	// whose minter differs from AccountID authenticates as the minter.
+	CreatedByAccountID string
 }
 
 // App is a deployed application (or function). The Manifest carries the
@@ -1336,6 +1346,8 @@ type App struct {
 	// scaling input or the owning scheduler node changes; schedulers
 	// acknowledge observing this revision without creating a deployment.
 	ScalingPolicyRevision int64
+	// ScalingRevision guards RAM, CPU, concurrency and instance-floor edits.
+	ScalingRevision int64
 	// EgressAllowlist is the per-app outbound CIDR allowlist (ADR-031,
 	// tier-2 of the network roadmap). Empty => no allowlist rule
 	// emitted, current behaviour preserved; non-empty => the per-netns
@@ -1351,6 +1363,11 @@ type App struct {
 	// (sorted, no base ports). Empty for Free/Hobby; Pro and Scale are
 	// capped by api.Plan.EgressExtraPortsMax.
 	EgressPorts []int
+	// EgressAllowlistRevision is apps.egress_allowlist_revision, bumped by
+	// the database on every allowlist or port change. A wake request carries
+	// it so vmmd can tell its cached app policy from a newer one in the
+	// request (0 = unknown, e.g. an App built outside the store).
+	EgressAllowlistRevision int64
 	// StaticEgressIP (ADR-119) is the customer-supplied IPv4 that
 	// the app's egress traffic presents on the wire. NULL => no
 	// static IP — egress exits with the host's primary IP (the
@@ -1656,6 +1673,11 @@ type App struct {
 	// PlatformTenantRequired admits app traffic only after the gateway has
 	// verified a platform tenant through a linked key, surface, or JWT rule.
 	PlatformTenantRequired bool
+	// SandboxTemplate marks the platform-managed app that builds a sandbox
+	// template's image (ADR-20261027090013). It only builds (execution_mode
+	// job), counts against SandboxTemplatesMax instead of DeployedApps and
+	// stays out of ListApps and ListAppsByOrg. Set only at create.
+	SandboxTemplate bool
 	// PublicAuthBasicSealed (issue #477 / ADR-079) is the
 	// secretbox-sealed APP_BASIC_AUTH blob carrying the
 	// {username, password} pair the basic-auth path verifies
@@ -1996,6 +2018,12 @@ type AppManifest struct {
 	// /run/secrets in its main workload (ADR-20261023090000). imaged copies
 	// them into the guest manifest; they name app secrets, never values.
 	ProjectSecretFiles []api.SecretFile `json:"project_secret_files,omitempty"`
+	// ProjectReleaseCommand is the command of the Compose service this app
+	// waits for with service_completed_successfully (ADR-20261102192943).
+	// A deploy whose source declares no release command (gregale.yaml
+	// release.command or Procfile release:) runs it as the release command.
+	ProjectReleaseCommand      []string `json:"project_release_command,omitempty"`
+	ProjectReleaseCommandShell bool     `json:"project_release_command_shell,omitempty"`
 	// ServiceBindings is the authoritative declared projection of Compose
 	// depends_on edges or standalone service_binding_targets. Keeping it beside
 	// generated service URLs makes it inspectable without parsing env text.
@@ -2268,6 +2296,10 @@ type ScalingTarget struct {
 	// Name is the custom metric this target watches (ADR-202). Set only
 	// when Metric == "custom".
 	Name string
+	// Labels selects one labelled series of Name (ADR-20261108160000 slice
+	// C2); empty reads the metric's aggregate. Stored in the policy jsonb;
+	// omitted when empty so existing policies serialise unchanged.
+	Labels map[string]string `json:",omitempty"`
 }
 
 // CustomMetric is one customer-pushed gauge (ADR-202).
@@ -2284,6 +2316,10 @@ type CustomMetric struct {
 	// Kind is CustomMetricKindGauge (ADR-202 pushes) or
 	// CustomMetricKindCounter (ADR-745 OTLP cumulative sums).
 	Kind string
+	// Labelled is true when the metric has labelled series
+	// (ADR-20261108160000 slice C): Value is then their aggregate, the sum
+	// for counters and the maximum of fresh series for gauges.
+	Labelled bool
 }
 
 // MCPTaskHandlerCompatibility is a bounded, payload-free queue summary for a
@@ -2450,6 +2486,14 @@ type GitHubBinding struct {
 	OwnerID          int64
 	RepoID           int64
 	ProductionBranch string
+	// ProductionTrigger chooses the webhook or GitHub Actions for an app
+	// bound without a project (ADR-20261101160300). Empty is the webhook.
+	// A binding upsert keeps it; unbinding clears it.
+	ProductionTrigger ProductionTrigger
+	// PreviewsOff turns off pull-request previews for an app bound without
+	// a project; a project-backed app follows its project's policy. Kept and
+	// cleared like ProductionTrigger.
+	PreviewsOff bool
 }
 
 // GitHubInstall is the durable OAuth handshake state for one account's
@@ -2503,10 +2547,14 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
 	// submissionAttemptID is creation-only metadata, never copied onto the wire.
-	submissionAttemptID  string
-	releaseWorkerAttempt string
-	releaseConfigAttempt string
-	retryDeploymentID    string
+	submissionAttemptID string
+	// eventSubscriptionIntent is creation-only: the event subscriptions a
+	// production manifest deploy declares (ADR-20261101030512). nil records
+	// no intent; an empty slice declares none.
+	eventSubscriptionIntent *[]string
+	releaseWorkerAttempt    string
+	releaseConfigAttempt    string
+	retryDeploymentID       string
 	// BuildDependencies is trusted APID admission input, captured atomically in
 	// a separate durable gate before the build can enter the queue.
 	BuildDependencies []DeploymentDependencyPin `json:"-"`
@@ -2839,6 +2887,13 @@ type Deployment struct {
 	// legacy deployment whose support has not been recorded yet.
 	SecretReloadSignal      string `json:"-"`
 	SecretReloadSignalKnown bool   `json:"-"`
+	// BeforeCheckpointHook records whether imaged stamped a before_checkpoint
+	// hook into this deployment's guest manifest. The guest only knows the
+	// hook its own layer was built with, so parks of this deployment must
+	// follow this value, not the app's current manifest (H32-49). Known is
+	// false for deployments built before the column existed.
+	BeforeCheckpointHook      bool `json:"-"`
+	BeforeCheckpointHookKnown bool `json:"-"`
 	// RuntimeBase is the shared runner base a source-built container app's
 	// layer was built for ("" for the app's own base). imaged stamps it with
 	// the deployment's source rootfs; schedd boots that base
@@ -3162,6 +3217,7 @@ func (d Deployment) DeploymentAliasActive() bool {
 // the shape so unit tests can exercise the read path without
 // spinning Postgres.
 type StageState struct {
+	RetryIntent         *DeploymentRetryIntent       `json:"retry_intent,omitempty"`
 	BuildDependencyGate *BuildDependencyGate         `json:"build_dependency_gate,omitempty"`
 	DependencyGate      *DeploymentDependencyGate    `json:"dependency_gate,omitempty"`
 	HostingVerification *HostingVerificationProgress `json:"hosting_verification,omitempty"`
@@ -3314,8 +3370,10 @@ const (
 // CustomDomain is a customer's CNAME'd domain. apid owns this table;
 // gatewayd-internal reads it to decide whether to mint a cert (spec §4.1, §7).
 type CustomDomain struct {
-	Domain string
-	AppID  string
+	// BindingVersion fences reviewed plans across moves without changing DNS proof.
+	BindingVersion string
+	Domain         string
+	AppID          string
 	// RedirectAppID mirrors the legacy redirect FK used by app purge.
 	RedirectAppID string `json:"-"`
 	// EnvironmentID is empty for the legacy application-wide route. A
@@ -3335,10 +3393,11 @@ type CustomDomain struct {
 	// CertFailureEmailAt is the in-memory mirror of the durable 24-hour
 	// notification cooldown. PgStore keeps this value in its column and does
 	// not need to expose it on customer-facing domain responses.
-	CertFailureEmailAt      time.Time
-	VerificationNextCheckAt time.Time
-	VerificationExpiresAt   time.Time
-	VerificationAttempts    int
+	CertFailureEmailAt        time.Time
+	VerificationNextCheckAt   time.Time
+	VerificationExpiresAt     time.Time
+	VerificationAttempts      int
+	VerificationManualCheckAt time.Time
 }
 
 // Verified reports whether the TXT challenge has been satisfied.
@@ -3448,6 +3507,12 @@ type CronOptions struct {
 	CommandMaxOutputBytes int
 	RetryMax              int
 	RetryBackoffSeconds   int
+	// ClearSchedulePolicy and ClearFailureRules remove the cron's policy or
+	// rules on an update; a nil SchedulePolicy or FailureRules leaves them
+	// as they are. Nothing could remove either once set (crons audit
+	// 2026-11-03).
+	ClearSchedulePolicy bool
+	ClearFailureRules   bool
 }
 
 const (
@@ -3537,7 +3602,46 @@ const (
 	OperatorIntentKindNodeForceDrain OperatorIntentKind = "node_force_drain"
 	OperatorIntentKindNodeActivate   OperatorIntentKind = "node_activate"
 	OperatorIntentKindNodeRetire     OperatorIntentKind = "node_retire"
+	// OperatorIntentKindDatabaseMove moves a native managed database to
+	// another database node (ADR-1027). TargetID is the database id,
+	// AccountID is nil, and Metadata names the target node (empty: the
+	// active node with the most free volume capacity). schedd's database
+	// scheduler parks the database and records the move before stamping
+	// the intent; the copy finishes in the background.
+	OperatorIntentKindDatabaseMove OperatorIntentKind = "database_move"
+	// OperatorIntentKindDatabaseRestart restarts a running native managed
+	// database in place (ADR-1027), onto its node's current base. TargetID
+	// is the database id and AccountID is nil. schedd's database scheduler
+	// parks the database and wakes it again before stamping the intent; a
+	// parked database is left for its next wake, which boots the current
+	// base anyway.
+	OperatorIntentKindDatabaseRestart OperatorIntentKind = "database_restart"
+	// OperatorIntentKindDatabaseSwitchover hands a production-class native
+	// managed database to its synchronized standby on purpose (ADR-1027).
+	// TargetID is the database id and AccountID is nil. schedd's database
+	// scheduler stops a running primary cleanly and promotes the standby,
+	// or moves a parked database's record to the standby's node, before
+	// stamping the intent.
+	OperatorIntentKindDatabaseSwitchover OperatorIntentKind = "database_switchover"
 )
+
+// IsOperatorDatabaseKind reports the native database operations (ADR-1027),
+// which schedd's database scheduler runs.
+func IsOperatorDatabaseKind(kind OperatorIntentKind) bool {
+	switch kind {
+	case OperatorIntentKindDatabaseMove, OperatorIntentKindDatabaseRestart, OperatorIntentKindDatabaseSwitchover:
+		return true
+	default:
+		return false
+	}
+}
+
+// DatabaseMoveIntentMetadata is a database_move intent's metadata: the
+// node to move to, or empty for the active node with the most free volume
+// capacity.
+type DatabaseMoveIntentMetadata struct {
+	TargetNode string `json:"target_node,omitempty"`
+}
 
 // OperatorIntent is one row of operator_intents (migrations/00431).
 // apid inserts customer-workload or fleet-level node intents, emits
@@ -3903,19 +4007,22 @@ type AlertRule struct {
 	// CreatedByAccountID is the member who created the rule
 	// (ADR-20261026151103); empty for a rule older than the column, which
 	// only the app's creator could create.
-	CreatedByAccountID  string
-	Name                string
-	Enabled             bool
-	Metric              AlertMetric
-	Comparison          AlertComparison
-	Threshold           float64
-	WindowSpec          AlertWindowSpec
-	FailureSource       AlertFailureSource // empty unless Metric == failed_invocations
-	CustomMetricName    string             // empty unless Metric == custom_metric (ADR-745)
-	LogQuery            string             // canonical log search filters; set only for log_search_matches
-	SLOID               string             // set only for the ADR-747 SLO metrics
-	SyntheticCheckID    string             // set only for the ADR-748 synthetic check metrics
-	Action              AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
+	CreatedByAccountID string
+	Name               string
+	Enabled            bool
+	Metric             AlertMetric
+	Comparison         AlertComparison
+	Threshold          float64
+	WindowSpec         AlertWindowSpec
+	FailureSource      AlertFailureSource // empty unless Metric == failed_invocations
+	CustomMetricName   string             // empty unless Metric == custom_metric (ADR-745)
+	// CustomMetricLabels selects one labelled series of the custom metric
+	// instead of its aggregate (ADR-20261108160000 slice C2); nil for none.
+	CustomMetricLabels  map[string]string
+	LogQuery            string      // canonical log search filters; set only for log_search_matches
+	SLOID               string      // set only for the ADR-747 SLO metrics
+	SyntheticCheckID    string      // set only for the ADR-748 synthetic check metrics
+	Action              AlertAction // issue #976 / ADR-122 / SAFE-RELEASES-B
 	WebhookURL          string
 	WebhookSecretSealed []byte // age/X25519 ciphertext; never logged
 	// NotifyResolved also sends the webhook a signed resolve event when the
@@ -4025,7 +4132,7 @@ const (
 	AppWebhookEventConsumerSignedUp                        AppWebhookEvent = "consumer.signed_up"
 	AppWebhookEventConsumerPlanChanged                     AppWebhookEvent = "consumer.plan_changed"
 	AppWebhookEventConsumerClosed                          AppWebhookEvent = "consumer.closed"
-	AppWebhookEventAutomationPaused                        AppWebhookEvent = "automation.paused"
+	AppWebhookEventStoredWorkflowPaused                    AppWebhookEvent = "stored_workflow.paused"
 	AppWebhookEventRealtimeConsumerGroupLagExceeded        AppWebhookEvent = "realtime.consumer_group.lag_exceeded"
 	AppWebhookEventRealtimeConsumerGroupLagRecovered       AppWebhookEvent = "realtime.consumer_group.lag_recovered"
 	AppWebhookEventRealtimeConsumerGroupDeadLetterExpiring AppWebhookEvent = "realtime.consumer_group.dead_letter_expiring"
@@ -4106,14 +4213,14 @@ const (
 	AppWebhookEventWorkflowFinished                        AppWebhookEvent = "workflow.finished"
 	AppWebhookEventOutboundAIBudgetThreshold               AppWebhookEvent = "outbound.ai_budget.threshold"
 	AppWebhookEventOutboundAIQualityDrift                  AppWebhookEvent = "outbound.ai_quality.drift"
-	AppWebhookEventRecoveryQueueBlocked                    AppWebhookEvent = "automation.recovery_queue_blocked"
-	AppWebhookEventRecoveryHealthAlert                     AppWebhookEvent = "automation.recovery_health_alert"
-	AppWebhookEventRecoveryHealthRecovered                 AppWebhookEvent = "automation.recovery_health_recovered"
-	AppWebhookEventRecoveryPolicyPaused                    AppWebhookEvent = "automation.recovery_policy_paused"
-	AppWebhookEventRecoveryReviewFinished                  AppWebhookEvent = "automation.recovery_review_finished"
-	AppWebhookEventRecoveryReviewReady                     AppWebhookEvent = "automation.recovery_review_ready"
+	AppWebhookEventRecoveryQueueBlocked                    AppWebhookEvent = "stored_workflow.recovery_queue_blocked"
+	AppWebhookEventRecoveryHealthAlert                     AppWebhookEvent = "stored_workflow.recovery_health_alert"
+	AppWebhookEventRecoveryHealthRecovered                 AppWebhookEvent = "stored_workflow.recovery_health_recovered"
+	AppWebhookEventRecoveryPolicyPaused                    AppWebhookEvent = "stored_workflow.recovery_policy_paused"
+	AppWebhookEventRecoveryReviewFinished                  AppWebhookEvent = "stored_workflow.recovery_review_finished"
+	AppWebhookEventRecoveryReviewReady                     AppWebhookEvent = "stored_workflow.recovery_review_ready"
 	AppWebhookEventRecoveryExecutionAttention              AppWebhookEvent = "event_recovery.execution_attention"
-	AppWebhookEventRecoveryPollingStatus                   AppWebhookEvent = "automation.recovery_polling_status"
+	AppWebhookEventRecoveryPollingStatus                   AppWebhookEvent = "stored_workflow.recovery_polling_status"
 	AppWebhookEventEnvironmentGitOpsChanged                AppWebhookEvent = "environment.gitops.changed"
 	AppWebhookEventIssueTrackerSyncAttention               AppWebhookEvent = "issue.tracker_sync.attention"
 	AppWebhookEventIssueTrackerSyncRecovered               AppWebhookEvent = "issue.tracker_sync.recovered"
@@ -4200,7 +4307,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventRecoveryExecutionAttention,
 	AppWebhookEventIssueFrequencyThresholdReached,
 	AppWebhookEventIssueCompoundThresholdReached,
-	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
+	AppWebhookEventWorkflowFinished, AppWebhookEventStoredWorkflowPaused,
 	AppWebhookEventEnvironmentGitOpsChanged,
 }
 
@@ -4273,7 +4380,25 @@ type UpdateAppWebhookParams struct {
 	DeliveryFormat      *AppWebhookDeliveryFormat
 	Enabled             *bool
 	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
+	// PreviousSecretUntil, set with WebhookSecretSealed, keeps the secret
+	// being replaced as the previous secret until this instant
+	// (ADR-20261101093517): deliveries carry a second signature made with
+	// it. A rotation inside the window replaces the previous secret with
+	// the one it retires. Ignored without WebhookSecretSealed.
+	PreviousSecretUntil *time.Time
 }
+
+// AppWebhookPreviousSecretStore reads the secret a rotation replaced while
+// its overlap window lasts (ADR-20261101093517). nil means none: never
+// rotated, rotated without overlap, or the window has passed.
+type AppWebhookPreviousSecretStore interface {
+	PreviousAppWebhookSecret(ctx context.Context, webhookID string, now time.Time) ([]byte, error)
+}
+
+var (
+	_ AppWebhookPreviousSecretStore = (*MemStore)(nil)
+	_ AppWebhookPreviousSecretStore = (*PgStore)(nil)
+)
 
 // AppWebhookScope is the closed storage vocabulary for outbound subscriptions.
 type AppWebhookScope string
@@ -4446,6 +4571,40 @@ type AppWebhookDelivery struct {
 	DeliveredAt      *time.Time // nil until status=succeeded
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+
+	// AdmissionMaxPending and AdmissionMaxBacklogBytes are the producer's
+	// caps on the account's undelivered deliveries (ADR-20261101093517):
+	// RecordAppWebhookDelivery counts the account's pending and in-flight
+	// rows and their payload bytes under a per-account lock and refuses
+	// with *AppWebhookOutboxFullError at either cap. Zero leaves that cap
+	// off. Admission input only; never stored.
+	AdmissionMaxPending      int   `json:"-"`
+	AdmissionMaxBacklogBytes int64 `json:"-"`
+}
+
+// AppWebhookOutboxFullError reports that an admission-capped
+// RecordAppWebhookDelivery found the account's undelivered deliveries at a
+// cap. It unwraps to ErrQuotaExceeded.
+type AppWebhookOutboxFullError struct {
+	Bytes    bool // the payload-bytes cap refused; otherwise the count cap
+	Limit    int64
+	Observed int64
+}
+
+func (e *AppWebhookOutboxFullError) Error() string { return ErrQuotaExceeded.Error() }
+func (e *AppWebhookOutboxFullError) Unwrap() error { return ErrQuotaExceeded }
+
+// appWebhookOutboxAdmission applies the caps to the account's undelivered
+// count and payload bytes. A delivery admitted just under the bytes cap may
+// pass it by its own size, as queue admission does.
+func appWebhookOutboxAdmission(in AppWebhookDelivery, pending, held int64) error {
+	if in.AdmissionMaxPending > 0 && pending >= int64(in.AdmissionMaxPending) {
+		return &AppWebhookOutboxFullError{Limit: int64(in.AdmissionMaxPending), Observed: pending}
+	}
+	if in.AdmissionMaxBacklogBytes > 0 && held >= in.AdmissionMaxBacklogBytes {
+		return &AppWebhookOutboxFullError{Bytes: true, Limit: in.AdmissionMaxBacklogBytes, Observed: held}
+	}
+	return nil
 }
 
 // AppWebhookAttemptMetadata records the wall-clock interval of a dispatch.
@@ -4733,6 +4892,12 @@ type Invocation struct {
 	QuotaReserved bool `json:"-"`
 	// AsyncQuotaSubjectID captures the reserved counter independently of storage ownership.
 	AsyncQuotaSubjectID string `json:"-"`
+	// EdgeJWTIssuer and EdgeJWTSubject are the caller a kind=jwt edge rule
+	// verified when an async route admitted the request (ADR-091 amendment
+	// 2026-11-04, round 11). Only the gateway sets them; delivery renders
+	// them as X-Faas-Edge-Jwt-*. Customer headers never fill them.
+	EdgeJWTIssuer  string `json:"-"`
+	EdgeJWTSubject string `json:"-"`
 	// WorkPolicyName and WorkKeyDigest identify an app-scoped scheduling lane.
 	// The raw application key is never persisted in this ledger.
 	WorkPolicyName     string     `json:"work_policy_name,omitempty"`
@@ -5404,12 +5569,31 @@ const (
 	// snapshotted or drained, and is destroyed only by the fork
 	// coordinator at its TTL.
 	InstanceModeFork InstanceMode = "fork"
+	// InstanceModeRefresh tags a platform snapshot refresh
+	// (ADR-20261106214916): after a node takes a release that made an
+	// app's snapshot stale, schedd boots the app's current deployment,
+	// captures a fresh snapshot and parks it before a user asks. It is
+	// never routed, never counted toward max_concurrency (it admits as a
+	// snapshot prime), counts toward the RAM ceiling, is never
+	// idle-reaped, and is not billed: the release, not the customer,
+	// caused it.
+	InstanceModeRefresh InstanceMode = "refresh"
 )
 
 // IsFork reports whether mode is the ADR-732 production-fork mode. Every
 // path that routes to, counts, parks or snapshots instances must skip
 // these rows.
 func IsFork(mode string) bool { return mode == string(InstanceModeFork) }
+
+// IsRefresh reports whether mode is a platform snapshot refresh
+// (ADR-20261106214916).
+func IsRefresh(mode string) bool { return mode == string(InstanceModeRefresh) }
+
+// NeverServes reports an instance mode that must never receive traffic or
+// stand in for a serving replica: a production fork (ADR-732) or a platform
+// snapshot refresh (ADR-20261106214916). Every target loader, wake reuse and
+// replica count skips these rows.
+func NeverServes(mode string) bool { return IsFork(mode) || IsRefresh(mode) }
 
 // MirrorRule (issue #72 / ADR-125) is the customer-intent row
 // that links a live source_deployment to a live mirror_deployment.
@@ -7106,6 +7290,13 @@ type CliAuthCode struct {
 	AccountID  string // empty until ClaimCliAuthCode
 	ExpiresAt  time.Time
 	ConsumedAt *time.Time
+	// OrgID is the organization a hosted MCP sign-in acts in, chosen at
+	// approval; "" is the personal one (ADR-20261101225122).
+	OrgID string
+	// ProjectIDs are the projects the sign-in was limited to at approval;
+	// nil is every project (ADR-20261104085712). MemStore only: the Pg
+	// store reads it through CliAuthCodeProjects.
+	ProjectIDs []string
 }
 
 // CliAuthDeviceCodeStore binds a CLI code to a device code (H67). A row
@@ -7665,6 +7856,9 @@ const (
 	ProjectScanSourceConvention ProjectScanSource = "convention"
 	ProjectScanSourceSingle     ProjectScanSource = "single"
 	ProjectScanSourceUnknown    ProjectScanSource = "unknown"
+	// ProjectScanSourceFunctions is a gregale.yaml functions project
+	// (ADR-20261108160000), a declared source like compose.
+	ProjectScanSourceFunctions ProjectScanSource = "functions"
 	// ProjectScanSourceWorkspaces is the plural form the
 	// reconcile.Service.DeriveScanSource helper returns for
 	// projects whose root tree enumerates a workspaces section
@@ -7710,6 +7904,7 @@ const (
 	scanSourceRankRender     scanSourceRank = 8
 	scanSourceRankK8s        scanSourceRank = 8
 	scanSourceRankCompose    scanSourceRank = 8
+	scanSourceRankFunctions  scanSourceRank = 8
 )
 
 func tierRank(s ProjectScanSource) scanSourceRank {
@@ -7724,6 +7919,8 @@ func tierRank(s ProjectScanSource) scanSourceRank {
 		return scanSourceRankFly
 	case ProjectScanSourceServerless:
 		return scanSourceRankServerless
+	case ProjectScanSourceFunctions:
+		return scanSourceRankFunctions
 	case ProjectScanSourceProcfile:
 		return scanSourceRankProcfile
 	case ProjectScanSourceWorkspace:
@@ -7808,6 +8005,10 @@ type ProjectEnvironmentApproval struct {
 	// ApprovedByAccountID is who gave the approval; "" for approvals made
 	// before it was recorded (ADR-20261020085706 amendment 2).
 	ApprovedByAccountID string
+	// ApprovedByPrincipal is the credential that gave the approval:
+	// "session:<id>" for a browser session or "key:<id>" for an interactive
+	// sign-in key (bug hunt H70); "" before it was recorded.
+	ApprovedByPrincipal string
 }
 
 // ProjectEnvironmentConfig is one immutable, canonical non-secret
@@ -7996,8 +8197,11 @@ type Org struct {
 	ProviderCustomerID       string
 	StripeSubscriptionItem   string
 	DeletedPending           bool
-	CreatedAt                time.Time
-	UpdatedAt                time.Time
+	// DeletionRequestedAt is when DeletedPending turned on (ADR-20261101143527);
+	// meterd delivers the organization's usage from before it.
+	DeletionRequestedAt *time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // OrgMembership is the (org, account) join row. The pair is the PK;
@@ -8089,6 +8293,13 @@ type CreateAccountWithPersonalOrgParams struct {
 	// preserves the historical trusted-creation behavior used by OAuth,
 	// operator, migration, and test call sites.
 	RequireEmailVerification bool
+	// InitialPasswordHash is an optional precomputed PHC hash. Password signup
+	// commits it with the account, personal organization and owner membership.
+	// The credential is never included when creation parameters are serialized.
+	InitialPasswordHash string `json:"-"`
+	// TermsAcceptance, when set, records the Terms of Service version the
+	// account accepted at sign-up in the same transaction (legal_acceptances).
+	TermsAcceptance *TermsAcceptance
 }
 
 // CreateAccountWithPersonalOrgResult bundles the freshly minted
@@ -8322,6 +8533,13 @@ type EdgeRuleHeaderOp struct {
 	Value    string `json:"value,omitempty"`
 	Action   string `json:"action"`
 	Template bool   `json:"template,omitempty"` // ADR-968
+	// Secret and SecretID (ADR-20261108110000): the value is sealed in
+	// edge_rule_header_secrets row SecretID and Value is empty.
+	Secret   bool   `json:"secret,omitempty"`
+	SecretID string `json:"secret_id,omitempty"`
+	// Redacted is set only on a response copy whose credential-named value
+	// was stored before sealing; it is never stored.
+	Redacted bool `json:"redacted,omitempty"`
 }
 
 // EdgeRuleHeadersAction mutates request headers BEFORE auth and
@@ -9338,6 +9556,10 @@ type OIDCExchangedToken struct {
 	Audience  []string
 	JTI       string
 	CreatedAt time.Time
+	// AppID binds the bearer to one app (ADR-20261101100000): set for a
+	// deploy bearer minted under a trust policy Gregale created, and
+	// enforced like a per-app deploy token. Empty is account-wide.
+	AppID string
 }
 
 // ToAPIKey projects the OIDC-bearer row into a synthetic state.APIKey
@@ -9368,6 +9590,7 @@ func (e OIDCExchangedToken) ToAPIKey() APIKey {
 		AccountID: e.AccountID,
 		Scopes:    scopes,
 		Status:    string(APIKeyStatusActive),
+		AppID:     e.AppID,
 	}
 }
 

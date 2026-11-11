@@ -127,6 +127,33 @@ func TestLogsInterruptedWhileConnectingExits130(t *testing.T) {
 	}
 }
 
+// A rejected filter or plan gate arrives as `event: error`. The CLI printed
+// its JSON as a log line and exited 0; it now reports the problem and fails.
+func TestLogsStreamErrorEventFails(t *testing.T) {
+	main.ResetJSONOut(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: error\ndata: {\"code\":\"plan_deployment_filter_not_allowed\",\"message\":\"your plan does not allow the ?deployment= filter (max=0)\"}\n\nevent: end\ndata: {}\n\n")
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	stdout, restoreOut := main.CaptureStdout(t)
+	stderr, restoreErr := main.CaptureStderr(t)
+	code := main.RunLogs(context.Background(), "myapp", "dep-1", api.LogFilter{}, nil, false, false)
+	restoreErr()
+	restoreOut()
+	if code == 0 {
+		t.Fatalf("exit 0 after a stream error; stdout=%q", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "plan_deployment_filter_not_allowed") {
+		t.Fatalf("the error was printed as a log line: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "deployment= filter") {
+		t.Fatalf("stderr = %q, want the rejection reason", stderr.String())
+	}
+}
+
 func TestNormalizeLogsSinceRejectsFutureRuntimeTimestamp(t *testing.T) {
 	now := time.Date(2026, 10, 14, 19, 0, 0, 0, time.UTC)
 	if _, err := main.NormalizeLogsSince("2030-01-01T00:00:00Z", "runtime", now); err == nil || !strings.Contains(err.Error(), "in the past") {
@@ -161,5 +188,71 @@ func TestParkedArchivePendingNote(t *testing.T) {
 				t.Fatalf("note does not say to retry: %q", note)
 			}
 		})
+	}
+}
+
+// An app with no live deployment has no runtime logs, and waking it cannot
+// help. logs suggested `gregale app wake` while the first release was still
+// building (CLI journey 2026-11-05, #6627); it now names the deployment.
+func TestCmdLogsNoLiveDeploymentNamesTheDeployment(t *testing.T) {
+	const dep = "56f8eea5-087c-4834-ad30-6dba0f374ca2"
+	for _, tc := range []struct {
+		name        string
+		deployments string
+		wantCode    int
+		want        []string
+	}{
+		{"no deployment", `{"items":[]}`, 5, []string{"has no deployment yet", "gregale deploy"}},
+		{"initial build", `{"items":[{"id":"` + dep + `","status":"building"}]}`, 3, []string{"deployment " + dep + " is building", "--deployment " + dep + " --follow", "release wait " + dep}},
+		{"failed build", `{"items":[{"id":"` + dep + `","status":"failed"}]}`, 5, []string{"is failed", "gregale logs myapp --deployment " + dep}},
+	} {
+		for _, jsonMode := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/json=%t", tc.name, jsonMode), func(t *testing.T) {
+				main.ResetJSONOut(t)
+				(*main.JsonOutput) = jsonMode
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/v1/apps/myapp/instances":
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = fmt.Fprint(w, `[]`)
+					case "/v1/apps/myapp":
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = fmt.Fprint(w, `{"id":"a1","slug":"myapp","status":"active","deployment_availability":"no_live_deployment"}`)
+					case "/v1/apps/myapp/deployments":
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = fmt.Fprint(w, tc.deployments)
+					default:
+						w.Header().Set("Content-Type", "text/event-stream")
+						_, _ = fmt.Fprint(w, "event: degraded\ndata: {\"code\":\"not_found\"}\n\n")
+					}
+				}))
+				defer srv.Close()
+				t.Setenv("FAAS_API", srv.URL)
+				t.Setenv("FAAS_TOKEN", "test-token")
+				stdout, restoreOut := main.CaptureStdout(t)
+				stderr, restoreErr := main.CaptureStderr(t)
+				code := main.CmdLogs([]string{"myapp"})
+				restoreErr()
+				restoreOut()
+				if code != tc.wantCode {
+					t.Fatalf("exit=%d, want %d; stderr=%q", code, tc.wantCode, stderr.String())
+				}
+				out := stderr.String()
+				if strings.Contains(out, "app wake") {
+					t.Fatalf("suggested waking an app with no live deployment: %q", out)
+				}
+				for _, want := range tc.want {
+					if !strings.Contains(out, want) {
+						t.Errorf("stderr missing %q: %q", want, out)
+					}
+				}
+				if jsonMode && !strings.Contains(out, `"code":"no_live_deployment"`) {
+					t.Errorf("JSON problem code: %q", out)
+				}
+				if stdout.String() != "" {
+					t.Errorf("stdout = %q, want empty", stdout.String())
+				}
+			})
+		}
 	}
 }

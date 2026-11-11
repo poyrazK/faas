@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -23,12 +24,16 @@ import (
 
 func cmdMCP(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mcp serve|connections|init|capabilities|validate|test|deploy|readiness|overview|status|monitor|diagnostics|health|retirements|access|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
+		PrintUsage(os.Stderr, "usage: gregale mcp serve|connect|connections|approval-channels|init|capabilities|validate|test|deploy|readiness|overview|status|monitor|diagnostics|health|retirements|access|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
 		return 1
 	}
 	switch args[0] {
+	case "connect":
+		return cmdMCPConnect(args[1:])
 	case "connections":
 		return cmdMCPConnections(args[1:])
+	case "approval-channels":
+		return cmdMCPApprovalChannels(args[1:])
 	case "serve":
 		return cmdMCPServe(args[1:])
 	case "init":
@@ -412,6 +417,7 @@ func cmdMCPRemote(command string, args []string) int {
 	inputResponsesFile := fs.String("input-responses-file", "", "JSON file with elicitation responses keyed by request ID (call only)")
 	enableTasks := fs.Bool("tasks", false, "accept modern MCP task handles for later inspection (call only)")
 	waitForTask := fs.Bool("wait", false, "wait for a task result and request cancellation if this command times out (call only; implies --tasks)")
+	cancelOnTimeout := fs.Bool("cancel-on-timeout", false, "request task cancellation if a resumed wait times out (task-wait only)")
 	tool := fs.String("tool", "", "tool to call")
 	streamTool := fs.String("stream-tool", "", "explicitly execute this tool to verify live progress (doctor)")
 	inline := fs.String("arguments", "", "tool arguments as a JSON object")
@@ -445,6 +451,9 @@ func cmdMCPRemote(command string, args []string) int {
 	}
 	if (*enableTasks || *waitForTask) && (command != "call" || *legacy) {
 		return printErr("Invalid MCP Tasks flags", errors.New("MCP Tasks support is available only for modern mcp call"))
+	}
+	if *cancelOnTimeout && (command != "task-wait" || *legacy) {
+		return printErr("Invalid MCP task flags", errors.New("--cancel-on-timeout is supported only by modern task-wait"))
 	}
 	if *taskID != "" && command != "task-get" && command != "task-wait" && command != "task-cancel" {
 		return printErr("Invalid MCP task flags", errors.New("--task-id is supported only by mcp task-get, mcp task-wait and mcp task-cancel"))
@@ -523,10 +532,10 @@ func cmdMCPRemote(command string, args []string) int {
 	if command == "prompt-get" && *promptName == "" {
 		return printErr("MCP prompt get", errors.New("--prompt is required"))
 	}
-	return runMCPRemoteWithOptions(ctx, command, c, *legacy, *tool, *streamTool, *name, *uri, *promptName, *taskID, arguments, responder, *enableTasks || *waitForTask, *waitForTask)
+	return runMCPRemoteWithOptions(ctx, command, c, *legacy, *tool, *streamTool, *name, *uri, *promptName, *taskID, arguments, responder, *enableTasks || *waitForTask, *waitForTask, *cancelOnTimeout)
 }
 
-func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.Client, legacy bool, tool, streamTool, name, uri, promptName, taskID string, args map[string]any, respond mcphosting.InputResponder, enableTasks, waitForTask bool) int {
+func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.Client, legacy bool, tool, streamTool, name, uri, promptName, taskID string, args map[string]any, respond mcphosting.InputResponder, enableTasks, waitForTask, cancelOnTimeout bool) int {
 	if command == "config" {
 		return jsonOut(writeJSON(mcphosting.ConnectionConfig(name, c.Endpoint)))
 	}
@@ -600,7 +609,7 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 		return jsonOut(writeJSON(task))
 	case "task-wait":
 		task, err := c.WaitTask(ctx, taskID, mcphosting.CallOptions{
-			Responder: respond,
+			Responder: respond, CancelOnTimeout: cancelOnTimeout,
 			OnTask: func(task mcphosting.Task) {
 				_, _ = fmt.Fprintf(osStderr, "MCP task status: %s\n", task.Status)
 			},
@@ -640,7 +649,7 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 		}
 		var x mcphosting.Exchange
 		x, err = c.CallWithOptions(ctx, candidate, args, mcphosting.CallOptions{
-			Progress: true, Responder: respond, EnableTasks: enableTasks, WaitForTask: waitForTask,
+			Progress: true, Responder: respond, EnableTasks: enableTasks, WaitForTask: waitForTask, CancelOnTimeout: waitForTask,
 			OnTask: func(task mcphosting.Task) {
 				_, _ = fmt.Fprintf(osStderr, "MCP task status: %s\n", task.Status)
 			},
@@ -684,7 +693,7 @@ func cmdMCPDeploy(args []string) int {
 	fs.StringVar(&o.accessAudit, "access-audit", "", "optional stored-policy promotion gate: gateway or guest-only")
 	fs.StringVar(&o.accessAuditAlgorithms, "access-audit-algorithms", "", "reviewed gateway algorithms (default RS256,ES256; requires --access-audit)")
 	fs.BoolVar(&o.mcpTaskMigrationOverride, "mcp-task-migration-override", false, "allow this deployment to replace incompatible MCP task workers once")
-	fs.IntVar(&o.timeout, "timeout", 1200, "deployment wait timeout in seconds")
+	fs.IntVar(&o.timeout, "timeout", 1200, "deployment and verification wait timeout in seconds")
 	// A failed submission's recovery hint tells the user to retry with this
 	// flag; without it the documented retry was an unknown-flag error
 	// (hunt #9 H9-63).
@@ -773,7 +782,9 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if pinnedDigest != "" {
 		pinReceipt = &mcpCatalogPinReceipt{DiscoveryDeploymentID: discoveryID, SHA256: pinnedDigest}
 	}
-	return finishMCPDeployWithSmoke(ctx, c, o.slug, candidate.ID, cfg, token, roles, audit, smoke, pinReceipt)
+	verificationCtx, cancel := context.WithTimeout(ctx, time.Duration(o.timeout)*time.Second)
+	defer cancel()
+	return finishMCPDeployWithSmoke(verificationCtx, c, o.slug, candidate.ID, cfg, token, roles, audit, smoke, pinReceipt)
 }
 
 func validateMCPDeploySecretsFile(path string) error {
@@ -811,6 +822,19 @@ func mcpDeployArgs(o mcpDeployOptions, dir string, secretsRequested ...bool) []s
 }
 
 func pinMCPCandidateRevision(ctx context.Context, c *Client, o mcpDeployOptions, dir string, cfg mcphosting.Config, candidate api.DeploymentResponse) (api.DeploymentResponse, string, error) {
+	return pinMCPCandidateRevisionWithSubmit(ctx, c, o, dir, cfg, candidate, func(args []string, env map[string]string) (api.DeploymentResponse, error) {
+		var pinned api.DeploymentResponse
+		code := quietMCPDeploy(ctx, args, deployExecution{
+			onQueued: func(dep api.DeploymentResponse) { pinned = dep }, overrideEnv: env,
+		})
+		if code != 0 {
+			return pinned, fmt.Errorf("catalog-pinned candidate deployment failed with exit code %d", code)
+		}
+		return pinned, nil
+	})
+}
+
+func pinMCPCandidateRevisionWithSubmit(ctx context.Context, c *Client, o mcpDeployOptions, dir string, cfg mcphosting.Config, candidate api.DeploymentResponse, submit func([]string, map[string]string) (api.DeploymentResponse, error)) (api.DeploymentResponse, string, error) {
 	preview, err := mcpCandidatePreview(ctx, c, candidate.ID, cfg)
 	if err != nil {
 		return api.DeploymentResponse{}, "", err
@@ -824,16 +848,24 @@ func pinMCPCandidateRevision(ctx context.Context, c *Client, o mcpDeployOptions,
 		return candidate, "", nil
 	}
 
-	var pinned api.DeploymentResponse
-	code := quietMCPDeploy(ctx, mcpDeployArgs(o, dir, false), deployExecution{
-		onQueued:    func(dep api.DeploymentResponse) { pinned = dep },
-		overrideEnv: map[string]string{"MCP_CATALOG_EXPECTED_SHA256": digest},
-	})
-	if code != 0 {
-		return api.DeploymentResponse{}, "", fmt.Errorf("catalog-pinned candidate deployment failed with exit code %d", code)
+	pinnedOptions := o
+	pinnedOptions.idempotencyKey = deployOperationIdempotencyKey(o.idempotencyKey, "mcp-catalog-pin")
+	pinned, err := submit(mcpDeployArgs(pinnedOptions, dir, false), map[string]string{"MCP_CATALOG_EXPECTED_SHA256": digest})
+	if err != nil {
+		return api.DeploymentResponse{}, "", err
 	}
 	if pinned.ID == "" {
 		return api.DeploymentResponse{}, "", errors.New("catalog-pinned deployment completed without a deployment id")
+	}
+	if pinned.ID == candidate.ID {
+		return api.DeploymentResponse{}, "", errors.New("catalog-pinned deployment replayed the unpinned discovery revision")
+	}
+	confirmed, err := c.GetDeployment(ctx, pinned.ID)
+	if err != nil {
+		return api.DeploymentResponse{}, "", fmt.Errorf("confirm candidate catalog pin: %w", err)
+	}
+	if !slices.Contains(confirmed.OverrideEnvKeys, "MCP_CATALOG_EXPECTED_SHA256") {
+		return api.DeploymentResponse{}, "", errors.New("candidate deployment is missing its catalog pin override")
 	}
 	return pinned, digest, nil
 }

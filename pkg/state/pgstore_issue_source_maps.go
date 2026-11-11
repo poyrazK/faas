@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/issues"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
+
+// Each published manifest is bounded; keep a small process-local working set.
+// Publication state is still read under the app lock on every occurrence.
+var issueSourceMapsCache = issues.NewSourceMapCacheWithBudget(32, 64<<20)
 
 func sourceMapMetadata(row sqlc.IssueSourceMapArtifact) api.IssueSourceMapsMetadata {
 	return api.IssueSourceMapsMetadata{DeploymentID: issueID(row.DeploymentID), ManifestSHA256: row.ManifestSha256, MapCount: int(row.MapCount), Ready: row.CanonicalManifest != nil, CreatedAt: row.CreatedAt.Time, RetiredAt: issueTimePtr(row.RetiredAt)}
@@ -100,43 +103,63 @@ func (s *PgStore) RetireIssueSourceMaps(ctx context.Context, account, app, dep, 
 	if issueID(owner.AccountID) != account {
 		return api.IssueSourceMapsMetadata{}, ErrNotFound
 	}
+	previous, err := q.IssueReadSourceMaps(ctx, tx, sqlc.IssueReadSourceMapsParams{AppID: issueUUID(app), DeploymentID: issueUUID(dep)})
+	if err != nil {
+		return api.IssueSourceMapsMetadata{}, mapErr(err)
+	}
 	row, err := q.IssueRetireSourceMaps(ctx, tx, sqlc.IssueRetireSourceMapsParams{AppID: issueUUID(app), DeploymentID: issueUUID(dep), ActorAccountID: issueUUID(actor)})
 	if err != nil {
 		return api.IssueSourceMapsMetadata{}, mapErr(err)
 	}
-	return sourceMapMetadata(row), tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return api.IssueSourceMapsMetadata{}, err
+	}
+	if previous.CanonicalManifest != nil {
+		issueSourceMapsCache.RemoveDeployment(app + ":" + dep + ":" + previous.ManifestSha256)
+	}
+	return sourceMapMetadata(row), nil
 }
 
-func symbolicateIssueTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, in *RecordIssueParams) error {
+func symbolicateIssueTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, in *RecordIssueParams, batchMaps map[string]*issues.SourceMapSet) error {
 	if in.Event.SymbolicationStrategy != issues.DeploymentSourceMapStrategy {
 		return nil
 	}
-	row, err := q.IssueReadSourceMaps(ctx, tx, sqlc.IssueReadSourceMapsParams{AppID: issueUUID(in.Credential.AppID), DeploymentID: issueUUID(in.Credential.DeploymentID)})
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && row.CanonicalManifest == nil) {
+	status, err := q.IssueReadSourceMapStatus(ctx, tx, sqlc.IssueReadSourceMapStatusParams{AppID: issueUUID(in.Credential.AppID), DeploymentID: issueUUID(in.Credential.DeploymentID)})
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !status.Ready) {
 		return ErrIssueSourceMapsUnavailable
 	}
 	if err != nil {
 		return err
 	}
-	var request api.PublishIssueSourceMapsRequest
-	if err = json.Unmarshal(row.CanonicalManifest, &request); err != nil {
-		return err
+	key := in.Credential.AppID + ":" + in.Credential.DeploymentID + ":" + status.ManifestSha256
+	set := batchMaps[key]
+	if set == nil {
+		set = issueSourceMapsCache.GetDeployment(key)
 	}
-	set, err := issues.CompileSourceMaps(request)
-	if err != nil {
-		return err
+	if set == nil {
+		row, err := q.IssueReadSourceMaps(ctx, tx, sqlc.IssueReadSourceMapsParams{AppID: issueUUID(in.Credential.AppID), DeploymentID: issueUUID(in.Credential.DeploymentID)})
+		if err != nil {
+			return err
+		}
+		var request api.PublishIssueSourceMapsRequest
+		if err := json.Unmarshal(row.CanonicalManifest, &request); err != nil {
+			return err
+		}
+		set, err = issues.CompileSourceMaps(request)
+		if err != nil {
+			return err
+		}
+		if set.Digest != status.ManifestSha256 {
+			return ErrIssueSourceMapsUnavailable
+		}
+		issueSourceMapsCache.PutDeployment(key, set)
 	}
-	if set.Digest != row.ManifestSha256 {
-		return ErrIssueSourceMapsUnavailable
-	}
+	batchMaps[key] = set
 	mapped, result := set.Symbolicate(in.Event)
-	event, fp, title, err := issues.Normalize(mapped, in.Now, in.Limits)
+	event, fp, title, err := issues.NormalizeSymbolicated(in.Event, mapped)
 	if err != nil {
 		return err
 	}
-	event.Redactions = append(event.Redactions, in.Event.Redactions...)
-	slices.Sort(event.Redactions)
-	event.Redactions = slices.Compact(event.Redactions)
 	event.Symbolication = &result
 	in.Event = event
 	in.Fingerprint = fp

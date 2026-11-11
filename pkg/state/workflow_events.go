@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5" // #nosec G501 -- Stable routing identity, not a security primitive.
 	"encoding/json"
@@ -25,6 +26,10 @@ var ErrWorkflowEventDefinitionInvalid = errors.New("workflow: invalid captured e
 
 var ErrWorkflowEventTargetUnavailable = errors.New("workflow: event target is temporarily unavailable")
 
+var ErrWorkflowEventPlanIneligible = errors.New("workflow: captured event definition exceeds current plan")
+
+var ErrWorkflowEventInputTooLarge = errors.New("workflow: event envelope exceeds workflow input limit")
+
 func workflowEventRecipientID(appID, name string) string {
 	// codeql[go/weak-sensitive-data-hashing] -- This digest preserves the stable UUID bytes used by SQL event routing; it is a routing identity, not password or secret hashing.
 	return uuid.UUID(md5.Sum([]byte("gregale.workflow.event:" + canonicalMemUUID(appID) + ":" + name))).String() // #nosec G401 -- Must match the database recipient identity.
@@ -40,15 +45,12 @@ func eventWorkflowRun(recipient PublishedEventRecipient, payload []byte, plan ap
 	if err := json.Unmarshal(recipient.Workflow, &definition); err != nil {
 		return nil, err
 	}
-	if _, err := api.ValidateWorkflowDAG(definition, plan); err != nil {
-		return nil, err
-	}
 	if recipient.WebhookEndpointID != "" {
 		provider := recipient.WebhookProvider
 		if provider == "" {
 			provider = InboundWebhookProviderStripe
 		}
-		if recipient.Source != webhookAutomationSource(provider, recipient.WebhookEndpointID) || recipient.ID != webhookAutomationRecipientID(recipient.WebhookEndpointID, definition.Name) {
+		if recipient.Source != webhookWorkflowSource(provider, recipient.WebhookEndpointID) || recipient.ID != webhookWorkflowRecipientID(recipient.WebhookEndpointID, definition.Name) {
 			return nil, ErrWorkflowEventDefinitionInvalid
 		}
 	} else {
@@ -68,11 +70,25 @@ func eventWorkflowRun(recipient PublishedEventRecipient, payload []byte, plan ap
 			return nil, fmt.Errorf("workflow: invalid captured event definition")
 		}
 	}
-	if int64(len(payload)) > api.WorkflowRunInputMaxBytes {
+	if _, err := api.ValidateWorkflowDAG(definition, plan); err != nil {
+		// Captured definitions can outlive a plan change. A definition that is
+		// still valid on another plan is temporarily ineligible, not corrupt.
+		for _, other := range api.Plans {
+			if _, otherErr := api.ValidateWorkflowDAG(definition, other); otherErr == nil {
+				return nil, fmt.Errorf("%w: %w: %w", ErrWorkflowEventTargetUnavailable, ErrWorkflowEventPlanIneligible, err)
+			}
+		}
+		return nil, err
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, payload); err != nil {
+		return nil, err
+	}
+	if int64(compact.Len()) > api.WorkflowRunInputMaxBytes {
 		return nil, fmt.Errorf("workflow: event envelope exceeds workflow input limit")
 	}
 	run := &WorkflowRun{AppID: recipient.AppID, DeploymentID: recipient.DeploymentID, PlatformTenantID: recipient.PlatformTenantID, WorkflowName: definition.Name,
-		Input: cloneWorkflowJSON(payload), DefinitionSnapshot: cloneWorkflowJSON(recipient.Workflow)}
+		Input: cloneWorkflowJSON(compact.Bytes()), DefinitionSnapshot: cloneWorkflowJSON(recipient.Workflow)}
 	if err := prepareWorkflowRun(run); err != nil {
 		return nil, err
 	}
@@ -89,11 +105,11 @@ func (m *MemStore) tenantWorkflowEventRecipientsLocked(accountID, appID, tenantI
 	if !exists || !account.Active() || !account.Plan.WorkflowsAllowed() {
 		return nil
 	}
-	deployment := m.automationDeploymentLocked(appID)
+	deployment := m.storedWorkflowDeploymentLocked(appID)
 	if deployment.ID == "" {
 		return nil
 	}
-	effective, err := m.mergeRuntimeAutomationDefinitionsLocked(appID, deployment.Workflows)
+	effective, err := m.mergeRuntimeStoredWorkflowDefinitionsLocked(appID, deployment.Workflows)
 	if err != nil {
 		return nil
 	}
@@ -214,18 +230,24 @@ func (m *MemStore) admitEventWorkflowLocked(work *PublishedEventWork, recipient 
 		return "", false, ErrNotFound
 	}
 	account, exists := m.accounts[app.AccountID]
-	if !exists || !account.Active() || !account.Plan.WorkflowsAllowed() || app.MaintenanceMode ||
+	if !exists || !account.Active() || app.MaintenanceMode ||
 		(app.PlatformTenantRequired && recipient.PlatformTenantID == "") {
 		return "", false, ErrWorkflowEventTargetUnavailable
+	}
+	if !account.Plan.WorkflowsAllowed() {
+		return "", false, fmt.Errorf("%w: %w", ErrWorkflowEventTargetUnavailable, ErrWorkflowEventPlanIneligible)
 	}
 	if recipient.PlatformTenantID != "" && (!app.PlatformTenantRequired || !m.workflowOutboundTenantLinkActiveLocked(app.AccountID, recipient.PlatformTenantID, app.ID)) {
 		return "", false, ErrWorkflowEventTargetUnavailable
 	}
 	run, err := eventWorkflowRun(recipient, work.Payload, account.Plan)
 	if err != nil {
+		if errors.Is(err, ErrWorkflowEventTargetUnavailable) {
+			return "", false, err
+		}
 		return "", false, fmt.Errorf("%w: %w", ErrWorkflowEventDefinitionInvalid, err)
 	}
-	if m.automationFailureGuards[app.ID+"/"+run.WorkflowName].PausedAt != nil {
+	if m.storedWorkflowFailureBlocksAdmissionLocked(app.ID, run.WorkflowName, time.Now().UTC()) {
 		return "", false, ErrWorkflowEventTargetUnavailable
 	}
 	run.AppID = app.ID

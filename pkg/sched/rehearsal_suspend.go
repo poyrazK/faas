@@ -137,7 +137,10 @@ func (e *Engine) RunScenarioSuspendResume(ctx context.Context, id string) (err e
 		return err
 	}
 	if current.State == string(state.StateFrozen) {
-		fresh, publishErr := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{AccountID: r.AccountID, AppID: r.AppID, InstanceID: ins.ID, NodeID: ins.NodeID, WakeID: ins.WakeID, ExpectedState: string(state.StateFrozen), Fence: captured.SecretFence, ConfigFence: captured, Netns: ins.Netns, HostIP: ins.HostIP, GuestUID: ins.GuestUID})
+		// The resume books the VM's RAM back on its node under the durable
+		// reservation (ADR 20261102072403); its vCPU and CPU stayed booked in
+		// this ledger through the suspend, and only memory is checked.
+		fresh, publishErr := e.store.PublishOwnedInstanceRuntime(e.thawAdmissionContext(ctx, ins.NodeID), state.RuntimeInstancePublication{AccountID: r.AccountID, AppID: r.AppID, InstanceID: ins.ID, NodeID: ins.NodeID, WakeID: ins.WakeID, ExpectedState: string(state.StateFrozen), Fence: captured.SecretFence, ConfigFence: captured, Netns: ins.Netns, HostIP: ins.HostIP, GuestUID: ins.GuestUID})
 		if publishErr != nil {
 			return publishErr
 		}

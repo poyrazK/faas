@@ -18,7 +18,7 @@ func cliTreeManifest(commands []cliCommand) []cliCommand {
 	var manifest []cliCommand
 	for _, name := range cliTreeShortcutCommands {
 		if command, ok := d.commands[name]; ok && command.Audience == cliAudienceCustomer {
-			manifest = append(manifest, command)
+			manifest = append(manifest, d.shortcutCommand(command))
 		}
 	}
 	for _, noun := range cliTreeNouns {
@@ -35,6 +35,29 @@ func cliTreeManifest(commands []cliCommand) []cliCommand {
 		manifest[i] = cliTreeDisplayCommand(command)
 	}
 	return manifest
+}
+
+// shortcutCommand is a shortcut as the tree documents it: today's command
+// without the verbs the tree names elsewhere (`deploy status` is `release
+// attempt get`), plus the paths the table places under it (`logs drain`).
+func (d cliTreeDiscovery) shortcutCommand(command cliCommand) cliCommand {
+	subs := make([]cliSub, 0, len(command.Subcommands))
+	seen := map[string]bool{}
+	for _, sub := range command.Subcommands {
+		if !cliTreeRenamesPath(command.Name + " " + sub.Name) {
+			subs = append(subs, sub)
+			seen[sub.Name] = true
+		}
+	}
+	if !command.SubcommandsAfterPositionals {
+		for _, sub := range d.treeSubs([]string{command.Name}) {
+			if !seen[sub.Name] {
+				subs = append(subs, sub)
+			}
+		}
+	}
+	command.Subcommands = subs
+	return command
 }
 
 // cliTreeBarePaths run today's command without a verb; that command's verbs
@@ -301,7 +324,7 @@ func withAppTarget(sub cliSub, target string) cliSub {
 }
 
 // standardCliVerbs spells verbs in their standard form, dropping a synonym
-// whose standard verb is also listed (`rm` beside `delete`).
+// that is an alias of its listed standard verb (`rm` beside `delete`).
 func standardCliVerbs(subs []cliSub) []cliSub {
 	standard := make([]cliSub, 0, len(subs))
 	for _, sub := range subs {

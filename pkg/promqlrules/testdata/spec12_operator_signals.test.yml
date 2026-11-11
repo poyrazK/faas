@@ -76,7 +76,7 @@ tests:
               public_status: "internal"
             exp_annotations:
               summary: "More than 5% of cacheable lookups bypass the cache as authenticated"
-              description: "A cache rule is matching credentialed traffic, so more than 5% of response-cache decisions over 10m bypassed the cache as bypass_authed."
+              description: "A cache rule is matching credentialed traffic, so more than 5% of response-cache decisions over 10m bypassed the cache as bypass_authed, at more than 0.1 lookups per second."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasResponseCache.md"
 
   - interval: 1m
@@ -402,12 +402,13 @@ tests:
           - exp_labels:
               job: "schedd"
               instance: "127.0.0.1:9103"
+              pool: "schedd"
               severity: "warn"
               component: "platform"
               family: "db_pool"
               public_status: "internal"
             exp_annotations:
-              summary: "schedd is using over 90% of its database pool"
+              summary: "schedd is using over 90% of its schedd database pool"
               description: "schedd on 127.0.0.1:9103 has held more than 90% of its pool cap (pkg/db.DaemonMaxConnections) for 10m. Callers will start waiting for connections; FaasDBPoolStarved fires once they give up."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBPoolStarved.md"
 
@@ -426,6 +427,37 @@ tests:
       - eval_time: 30m
         alertname: FaasDBPoolNearCap
         exp_alerts: []
+
+  # apid runs a request pool and a background pool (#6464); each is held
+  # against its own cap, so a full small pool fires beside a quiet large one
+  # and their sum never reads as one pool.
+  - interval: 1m
+    name: "each pool of a two-pool daemon is held against its own cap"
+    input_series:
+      - series: 'apid_db_pool_conns{job="apid",instance="127.0.0.1:9101",state="acquired"}'
+        values: '2x30'
+      - series: 'apid_db_pool_max_conns{job="apid",instance="127.0.0.1:9101"}'
+        values: '12x30'
+      - series: 'apid_background_db_pool_conns{job="apid",instance="127.0.0.1:9101",state="acquired"}'
+        values: '4x30'
+      - series: 'apid_background_db_pool_max_conns{job="apid",instance="127.0.0.1:9101"}'
+        values: '4x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasDBPoolNearCap
+        exp_alerts:
+          - exp_labels:
+              job: "apid"
+              instance: "127.0.0.1:9101"
+              pool: "apid_background"
+              severity: "warn"
+              component: "platform"
+              family: "db_pool"
+              public_status: "internal"
+            exp_annotations:
+              summary: "apid is using over 90% of its apid_background database pool"
+              description: "apid on 127.0.0.1:9101 has held more than 90% of its pool cap (pkg/db.DaemonMaxConnections) for 10m. Callers will start waiting for connections; FaasDBPoolStarved fires once they give up."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBPoolStarved.md"
 
   - interval: 1m
     name: "dropped and panicked loop work fire"
@@ -756,7 +788,7 @@ tests:
               public_status: "internal"
             exp_annotations:
               summary: "Edge-rule changes are not converging (prepare)"
-              description: "apid_edge_rule_convergence_failures_total{phase=\"prepare\"} rose more than twice in 10m. prepare: customers' edge-rule edits are refused with 503 and nothing changes. apply: edits committed but a gateway did not acknowledge them, so its hosts stay held with 503 until the 10s fence expires."
+              description: "apid_edge_rule_convergence_failures_total{phase=\"prepare\"} rose more than twice in 10m. prepare: customers' edge-rule edits are refused with 503 and nothing changes. apply: edits committed but a gateway did not acknowledge them, so it serves the old rules until its cache entries reload (up to 30s)."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleConvergence.md"
 
   # Fences that never clear fire; fences that come and go stay quiet.
@@ -780,5 +812,5 @@ tests:
               public_status: "internal"
             exp_annotations:
               summary: "fsn-2.gregale.dev:9092 has held hosts behind edge-rule fences for 10 minutes"
-              description: "gateway_edge_rule_converging_hosts on fsn-2.gregale.dev:9092 has not dropped to zero for 10m. Requests to fenced hosts get 503 Edge policy update in progress. A fence expires 10s after its change is prepared, so one that never clears means changes keep being prepared without being applied."
+              description: "gateway_edge_rule_converging_hosts on fsn-2.gregale.dev:9092 has not dropped to zero for 10m. Those hosts keep serving their current rules. A fence expires 10s after its change is prepared, so one that never clears means changes keep being prepared without being applied."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleConvergence.md"

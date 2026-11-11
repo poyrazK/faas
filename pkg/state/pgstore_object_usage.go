@@ -57,11 +57,18 @@ func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string,
 	out := ObjectUsageSnapshot{}
 	// ADR-1320: checks tighten the operator policy by the plan's ceilings. A
 	// missing account keeps the operator policy, as before.
-	plan, err := q.ObjectUsageAccountPlan(ctx, db, mustPgUUID(account))
+	owner, err := q.ObjectUsageAccountPlanCap(ctx, db, mustPgUUID(account))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return out, err
 	}
-	out.PlanLimits = objectStoragePlanLimits(api.Plan(plan))
+	var capCents, grantBytes *int64
+	if owner.OverageCapCents.Valid {
+		capCents = &owner.OverageCapCents.Int64
+	}
+	if owner.CeilingGrantBytes.Valid {
+		grantBytes = &owner.CeilingGrantBytes.Int64
+	}
+	out.PlanLimits = objectStoragePlanLimits(api.Plan(owner.Plan), grantBytes, capCents)
 	rows, err := q.ObjectUsageBuckets(ctx, db, sqlc.ObjectUsageBucketsParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(ObjectStoragePeriod(periodStart))})
 	if err != nil {
 		return out, err
@@ -74,6 +81,7 @@ func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string,
 			RequestCount: r.GatewayRequestCount, EgressBytes: r.GatewayEgressBytes, GatewayMetricsKnown: true,
 			StoredByteHours: r.GatewayStoredByteHours, StorageMeteredThrough: r.GatewayStorageThrough.Time,
 			InventoryScan: ObjectInventoryScan{StartedAt: r.ScanStartedAt.Time, ProgressAt: r.ScanProgressAt.Time, Bytes: r.ScanBytes.Int64, Keys: r.ScanKeys.Int64, Pages: int(r.ScanPages.Int32), Complete: r.ScanComplete.Bool},
+			InventoryHeld: r.InventoryHeld,
 		})
 	}
 	reports, err := q.ObjectUsageReports(ctx, db, sqlc.ObjectUsageReportsParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(periodStart)})
@@ -251,18 +259,42 @@ func (s *pgCore) RecordObjectUsageReport(ctx context.Context, r api.ObjectStorag
 }
 
 func (s *pgCore) DueObjectInventories(ctx context.Context, limit int32) ([]ObjectBucket, error) {
-	if limit < 1 || limit > 100 {
-		return nil, ErrConflict
-	}
-	rows, err := sqlc.New().ObjectInventoriesDue(ctx, s.pool, sqlc.ObjectInventoriesDueParams{ScanMaxAgeSeconds: int64(api.ObjectInventoryScanMaxAge / time.Second), RowLimit: limit})
+	due, err := s.DueObjectInventoryQueue(ctx, limit, nil)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]ObjectBucket, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, objectBucketFromSQL(r))
+	out := make([]ObjectBucket, 0, len(due))
+	for _, d := range due {
+		out = append(out, d.Bucket)
 	}
 	return out, nil
+}
+
+func (s *pgCore) DueObjectInventoryQueue(ctx context.Context, limit int32, skip []string) ([]ObjectInventoryDue, error) {
+	if limit < 1 || limit > 100 {
+		return nil, ErrConflict
+	}
+	ids := make([]pgtype.UUID, 0, len(skip))
+	for _, id := range skip {
+		ids = append(ids, mustPgUUID(id))
+	}
+	rows, err := sqlc.New().ObjectInventoriesDue(ctx, s.pool, sqlc.ObjectInventoriesDueParams{LongKeys: api.ObjectStorageInventoryLongListingKeys, ScanMaxAgeSeconds: int64(api.ObjectInventoryScanMaxAge / time.Second), Skip: ids, RowLimit: limit})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ObjectInventoryDue, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ObjectInventoryDue{Bucket: objectBucketFromSQL(r.ObjectBucket), Long: r.LongListing})
+	}
+	return out, nil
+}
+
+func (s *pgCore) ObjectInventoryBacklog(ctx context.Context) (ObjectInventoryBacklog, error) {
+	r, err := sqlc.New().ObjectInventoryBacklog(ctx, s.pool, sqlc.ObjectInventoryBacklogParams{ScanMaxAgeSeconds: int64(api.ObjectInventoryScanMaxAge / time.Second), ProgressWindowSeconds: int64(api.ObjectInventoryScanProgressWindow / time.Second)})
+	if err != nil {
+		return ObjectInventoryBacklog{}, err
+	}
+	return ObjectInventoryBacklog{DueBuckets: r.DueBuckets, OldestObservationAge: time.Duration(max(r.OldestAgeSeconds, 0) * float64(time.Second))}, nil
 }
 
 func (s *pgCore) ClaimObjectInventory(ctx context.Context, bucket, token string) error {

@@ -16,6 +16,37 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 
 Approved Git content, observed intent, qualification, activation and serving state are separate facts. A reviewed or adopted definition does not mean that a deployment is ready or that the environment is serving that revision. Unqualified owned source, runtime, secret-reference, service-binding and queue-binding fields prevent the applied revision from advancing.
 
+Owned source and runtime fields stop blocking convergence once the current whole
+graph has preparation, qualification, activation and serving proof. That evidence
+must still match the approved revision, generation, intent version, plan and exact
+active release. Stale or missing proof and unfinished fleet refreshes keep the
+revision pending. A newer definition removing a workload does not discard an
+earlier committed refresh: recovery still checks its original app and environment,
+invalidates old snapshots and waits for stale residents to refresh or drain.
+Report mode observes that work before planning and can finalize an effect that
+is already fresh or cold, including when a newer definition has drift or omits
+the workload. It does not invalidate snapshots, advance refresh boundaries or
+request a refresh. Stale runtime work keeps source detachment blocked until it
+becomes fresh or drains.
+
+The platform release pause holds both candidate activation and the first cutover
+of a full-environment retirement. Production freezes and application release
+approval policies also cover the apps being retired, including when no workload
+remains in the desired graph. Retirement already cut over can finish cleanup
+while a release hold is active; a new release waits until its holds end.
+
+Policy-effect recovery preserves the complete minimum gateway roster. Departed
+gateways with durable acknowledgements do not need to acknowledge again; missing
+receipts still block recovery. Every current serving gateway, including a newly
+registered gateway, must acknowledge the replay before recovery can finish.
+
+After activation, ordinary serving instances publish their runtime input receipts
+and park, stop, fail and retire through the normal scheduler lifecycle. Retained
+frozen deployment inputs do not make those instances qualification VMs. Capture
+and restore qualification reservations still require their private attempt lease
+and physical retirement evidence, including after parent removal; held legacy
+candidates missing an execution frame remain fenced.
+
 An immutable `source.kind: image` may set `source.full_rootfs: true` when the image is not layered on Gregale's runtime base. The choice is part of the reviewed source contract and is frozen with the candidate deployment; other source kinds reject it. Omitting the field keeps the existing dispatch policy, including inherited settings on adopted workloads.
 For an adopted workload with live deployments, a conflicting inherited full-rootfs setting blocks preparation until the live deployment policy and reviewed source agree.
 
@@ -28,7 +59,7 @@ The opt-in apid reporter has a separate PostgreSQL journey for API variables, ro
 After normal review, approval and merge, CI can wait for recorded serving proof
 for that exact merged commit:
 
-    gregale projects environments gitops wait shop production \
+    gregale environment gitops wait shop production \
       --commit "$MERGED_SHA" --timeout 15m --json
 
 The commit must be a full lowercase 40-character SHA from the environment's
@@ -79,7 +110,7 @@ remains pending. See [ADR-20261017190812](adr/20261017190812-gitops-wait-for-ser
 
 ## Try review and reporting
 
-Use `gregale projects environments gitops explain shop production` for a
+Use `gregale environment gitops explain shop production` for a
 read-only explanation of the current recorded state, or add `--json` for
 automation. The existing status API includes the same assessment under
 `explanation`, and the GitOps dashboard shows its workload progress and actions.
@@ -108,9 +139,9 @@ work nor approves, adopts, activates, rolls back or enables production gates.
 Use an existing GitHub-linked project and registered environment. Start in `report` mode with manual approval and pruning disabled:
 
 ```sh
-gregale projects environments gitops bind shop staging \
+gregale environment gitops bind shop staging \
   --manifest-path environments/staging.yaml --mode report --approval-policy manual
-gregale projects environments gitops review shop staging \
+gregale environment gitops review shop staging \
   --commit "$REVIEWED_COMMIT" > revision-review.json
 ```
 
@@ -124,11 +155,11 @@ sealed at rest and can be disconnected on the account page. A GitLab source
 may be bound to a Gregale project without a GitHub installation:
 
 ```sh
-gregale projects environments gitops bind shop staging \
+gregale environment gitops bind shop staging \
   --provider gitlab --repository group/subgroup/service \
   --ref refs/heads/main --manifest-path environments/staging.yaml \
   --mode report --approval-policy manual
-gregale projects environments gitops review shop staging \
+gregale environment gitops review shop staging \
   --commit "$REVIEWED_COMMIT" > revision-review.json
 ```
 
@@ -152,16 +183,20 @@ Production qualification and enforcement remain gated on exclusive native accept
 `REVIEWED_COMMIT` must be a complete immutable commit SHA. Inspect the returned definition digest and generation before approving its receipt:
 
 ```sh
-gregale projects environments gitops approve shop staging \
+gregale environment gitops approve shop staging \
   --file revision-review.json --yes
-gregale projects environments gitops adoption-preview shop staging > adoption-plan.json
+gregale environment gitops adoption-preview shop staging > adoption-plan.json
 ```
+
+Status reports and adoption previews omit before/after values, including
+unmanaged console values. Their plan hashes remain valid review receipts;
+reconciliation and adoption revalidate against the complete internal observation.
 
 Inspect the mapped resource IDs, owned fields and blocking reasons. Adoption preserves existing values and transfers the reviewed ownership; it does not activate a new workload:
 
 ```sh
-gregale projects environments gitops adopt shop staging --file adoption-plan.json --yes
-gregale projects environments gitops status shop staging
+gregale environment gitops adopt shop staging --file adoption-plan.json --yes
+gregale environment gitops status shop staging
 ```
 
 Stale or blocked receipts are rejected. Re-run the preview after changing relevant intent or source controls.
@@ -227,7 +262,11 @@ creates or reconciles a deterministic, paused Gregale `jobs` record and stores
 its ID on the scoped workload intent. Database checks require that link to
 match the reviewed immutable image, schedule and variables; the Jobs API cannot
 edit or delete a linked record. Removing the schedule pauses and retires the
-managed Job. Its definition accepts a reviewed
+managed Job. Before changing a linked Job, the controller commits a reviewed,
+lease-checked pause and waits for queued and running tasks to finish. Accepted
+tasks retain their frozen inputs and private service identity while draining;
+the old schedule cannot admit new occurrences. Intent updates then leave the
+Job paused through qualification and release activation. Its definition accepts a reviewed
 `schedule` for `execution_mode: job`: a five-field cron expression, IANA
 timezone (UTC by default), and Gregale's schedule and failure policies. That
 contract is frozen and observed. Before activation, Gregale verifies that the
@@ -316,7 +355,7 @@ Preview a candidate before approving it, including on a binding that has no
 approved revision yet:
 
 ```sh
-gregale projects environments gitops plan shop staging \
+gregale environment gitops plan shop staging \
   --commit "$CANDIDATE_SHA" --format markdown --fail-on-blocked
 ```
 
@@ -342,7 +381,7 @@ candidate plans always require a fresh request and grant no write authority.
 Preview an immutable image promotion from a currently proven serving release:
 
 ```sh
-gregale projects environments gitops promotion-plan shop production \
+gregale environment gitops promotion-plan shop production \
   --from staging --target-commit "$TARGET_COMMIT" --fail-on-blocked \
   > promotion-plan.json
 ```
@@ -425,7 +464,7 @@ An explicit artifact pin takes precedence. See [ADR-20261017190809](adr/20261017
 Review the plan and reuse its `plan_hash` in a fresh request before exporting:
 
 ```sh
-gregale projects environments gitops promotion-plan shop production \
+gregale environment gitops promotion-plan shop production \
   --from staging --target-commit "$TARGET_COMMIT" \
   --expected-plan-hash "$REVIEWED_PLAN_HASH" --format manifest \
   --manifest environments/production.yaml > proposed-production.json
@@ -453,7 +492,7 @@ After reviewing a `promotion-plan`, use its hash and the current target branch
 commit to preview a draft proposal:
 
 ```sh
-gregale projects environments gitops promotion-pr shop production \
+gregale environment gitops promotion create shop production \
   --from staging --target-commit "$TARGET_COMMIT" \
   --expected-plan-hash "$REVIEWED_PLAN_HASH"
 ```
@@ -461,7 +500,7 @@ gregale projects environments gitops promotion-pr shop production \
 Add `--yes` to create the draft PR/MR and `--json` for its portable receipt:
 
 ```sh
-gregale projects environments gitops promotion-pr shop production \
+gregale environment gitops promotion create shop production \
   --from staging --target-commit "$TARGET_COMMIT" \
   --expected-plan-hash "$REVIEWED_PLAN_HASH" --yes --json
 ```
@@ -529,7 +568,7 @@ See [ADR-20261017190807](adr/20261017190807-gitops-bounded-recovery-retention.md
 Find retained releases and current eligibility for your target manifest:
 
 ```sh
-gregale projects environments gitops releases shop production \
+gregale environment gitops releases shop production \
   --target-commit "$TARGET_COMMIT"
 ```
 
@@ -549,7 +588,7 @@ Select a release previously served by this Git source in this environment. The r
 image/build artifact and historical serving time:
 
 ```sh
-gregale projects environments gitops rollback-plan shop production \
+gregale environment gitops rollback-plan shop production \
   --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" --fail-on-blocked
 ```
 
@@ -557,7 +596,7 @@ Review the result, then request a fresh observation with its `plan_hash` before
 exporting a patch or manifest:
 
 ```sh
-gregale projects environments gitops rollback-plan shop production \
+gregale environment gitops rollback-plan shop production \
   --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" \
   --expected-plan-hash "$REVIEWED_PLAN_HASH" --format patch > rollback-plan.json
 ```
@@ -595,7 +634,7 @@ Choose an eligible release from `gitops releases`, then review its fresh
 `rollback-plan`. Preview the recovery draft with that plan's hash:
 
 ```sh
-gregale projects environments gitops rollback-pr shop production \
+gregale environment gitops recovery create shop production \
   --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" \
   --expected-plan-hash "$REVIEWED_ROLLBACK_HASH"
 ```
@@ -604,7 +643,7 @@ Add `--yes` to create the draft PR/MR, and `--json` for a receipt that includes
 the selected `release_set_id`:
 
 ```sh
-gregale projects environments gitops rollback-pr shop production \
+gregale environment gitops recovery create shop production \
   --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" \
   --expected-plan-hash "$REVIEWED_ROLLBACK_HASH" --yes --json
 ```
@@ -642,7 +681,7 @@ exclusive native acceptance requirements remain unchanged. See
 Subscribe an account receiver explicitly to `environment.gitops.changed`:
 
 ```sh
-printf '%s' "$WEBHOOK_SECRET" | gregale webhooks account add \
+printf '%s' "$WEBHOOK_SECRET" | gregale webhook account add \
   --target-url https://alerts.example.test/gregale \
   --event environment.gitops.changed --from-stdin
 ```
@@ -1309,6 +1348,18 @@ Customer source creation and updates support `report` mode. A request to enable
 `enforce` returns `409 environment_git_enforcement_unavailable`; the dashboard
 also disables that choice. Internal executor qualification remains separate.
 
+Suspending reconciliation pauses controller writes; report mode observes drift
+without applying changes. An active release continues to authorize its frozen
+private service bindings in either state. Calls still require the exact live
+caller and target deployments in that release, the original source scope and
+the reviewed binding policy. Pausing reconciliation grants no access to unbound
+services. Scheduled Job callers retain their release-bound identity during
+these controls and while a newer revision awaits activation. Image defaults,
+reviewed commands and qualified source/Dockerfile layers use the same scoped
+service authorization.
+New verification probes still require active enforcement and are invalidated
+when reconciliation is suspended or switched to report mode.
+
 The Terraform provider reserves the scoped fields managed by `gregale_env` and
 `gregale_project_environment_config`, plus workload source intent for scoped
 `gregale_deployment` resources. Refresh/import also registers ownership.
@@ -1331,23 +1382,52 @@ source. Release that reservation explicitly during a reviewed handoff to Git.
 Use the dashboard source controls or the CLI to rebind or disconnect:
 
 ```sh
-gregale projects environments gitops rebind shop staging \
+gregale environment gitops rebind shop staging \
   --expected-generation 3 --manifest-path environments/staging-v2.yaml --yes
-gregale projects environments gitops unbind shop staging \
+gregale environment gitops unbind shop staging \
   --expected-generation 5 --yes
 ```
 
 Both operations require the current generation and report mode, release only the
 retired binding's Git ownership and overrides, and preserve existing values,
 resource identities, revisions, reports and execution journals. Pending effects,
-graph preparation block retirement. Bindings with qualification records cannot
-yet be retired by this preview; those records and their execution evidence remain
-protected. Rebinding creates
+graph preparation and unfinished qualification cleanup block retirement.
+Completed qualification records remain protected without preventing retirement:
+every capture and restore execution must have retirement evidence and any
+associated instance must be terminal. Rebinding creates
 a new verified source with a later generation and requires fresh review, approval
 and adoption. Old approvals, plans and leases cannot authorize the replacement.
 Retired binding history remains stored for operator inspection; the status page
 shows the active binding. Repository identity comes from the project's current
-verified GitHub connection. Disconnecting does not delete any workload or queue.
+verified GitHub connection. Disconnecting removes the original source binding
+required for its private service aliases; it does not delete any workload or
+queue. See [ADR-20261103180001](adr/20261103180001-gitops-job-serving-and-source-retirement.md).
+
+Workload rollout ownership is scoped to the app and environment. A production
+candidate does not block manual staging traffic or canary advancement. Report
+mode and suspension retain ownership until disconnect. After disconnect, fresh
+manual deployments and replacement release sets may take over that environment;
+existing checked binding policies still apply. Frozen candidates cannot be
+activated manually, and their runtime inputs and qualification history remain
+protected. An active release remains selected until it is explicitly replaced or
+deactivated through the release APIs. See
+[ADR-20261103190000](adr/20261103190000-gitops-scoped-ownership-and-manual-handoff.md).
+
+Disconnect also releases scheduled Job edits and deletion. The Job, its runs
+and the retained scoped intent remain available as history. Rebinding alone
+does not lock those Jobs again: fresh approval, adoption and controller
+reconciliation are required. Candidate preparation reuses an edited Job or
+creates a replacement for a deleted Job, then freezes that identity in the new
+graph. A detached source Job needs ordinary image input before it can run
+without its former GitOps binding; its qualified source artifact cannot be
+replaced through ordinary materializer APIs.
+
+Private GitOps service calls pin the verified release and deployment with their
+reviewed authorization policy. HTTP and HTTPS aliases use the scoped binding
+even when ordinary app policy requires declared dependencies. Tenant checks,
+HTTPS requirements, method/path grants and release selectors still apply. See
+[ADR-20261103200001](adr/20261103200001-gitops-service-policy-and-job-handoff.md).
+
 
 Completed report history keeps at most 1,000 runs per source and seven days of
 reports, retaining the latest completed run and all active runs. Pruning happens

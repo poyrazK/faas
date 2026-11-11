@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // FleetPolicy bounds the platform's managed PostgreSQL fleet across every
@@ -14,6 +16,21 @@ import (
 type FleetPolicy struct {
 	MaxDatabases             int
 	MaxMonthlyCostMillicents int64
+	// PaidReserve keeps the fleet's last databases for paid plans: a Free
+	// subject cannot add a database once the fleet holds MaxDatabases minus
+	// PaidReserve, so Free sign-ups cannot pause paying customers
+	// (ADR-20261031091607).
+	PaidReserve int
+}
+
+// PreviewShare is how many PR preview databases one account may hold under
+// the fleet cap: api.ManagedPostgresPreviewFleetSharePercent of MaxDatabases,
+// at least one. Zero means no fleet cap is set.
+func (p FleetPolicy) PreviewShare() int {
+	if p.MaxDatabases <= 0 {
+		return 0
+	}
+	return max(1, p.MaxDatabases*api.ManagedPostgresPreviewFleetSharePercent/100)
 }
 
 // Complete reports whether both ceilings are set, as production requires.
@@ -37,6 +54,14 @@ type FleetStore interface {
 // fleet is at its database cap or its monthly provider-spend breaker is open.
 // It wraps ErrUnavailable: nothing is down and a later retry may succeed.
 var ErrFleetPaused = fmt.Errorf("%w: new managed databases are paused platform-wide", ErrUnavailable)
+
+// ErrFleetFreePaused refuses a Free subject's new database while the fleet is
+// inside the paid reserve. It wraps ErrFleetPaused.
+var ErrFleetFreePaused = fmt.Errorf("%w: the remaining capacity is reserved for paid plans", ErrFleetPaused)
+
+// FleetFreePausedDetail is the customer-facing explanation for
+// ErrFleetFreePaused.
+const FleetFreePausedDetail = "New managed PostgreSQL databases on the Free plan are paused while the platform is near capacity. Existing databases and bindings keep working; upgrade to a paid plan to create one now, or retry later."
 
 // FleetPausedDetail is the customer-facing explanation for ErrFleetPaused.
 // It names no fleet sizes or costs.
@@ -69,9 +94,10 @@ func (s *Service) FleetStatus(ctx context.Context) (FleetTotals, FleetPolicy, er
 
 // admitFleet applies the fleet policy before work that adds provider cost.
 // The spend breaker refuses any such work; the database cap refuses only
-// work that adds a database. Concurrent reservations can overshoot the cap
-// by at most the number in flight: it is a safety ceiling, not a quota.
-func (s *Service) admitFleet(ctx context.Context, addsDatabase bool) error {
+// work that adds a database, and for a Free subject stops PaidReserve short of
+// it. Concurrent reservations can overshoot the cap by at most the number in
+// flight: it is a safety ceiling, not a quota.
+func (s *Service) admitFleet(ctx context.Context, subjectID string, addsDatabase bool) error {
 	policy := s.registry.Fleet()
 	if policy.MaxDatabases <= 0 && policy.MaxMonthlyCostMillicents <= 0 {
 		return nil
@@ -83,8 +109,51 @@ func (s *Service) admitFleet(ctx context.Context, addsDatabase bool) error {
 	if policy.MaxMonthlyCostMillicents > 0 && totals.CostMillicents >= policy.MaxMonthlyCostMillicents {
 		return ErrFleetPaused
 	}
-	if addsDatabase && policy.MaxDatabases > 0 && totals.Databases >= policy.MaxDatabases {
+	if !addsDatabase || policy.MaxDatabases <= 0 {
+		return nil
+	}
+	if totals.Databases >= policy.MaxDatabases {
+		return ErrFleetPaused
+	}
+	if policy.PaidReserve > 0 && s.freePlan != nil && totals.Databases >= policy.MaxDatabases-policy.PaidReserve {
+		free, err := s.freePlan(ctx, subjectID)
+		if err != nil {
+			return err
+		}
+		if free {
+			return ErrFleetFreePaused
+		}
+	}
+	return nil
+}
+
+// admitPreviewFleet is admitFleet for a PR preview database, which also stays
+// out of the paid reserve whatever the plan: a preview is disposable, and the
+// reserve's last databases are for production creates (ADR-20261102123523
+// amendment 2026-11-10).
+func (s *Service) admitPreviewFleet(ctx context.Context, subjectID string) error {
+	if err := s.admitFleet(ctx, subjectID, true); err != nil {
+		return err
+	}
+	policy := s.registry.Fleet()
+	if policy.MaxDatabases <= 0 || policy.PaidReserve <= 0 {
+		return nil
+	}
+	totals, _, err := s.FleetStatus(ctx)
+	if err != nil {
+		return err
+	}
+	if totals.Databases >= policy.MaxDatabases-policy.PaidReserve {
 		return ErrFleetPaused
 	}
 	return nil
+}
+
+// previewLimit is the preview databases an account may hold: its plan's
+// allowance, capped at its fleet share.
+func (s *Service) previewLimit(planLimit int) int {
+	if share := s.registry.Fleet().PreviewShare(); share > 0 && share < planLimit {
+		return share
+	}
+	return planLimit
 }

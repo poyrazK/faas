@@ -69,6 +69,7 @@ func TestPasswordResetOutboxPublicWiringUniformResponseAndRollback(t *testing.T)
 			handler := server.Handler()
 			unknown := resetFormPost(handler, "/login/forgot", url.Values{"email": {"unbound-reset@example.net"}})
 			known := resetFormPost(handler, "/login/forgot", url.Values{"email": {email}})
+			server.WaitPasswordResetMail()
 			if unknown.Code != http.StatusOK || known.Code != unknown.Code || known.Body.String() != unknown.Body.String() {
 				t.Fatal("reset queue outcome exposed account existence", known.Code, unknown.Code)
 			}
@@ -106,7 +107,7 @@ func TestPasswordResetOutboxPublicWiringUniformResponseAndRollback(t *testing.T)
 			defer clear(raw)
 			token := base64.RawURLEncoding.EncodeToString(raw)
 			magic := httptest.NewRecorder()
-			handler.ServeHTTP(magic, httptest.NewRequest(http.MethodGet, "https://dashboard.example.test/auth/verify?token="+token, nil))
+			handler.ServeHTTP(magic, browserOpenedLink("https://dashboard.example.test/auth/verify?token="+token))
 			if magic.Code != http.StatusGone || len(magic.Result().Cookies()) != 0 {
 				t.Fatal("reset credential authenticated through magic login", magic.Code)
 			}

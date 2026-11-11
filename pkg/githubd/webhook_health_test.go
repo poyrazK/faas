@@ -223,7 +223,7 @@ func TestRunWebhookDeliveryWorker_SettlesUnprocessableDeliveriesAtOnce(t *testin
 // Non-preview actions are ignored deliveries: the sentinel lets the worker
 // complete them instead of dead-lettering every labeled or edited PR.
 func TestDecodePullRequest_UnknownActionIsIgnoredSentinel(t *testing.T) {
-	body := strings.Replace(validPRBody, `"action": "opened"`, `"action": "converted_to_draft"`, 1)
+	body := strings.Replace(validPRBody, `"action": "opened"`, `"action": "labeled"`, 1)
 	_, err := DecodePullRequest([]byte(body))
 	if !errors.Is(err, ErrPullRequestActionIgnored) {
 		t.Fatalf("err = %v, want ErrPullRequestActionIgnored", err)

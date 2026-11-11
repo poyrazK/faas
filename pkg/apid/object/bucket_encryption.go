@@ -28,7 +28,11 @@ func (s *Service) bucketEncryptionService(w http.ResponseWriter, r *http.Request
 		BucketProblem(w, objectstorage.ErrInvalid)
 		return b, objectstorage.BucketEncryptionService{}, false
 	}
-	return b, objectstorage.BucketEncryptionService{Store: st, Provider: native, BeforeRequest: s.CustomerObjectRequestRecorder(b)}, true
+	record := s.CustomerObjectRequestRecorder(b)
+	if r.Method == http.MethodDelete {
+		record = s.inventoryRequestRecorder(b)
+	}
+	return b, objectstorage.BucketEncryptionService{Store: st, Provider: native, BeforeRequest: record}, true
 }
 
 func (s *Service) GetObjectBucketEncryption(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -65,6 +69,12 @@ func (s *Service) PutObjectBucketEncryption(w http.ResponseWriter, r *http.Reque
 	}
 	snapshot, err := s.resolveObjectURLEncryption(b, objectstorage.SignRequest{Method: http.MethodPut, Encryption: &in.Encryption})
 	if err != nil {
+		BucketProblem(w, err)
+		return
+	}
+	// New intent may be journaled without a native preflight. Apply the
+	// admission boundary before accepting work for the recovery worker.
+	if err = s.AdmitObjectURL(r.Context(), b, objectstorage.SignRequest{Method: http.MethodGet, Key: "__settings__"}); err != nil {
 		BucketProblem(w, err)
 		return
 	}

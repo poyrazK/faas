@@ -46,6 +46,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -137,6 +138,7 @@ type InternalReverseProxy struct {
 	placement EdgePlacement
 
 	trafficRevocations  *trafficrevocation.Registry
+	trafficSnapshots    *trafficSnapshotMemo
 	Dialer              InternalDialer
 	Target              *url.URL
 	Transport           http.RoundTripper
@@ -277,6 +279,12 @@ type EdgePlacement interface {
 	Learn(r *http.Request, nodeID string)
 }
 
+// EdgePlacementSet is an EdgePlacement that also takes every node of the app,
+// InstanceNodesHeader's "<node id>=<count>,..." (ADR-20261102081618 §5b).
+type EdgePlacementSet interface {
+	LearnSet(r *http.Request, nodes string)
+}
+
 // WithEdgePlacement makes the proxy ask gatewayd-internal for the node of
 // the instance behind each response, remember it in placement, and hand the
 // host's preferred node to the dialer through the request context. Every
@@ -291,10 +299,11 @@ func (p *InternalReverseProxy) withPreference(r *http.Request) *http.Request {
 	if p.placement == nil {
 		return r
 	}
+	ctx := WithPlacementAsked(r.Context())
 	if pref, ok := p.placement.Prefer(r); ok {
-		return r.WithContext(WithPreferredNode(r.Context(), pref))
+		ctx = WithPreferredNode(ctx, pref)
 	}
-	return r
+	return r.WithContext(ctx)
 }
 
 // markPlacement replaces a client's placement request with this proxy's own.
@@ -310,7 +319,18 @@ func (p *InternalReverseProxy) markPlacement(h http.Header) {
 func (p *InternalReverseProxy) takeInstanceNode(r *http.Request, h http.Header) {
 	node := strings.TrimSpace(h.Get(InstanceNodeHeader))
 	h.Del(InstanceNodeHeader)
-	if node != "" && p.placement != nil {
+	// ADR-20261102081618 §5a: a gatewayd-internal with local-first on also
+	// names every node of the app; no client sees it.
+	nodes := strings.TrimSpace(h.Get(InstanceNodesHeader))
+	h.Del(InstanceNodesHeader)
+	if p.placement == nil {
+		return
+	}
+	if set, ok := p.placement.(EdgePlacementSet); ok && nodes != "" {
+		set.LearnSet(r, nodes)
+		return
+	}
+	if node != "" {
 		p.placement.Learn(r, node)
 	}
 }
@@ -866,7 +886,7 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 	}
 	// Body copy bound to ctx — a hung upstream pins only the
 	// in-flight goroutine, not the listener.
-	if _, err := copyResponseBodyWithActivity(bodyCtx, w, resp.Body, touch); err != nil && !shutdownEnded.Load() && (!errors.Is(err, context.Canceled) || trafficRevocationCause(bodyCtx) != nil) {
+	if _, err := copyResponseBodyWithActivity(bodyCtx, w, resp.Body, resp.ContentLength, touch); err != nil && !shutdownEnded.Load() && (!errors.Is(err, context.Canceled) || trafficRevocationCause(bodyCtx) != nil) {
 		p.logger().Warn("internal body copy failed",
 			"target", p.Target.String(),
 			"err", err)
@@ -964,10 +984,29 @@ func isHopByHop(h string) bool {
 // The function owns src's lifecycle: defer Body.Close in the
 // caller is redundant after this change.
 func copyResponseBody(ctx context.Context, dst io.Writer, src io.ReadCloser) (int64, error) {
-	return copyResponseBodyWithActivity(ctx, dst, src, nil)
+	return copyResponseBodyWithActivity(ctx, dst, src, -1, nil)
 }
 
-func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.ReadCloser, activity func()) (int64, error) {
+// responseCopyBuffers recycles copyResponseBodyWithActivity's 32 KiB
+// buffer. A fresh one per response was the edge's largest allocation by
+// bytes (300 req/s made ~10 MB/s of garbage). The copier returns its
+// buffer only after its last Read and Write.
+var responseCopyBuffers = sync.Pool{New: func() any {
+	buf := make([]byte, 32*1024)
+	return &buf
+}}
+
+// copyResponseBodyWithActivity is copyResponseBody that calls activity after
+// each write.
+//
+// length is the body's declared length, or -1 when unknown. The chunk that
+// completes a declared length is not flushed on its own: the handler returns
+// right after, and the server sends those bytes with the end of the response
+// in one write. Over HTTP/2 each flush is its own TLS record and write
+// syscall, so a small response took three writes (headers, data, end of
+// stream) instead of one. A body of unknown length (SSE, chunked streams)
+// still flushes every chunk.
+func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.ReadCloser, length int64, activity func()) (int64, error) {
 	if w, ok := dst.(http.ResponseWriter); ok {
 		stop, err := armResponseWriteContext(ctx, w)
 		if err != nil {
@@ -1019,7 +1058,9 @@ func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.Rea
 			}
 		}()
 		defer func() { _ = src.Close() }() // ensure goroutine exit even on panic
-		buf := make([]byte, 32*1024)
+		bufp := responseCopyBuffers.Get().(*[]byte)
+		defer responseCopyBuffers.Put(bufp)
+		buf := *bufp
 		for {
 			n, rErr := src.Read(buf)
 			if n > 0 {
@@ -1057,7 +1098,7 @@ func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.Rea
 				if activity != nil && written > 0 {
 					activity()
 				}
-				if flusher != nil {
+				if flusher != nil && (length < 0 || total < length) {
 					flusher.Flush()
 				}
 			}
@@ -1177,7 +1218,7 @@ func CanonicalForwardingContext(r *http.Request, trustedIngressCIDRs []netip.Pre
 	if r.TLS != nil {
 		proto = "https"
 	}
-	if !trustsIngressPeer(peer, trustedIngressCIDRs) {
+	if !trustsIngressPeer(peer, trustedIngressCIDRs) && !verifiedIngress(r) {
 		return peerText, proto
 	}
 
@@ -1202,7 +1243,25 @@ func CanonicalForwardingContext(r *http.Request, trustedIngressCIDRs []netip.Pre
 // peer, the same test CanonicalForwardingContext applies before it reads any
 // forwarded header.
 func TrustedIngressPeer(r *http.Request, trustedIngressCIDRs []netip.Prefix) bool {
-	return trustsIngressPeer(remoteAddrIP(r.RemoteAddr), trustedIngressCIDRs)
+	return verifiedIngress(r) || trustsIngressPeer(remoteAddrIP(r.RemoteAddr), trustedIngressCIDRs)
+}
+
+type verifiedIngressKey struct{}
+
+// WithVerifiedIngress marks ctx as a connection whose peer proves it is the
+// ingress with a client certificate the listener verified. Cloudflare reaches
+// a compute edge from addresses we do not list, so the certificate stands in
+// for FAAS_TRUSTED_INGRESS_CIDRS there (ADR-20261102081618 §2).
+func WithVerifiedIngress(ctx context.Context) context.Context {
+	return context.WithValue(ctx, verifiedIngressKey{}, true)
+}
+
+// verifiedIngress reports whether r came over a marked connection and its
+// client certificate was verified. Both are required, so a mark on a
+// connection without a verified certificate trusts nothing.
+func verifiedIngress(r *http.Request) bool {
+	marked, _ := r.Context().Value(verifiedIngressKey{}).(bool)
+	return marked && r.TLS != nil && len(r.TLS.VerifiedChains) > 0
 }
 
 func trustsIngressPeer(peer netip.Addr, trustedIngressCIDRs []netip.Prefix) bool {

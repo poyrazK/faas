@@ -187,6 +187,18 @@ func effectiveConfigEntries(cfg cliConfig) []cliConfigEntry {
 	return []cliConfigEntry{apiEntry, jsonEntry}
 }
 
+// displayConfigEntries is effectiveConfigEntries for printing: an api-base
+// from FAAS_API loses any embedded credentials.
+func displayConfigEntries(cfg cliConfig) []cliConfigEntry {
+	entries := effectiveConfigEntries(cfg)
+	for i := range entries {
+		if entries[i].Key == configKeyAPIBase {
+			entries[i].Value = displayAPIBase(entries[i].Value)
+		}
+	}
+	return entries
+}
+
 func configEntry(entries []cliConfigEntry, key string) (cliConfigEntry, bool) {
 	for _, entry := range entries {
 		if entry.Key == key {
@@ -219,6 +231,8 @@ func cmdConfig(args []string) int {
 		return cmdConfigGet(args[1:])
 	case "set":
 		return cmdConfigSet(args[1:])
+	case "explain":
+		return cmdConfigExplain(args[1:])
 	default:
 		return printUnknownSubcommand(os.Stderr, "config", parent, args[0])
 	}
@@ -233,7 +247,7 @@ func cmdConfigList(args []string) int {
 	if err != nil {
 		return printErr("Could not read config", err)
 	}
-	entries := effectiveConfigEntries(cfg)
+	entries := displayConfigEntries(cfg)
 	if jsonOutput {
 		return jsonOut(writeNDJSON(entries))
 	}
@@ -257,7 +271,7 @@ func cmdConfigGet(args []string) int {
 	if err != nil {
 		return printErr("Could not read config", err)
 	}
-	entry, _ := configEntry(effectiveConfigEntries(cfg), key)
+	entry, _ := configEntry(displayConfigEntries(cfg), key)
 	if jsonOutput {
 		return jsonOut(writeJSON(entry))
 	}
@@ -280,7 +294,7 @@ func cmdConfigSet(args []string) int {
 	}
 	switch key {
 	case configKeyAPIBase:
-		value, err := validateConfigAPIBase(args[1])
+		value, err := validateAcceptedAPIBase(args[1])
 		if err != nil {
 			return printErr("Invalid api-base", err)
 		}
@@ -299,7 +313,7 @@ func cmdConfigSet(args []string) int {
 	if err := saveCLIConfig(cfg); err != nil {
 		return printErr("Could not save config", err)
 	}
-	entry, _ := configEntry(effectiveConfigEntries(cfg), key)
+	entry, _ := configEntry(displayConfigEntries(cfg), key)
 	if jsonOutput {
 		return jsonOut(writeJSON(entry))
 	}

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/storedworkflowchecks"
 )
 
 type workflowRunCreateKey struct {
@@ -634,6 +636,7 @@ func (m *MemStore) RetryWorkflowStep(_ context.Context, runID, stepName string, 
 		return nil, active, ErrWorkflowRunQuotaExceeded
 	}
 	failed := steps[stepName]
+	failed.RetryBase = workflowManualRetryBase(&run, stepName, failed.Attempt, failed.RetryBase)
 	failed.Status = WorkflowStepStatusPending
 	failed.Output = nil
 	failed.NextCheckAt = nil
@@ -1341,11 +1344,14 @@ func (m *MemStore) completeWorkflowCallbackLocked(tenantID, runID, stepName, eve
 			if event.ID != eventID {
 				continue
 			}
-			if event.RunID == runID && event.EventName == eventName && equalWorkflowJSON(event.Payload, payload) {
+			if event.RunID == runID && event.EventName == eventName && storedworkflowchecks.EqualJSON(event.Payload, payload) {
 				return true, nil
 			}
 			return false, fmt.Errorf("%w: workflow callback payload differs", ErrConflict)
 		}
+	}
+	if err := validateWorkflowEventPayload(payload); err != nil {
+		return false, err
 	}
 	if run.Status == WorkflowRunStatusSucceeded || run.Status == WorkflowRunStatusFailed || run.Status == WorkflowRunStatusDead {
 		return false, ErrWorkflowCallbackClosed
@@ -1363,6 +1369,7 @@ func (m *MemStore) completeWorkflowCallbackLocked(tenantID, runID, stepName, eve
 		ID: eventID, RunID: runID, EventName: eventName,
 		Payload: cloneWorkflowJSON(payload), ReceivedAt: now,
 	})
+	m.workflowEventApps[runID] = run.AppID
 	if run.Status == WorkflowRunStatusAwaitingEvent {
 		run.Status = WorkflowRunStatusPending
 		run.ScheduledFor = now
@@ -1411,9 +1418,6 @@ func (m *MemStore) insertWorkflowEventLocked(tenantID string, e *WorkflowEvent) 
 			!m.workflowOutboundTenantLinkActiveLocked(app.AccountID, tenantID, app.ID) {
 			return ErrWorkflowRunNotFound
 		}
-		if run.Status != WorkflowRunStatusPending && run.Status != WorkflowRunStatusRunning && run.Status != WorkflowRunStatusAwaitingEvent {
-			return ErrWorkflowNotRunning
-		}
 	}
 
 	if e.ID == "" {
@@ -1428,9 +1432,10 @@ func (m *MemStore) insertWorkflowEventLocked(tenantID string, e *WorkflowEvent) 
 	for _, events := range m.workflowEvents {
 		for _, existing := range events {
 			if existing.ID == e.ID {
-				if existing.RunID != e.RunID || existing.EventName != e.EventName {
+				if existing.RunID != e.RunID || existing.EventName != e.EventName || !storedworkflowchecks.EqualJSON(existing.Payload, e.Payload) {
 					return fmt.Errorf("%w: workflow_events.id", ErrConflict)
 				}
+				e.ReceivedAt = existing.ReceivedAt
 				if run := m.workflowRuns[e.RunID]; run.Status == WorkflowRunStatusAwaitingEvent {
 					run.Status = WorkflowRunStatusPending
 					run.ScheduledFor = time.Now().UTC()
@@ -1441,10 +1446,17 @@ func (m *MemStore) insertWorkflowEventLocked(tenantID string, e *WorkflowEvent) 
 			}
 		}
 	}
+	if run.Status != WorkflowRunStatusPending && run.Status != WorkflowRunStatusRunning && run.Status != WorkflowRunStatusAwaitingEvent {
+		return ErrWorkflowNotRunning
+	}
+	if err := validateWorkflowEventPayload(e.Payload); err != nil {
+		return err
+	}
 
 	stored := *e
 	stored.Payload = cloneWorkflowJSON(e.Payload)
 	m.workflowEvents[e.RunID] = append(m.workflowEvents[e.RunID], stored)
+	m.workflowEventApps[e.RunID] = run.AppID
 	if run := m.workflowRuns[e.RunID]; run.Status == WorkflowRunStatusAwaitingEvent {
 		run.Status = WorkflowRunStatusPending
 		run.ScheduledFor = time.Now().UTC()
@@ -1512,9 +1524,8 @@ func (m *MemStore) SweepExpiredWorkflowRuns(_ context.Context, olderThan time.Du
 		if r.FinishedAt != nil && !r.FinishedAt.After(threshold) && !retainedByOperation {
 			m.captureWorkflowRecoveryResultLocked(r, time.Now().UTC())
 			delete(m.workflowRuns, id)
-			delete(m.automationLiveVerifications, id)
+			delete(m.storedWorkflowLiveVerifications, id)
 			delete(m.workflowSteps, id)
-			delete(m.workflowEvents, id)
 			for key := range m.workflowStepAttempts {
 				if key.runID == id {
 					delete(m.workflowStepAttempts, key)
@@ -1526,6 +1537,9 @@ func (m *MemStore) SweepExpiredWorkflowRuns(_ context.Context, olderThan time.Du
 				}
 			}
 			deleted++
+			if deleted == api.WorkflowRetentionPruneBatch {
+				break
+			}
 		}
 	}
 	return deleted, nil
@@ -1547,13 +1561,18 @@ func (m *MemStore) SweepExpiredWorkflowEvents(_ context.Context, olderThan time.
 		}
 		var kept []WorkflowEvent
 		for _, e := range events {
-			if e.ReceivedAt.Before(threshold) {
+			if e.ReceivedAt.Before(threshold) && deleted < api.WorkflowRetentionPruneBatch {
 				deleted++
 			} else {
 				kept = append(kept, e)
 			}
 		}
-		m.workflowEvents[runID] = kept
+		if len(kept) == 0 {
+			delete(m.workflowEvents, runID)
+			delete(m.workflowEventApps, runID)
+		} else {
+			m.workflowEvents[runID] = kept
+		}
 	}
 	return deleted, nil
 }

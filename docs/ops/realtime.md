@@ -1953,8 +1953,9 @@ existing committed results without revalidating history.
 
 Contracts use JSON Schema Draft 2020-12, limited to 16 KiB each. Local references
 are supported; fetching external schema resources is disabled. Format keywords
-use the validator's default annotation behavior. Each endpoint may register at
-most 64 schema versions across its channels. Event types match
+use the validator's default annotation behavior. Each event type may register at
+most 64 schema versions, and an endpoint at most 1,024 across its channels and
+event types. Event types match
 `[a-z0-9_.-]{1,64}` and versions range from 1 to 1000000. Versions are immutable:
 identical PUTs succeed, changed contracts return 409. Register a new version for
 format changes. No version deletion or enforcement-disable endpoint is provided;

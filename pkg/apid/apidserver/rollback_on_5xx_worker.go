@@ -3,12 +3,14 @@ package apidserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/canary"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -64,7 +66,15 @@ func (s *server) evaluateRollbackOn5xx(ctx context.Context, telemetry rollbackOn
 		// window's end still belongs to the window.
 		until = c.WindowEndsAt.Truncate(time.Minute).Add(time.Minute)
 	}
-	requests, serverErrors, _, _, _, _, _, err := telemetry.RequestTelemetryCircuitBreakerSummary(ctx, c.AppID, c.DeploymentID, c.CreatedAt.Truncate(time.Minute), until)
+	// Only closed minutes: gateways ship a 5xx at once but a 2xx with its
+	// minute's bucket, so the open minute read 6/6 errors for a release
+	// failing 3% of requests (prod 2026-11-09, ADR-625 amendment 2026-11-10).
+	until = canary.ClosedTelemetryUntil(until, now)
+	since := c.CreatedAt.Truncate(time.Minute)
+	if !since.Before(until) {
+		return nil
+	}
+	requests, serverErrors, _, _, _, _, _, err := telemetry.RequestTelemetryCircuitBreakerSummary(ctx, c.AppID, c.DeploymentID, since, until)
 	if err != nil {
 		return fmt.Errorf("read request telemetry: %w", err)
 	}
@@ -79,7 +89,30 @@ func (s *server) evaluateRollbackOn5xx(ctx context.Context, telemetry rollbackOn
 	if !rollbackOn5xxBreached(requests, serverErrors) {
 		return nil
 	}
+	if lost, err := s.releaseTelemetryLost(ctx, telemetry, since, until); err != nil || lost {
+		// A gateway may have dropped rows in the window: the 2xx it lost
+		// would read as a higher error rate. Judge again once coverage holds.
+		return err
+	}
 	return s.autoRollbackOn5xx(ctx, c, requests, serverErrors)
+}
+
+// releaseTelemetryLost reports whether a gateway may have lost request
+// telemetry over [from, until) (ADR-625 amendment 2026-11-10). A store
+// without coverage records (MemStore) reports complete coverage.
+func (s *server) releaseTelemetryLost(ctx context.Context, telemetry any, from, until time.Time) (bool, error) {
+	reader, ok := telemetry.(state.RequestTelemetryLossReader)
+	if !ok {
+		reader, ok = s.store.(state.RequestTelemetryLossReader)
+	}
+	if !ok {
+		return false, nil
+	}
+	lost, err := reader.RequestTelemetryLostBetween(ctx, from, until)
+	if err != nil {
+		return false, fmt.Errorf("read request telemetry coverage: %w", err)
+	}
+	return lost, nil
 }
 
 // autoRollbackOn5xx hands the release's predecessor to the same
@@ -103,7 +136,7 @@ func (s *server) autoRollbackOn5xx(ctx context.Context, c state.RollbackOn5xxCan
 	if err != nil {
 		return err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "/", nil)
+	request, err := http.NewRequestWithContext(state.WithExpectedRollbackCurrent(ctx, c.DeploymentID), http.MethodPost, "/", nil)
 	if err != nil {
 		return err
 	}
@@ -112,9 +145,7 @@ func (s *server) autoRollbackOn5xx(ctx context.Context, c state.RollbackOn5xxCan
 		if problem.Code == api.CodeRollbackCrossesRelease {
 			// ADR-1448: automation never runs code on changes it has not
 			// served with. The release keeps serving; a person decides.
-			s.log.Warn("rollback-on-5xx: skipped; the rollback would cross release commands",
-				"app", app.ID, "deployment", c.DeploymentID, "target", target.ID, "detail", problem.Detail)
-			return nil
+			return s.rollbackOn5xxSkipped(ctx, c, acct, app, target.ID, requests, serverErrors, problem)
 		}
 		return fmt.Errorf("roll back to %s: %s: %s", target.ID, problem.Code, problem.Detail)
 	}
@@ -128,6 +159,42 @@ func (s *server) autoRollbackOn5xx(ctx context.Context, c state.RollbackOn5xxCan
 	s.audit.Emit(ctx, "app.auto_rollback_on_5xx", &acct.ID, map[string]any{
 		"app_id": app.ID, "from": c.DeploymentID, "to": target.ID,
 		"requests": requests, "server_errors": serverErrors, "reason": string(state.AutoRollbackReasonThresholdExceeded),
+	})
+	return nil
+}
+
+// rollbackOn5xxSkipped records a first-wake 5xx breach the guard could not
+// roll back, as the post-release watch records its own (ADR-1445 amendment
+// 2): the decision on the release carries rollback_skipped, its timeline
+// shows the regression, and neither worker judges it again. The guard used to
+// log the skip on every sweep and tell no one (release review 2026-11-01).
+func (s *server) rollbackOn5xxSkipped(ctx context.Context, c state.RollbackOn5xxCandidate, acct state.Account, app state.App,
+	targetID string, requests, serverErrors int64, problem *api.Problem) error {
+	now := time.Now().UTC()
+	decision := api.RolloutDecision{Kind: api.RolloutDecisionAbort, Rule: api.RolloutRuleAbortPostRelease5xx,
+		Summary:        fmt.Sprintf("first-wake 5xx: %d of %d responses failed", serverErrors, requests),
+		TrafficPercent: 100, StableDeploymentID: targetID,
+		Candidate:       &api.RolloutDecisionSample{Requests: requests, ServerErrors: serverErrors},
+		RollbackSkipped: problem.Code, DecidedAt: now.Format(time.RFC3339Nano)}
+	if err := decision.Validate(); err != nil {
+		return fmt.Errorf("first-wake 5xx decision: %w", err)
+	}
+	raw, err := json.Marshal(decision)
+	if err != nil {
+		return fmt.Errorf("encode first-wake 5xx decision: %w", err)
+	}
+	store, ok := s.store.(state.PostReleaseWatchStore)
+	if !ok {
+		return errors.New("record skipped first-wake rollback: store has no rollout decisions")
+	}
+	if err := store.RecordPostReleaseRolloutDecision(ctx, c.DeploymentID, raw); err != nil {
+		return fmt.Errorf("record skipped first-wake rollback: %w", err)
+	}
+	s.log.Warn("rollback-on-5xx: skipped; the rollback would cross release commands",
+		"app", app.ID, "deployment", c.DeploymentID, "target", targetID, "detail", problem.Detail)
+	s.audit.Emit(ctx, "app.auto_rollback_on_5xx_skipped", &acct.ID, map[string]any{
+		"app_id": app.ID, "deployment": c.DeploymentID, "target": targetID,
+		"requests": requests, "server_errors": serverErrors, "reason": problem.Code,
 	})
 	return nil
 }

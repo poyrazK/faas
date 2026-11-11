@@ -5,6 +5,44 @@
 # Tap proxy NAT — used by gatewayd-internal for outbound guest traffic.
 
 flush ruleset
+{% set faas_priv = ('iifname "' ~ faas_private_iface ~ '" ') if (faas_private_iface | default('')) else '' %}
+{# ADR-20261110120000: admit each fleet peer by its own address. exact is
+   {cidrs, hosts} from the manifest renderer; each host resolves to the
+   private address /etc/hosts maps the fleet's names to. Without exact, or
+   when any host does not resolve, the list is fallback (the *_allowed_cidrs
+   list, the overlay subnet for hostname fleets), as before. #}
+{% macro faas_exact_cidrs(exact, fallback) -%}
+{%- set ns = namespace(out=[], ok=(exact is mapping)) -%}
+{%- if ns.ok -%}
+{%- set ns.out = exact.cidrs | default([]) | list -%}
+{%- for h in exact.hosts | default([]) -%}
+{%- set hv = hostvars[h] if (hostvars is defined and h in hostvars) else {} -%}
+{%- set addr = (hv.faas_private_dns_address | default(hv.faas_private_address | default(((hv.ansible_facts | default({})).default_ipv4 | default({})).address | default(''), true), true)) | string -%}
+{%- if addr.split('.') | length == 4 and addr.replace('.', '').isdigit() -%}
+{%- set ns.out = ns.out + [addr ~ '/32'] -%}
+{%- else -%}
+{%- set ns.ok = false -%}
+{%- endif -%}
+{%- endfor -%}
+{%- endif -%}
+{{- (ns.out | unique | join(',')) if ns.ok else (fallback | default([]) | join(',')) -}}
+{%- endmacro %}
+{% set faas_compute_peer_cidrs = (faas_exact_cidrs(faas_compute_peer_exact, faas_control_plane_allowed_cidrs | default([])) | trim).split(',') | reject('equalto', '') | list if faas_compute_peer_exact is defined else [] %}
+{% set faas_control_plane_allowed_cidrs = (faas_exact_cidrs(faas_control_plane_allowed_exact | default(none), faas_control_plane_allowed_cidrs | default([])) | trim).split(',') | reject('equalto', '') | list %}
+{% set faas_compute_allowed_cidrs = (faas_exact_cidrs(faas_compute_allowed_exact | default(none), faas_compute_allowed_cidrs | default([])) | trim).split(',') | reject('equalto', '') | list %}
+{% set faas_postgres_allowed_cidrs = (faas_exact_cidrs(faas_compute_allowed_exact | default(none), faas_postgres_allowed_cidrs | default([])) | trim).split(',') | reject('equalto', '') | list %}
+{% macro faas_sshd() %}
+{% if (faas_ssh_restricted | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+{% for cidr in faas_ssh_private_cidrs | default([]) %}
+    {{ faas_priv }}{{ 'ip6' if ':' in cidr else 'ip' }} saddr {{ cidr }} tcp dport 22 accept comment "sshd from the private network"
+{% endfor %}
+{% for cidr in faas_ssh_allowed_cidrs | default([]) %}
+    {{ 'ip6' if ':' in cidr else 'ip' }} saddr {{ cidr }} tcp dport 22 accept comment "sshd from an operator source"
+{% endfor %}
+{% else %}
+    tcp dport 22 accept                # sshd; provider firewall/IAP applies the source boundary
+{% endif %}
+{% endmacro %}
 
 table inet faas {
   counter drop_v4_10_0_0_0_8 {}
@@ -21,23 +59,50 @@ table inet faas {
   counter drop_v6_fc00___7 {}
   counter drop_v6_fe80___10 {}
   counter drop_v6_ff00___8 {}
-  chain input {
+{% set faas_entry_v4 = [] %}{% set faas_entry_v6 = [] %}{% for addr in faas_public_entry_addrs | default([]) %}{% set _ = (faas_entry_v6 if ':' in addr else faas_entry_v4).append(addr) %}{% endfor %}{% set faas_entry_proxy_v4 = (faas_cloudflare_ipv4_cidrs | default([])) if faas_cloudflare_origin_only | default(false) else [] %}{% set faas_entry_proxy_v6 = (faas_cloudflare_ipv6_cidrs | default([])) if faas_cloudflare_origin_only | default(false) else [] %}{% set faas_entry_families = ([['v4', 'ipv4_addr', faas_entry_proxy_v4]] if faas_entry_v4 else []) + ([['v6', 'ipv6_addr', faas_entry_proxy_v6]] if faas_entry_v6 else []) %}{% for suffix, key_type, proxies in faas_entry_families %}  set public_entry_rate_{{ suffix }} {
+    type {{ key_type }}
+    size 65536
+    flags dynamic,timeout
+    timeout 1m
+  }
+  set public_entry_conns_{{ suffix }} {
+    type {{ key_type }}
+    size 65536
+    flags dynamic
+  }
+  set public_block_{{ suffix }} {
+    type {{ key_type }}
+    flags interval,timeout
+  }
+{% if proxies %}  set public_entry_proxy_{{ suffix }} {
+    type {{ key_type }}
+    flags interval
+    auto-merge
+    elements = { {{ proxies | join(', ') }} }
+  }
+{% endif %}{% endfor %}  chain input {
     type filter hook input priority 0; policy drop;
-    ct state established,related accept
+{% for addr in faas_public_entry_addrs | default([]) %}{% set fam = 'ip6' if ':' in addr else 'ip' %}    {{ fam }} daddr {{ addr }} {{ fam }} saddr @public_block_{{ 'v6' if ':' in addr else 'v4' }} counter drop comment "public entry block list"
+{% endfor %}    ct state established,related accept
     iif lo accept
     iifname "br-tenants" ip daddr {{ masquerade_cidr }} accept
     iifname "br-tenants" tcp dport { 80,443 } accept
     iifname "br-tenants" meta l4proto { icmp, ipv6-icmp } accept
     iifname "br-tenants" drop
-{% if faas_cloudflare_origin_only | default(false) and (faas_custom_domain_tls | default(false) | string | lower) not in ["true", "yes", "on", "1"] %}    tcp dport 22 accept                # sshd; provider firewall/IAP applies the source boundary
-{% for cidr in faas_cloudflare_ipv4_cidrs %}    ip saddr {{ cidr }} tcp dport { 80,443 } accept comment "gateway via Cloudflare"
+{% if faas_public_entry_addrs | default([]) %}{% for addr in faas_public_entry_addrs %}{% set fam = 'ip6' if ':' in addr else 'ip' %}{% set suffix = 'v6' if ':' in addr else 'v4' %}{% set exempt = (' ' ~ fam ~ ' saddr != @public_entry_proxy_' ~ suffix) if (faas_entry_proxy_v6 if ':' in addr else faas_entry_proxy_v4) else '' %}    {{ fam }} daddr {{ addr }} tcp dport 443{{ exempt }} ct state new add @public_entry_rate_{{ suffix }} { {{ fam }} saddr limit rate over 200/second burst 800 packets } counter drop comment "public entry new connections per source"
+    {{ fam }} daddr {{ addr }} tcp dport 443{{ exempt }} ct state new add @public_entry_conns_{{ suffix }} { {{ fam }} saddr ct count over 1024 } counter drop comment "public entry connections per source"
+    {{ fam }} daddr {{ addr }} tcp dport 443 accept comment "public entry"
+{% endfor %}{% for addr in faas_public_entry_addrs %}    {{ 'ip6' if ':' in addr else 'ip' }} daddr {{ addr }} drop comment "public entry carries 443 only"
+{% endfor %}{{ faas_sshd() }}{% elif faas_cloudflare_origin_only | default(false) and (faas_custom_domain_tls | default(false) | string | lower) not in ["true", "yes", "on", "1"] %}{{ faas_sshd() }}{% for cidr in faas_cloudflare_ipv4_cidrs %}    ip saddr {{ cidr }} tcp dport { 80,443 } accept comment "gateway via Cloudflare"
 {% endfor %}{% for cidr in faas_cloudflare_ipv6_cidrs %}    ip6 saddr {{ cidr }} tcp dport { 80,443 } accept comment "gateway via Cloudflare"
-{% endfor %}{% elif (faas_custom_domain_tls | default(false) | string | lower) in ["true", "yes", "on", "1"] %}    tcp dport { 22,80,443 } accept     # sshd + public edge; customer domains connect directly (ADR-520), platform hosts still answer Cloudflare only at Caddy
+{% endfor %}{% elif (faas_custom_domain_tls | default(false) | string | lower) in ["true", "yes", "on", "1"] %}{% if (faas_ssh_restricted | default(false) | string | lower) in ["true", "yes", "on", "1"] %}{{ faas_sshd() }}    tcp dport { 80,443 } accept     # public edge; customer domains connect directly (ADR-520), platform hosts still answer Cloudflare only at Caddy
+{% else %}    tcp dport { 22,80,443 } accept     # sshd + public edge; customer domains connect directly (ADR-520), platform hosts still answer Cloudflare only at Caddy
+{% endif %}{% else %}{% if (faas_ssh_restricted | default(false) | string | lower) in ["true", "yes", "on", "1"] %}{{ faas_sshd() }}    tcp dport { 80,443 } accept     # gatewayd-public public listener
 {% else %}    tcp dport { 22,80,443 } accept     # sshd + gatewayd-public public listener
-{% endif -%}
+{% endif %}{% endif -%}
 {% if faas_postgres_allowed_cidrs is defined and faas_postgres_allowed_cidrs -%}
 {% for cidr in faas_postgres_allowed_cidrs -%}
-    ip saddr {{ cidr }} tcp dport 5432 accept comment "faas postgres from compute"
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport 5432 accept comment "faas postgres from compute"
 {% endfor -%}
 {% endif -%}
 {% if faas_postgres_standby_address | default('') -%}
@@ -45,48 +110,69 @@ table inet faas {
 {% endif -%}
 {% if faas_pgbouncer_enabled | default(false) and faas_postgres_allowed_cidrs is defined and faas_postgres_allowed_cidrs -%}
 {% for cidr in faas_postgres_allowed_cidrs -%}
-    ip saddr {{ cidr }} tcp dport {{ faas_pgbouncer_listen_port | default(6432) }} accept comment "faas pgbouncer from compute"
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport {{ faas_pgbouncer_listen_port | default(6432) }} accept comment "faas pgbouncer from compute"
 {% endfor -%}
 {% endif -%}
 {% if faas_compute_allowed_cidrs is defined and faas_compute_allowed_cidrs -%}
 {% for cidr in faas_compute_allowed_cidrs -%}
-    ip saddr {{ cidr }} tcp dport { {{ faas_compute_allowed_ports | join(', ') }} } accept comment "faas control services from compute"
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport { {{ faas_compute_allowed_ports | join(', ') }} } accept comment "faas control services from compute"
+{% endfor -%}
+{% endif -%}
+{% if faas_database_allowed_cidrs is defined and faas_database_allowed_cidrs -%}
+{% for cidr in faas_database_allowed_cidrs -%}
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport { {{ faas_database_allowed_ports | join(', ') }} } accept comment "pgproxyd from database nodes"
 {% endfor -%}
 {% endif -%}
 {% if (faas_livequeryd_managed | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_compute_allowed_cidrs is defined and faas_compute_allowed_cidrs -%}
 {% for cidr in faas_compute_allowed_cidrs -%}
-    ip saddr {{ cidr }} tcp dport {{ (faas_livequeryd_listen | default('0.0.0.0:9480')).rsplit(':', 1)[1] }} accept comment "live-query hub from realtimed (ADR-20261016151947)"
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport {{ (faas_livequeryd_listen | default('0.0.0.0:9480')).rsplit(':', 1)[1] }} accept comment "live-query hub from realtimed (ADR-20261016151947)"
 {% endfor -%}
 {% endif -%}
 {% if (faas_edge_on_compute_nodes | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_edge_private_listen_addr | default('') and faas_compute_allowed_cidrs is defined and faas_compute_allowed_cidrs -%}
 {% for cidr in faas_compute_allowed_cidrs -%}
-    ip saddr {{ cidr }} tcp dport {{ faas_edge_private_listen_addr.rsplit(':', 1)[1] }} accept comment "faas app edge forwards from compute (ADR-1343)"
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport {{ faas_edge_private_listen_addr.rsplit(':', 1)[1] }} accept comment "faas app edge forwards from compute (ADR-1343)"
 {% endfor -%}
 {% endif -%}
 {% if (faas_edge_on_compute_nodes | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_edge_peer_cidrs | default([]) -%}
 {% for cidr in faas_edge_peer_cidrs -%}
-    ip saddr {{ cidr }} tcp dport {{ faas_edge_peer_gateway_port | default(8080) }} accept comment "faas app edge compute-pool fallback (ADR-1343)"
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport {{ faas_edge_peer_gateway_port | default(8080) }} accept comment "faas app edge compute-pool fallback (ADR-1343)"
 {% endfor -%}
 {% endif -%}
 {% if (faas_edge_on_compute_nodes | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_control_plane_allowed_cidrs is defined and faas_control_plane_allowed_cidrs -%}
 {% for cidr in faas_control_plane_allowed_cidrs -%}
-    ip saddr {{ cidr }} tcp dport {{ faas_edge_connector_metrics_port | default(20241) }} accept comment "faas app edge connector metrics from control (ADR-1343)"
-    ip saddr {{ cidr }} tcp dport {{ faas_edge_control_port | default(9109) }} accept comment "faas app edge control listener from control (ADR-1343)"
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport {{ faas_edge_connector_metrics_port | default(20241) }} accept comment "faas app edge connector metrics from control (ADR-1343)"
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport {{ faas_edge_control_port | default(9109) }} accept comment "faas app edge control listener from control (ADR-1343)"
+{% endfor -%}
+{% endif -%}
+{% if (faas_object_gateway_on_compute_nodes | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_control_plane_allowed_cidrs is defined and faas_control_plane_allowed_cidrs -%}
+{% for cidr in faas_control_plane_allowed_cidrs -%}
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport {{ faas_object_gateway_control_port | default(9096) }} accept comment "faas s3 gateway control listener from control (ADR-20261031122757)"
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport {{ faas_object_gateway_connector_metrics_port | default(20242) }} accept comment "faas s3 tunnel connector metrics from control (ADR-20261031122757)"
 {% endfor -%}
 {% endif -%}
 {% if faas_control_plane_allowed_cidrs is defined and faas_control_plane_allowed_cidrs -%}
 {% for cidr in faas_control_plane_allowed_cidrs -%}
-    ip saddr {{ cidr }} tcp dport { {{ faas_control_plane_allowed_ports | join(', ') }} } accept comment "faas compute services from control"
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport { {{ faas_control_plane_allowed_ports | join(', ') }} } accept comment "faas compute services from control"
+{% endfor -%}
+{% endif -%}
+{% if faas_compute_peer_cidrs -%}
+{% for cidr in faas_compute_peer_cidrs -%}
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport { {{ faas_compute_peer_ports | default([50051, 9091]) | join(', ') }} } accept comment "faas vmmd and schedd from peer compute nodes (ADR-20261110120000)"
 {% endfor -%}
 {% endif -%}
 {% if (faas_obs_logs_enabled | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_compute_allowed_cidrs is defined and faas_compute_allowed_cidrs -%}
 {% for cidr in faas_compute_allowed_cidrs -%}
-    ip saddr {{ cidr }} tcp dport 3100 accept comment "Loki push from compute Promtail (ADR-20261023124955)"
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport 3100 accept comment "Loki push from compute Promtail (ADR-20261023124955)"
 {% endfor -%}
 {% endif -%}
 {% if (faas_obs_logs_enabled | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_control_plane_allowed_cidrs is defined and faas_control_plane_allowed_cidrs -%}
 {% for cidr in faas_control_plane_allowed_cidrs -%}
-    ip saddr {{ cidr }} tcp dport 9080 accept comment "Promtail metrics scraped from control (ADR-20261023124955)"
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport 9080 accept comment "Promtail metrics scraped from control (ADR-20261023124955)"
+{% endfor -%}
+{% endif -%}
+{% if (faas_disk_encryption | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_tang_allowed_cidrs | default([]) -%}
+{% for cidr in faas_tang_allowed_cidrs -%}
+    {{ faas_priv }}ip saddr {{ cidr }} tcp dport {{ faas_tang_port | default(7500) }} accept comment "faas Tang key server from the fleet (ADR-20261109120000)"
 {% endfor -%}
 {% endif -%}
 {% if faas_tcpd_enabled | default(false) and faas_tcpd_allowed_cidrs | default([]) -%}
@@ -131,6 +217,9 @@ table inet faas {
 {% if faas_service_tcp_enabled | default(false) -%}
 {{ '    ' }}ip daddr 198.19.0.0/16 drop     # ADR-576: service addresses never leave the host
 {% endif -%}
+{% if faas_database_route_enabled | default(false) -%}
+{{ '    ' }}ip daddr 198.18.0.1 drop     # ADR-1027: the database route never leaves the host
+{% endif -%}
 {{ '    ' }}tcp dport { 25,465,587 } drop
 {% if overlay_cidrs is defined and overlay_cidrs -%}
 {% for cidr in overlay_cidrs -%}
@@ -150,12 +239,17 @@ table inet faas {
     type filter hook output priority 0; policy accept;
   }
 
-{% if faas_service_tcp_enabled | default(false) -%}
+{% if faas_service_tcp_enabled | default(false) or faas_database_route_enabled | default(false) -%}
 {{ '  ' }}chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
-    iifname "{{ tenant_bridge | default('br-tenants') }}" ip daddr 198.19.0.0/16 tcp dport { {{ '443, ' if faas_service_tcp_https_enabled | default(false) else '' }}10080, 10081 } dnat ip to {{ bridge_cidr.split('/')[0] }}
+{% if faas_service_tcp_enabled | default(false) -%}
+{{ '    ' }}iifname "{{ tenant_bridge | default('br-tenants') }}" ip daddr 198.19.0.0/16 tcp dport { {{ '443, ' if faas_service_tcp_https_enabled | default(false) | bool else '' }}10080, 10081 } dnat ip to {{ bridge_cidr.split('/')[0] }}
     iifname "{{ tenant_bridge | default('br-tenants') }}" ip daddr 198.19.0.0/16 meta l4proto tcp dnat ip to {{ bridge_cidr.split('/')[0] }}:10082
-  }
+{% endif -%}
+{% if faas_database_route_enabled | default(false) -%}
+{{ '    ' }}iifname "{{ tenant_bridge | default('br-tenants') }}" ip daddr 198.18.0.1 tcp dport 5432 dnat ip to {{ bridge_cidr.split('/')[0] }}:10083
+{% endif -%}
+{{ '  ' }}}
 
 {% endif -%}
 {{ '  ' }}chain postrouting {

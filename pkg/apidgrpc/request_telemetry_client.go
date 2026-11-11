@@ -100,6 +100,12 @@ func DialRequestTelemetry(ctx context.Context, target string, tlsCfg *tls.Config
 	return &RequestTelemetryClientImpl{conn: conn, cli: apidpb.NewRequestTelemetryClient(conn)}, nil
 }
 
+// RequestIDLookups returns a client for the lookup stream apid serves beside
+// RequestTelemetry on the same connection (ADR-20261101085552).
+func (c *RequestTelemetryClientImpl) RequestIDLookups() apidpb.RequestIDLookupsClient {
+	return apidpb.NewRequestIDLookupsClient(c.conn)
+}
+
 // NewRequestTelemetryClient wraps an already-dialed connection
 // (used by bufconn tests in pkg/apidgrpc/).
 func NewRequestTelemetryClient(conn *grpc.ClientConn) *RequestTelemetryClientImpl {
@@ -144,6 +150,18 @@ func (c *RequestTelemetryClientImpl) RecordRequestIDJournalBatch(ctx context.Con
 	receipt, err := c.cli.RecordRequestIDJournalBatch(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("apidgrpc: RecordRequestIDJournalBatch: %w", err)
+	}
+	return receipt, nil
+}
+
+// AddRequestAnalyticsRollups ships one gateway batch of per-minute analytics
+// rollups (ADR-20261103113952 amendment 5). The wrapped error keeps the gRPC
+// status, so callers can detect an apid that predates the RPC with
+// status.Code.
+func (c *RequestTelemetryClientImpl) AddRequestAnalyticsRollups(ctx context.Context, req *apidpb.AddRequestAnalyticsRollupsRequest) (*apidpb.AddRequestAnalyticsRollupsResponse, error) {
+	receipt, err := c.cli.AddRequestAnalyticsRollups(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("apidgrpc: AddRequestAnalyticsRollups: %w", err)
 	}
 	return receipt, nil
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -43,6 +44,11 @@ func validateRealtimeCallbackURL(raw string) *api.Problem {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return api.ErrRealtimeInvalid("callback_url must be an absolute http:// or https:// URL")
+	}
+	// The URL is stored and returned as plain text; credentials belong in
+	// the sealed callback_auth_token. A fragment never reaches the app.
+	if u.User != nil || u.Fragment != "" {
+		return api.ErrRealtimeInvalid("callback_url must not contain credentials or a fragment; send credentials as callback_auth_token")
 	}
 	return nil
 }
@@ -265,10 +271,24 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 // previewOn decides one realtime preview for a request: the platform flag
 // once an operator wrote it, otherwise the environment gate.
 func (s *Service) previewOn(r *http.Request, acct state.Account, flagKey string, legacy bool) bool {
-	if s.PreviewReleased == nil {
-		return legacy
+	released := legacy
+	if s.PreviewReleased != nil {
+		released = s.PreviewReleased(r, acct, flagKey, legacy)
 	}
-	return s.PreviewReleased(r, acct, flagKey, legacy)
+	if !released || s.NodesServePreview == nil {
+		return released
+	}
+	node, ok := previewNodeCapability[flagKey]
+	return !ok || s.NodesServePreview(node)
+}
+
+// previewNodeCapability names the node capability each realtime preview
+// flag needs.
+var previewNodeCapability = map[string]string{
+	platformflags.RealtimeResume:    realtime.NodePreviewResume,
+	platformflags.RealtimeTickets:   realtime.NodePreviewTickets,
+	platformflags.RealtimeAccess:    realtime.NodePreviewAccess,
+	platformflags.RealtimeOccupancy: realtime.NodePreviewOccupancy,
 }
 
 // realtimeAccountConnectionLimit is the account's plan allowance of concurrent
@@ -278,7 +298,7 @@ func (s *Service) realtimeAccountConnectionLimit(ctx context.Context, accountID 
 	if !s.FairUseEnabled {
 		return 0, nil
 	}
-	acct, err := s.Host.Store().AccountByID(ctx, accountID)
+	acct, err := s.realtimeAccount(ctx, accountID)
 	if err != nil {
 		return 0, fmt.Errorf("realtime account %s plan: %w", accountID, err)
 	}
@@ -290,7 +310,8 @@ func (s *Service) realtimeAccountConnectionLimit(ctx context.Context, accountID 
 }
 
 // SyncAppEndpoints registers an app's endpoints again, so a change to its
-// live routes reaches realtimed without waiting for reconciliation.
+// live routes reaches realtimed without waiting for reconciliation. It
+// withdraws an endpoint whose owner no longer serves, as reconciliation does.
 func (s *Service) SyncAppEndpoints(ctx context.Context, appID string) error {
 	store, ok := realtimeEndpointStore(s)
 	if !ok || s.Registrar == nil {
@@ -301,8 +322,9 @@ func (s *Service) SyncAppEndpoints(ctx context.Context, appID string) error {
 		return fmt.Errorf("list realtime endpoints for app %s: %w", appID, err)
 	}
 	var errs []error
+	ctx = withEndpointPass(ctx)
 	for _, row := range rows {
-		if err := s.syncManagedRealtimeEndpoint(ctx, row); err != nil {
+		if err := s.reconcileManagedRealtimeEndpoint(ctx, row); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -313,6 +335,9 @@ func (s *Service) unsealRealtimeCredential(ctx context.Context, sealed []byte) (
 	if len(sealed) == 0 {
 		return nil, nil
 	}
+	if plaintext, ok := s.unsealed.get(sealed); ok {
+		return plaintext, nil
+	}
 	identities := s.Host.HostIdentitiesForUnseal(ctx)
 	if len(identities) == 0 {
 		return nil, errors.New("realtime credential identity unavailable")
@@ -321,6 +346,7 @@ func (s *Service) unsealRealtimeCredential(ctx context.Context, sealed []byte) (
 	if err != nil {
 		return nil, fmt.Errorf("realtime credential unseal: %w", err)
 	}
+	s.unsealed.put(sealed, plaintext)
 	return plaintext, nil
 }
 

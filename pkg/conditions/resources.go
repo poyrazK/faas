@@ -116,14 +116,17 @@ func databaseFailedMessage(d api.ManagedPostgresDatabase) string {
 
 // Domain returns a custom domain's status from its durable API response.
 func Domain(d api.CustomDomainResponse, observedAt time.Time) api.ResourceStatus {
-	verified, cert := domainVerified(d), domainCertificate(d)
+	verified, cert := domainVerified(d, observedAt), domainCertificate(d, observedAt)
 	ready := api.Condition{Type: api.ConditionReady, Status: api.ConditionTrue, Reason: api.ConditionReasonServing,
 		Message: "The domain serves the app over HTTPS."}
 	for _, c := range []api.Condition{verified, cert} {
 		if c.Status != api.ConditionTrue {
-			ready.Status, ready.Reason, ready.Message = api.ConditionFalse, c.Reason, c.Message
+			ready.Status, ready.Reason, ready.Message, ready.Terminal = api.ConditionFalse, c.Reason, c.Message, c.Terminal
 			break
 		}
+	}
+	if d.Readiness != nil && !d.HTTPSReadyAt(observedAt) && ready.Status == api.ConditionTrue {
+		ready.Status, ready.Reason, ready.Message = api.ConditionFalse, d.Readiness.Status, "Domain activation is incomplete: "+d.Readiness.Status+"."
 	}
 	return api.ResourceStatus{
 		Kind: api.ResourceKindDomain, Name: d.Domain, ObservedAt: observedAt.UTC().Format(time.RFC3339Nano),
@@ -131,7 +134,11 @@ func Domain(d api.CustomDomainResponse, observedAt time.Time) api.ResourceStatus
 	}
 }
 
-func domainVerified(d api.CustomDomainResponse) api.Condition {
+func domainVerified(d api.CustomDomainResponse, at time.Time) api.Condition {
+	if d.VerificationExpiredAt(at) {
+		return api.Condition{Type: api.ConditionVerified, Status: api.ConditionFalse, Reason: "verification_expired", Terminal: true,
+			Message: "The verification claim expired; run domain setup again to obtain a new TXT proof."}
+	}
 	if d.Verified {
 		return api.Condition{Type: api.ConditionVerified, Status: api.ConditionTrue, Reason: api.ConditionReasonVerified,
 			Since: d.VerifiedAt, Message: "Domain ownership is verified."}
@@ -140,17 +147,31 @@ func domainVerified(d api.CustomDomainResponse) api.Condition {
 		Message: "Ownership is not verified yet; publish the domain's DNS records."}
 }
 
-func domainCertificate(d api.CustomDomainResponse) api.Condition {
+func domainCertificate(d api.CustomDomainResponse, at time.Time) api.Condition {
 	c := api.Condition{Type: api.ConditionCertificateReady, Status: api.ConditionFalse, Reason: d.CertStatus}
 	switch {
+	case d.VerificationExpiredAt(at):
+		c.Reason, c.Message, c.Terminal = "verification_expired", "The verification claim expired; recreate the binding before certificate issuance.", true
 	case d.CertStatus == certDNSDrifted:
 		c.Message = "The domain's DNS no longer points to Gregale."
 	case !d.Verified:
 		c.Reason, c.Message = certPending, "The certificate is issued after ownership is verified."
 	case d.CertStatus == certIssued, d.CertStatus == certRenewing, d.CertStatus == certCDN:
 		c.Status, c.Message = api.ConditionTrue, "A certificate serves the domain."
-		if d.CertExpiresAt != "" {
-			c.Message = "A certificate serves the domain until " + d.CertExpiresAt + "."
+		expires := d.CertExpiresAt
+		if expires == "" {
+			expires = d.CertNotAfter
+		}
+		if expires != "" {
+			end, err := time.Parse(time.RFC3339Nano, expires)
+			switch {
+			case err != nil:
+				c.Status, c.Reason, c.Message = api.ConditionUnknown, api.ConditionReasonNotAssessed, "The recorded certificate expiry is invalid."
+			case !end.After(at):
+				c.Status, c.Reason, c.Message = api.ConditionFalse, "certificate_expired", "The certificate expired at "+expires+"; renewal is required."
+			default:
+				c.Message = "A certificate serves the domain until " + expires + "."
+			}
 		}
 	case d.CertStatus == certPending:
 		c.Message = "The certificate is being issued."
@@ -167,25 +188,41 @@ func domainCertificate(d api.CustomDomainResponse) api.Condition {
 
 // Cron returns a cron's status from its API response and its newest run,
 // which is nil when it has never run.
-func Cron(cron api.CronResponse, last *api.CronRun, observedAt time.Time) api.ResourceStatus {
+// Cron returns a cron's status. paused is why the scheduler skips the cron
+// although it is enabled and not suspended (pkg/apid/cronrun.Paused), or "".
+func Cron(cron api.CronResponse, last *api.CronRun, observedAt time.Time, paused string) api.ResourceStatus {
 	return api.ResourceStatus{
 		Kind: api.ResourceKindCron, Name: cron.ID, ObservedAt: observedAt.UTC().Format(time.RFC3339Nano),
-		Conditions: []api.Condition{cronReady(cron), cronLastRun(last)},
+		Conditions: []api.Condition{cronReady(cron, paused), cronLastRun(last)},
 	}
 }
 
-func cronReady(cron api.CronResponse) api.Condition {
+func cronReady(cron api.CronResponse, paused string) api.Condition {
 	c := api.Condition{Type: api.ConditionReady, Status: api.ConditionFalse}
 	switch {
 	case !cron.Enabled:
 		c.Reason, c.Terminal, c.Message = api.ConditionReasonDisabled, true, "The cron is disabled."
 	case cron.SuspendedReason != "":
 		c.Reason, c.Message = cron.SuspendedReason, "The cron is suspended: "+cron.SuspendedReason+"."
+	case paused != "":
+		c.Reason, c.Message = paused, "The cron does not fire: "+cronPausedText(paused)
 	default:
 		c.Status, c.Reason = api.ConditionTrue, api.ConditionReasonScheduled
 		c.Message = "The cron fires on schedule " + cron.Schedule + "."
 	}
 	return c
+}
+
+func cronPausedText(paused string) string {
+	switch paused {
+	case "plan_limit":
+		return "it is over the plan's cron limits, and only the oldest crons within them run."
+	case "account_suspended":
+		return "the account that owns the app is suspended."
+	case "budget_held":
+		return "a compute budget holds the app; the cron runs once when the hold lifts."
+	}
+	return paused + "."
 }
 
 func cronLastRun(last *api.CronRun) api.Condition {

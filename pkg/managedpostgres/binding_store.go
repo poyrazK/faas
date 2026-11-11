@@ -45,6 +45,18 @@ func (s *MemoryStore) ReserveBinding(ctx context.Context, binding Binding) (Bind
 	if s.databaseCutoverPinned(binding.DatabaseID) {
 		return Binding{}, false, ErrConflict
 	}
+	if limit := binding.appBindingLimit; limit > 0 {
+		count := 0
+		for _, existing := range s.bindings {
+			if existing.AppID == binding.AppID && existing.State != BindingStateDeleted {
+				count++
+			}
+		}
+		if count >= limit {
+			return Binding{}, false, &BindingLimitError{Limit: limit, Observed: count}
+		}
+	}
+	binding.appBindingLimit = 0
 	if binding.RetryAt.IsZero() {
 		binding.RetryAt = binding.CreatedAt
 	}
@@ -92,7 +104,10 @@ func (s *MemoryStore) DueBindings(_ context.Context, includeProvisioning bool, l
 		provisioning := binding.State == BindingStateProvisioning || binding.State == BindingStateFailed
 		rotationCleanup := binding.RotationCleanupReady &&
 			(binding.State == BindingStateReady || binding.State == BindingStateRetiring)
-		if binding.State != BindingStateDeleting && !rotationCleanup && (!includeProvisioning || !provisioning) {
+		refresh, refreshQueued := s.rotationRefreshes[binding.ID]
+		refreshQueued = refreshQueued && refresh.WakeID == binding.RotationWakeID
+		rotationRefresh := bindingRotationNeedsRefresh(binding) && !refreshQueued
+		if binding.State != BindingStateDeleting && !rotationCleanup && !rotationRefresh && (!includeProvisioning || !provisioning) {
 			continue
 		}
 		if binding.RetryAt.After(now) || binding.LeaseUntil.After(now) {
@@ -238,6 +253,7 @@ func (s *MemoryStore) FinishBindingProvision(ctx context.Context, bindingID, lea
 	binding.RetryAt = now
 	binding.UpdatedAt = now
 	s.bindings[bindingID] = binding
+	s.queueBindingRotationRefreshLocked(binding)
 	return cloneBinding(binding), nil
 }
 

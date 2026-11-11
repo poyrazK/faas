@@ -128,6 +128,27 @@ func TestEvaluateVerificationAgeBoundaryAndClock(t *testing.T) {
 	}
 }
 
+// A caller clock behind the server's must not turn the server's own runtime,
+// consumer and acknowledgement observations into future timestamps; seen in
+// production as runtime_unknown on healthy apps from a laptop 236 ms slow.
+func TestEvaluateToleratesCallerClockBehindServer(t *testing.T) {
+	inventory, policy, now := fixture()
+	slowClient := now.Add(-200 * time.Millisecond)
+	report, err := Evaluate(inventory, policy, slowClient)
+	if err != nil || !report.Passed || slices.Contains(codes(report.Blockers), "runtime_unknown") {
+		t.Fatalf("slow caller clock must not block current evidence: %+v %v", report, err)
+	}
+	if !report.CheckedAt.Equal(now) {
+		t.Fatalf("checked_at = %s, want server time %s", report.CheckedAt, now)
+	}
+	future := now.Add(time.Second)
+	inventory.Bindings[0].Verification.CheckedAt = &future
+	report, err = Evaluate(inventory, policy, slowClient)
+	if err != nil || report.Passed || !slices.Contains(codes(report.Blockers), "verification_time_future") {
+		t.Fatalf("evidence after the server's own clock must still block: %+v %v", report, err)
+	}
+}
+
 func TestEvaluateRuntimeCannotBeHiddenByProbeOrRefreshCompletion(t *testing.T) {
 	for _, tc := range []struct {
 		name, code string
@@ -198,6 +219,32 @@ func TestEvaluateInactiveRuntimeDoesNotClaimAdoption(t *testing.T) {
 	report, err := Evaluate(inventory, policy, now)
 	if err != nil || !report.Passed || !slices.Contains(codes(report.Warnings), "runtime_inactive") {
 		t.Fatalf("inactive runtime=%+v %v", report, err)
+	}
+}
+
+func TestEvaluatePreparedRollbackRequiresAnInternalPolicyAndNoResidents(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		allow, resident, passed bool
+	}{
+		{"public policy", false, false, false},
+		{"prepared cold target", true, false, true},
+		{"prepared resident target", true, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inventory, policy, now := fixture()
+			policy.AllowPreparedRollback = tc.allow
+			d := &inventory.RuntimeFreshness.Deployments[0]
+			d.DeploymentStatus, d.Status = "snapshotting", "inactive"
+			d.Serving, d.Resident = api.BindingRuntimeInstanceCounts{}, api.BindingRuntimeInstanceCounts{}
+			if tc.resident {
+				d.Resident.Current, d.Status = 1, "current"
+			}
+			report, err := Evaluate(inventory, policy, now)
+			if err != nil || report.Passed != tc.passed {
+				t.Fatalf("prepared rollback report=%+v err=%v", report, err)
+			}
+		})
 	}
 }
 
@@ -273,7 +320,7 @@ func TestEvaluateIncompleteReadsAndDeploymentIdentityFailClosed(t *testing.T) {
 }
 
 func TestEvaluateUnsupportedCoverageRequiresExplicitWaiver(t *testing.T) {
-	for _, kind := range []string{api.BindingTypeQueue, api.BindingTypeOutbound} {
+	for _, kind := range []string{api.BindingTypeOutbound} {
 		for _, allow := range []bool{false, true} {
 			t.Run(kind+map[bool]string{false: " strict", true: " waived"}[allow], func(t *testing.T) {
 				inventory, policy, now := fixture()
@@ -286,12 +333,65 @@ func TestEvaluateUnsupportedCoverageRequiresExplicitWaiver(t *testing.T) {
 			})
 		}
 	}
+	// A pull consumer is an explicit exclusion, like release-only credentials:
+	// it neither claims verification nor blocks without a waiver.
+	{
+		inventory, policy, now := fixture()
+		inventory.Bindings = append(inventory.Bindings, api.AppBindingInventoryItem{Type: api.BindingTypeQueue, Name: "jobs", Binding: "jobs", Access: "pull", Scope: "app", State: "enabled"})
+		report, err := Evaluate(inventory, policy, now)
+		pull := report.Bindings[len(report.Bindings)-1]
+		for _, item := range report.Bindings {
+			if item.Type == api.BindingTypeQueue {
+				pull = item
+			}
+		}
+		if err != nil || !report.Passed || report.Coverage != "complete" || pull.Status != "skipped" || pull.Reason != "pull_consumer_external" ||
+			!slices.Contains(codes(report.Warnings), "queue_pull_consumer_unverified") {
+			t.Fatalf("pull consumer was not an explicit exclusion: %+v %v", report, err)
+		}
+	}
 	inventory, policy, now := fixture()
 	policy.AllowUnsupported = true
 	inventory.Bindings = []api.AppBindingInventoryItem{{Type: "future_family", State: "enabled"}}
 	report, err := Evaluate(inventory, policy, now)
 	if err != nil || report.Passed || !slices.Contains(codes(report.Blockers), "binding_type_unknown") {
 		t.Fatalf("unknown type was waived: %+v %v", report, err)
+	}
+}
+
+// chronolake-data-api (production 2026-11-09) has only a data_api binding and
+// no deployment; the gate used to block it forever with deployment_missing.
+func TestEvaluateDataAPIRuntimeAppIsExcludedNotBlocked(t *testing.T) {
+	inventory, policy, now := fixture()
+	inventory.VerificationDeploymentID, inventory.VerificationScope, inventory.RuntimeFreshness = "", "", nil
+	inventory.Bindings = []api.AppBindingInventoryItem{{Type: api.BindingTypePostgres, Name: "db", Binding: "DATABASE_URL", Access: "data_api", Scope: "default", State: "ready"}}
+	report, err := Evaluate(inventory, policy, now)
+	if err != nil || !report.Passed || report.Bindings[0].Status != "skipped" || report.Bindings[0].Reason != "data_api_runtime" ||
+		slices.Contains(codes(report.Blockers), "deployment_missing") || slices.Contains(codes(report.Blockers), "runtime_unknown") {
+		t.Fatalf("Data API runtime app should be excluded, not blocked: %+v %v", report, err)
+	}
+	policy.RequireBindings = true
+	if report, err = Evaluate(inventory, policy, now); err != nil || report.Passed {
+		t.Fatalf("--require-bindings must still fail with nothing verifiable: %+v %v", report, err)
+	}
+	inventory.Bindings = append(inventory.Bindings, api.AppBindingInventoryItem{Type: api.BindingTypeObjectStorage, Name: "assets", Binding: "ASSETS", Scope: "default", State: "active"})
+	policy.RequireBindings = false
+	if report, err = Evaluate(inventory, policy, now); err != nil || report.Passed || !slices.Contains(codes(report.Blockers), "deployment_missing") {
+		t.Fatalf("an ordinary binding still needs a deployment: %+v %v", report, err)
+	}
+}
+
+func TestEvaluateRequireBindingsBlocksEmptyScope(t *testing.T) {
+	inventory, policy, now := fixture()
+	inventory.Bindings = nil
+	report, err := Evaluate(inventory, policy, now)
+	if err != nil || !report.Passed || !slices.Contains(codes(report.Warnings), "no_bindings") {
+		t.Fatalf("default empty scope should warn and pass: %+v %v", report, err)
+	}
+	policy.RequireBindings = true
+	report, err = Evaluate(inventory, policy, now)
+	if err != nil || report.Passed || !slices.Contains(codes(report.Blockers), "no_bindings") {
+		t.Fatalf("--require-bindings must block an empty scope: %+v %v", report, err)
 	}
 }
 

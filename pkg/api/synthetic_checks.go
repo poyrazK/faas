@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // Stable problem codes for the ADR-748 synthetic check endpoints.
@@ -16,11 +17,11 @@ const (
 )
 
 var (
-	syntheticCheckNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+	syntheticCheckNamePattern = lazyregexp.New(`^[a-z][a-z0-9_-]{0,62}$`)
 	// syntheticCheckPathPattern mirrors synthetic_checks_path_chk: an
 	// origin-relative path ("/" or "/x…"), never "//host", no whitespace
 	// or backslashes, so the request can only reach the app's own host.
-	syntheticCheckPathPattern = regexp.MustCompile(`^/([^/\s\\][^\s\\]*)?$`)
+	syntheticCheckPathPattern = lazyregexp.New(`^/([^/\s\\][^\s\\]*)?$`)
 )
 
 // CreateSyntheticCheckRequest is the POST /v1/apps/{slug}/synthetics body.
@@ -75,6 +76,13 @@ type SyntheticCheckRun struct {
 	ErrorClass string `json:"error_class,omitempty"`
 }
 
+// SyntheticProbeCookieName names the cookie every synthetic probe carries.
+// A request with a cookie is never answered from the edge cache (ADR-122
+// D3), so a probe reaches the app even on a path the edge caches, and a
+// stale copy served because the app failed cannot pass a check
+// (ADR-20261104142830).
+const SyntheticProbeCookieName = "gregale_synthetic_probe"
+
 // NormalizeCreateSyntheticCheck applies defaults and checks the request
 // against the closed sets the synthetic_checks CHECKs enforce.
 func NormalizeCreateSyntheticCheck(req CreateSyntheticCheckRequest) (CreateSyntheticCheckRequest, *Problem) {
@@ -105,6 +113,15 @@ func NormalizeCreateSyntheticCheck(req CreateSyntheticCheckRequest) (CreateSynth
 // ErrSyntheticCheckInvalid is a 400 for a malformed check definition.
 func ErrSyntheticCheckInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeSyntheticCheckInvalid, "Invalid synthetic check", reason).
+		WithDocs(docsBase + "/synthetic-checks")
+}
+
+// ErrSyntheticCheckAppInternal is a 409 for a check on an internal app: the
+// public edge does not serve it, so every probe would fail
+// (ADR-20261031144636).
+func ErrSyntheticCheckAppInternal() *Problem {
+	return NewProblem(http.StatusConflict, CodeSyntheticCheckInvalid, "App is internal",
+		"synthetic checks probe the app's public hostname, which an internal app does not serve; make the app public to run checks").
 		WithDocs(docsBase + "/synthetic-checks")
 }
 

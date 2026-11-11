@@ -2,6 +2,8 @@ package apidserver
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -147,7 +149,7 @@ func (s *server) composePostgresPlan(ctx context.Context, acct state.Account, pr
 		return notProvided(composePostgresUnavailable)
 	}
 	limits, ok := api.ManagedPostgresLimitsFor(api.Plan(acct.Plan))
-	if !ok || limits.DatabasesMax == 0 || !limits.DevelopmentAllowed {
+	if !ok || managedPostgresNotInPlan(api.Plan(acct.Plan)) || !limits.DevelopmentAllowed {
 		return notProvided(composePostgresPlan)
 	}
 	databases, err := s.managedPostgres.List(ctx, acct.ID)
@@ -162,7 +164,7 @@ func (s *server) composePostgresPlan(ctx context.Context, acct state.Account, pr
 		}
 	}
 	for _, m := range candidates {
-		name := projectSlug + "-" + m.Name
+		name := composePostgresDatabaseName(projectSlug, m.Name, scope)
 		major, offered := composePostgresMajor(m.Image, discovery.Capabilities.PostgresMajors)
 		if !managedpostgres.ValidName(name) || !offered {
 			reasons[m.Name] = composePostgresUnsupported
@@ -214,6 +216,20 @@ func (s *server) composePostgresPlan(ctx context.Context, acct state.Account, pr
 		provisions[m.Name] = provision
 	}
 	return provisions, reasons, nil
+}
+
+func composePostgresDatabaseName(project, service, scope string) string {
+	if state.IsProductionScope(scope) {
+		return project + "-" + service
+	}
+	// Keep stages distinct even when long names need truncation. Include
+	// field boundaries so different project/service/scope tuples cannot alias.
+	sum := sha256.Sum256([]byte(project + "\x00" + service + "\x00" + scope))
+	name := project + "-" + scope + "-" + service
+	if len(name) > 46 {
+		name = strings.TrimRight(name[:46], "-")
+	}
+	return name + "-" + hex.EncodeToString(sum[:8])
 }
 
 // composePostgresOwnership scopes managed PostgreSQL calls to the personal

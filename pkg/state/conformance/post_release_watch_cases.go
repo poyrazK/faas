@@ -105,13 +105,17 @@ func testPostReleaseWatchCandidates(t *testing.T, fx *Fixture) {
 		t.Fatal(err)
 	}
 	complete(next.ID, time.Minute)
-	if c, ok := watched()[next.ID]; !ok || c.PredecessorID != release.ID {
-		t.Fatalf("watched = %+v, want %s against %s", watched(), next.ID, release.ID)
+	// The rolled-back release is never a rollback target (ADR-625 amendment
+	// 2026-11-10), so the watch compares against the last good release.
+	if c, ok := watched()[next.ID]; !ok || c.PredecessorID != previous.ID {
+		t.Fatalf("watched = %+v, want %s against %s", watched(), next.ID, previous.ID)
 	}
 	time.Sleep(10 * time.Millisecond)
+	// ADR-1445 amendment 5: a newer release that has not served (still
+	// building here) leaves the serving release watched.
 	pending := deploy("sha256:watch-pending", true)
-	if _, ok := watched()[next.ID]; ok {
-		t.Fatalf("release %s still watched after %s was created", next.ID, pending.ID)
+	if _, ok := watched()[next.ID]; !ok {
+		t.Fatalf("release %s not watched beside %s, which never served", next.ID, pending.ID)
 	}
 	optOut := deploy("sha256:watch-optout", false)
 	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, pending.ID, state.DeployFailed, "test"); err != nil {
@@ -124,6 +128,17 @@ func testPostReleaseWatchCandidates(t *testing.T, fx *Fixture) {
 	complete(optOut.ID, time.Minute)
 	if _, ok := watched()[optOut.ID]; ok {
 		t.Fatal("a release that opted out of automatic rollback was watched")
+	}
+	// A rollback target served before the release it replaced, which served
+	// too: re-activating it is not a fresh release to watch.
+	target, err := fx.Store.AutoRollbackDeploymentsTx(fx.Ctx, fx.App.ID, optOut.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != "" {
+		if _, ok := watched()[target]; ok {
+			t.Fatalf("rollback target %s was watched as a fresh release beside %s, which served", target, optOut.ID)
+		}
 	}
 	if err := store.RecordPostReleaseRolloutDecision(fx.Ctx, release.ID, json.RawMessage(`{`)); err == nil {
 		t.Fatal("an invalid decision was stored")

@@ -78,9 +78,8 @@ type InstanceStatRow struct {
 	// counter delta for that row. Otherwise the rollup Adds
 	// the per-row delta to vmmd_cpu_throttle_seconds_total{account_id,
 	// app_id} via the per-(account_id, app_id) baseline in
-	// cpuThrottleLastSeen. NaN is treated as 0. The cpu.max
-	// ratio gauge (vmmd_cpu_throttle_ratio{slice}) is the
-	// alert source; this counter is the dashboard top-N view.
+	// cpuThrottleLastSeen. NaN is treated as 0. The counter is
+	// the dashboard top-N view.
 	ThrottledUsec float64
 }
 
@@ -636,9 +635,10 @@ type OpsMetrics struct {
 	issueEventsRecorded *prometheus.CounterVec
 	// requestTelemetryRecorded (ADR-127 PR-B) — counter the
 	// apid gRPC handler (cmd/apid/grpc_server_request_telemetry.go)
-	// increments per outcome. outcome ∈ {inserted, rate_limited,
-	// db_error}. `inserted` is the §12 customer-telemetry-ingest
-	// panel (rate over 5m). `rate_limited` is the per-account
+	// increments per outcome. outcome ∈ {inserted, not_retained,
+	// rate_limited, db_error}. `inserted` is the §12 customer-telemetry-ingest
+	// panel (rate over 5m). `not_retained` is a row whose plan keeps no
+	// request telemetry (usage only). `rate_limited` is the per-account
 	// token-bucket overflow path (DebugTelemetryRequestsPerMinute
 	// exceeded). `db_error` is the per-row INSERT failure path.
 	// The closed label set keeps cardinality bounded.
@@ -670,7 +670,8 @@ type OpsMetrics struct {
 	// counter the gatewayd-public OTel handler increments when
 	// the apid AuthenticateKey RPC rejects the bearer token or
 	// the plan doesn't include telemetry. reason ∈
-	// {unauthenticated, plan_disabled, internal}. Single-registry:
+	// {unauthenticated, forbidden, not_released, plan_disabled,
+	// internal}. Single-registry:
 	// registered on every daemon; only gatewayd-public increments
 	// via IncrementGatewaydPublicOtelAuthFailures.
 	gatewaydPublicOtelAuthFailures *prometheus.CounterVec
@@ -1152,20 +1153,8 @@ type OpsMetrics struct {
 	// Layered above accountLabelSet the same way topTenantRPS
 	// is: an (account_id, app_id) pair admitted at the 10k
 	// account-id level can still be demoted past the top-100
-	// here. The counter is the dashboard top-N view; the
-	// FaasCpuStarvation alert (issue #301 acceptance #3) reads
-	// from the sibling throttleRatio gauge instead.
+	// here. The counter is the dashboard top-N view.
 	throttleSecondsTotal *prometheus.CounterVec
-	// throttleRatio (issue #301 / ADR-044): per-slice throttle
-	// ratio (throttle_delta / (throttle_delta + usage_delta))
-	// over the 5s sampler window. Gauge (not Counter) because
-	// the value is computed windowed, not cumulative. Labelled
-	// by slice ∈ {tenant-free, tenant-hobby, tenant-pro,
-	// tenant-scale}; the closed plan set is pre-instantiated at
-	// boot so the dashboard surfaces "no data" → "0" on an
-	// idle box. The FaasCpuStarvation alert reads
-	// throttleRatio{slice=~"tenant-.*"} > 0.8 for 5m.
-	throttleRatio *prometheus.GaugeVec
 	// topApps: the bounded top-N admission primitive that
 	// drives throttleSecondsTotal. Keyed on the composite
 	// (account_id, app_id); cap = topAppSetCap (100). See
@@ -1287,6 +1276,10 @@ type OpsMetrics struct {
 	// in the pre-instantiation loop below so every plan label surfaces
 	// in /metrics from the moment the daemon boots.
 	residentGBPerCustomer *prometheus.GaugeVec
+	// residentPayingCustomers: the per-plan paying-customer count behind
+	// residentGBPerCustomer, so FaasResidentGbPerCustomerHigh can skip a
+	// plan whose average comes from one or two accounts.
+	residentPayingCustomers *prometheus.GaugeVec
 	// billingCapExceededTotal: counter incremented by meterd's quota
 	// tick every time the per-account overage_cap_cents is met and
 	// the overage-row insert is skipped (issue #279). Labelled by
@@ -2367,7 +2360,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	ownerCacheTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_owner_cache_total",
-		Help: "schedd owner cache (ADR-1741) by outcome: hit, miss, invalidated (an app's generation moved), resync (every entry dropped), refused (an admission found its entry's generation moved), guarded_publish (a boot published on its admission's generation), guarded_publish_moved (the generation moved during the boot; it published through the fence), selection (a coordinated wake selected other than the entry's deployment; it decided from its own reads), organization (a team organization's app, which the cache does not serve).",
+		Help: "schedd owner cache (ADR-1741) by outcome: hit, miss, invalidated (an app's generation moved), resync (every entry dropped), refused (an admission found its entry's generation moved), guarded_publish (a boot published on its admission's generation), guarded_publish_moved (the generation moved during the boot; it published through the fence), selection (a wake named or selected a deployment other than the entry's production one, or an environment the entry does not serve; it decided from its own reads), organization (a team organization's app, which the cache does not serve).",
 	}, []string{"outcome"})
 	for _, outcome := range OwnerCacheOutcomes {
 		ownerCacheTotal.WithLabelValues(outcome)
@@ -2381,10 +2374,12 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	frozenCompressTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_frozen_compress_total",
-		Help: "Compressions of frozen instances into memory-only swap before memory pressure would park them (ADR-906 decision 6), by outcome.",
-	}, []string{"outcome"})
-	for _, outcome := range FrozenCompressOutcomes {
-		frozenCompressTotal.WithLabelValues(outcome)
+		Help: "Compressions of frozen instances into memory-only swap (ADR-906 decision 6), by what asked for them (pressure: before memory pressure would park them; proactive: a node near its RAM ceiling, ADR 20261031143521) and outcome.",
+	}, []string{"trigger", "outcome"})
+	for _, trigger := range FrozenCompressTriggers {
+		for _, outcome := range FrozenCompressOutcomes {
+			frozenCompressTotal.WithLabelValues(trigger, outcome)
+		}
 	}
 	frozenInstances := prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: prefix + "_frozen_instances",
@@ -3232,6 +3227,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_resident_gb_per_customer",
 		Help: "Month-to-date GB-RAM-hours divided by elapsed UTC-month hours and paying-customer count, per plan (ADR-031). Spec §12 target 0.305 (≈312 MB/customer); > 0.45 warns. Emitted by meterd once per ResidencyInterval.",
 	}, []string{"plan"})
+	residentPayingCustomers := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_resident_paying_customers",
+		Help: "Paying customers per plan counted by the last residency tick: the divisor of resident_gb_per_customer. Emitted by meterd once per ResidencyInterval.",
+	}, []string{"plan"})
 	billingCapExceededTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_billing_cap_exceeded_total",
 		Help: "Count of meterd quota ticks where accounts.overage_cap_cents was met and the overage-row insert was skipped (issue #279). Per-plan label so the §12 dashboard can split cap hits across plans. A non-zero rate is informational: a cap-hit account is operating as designed (the customer hit the operator-set monthly ceiling), not a failure mode.",
@@ -3699,18 +3698,13 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Cumulative CPU-seconds consumed by live instances, per (app, node) — sum over live siblings, source is vmmd's cpu_seconds wire field (issue #279 / PR-B).",
 	}, []string{"app", "node"})
 	// issue #301 / ADR-044: per-app CPU-throttle counter (the
-	// dashboard top-N view) + per-slice throttle ratio gauge (the
-	// FaasCpuStarvation alert source). See the field doc comments
-	// on throttleSecondsTotal and throttleRatio for the cardinality
-	// contract and the two-tier admission via topAppSet.
+	// dashboard top-N view). See the field doc comment on
+	// throttleSecondsTotal for the cardinality contract and the
+	// two-tier admission via topAppSet.
 	throttleSecondsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_cpu_throttle_seconds_total",
-		Help: "Cumulative CPU-seconds the cgroup spent throttled, per (account_id, app_id) — sum over live siblings, source is vmmd's cpu.stat throttled_usec (issue #301, ADR-044). Bounded at topAppSetCap (100) real cached pairs plus the (\"other\", \"other\") overflow; the (account_id, app_id) tuple is layered above accountLabelSet so a customer id at the 10k level can still be demoted past the top-100 here. Default overflow label is (\"other\", \"other\"); the panel selector {app_id!=\"other\"} excludes the overflow bucket. The FaasCpuStarvation alert reads the sibling throttleRatio gauge instead.",
+		Help: "Cumulative CPU-seconds the cgroup spent throttled, per (account_id, app_id) — sum over live siblings, source is vmmd's cpu.stat throttled_usec (issue #301, ADR-044). Bounded at topAppSetCap (100) real cached pairs plus the (\"other\", \"other\") overflow; the (account_id, app_id) tuple is layered above accountLabelSet so a customer id at the 10k level can still be demoted past the top-100 here. Default overflow label is (\"other\", \"other\"); the panel selector {app_id!=\"other\"} excludes the overflow bucket.",
 	}, []string{"account_id", "app_id"})
-	throttleRatio := prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: prefix + "_cpu_throttle_ratio",
-		Help: "Per-slice throttle ratio (throttle_delta / (throttle_delta + usage_delta)) over the 5s sampler window (issue #301, ADR-044). Labelled by slice ∈ {tenant-free, tenant-hobby, tenant-pro, tenant-scale}; the closed plan set is pre-instantiated at boot so the dashboard surfaces 'no data' → '0' on an idle box. The FaasCpuStarvation alert reads slice=~\"tenant-.*\" > 0.8 for 5m. Ratio is the operationally meaningful number — a counter delta alone would conflate 'lots of CPU, low throttle' with 'no CPU, no throttle'.",
-	}, []string{"slice"})
 	// Issue #169 / #172: scale-up trigger observability. Outcome
 	// label set is closed ({admit, reject_at_cap, no_signal,
 	// cooldown_held, min_floor_already, overage_cap_reached});
@@ -4066,7 +4060,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// only needs to be added here, not in two parallel MustRegister
 	// calls that would silently drift apart.
 	commonCollectors := []prometheus.Collector{
-		eventDelivery.deferrals, eventDelivery.waiting, eventDelivery.oldest,
+		eventDelivery.deferrals, eventDelivery.waiting, eventDelivery.oldest, eventDelivery.outcomes,
 		workerRecovery.apps, workerRecovery.replicas, workerRecovery.observedAt,
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
@@ -4077,7 +4071,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
 		buildExportCleanupTotal, buildExportCleanupErrors, buildExportBytes, builderSliceOOMKills,
-		residentGBPerCustomer, billingCapExceededTotal,
+		residentGBPerCustomer, residentPayingCustomers, billingCapExceededTotal,
 		meterdFloorAppliedTotal, meteredMBSecondsTotal,
 		// ADR-123 alert-preset signal series — PR-A (3) + PR-B (2). Each
 		// backs one of the 8 alert_presets catalog rows. Without
@@ -4150,7 +4144,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		apidGithubdBridgeEnqueuedTotal,
 		githubdPathFilterTotal,
 		githubdPushSkippedTotal,
-		throttleSecondsTotal, throttleRatio,
+		throttleSecondsTotal,
 		egressSourceErrors,
 		wakePhaseEmitted, wakeIdentityInvalid, wakePhaseDur, recoveryEventEmitted,
 		// ADR-124 follow-up #2: plan_gate_rescued_by_exclude counter
@@ -4356,7 +4350,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Customer-facing automatic error grouping ingest outcomes (ADR-096), labelled by outcome ∈ {ok, redaction_failed, rate_limited, db_error}. `ok` is the §12 customer-error-ingest panel (rate over 5m). `redaction_failed` is the tripwire for pkg/redact panicking — MUST stay at 0. `rate_limited` is the LRU-cardinality backstop firing when an app exceeds CardinalityLimit fingerprints. `db_error` is the publisher's per-row drop signal — incremented for EVERY row of a failed flush batch (the batch is drained before flushBatch is called, so failures always lose data; per-row observe gives the §12 panel an accurate outage timeline rather than only the 5th-consecutive-failure tripwire). Single-registry: registered on every daemon; only gatewayd-internal + apid increment via ObserveAppErrorsRecorded.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, appErrorsRecorded)
-	issueEventsRecorded := prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_issue_events_recorded_total", Help: "Gregale Issues accepted, duplicate, quota, rate, conflict, or persistence outcomes; no customer identifiers."}, []string{"outcome"})
+	issueEventsRecorded := prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_issue_events_recorded_total", Help: "Gregale Issues ingestion and bounded HTTP retry outcomes; no customer identifiers."}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, issueEventsRecorded)
 	// ADR-127 PR-B: production debugger ingest outcomes.
 	// outcome ∈ {inserted, rate_limited, db_error}. `inserted`
@@ -4382,7 +4376,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// increments via IncrementGatewaydPublicOtelSpansIngested.
 	gatewaydPublicOtelSpansIngested := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_otel_spans_ingested_total",
-		Help: "OTel spans writer ingest outcomes on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by outcome ∈ {inserted, rate_limited, db_error, shape_invalid}. `inserted` is the customer-telemetry-spans panel (rate over 5m). `rate_limited` is the per-account token-bucket overflow path (DebugTelemetryRequestsPerMinute exceeded). `db_error` is the apid WriteSpansSummary RPC failure path. `shape_invalid` is the OTLP body parser rejection (malformed JSON, missing trace_id, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelSpansIngested.",
+		Help: "OTel spans writer ingest outcomes on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by outcome ∈ {inserted, rate_limited, db_error, shape_invalid, buffer_full}. `buffer_full` counts traces rejected because the account or the process already buffers its maximum of traces between flushes. `inserted` is the customer-telemetry-spans panel (rate over 5m). `rate_limited` is the per-account token-bucket overflow path (DebugTelemetryRequestsPerMinute exceeded). `db_error` is the apid WriteSpansSummary RPC failure path. `shape_invalid` is the OTLP body parser rejection (malformed JSON, missing trace_id, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelSpansIngested.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, gatewaydPublicOtelSpansIngested)
 	// ADR-127 PR-D: truncation tripwire. Fires once per OTLP
@@ -4402,7 +4396,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// IncrementGatewaydPublicOtelAuthFailures.
 	gatewaydPublicOtelAuthFailures := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_otel_auth_failures_total",
-		Help: "OTel spans writer auth failures on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by reason ∈ {unauthenticated, plan_disabled, internal}. `unauthenticated` is the apid AuthenticateKey RPC rejecting the bearer token (hash miss, expired, revoked). `plan_disabled` is the customer's plan not including DebugTelemetryEnabled. `internal` is the apid RPC error (Postgres down, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelAuthFailures.",
+		Help: "OTel spans writer auth failures on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by reason ∈ {unauthenticated, forbidden, not_released, plan_disabled, internal}. `unauthenticated` is the apid AuthenticateKey RPC rejecting the bearer token (hash miss, expired, revoked). `forbidden` is a key that cannot write traces (no admin, deploy:write or metrics:write scope, or a company key whose holder may no longer deploy there). `not_released` is the tracing capability being off for the account. `plan_disabled` is the customer's plan not including DebugTelemetryEnabled. `internal` is the apid RPC error (Postgres down, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelAuthFailures.",
 	}, []string{"reason"})
 	commonCollectors = append(commonCollectors, gatewaydPublicOtelAuthFailures)
 	// ADR-127 PR-D: apid-side SpansWriter RPC outcomes. outcome
@@ -5428,6 +5422,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// least one plan tick has fired (ADR-031).
 	for _, plan := range api.Plans {
 		residentGBPerCustomer.WithLabelValues(string(plan))
+		residentPayingCustomers.WithLabelValues(string(plan))
 	}
 	// Pre-instantiate the closed plan set for the billingCapExceeded
 	// counter (issue #279). Same precedent as residentGBPerCustomer
@@ -5523,16 +5518,6 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// listener.go), which routes through topAccountSet and demotes past
 	// top-1000 into this bucket.
 	topTenantRPS.WithLabelValues(topAccountOtherLabel)
-	// issue #301 / ADR-044: pre-instantiate the closed "slice"
-	// label set for throttleRatio (the FaasCpuStarvation alert
-	// source) so the gauge surfaces "no data" → "0" on an idle
-	// box. The slice values are the api.Plan.SliceName() set
-	// (tenant-free, tenant-hobby, tenant-pro, tenant-scale);
-	// the alert's `slice=~"tenant-.*"` matcher stays stable
-	// for any future tenant-customer slice hierarchy.
-	for _, slice := range []string{"tenant-free", "tenant-hobby", "tenant-pro", "tenant-scale"} {
-		throttleRatio.WithLabelValues(slice)
-	}
 	// Pre-instantiate the ("other", "other") overflow bucket for
 	// throttleSecondsTotal so the dashboard's
 	// {app_id!="other"} selector excludes a series that exists
@@ -5753,7 +5738,6 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		topTenantRPS:                         topTenantRPS,
 		topAccounts:                          newTopAccountSet(topAccountSetCap),
 		throttleSecondsTotal:                 throttleSecondsTotal,
-		throttleRatio:                        throttleRatio,
 		topApps:                              newTopAppSet(topAppSetCap),
 		throttleSecondsLastSeen:              newCPUThrottleLastSeen(),
 		cpuSecondsLast:                       newCPUSecondsLastSeen(),
@@ -5770,6 +5754,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		buildExportBytes:                     buildExportBytes,
 		builderSliceOOMKills:                 builderSliceOOMKills,
 		residentGBPerCustomer:                residentGBPerCustomer,
+		residentPayingCustomers:              residentPayingCustomers,
 		billingCapExceededTotal:              billingCapExceededTotal,
 		meterdFloorAppliedTotal:              meterdFloorAppliedTotal,
 		meteredMBSecondsTotal:                meteredMBSecondsTotal,
@@ -6480,10 +6465,15 @@ var (
 	// (ADR-1741).
 	OwnerCacheOutcomes = []string{"hit", "miss", "invalidated", "resync", "refused", "guarded_publish", "guarded_publish_moved", "selection", "organization"}
 	FrozenParkReasons  = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
-		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park", "node_draining"}
+		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park", "node_draining",
+		// ADR 20261031190030: frozen VMs yield memory to admission.
+		"admission", "refused_wake"}
 	// FrozenCompressOutcomes: compressed keeps the VM frozen; insufficient,
 	// unavailable (no memory-only swap) and error park it.
 	FrozenCompressOutcomes = []string{"compressed", "insufficient", "unavailable", "error"}
+	// FrozenCompressTriggers: pressure is eviction above a node's ceiling,
+	// proactive a node near it (ADR 20261031143521).
+	FrozenCompressTriggers = []string{"pressure", "proactive"}
 )
 
 // FrozenFreezeTotal is the idle-timeout freeze counter for one outcome.
@@ -6535,12 +6525,13 @@ func (m *OpsMetrics) FrozenParksTotal(reason string) prometheus.Counter {
 	return m.frozenParksTotal.WithLabelValues(reason)
 }
 
-// FrozenCompressTotal is the frozen-compression counter for one outcome.
-func (m *OpsMetrics) FrozenCompressTotal(outcome string) prometheus.Counter {
+// FrozenCompressTotal is the frozen-compression counter for one trigger and
+// outcome.
+func (m *OpsMetrics) FrozenCompressTotal(trigger, outcome string) prometheus.Counter {
 	if m == nil {
 		return nil
 	}
-	return m.frozenCompressTotal.WithLabelValues(outcome)
+	return m.frozenCompressTotal.WithLabelValues(trigger, outcome)
 }
 
 // SetFrozenInstances sets the number of instances held frozen.
@@ -7926,21 +7917,6 @@ func (m *OpsMetrics) ThrottleSecondsLastSeenForTest(accountID, appID string) flo
 	return m.throttleSecondsLastSeen.m[accountID+"\x00"+appID]
 }
 
-// SetThrottleRatio sets the per-slice throttle ratio gauge
-// (issue #301, ADR-044). Called by the vmmd-side sampler after
-// computing the per-tick (throttle_delta / (throttle_delta +
-// usage_delta)) ratio. slice must be one of the api.Plan.SliceName
-// values ("tenant-free", "tenant-hobby", "tenant-pro",
-// "tenant-scale"); the closed set is pre-instantiated at boot
-// (see the loop at top of NewOpsMetrics) so /metrics always
-// surfaces a row. Safe on a nil receiver.
-func (m *OpsMetrics) SetThrottleRatio(slice string, ratio float64) {
-	if m == nil || m.throttleRatio == nil {
-		return
-	}
-	m.throttleRatio.WithLabelValues(slice).Set(ratio)
-}
-
 // ShouldReset returns true if the rolling 24h window has elapsed
 // since the last resetWindow. Cheap read; called from the 5s
 // sampler tick. Forwarded from *topAccountSet so the sampler stays
@@ -8691,6 +8667,7 @@ func (m *OpsMetrics) ObserveDeploymentReorder(outcome string) {
 // outcome is the closed label set:
 //   - "ok" — single deployment soft-deleted (status untouched)
 //   - "live_forbidden" — attempt to clear a DeployLive row (409)
+//   - "in_flight" — attempt to clear a row still in the pipeline (409)
 //   - "error" — internal failure (logged at the call site)
 //
 // Mirrors ObserveDeploymentCancelled's label set for §12 dashboard
@@ -8975,6 +8952,15 @@ func (m *OpsMetrics) SetResidentGBPerCustomer(plan string, gb float64) {
 		return
 	}
 	m.residentGBPerCustomer.WithLabelValues(plan).Set(gb)
+}
+
+// SetResidentPayingCustomers writes the per-plan paying-customer count
+// behind SetResidentGBPerCustomer. Safe on a nil receiver.
+func (m *OpsMetrics) SetResidentPayingCustomers(plan string, n int) {
+	if m == nil {
+		return
+	}
+	m.residentPayingCustomers.WithLabelValues(plan).Set(float64(n))
 }
 
 // BillingCapExceededTotal is the per-plan counter the meterd quota
@@ -10853,6 +10839,17 @@ type appLabelSet struct {
 	cap      int
 }
 
+// has reports whether app is admitted as its own label, without admitting it.
+func (s *appLabelSet) has(app string) bool {
+	if app == labelAppUnknown || app == otherAppLabel {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.admitted[app]
+	return ok
+}
+
 // newAppLabelSet constructs an admission set with the given
 // capacity. capacity must be > 0; the call panics otherwise to
 // fail loud at boot rather than silently allow unbounded
@@ -11317,7 +11314,7 @@ func (m *OpsMetrics) ObserveIssueEvent(outcome string) {
 		return
 	}
 	switch outcome {
-	case "accepted", "duplicate", "quota_exceeded", "rate_limited", "conflict", "db_error":
+	case "accepted", "duplicate", "invalid", "quota_exceeded", "rate_limited", "conflict", "db_error", "retry_recovered", "retry_dropped", "retry_skipped":
 	default:
 		return
 	}

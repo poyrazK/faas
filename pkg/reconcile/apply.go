@@ -428,6 +428,14 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 	}
 	applyProjectImage(&app.Manifest, w)
 	applyComposeResources(&app, w)
+	if w.Function != nil {
+		// A functions-project entry deploys as a function app, sized as
+		// `gregale deploy` creates one (ADR-20261108160000).
+		app.Type, app.Runtime = state.AppTypeFunction, w.Function.Runtime
+		if limits, ok := api.LimitsFor(plan); ok && app.RAMMB == 0 {
+			app.RAMMB = api.StandaloneAppDefaultRAMMB(limits)
+		}
+	}
 	if app.RAMMB == 0 {
 		app.RAMMB = api.ProjectWorkloadDefaultRAMMB
 	}
@@ -483,6 +491,15 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	// Compose secrets become files for built and prebuilt images alike
 	// (ADR-20261023090000).
 	manifest.ProjectSecretFiles = api.CloneSecretFiles(w.SecretFiles)
+	// A Compose service run to completion is this app's release command
+	// (ADR-20261102192943); every deploy path reads it from here.
+	manifest.ProjectReleaseCommand, manifest.ProjectReleaseCommandShell = composeReleaseCommand(w)
+	// The first Compose ports: target is the serving port of a built
+	// service too, so an app that listens on a fixed port without a
+	// Dockerfile EXPOSE is reached there (ADR-20261103112845).
+	if len(w.Ports) > 0 && (w.Image != "" || w.DetectedBy.Detector == detectorCompose) {
+		manifest.ProjectImagePort = w.Ports[0]
+	}
 	if w.Image == "" {
 		return
 	}
@@ -490,9 +507,19 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	if w.CommandShell && len(w.Command) > 0 {
 		manifest.ProjectImageCommand = []string{"/bin/sh", "-c", w.Command[0]}
 	}
-	if len(w.Ports) > 0 {
-		manifest.ProjectImagePort = w.Ports[0]
+}
+
+// detectorCompose is reposcan's Detection.Detector for a Compose service.
+const detectorCompose = "compose"
+
+// composeReleaseCommand is the release command an app keeps for w: the
+// command of the Compose service w waits for to complete. A Procfile release
+// command stays with the source and is not stored on the app.
+func composeReleaseCommand(w reposcan.Workload) ([]string, bool) {
+	if w.ReleaseService == "" || len(w.ReleaseCommand) == 0 {
+		return nil, false
 	}
+	return append([]string(nil), w.ReleaseCommand...), w.ReleaseCommandShell
 }
 
 // releaseScanWorkerMode clears the worker mode the scan gave an app once the

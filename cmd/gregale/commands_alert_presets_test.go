@@ -242,15 +242,15 @@ func TestCmdAlertPresetEnable_CooldownOverride(t *testing.T) {
 	}
 }
 
-func TestCmdAutomationBacklogPresetEnableUsesNotificationDefaults(t *testing.T) {
+func TestCmdStoredWorkflowBacklogPresetEnableUsesNotificationDefaults(t *testing.T) {
 	main.ResetJSONOut(t)
 	(*main.JsonOutput) = true
-	f := main.AuthedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","name":"Automation backlog exceeds five minutes","metric":"workflow_due_age_seconds","comparison":"gte","threshold":300,"window_spec":"5m","action":"webhook","enabled":true,"cooldown_minutes":30}`, 201)
-	output := main.CaptureAutomationStdout(t)
-	if code := main.CmdAlertPresetEnable([]string{"--app", "billing", "--webhook-url", "https://example.com/hooks", "--webhook-secret", "test-secret", "automation_backlog"}); code != 0 {
+	f := main.AuthedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","name":"Stored workflow backlog exceeds five minutes","metric":"workflow_due_age_seconds","comparison":"gte","threshold":300,"window_spec":"5m","action":"webhook","enabled":true,"cooldown_minutes":30}`, 201)
+	output := main.CaptureStoredWorkflowStdout(t)
+	if code := main.CmdAlertPresetEnable([]string{"--app", "billing", "--webhook-url", "https://example.com/hooks", "--webhook-secret", "test-secret", "stored_workflow_backlog"}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
-	if (*f.SawMethod()) != "POST" || (*f.SawPath()) != "/v1/apps/billing/alert-presets/automation_backlog/enable" {
+	if (*f.SawMethod()) != "POST" || (*f.SawPath()) != "/v1/apps/billing/alert-presets/stored_workflow_backlog/enable" {
 		t.Fatalf("request=%s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 	var request api.EnableAlertPresetRequest
@@ -302,5 +302,32 @@ func TestCmdAlertsPreset_DispatchTable(t *testing.T) {
 		if gotHits != c.wantHit {
 			t.Errorf("args=%v hit=%v, want %v", c.args, gotHits, c.wantHit)
 		}
+	}
+}
+
+// rc.318 field report: `alert preset enable error_rate_2pct --app demo ...`
+// answered a bare usage line because parsing stopped at the preset name.
+func TestCmdAlertPresetEnable_NameBeforeFlags(t *testing.T) {
+	main.ResetJSONOut(t)
+	respBody := `{"id":"0123456789abcdef0123456789abcdef","name":"Error rate exceeds 2% (demo)","metric":"error_rate_pct","comparison":"gt","threshold":2,"window_spec":"15m","enabled":false,"cooldown_minutes":15}`
+	f := main.AuthedFakeAPI(t, respBody, 201)
+	if code := main.CmdAlertPresetEnable([]string{
+		"error_rate_2pct",
+		"--app", "demo",
+		"--webhook-url", "https://hooks.example.com/x",
+		"--webhook-secret", "shh",
+		"--enabled=false",
+	}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if (*f.SawPath()) != "/v1/apps/demo/alert-presets/error_rate_2pct/enable" {
+		t.Errorf("path = %s, want /v1/apps/demo/alert-presets/error_rate_2pct/enable", (*f.SawPath()))
+	}
+	var got map[string]any
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
+		t.Fatalf("body unmarshal: %v", err)
+	}
+	if enabled, _ := got["enabled"].(bool); enabled || got["webhook_url"] != "https://hooks.example.com/x" {
+		t.Errorf("body = %v; flags after the preset name were dropped", got)
 	}
 }

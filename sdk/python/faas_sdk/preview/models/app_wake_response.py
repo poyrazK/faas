@@ -21,7 +21,8 @@ class AppWakeResponse:
     already_running: bool | Unset = UNSET
     """True when the app already had a routable running instance and no wake was queued."""
     instance_id: UUID | Unset = UNSET
-    """The running instance, present when already_running is true."""
+    """The instance the wake resolves to: the running instance when already_running is true, or the frozen instance
+    a queued wake resumes under its own wake_id."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

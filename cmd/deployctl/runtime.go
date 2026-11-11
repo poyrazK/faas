@@ -377,15 +377,24 @@ func (r hostRuntime) Migrate(ctx context.Context, manifest releasebundle.Manifes
 			return fmt.Errorf("pre-migration backup failed; refusing to apply %d pending migrations: %w", pending, err)
 		}
 	}
-	command := fmt.Sprintf("DATABASE_URL=%q %q", r.databaseURL, migrate)
-	return runCommand(ctx, "su", "-", "faas", "-s", "/bin/bash", "-c", command)
+	command := fmt.Sprintf("exec env -i PATH=/usr/bin:/bin DATABASE_URL=%q %q", r.databaseURL, migrate)
+	return runCommand(ctx, "/bin/bash", "-c", command)
 }
+
+// The migrator runs as root, deployctl's own user: the owner role is reached
+// through `faas_map root faas`, which pg_ident keeps in both modes
+// (ADR-20261023104734). Under faas_postgres_owner_contracted the OS user
+// faas maps only to faas_shared, so the `su - faas` this used to run was
+// refused peer authentication and failed the rc.330 control-plane activation
+// after the schema had already been applied. `env -i` gives the migrator the
+// clean environment `su -` used to, so nothing from deployctl's own
+// environment (PG* variables, a stray PATH) reaches it.
 
 // pendingMigrations runs `migrate -status` and returns the pending_count from
 // its JSON status line (the migrator logs to stderr, folded into stdout).
 func pendingMigrations(ctx context.Context, databaseURL, migrate string) (int, error) {
-	command := fmt.Sprintf("DATABASE_URL=%q %q -status 2>&1", databaseURL, migrate)
-	out, err := commandOutput(ctx, "su", "-", "faas", "-s", "/bin/bash", "-c", command)
+	command := fmt.Sprintf("exec env -i PATH=/usr/bin:/bin DATABASE_URL=%q %q -status 2>&1", databaseURL, migrate)
+	out, err := commandOutput(ctx, "/bin/bash", "-c", command)
 	if err != nil {
 		return 0, err
 	}
@@ -948,13 +957,16 @@ func (r hostRuntime) waitReady(ctx context.Context, service string) error {
 }
 
 func (r hostRuntime) waitHTTP(ctx context.Context, address string) error {
+	ctx, cancel := context.WithTimeout(ctx, r.readyTimeout)
+	defer cancel()
+	client := &http.Client{Timeout: 2 * time.Second}
 	deadline := time.Now().Add(r.readyTimeout)
 	lastStatus := 0
 	lastBody := ""
 	for time.Now().Before(deadline) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 		if err == nil {
-			response, err := http.DefaultClient.Do(req)
+			response, err := client.Do(req)
 			if err == nil {
 				body, readErr := io.ReadAll(io.LimitReader(response.Body, 512))
 				_ = response.Body.Close()
@@ -962,12 +974,15 @@ func (r hostRuntime) waitHTTP(ctx context.Context, address string) error {
 				if readErr == nil {
 					lastBody = strings.TrimSpace(string(body))
 				}
-				if response.StatusCode == http.StatusOK {
+				if response.StatusCode == http.StatusOK && readErr == nil && ctx.Err() == nil {
 					return nil
 				}
 			}
 		}
 		if err := sleepReady(ctx); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				break
+			}
 			return err
 		}
 	}

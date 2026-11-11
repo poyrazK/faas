@@ -79,6 +79,9 @@ func (s *Server) RunAgent(stream scheddpb.Schedd_RunAgentServer) error {
 		Output: func(_ context.Context, name string, chunk []byte) error {
 			return send(&scheddpb.AgentRunEvent{Frame: &scheddpb.AgentRunEvent_Output{Output: &scheddpb.AgentRunOutput{Stream: name, Chunk: append([]byte(nil), chunk...)}}})
 		},
+		Usage: func(_ context.Context, u sched.AgentRunUsage) error {
+			return send(&scheddpb.AgentRunEvent{Frame: &scheddpb.AgentRunEvent_Usage{Usage: agentRunUsageToProto(u)}})
+		},
 	}
 	result, err := s.agentRuns.Run(ctx, admission, run, placed, hooks, frames.cancel)
 	if err != nil {
@@ -92,6 +95,13 @@ func (s *Server) RunAgent(stream scheddpb.Schedd_RunAgentServer) error {
 	}
 	opErr = send(&scheddpb.AgentRunEvent{Frame: &scheddpb.AgentRunEvent_Result{Result: &scheddpb.AgentRunResult{Result: body}}})
 	return opErr
+}
+
+func agentRunUsageToProto(u sched.AgentRunUsage) *scheddpb.AgentRunUsage {
+	return &scheddpb.AgentRunUsage{Method: int32(u.Method), Samples: int32(u.Samples), ExpectedSamples: int32(u.ExpectedSamples),
+		MeasuredMs: u.MeasuredMillis, PausedMs: u.PausedMillis, PrivateMbMs: u.PrivateMBMillis,
+		UnpausedPrivateMbMs: u.UnpausedPrivateMBMillis, BillableMbMs: u.BillableMBMillis, PeakPrivateMb: u.PeakPrivateMB,
+		ColdBoot: u.ColdBoot, FrozenMs: u.FrozenMillis, Final: u.Final}
 }
 
 func agentRunStartFromProto(start *scheddpb.AgentRunStart) (sched.AgentRunAdmission, agentrunproto.Request, error) {
@@ -132,6 +142,10 @@ func agentRunStatus(err error) error {
 	switch {
 	case errors.As(err, &problem) && problem.Code == api.CodeCapacity:
 		return status.Error(codes.ResourceExhausted, "no agent-pool node has capacity for this run")
+	case errors.As(err, &problem) && problem.Code == api.CodeSandboxWorkspaceUnavailable:
+		// A sandbox session whose persisted workspace could not be unpacked
+		// (ADR-20261027090013 step 7): retrying cannot help it.
+		return status.Error(codes.DataLoss, problem.Detail)
 	case errors.Is(err, errAgentRunNotProceeded):
 		return status.Error(codes.Aborted, "the run was cancelled before it booted")
 	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):

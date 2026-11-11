@@ -35,7 +35,7 @@ func readyCapture(t *testing.T, host *fakeHost, acct state.Account, kinds []stri
 	t.Helper()
 	c := api.ProfileCapture{ID: uuid.NewString(), AppID: host.app.ID, Status: api.ProfileCaptureQueued, Kinds: kinds,
 		DurationSeconds: 10, Profiles: []api.ProfileCaptureProfile{}, CreatedAt: at, ExpiresAt: at.Add(api.ProfileCaptureRetention)}
-	if err := host.mem.CreateProfileCapture(t.Context(), acct.ID, host.app.ID, c, api.MustLimitsFor(api.PlanPro).Profiling.CaptureStorageBytes); err != nil {
+	if err := host.mem.CreateProfileCapture(t.Context(), acct.ID, host.app.ID, c, state.ProfileCaptureLimits{StorageBytes: api.MustLimitsFor(api.PlanPro).Profiling.CaptureStorageBytes}); err != nil {
 		t.Fatal(err)
 	}
 	claimed, err := host.mem.ClaimProfileCapture(t.Context(), at)
@@ -107,6 +107,28 @@ func TestCaptureDiffRejectsUnreadyBase(t *testing.T) {
 	rec = serve(svc, acct, http.MethodGet, "/v1/apps/capture/profiles/captures/"+cand.ID+"/diff?base="+queued.ID, "")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+}
+
+// Capture data is guest-supplied, so an apid parses a bounded number of
+// captures at once and refuses the rest as busy instead of queueing them.
+func TestCaptureMergesAreBoundedPerAPID(t *testing.T) {
+	svc, host, acct := newService(t, api.PlanPro, true)
+	c := readyCapture(t, host, acct, []string{api.ProfileKindHeap}, time.Now().UTC(),
+		state.ProfileCaptureBlob{Kind: api.ProfileKindHeap, ProcessID: "7", Profile: heapBlob(t, "grow", 1000)})
+	release := svc.HoldMergeSlots()
+	for _, target := range []string{"/view", "/pprof"} {
+		rec := serve(svc, acct, http.MethodGet, "/v1/apps/capture/profiles/captures/"+c.ID+target, "")
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s with every merge slot taken = %d: %s", target, rec.Code, rec.Body)
+		}
+	}
+	if _, busy, _ := svc.MergeBlobs(nil, api.ProfileKindHeap); !busy {
+		t.Fatal("MergeBlobs ran with every slot taken")
+	}
+	release()
+	if rec := serve(svc, acct, http.MethodGet, "/v1/apps/capture/profiles/captures/"+c.ID+"/view", ""); rec.Code != http.StatusOK {
+		t.Fatalf("view after release = %d: %s", rec.Code, rec.Body)
 	}
 }
 

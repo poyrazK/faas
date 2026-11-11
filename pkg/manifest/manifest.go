@@ -110,6 +110,16 @@ type Manifest struct {
 	// renderer uses the same endpoint port for per-daemon target_url entries.
 	Overlay Overlay `yaml:"overlay"`
 
+	// SSH limits who may reach sshd (ADR-20261109100000). Absent keeps the
+	// provider boundary in charge (GCP IAP); present, sshd answers only the
+	// private network (overlay.cidr, on overlay.interface when set) and
+	// AllowedCIDRs. Bare-metal fleets with a public address on every host set it.
+	SSH *SSH `yaml:"ssh,omitempty"`
+
+	// DiskEncryption encrypts each host's data volume at rest, unlocked by
+	// the other hosts' Tang servers (ADR-20261109120000). Absent: plain.
+	DiskEncryption *DiskEncryption `yaml:"disk_encryption,omitempty"`
+
 	// DNS is the public-facing hostname contract. apps_domain is the
 	// single source of truth — gatewayd-internal, apid, and the CLI
 	// PrintOK paths all read from it; a value of `gregale.dev` produces
@@ -128,6 +138,18 @@ type Manifest struct {
 	// PublicEdge configures what the public HTTPS edge serves beyond the
 	// platform zone. Today that is customer custom domains (ADR-520).
 	PublicEdge PublicEdge `yaml:"public_edge,omitempty"`
+
+	// HotPath turns on the compute nodes' request- and wake-path switches
+	// (hot_path.go).
+	HotPath HotPath `yaml:"hot_path,omitempty"`
+
+	// ManagedPostgres turns on native managed PostgreSQL (ADR-1027) on the
+	// fleet's database hosts (managed_postgres.go).
+	ManagedPostgres *ManagedPostgres `yaml:"managed_postgres,omitempty"`
+
+	// ServiceTCP stages private TCP service addressing (ADR-576) on the
+	// compute-only hosts (service_tcp.go).
+	ServiceTCP *ServiceTCP `yaml:"service_tcp,omitempty"`
 
 	// PostgreSQL is the database cluster configuration. The renderer
 	// needs the role names, the database name, and the migration
@@ -181,6 +203,10 @@ type Manifest struct {
 	// each host's archive credential envelope untouched.
 	LogArchive LogArchive `yaml:"log_archive,omitempty"`
 
+	// ArtifactSigner turns on the control plane's artifact signer
+	// (ADR-20261109170000). Absent keeps sign.key on the compute nodes.
+	ArtifactSigner ArtifactSigner `yaml:"artifact_signer,omitempty"`
+
 	// WorkloadIdentity turns on workload-identity tokens (ADR-1141): the
 	// renderer hands its source directory to every control-plane and
 	// compute host, so the roles install the JWKS and the signing key.
@@ -198,6 +224,21 @@ type ObjectStorage struct {
 	// ProviderEnvSrc is the optional controller-local credential env file
 	// for S3-compatible providers; GCS with attached ADC needs none.
 	ProviderEnvSrc string `yaml:"provider_env_src,omitempty"`
+	// ComputeNodes runs the gateway on every compute node of the cell as
+	// well (ADR-20261031122757). It needs the managed gateway, the app edge
+	// on the compute nodes, GatewayProviderEnvSrc and every compute host's
+	// port_mbps.
+	ComputeNodes bool `yaml:"compute_nodes,omitempty"`
+	// GatewayProviderEnvSrc is the controller-local env file holding only
+	// the gateway credentials the registry's gateway_*_env fields name.
+	// Compute nodes get it instead of ProviderEnvSrc, so they never hold the
+	// bucket-admin credential.
+	GatewayProviderEnvSrc string `yaml:"gateway_provider_env_src,omitempty"`
+	// ComputePublicReads has each compute node's app edge serve public
+	// bucket reads itself, with the gateway credential and a part of the
+	// node's port share, instead of forwarding them to the control plane
+	// (ADR-20261031122757 step 7). It needs ComputeNodes.
+	ComputePublicReads bool `yaml:"compute_public_reads,omitempty"`
 }
 
 // Managed reports whether the playbooks own s3-gatewayd.
@@ -219,8 +260,46 @@ func (o ObjectStorage) validate() Errors {
 	if !o.Managed() && (o.ConfigSrc != "" || o.ProviderEnvSrc != "") {
 		errs = append(errs, Error{"object_storage.gateway", "must be managed when config_src or provider_env_src is set"})
 	}
+	if o.ComputeNodes && !o.Managed() {
+		errs = append(errs, Error{"object_storage.compute_nodes", "needs the managed gateway"})
+	}
+	if o.ComputeNodes && !filepath.IsAbs(o.GatewayProviderEnvSrc) {
+		errs = append(errs, Error{"object_storage.gateway_provider_env_src", "must be an absolute controller path when the gateway runs on compute nodes"})
+	}
+	if !o.ComputeNodes && o.GatewayProviderEnvSrc != "" {
+		errs = append(errs, Error{"object_storage.gateway_provider_env_src", "is used only with compute_nodes"})
+	}
+	if o.ComputePublicReads && !o.ComputeNodes {
+		errs = append(errs, Error{"object_storage.compute_public_reads", "needs compute_nodes: the app edge reads with the gateway credential and port share the compute gateway gets"})
+	}
 	return errs
 }
+
+// validateOnCompute checks what the gateway on compute nodes needs from the
+// rest of the manifest (ADR-20261031122757): the app edge runs there too, and
+// every compute host declares its port speed, from which its port share is
+// rendered.
+func (o ObjectStorage) validateOnCompute(edge PublicEdge, hosts []Host) Errors {
+	if !o.ComputeNodes {
+		return nil
+	}
+	var errs Errors
+	if !edge.ComputeNodes {
+		errs = append(errs, Error{"object_storage.compute_nodes", "needs public_edge.compute_nodes: the gateway's tunnel runs beside the app edge"})
+	}
+	for i, h := range hosts {
+		if h.Role == "compute-only" && (h.PortMbps < MinHostPortMbps || h.PortMbps > MaxHostPortMbps) {
+			errs = append(errs, Error{fmt.Sprintf("fleet.hosts[%d].port_mbps", i), fmt.Sprintf("must be %d–%d Mbit/s when the object gateway runs on compute nodes", MinHostPortMbps, MaxHostPortMbps)})
+		}
+	}
+	return errs
+}
+
+// MinHostPortMbps and MaxHostPortMbps bound a host's declared port speed.
+const (
+	MinHostPortMbps = 100
+	MaxHostPortMbps = 100_000
+)
 
 // WorkloadIdentity names the directory `gregalectl workload-identity init`
 // wrote on the Ansible controller (ADR-1141 amendment 2026-10-24). Empty
@@ -472,6 +551,41 @@ type Host struct {
 	// checks (e.g. `--role=compute-only` skips cert checks for the
 	// egress server leaf, which lives on the control-plane box).
 	Tags []string `yaml:"tags,omitempty"`
+	// Database is a database host's place in schedd's database
+	// scheduler (role `database` only; managed_postgres.go).
+	Database *DatabaseHost `yaml:"database,omitempty"`
+	// PortMbps is the speed of the host's network port in Mbit/s. A compute
+	// host that runs the object gateway gets its share of it
+	// (ADR-20261031122757 §3); required there, unused elsewhere.
+	PortMbps int `yaml:"port_mbps,omitempty"`
+	// PublicIPv4 is the address Cloudflare connects to for a compute host's
+	// edge under direct entry (ADR-20261102081618): its own on bare metal,
+	// an inbound-only forwarding rule on GCP. Unused elsewhere.
+	PublicIPv4 string `yaml:"public_ipv4,omitempty"`
+	// PublicIPv4Forwarded says public_ipv4 is an inbound-only forwarding
+	// rule to the host that carries TCP 443 alone
+	// (deploy/scripts/gcp-compute-edge-address.sh), not an address anyone
+	// manages the host on. Under public_edge.front: none it is then the
+	// host's entry address unless entry_ipv4 names another
+	// (ADR-20261103163954 §2: on GCP the forwarding-rule address already
+	// carries only 443).
+	PublicIPv4Forwarded bool `yaml:"public_ipv4_forwarded,omitempty"`
+	// EntryIPv4 is a compute host's public entry address under
+	// public_edge.front: none (ADR-20261103163954 §2): on bare metal an
+	// additional IP, not the address operators manage the host on, because
+	// the firewall admits 443 to it from everyone and drops everything else
+	// sent to it, including SSH. The DNS-only records point at it. Unused
+	// elsewhere.
+	EntryIPv4 string `yaml:"entry_ipv4,omitempty"`
+}
+
+// EntryAddress is the host's public entry address under public_edge.front:
+// none: entry_ipv4, or a forwarded public_ipv4. "" when it has neither.
+func (h Host) EntryAddress() string {
+	if h.EntryIPv4 == "" && h.PublicIPv4Forwarded {
+		return h.PublicIPv4
+	}
+	return h.EntryIPv4
 }
 
 // Daemons is the per-daemon configuration. Keys are daemon names;
@@ -556,7 +670,8 @@ type DaemonConfig struct {
 
 	// RateLimitLease is gatewayd-internal's [ratelimit] lease (ADR-1520):
 	// central counters are spent from local leases instead of one Postgres
-	// consult per request. Omitted renders false. Requires central mode.
+	// consult per request. Omitted keeps the Ansible default, true. Requires
+	// central mode.
 	RateLimitLease *bool `yaml:"ratelimit_lease,omitempty"`
 
 	// FrozenTierEarlyFreezeAfterS is schedd's
@@ -649,6 +764,19 @@ type Overlay struct {
 	// CIDR is the overlay subnet (e.g. "10.42.0.0/24"). The renderer
 	// asserts each host's Address falls within CIDR.
 	CIDR string `yaml:"cidr"`
+	// Interface names the private network card for the "static" provider
+	// (ADR-20261109100000), e.g. an OVH vRack NIC. Empty keeps the
+	// default-route interface, which is right on a cloud VPC with one NIC and
+	// wrong on bare metal, where the default route is the public card. When
+	// set, the host firewall accepts private-service traffic only on it.
+	Interface string `yaml:"interface,omitempty"`
+}
+
+// SSH is the sshd source boundary (ADR-20261109100000).
+type SSH struct {
+	// AllowedCIDRs are the sources outside the private network that may reach
+	// sshd: an operator bastion or VPN. Empty means the private network only.
+	AllowedCIDRs []string `yaml:"allowed_cidrs,omitempty"`
 }
 
 // DNS is the public-facing hostname contract. apps_domain is the
@@ -677,6 +805,15 @@ type DNS struct {
 	// Mode is the DNS provider ("cloudflare", "manual", "nip_io").
 	// The validator rejects values outside the supported set.
 	Mode string `yaml:"mode"`
+	// OriginPull is how the control plane's Caddy treats Cloudflare's
+	// connections when Mode is "cloudflare" (ADR-20261103172551):
+	// "required" demands the zone's own origin-pull client certificate
+	// (install its CA and turn on zone-level Authenticated Origin Pulls
+	// first, docs/runbooks/EdgeDirectEntry.md); "any_zone" admits every
+	// Cloudflare zone, knowingly, while the certificate is rolled out. Empty
+	// renders neither, and the public_edge role refuses to deploy a site
+	// that admits Cloudflare.
+	OriginPull string `yaml:"origin_pull,omitempty"`
 }
 
 // PublicEdge is the public HTTPS edge contract beyond the platform zone.
@@ -687,13 +824,184 @@ type PublicEdge struct {
 	// there, while the platform hosts and custom domains stay on the control
 	// plane. Off by default.
 	ComputeNodes bool `yaml:"compute_nodes,omitempty"`
+	// PlacementRouting makes each compute edge send an app host to the
+	// gatewayd-internal of the node that last served it, instead of its own
+	// (ADR-20261031105055). Needs compute_nodes. Off by default.
+	PlacementRouting bool `yaml:"placement_routing,omitempty"`
+	// PlacementNodeSet makes each compute edge spread an app host's requests
+	// over every node the app runs on, by ready instances
+	// (ADR-20261102081618 §5b). Needs placement_routing.
+	PlacementNodeSet bool `yaml:"placement_node_set,omitempty"`
+	// LocalFirst makes each compute node's gatewayd-internal serve the
+	// requests an edge forwarded from its own node's instances first, and
+	// name every node of the app for the edges (§5a, §5c, §5d). Needs
+	// placement_node_set: without the spread the edges would settle on one
+	// node.
+	LocalFirst bool `yaml:"local_first,omitempty"`
+	// Entry is how Cloudflare reaches the compute edges
+	// (ADR-20261102081618): "tunnel", the default, through the cell's
+	// Cloudflare Tunnel; "both" also opens each edge's TLS listener on port
+	// 443 for proxied address records, for the move off the tunnel and its
+	// rollback. Needs compute_nodes.
+	Entry string `yaml:"entry,omitempty"`
+	// DNS turns on edgednsd (ADR-20261102081618 §3), which points the names
+	// at the compute hosts whose edges are ready. Needs entry both.
+	DNS *PublicEdgeDNS `yaml:"dns,omitempty"`
+	// Front is what stands in front of the compute edges' direct entry
+	// (ADR-20261103163954 §6): "cloudflare", the default, is
+	// ADR-20261102081618 as written; "none" turns on DNS-only records, the
+	// edges' public listener for clients that bring no Cloudflare
+	// certificate, the peer address as client, port 443 open on each compute
+	// host's entry_ipv4 and the client limits, together. Needs entry both.
+	Front string `yaml:"front,omitempty"`
+	// Overload is the compute edges' node-wide overload level
+	// (ADR-20261110123517): "off", the default; "observe", which measures
+	// and exports it and refuses nothing; or "on", which sheds by it. Needs
+	// front none, whose client limits it extends.
+	Overload string `yaml:"overload,omitempty"`
+}
+
+// PublicEdgeDNS is the Cloudflare zone and the names edgednsd manages.
+type PublicEdgeDNS struct {
+	ZoneID string   `yaml:"zone_id"`
+	Names  []string `yaml:"names"`
+	// Live makes edgednsd write records; until then it only logs and
+	// counts the changes it would make.
+	Live bool `yaml:"live,omitempty"`
+	// Proxied are names that keep proxied records under front: none, managed
+	// beside Names: the way one host goes back behind Cloudflare
+	// (ADR-20261103163954 §4). A record for the exact name wins over the
+	// wildcard.
+	Proxied []string `yaml:"proxied,omitempty"`
+	// Certificate is the apps domains' publicly trusted certificate, which
+	// edgednsd orders with the DNS-01 challenge in ZoneID and the compute
+	// edges serve (ADR-20261103163954 §3).
+	Certificate *PublicEdgeCertificate `yaml:"certificate,omitempty"`
+}
+
+// PublicEdgeCertificate is the certificate edgednsd keeps for the apps
+// domains (ADR-20261103163954 §3). Each cell's edge-tls seal domain must be
+// staged first: edgednsd seals the key to its recipient, and the edges open
+// it with its identity.
+type PublicEdgeCertificate struct {
+	// Names are the certificate's names, e.g. "*.gregale.dev".
+	Names []string `yaml:"names"`
+	// CA is letsencrypt-staging, the default, until the path is proven,
+	// then letsencrypt.
+	CA string `yaml:"ca,omitempty"`
+	// Serve is the CA whose stored certificate the compute edges serve in
+	// place of their certificate files: empty (the default) serves none.
+	// It moves separately from CA, after edgednsd has stored a certificate
+	// from it: an edge without one is not ready, so switching both at once
+	// would take every edge out of DNS until the new order lands.
+	Serve string `yaml:"serve,omitempty"`
+	// Transparency turns on edgednsd's Certificate Transparency watch,
+	// which pages on publicly trusted certificates it did not issue.
+	Transparency *PublicEdgeTransparency `yaml:"transparency,omitempty"`
+}
+
+// PublicEdgeTransparency is edgednsd's Certificate Transparency watch
+// (ADR-20261103163954 §3).
+type PublicEdgeTransparency struct {
+	// Domain is the domain whose certificates, and those of every name
+	// under it, the watch reads, e.g. gregale.dev.
+	Domain string `yaml:"domain"`
+	// AllowNames are the names a certificate edgednsd did not issue may
+	// carry without a page: a certificate whose every name is listed is
+	// someone else's by design, such as the CDN's own certificate for the
+	// zone ("gregale.dev", "*.gregale.dev") or a hosted site's.
+	AllowNames []string `yaml:"allow_names,omitempty"`
+}
+
+// The CAs a public_edge.dns.certificate comes from.
+const (
+	EdgeCertificateCAStaging    = "letsencrypt-staging"
+	EdgeCertificateCAProduction = "letsencrypt"
+	// edgeTransparencyAllowNamesMax is
+	// api.EdgeCertificateTransparencyAllowNamesMax.
+	edgeTransparencyAllowNamesMax = 32
+	// edgeCertificateNamesMax is api.EdgeCertificateNamesMax, which the
+	// edgednsd unit refuses past.
+	edgeCertificateNamesMax = 10
+)
+
+// CAOrDefault is the certificate's CA, staging when unset.
+func (c PublicEdgeCertificate) CAOrDefault() string {
+	if c.CA == "" {
+		return EdgeCertificateCAStaging
+	}
+	return c.CA
+}
+
+// Public edge entries (ADR-20261102081618).
+const (
+	PublicEdgeEntryTunnel = "tunnel"
+	PublicEdgeEntryBoth   = "both"
+)
+
+// Public edge fronts (ADR-20261103163954 §6).
+const (
+	PublicEdgeFrontCloudflare = "cloudflare"
+	PublicEdgeFrontNone       = "none"
+	PublicEdgeOverloadOff     = "off"
+	PublicEdgeOverloadObserve = "observe"
+	PublicEdgeOverloadOn      = "on"
+)
+
+// DirectEntry reports whether the compute edges take Cloudflare's direct
+// connections on port 443.
+func (e PublicEdge) DirectEntry() bool {
+	return e.ComputeNodes && e.Entry == PublicEdgeEntryBoth
+}
+
+// NoFront reports whether clients connect to the compute edges' entry
+// addresses with nothing in front (ADR-20261103163954).
+func (e PublicEdge) NoFront() bool {
+	return e.DirectEntry() && e.Front == PublicEdgeFrontNone
 }
 
 // validate checks the compute-node edge against the fleet: it needs a control
 // plane to forward credential-bound routes to and compute nodes to run on.
 func (e PublicEdge) validate(hosts []Host) Errors {
+	switch e.Entry {
+	case "", PublicEdgeEntryTunnel, PublicEdgeEntryBoth:
+	case "direct":
+		return Errors{{"public_edge.entry", "direct comes one release after the move off the tunnel (ADR-20261102081618 step 6); use both"}}
+	default:
+		return Errors{{"public_edge.entry", fmt.Sprintf("%q is not tunnel or both", e.Entry)}}
+	}
+	switch e.Front {
+	case "", PublicEdgeFrontCloudflare:
+	case PublicEdgeFrontNone:
+		if !e.DirectEntry() {
+			return Errors{{"public_edge.front", "none needs public_edge.compute_nodes and entry: both, whose listeners clients reach"}}
+		}
+	default:
+		return Errors{{"public_edge.front", fmt.Sprintf("%q is not cloudflare or none", e.Front)}}
+	}
+	switch e.Overload {
+	case "", PublicEdgeOverloadOff:
+	case PublicEdgeOverloadObserve, PublicEdgeOverloadOn:
+		if !e.NoFront() {
+			return Errors{{"public_edge.overload", "needs public_edge.front: none, whose client limits it extends"}}
+		}
+	default:
+		return Errors{{"public_edge.overload", fmt.Sprintf("%q is not off, observe or on", e.Overload)}}
+	}
+	if e.PlacementNodeSet && !e.PlacementRouting {
+		return Errors{{"public_edge.placement_node_set", "needs public_edge.placement_routing: it spreads the routed requests"}}
+	}
+	if e.LocalFirst && !e.PlacementNodeSet {
+		return Errors{{"public_edge.local_first", "needs public_edge.placement_node_set: without the spread the edges would settle on one node"}}
+	}
 	if !e.ComputeNodes {
-		return nil
+		if e.PlacementRouting {
+			return Errors{{"public_edge.placement_routing", "needs public_edge.compute_nodes: it routes the compute edges' requests"}}
+		}
+		if e.Entry == PublicEdgeEntryBoth {
+			return Errors{{"public_edge.entry", "needs public_edge.compute_nodes: it opens the compute edges' TLS listener"}}
+		}
+		return e.validateEntryAddrs(hosts)
 	}
 	var controlPlanes, computeNodes int
 	for _, h := range hosts {
@@ -710,6 +1018,135 @@ func (e PublicEdge) validate(hosts []Host) Errors {
 	}
 	if computeNodes == 0 {
 		errs = append(errs, Error{"public_edge.compute_nodes", "needs at least one compute-only host to run the edge"})
+	}
+	errs = append(errs, e.validateEntryAddrs(hosts)...)
+	return append(errs, e.validateDNS(hosts)...)
+}
+
+// validateEntryAddrs checks the compute hosts' entry addresses: each needs
+// one under front: none, apart from the addresses it is managed on, and no
+// host takes one otherwise.
+func (e PublicEdge) validateEntryAddrs(hosts []Host) Errors {
+	var errs Errors
+	for i, h := range hosts {
+		field := fmt.Sprintf("fleet.hosts[%d].entry_ipv4", i)
+		if h.PublicIPv4Forwarded && h.PublicIPv4 == "" {
+			errs = append(errs, Error{fmt.Sprintf("fleet.hosts[%d].public_ipv4_forwarded", i), "needs public_ipv4, the forwarding rule's address"})
+		}
+		entry := h.EntryAddress()
+		switch {
+		case !e.NoFront() || h.Role != "compute-only":
+			if h.EntryIPv4 != "" {
+				errs = append(errs, Error{field, "is for a compute-only host under public_edge.front: none"})
+			}
+		case entry == "":
+			errs = append(errs, Error{field, "is required under public_edge.front: none (or public_ipv4_forwarded): the address clients reach, apart from the one the host is managed on"})
+		default:
+			addr, err := netip.ParseAddr(entry)
+			if err != nil || !addr.Is4() || addr.String() != entry {
+				errs = append(errs, Error{field, fmt.Sprintf("%q is not an IPv4 address in canonical form", entry)})
+				continue
+			}
+			managed, _, _ := ParseHostPort(h.Address)
+			if entry == managed || (entry == h.PublicIPv4 && !h.PublicIPv4Forwarded) {
+				errs = append(errs, Error{field, "must not be the host's address, or its public_ipv4 unless that is an inbound-only forwarding rule (public_ipv4_forwarded): the firewall drops SSH and every port but 443 on it"})
+			}
+		}
+	}
+	return errs
+}
+
+// validateDNS checks public_edge.dns: edgednsd sends Cloudflare to the TLS
+// listeners entry both opens, at the compute hosts' public addresses.
+func (e PublicEdge) validateDNS(hosts []Host) Errors {
+	if e.DNS == nil {
+		return nil
+	}
+	var errs Errors
+	if !e.DirectEntry() {
+		errs = append(errs, Error{"public_edge.dns", "needs public_edge.entry: both, whose TLS listeners the records point at"})
+	}
+	if strings.TrimSpace(e.DNS.ZoneID) == "" {
+		errs = append(errs, Error{"public_edge.dns.zone_id", "is required"})
+	}
+	if len(e.DNS.Names) == 0 {
+		errs = append(errs, Error{"public_edge.dns.names", "needs at least one host name"})
+	}
+	if len(e.DNS.Proxied) > 0 && !e.NoFront() {
+		errs = append(errs, Error{"public_edge.dns.proxied", "is for public_edge.front: none; under Cloudflare every name is proxied"})
+	}
+	seen := map[string]bool{}
+	for i, name := range e.DNS.Proxied {
+		if strings.TrimSpace(name) == "" || seen[name] {
+			errs = append(errs, Error{fmt.Sprintf("public_edge.dns.proxied[%d]", i), fmt.Sprintf("%q is empty or listed twice", name)})
+		}
+		seen[name] = true
+	}
+	errs = append(errs, e.DNS.Certificate.validate()...)
+	addressed := 0
+	for i, h := range hosts {
+		if h.PublicIPv4 == "" {
+			continue
+		}
+		if addr, err := netip.ParseAddr(h.PublicIPv4); err != nil || !addr.Is4() {
+			errs = append(errs, Error{fmt.Sprintf("fleet.hosts[%d].public_ipv4", i), fmt.Sprintf("%q is not an IPv4 address", h.PublicIPv4)})
+		} else if h.Role == "compute-only" {
+			addressed++
+		}
+	}
+	// Under front: none the records point at the entry addresses
+	// validateEntryAddrs requires instead.
+	if addressed == 0 && !e.NoFront() {
+		errs = append(errs, Error{"public_edge.dns", "needs a compute-only host with public_ipv4"})
+	}
+	return errs
+}
+
+// validate checks public_edge.dns.certificate; nil is valid.
+func (c *PublicEdgeCertificate) validate() Errors {
+	if c == nil {
+		return nil
+	}
+	var errs Errors
+	if len(c.Names) == 0 || len(c.Names) > edgeCertificateNamesMax {
+		errs = append(errs, Error{"public_edge.dns.certificate.names", fmt.Sprintf("needs 1 to %d names", edgeCertificateNamesMax)})
+	}
+	seen := map[string]bool{}
+	for i, name := range c.Names {
+		lower := strings.ToLower(strings.TrimSpace(name))
+		if lower == "" || seen[lower] || !strings.Contains(strings.TrimPrefix(lower, "*."), ".") || strings.Contains(strings.TrimPrefix(lower, "*."), "*") {
+			errs = append(errs, Error{fmt.Sprintf("public_edge.dns.certificate.names[%d]", i), fmt.Sprintf("%q is empty, listed twice, or not a host name or *. wildcard", name)})
+		}
+		seen[lower] = true
+	}
+	if !contains([]string{"", EdgeCertificateCAStaging, EdgeCertificateCAProduction}, c.CA) {
+		errs = append(errs, Error{"public_edge.dns.certificate.ca", fmt.Sprintf("unsupported %q (allowed: %s|%s)", c.CA, EdgeCertificateCAStaging, EdgeCertificateCAProduction)})
+	}
+	if !contains([]string{"", EdgeCertificateCAStaging, EdgeCertificateCAProduction}, c.Serve) {
+		errs = append(errs, Error{"public_edge.dns.certificate.serve", fmt.Sprintf("unsupported %q (allowed: empty, %s or %s)", c.Serve, EdgeCertificateCAStaging, EdgeCertificateCAProduction)})
+	}
+	return append(errs, c.Transparency.validate()...)
+}
+
+func (t *PublicEdgeTransparency) validate() Errors {
+	if t == nil {
+		return nil
+	}
+	var errs Errors
+	domain := strings.ToLower(strings.TrimSpace(t.Domain))
+	if domain == "" || strings.Contains(domain, "*") || !strings.Contains(domain, ".") {
+		errs = append(errs, Error{"public_edge.dns.certificate.transparency.domain", fmt.Sprintf("%q is not a domain name", t.Domain)})
+	}
+	if len(t.AllowNames) > edgeTransparencyAllowNamesMax {
+		errs = append(errs, Error{"public_edge.dns.certificate.transparency.allow_names", fmt.Sprintf("at most %d names, not %d", edgeTransparencyAllowNamesMax, len(t.AllowNames))})
+	}
+	seen := map[string]bool{}
+	for i, name := range t.AllowNames {
+		lower := strings.ToLower(strings.TrimSpace(name))
+		if lower == "" || seen[lower] || !strings.Contains(strings.TrimPrefix(lower, "*."), ".") || strings.Contains(strings.TrimPrefix(lower, "*."), "*") {
+			errs = append(errs, Error{fmt.Sprintf("public_edge.dns.certificate.transparency.allow_names[%d]", i), fmt.Sprintf("%q is empty, listed twice, or not a host name or *. wildcard", name)})
+		}
+		seen[lower] = true
 	}
 	return errs
 }
@@ -1101,10 +1538,13 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.validateFleetEndpoints()...)
 	errs = append(errs, m.Daemons.validate()...)
 	errs = append(errs, m.Overlay.validate()...)
+	errs = append(errs, m.SSH.validate()...)
+	errs = append(errs, m.validateDiskEncryption()...)
 	errs = append(errs, m.DNS.validate()...)
 	errs = append(errs, m.PrivateDNS.validate()...)
 	errs = append(errs, m.PublicEdge.CustomDomains.validate(m.DNS)...)
 	errs = append(errs, m.PublicEdge.validate(m.Fleet.Hosts)...)
+	errs = append(errs, m.HotPath.validate(m.PublicEdge)...)
 	errs = append(errs, m.validatePrivateResolution()...)
 	errs = append(errs, m.PostgreSQL.validate()...)
 	errs = append(errs, m.validatePostgresStandby()...)
@@ -1113,8 +1553,12 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.Cgroups.validate()...)
 	errs = append(errs, m.PKI.validate()...)
 	errs = append(errs, m.Egress.validate(m.Overlay.CIDR)...)
+	errs = append(errs, m.validateManagedPostgres()...)
+	errs = append(errs, m.validateServiceTCP()...)
 	errs = append(errs, m.ObjectStorage.validate()...)
+	errs = append(errs, m.ObjectStorage.validateOnCompute(m.PublicEdge, m.Fleet.Hosts)...)
 	errs = append(errs, m.LogArchive.validate()...)
+	errs = append(errs, m.ArtifactSigner.validate()...)
 	errs = append(errs, m.WorkloadIdentity.validate()...)
 	if len(errs) > 0 {
 		return errs
@@ -1370,7 +1814,7 @@ func (f *Fleet) validate() Errors {
 			errs = append(errs, Error{path + ".role", "is required"})
 		} else if !roleKnown(h.Role) {
 			errs = append(errs, Error{path + ".role",
-				fmt.Sprintf("unknown role %q (allowed: single-box|control-plane|compute-only)", h.Role)})
+				fmt.Sprintf("unknown role %q (allowed: single-box|control-plane|compute-only|database)", h.Role)})
 		}
 		if h.Address != "" && !looksLikeHostPort(h.Address) {
 			errs = append(errs, Error{path + ".address",
@@ -1538,11 +1982,41 @@ func (o *Overlay) validate() Errors {
 		errs = append(errs, Error{"overlay.provider",
 			fmt.Sprintf("unsupported %q (allowed: wireguard|tailscale|static)", o.Provider)})
 	}
+	if o.Interface != "" {
+		if !ifaceNameRe.MatchString(o.Interface) {
+			errs = append(errs, Error{"overlay.interface",
+				fmt.Sprintf("%q is not a network interface name (at most 15 of [A-Za-z0-9_.-])", o.Interface)})
+		} else if o.Provider != "static" {
+			errs = append(errs, Error{"overlay.interface",
+				fmt.Sprintf("applies to the static provider only; %s names its own interface", o.Provider)})
+		}
+	}
 	if o.CIDR == "" {
 		errs = append(errs, Error{"overlay.cidr", "is required"})
 	} else if !validCIDR(o.CIDR) {
 		errs = append(errs, Error{"overlay.cidr",
 			fmt.Sprintf("cidr %q must be a valid IPv4 CIDR (e.g. 10.42.0.0/24)", o.CIDR)})
+	}
+	return errs
+}
+
+var ifaceNameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,15}$`)
+
+func (s *SSH) validate() Errors {
+	if s == nil {
+		return nil
+	}
+	var errs Errors
+	for i, cidr := range s.AllowedCIDRs {
+		path := fmt.Sprintf("ssh.allowed_cidrs[%d]", i)
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			errs = append(errs, Error{path, fmt.Sprintf("%q is not a CIDR", cidr)})
+			continue
+		}
+		if ones, _ := network.Mask.Size(); ones == 0 {
+			errs = append(errs, Error{path, fmt.Sprintf("%q admits every address; leave the ssh section out instead", cidr)})
+		}
 	}
 	return errs
 }
@@ -1563,8 +2037,22 @@ func (d *DNS) validate() Errors {
 		errs = append(errs, Error{"dns.mode",
 			fmt.Sprintf("unsupported %q (allowed: cloudflare|manual|nip_io)", d.Mode)})
 	}
+	switch {
+	case d.OriginPull == "":
+	case !contains([]string{DNSOriginPullRequired, DNSOriginPullAnyZone}, d.OriginPull):
+		errs = append(errs, Error{"dns.origin_pull",
+			fmt.Sprintf("unsupported %q (allowed: %s|%s)", d.OriginPull, DNSOriginPullRequired, DNSOriginPullAnyZone)})
+	case d.Mode != "cloudflare":
+		errs = append(errs, Error{"dns.origin_pull", "applies only with dns.mode cloudflare"})
+	}
 	return errs
 }
+
+// dns.origin_pull values (ADR-20261103172551).
+const (
+	DNSOriginPullRequired = "required"
+	DNSOriginPullAnyZone  = "any_zone"
+)
 
 func (d *PrivateDNS) validate() Errors {
 	var errs Errors
@@ -1784,7 +2272,7 @@ func contains(xs []string, x string) bool {
 }
 
 func roleKnown(r string) bool {
-	for _, v := range []string{"single-box", "control-plane", "compute-only"} {
+	for _, v := range []string{"single-box", "control-plane", "compute-only", RoleDatabase} {
 		if r == v {
 			return true
 		}

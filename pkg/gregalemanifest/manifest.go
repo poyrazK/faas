@@ -38,6 +38,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -51,6 +52,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/hostingconfig"
+	"github.com/onebox-faas/faas/pkg/labels"
+	"github.com/onebox-faas/faas/pkg/projectconfig"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -679,7 +682,7 @@ func (t EventTrigger) Validate(idx int) error {
 	if err := events.ValidatePattern(t.Type); err != nil {
 		return fmt.Errorf("triggers.event[%d].type: %w", idx, err)
 	}
-	if err := events.ValidateFilter(json.RawMessage(t.Filter)); err != nil {
+	if err := events.ValidateSubscriptionFilter(json.RawMessage(t.Filter)); err != nil {
 		return fmt.Errorf("triggers.event[%d].filter: %w", idx, err)
 	}
 	return nil
@@ -1056,6 +1059,9 @@ type ScalingTarget struct {
 	// Name selects WHICH custom metric to watch (ADR-202). Required with
 	// `metric: custom`, rejected with any other metric.
 	Name string `yaml:"name,omitempty"`
+	// Labels selects one labelled series of the custom metric
+	// (ADR-20261108160000 slice C2); omitted, the metric's aggregate.
+	Labels map[string]string `yaml:"labels,omitempty"`
 }
 
 // ScalingConfig declares the app-level autoscaling policy. Pointers preserve
@@ -1264,7 +1270,7 @@ func (s *ScalingConfig) Validate() error {
 	if len(s.Targets) > 0 {
 		converted := make([]api.ScalingTarget, 0, len(s.Targets))
 		for _, t := range s.Targets {
-			converted = append(converted, api.ScalingTarget{Metric: t.Metric, Value: t.Value, Name: t.Name})
+			converted = append(converted, api.ScalingTarget{Metric: t.Metric, Value: t.Value, Name: t.Name, Labels: t.Labels})
 		}
 		if problem := api.ValidateScalingTargets("targets", converted); problem != nil {
 			return fmt.Errorf("scaling: %s", problem.Detail)
@@ -1336,10 +1342,10 @@ func (s *ScalingConfig) ToAPI() *api.ScalingPolicy {
 		out.ScaleInCooldownS = *s.ScaleInCooldownS
 	}
 	if s.Target != nil {
-		out.Target = &api.ScalingTarget{Metric: s.Target.Metric, Value: s.Target.Value, Name: s.Target.Name}
+		out.Target = &api.ScalingTarget{Metric: s.Target.Metric, Value: s.Target.Value, Name: s.Target.Name, Labels: s.Target.Labels}
 	}
 	for _, t := range s.Targets {
-		out.Targets = append(out.Targets, api.ScalingTarget{Metric: t.Metric, Value: t.Value, Name: t.Name})
+		out.Targets = append(out.Targets, api.ScalingTarget{Metric: t.Metric, Value: t.Value, Name: t.Name, Labels: t.Labels})
 	}
 	out.Timezone = s.Timezone
 	// Validate() already rejected an unparseable duration, so a failure
@@ -1367,6 +1373,93 @@ type DatabaseDependency struct {
 	Scope          string `yaml:"scope,omitempty"`
 	EnvironmentKey string `yaml:"env,omitempty"`
 	Access         string `yaml:"access,omitempty"`
+	// Create makes a deploy create the database when none with this name
+	// exists (ADR-20261106105015 §1). Without it a missing database fails
+	// the deploy, as before.
+	Create *DatabaseCreate `yaml:"create,omitempty"`
+}
+
+// DatabaseCreate is the managed PostgreSQL database a deploy creates for a
+// dependency whose database does not exist yet. Unset fields take the
+// defaults of `gregale postgres create`. `create: true` is the same as an
+// empty object.
+type DatabaseCreate struct {
+	PostgresMajor int    `yaml:"postgres_major,omitempty"`
+	Class         string `yaml:"class,omitempty"`
+	Region        string `yaml:"region,omitempty"`
+	ScaleToZero   *bool  `yaml:"scale_to_zero,omitempty"`
+}
+
+// UnmarshalYAML accepts true or an object; false would read like an opt-out
+// of something on by default, so it is rejected.
+func (c *DatabaseCreate) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		var enabled bool
+		if err := node.Decode(&enabled); err != nil || !enabled {
+			return fmt.Errorf("database create must be true or an object with postgres_major, class, region or scale_to_zero")
+		}
+		*c = DatabaseCreate{}
+		return nil
+	}
+	if err := checkCreateKeys(node, "database create", "postgres_major", "class", "region", "scale_to_zero"); err != nil {
+		return err
+	}
+	type plain DatabaseCreate
+	var raw plain
+	if err := node.Decode(&raw); err != nil {
+		return fmt.Errorf("database create: %w", err)
+	}
+	*c = DatabaseCreate(raw)
+	return nil
+}
+
+// Request is the create request for database name.
+func (c DatabaseCreate) Request(name string) api.CreateManagedPostgresDatabaseRequest {
+	return api.CreateManagedPostgresDatabaseRequest{
+		Name: strings.TrimSpace(name), Region: strings.TrimSpace(c.Region), PostgresMajor: c.PostgresMajor,
+		ServiceClass: strings.TrimSpace(c.Class), ScaleToZero: c.ScaleToZero,
+	}
+}
+
+// BucketCreate is the object-storage bucket a deploy creates for a
+// dependency whose bucket does not exist yet in the app's scope
+// (ADR-20261106105015 §1). `create: true` is the same as an empty object.
+type BucketCreate struct {
+	Region string `yaml:"region,omitempty"`
+}
+
+// UnmarshalYAML accepts true or an object with region.
+func (c *BucketCreate) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		var enabled bool
+		if err := node.Decode(&enabled); err != nil || !enabled {
+			return fmt.Errorf("bucket create must be true or an object with region")
+		}
+		*c = BucketCreate{}
+		return nil
+	}
+	if err := checkCreateKeys(node, "bucket create", "region"); err != nil {
+		return err
+	}
+	type plain BucketCreate
+	var raw plain
+	if err := node.Decode(&raw); err != nil {
+		return fmt.Errorf("bucket create: %w", err)
+	}
+	*c = BucketCreate(raw)
+	return nil
+}
+
+func checkCreateKeys(node *yaml.Node, what string, known ...string) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("%s must be true or an object", what)
+	}
+	for i := 0; i < len(node.Content); i += 2 {
+		if key := node.Content[i].Value; !slices.Contains(known, key) {
+			return fmt.Errorf("%s: unknown key %q (supported: %s)", what, key, strings.Join(known, ", "))
+		}
+	}
+	return nil
 }
 
 // EffectiveScope returns the scope used by the binding API when the manifest
@@ -1402,10 +1495,11 @@ func (d DatabaseDependency) EffectiveAccess() string {
 // scope. The binding injects sealed S3 settings under the requested prefix.
 // Credentials and provider details never appear in the manifest.
 //
-// Bucket creation remains explicit through `gregale add bucket`. A deployment
-// only attaches an existing ready bucket, so adding a manifest entry cannot
-// unexpectedly create billable storage during CI.
+// A deployment only attaches an existing ready bucket unless the entry says
+// `create` (ADR-20261106105015 §1), so adding an entry without it cannot
+// create billable storage during CI.
 type BucketDependency struct {
+	Create     *BucketCreate                      `yaml:"create,omitempty"`
 	Triggers   *[]api.ObjectStorageComputeTrigger `yaml:"triggers,omitempty"`
 	Bucket     string                             `yaml:"bucket"`
 	App        string                             `yaml:"app,omitempty"`
@@ -1413,6 +1507,9 @@ type BucketDependency struct {
 	Permission string                             `yaml:"permission,omitempty"`
 	Label      string                             `yaml:"label,omitempty"`
 	Prefix     string                             `yaml:"prefix,omitempty"`
+	// KeyPrefix limits the binding to object keys under it
+	// (ADR-20261106114500); empty binds the whole bucket.
+	KeyPrefix string `yaml:"key_prefix,omitempty"`
 }
 
 // EffectiveScope returns the scope used by the binding API when the manifest
@@ -1446,7 +1543,7 @@ func (d BucketDependency) EffectiveLabel() string {
 // `function`, `release`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
 // `triggers`, `event_triggers`, `async_routes`, `routes`, `companions`, `main_depends_on`,
 // `exclusive_operations`, `extensions`, `workflows`, `databases`, `buckets`,
-// and the local-only `dev`
+// `labels`, and the local-only `dev`
 // profile; other keys are validated strictly (yaml.Decoder.KnownFields(true))
 // so a typo like `trigger:` (singular) surfaces as a load-time error rather
 // than silently shipping a no-op deploy.
@@ -1500,6 +1597,20 @@ type Manifest struct {
 	// Realtime declares managed realtime endpoints by slug
 	// (ADR-20261019102657).
 	Realtime *RealtimeConfig `yaml:"realtime,omitempty"`
+	// Labels are the app's key/value labels (ADR-20261031100025 §7). A deploy
+	// sets these keys and removes none: a key dropped from the manifest stays
+	// until `gregale app label unset` removes it. Labels are not secret.
+	Labels map[string]string `yaml:"labels,omitempty"`
+	// Project holds the repository's project-wide service settings
+	// (ADR-20261107180000). It is meaningful in the repository's root
+	// gregale.yaml, where the scanner applies it; it replaces the
+	// deprecated .gregale/project.yaml. Not part of any app's deployment.
+	Project *projectconfig.Config `yaml:"project,omitempty" json:"-"`
+
+	// FunctionSettings is set on a FunctionAppManifest view: the function's
+	// app settings (RAM, idle timeout, concurrency, env) that a repository
+	// push applies to its function app (ADR-20261108160000 §4). Never parsed.
+	FunctionSettings *FunctionSpec `yaml:"-"`
 }
 
 // ReleaseConfig declares a command that must succeed for the candidate
@@ -1549,6 +1660,9 @@ type DevConfig struct {
 	// Debug starts the Node.js inspector in the developer environment and
 	// exposes it on a local port (`gregale dev --debug`, ADR-741).
 	Debug *bool `yaml:"debug,omitempty"`
+	// DebugPort is the local debugger port (`--debug-port`). Each app of a
+	// `gregale dev --all` workspace that sets debug needs its own.
+	DebugPort *int `yaml:"debug_port,omitempty"`
 	// Watch runs a development server instead of the production build
 	// (`gregale dev --watch`, ADR-1170).
 	Watch *DevWatchConfig `yaml:"watch,omitempty"`
@@ -2131,6 +2245,7 @@ type tomlManifest struct {
 	Companions          []CompanionSpec            `toml:"companions"`
 	MainDependsOn       []ExtensionDependency      `toml:"main_depends_on"`
 	Extensions          []ExtensionSpec            `toml:"extensions"`
+	Labels              map[string]string          `toml:"labels"`
 }
 
 type tomlTriggers struct {
@@ -2161,6 +2276,7 @@ func parseTOMLManifest(b []byte) (*Manifest, error) {
 		Companions:          raw.Companions,
 		MainDependsOn:       raw.MainDependsOn,
 		Extensions:          raw.Extensions,
+		Labels:              raw.Labels,
 	}, nil
 }
 
@@ -2198,6 +2314,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if err := m.validateRealtime(); err != nil {
 		return err
 	}
+	if m.Project != nil {
+		if err := m.Project.Validate(); err != nil {
+			return fmt.Errorf("project: %w", err)
+		}
+	}
 	if m.Profiling != nil {
 		if err := m.Profiling.Validate(plan); err != nil {
 			return err
@@ -2227,6 +2348,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	}
 	if m.SchemaVersion != 0 && m.SchemaVersion != 1 {
 		return fmt.Errorf("schema_version: unsupported version %d; supported versions: 1", m.SchemaVersion)
+	}
+	// A customer's labels: valid keys and values, within the limit, and none
+	// under gregale.dev/.
+	if err := (labels.Change{Set: m.Labels}).Validate(); err != nil {
+		return fmt.Errorf("labels: %w", err)
 	}
 	if m.Hosting != nil {
 		if err := m.Hosting.Validate(); err != nil {
@@ -2511,6 +2637,7 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	}
 
 	seenDatabases := make(map[string]struct{}, len(m.Databases))
+	createdDatabases := map[string]struct{}{}
 	for i, dependency := range m.Databases {
 		if strings.TrimSpace(dependency.Database) == "" {
 			return fmt.Errorf("database[%d]: database is required", i)
@@ -2525,9 +2652,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return fmt.Errorf("database[%d]: env: %w", i, problem)
 		}
 		access := dependency.EffectiveAccess()
-		if access != "read_write" && access != "read_only" && access != "migration" && access != "data_api" && access != "auth" {
+		if access != "read_write" && access != "read_only" && access != "migration" && access != "data_api" && access != "auth" && access != "session" {
 			// auth (application Auth, ADR-1190) is accepted but not yet listed.
-			return fmt.Errorf("database[%d]: access %q not in {read_write, read_only, migration, data_api}", i, access)
+			return fmt.Errorf("database[%d]: access %q not in {read_write, read_only, migration, data_api, session}", i, access)
 		}
 		// A database dependency targets one environment variable on one
 		// workload. Different databases must not silently compete for the
@@ -2538,6 +2665,16 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return fmt.Errorf("database[%d]: duplicate (app, scope, env) dependency", i)
 		}
 		seenDatabases[key] = struct{}{}
+		if dependency.Create != nil {
+			if err := validateDatabaseCreate(dependency); err != nil {
+				return fmt.Errorf("database[%d]: create: %w", i, err)
+			}
+			name := strings.TrimSpace(dependency.Database)
+			if _, again := createdDatabases[name]; again {
+				return fmt.Errorf("database[%d]: create: declare create once per database (%q)", i, name)
+			}
+			createdDatabases[name] = struct{}{}
+		}
 	}
 
 	seenBuckets := make(map[string]struct{}, len(m.Buckets))
@@ -2567,6 +2704,12 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		}
 		if dependency.Prefix != "" && !validManifestBucketPrefix(dependency.Prefix) {
 			return fmt.Errorf("bucket[%d]: prefix must match [A-Z][A-Z0-9_]{0,47}", i)
+		}
+		if dependency.KeyPrefix != "" && !api.ValidObjectKeyScope(dependency.KeyPrefix) {
+			return fmt.Errorf("bucket[%d]: key_prefix must be a literal object key prefix ending in /, such as segments/L0/ (no patterns, at most %d bytes)", i, api.MaxObjectKeyScopeBytes)
+		}
+		if dependency.Create != nil && !validCreatedBucketName(dependency.Bucket) {
+			return fmt.Errorf("bucket[%d]: create: bucket must be a name matching [a-z][a-z0-9-]{0,62}, not an ID", i)
 		}
 		// One binding owns one (app, scope, prefix) target. An omitted
 		// prefix is resolved from the bucket name before the API call, so
@@ -2692,7 +2835,7 @@ func (t Trigger) validateKindConfig(idx int) error {
 			return fmt.Errorf("trigger[%d]: invalid path %q: %s", idx, t.Path, problem.Detail)
 		}
 		if t.Timezone != "" {
-			if _, err := time.LoadLocation(t.Timezone); err != nil {
+			if _, err := cronexpr.NormalizeCustomerTimezone(t.Timezone); err != nil {
 				return fmt.Errorf("trigger[%d]: timezone %q is not a valid IANA location", idx, t.Timezone)
 			}
 		}
@@ -3111,4 +3254,38 @@ type triggerKey struct {
 	schedule string
 	path     string
 	slug     string
+}
+
+var (
+	createdDatabaseName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+	createdBucketName   = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+)
+
+func isUUID(value string) bool {
+	_, err := uuid.Parse(value)
+	return err == nil
+}
+
+// validateDatabaseCreate checks what the manifest can know; the API checks
+// the plan, region and offered majors at deploy time.
+func validateDatabaseCreate(dependency DatabaseDependency) error {
+	name := strings.TrimSpace(dependency.Database)
+	if !createdDatabaseName.MatchString(name) || isUUID(name) {
+		return fmt.Errorf("database must be a name matching [a-z][a-z0-9-]{0,62}, not an ID")
+	}
+	create := dependency.Create
+	if create.PostgresMajor != 0 && (create.PostgresMajor < 13 || create.PostgresMajor > 99) {
+		return fmt.Errorf("postgres_major %d is not a PostgreSQL major version", create.PostgresMajor)
+	}
+	switch strings.TrimSpace(create.Class) {
+	case "", "development", "burstable", "production":
+	default:
+		return fmt.Errorf("class %q not in {development, burstable, production}", create.Class)
+	}
+	return nil
+}
+
+func validCreatedBucketName(name string) bool {
+	name = strings.TrimSpace(name)
+	return createdBucketName.MatchString(name) && !isUUID(name)
 }

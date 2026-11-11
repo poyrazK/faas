@@ -3,7 +3,7 @@
   "defaults": {
     "eu-central-1": "neon-eu"
   },
-  "max_databases_per_account": 3,
+  "max_databases_per_account": 10,
   "provisioning_enabled": false,
   "health": {
     "enabled": true,
@@ -33,6 +33,7 @@
       "namespace": "org-replace-with-neon-org-id",
       "data_api_enabled": false,
       "auth_enabled": false,
+      "session_enabled": false,
       "settings": {
         "region_id": "aws-eu-central-1",
         "database_name": "gregale",

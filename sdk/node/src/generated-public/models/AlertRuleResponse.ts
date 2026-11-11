@@ -59,6 +59,10 @@ export type AlertRuleResponse = {
    */
   custom_metric_name?: string;
   /**
+   * The labelled series a custom_metric rule watches: the series with exactly these labels. Absent when the rule watches the aggregate.
+   */
+  custom_metric_labels?: Record<string, string>;
+  /**
    * The canonical log search filters a log_search_matches rule counts. Present only when metric is log_search_matches.
    */
   log_query?: string;

@@ -16,8 +16,39 @@ import (
 
 const rollbackStatusUsage = "usage: gregale rollback status <slug> --operation UUID [--wait] [--timeout 10m] [--poll-interval 2s]"
 
+// rollbackStatusNamesSwitch reports status arguments that name a database
+// switch (`<slug> <switch-id>`) rather than a rollback operation
+// (`--operation UUID`). One `status` reads both, so `rollback status` and
+// the tree's `release rollback status` mean the same (ADR-20261026145832).
+func rollbackStatusNamesSwitch(args []string) bool {
+	return !rollbackStatusNamesOperation(args) && len(args) >= 2 && !strings.HasPrefix(args[0], "-") && !strings.HasPrefix(args[1], "-")
+}
+
+// rollbackStatusNamesOperation reports status arguments that carry
+// --operation, which the switch form does not take.
+func rollbackStatusNamesOperation(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if name, _, _ := strings.Cut(strings.TrimLeft(arg, "-"), "="); strings.HasPrefix(arg, "-") && name == "operation" {
+			return true
+		}
+	}
+	return false
+}
+
 type rollbackOperationClient interface {
 	GetRollbackOperation(context.Context, string, string) (api.RollbackOperation, error)
+}
+
+// freshRollbackReceiptStatus names the states a just-created checked rollback
+// can report. A target that is still live at zero traffic needs no snapshot
+// prime, so the server records it ready at once (CheckedRollbackReuseLive);
+// rejecting that receipt printed "Invalid rollback receipt" for a rollback
+// the server had durably accepted (ChronoLake finding 23).
+func freshRollbackReceiptStatus(status string) bool {
+	return status == "preparing" || status == "ready"
 }
 
 func rollbackReceiptMatches(got, pin api.RollbackOperation) bool {
@@ -98,7 +129,7 @@ func cmdCheckedRollback(slug, target, current, reason string, acknowledgeRelease
 		return checkedRollbackCLIError(signalCtx, "Rollback request failed", err)
 	}
 	operation := response.RollbackOperation
-	if operation == nil || operation.ID == "" || operation.Scope == "" || operation.Scope != response.Scope || operation.CreatedAt.IsZero() || operation.UpdatedAt.IsZero() || operation.AppID != app.ID || !sameBindingDeployment(response.ID, targetID) || response.AppID != app.ID || !sameBindingDeployment(operation.TargetDeploymentID, targetID) || !sameBindingDeployment(operation.CurrentDeploymentID, currentID) || operation.Status != "preparing" {
+	if operation == nil || operation.ID == "" || operation.Scope == "" || operation.Scope != response.Scope || operation.CreatedAt.IsZero() || operation.UpdatedAt.IsZero() || operation.AppID != app.ID || !sameBindingDeployment(response.ID, targetID) || response.AppID != app.ID || !sameBindingDeployment(operation.TargetDeploymentID, targetID) || !sameBindingDeployment(operation.CurrentDeploymentID, currentID) || !freshRollbackReceiptStatus(operation.Status) {
 		return printErr("Invalid rollback receipt", fmt.Errorf("server did not confirm durable intent for the exact deployment pair"))
 	}
 	if _, err := uuid.Parse(operation.ID); err != nil {
@@ -144,8 +175,11 @@ func outputRollbackOperation(r api.RollbackOperation) int {
 }
 func cmdRollbackStatus(args []string) int {
 	if hasHelpFlag(args) {
-		PrintUsage(osStdout, rollbackStatusUsage, "rollback")
+		PrintUsage(osStdout, rollbackStatusUsage+"\n       "+strings.TrimPrefix(rollbackSwitchUsage, "usage: "), "rollback")
 		return 0
+	}
+	if rollbackStatusNamesSwitch(args) {
+		return cmdRollbackSwitch(args)
 	}
 	fs := newFlagSet("rollback status", flag.ContinueOnError)
 	id := fs.String("operation", "", "rollback operation UUID")

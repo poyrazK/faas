@@ -35,6 +35,7 @@ import (
 	"filippo.io/age"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 	"github.com/onebox-faas/faas/pkg/auth"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/authcode"
@@ -126,6 +127,12 @@ func (s *server) mfaEnroll(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Already enrolled", "call /v1/account/mfa/disable before re-enrolling"))
 		return
 	}
+	// Confirming asks for the current password. Without one, a stolen
+	// session could add an authenticator that locks the owner out, so it
+	// must have signed in recently (ADR 20261110100000).
+	if !s.mfaEnrollFirstFactorReady(w, r, acct) {
+		return
+	}
 	// mfaRecipient stays nil when apid boots without an age identity;
 	// calling it panicked (a recovered 500) instead of reporting 503. The
 	// TOTP secret is an account value (ADR 20261022111812).
@@ -206,13 +213,20 @@ func (s *server) mfaConfirm(w http.ResponseWriter, r *http.Request, acct state.A
 			"Invalid CSRF token", "please reload the page and try again"))
 		return
 	}
+	if acct.MFAEnrolled() {
+		s.writeMFAEnabledAlertError(w, r, acct, mailoutbox.ErrMFAEnrollmentAlreadyEnabled)
+		return
+	}
 	var req api.MFAConfirmRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid request", "malformed JSON body"))
 		return
 	}
-	if !s.totpAttemptAllowed(w, acct) {
+	if !s.confirmMFAFirstFactor(w, r, acct, req.CurrentPassword) {
+		return
+	}
+	if !s.totpAttemptAllowed(w, r, acct) {
 		return
 	}
 	if s.tryMFAEnabledAlert(w, r, acct, req.Totp) {
@@ -226,23 +240,35 @@ func (s *server) confirmInlineMFA(w http.ResponseWriter, r *http.Request, acct s
 	if confirmSecret == "" {
 		return // readSealedSecret wrote the problem
 	}
-	if !auth.VerifyCode(confirmSecret, code) {
-		s.totp.fail(acct.ID, time.Now())
+	step, valid := auth.VerifyCodeStep(confirmSecret, code, time.Now())
+	if !valid {
 		s.audit.Emit(r.Context(), "account.mfa_confirm_failed", &acct.ID, map[string]any{"reason": "code_mismatch"})
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode,
 			"Invalid code", "the TOTP code did not match"))
 		return
 	}
-	if err := s.store.MarkMFAEnrolled(r.Context(), acct.ID); err != nil {
+	enrollments, ok := s.store.(state.MFAEnrollmentStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("MFA enrollment store unavailable"))
+		return
+	}
+	confirmed, err := enrollments.ConfirmPendingMFA(r.Context(), acct.ID, acct.MFASecretEncrypted, step)
+	if err != nil {
 		s.log.Error("mfa.confirm.mark_enrolled", "err", err.Error())
 		api.WriteProblem(w, api.ErrCapacity("could not finalize enrollment"))
 		return
 	}
+	if !confirmed {
+		s.writeMFAEnabledAlertError(w, r, acct, mailoutbox.ErrMFAEnrollmentAlreadyEnabled)
+		return
+	}
+	s.alertMFAEnabledInline(r.Context(), acct)
 	s.finishMFAConfirmation(w, r, acct)
 }
 
 func (s *server) finishMFAConfirmation(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if err := s.reissueSessionCookie(w, r, acct, false); err != nil {
+	s.resetTOTPAttempts(r.Context(), acct.ID) // a correct code clears the counted attempts
+	if err := s.reissueSessionCookieWithStepUp(w, r, acct, false, time.Now()); err != nil {
 		// Cookie re-issue failure is non-fatal — the customer's
 		// enrollment landed; the next request will trip
 		// requireMFA until they log in again. We log it but
@@ -260,7 +286,22 @@ func (s *server) finishMFAConfirmation(w http.ResponseWriter, r *http.Request, a
 	}
 	s.audit.Emit(r.Context(), "account.mfa_enrolled", &acct.ID, nil)
 	s.audit.Emit(r.Context(), "account.mfa_confirmed", &acct.ID, map[string]any{"method": "totp"})
+	s.endOtherAccessAfterMFAEnroll(r, acct)
 	writeJSON(w, http.StatusOK, api.MFAConfirmResponse{})
+}
+
+// endOtherAccessAfterMFAEnroll signs out every other browser and revokes the
+// CLI and MCP sign-in keys. Turning on two-factor authentication is what a
+// customer does when they suspect someone else is in: sessions and keys
+// issued before it never passed the new factor (account-flow audit
+// 2026-11-10, ADR 20261111110000). The enrolling browser stays signed in.
+func (s *server) endOtherAccessAfterMFAEnroll(r *http.Request, acct state.Account) {
+	keep := ""
+	if sess, ok := sessionFrom(r); ok {
+		keep = sess.ID
+	}
+	s.revokeSessionsAfterPasswordChange(r.Context(), acct.ID, keep)
+	s.revokeInteractiveSignInKeys(r, acct, "mfa_enrolled")
 }
 
 // mfaVerify steps up an mfa_pending session. Same verify path
@@ -273,13 +314,16 @@ func (s *server) finishMFAConfirmation(w http.ResponseWriter, r *http.Request, a
 // is missing (defense in depth — should never happen because
 // s.auth resolved it moments earlier).
 func (s *server) mfaVerify(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !requireEnrolledMFA(w, acct) {
+		return
+	}
 	var req api.MFAVerifyRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid request", "malformed JSON body"))
 		return
 	}
-	if !s.totpAttemptAllowed(w, acct) {
+	if !s.totpAttemptAllowed(w, r, acct) {
 		return
 	}
 	secret := readSealedSecret(s, w, r, acct.ID)
@@ -293,7 +337,6 @@ func (s *server) mfaVerify(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	if reason != "" {
-		s.totp.fail(acct.ID, time.Now())
 		s.audit.Emit(r.Context(), "account.mfa_verify_failed", &acct.ID, map[string]any{"reason": reason})
 		detail := "the TOTP code did not match"
 		if reason == totpCodeReplayed {
@@ -302,7 +345,7 @@ func (s *server) mfaVerify(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode, "Invalid code", detail))
 		return
 	}
-	s.totp.reset(acct.ID)
+	s.resetTOTPAttempts(r.Context(), acct.ID)
 	if err := s.reissueSessionCookieWithStepUp(w, r, acct, false, time.Now()); err != nil {
 		s.log.Error("mfa.verify.reissue_cookie", "err", err.Error())
 		api.WriteProblem(w, api.ErrCapacity("could not re-issue session cookie"))
@@ -345,6 +388,9 @@ func (s *server) mfaRecover(w http.ResponseWriter, r *http.Request, acct state.A
 			"Invalid CSRF token", "please reload the page and try again"))
 		return
 	}
+	if !requireEnrolledMFA(w, acct) {
+		return
+	}
 	var req api.MFARecoverRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -375,6 +421,44 @@ func (s *server) mfaRecover(w http.ResponseWriter, r *http.Request, acct state.A
 	}
 	// Step 2 — consume, reissue cookie, audit, email, write 200.
 	s.completeRecoveryCodeBurn(w, r, acct, presented)
+}
+
+// A new setup secret is handed to the calling session. It cannot establish
+// independent proof until the account's existing password authorizes enrollment.
+// OAuth-only accounts retain their session-based opt-in, as with set-password.
+func (s *server) confirmMFAFirstFactor(w http.ResponseWriter, r *http.Request, acct state.Account, password string) bool {
+	hash, err := s.store.AccountPasswordByAccountID(r.Context(), acct.ID)
+	if errors.Is(err, state.ErrNotFound) {
+		return true
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not check enrollment credentials"))
+		return false
+	}
+	if wait := s.loginFailures.retryAfter(auth.HashEmail(acct.Email)); wait > 0 {
+		api.WriteProblem(w, api.ErrAuthRateLimited(int(wait.Seconds())+1))
+		return false
+	}
+	matched, err := auth.VerifyContext(r.Context(), hash, password)
+	if passwordNotChecked(err) {
+		writePasswordCheckUnavailable(w)
+		return false
+	}
+	if err != nil || !matched {
+		s.recordLoginFailure(r.Context(), acct.Email, &acct)
+		api.WriteProblem(w, api.ErrInvalidCredentials())
+		return false
+	}
+	return true
+}
+
+func requireEnrolledMFA(w http.ResponseWriter, acct state.Account) bool {
+	if acct.MFAEnrolled() {
+		return true
+	}
+	api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeMFARequired,
+		"MFA setup incomplete", "finish /v1/account/mfa/confirm before verifying or using recovery codes"))
+	return false
 }
 
 // refuseLastRecoveryCodeOrMatch is Step 1 of mfaRecover. It runs
@@ -411,9 +495,9 @@ func (s *server) refuseLastRecoveryCodeOrMatch(w http.ResponseWriter, r *http.Re
 		// Refuse to burn the only remaining code: the customer
 		// would otherwise be locked out with no way back in.
 		// The store still has the code (matched-then-not-burnt).
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeMFALastRecoveryCode,
 			"Last recovery code",
-			"burning the only remaining code would lock you out — use /v1/account/mfa/disable with your password instead"))
+			"this is your last recovery code; use it to reset your authenticator, then set up a replacement"))
 		return false
 	}
 	return true
@@ -467,16 +551,19 @@ func (s *server) completeRecoveryCodeBurn(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if lastCode {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
-			"Last recovery code", "burning the only remaining code would lock you out — disable MFA with your password instead"))
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeMFALastRecoveryCode,
+			"Last recovery code", "this is your last recovery code; use it to reset your authenticator, then set up a replacement"))
 		return
 	}
-	if err := s.reissueSessionCookie(w, r, acct, false); err != nil {
+	if err := s.reissueSessionCookieWithStepUp(w, r, acct, false, time.Now()); err != nil {
 		s.log.Error("mfa.recover.reissue_cookie", "err", err.Error())
 		api.WriteProblem(w, api.ErrCapacity("could not re-issue session cookie"))
 		return
 	}
 	s.audit.Emit(r.Context(), "account.mfa_recovered", &acct.ID, nil)
+	s.audit.Emit(r.Context(), "auth.step_up_verified", &acct.ID, map[string]any{
+		"path": r.URL.Path, "method": r.Method, "ttl_sec": 300, "factor": "recovery_code",
+	})
 	if !outboxed {
 		s.sendBurnEmail(r.Context(), acct, remaining)
 	}
@@ -541,6 +628,16 @@ func (s *server) mfaDisable(w http.ResponseWriter, r *http.Request, acct state.A
 			"Invalid request", "exactly one of password or recovery_code is required"))
 		return
 	}
+	// The enrolled factor outranks the password: switching it off with the
+	// password alone let a stolen session and password remove the second
+	// factor. The password path also needs a code verified within the
+	// step-up window; without the authenticator, use a recovery code or the
+	// emailed disable link (account-flow audit 2026-11-10, ADR 20261111110000).
+	if hasPassword && !freshStepUp(r) {
+		s.audit.Emit(r.Context(), "account.mfa_disable_failed", &acct.ID, map[string]any{"reason": "step_up_required"})
+		api.WriteProblem(w, api.ErrStepUpRequired())
+		return
+	}
 
 	if s.tryMFADisabledAlert(w, r, acct, req) {
 		return
@@ -582,7 +679,29 @@ func (s *server) completeInlineMFADisable(w http.ResponseWriter, r *http.Request
 	if !hasPassword {
 		method = "recovery_code"
 	}
+	s.alertMFADisabledInline(r.Context(), acct, method)
+	s.finishMFADisable(w, r, acct, method)
+}
+
+// freshStepUp reports whether the session verified a two-factor code within
+// the account step-up window.
+func freshStepUp(r *http.Request) bool {
+	ts, has := authmw.StepUpFrom(r)
+	return has && !ts.IsZero() && time.Since(ts) <= accountStepUpTTL
+}
+
+// Clear stale pending proof, while preserving an operator or explicit policy.
+func (s *server) finishMFADisable(w http.ResponseWriter, r *http.Request, acct state.Account, method string) {
 	s.audit.Emit(r.Context(), "account.mfa_disabled", &acct.ID, map[string]any{"method": method})
+	fresh, err := s.store.AccountByID(r.Context(), acct.ID)
+	if err == nil {
+		err = s.reissueSessionCookie(w, r, fresh, s.sessionMFAPending(fresh))
+	}
+	if err != nil {
+		s.log.Error("mfa.disable.reissue_cookie", "err", err)
+		api.WriteProblem(w, api.ErrCapacity("MFA was reset; sign in again to continue"))
+		return
+	}
 	writeJSON(w, http.StatusOK, api.MFADisableResponse{})
 }
 
@@ -607,6 +726,13 @@ func (s *server) mfaDisableEmail(w http.ResponseWriter, r *http.Request, acct st
 }
 
 func (s *server) issueInlineMFADisableEmail(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	// A password holder could send the owner any number of these mails,
+	// limited only per client address (bug hunt 2026-10-28 H98).
+	if !s.allowSecurityMail(r.Context(), acct, "mfa_disable") {
+		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeAuthRateLimited,
+			"Too many MFA disable emails", "an MFA disable email was sent recently; use that link or try again in an hour"))
+		return
+	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		s.log.Error("mfa.disable_email.rand", "err", err.Error())
@@ -702,6 +828,12 @@ func (s *server) confirmInlineMFADisableEmail(w http.ResponseWriter, r *http.Req
 			"MFA disable cooldown active", "confirm this request after the 24-hour waiting period").WithHeader("Retry-After", strconv.Itoa(retryAfter)))
 		return
 	}
+	// A legacy link expires a day after its cooldown, as a durable one does;
+	// it used to work forever (bug hunt 2026-10-28 H98).
+	if time.Now().UTC().After(readyAt.Add(api.MFADisableEmailConfirmWindow)) {
+		s.writeMFADisableEmailInvalid(w, r, acct, "token_expired")
+		return
+	}
 	if _, err := s.store.ConsumeMFADisableRequest(r.Context(), api.HashToken(sealed)); err != nil {
 		s.writeMFADisableEmailInvalid(w, r, acct, "token_replayed")
 		return
@@ -711,6 +843,10 @@ func (s *server) confirmInlineMFADisableEmail(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrCapacity("could not clear MFA state"))
 		return
 	}
+	// An email-assisted MFA reset ends interactive sign-in keys as well
+	// (bug hunt 2026-10-28 H71).
+	s.revokeInteractiveSignInKeys(r, acct, "mfa_reset_email")
+	s.alertMFADisabledInline(r.Context(), acct, "email")
 	s.audit.Emit(r.Context(), "account.mfa_disabled", &acct.ID, map[string]any{"method": "email"})
 	writeJSON(w, http.StatusOK, api.MFADisableEmailConfirmResponse{})
 }
@@ -764,7 +900,11 @@ func (s *server) disableByPassword(w http.ResponseWriter, r *http.Request, acct 
 			"Invalid credentials", "password not set on this account"))
 		return false
 	}
-	ok, err := auth.Verify(hash, presented)
+	ok, err := auth.VerifyContext(r.Context(), hash, presented)
+	if passwordNotChecked(err) {
+		writePasswordCheckUnavailable(w)
+		return false
+	}
 	if err != nil || !ok {
 		s.audit.Emit(r.Context(), "account.mfa_disable_failed", &acct.ID, map[string]any{"reason": "password_mismatch"})
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode,
@@ -955,10 +1095,8 @@ func (s *server) reissueSessionCookie(w http.ResponseWriter, r *http.Request, ac
 // reissueSessionCookieWithStepUp is the IAM-hardening-mega-PR
 // (logical change 6, ADR-077) entry point. Pass a non-zero
 // stepUpAt to refresh the step-up stamp on the cookie envelope
-// (the /v1/account/mfa/verify success branch sets it to
-// time.Now()); pass time.Time{} to leave it cleared (the
-// enrollment-confirm + recovery + disable branches don't
-// refresh step-up because they don't gate on it themselves).
+// (confirmation, authenticator verification and recovery set it to
+// time.Now()); pass time.Time{} to clear it after resetting a factor.
 //
 // The binding-hash is unconditionally refreshed so the
 // stolen-cookie auto-revoke branch (ADR-076) always sees the
@@ -1049,10 +1187,10 @@ func consumeRecoveryCode(ctx context.Context, st consumeRecoveryCodeSelector, ac
 	return st.ConsumeRecoveryCode(ctx, accountID, presented)
 }
 
-// totpAttemptAllowed answers 429 while the account has used up its TOTP
-// guesses (totp_guard.go).
-func (s *server) totpAttemptAllowed(w http.ResponseWriter, acct state.Account) bool {
-	wait := s.totp.retryAfter(acct.ID, time.Now())
+// totpAttemptAllowed counts a TOTP attempt, or answers 429 while the account
+// has used up its attempts (totp_guard.go).
+func (s *server) totpAttemptAllowed(w http.ResponseWriter, r *http.Request, acct state.Account) bool {
+	wait := s.reserveTOTPAttempt(r.Context(), acct.ID)
 	if wait <= 0 {
 		return true
 	}

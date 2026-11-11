@@ -20,9 +20,19 @@ app was refused, by the `reason` label:
   cascades touch; retried every minute, that deadlocked a migration adding a
   foreign key to `apps` on 2026-10-24. An apid restart retries at once.
 - `managed_postgres_binding`: a binding that is not a deleted tombstone holds
-  a deleted app. Deleting an app is refused while it has a live binding, so
-  this should not happen. Deleted binding tombstones are removed by the purge
-  itself.
+  a deleted app, or a managed PostgreSQL cutover of the app is still named by
+  a database, a checkpoint reservation or a source fence. Deleting an app is
+  refused while it has a live binding, so this should not happen. Deleted
+  binding tombstones are removed by the purge itself.
+
+`apid_app_grace_blocked_apps` also records two waits that do not alert:
+`exclusive_work` (an exclusive work operation of the app still holds an
+unexpired claim; finished operations are purged with the app) and
+`environment_clone` (an environment clone still fences or copies one of the
+app's buckets or bindings; the clone workflow releases them).
+`pkg/state/purgeguard` checks the purge against every restricting foreign key
+in `schema.sql`, so a new table that references apps without a cascade fails
+CI instead of production purges.
 
 ## Check
 

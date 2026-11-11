@@ -16,6 +16,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -64,6 +65,10 @@ type Provider struct {
 	objectStorageFrom    time.Time
 	objectStorageEvent   string
 	objectStorageMeterID string
+	postgresMode         string
+	postgresFrom         time.Time
+	postgresEvent        string
+	postgresMeterID      string
 	products             map[api.Plan]string
 	successURL           string
 	returnURL            string
@@ -81,6 +86,10 @@ var _ billing.Classifier = (*Provider)(nil)
 var _ billing.MeterUsageProvider = (*Provider)(nil)
 var _ billing.MeterUsagePolicyProvider = (*Provider)(nil)
 var _ billing.ObjectStorageLineItemSink = (*Provider)(nil)
+var _ billing.CustomerBillingInfoProvider = (*Provider)(nil)
+var _ billing.CustomerEmailUpdater = (*Provider)(nil)
+var _ billing.CustomerDeleter = (*Provider)(nil)
+var _ billing.ManagedPostgresChargeSink = (*Provider)(nil)
 
 // PolarCapabilities returns the static capabilities of this provider.
 func PolarCapabilities() billing.CapabilitySet {
@@ -116,8 +125,12 @@ func newProvider(cfg Config, log *slog.Logger, dedupe usageDedupe) (*Provider, e
 	if err := validateObjectStorageConfig(cfg); err != nil {
 		return nil, err
 	}
+	if err := validateManagedPostgresConfig(cfg); err != nil {
+		return nil, err
+	}
 	egressFrom, _ := time.Parse(time.RFC3339, cfg.EgressBillingFrom)
 	objectStorageFrom, _ := time.Parse(time.RFC3339, cfg.ObjectStorageBillingFrom)
+	postgresFrom, _ := time.Parse(time.RFC3339, cfg.ManagedPostgresBillingFrom)
 	if log == nil {
 		log = slog.Default()
 	}
@@ -148,6 +161,10 @@ func newProvider(cfg Config, log *slog.Logger, dedupe usageDedupe) (*Provider, e
 		objectStorageFrom:    objectStorageFrom.UTC(),
 		objectStorageEvent:   cfg.ObjectStorageUsageEventName,
 		objectStorageMeterID: cfg.ObjectStorageMeterID,
+		postgresMode:         cfg.ManagedPostgresBillingMode,
+		postgresFrom:         postgresFrom.UTC(),
+		postgresEvent:        cfg.ManagedPostgresUsageEventName,
+		postgresMeterID:      cfg.ManagedPostgresMeterID,
 		products: map[api.Plan]string{
 			api.PlanHobby: cfg.HobbyProductID,
 			api.PlanPro:   cfg.ProProductID,
@@ -191,6 +208,34 @@ func validateObjectStorageConfig(cfg Config) error {
 	return nil
 }
 
+func validateManagedPostgresConfig(cfg Config) error {
+	switch cfg.ManagedPostgresBillingMode {
+	case ManagedPostgresBillingOff:
+		return nil
+	case ManagedPostgresBillingShadow, ManagedPostgresBillingLive:
+	default:
+		return fmt.Errorf("polar: invalid managed postgres billing mode %q (want off, shadow, or live)", cfg.ManagedPostgresBillingMode)
+	}
+	effectiveFrom, err := time.Parse(time.RFC3339, cfg.ManagedPostgresBillingFrom)
+	_, utcOffset := effectiveFrom.Zone()
+	if err != nil || utcOffset != 0 || !effectiveFrom.Equal(state.ObjectStoragePeriod(effectiveFrom)) {
+		return errors.New("polar: managed postgres billing from must be an RFC3339 UTC-month boundary")
+	}
+	if strings.TrimSpace(cfg.ManagedPostgresMeterID) == "" {
+		return errors.New("polar: managed postgres meter id missing")
+	}
+	if slices.Contains([]string{cfg.MeterID, cfg.EgressMeterID, cfg.ObjectStorageMeterID}, cfg.ManagedPostgresMeterID) {
+		return errors.New("polar: managed postgres meter must be separate from the compute, egress and object storage meters")
+	}
+	if strings.TrimSpace(cfg.ManagedPostgresUsageEventName) == "" {
+		return errors.New("polar: managed postgres usage event name is empty")
+	}
+	if slices.Contains([]string{cfg.UsageEventName, cfg.EgressUsageEventName, cfg.ObjectStorageUsageEventName}, cfg.ManagedPostgresUsageEventName) {
+		return errors.New("polar: managed postgres usage event must be separate from the other usage events")
+	}
+	return nil
+}
+
 func validateEgressConfig(cfg Config) error {
 	switch cfg.EgressBillingMode {
 	case EgressBillingOff:
@@ -215,8 +260,10 @@ func validateEgressConfig(cfg Config) error {
 	if cfg.EgressUsageEventName == cfg.UsageEventName {
 		return errors.New("polar: egress usage event must be separate from compute usage event")
 	}
-	if cfg.EgressMillicentsPerGiB <= 0 || cfg.EgressMillicentsPerGiB%api.MillicentsPerCent != 0 {
-		return errors.New("polar: egress price must be a positive whole number of euro cents per GiB")
+	if cfg.EgressMillicentsPerGiB != api.EgressOverageMillicentsPerGiB {
+		// The published rate, like compute's, is a limits.go constant
+		// (ADR-20261103131742 amendment 2).
+		return fmt.Errorf("polar: egress price must be the published %d cents per GiB (got %d millicents)", api.EgressOverageMillicentsPerGiB/api.MillicentsPerCent, cfg.EgressMillicentsPerGiB)
 	}
 	for plan, included := range map[api.Plan]int64{
 		api.PlanHobby: cfg.HobbyIncludedEgressGiB,
@@ -262,7 +309,19 @@ func (p *Provider) Capabilities() billing.CapabilitySet {
 	if p != nil && p.objectStorageMode == ObjectStorageBillingLive {
 		caps |= billing.CapabilitySet(billing.CapObjectStorageUsage)
 	}
+	if p != nil && p.postgresMode == ManagedPostgresBillingLive {
+		caps |= billing.CapabilitySet(billing.CapManagedPostgresUsage)
+	}
 	return caps
+}
+
+// ManagedPostgresChargePolicy exposes the managed PostgreSQL overage rollout
+// boundary to apid (ADR-20261031110037). Off returns ok=false.
+func (p *Provider) ManagedPostgresChargePolicy() (billing.ManagedPostgresChargePolicy, bool) {
+	if p == nil || p.postgresMode == ManagedPostgresBillingOff || p.postgresMode == "" {
+		return billing.ManagedPostgresChargePolicy{}, false
+	}
+	return billing.ManagedPostgresChargePolicy{Provider: "polar", Live: p.postgresMode == ManagedPostgresBillingLive, EffectiveFrom: p.postgresFrom}, true
 }
 
 // ObjectStorageLineItemPolicy exposes the object-storage rollout boundary to
@@ -363,12 +422,26 @@ func (p *Provider) EnsurePlanProducts(ctx context.Context) error {
 type catalogOrganization struct {
 	ID                   string `json:"id"`
 	SubscriptionSettings struct {
-		AllowMultipleSubscriptions *bool `json:"allow_multiple_subscriptions"`
+		AllowMultipleSubscriptions *bool  `json:"allow_multiple_subscriptions"`
+		ProrationBehavior          string `json:"proration_behavior"`
 	} `json:"subscription_settings"`
+	CustomerPortalSettings struct {
+		Subscription struct {
+			UpdatePlan *bool `json:"update_plan"`
+		} `json:"subscription"`
+	} `json:"customer_portal_settings"`
 }
 
+// prorationInvoice is the organization proration that charges a plan change
+// made in the customer portal when it is made (ADR-20261031090658). With
+// "prorate" the portal grants the larger plan at once and leaves the charge
+// for the next renewal, which a cancellation may never reach. apid's own
+// plan changes set their proration per request.
+const prorationInvoice = "invoice"
+
 // validateOrganization refuses an organization that lets one customer hold
-// several subscriptions, so a second checkout can never bill a customer twice.
+// several subscriptions, so a second checkout can never bill a customer twice,
+// or that defers the charge for a portal upgrade to the next renewal.
 func (p *Provider) validateOrganization(ctx context.Context) error {
 	var page struct {
 		Items []catalogOrganization `json:"items"`
@@ -382,6 +455,16 @@ func (p *Provider) validateOrganization(ctx context.Context) error {
 	org := page.Items[0]
 	if allow := org.SubscriptionSettings.AllowMultipleSubscriptions; allow == nil || *allow {
 		return fmt.Errorf("polar: organization %s allows multiple subscriptions per customer; turn it off in the Polar dashboard (Settings, Subscriptions) before billing starts", org.ID)
+	}
+	if got := org.SubscriptionSettings.ProrationBehavior; got != prorationInvoice {
+		return fmt.Errorf("polar: organization %s prorates plan changes as %q; set proration to %q (invoice immediately) in the Polar dashboard (Settings, Subscriptions) before billing starts", org.ID, got, prorationInvoice)
+	}
+	// A portal plan switch skips apid's plan checks, and with invoice
+	// proration an upgrade and a downgrade back cost almost nothing, so a
+	// customer could keep a larger plan's apps on a smaller plan's fee
+	// (ADR-20261103131742). apid changes plans itself.
+	if update := org.CustomerPortalSettings.Subscription.UpdatePlan; update == nil || *update {
+		return fmt.Errorf("polar: organization %s lets customers change plans in the customer portal; turn it off in the Polar dashboard (Settings, Customer portal) before billing starts", org.ID)
 	}
 	return nil
 }
@@ -436,6 +519,7 @@ type catalogAggregation struct {
 func (p *Provider) validateCatalog(ctx context.Context) error {
 	validateEgressMeter := false
 	validateObjectStorageMeter := false
+	validatePostgresMeter := false
 	for plan, productID := range p.products {
 		var product catalogProduct
 		path := "/v1/products/" + url.PathEscape(productID)
@@ -452,7 +536,7 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 			return fmt.Errorf("polar: validate %s product %q requires an active monthly recurring product", plan, productID)
 		}
 
-		fixed, computeMetered, egressMetered, objectStorageMetered := 0, 0, 0, 0
+		fixed, computeMetered, egressMetered, objectStorageMetered, postgresMetered := 0, 0, 0, 0, 0
 		expectedFixedCents := billing.PlanMonthlyMillicents(plan) / api.MillicentsPerCent
 		for _, price := range product.Prices {
 			if price.IsArchived {
@@ -472,7 +556,7 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 				case p.meterID:
 					computeMetered++
 					if price.PriceCurrency != api.BillingCurrencyLower || !decimalEquals(price.UnitAmount, billing.PlanOverageMillicentsPerGBHour()/api.MillicentsPerCent) {
-						return fmt.Errorf("polar: validate %s product %q compute price must be %s 1 cent per unit on meter %q", plan, productID, api.BillingCurrency, p.meterID)
+						return fmt.Errorf("polar: validate %s product %q compute price must be %s %d cents per unit (GB-RAM-hour) on meter %q", plan, productID, api.BillingCurrency, billing.PlanOverageMillicentsPerGBHour()/api.MillicentsPerCent, p.meterID)
 					}
 				case p.egressMeterID:
 					egressMetered++
@@ -490,6 +574,12 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 					if price.PriceCurrency != api.BillingCurrencyLower || !decimalEqualsRatio(price.UnitAmount, 1, api.MillicentsPerCent) {
 						return fmt.Errorf("polar: validate %s product %q object storage price must be %s 0.001 cents per charge millicent on meter %q", plan, productID, api.BillingCurrency, p.objectStorageMeterID)
 					}
+				case p.postgresMeterID:
+					postgresMetered++
+					validatePostgresMeter = true
+					if price.PriceCurrency != api.BillingCurrencyLower || !decimalEqualsRatio(price.UnitAmount, 1, api.MillicentsPerCent) {
+						return fmt.Errorf("polar: validate %s product %q managed postgres price must be %s 0.001 cents per charge millicent on meter %q", plan, productID, api.BillingCurrency, p.postgresMeterID)
+					}
 				default:
 					return fmt.Errorf("polar: validate %s product %q has an unexpected metered price on meter %q", plan, productID, price.MeterID)
 				}
@@ -505,7 +595,11 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 		if p.objectStorageMode == ObjectStorageBillingOff {
 			validObjectStorageCount = objectStorageMetered <= 1
 		}
-		if fixed != 1 || computeMetered != 1 || !validEgressCount || !validObjectStorageCount {
+		validPostgresCount := postgresMetered == 1
+		if p.postgresMode == ManagedPostgresBillingOff || p.postgresMode == "" {
+			validPostgresCount = postgresMetered <= 1
+		}
+		if fixed != 1 || computeMetered != 1 || !validEgressCount || !validObjectStorageCount || !validPostgresCount {
 			return fmt.Errorf("polar: validate %s product %q requires one fixed price, one compute price, and one price for each enabled secondary meter", plan, productID)
 		}
 		for _, benefit := range product.Benefits {
@@ -524,6 +618,11 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 	}
 	if validateObjectStorageMeter {
 		if err := p.validateMeter(ctx, p.objectStorageMeterID, p.objectStorageEvent, "charge_millicents"); err != nil {
+			return err
+		}
+	}
+	if validatePostgresMeter {
+		if err := p.validateMeter(ctx, p.postgresMeterID, p.postgresEvent, "charge_millicents"); err != nil {
 			return err
 		}
 	}
@@ -608,12 +707,19 @@ func (p *Provider) CreateCustomer(ctx context.Context, acct state.Account) (stri
 			"faas_account_id": acct.ID,
 		},
 	}
+	if name := strings.TrimSpace(acct.BusinessName); name != "" {
+		body["name"] = name
+	}
 	var created customerResponse
 	if err := p.doJSON(ctx, http.MethodPost, "/v1/customers", body, &created, "faas-customer-"+acct.ID); err != nil {
 		// A concurrent creator can win between GET and POST. Re-read the
 		// external-ID endpoint before surfacing the create error.
 		if getErr := p.doJSON(ctx, http.MethodGet, "/v1/customers/external/"+url.PathEscape(acct.ID), nil, &existing, ""); getErr == nil && existing.ID != "" {
 			return existing.ID, nil
+		}
+		if emailTaken(err) {
+			// Polar keeps one customer per email (ADR-20261103131742).
+			return "", p.emailInUse(ctx, acct.Email, err)
 		}
 		return "", fmt.Errorf("polar: create customer account=%s: %w", acct.ID, err)
 	}
@@ -622,6 +728,86 @@ func (p *Provider) CreateCustomer(ctx context.Context, acct state.Account) (stri
 	}
 	p.log.Info("polar: customer created", "account", acct.ID, "customer_id", created.ID)
 	return created.ID, nil
+}
+
+// emailTaken reports Polar's validation error for a customer email another
+// customer of the organization already holds.
+func emailTaken(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.Status == http.StatusUnprocessableEntity &&
+		strings.Contains(strings.ToLower(apiErr.Body), "email address already exists")
+}
+
+// emailInUse looks up the customer holding email, so the caller can tell a
+// deleted subject's leftover customer from a live one.
+func (p *Provider) emailInUse(ctx context.Context, email string, cause error) error {
+	inUse := &billing.CustomerEmailInUseError{Email: email}
+	var page struct {
+		Items []customerResponse `json:"items"`
+	}
+	if err := p.doJSON(ctx, http.MethodGet, "/v1/customers/?email="+url.QueryEscape(email), nil, &page, ""); err != nil {
+		return fmt.Errorf("polar: find customer holding a billing email: %w (after %w)", err, cause)
+	}
+	if len(page.Items) > 0 {
+		inUse.CustomerID, inUse.ExternalID = page.Items[0].ID, page.Items[0].ExternalID
+	}
+	return inUse
+}
+
+// UpdateCustomerEmail moves the subject's Polar customer to its current
+// billing email (ADR-20261103131742). Polar sends receipts there and lets
+// whoever reads it sign in to its customer portal, so an organization's
+// billing email must follow the organization, not a former member.
+func (p *Provider) UpdateCustomerEmail(ctx context.Context, acct state.Account) error {
+	if acct.ProviderCustomerID == "" {
+		return fmt.Errorf("polar: account %s has no provider customer", acct.ID)
+	}
+	if strings.TrimSpace(acct.Email) == "" {
+		return errors.New("polar: UpdateCustomerEmail requires acct.Email")
+	}
+	path := "/v1/customers/" + url.PathEscape(acct.ProviderCustomerID)
+	if err := p.doJSON(ctx, http.MethodPatch, path, map[string]any{"email": acct.Email}, nil, "faas-customer-email-"+acct.ID+"-"+acct.Email); err != nil {
+		if emailTaken(err) {
+			return p.emailInUse(ctx, acct.Email, err)
+		}
+		return fmt.Errorf("polar: update customer email account=%s: %w", acct.ID, err)
+	}
+	return nil
+}
+
+// DeleteCustomer deletes a Polar customer whose Gregale subject no longer
+// exists, which frees its email (sandbox probe 2026-11-03). Polar cancels the
+// customer's subscriptions with it; the caller deletes only a customer whose
+// subject is gone, whose subscription ended with it.
+func (p *Provider) DeleteCustomer(ctx context.Context, customerID string) error {
+	if strings.TrimSpace(customerID) == "" {
+		return errors.New("polar: DeleteCustomer requires a customer ID")
+	}
+	if err := p.doJSON(ctx, http.MethodDelete, "/v1/customers/"+url.PathEscape(customerID), nil, nil, "faas-customer-delete-"+customerID); err != nil && !hasStatus(err, http.StatusNotFound) {
+		return fmt.Errorf("polar: delete customer %s: %w", customerID, err)
+	}
+	return nil
+}
+
+// SyncCustomerBillingInfo gives the account's Polar customer its business
+// name, which Polar prints on invoices (ADR-20261031090658). Polar keeps a
+// structured billing address with a country and validates a tax ID against
+// that country, so Gregale's free-form address and tax ID are not sent: the
+// customer enters them at checkout or in the customer portal. An empty
+// business name leaves the customer's name as it is.
+func (p *Provider) SyncCustomerBillingInfo(ctx context.Context, acct state.Account) error {
+	if acct.ProviderCustomerID == "" {
+		return fmt.Errorf("polar: account %s has no provider customer", acct.ID)
+	}
+	name := strings.TrimSpace(acct.BusinessName)
+	if name == "" {
+		return nil
+	}
+	path := "/v1/customers/" + url.PathEscape(acct.ProviderCustomerID)
+	if err := p.doJSON(ctx, http.MethodPatch, path, map[string]any{"name": name}, nil, "faas-customer-name-"+acct.ID); err != nil {
+		return fmt.Errorf("polar: update customer name account=%s: %w", acct.ID, err)
+	}
+	return nil
 }
 
 type usageEvent struct {
@@ -698,6 +884,11 @@ func (p *Provider) PushUsageRecord(ctx context.Context, acct state.Account, hour
 	}
 	return nil
 }
+
+// StampsUsageAtDelivery reports that Polar totals usage by delivery time
+// (billing.DeliveryTimeStamper), which the billing reconciler compares with
+// meterd's delivery ledger.
+func (p *Provider) StampsUsageAtDelivery() bool { return true }
 
 // deliveryTimestamp stamps a usage event with the time it is sent, so Polar
 // bills it in the subscription cycle that is open when it arrives
@@ -807,6 +998,60 @@ func (p *Provider) PublishObjectStorageCharge(ctx context.Context, step billing.
 	}
 	if result.Inserted == 0 && result.Duplicates == 0 {
 		return fmt.Errorf("polar: ingest object storage account=%s period=%s returned no inserted or duplicate events", step.AccountID, month)
+	}
+	return nil
+}
+
+// PublishManagedPostgresCharge emits one managed PostgreSQL overage step
+// (ADR-20261031110037) as an event on the charge meter. The external ID names
+// the subject, the month and the step's starting point (the cumulative charge
+// already delivered), not its target: usage keeps growing between sweeps, so
+// a retry after an ambiguous response has a new target but the same start,
+// and the provider keeps one event, never a second charge (bug hunt 33).
+func (p *Provider) PublishManagedPostgresCharge(ctx context.Context, step billing.ManagedPostgresChargeStep) error {
+	if p == nil || p.postgresMode != ManagedPostgresBillingLive || !p.Capabilities().Has(billing.CapManagedPostgresUsage) {
+		return errors.New("polar: managed postgres usage delivery is not live")
+	}
+	period := step.PeriodStart.UTC()
+	if step.SubjectID == "" || period.IsZero() || !period.Equal(state.ObjectStoragePeriod(period)) || step.At.IsZero() ||
+		step.DeliveredMillicents < 0 || step.TargetMillicents <= step.DeliveredMillicents || step.BilledUnitSeconds < 0 {
+		return errors.New("polar: invalid managed postgres charge step")
+	}
+	month := period.Format("2006-01")
+	externalID := "faas-managed-postgres-step-" + step.SubjectID + "-" + month + "-from-" + strconv.FormatInt(step.DeliveredMillicents, 10)
+	body := ingestRequest{Events: []usageEvent{{
+		ExternalID:         externalID,
+		Name:               p.postgresEvent,
+		ExternalCustomerID: step.SubjectID,
+		Metadata: map[string]any{
+			"faas_account_id":                  step.SubjectID,
+			"period_start":                     period.Format(time.RFC3339),
+			"period_end":                       period.AddDate(0, 1, 0).Format(time.RFC3339),
+			"used_unit_seconds":                step.UsedUnitSeconds,
+			"allowance_unit_seconds":           step.AllowanceSeconds,
+			"billed_unit_seconds":              step.BilledUnitSeconds,
+			"millicents_per_unit_hour":         api.ManagedPostgresOverageMillicentsPerComputeUnitHour,
+			"previous_millicents":              step.DeliveredMillicents,
+			"cumulative_millicents":            step.TargetMillicents,
+			"charge_millicents":                step.TargetMillicents - step.DeliveredMillicents,
+			"used_storage_byte_seconds":        step.UsedStorageByteSeconds,
+			"storage_pool_bytes":               step.StoragePoolBytes,
+			"billed_storage_byte_seconds":      step.BilledStorageByteSeconds,
+			"storage_millicents_per_gib_month": api.ManagedPostgresStorageOverageMillicentsPerGiBMonth,
+			"used_egress_bytes":                step.UsedEgressBytes,
+			"app_egress_bytes":                 step.AppEgressBytes,
+			"egress_allowance_bytes":           step.EgressAllowanceBytes,
+			"billed_egress_bytes":              step.BilledEgressBytes,
+			"egress_millicents_per_gb":         api.ManagedPostgresEgressOverageMillicentsPerGB,
+		},
+		Timestamp: step.At.UTC().Format(time.RFC3339),
+	}}}
+	var result ingestResponse
+	if err := p.doJSON(ctx, http.MethodPost, "/v1/events/ingest", body, &result, externalID); err != nil {
+		return fmt.Errorf("polar: ingest managed postgres subject=%s period=%s: %w", step.SubjectID, month, err)
+	}
+	if result.Inserted == 0 && result.Duplicates == 0 {
+		return fmt.Errorf("polar: ingest managed postgres subject=%s period=%s returned no inserted or duplicate events", step.SubjectID, month)
 	}
 	return nil
 }
@@ -1133,7 +1378,14 @@ func (p *Provider) ChangeSubscriptionPlan(ctx context.Context, acct state.Accoun
 		return time.Time{}, fmt.Errorf("polar: change subscription account=%s: %w", acct.ID, billing.ErrAlreadyCancelled)
 	}
 	if targetPlan == api.PlanFree {
-		return p.CancelAtPeriodEnd(ctx, acct)
+		endsAt, err := p.CancelAtPeriodEnd(ctx, acct)
+		if errors.Is(err, billing.ErrAlreadyCancelled) {
+			// Already scheduled to end: the move to Free is already booked.
+			if current, readErr := p.SubscriptionState(ctx, acct.StripeSubscriptionItem); readErr == nil && current.Status.Live() && current.CancelAtPeriodEnd {
+				return current.EndsAt, nil
+			}
+		}
+		return endsAt, err
 	}
 	if !targetPlan.IsPaid() {
 		return time.Time{}, fmt.Errorf("polar: invalid target plan=%q", targetPlan)
@@ -1142,15 +1394,33 @@ func (p *Provider) ChangeSubscriptionPlan(ctx context.Context, acct state.Accoun
 	if productID == "" {
 		return time.Time{}, fmt.Errorf("polar: product id missing for plan=%s", targetPlan)
 	}
+	// An upgrade is charged and applied now: the customer portal no longer
+	// switches plans (ADR-20261103131742), so this is the upgrade path for an
+	// existing subscription. Polar applies it only when the prorated charge
+	// succeeds; otherwise the subscription stays as it was and this errors.
+	proration := "next_period"
+	if acct.Plan.RequiresBillingUpgradeTo(targetPlan) {
+		proration = "invoice"
+	}
 	body := map[string]any{
 		"product_id":         productID,
-		"proration_behavior": "next_period",
+		"proration_behavior": proration,
 	}
 	var sub subscriptionResponse
 	path := "/v1/subscriptions/" + url.PathEscape(acct.StripeSubscriptionItem)
+	if proration == "invoice" {
+		// A charge is sent once, without retries: Polar does not honour
+		// Idempotency-Key (sandbox probe 2026-11-03), so a retried attempt
+		// could not be told from a new one. The customer retries a failed
+		// upgrade, which is then a new charge.
+		if err := p.doJSONOnce(ctx, http.MethodPatch, path, body, &sub, ""); err != nil {
+			return time.Time{}, fmt.Errorf("polar: upgrade subscription account=%s target=%s: %w", acct.ID, targetPlan, planChangeError(err))
+		}
+		return p.now(), nil
+	}
 	idem := fmt.Sprintf("faas-plan-change-%s-%s", acct.ID, targetPlan)
 	if err := p.doJSON(ctx, http.MethodPatch, path, body, &sub, idem); err != nil {
-		return time.Time{}, fmt.Errorf("polar: change subscription account=%s target=%s: %w", acct.ID, targetPlan, err)
+		return time.Time{}, fmt.Errorf("polar: change subscription account=%s target=%s: %w", acct.ID, targetPlan, planChangeError(err))
 	}
 	if sub.PendingUpdate != nil && !sub.PendingUpdate.AppliesAt.IsZero() {
 		return sub.PendingUpdate.AppliesAt, nil
@@ -1172,6 +1442,11 @@ func (p *Provider) CancelAtPeriodEnd(ctx context.Context, acct state.Account) (t
 	var sub subscriptionResponse
 	path := "/v1/subscriptions/" + url.PathEscape(acct.StripeSubscriptionItem)
 	if err := p.doJSON(ctx, http.MethodPatch, path, body, &sub, "faas-cancel-"+acct.StripeSubscriptionItem); err != nil {
+		if errorName(err) == errAlreadyCanceledSubscription {
+			// Polar refuses to cancel a subscription that is already
+			// cancelled or scheduled to cancel.
+			return time.Time{}, fmt.Errorf("polar: cancel subscription account=%s: %w: %w", acct.ID, billing.ErrAlreadyCancelled, err)
+		}
 		return time.Time{}, fmt.Errorf("polar: cancel subscription account=%s: %w", acct.ID, err)
 	}
 	if sub.CurrentPeriodEnd.IsZero() {
@@ -1184,27 +1459,120 @@ func (p *Provider) CancelAtPeriodEnd(ctx context.Context, acct state.Account) (t
 // Polar neither orders nor promptly delivers webhooks, so apid compares a
 // delivery with this before acting on it.
 func (p *Provider) SubscriptionState(ctx context.Context, subscriptionID string) (billing.SubscriptionState, error) {
+	sub, err := p.readSubscription(ctx, subscriptionID)
+	if err != nil {
+		return billing.SubscriptionState{}, err
+	}
+	return p.subscriptionState(sub), nil
+}
+
+// polarSubscription is the part of Polar's subscription object apid reads.
+type polarSubscription struct {
+	Status            string    `json:"status"`
+	ProductID         string    `json:"product_id"`
+	CancelAtPeriodEnd bool      `json:"cancel_at_period_end"`
+	CurrentPeriodEnd  time.Time `json:"current_period_end"`
+	EndsAt            time.Time `json:"ends_at"`
+	PendingUpdate     *struct {
+		AppliesAt time.Time `json:"applies_at"`
+		ProductID string    `json:"product_id"`
+	} `json:"pending_update"`
+	Currency   string `json:"currency"`
+	DiscountID string `json:"discount_id"`
+	Discount   *struct {
+		ID string `json:"id"`
+	} `json:"discount"`
+}
+
+func (p *Provider) readSubscription(ctx context.Context, subscriptionID string) (polarSubscription, error) {
 	if strings.TrimSpace(subscriptionID) == "" {
-		return billing.SubscriptionState{}, errors.New("polar: subscription state: empty subscription id")
+		return polarSubscription{}, errors.New("polar: subscription state: empty subscription id")
 	}
-	var sub struct {
-		Status    string `json:"status"`
-		ProductID string `json:"product_id"`
-	}
+	var sub polarSubscription
 	path := "/v1/subscriptions/" + url.PathEscape(subscriptionID)
 	if err := p.doJSON(ctx, http.MethodGet, path, nil, &sub, ""); err != nil {
 		if hasStatus(err, http.StatusNotFound) {
-			return billing.SubscriptionState{}, fmt.Errorf("polar: subscription state %s: %w", subscriptionID, billing.ErrSubscriptionGone)
+			return polarSubscription{}, fmt.Errorf("polar: subscription state %s: %w", subscriptionID, billing.ErrSubscriptionGone)
 		}
-		return billing.SubscriptionState{}, fmt.Errorf("polar: subscription state %s: %w", subscriptionID, err)
+		return polarSubscription{}, fmt.Errorf("polar: subscription state %s: %w", subscriptionID, err)
 	}
 	if sub.Status == "" {
-		return billing.SubscriptionState{}, fmt.Errorf("polar: subscription state %s: empty status", subscriptionID)
+		return polarSubscription{}, fmt.Errorf("polar: subscription state %s: empty status", subscriptionID)
 	}
-	return billing.SubscriptionState{
-		Status: billing.SubscriptionStatus(strings.ToLower(sub.Status)),
-		PlanID: p.planForProduct(sub.ProductID),
-	}, nil
+	return sub, nil
+}
+
+func (p *Provider) subscriptionState(sub polarSubscription) billing.SubscriptionState {
+	out := billing.SubscriptionState{
+		Status:            billing.SubscriptionStatus(strings.ToLower(sub.Status)),
+		PlanID:            p.planForProduct(sub.ProductID),
+		CancelAtPeriodEnd: sub.CancelAtPeriodEnd,
+	}
+	if sub.CancelAtPeriodEnd {
+		out.EndsAt = sub.EndsAt
+		if out.EndsAt.IsZero() {
+			out.EndsAt = sub.CurrentPeriodEnd
+		}
+	}
+	if sub.PendingUpdate != nil && sub.PendingUpdate.ProductID != "" {
+		out.PendingPlanID = p.planForProduct(sub.PendingUpdate.ProductID)
+		out.PendingAt = sub.PendingUpdate.AppliesAt
+	}
+	return out
+}
+
+// ResumeSubscription undoes the subscription's scheduled cancellation and
+// scheduled plan change (ADR-20261103131742 amendment 1), so it renews on its
+// current product: Polar refuses any product change while a cancellation is
+// scheduled, and its customer portal is the only other place to undo one.
+// Neither request moves money, so a request whose response was lost may be
+// retried; the state read back after a failure decides the outcome.
+func (p *Provider) ResumeSubscription(ctx context.Context, acct state.Account) (bool, error) {
+	id := acct.StripeSubscriptionItem
+	if id == "" {
+		return false, fmt.Errorf("polar: resume subscription account=%s: %w", acct.ID, billing.ErrSubscriptionGone)
+	}
+	sub, err := p.readSubscription(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if !p.subscriptionState(sub).Status.Live() {
+		return false, fmt.Errorf("polar: resume subscription account=%s status=%s: %w", acct.ID, sub.Status, billing.ErrSubscriptionGone)
+	}
+	path := "/v1/subscriptions/" + url.PathEscape(id)
+	if sub.CancelAtPeriodEnd {
+		body := map[string]any{"cancel_at_period_end": false}
+		if err := p.doJSON(ctx, http.MethodPatch, path, body, nil, "faas-uncancel-"+id); err != nil {
+			if current, readErr := p.readSubscription(ctx, id); readErr != nil || current.CancelAtPeriodEnd {
+				return false, fmt.Errorf("polar: undo scheduled cancellation account=%s: %w", acct.ID, err)
+			}
+		}
+	}
+	if sub.PendingUpdate != nil {
+		body := map[string]any{"pending_update": nil}
+		if err := p.doJSON(ctx, http.MethodPatch, path, body, nil, "faas-clear-pending-"+id); err != nil {
+			if current, readErr := p.readSubscription(ctx, id); readErr != nil || current.PendingUpdate != nil {
+				return false, fmt.Errorf("polar: clear scheduled plan change account=%s: %w", acct.ID, err)
+			}
+		}
+	}
+	return sub.CancelAtPeriodEnd || sub.PendingUpdate != nil, nil
+}
+
+// planChangeError names the plan change refusals apid answers differently
+// from a provider failure: a subscription scheduled to end cannot change
+// product, and an upgrade's prorated charge can need the bank's confirmation
+// or be declined. Polar rolls the change back in each of these cases.
+func planChangeError(err error) error {
+	switch errorName(err) {
+	case errAlreadyCanceledSubscription:
+		return fmt.Errorf("%w: %w", billing.ErrSubscriptionEnding, err)
+	case errPaymentActionRequired:
+		return fmt.Errorf("%w: %w", billing.ErrPaymentAuthenticationRequired, err)
+	case errPaymentFailed:
+		return fmt.Errorf("%w: %w", billing.ErrPaymentDeclined, err)
+	}
+	return err
 }
 
 // customerSubscriptionsMax bounds one customer's listing. A customer holds one

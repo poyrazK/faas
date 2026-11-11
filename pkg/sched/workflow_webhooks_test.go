@@ -28,7 +28,7 @@ func (s *webhookCheckpointFailure) RecordPublishedEventRecipientProgress(ctx con
 	}
 	return s.PublishedEventRecipientProgressStore.RecordPublishedEventRecipientProgress(ctx, id, token, recipientID, p)
 }
-func TestWebhookAutomationFanoutFiltersAndCheckpointRecovery(t *testing.T) {
+func TestWebhookWorkflowFanoutFiltersAndCheckpointRecovery(t *testing.T) {
 	guardOrchestrationStores(t, func(t *testing.T, store state.Store) {
 		ctx := t.Context()
 		account, err := store.CreateAccount(ctx, uuid.NewString()+"@example.com", api.PlanHobby)
@@ -50,8 +50,8 @@ func TestWebhookAutomationFanoutFiltersAndCheckpointRecovery(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		starts := store.(state.WebhookAutomationStore)
-		_, err = starts.SaveWebhookAutomationBinding(ctx, state.WebhookAutomationBindingOptions{EndpointID: endpoint.ID, AppID: app.ID, AccountID: account.ID, WorkflowName: "paid", EventType: "invoice.paid", Filter: json.RawMessage(`{"data":{"data":{"object":{"amount_paid":{"$gt":100}}}}}`)})
+		starts := store.(state.WebhookWorkflowStore)
+		_, err = starts.SaveWebhookWorkflowBinding(ctx, state.WebhookWorkflowBindingOptions{EndpointID: endpoint.ID, AppID: app.ID, AccountID: account.ID, WorkflowName: "paid", EventType: "invoice.paid", Filter: json.RawMessage(`{"data":{"data":{"object":{"amount_paid":{"$gt":100}}}}}`)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -65,7 +65,7 @@ func TestWebhookAutomationFanoutFiltersAndCheckpointRecovery(t *testing.T) {
 			{"evt_small", json.RawMessage(`{"id":"evt_small","type":"invoice.paid","data":{"object":{"id":"in_small","amount_paid":50}}}`), true},
 			{"evt_paid", json.RawMessage(`{"id":"evt_paid","type":"invoice.paid","data":{"object":{"id":"in_paid","amount_paid":150}}}`), false},
 		} {
-			receipt, handled, err := starts.AcceptWebhookAutomation(ctx, endpoint, sample.body, true)
+			receipt, handled, err := starts.AcceptWebhookWorkflow(ctx, endpoint, sample.body, true)
 			if err != nil || !handled {
 				t.Fatal(receipt, err)
 			}
@@ -83,7 +83,7 @@ func TestWebhookAutomationFanoutFiltersAndCheckpointRecovery(t *testing.T) {
 			if err := store.(state.PublishedEventWorkStore).FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
 				t.Fatal(err)
 			}
-			receipt, err = starts.GetWebhookAutomationReceipt(ctx, endpoint.ID, sample.id)
+			receipt, err = starts.GetWebhookWorkflowReceipt(ctx, endpoint.ID, sample.id)
 			if err != nil {
 				t.Fatal(err)
 			}

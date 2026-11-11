@@ -21,7 +21,7 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|restore|bindings|attach|cutover|live>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -47,12 +47,16 @@ func cmdPostgres(args []string) int {
 		return postgresConditions.status(args[1:])
 	case subWait:
 		return postgresConditions.wait(args[1:])
+	case subLabel:
+		return cmdPostgresLabel(args[1:])
 	case "delete":
 		return cmdPostgresDelete(args[1:])
 	case "recover", "undelete":
 		// `restore` is point-in-time restore into a new database, so bringing
 		// back a deleted one is `recover`; `undelete` is the API's word.
 		return cmdPostgresUndelete(args[1:])
+	case "previews":
+		return cmdPostgresPreviews(args[1:])
 	case "compute-policy":
 		return cmdPostgresComputePolicy(args[1:])
 	case "compute-policy-status":
@@ -61,14 +65,25 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresResize(args[1:])
 	case "resize-status":
 		return cmdPostgresResizeStatus(args[1:])
+	// ADR-1027 major upgrades: a preview, callable but out of customer
+	// help, completions and the CLI reference until launch (the API hides
+	// it outside FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS).
+	case "upgrade":
+		return cmdPostgresUpgrade(args[1:])
+	case "upgrade-status":
+		return cmdPostgresUpgradeStatus(args[1:])
 	case subRestore:
 		return cmdPostgresRestore(args[1:])
+	case "branch":
+		return cmdPostgresBranch(args[1:])
 	case "cutover":
 		return cmdPostgresCutover(args[1:])
 	case "bindings":
 		return cmdPostgresBindings(args[1:])
 	case "attach", "bind":
 		return cmdPostgresAttach(args[1:])
+	case "connect":
+		return cmdPostgresConnect(args[1:])
 	case "live":
 		return cmdPostgresLive(args[1:])
 	default:
@@ -87,7 +102,7 @@ func cmdPostgresAttach(args []string) int {
 	scope := fs.String("scope", "", "environment scope (defaults to linked project environment, otherwise default)")
 	environmentKey := fs.String("env", "DATABASE_URL", "environment variable name")
 	fs.Var(newStringAlias(environmentKey), "environment-key", "environment variable name")
-	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api|auth")
+	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api|session|auth")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -104,7 +119,7 @@ func cmdPostgresAttach(args []string) int {
 	}
 	if fs.NArg() != 2 || strings.TrimSpace(fs.Arg(0)) == "" || strings.TrimSpace(fs.Arg(1)) == "" ||
 		api.ValidateScope(*scope) != nil || api.ValidateEnvKey(*environmentKey) != nil || !postgresAccessOK(*access) {
-		PrintUsage(os.Stderr, "usage: gregale postgres attach DATABASE APP_SLUG [--scope SCOPE] [--env KEY] [--access read_write|read_only|migration|data_api|auth]", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres attach DATABASE APP_SLUG [--scope SCOPE] [--env KEY] [--access read_write|read_only|migration|data_api|session|auth]", "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -260,6 +275,14 @@ func cmdPostgresUsage(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "                                (%s of %s used)\n", formatGiBMonths(result.StorageByteSeconds), formatGiBMonths(result.StorageByteSecondsLimit))
 	_, _ = fmt.Fprintf(osStdout, "  history_byte_seconds:         %d (%s)\n", result.HistoryByteSeconds, formatGiBMonths(result.HistoryByteSeconds))
 	_, _ = fmt.Fprintf(osStdout, "  egress_bytes:                 %d (%s)\n", result.EgressBytes, formatIECBytes(result.EgressBytes))
+	if result.EgressAllowanceBytes > 0 {
+		_, _ = fmt.Fprintf(osStdout, "  app_egress_bytes:             %d (%s)\n", result.AppEgressBytes, formatIECBytes(result.AppEgressBytes))
+		_, _ = fmt.Fprintf(osStdout, "  egress_allowance:             %s (apps and databases together)\n", formatIECBytes(result.EgressAllowanceBytes))
+		_, _ = fmt.Fprintf(osStdout, "  egress_state:                 %s\n", result.EgressState)
+	}
+	if note := postgresHoldNote(result.Hold); note != "" {
+		_, _ = fmt.Fprintf(osStdout, "  hold:                         %s (every database is %s)\n", result.Hold, note)
+	}
 	return 0
 }
 
@@ -320,20 +343,30 @@ func formatPostgresObservedAt(observedAt *time.Time) string {
 
 func cmdPostgresList(args []string) int {
 	fs := newFlagSet("postgres list", flag.ContinueOnError)
+	selector := addSelectorFlag(fs)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres list", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres list [-l SELECTOR]", "postgres")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ListManagedPostgresDatabases(context.Background())
+	var resp api.ManagedPostgresDatabaseList
+	if *selector != "" {
+		resp, err = selectedDatabases(context.Background(), client, *selector)
+	} else {
+		resp, err = client.ListManagedPostgresDatabases(context.Background())
+	}
 	if err != nil {
 		return printErr("Could not list managed PostgreSQL databases", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
+	}
+	if len(resp.Items) == 0 && *selector != "" {
+		_, _ = fmt.Fprintf(osStdout, "No database matches %s\n", *selector)
+		return 0
 	}
 	if len(resp.Items) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "No managed PostgreSQL databases.")
@@ -346,6 +379,12 @@ func cmdPostgresList(args []string) int {
 	for _, database := range resp.Items {
 		if database.RestorableUntil != "" {
 			_, _ = fmt.Fprintf(osStdout, "%s is scheduled for deletion; undo before %s with: gregale postgres recover %s\n", database.Name, database.RestorableUntil, database.Name)
+		} else if database.RestoreSlotUntil != "" {
+			_, _ = fmt.Fprintf(osStdout, "%s is a restored copy past your plan's database limit; its delete is scheduled at %s unless you purge a database or upgrade first\n", database.Name, database.RestoreSlotUntil)
+		} else if note := postgresPlanExcessNote(database); note != "" {
+			_, _ = fmt.Fprintf(osStdout, "%s is %s\n", database.Name, note)
+		} else if note := postgresHoldNote(database.Hold); note != "" {
+			_, _ = fmt.Fprintf(osStdout, "%s is %s\n", database.Name, note)
 		}
 	}
 	return 0
@@ -613,7 +652,7 @@ func cmdPostgresBindingsCreate(args []string) int {
 	app := fs.String("app", "", "app ID (required)")
 	scope := fs.String("scope", "", "environment scope (required)")
 	environmentKey := fs.String("environment-key", "", "environment variable name (required)")
-	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api|auth")
+	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api|session|auth")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -621,7 +660,7 @@ func cmdPostgresBindingsCreate(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 || *app == "" || *scope == "" || *environmentKey == "" || !postgresAccessOK(*access) {
-		PrintUsage(os.Stderr, "usage: gregale postgres bindings create DATABASE_ID --app APP_ID --env SCOPE --environment-key KEY [--access read_write|read_only|migration|data_api|auth]", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres bindings create DATABASE_ID --app APP_ID --env SCOPE --environment-key KEY [--access read_write|read_only|migration|data_api|session|auth]", "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -756,7 +795,7 @@ func normalizePostgresArgs(args []string) []string {
 var postgresFlagVocab = map[string][]string{
 	"class":        {"development", "burstable", "production"},
 	"availability": {"single_zone", "high_availability"},
-	"access":       {"read_write", "read_only", "migration", "data_api"},
+	"access":       {"read_write", "read_only", "migration", "data_api", "session"},
 }
 
 // postgresVocab is a flag's vocabulary. The access mode of application Auth,
@@ -818,6 +857,24 @@ func renderPostgresDatabase(w io.Writer, database api.ManagedPostgresDatabase) {
 	_, _ = fmt.Fprintf(w, "  state:            %s\n", database.State)
 	if database.RestorableUntil != "" {
 		_, _ = fmt.Fprintf(w, "  restorable_until: %s (gregale postgres recover %s)\n", database.RestorableUntil, database.Name)
+	}
+	if database.RestoreRange != nil {
+		_, _ = fmt.Fprintf(w, "  restore_range:    %s to %s\n", database.RestoreRange.Earliest, database.RestoreRange.Latest)
+	}
+	if database.RestoreSlotUntil != "" {
+		_, _ = fmt.Fprintf(w, "  restore_slot_until: %s (a temporary copy past your plan's database limit; purge a database or upgrade to keep it)\n", database.RestoreSlotUntil)
+	}
+	if database.RestoreSourceDatabaseID != "" {
+		_, _ = fmt.Fprintf(w, "  restored_from:    %s at %s\n", database.RestoreSourceDatabaseID, database.RestorePointInTime)
+	}
+	if database.ExpiresAt != "" {
+		_, _ = fmt.Fprintf(w, "  expires_at:       %s (bindings revoked and purged then)\n", database.ExpiresAt)
+	}
+	if note := postgresPlanExcessNote(database); note != "" {
+		_, _ = fmt.Fprintf(w, "  plan_excess:      %s (%s)\n", database.PlanExcess, note)
+	}
+	if note := postgresHoldNote(database.Hold); note != "" {
+		_, _ = fmt.Fprintf(w, "  hold:             %s (%s)\n", database.Hold, note)
 	}
 	if health := database.Health; health != nil {
 		_, _ = fmt.Fprintf(w, "  provider_health:  %s (fresh=%t)\n", health.Status, health.Fresh)
@@ -883,4 +940,35 @@ func adoptRotationAfterUncertainError(ctx context.Context, client interface {
 		return api.ManagedPostgresBinding{}, false
 	}
 	return now, true
+}
+
+// postgresPlanExcessNote explains a database the plan no longer includes
+// (ADR-20261102125208); empty for any other database.
+func postgresPlanExcessNote(database api.ManagedPostgresDatabase) string {
+	switch database.PlanExcess {
+	case "database_limit":
+		return "suspended: your plan allows fewer databases than you have; its data is kept. Upgrade or delete a database to resume it"
+	case "service_class":
+		return fmt.Sprintf("suspended: your plan does not include the %s class; its data is kept. Upgrade, or resize it to a class your plan includes with gregale postgres resize, to resume it", database.ServiceClass)
+	default:
+		return ""
+	}
+}
+
+// postgresHoldNote explains why the platform holds a ready database
+// (ADR-20261110160000 amendment 2026-11-10); empty when nothing does, and for
+// plan_excess, which postgresPlanExcessNote explains.
+func postgresHoldNote(hold string) string {
+	switch hold {
+	case api.ManagedPostgresHoldComputeCeiling:
+		return "held: the account used this month's database compute; it refuses connections until the 1st of next month or an upgrade. Its data is kept"
+	case api.ManagedPostgresHoldEgress:
+		return "held: the account's apps and databases sent this month's egress allowance; it refuses connections until the 1st of next month or an upgrade. Its data is kept"
+	case api.ManagedPostgresHoldInactive:
+		return "held: the account is suspended; it refuses connections until the account is active again. Its data is kept"
+	case api.ManagedPostgresHoldPreview:
+		return "held: PR preview databases pause once the account used 80% of this month's database compute. Its data is kept"
+	default:
+		return ""
+	}
 }
