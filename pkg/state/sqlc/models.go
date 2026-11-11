@@ -241,6 +241,7 @@ type AgentActivity struct {
 	Status     int32
 	ApprovalID pgtype.UUID
 	CreatedAt  pgtype.Timestamptz
+	Reason     pgtype.Text
 }
 
 // ADR-20261107140000 notification channels that get agent approval requests; apid is the only writer.
@@ -293,6 +294,7 @@ type AgentApprovalRequest struct {
 	ConsumedAt   pgtype.Timestamptz
 	ExpiresAt    pgtype.Timestamptz
 	DecisionNote pgtype.Text
+	Reason       pgtype.Text
 }
 
 // ADR-20261030125501 agent callback revocations written by apid: a thread's latest revocation time.
@@ -4067,18 +4069,19 @@ type DebugRegressionObservation struct {
 }
 
 type DeployToken struct {
-	ID            pgtype.UUID
-	AccountID     pgtype.UUID
-	AppID         pgtype.UUID
-	TokenSha256   []byte
-	Label         string
-	Scopes        []string
-	Status        string
-	CreatedAt     pgtype.Timestamptz
-	ExpiresAt     pgtype.Timestamptz
-	LastUsedAt    pgtype.Timestamptz
-	RevokedAt     pgtype.Timestamptz
-	RotatedFromID pgtype.UUID
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	TokenSha256        []byte
+	Label              string
+	Scopes             []string
+	Status             string
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	LastUsedAt         pgtype.Timestamptz
+	RevokedAt          pgtype.Timestamptz
+	RotatedFromID      pgtype.UUID
+	CreatedByAccountID pgtype.UUID
 }
 
 type Deployment struct {
@@ -8656,6 +8659,7 @@ type ManagedPostgresDatabase struct {
 	PreviewSourceDatabaseID     pgtype.UUID
 	PreviewEnvironmentID        pgtype.Text
 	PreviewPrNumber             pgtype.Int4
+	ExpiresAt                   pgtype.Timestamptz
 }
 
 type ManagedPostgresDatabaseEndpoint struct {
@@ -8726,6 +8730,7 @@ type ManagedPostgresOverageDelivery struct {
 	DeliveredMillicents      int64
 	UpdatedAt                pgtype.Timestamptz
 	BilledStorageByteSeconds int64
+	BilledEgressBytes        int64
 }
 
 // A managed PostgreSQL overage step reserved before it is sent to the billing provider; written only by apid (ADR-20261101143527).
@@ -8745,6 +8750,10 @@ type ManagedPostgresOveragePending struct {
 	BilledStorageByteSeconds int64
 	PreviousMillicents       int64
 	PreviousLive             bool
+	UsedEgressBytes          int64
+	AppEgressBytes           int64
+	EgressAllowanceBytes     int64
+	BilledEgressBytes        int64
 }
 
 // Notices for managed PostgreSQL databases suspended past their plan; written only by apid (ADR-20261102125208).

@@ -213,11 +213,14 @@ func cmdEdgeRuleListsUpdate(args []string) int {
 func cmdEdgeRuleListsRm(args []string) int {
 	fs := newFlagSet("edge-rule-lists rm", flag.ContinueOnError)
 	app := edgeRuleListAppFlag(fs)
+	// `edge rule delete` needs --yes; rule-list delete refused it (Hunt 32
+	// H32-60). It is accepted here and still does not prompt.
+	fs.Bool("yes", false, "accepted for consistency with edge rule delete; does not prompt")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge rule-list delete <name>", "edge-rule-lists")
+		PrintUsage(os.Stderr, "usage: gregale edge rule-list delete <name> [--yes]", "edge-rule-lists")
 		return 1
 	}
 	name := fs.Arg(0)

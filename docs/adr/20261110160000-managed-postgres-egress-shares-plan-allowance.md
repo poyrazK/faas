@@ -1,6 +1,6 @@
 # ADR-20261110160000: Managed PostgreSQL egress shares the plan's egress allowance
 
-- **Status:** accepted (owner, 2026-11-10: "Count it in app egress", on the billing launch review). Slice 1 built.
+- **Status:** accepted (owner, 2026-11-10: "Count it in app egress", on the billing launch review). Slices 1 and 3 built.
 - **Date:** 2026-11-10
 - **Owner:** apid and managed PostgreSQL maintainers
 - **Amends:**
@@ -50,12 +50,58 @@ when parallel changes pick the next number.
    paying for its apps' egress past the allowance, but its databases stop at
    the allowance.
 
+## Amendment 2026-11-10: holds are visible
+
+A held database still reported `ready`, so a customer saw connections fail
+with no reason; no email names the egress hold yet.
+
+- `GET /v1/postgres/databases/{id}` and the list report `hold`:
+  `compute_ceiling`, `egress`, `inactive`, `plan_excess` or `preview`.
+- `GET /v1/postgres/usage` adds `egress_allowance_bytes`, `app_egress_bytes`,
+  `egress_state` (healthy, warning at 80%, held) and the account-wide `hold`.
+- The read uses the sweep's own rules (`managedpostgres.SubjectHold`,
+  `DatabaseHold`, `EgressState`) and the sweep's egress check shares the same
+  helper. It runs only while cap enforcement is `on`, so shadow mode reports
+  nothing and reads nothing extra. A view can lead or trail the provider by
+  one sweep interval.
+- The order of the slices below changes: slice 3 (billing database egress)
+  lifts the hold only while that charge is live, because the managed
+  PostgreSQL overage path is still `internal`.
+
+## Amendment 2026-11-10: slice 3, database egress overage is billed
+
+The owner chose the price ("Neon + 5%") and the split ("Apps use it first").
+
+- **Price.** Database egress past the allowance costs Neon's data transfer
+  price plus the managed PostgreSQL markup: $0.105 per GB (10^9 bytes, Neon's
+  unit), `api.ManagedPostgresEgressOverageMillicentsPerGB`.
+- **Split.** Apps use the shared allowance first. A month's database charge is
+  the database egress past what the apps left of the allowance, at most one
+  more allowance (`managedpostgres.EgressOverageCharge`). Apps keep their own
+  egress overage line; the two never bill the same byte.
+- **Who is billed.** A subject whose egress overage election lifts its apps'
+  allowance (`billing.EgressOverageLifted`: election on, plan allows it, the
+  provider bills egress live). The overage biller lists every subject with
+  databases whose election covered the month, and keeps billing a month that
+  already charged database egress after the election ends, as storage does.
+  An egress election alone never charges compute or storage past their
+  allowance.
+- **Delivery.** It is one more term of the managed PostgreSQL cumulative
+  overage step (`billed_egress_bytes` on deliveries and pending steps, migration
+  `20261110213000417`), sent through the same sink and idempotency key.
+- **Hold.** With the election lifted and managed PostgreSQL charges live, the
+  sweep and the views hold the databases at twice the allowance instead of at
+  it, the same 2x ceiling as compute. `egress_state` reports `overage` past the
+  allowance and `warning` at 80% of the 2x hold. In shadow or internal
+  delivery the hold stays at the allowance, so an election never makes
+  database egress free.
+- Decision 3 above no longer holds once managed PostgreSQL charges are live.
+
 ## Later slices
 
 - **Slice 2:** meterd's app egress stop counts the databases' egress too, so
   apps also stop once databases spent the allowance.
-- **Slice 3:** database egress past the allowance is billed with the egress
-  overage election, and the election then lifts the database ceiling too.
+- **Slice 3:** built, see the amendment above.
 - **Slice 4:** a Neon per-project `data_transfer_bytes` quota as a backstop,
   like the compute quota.
 

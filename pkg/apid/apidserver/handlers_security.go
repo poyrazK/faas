@@ -580,7 +580,7 @@ func (s *server) enforceSecurityPostureGate(ctx context.Context, app state.App) 
 	if len(codes) == 0 {
 		return nil
 	}
-	return api.ErrSecurityPostureBlocked(strings.Join(codes, ", "))
+	return api.ErrSecurityPostureBlocked(app.Slug, strings.Join(codes, ", "))
 }
 
 func postureSeverityRank(severity string) int {

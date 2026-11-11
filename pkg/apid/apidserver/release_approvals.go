@@ -762,6 +762,7 @@ func (s *server) abortForApproval(ctx context.Context, app state.App, d state.De
 	// and the rejected release would keep its canary traffic (approvals ADR
 	// amendment 11).
 	var err error
+	ctx = state.WithRolloutRecoveryActor(ctx, state.RolloutRecoveryActorReleaseApproval)
 	if predecessor, ok := s.rolloutPredecessor(ctx, d); ok {
 		_, _, err = decisions.RecoverRolloutForDeploymentWithDecision(ctx, app.ID, d.ID, predecessor.ID, "abort", reason, decision)
 	} else {

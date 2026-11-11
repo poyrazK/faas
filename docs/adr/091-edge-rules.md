@@ -1997,3 +1997,18 @@ An edge-rules review found two gaps around agent credentials.
    streams (ADR-102 D3: a JSON `Accept` is advisory), so a `limit` rule's
    `max_body_bytes_streaming` replaces `max_body_bytes` for request bodies, as
    D24 §6 decided. The edge-rules guide called it a response cap only.
+
+## Amendment (2026-11-10): the edge health answer passes the declared-route gate
+
+Hunt 32 (H32-48): with `only_allow_declared_routes` on and an imported
+OpenAPI document that did not list `/healthz`, `GET /healthz` returned
+`404 undeclared_route`, so uptime monitors failed on a healthy app.
+
+1. **The gateway's own health answer is not app surface.** A `GET` or `HEAD`
+   to the app's health path that the gateway answers without a VM
+   (`health_path_wakes` off, round 12's gated edge answer) skips the
+   declared-route gate. It still runs after the edge access gates, as round 12
+   placed it, and creates no app work, which is what the gate protects.
+2. **Everything else stays gated.** Other methods on the health path, a
+   health path with `health_path_wakes` on (the app answers it), and
+   deployment smoke requests must be declared like any route.
