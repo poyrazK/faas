@@ -1610,8 +1610,11 @@ func (r *server) UpsertWorkPolicy(p0 http.ResponseWriter, p1 *http.Request, p2 s
 func (r *server) ValidateProjectDeploymentEnvironment(p0 context.Context, p1 state.Account, p2 string, p3 string) *api.Problem {
 	return r.validateProjectDeploymentEnvironment(p0, p1, p2, p3)
 }
-func (r *server) VerifyOAuthAccountEmail(p0 context.Context, p1 state.Account) (state.Account, error) {
-	return r.verifyOAuthAccountEmail(p0, p1)
+func (r *server) VerifyOAuthAccountEmail(p0 context.Context, p1 state.Account, p2 string) (state.Account, error) {
+	return r.verifyOAuthAccountEmail(p0, p1, p2)
+}
+func (r *server) RemoveForeignProviderLinks(p0 context.Context, p1 string, p2 string) {
+	r.removeForeignProviderLinks(p0, p1, p2)
 }
 func (r *server) VmmdMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.vmmdMetricsDiscovery(p0, p1)
