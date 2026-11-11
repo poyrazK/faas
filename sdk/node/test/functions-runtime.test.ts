@@ -33,22 +33,25 @@ test('call posts JSON over the binding and parses the output', async () => {
   const fns = createFunctions<Fns>({ functions: { users: 'shop-users' }, env: {}, fetch });
   const user = await fns.users.call({ id: '42' });
   assert.equal(user.name, 'Ada');
-  assert.equal(calls[0].url, 'http://shop-users.internal:10081/');
-  assert.equal(calls[0].init.method, 'POST');
-  assert.equal(calls[0].init.body, '{"id":"42"}');
+  const [first] = calls;
+  assert.equal(first?.url, 'http://shop-users.internal:10081/');
+  assert.equal(first?.init.method, 'POST');
+  assert.equal(first?.init.body, '{"id":"42"}');
 });
 
 test('send asks for an async invocation and returns its id', async () => {
   const { fetch, calls } = fakeFetch([Response.json({ invocation_id: 'inv-1' }, { status: 202 })]);
-  const fns = createFunctions({ functions: { mailer: 'shop-mailer' }, env: {}, fetch });
+  type Fns = { mailer: { input: { to: string }; output: unknown } };
+  const fns = createFunctions<Fns>({ functions: { mailer: 'shop-mailer' }, env: {}, fetch });
   assert.deepEqual(await fns.mailer.send({ to: 'a@example.com' }), { invocationId: 'inv-1' });
-  assert.equal(new Headers(calls[0].init.headers).get('x-gregale-invoke'), 'async');
+  assert.equal(new Headers(calls[0]?.init.headers).get('x-gregale-invoke'), 'async');
 });
 
 test('a non-2xx answer raises FunctionCallError with the problem', async () => {
   const problem = { code: 'function_input_invalid', detail: '/id: required', status: 422 };
   const { fetch } = fakeFetch([Response.json(problem, { status: 422 })]);
-  const fns = createFunctions({ functions: { users: 'shop-users' }, env: {}, fetch });
+  type Fns = { users: { input: Record<string, unknown>; output: unknown } };
+  const fns = createFunctions<Fns>({ functions: { users: 'shop-users' }, env: {}, fetch });
   await assert.rejects(fns.users.call({}), (err: unknown) => {
     if (!(err instanceof FunctionCallError)) return false;
     assert.equal(err.status, 422);

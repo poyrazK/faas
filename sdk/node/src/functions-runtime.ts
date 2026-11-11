@@ -74,9 +74,13 @@ export interface FunctionCallOptions {
   signal?: AbortSignal;
 }
 
-export type FunctionsClient<M> = {
-  readonly [K in keyof M]: FunctionClient<M[K] extends FunctionTypes ? M[K] : FunctionTypes>;
-} & Readonly<Record<string, FunctionClient>>;
+/**
+ * Typed by GregaleFunctions (or an explicit map); untyped, every name is a
+ * FunctionClient with unknown input and output.
+ */
+export type FunctionsClient<M> = [keyof M] extends [never]
+  ? { readonly [name: string]: FunctionClient }
+  : { readonly [K in keyof M]: FunctionClient<M[K] extends FunctionTypes ? M[K] : FunctionTypes> };
 
 export interface CreateFunctionsOptions {
   /** The name -> slug map; defaults to GREGALE_FUNCTIONS. */
@@ -131,7 +135,7 @@ export function createFunctions<M = GregaleFunctions>(options: CreateFunctionsOp
       const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json', ...opts?.headers };
       if (async) headers[GREGALE_INVOKE_HEADER] = 'async';
       const res = await fetchImpl(baseURL(slug) + (path.startsWith('/') ? path : '/' + path), {
-        method: 'POST', headers, body: JSON.stringify(input ?? null), signal: opts?.signal,
+        method: 'POST', headers, body: JSON.stringify(input ?? null), ...(opts?.signal ? { signal: opts.signal } : {}),
       });
       if (res.ok) return res;
       const body = await res.text();
