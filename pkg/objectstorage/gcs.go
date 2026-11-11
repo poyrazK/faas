@@ -976,8 +976,11 @@ type gcsMultipartUpload struct {
 	UploadID string `xml:"UploadId"`
 }
 
+// gcsListMultipartUploadsResult is GCS's reply to GET ?uploads. Its root is
+// ListMultipartUploadsResult, as in S3 (XML API reference, "List multipart
+// uploads"); a wrong root made every discovery fail to decode (Hunt 33 H33-41).
 type gcsListMultipartUploadsResult struct {
-	XMLName            xml.Name             `xml:"ListBucketMultipartUploadsResult"`
+	XMLName            xml.Name             `xml:"ListMultipartUploadsResult"`
 	Encoding           []string             `xml:"EncodingType"`
 	NativeEncoding     []string             `xml:"Encoding-Type"`
 	IsTruncated        *bool                `xml:"IsTruncated"`

@@ -85,7 +85,7 @@ func TestGCSMultipartDiscoveryRejectsInvalidBoundaries(t *testing.T) {
 					w.WriteHeader(500)
 					return
 				}
-				_, _ = io.WriteString(w, `<ListBucketMultipartUploadsResult>`+tc.body+`</ListBucketMultipartUploadsResult>`)
+				_, _ = io.WriteString(w, `<ListMultipartUploadsResult>`+tc.body+`</ListMultipartUploadsResult>`)
 			}))
 			t.Cleanup(native.Close)
 			p := testGCS(native.URL, &fakeGCSStore{})
@@ -103,17 +103,18 @@ func TestGCSMultipartDiscoveryDecodesAndRetainsPairedCursor(t *testing.T) {
 	native := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		q := r.URL.Query()
-		if r.Method != http.MethodGet || q.Get("encoding-type") != "url" {
+		if r.Method != http.MethodGet || q.Has("encoding-type") {
 			t.Error("invalid discovery dispatch", r.Method, r.URL)
 		}
 		if q.Get("key-marker") == "" {
-			_, _ = io.WriteString(w, `<ListBucketMultipartUploadsResult><Encoding-Type>url</Encoding-Type><IsTruncated>true</IsTruncated><Upload><Key>key%2F%2B%25</Key><UploadId>opaque/+%</UploadId></Upload><NextKeyMarker>key%2F%2B%25</NextKeyMarker><NextUploadIdMarker>opaque/+%</NextUploadIdMarker></ListBucketMultipartUploadsResult>`)
+			// A reply that declares url encoding is still decoded.
+			_, _ = io.WriteString(w, `<ListMultipartUploadsResult><Encoding-Type>url</Encoding-Type><IsTruncated>true</IsTruncated><Upload><Key>key%2F%2B%25</Key><UploadId>opaque/+%</UploadId></Upload><NextKeyMarker>key%2F%2B%25</NextKeyMarker><NextUploadIdMarker>opaque/+%</NextUploadIdMarker></ListMultipartUploadsResult>`)
 			return
 		}
 		if q.Get("key-marker") != "key/+%" || q.Get("upload-id-marker") != "opaque/+%" {
 			t.Error("discovery changed its paired cursor", q)
 		}
-		_, _ = io.WriteString(w, `<ListBucketMultipartUploadsResult><IsTruncated>false</IsTruncated></ListBucketMultipartUploadsResult>`)
+		_, _ = io.WriteString(w, `<ListMultipartUploadsResult><IsTruncated>false</IsTruncated></ListMultipartUploadsResult>`)
 	}))
 	t.Cleanup(native.Close)
 	p := testGCS(native.URL, &fakeGCSStore{})
@@ -125,7 +126,7 @@ func TestGCSMultipartDiscoveryDecodesAndRetainsPairedCursor(t *testing.T) {
 }
 
 func TestGCSInitiationRequiresCompleteDiscovery(t *testing.T) {
-	for _, body := range []string{`<ListBucketMultipartUploadsResult/>`, `<Error><Code>InternalError</Code></Error>`, `<ListBucketMultipartUploadsResult><IsTruncated>false</IsTruncated><NextKeyMarker>key</NextKeyMarker><NextUploadIdMarker>existing</NextUploadIdMarker></ListBucketMultipartUploadsResult>`} {
+	for _, body := range []string{`<ListMultipartUploadsResult/>`, `<Error><Code>InternalError</Code></Error>`, `<ListMultipartUploadsResult><IsTruncated>false</IsTruncated><NextKeyMarker>key</NextKeyMarker><NextUploadIdMarker>existing</NextUploadIdMarker></ListMultipartUploadsResult>`} {
 		t.Run(body, func(t *testing.T) {
 			var creates atomic.Int32
 			native := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
