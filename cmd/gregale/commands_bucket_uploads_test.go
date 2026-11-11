@@ -43,3 +43,27 @@ func TestBucketUploadsCLIUsesOwnedSessionEndpoints(t *testing.T) {
 		})
 	}
 }
+
+// Hunt 33 H33-42: an unfinished multipart upload holds its bucket until it
+// expires; the CLI can now abort it through the owned session endpoint.
+func TestBucketUploadsCLIAbortsASession(t *testing.T) {
+	bucket, upload := uuid.NewString(), uuid.NewString()
+	var called bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/apps/demo/buckets/"+bucket+"/multipart-uploads/"+upload {
+			t.Errorf("abort reached %s %s", r.Method, r.URL.Path)
+		}
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fixture-token")
+	var out bytes.Buffer
+	previous := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previous })
+	if code := main.CmdBucketUploads([]string{"abort", "demo", bucket, upload}); code != 0 || !called || !bytes.Contains(out.Bytes(), []byte(upload)) {
+		t.Fatalf("abort = %d, called=%t, out=%q", code, called, out.String())
+	}
+}
