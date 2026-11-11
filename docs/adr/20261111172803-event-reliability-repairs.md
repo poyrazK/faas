@@ -46,6 +46,9 @@ policies, and claim generation fencing while correcting them.
 - Permanent routing failures stop even after a subscription matches. Circuit
   probe liveness follows the current matching routing claim, including renewal,
   instead of a stale copy of its first lease deadline.
+- Native pipeline table-retirement checkpoints follow the durable target
+  receipt. Failed read-gate, detach, or archive operations cannot advance the
+  reported phase; retries recover the committed phase before attempting work.
 
 These repairs do not promote the event capability to GA. Reference-host
 throughput, the controlled primary/standby failover drill, and the deployed

@@ -118,3 +118,11 @@ block environment clone admission. The registry now includes the column under
 the table's existing operational classification, so replay work stays with
 its source environment. The canonical schema and clone coverage tests guard
 this boundary.
+
+Native pipeline acceptance exposed another integration defect during live table
+removal: an unsuccessful native operation could advance the reported checkpoint
+before its transaction committed. A lock timeout could therefore report a
+retiring table while its read gate remained open. Retirement checkpoints now
+follow the durable receipt and advance only after the corresponding operation
+succeeds. A native regression holds a real table lock and checks that the failed
+attempt reports no uncommitted progress before retrying the removal.
