@@ -65266,6 +65266,52 @@ func (q *Queries) ManagedPostgresDueBindings(ctx context.Context, db DBTX, arg M
 	return items, nil
 }
 
+const managedPostgresEgressByDatabase = `-- name: ManagedPostgresEgressByDatabase :many
+SELECT u.database_id, COALESCE(sum(u.quantity),0)::bigint AS egress_bytes
+FROM managed_postgres_usage u JOIN managed_postgres_databases d ON d.id=u.database_id
+WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=$1::uuid AND u.meter='egress_bytes'
+AND u.window_from>=$2::timestamptz AND u.window_from<$3::timestamptz
+AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers w WHERE w.database_id=u.database_id
+ AND u.window_from>=w.waived_from AND (w.waived_until IS NULL OR u.window_to<=w.waived_until)
+ AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers p WHERE p.database_id=w.database_id
+  AND p.waived_from<w.waived_from AND p.waived_from>w.waived_from-interval '30 days'))
+GROUP BY u.database_id
+`
+
+type ManagedPostgresEgressByDatabaseParams struct {
+	SubjectID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+}
+
+type ManagedPostgresEgressByDatabaseRow struct {
+	DatabaseID  pgtype.UUID
+	EgressBytes int64
+}
+
+// ADR-20261110160000 amendment 2026-11-11: each database's egress this month,
+// under the same waivers as ManagedPostgresUsageForSubject. Neon's transfer
+// allowance is per project, and every database is its own project.
+func (q *Queries) ManagedPostgresEgressByDatabase(ctx context.Context, db DBTX, arg ManagedPostgresEgressByDatabaseParams) ([]ManagedPostgresEgressByDatabaseRow, error) {
+	rows, err := db.Query(ctx, managedPostgresEgressByDatabase, arg.SubjectID, arg.PeriodStart, arg.PeriodEnd)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ManagedPostgresEgressByDatabaseRow{}
+	for rows.Next() {
+		var i ManagedPostgresEgressByDatabaseRow
+		if err := rows.Scan(&i.DatabaseID, &i.EgressBytes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const managedPostgresFleetTotals = `-- name: ManagedPostgresFleetTotals :one
 SELECT
  ((SELECT count(*) FROM managed_postgres_databases d WHERE d.state<>'deleted')

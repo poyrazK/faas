@@ -276,8 +276,7 @@ func cmdPostgresUsage(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "  history_byte_seconds:         %d (%s)\n", result.HistoryByteSeconds, formatGiBMonths(result.HistoryByteSeconds))
 	_, _ = fmt.Fprintf(osStdout, "  egress_bytes:                 %d (%s)\n", result.EgressBytes, formatIECBytes(result.EgressBytes))
 	if result.EgressAllowanceBytes > 0 {
-		_, _ = fmt.Fprintf(osStdout, "  app_egress_bytes:             %d (%s)\n", result.AppEgressBytes, formatIECBytes(result.AppEgressBytes))
-		_, _ = fmt.Fprintf(osStdout, "  egress_allowance:             %s (apps and databases together)\n", formatIECBytes(result.EgressAllowanceBytes))
+		_, _ = fmt.Fprintf(osStdout, "  egress_allowance:             %.0f GB per database\n", float64(result.EgressAllowanceBytes)/1e9)
 		_, _ = fmt.Fprintf(osStdout, "  egress_state:                 %s\n", result.EgressState)
 	}
 	if note := postgresHoldNote(result.Hold); note != "" {
@@ -968,7 +967,7 @@ func postgresHoldNote(hold string) string {
 	case api.ManagedPostgresHoldComputeCeiling:
 		return "held: the account used this month's database compute; it refuses connections until the 1st of next month or an upgrade. Its data is kept"
 	case api.ManagedPostgresHoldEgress:
-		return "held: the account's apps and databases sent this month's egress allowance; it refuses connections until the 1st of next month or an upgrade. Its data is kept"
+		return "held: it sent its own monthly egress allowance; it refuses connections until the 1st of next month. Its data is kept"
 	case api.ManagedPostgresHoldInactive:
 		return "held: the account is suspended; it refuses connections until the account is active again. Its data is kept"
 	case api.ManagedPostgresHoldPreview:
