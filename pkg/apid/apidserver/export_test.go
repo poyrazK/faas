@@ -629,6 +629,8 @@ var NewObsPR3Env = newObsPR3Env
 var NewPgBackupPushedSampler = newPgBackupPushedSampler
 var NewPreviewJanitor = newPreviewJanitor
 var NewProjectLifecycleFixture = newProjectLifecycleFixture
+
+var CopyPromotedArtifactStamps = copyPromotedArtifactStamps
 var NewRuntimeConfigManager = newRuntimeConfigManager
 
 func (s *server) ConfigureHostingForTest(getenv func(string) string) error {

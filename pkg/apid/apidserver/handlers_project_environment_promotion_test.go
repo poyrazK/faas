@@ -34,6 +34,9 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 	if err := store.SetDeploymentRootfs(ctx, source.ID, "/rootfs/source", "apps/source.ext4", 42); err != nil {
 		t.Fatal(err)
 	}
+	// What imaged stamps on a source-built container app must reach the
+	// promoted copy, or it boots without its runtime (Hunt 33 H33-35).
+	stampPromotionSourceArtifact(t, store, source.ID)
 	if err := store.MarkDeploymentLive(ctx, source.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -170,6 +173,12 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 	}
 	if live.ID == target.ID || live.SourceSHA256 != source.SourceSHA256 || live.RootfsKey != "apps/source.ext4" {
 		t.Fatalf("promoted live deployment=%+v", live)
+	}
+	if live.RuntimeBase != "node24" || !live.BeforeCheckpointHookKnown || !live.BeforeCheckpointHook ||
+		!live.SecretReloadSignalKnown || live.SecretReloadSignal != "SIGHUP" {
+		t.Fatalf("promoted deployment lost its artifact stamps: runtime_base=%q hook=%v/%v signal=%q/%v",
+			live.RuntimeBase, live.BeforeCheckpointHook, live.BeforeCheckpointHookKnown,
+			live.SecretReloadSignal, live.SecretReloadSignalKnown)
 	}
 	rollbackReq, rollbackRec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+response.PromotionID+"/rollback", "shop", nil)
 	rollbackReq.SetPathValue("environment", "production")
@@ -1265,4 +1274,57 @@ func createProjectEnvironmentQualificationForTest(t *testing.T, store *state.Mem
 		t.Fatal(err)
 	}
 	return qualification
+}
+
+func stampPromotionSourceArtifact(t *testing.T, store state.Store, deploymentID string) {
+	t.Helper()
+	ctx := context.Background()
+	stamper, ok := store.(state.DeploymentRuntimeBaseStore)
+	if !ok {
+		t.Fatalf("store %T cannot stamp a runtime base", store)
+	}
+	if err := stamper.SetDeploymentRuntimeBase(ctx, deploymentID, "node24"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetDeploymentBeforeCheckpointHook(ctx, deploymentID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetDeploymentSecretReloadSignal(ctx, deploymentID, "SIGHUP"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// PgStore's CreateDeployment does not persist imaged's stamps, so the copy
+// must write them onto a promoted deployment created without them.
+func TestCopyPromotedArtifactStampsWritesImagedStamps(t *testing.T) {
+	_, store, _, _, app := apidserver.NewProjectLifecycleFixture(t)
+	ctx := context.Background()
+	source, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Status: state.DeployPending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stampPromotionSourceArtifact(t, store, source.ID)
+	source, err = store.DeploymentByID(ctx, source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Status: state.DeployPending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.RuntimeBase != "" || target.BeforeCheckpointHookKnown || target.SecretReloadSignalKnown {
+		t.Fatalf("fresh target already carries stamps: %+v", target)
+	}
+	if err := apidserver.CopyPromotedArtifactStamps(ctx, store, source, target.ID); err != nil {
+		t.Fatalf("CopyPromotedArtifactStamps: %v", err)
+	}
+	got, err := store.DeploymentByID(ctx, target.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RuntimeBase != "node24" || !got.BeforeCheckpointHook || !got.BeforeCheckpointHookKnown ||
+		got.SecretReloadSignal != "SIGHUP" || !got.SecretReloadSignalKnown {
+		t.Fatalf("target after copy: runtime_base=%q hook=%v/%v signal=%q/%v", got.RuntimeBase,
+			got.BeforeCheckpointHook, got.BeforeCheckpointHookKnown, got.SecretReloadSignal, got.SecretReloadSignalKnown)
+	}
 }
