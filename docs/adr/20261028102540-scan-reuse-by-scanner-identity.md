@@ -137,3 +137,22 @@ although its image and findings had not changed (bug hunt 2026-10-28 H84).
   invalid signature, or evidence the lease finds expired, drifted or invalid. A
   store read error skips that lease tick instead of counting as missing evidence.
 - The lease is unchanged: evidence that no rescan renews still expires on it.
+
+## Amendment 2026-11-11 · keep the identity while the install is unchanged
+
+Deploys arrive less often than once a minute, so the one-minute identity
+cache almost never held and every deploy paid the probe: 3 s on an idle node
+and about 10 s while a build was running (profile of a production deploy on
+2026-11-11; `runtime_base_ms` p50 6 s, p90 18–20 s over 372 deploys).
+
+imaged now also records an install stamp just before each probe: the device,
+inode, size, mode and modification time of the Grype binary and of every
+entry under `GRYPE_DB_CACHE_DIR` (at most `api.ScannerInstallStampMaxEntries`).
+Past `api.ScannerIdentityCacheTTL` the cached identity is still used while the
+current stamp equals the probed one, up to `api.ScannerIdentityUnchangedMaxAge`
+(6 h, the database refresh cadence). Grype installs a new database by writing
+new files and an upgrade replaces the binary, so either changes the stamp and
+the next decision probes again. An unreadable file, a missing directory, an
+oversized directory or an unset `GRYPE_DB_CACHE_DIR` gives no stamp, which
+keeps the one-minute cache. A real scan that reports a different identity
+drops the stamp; `refreshScannerDB` still forgets the identity.
