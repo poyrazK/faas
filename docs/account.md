@@ -66,7 +66,16 @@ operation still enforces its own authorization and admission checks.
   links whichever provider account you sign in with, even if its email
   differs from your Gregale email; it is also the only way to add back a
   provider you removed ("Continue with Google" with the same email is refused
-  after a removal). Linking or removing a provider emails you.
+  after a removal). Linking needs a verified email and, like removing, a
+  code from the last 5 minutes when two-factor authentication is on, else a
+  sign-in from the last 15 minutes. Linking or removing a provider emails you.
+  Signing in with a provider verifies your email only when the provider's
+  verified email is your Gregale email.
+- **Recovery removes unknown provider sign-ins:** a password reset, claiming
+  an unverified address with an email link, and an operator's email revert or
+  two-factor reset remove every linked provider whose email is not your
+  Gregale email, and email you for each. Link it again from the account page
+  if it was yours.
 - **Signing in again for sensitive changes:** if your account has neither a
   password nor two-factor authentication, setting a first password,
   changing the email, removing a sign-in method and setting up two-factor

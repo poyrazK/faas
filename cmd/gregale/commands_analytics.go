@@ -120,7 +120,9 @@ func renderRequestAnalytics(w io.Writer, response api.RequestAnalyticsResponse) 
 	_, _ = fmt.Fprintf(w, "App:        %s\n", response.Slug)
 	_, _ = fmt.Fprintf(w, "Group by:   %s\n", response.GroupBy)
 	_, _ = fmt.Fprintf(w, "Window:     %s (%s to %s)\n", response.Since, analyticsWindowTime(response.From), analyticsWindowTime(response.Until))
-	_, _ = fmt.Fprintf(w, "Requests:   %d\n", response.Requests)
+	// Recorded request log, so it can trail the gateway counters that
+	// `gregale metric <app>` reads (Hunt 32 H32-27).
+	_, _ = fmt.Fprintf(w, "Requests:   %d (recorded request log)\n", response.Requests)
 	// Request analytics count every HTTP status >= 400 (MCP error_basis
 	// http_status_gte_400); alerts, SLOs and app health count only 5xx, so
 	// the label says which one this is (ADR-20261110090000).

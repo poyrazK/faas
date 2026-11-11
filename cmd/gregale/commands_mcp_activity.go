@@ -69,6 +69,10 @@ func printAgentActivity(out api.AgentActivityResponse) {
 			approval = "-"
 		}
 		_, _ = fmt.Fprintf(osStdout, "%-20s  %-6s  %-6d  %-36s  %s\n", oneLine(e.CreatedAt), e.Method, e.Status, approval, oneLine(e.Path))
+		if e.Reason != "" {
+			// The agent's own words, quoted so they cannot pass for a row.
+			_, _ = fmt.Fprintf(osStdout, "%-20s  reason: %q\n", "", oneLine(e.Reason))
+		}
 	}
 	if out.NextBefore != "" {
 		_, _ = fmt.Fprintf(osStdout, "More: gregale mcp connection activity ... --cursor %s\n", out.NextBefore)

@@ -58,10 +58,9 @@ func TestMetalFailureOutboxRetriesConfirmedTeardown(t *testing.T) {
 				}
 				leakcheck.AssertZero(t)
 			})
-			limits, _ := api.LimitsFor(api.PlanPro)
 			_, err = m.Wake(ctx, fcvm.WakeRequest{Instance: i.ID, AppID: app.ID, DeploymentID: dep.ID,
 				BaseKey: os.Getenv("FAAS_TEST_BASE_ROOTFS"), LayerKey: os.Getenv("FAAS_TEST_LAYER_ROOTFS"),
-				VcpuCount: limits.VCPU, MemSizeMiB: app.RAMMB, Plan: api.PlanPro})
+				VcpuCount: api.SizeVCPUs(app.RAMMB), MemSizeMiB: app.RAMMB, Plan: api.PlanPro})
 			mustSchedulerTeardown(t, err)
 			route := &schedulerTeardownRoute{manager: m}
 			route.fail.Store(true)

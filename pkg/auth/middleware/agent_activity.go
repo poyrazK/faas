@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -94,6 +95,7 @@ func (m *Middleware) recordAgentActivity(r *http.Request, acct state.Account, ke
 	row := state.AgentActivity{
 		KeyID: key.ID, AccountID: acct.ID, OrgID: key.OrgID, Method: r.Method, Path: path,
 		Status: status, ApprovalID: note.approvalID, CreatedAt: time.Now().UTC(),
+		Reason: api.SanitizeAgentReason(r.Header.Get(api.AgentReasonHeader)),
 	}
 	//nolint:contextcheck // detached-context is load-bearing, as for TouchKeyLastUsed.
 	go func() {

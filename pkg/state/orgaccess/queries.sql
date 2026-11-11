@@ -13,9 +13,10 @@ WHERE id = $1 AND account_id = $2 AND org_id = $3
   AND status IN ('active', 'grace') AND (expires_at IS NULL OR expires_at > now())
 FOR SHARE;
 
+-- A token authenticates as its minter when it has one (ADR 20261110190000).
 -- name: LockDeployToken :one
 SELECT id FROM deploy_tokens
-WHERE id = $1 AND account_id = $2 AND app_id = $3
+WHERE id = sqlc.arg(id) AND coalesce(created_by_account_id, account_id) = sqlc.arg(account_id)::uuid AND app_id = sqlc.arg(app_id)
   AND status IN ('active', 'grace') AND expires_at > now()
 FOR SHARE;
 

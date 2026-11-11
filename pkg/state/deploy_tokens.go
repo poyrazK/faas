@@ -22,7 +22,23 @@ type DeployTokenStore interface {
 	TouchDeployTokenLastUsed(ctx context.Context, tokenID string) error
 }
 
-func (m *MemStore) CreateDeployToken(_ context.Context, accountID, appID string, hash []byte, label string, scopes []string, expiresAt time.Time) (DeployToken, error) {
+type deployTokenMinterKey struct{}
+
+// WithDeployTokenMinter names the member minting or rotating a deploy token
+// in ctx. CreateDeployToken and RotateDeployToken record it, and a token whose
+// minter is not the app's creator authenticates as the minter, so a company
+// app's token carries the minter's own membership and role rather than the
+// creator's (account-flow audit 2026-11-10, ADR 20261110190000).
+func WithDeployTokenMinter(ctx context.Context, accountID string) context.Context {
+	return context.WithValue(ctx, deployTokenMinterKey{}, accountID)
+}
+
+func deployTokenMinter(ctx context.Context) string {
+	id, _ := ctx.Value(deployTokenMinterKey{}).(string)
+	return id
+}
+
+func (m *MemStore) CreateDeployToken(ctx context.Context, accountID, appID string, hash []byte, label string, scopes []string, expiresAt time.Time) (DeployToken, error) {
 	if accountID == "" || appID == "" {
 		return DeployToken{}, errors.New("state: deploy token requires account_id and app_id")
 	}
@@ -48,6 +64,11 @@ func (m *MemStore) CreateDeployToken(_ context.Context, accountID, appID string,
 	if err := m.checkOrgCredentialMemberLocked(app.OrgID, accountID); err != nil {
 		return DeployToken{}, err
 	}
+	if minter := deployTokenMinter(ctx); minter != "" {
+		if err := m.checkOrgCredentialMemberLocked(app.OrgID, minter); err != nil {
+			return DeployToken{}, err
+		}
+	}
 	hashKey := string(hash)
 	if _, ok := m.deployTokenByHash[hashKey]; ok {
 		return DeployToken{}, ErrConflict
@@ -55,7 +76,8 @@ func (m *MemStore) CreateDeployToken(_ context.Context, accountID, appID string,
 	t := DeployToken{ID: newID(), AccountID: accountID, AppID: appID,
 		Hash: append([]byte(nil), hash...), Label: label,
 		Scopes: append([]string(nil), scopes...), Status: string(APIKeyStatusActive),
-		CreatedAt: time.Now().UTC(), ExpiresAt: deployTokenTimePtr(expiresAt.UTC())}
+		CreatedAt: time.Now().UTC(), ExpiresAt: deployTokenTimePtr(expiresAt.UTC()),
+		CreatedByAccountID: deployTokenMinter(ctx)}
 	m.deployTokens[t.ID] = t
 	m.deployTokenByHash[hashKey] = t
 	return t, nil
@@ -113,7 +135,7 @@ func (m *MemStore) RevokeDeployToken(_ context.Context, accountID, appID, tokenI
 	return cloneDeployToken(t), nil
 }
 
-func (m *MemStore) RotateDeployToken(_ context.Context, accountID, appID, tokenID string, hash []byte, label string, expiresAt time.Time, graceWindow time.Duration) (DeployToken, DeployToken, error) {
+func (m *MemStore) RotateDeployToken(ctx context.Context, accountID, appID, tokenID string, hash []byte, label string, expiresAt time.Time, graceWindow time.Duration) (DeployToken, DeployToken, error) {
 	if len(hash) != 32 || !expiresAt.After(time.Now()) {
 		return DeployToken{}, DeployToken{}, errors.New("state: invalid rotated deploy token")
 	}
@@ -126,6 +148,11 @@ func (m *MemStore) RotateDeployToken(_ context.Context, accountID, appID, tokenI
 	}
 	if err := m.checkOrgCredentialMemberLocked(m.apps[appID].OrgID, accountID); err != nil {
 		return DeployToken{}, DeployToken{}, err
+	}
+	if minter := deployTokenMinter(ctx); minter != "" {
+		if err := m.checkOrgCredentialMemberLocked(m.apps[appID].OrgID, minter); err != nil {
+			return DeployToken{}, DeployToken{}, err
+		}
 	}
 	if old.Status == string(APIKeyStatusRevoked) {
 		return DeployToken{}, DeployToken{}, ErrAPIKeyRevoked
@@ -143,7 +170,8 @@ func (m *MemStore) RotateDeployToken(_ context.Context, accountID, appID, tokenI
 	newToken := DeployToken{ID: newID(), AccountID: accountID, AppID: appID,
 		Hash: append([]byte(nil), hash...), Label: label,
 		Scopes: append([]string(nil), old.Scopes...), Status: string(APIKeyStatusActive),
-		CreatedAt: time.Now().UTC(), ExpiresAt: deployTokenTimePtr(expiresAt.UTC()), RotatedFromID: &rotatedFrom}
+		CreatedAt: time.Now().UTC(), ExpiresAt: deployTokenTimePtr(expiresAt.UTC()), RotatedFromID: &rotatedFrom,
+		CreatedByAccountID: deployTokenMinter(ctx)}
 	m.deployTokens[newToken.ID] = newToken
 	m.deployTokenByHash[string(newToken.Hash)] = newToken
 	if graceWindow <= 0 {
@@ -173,7 +201,11 @@ func (m *MemStore) AuthenticateDeployToken(_ context.Context, hash []byte) (Acco
 	if !ok {
 		return Account{}, APIKey{}, ErrNotFound
 	}
-	acct, ok := m.accounts[t.AccountID]
+	principal, orgID := t.principalID(), ""
+	if principal != t.AccountID {
+		orgID = m.apps[t.AppID].OrgID
+	}
+	acct, ok := m.accounts[principal]
 	if !ok {
 		return Account{}, APIKey{}, ErrNotFound
 	}
@@ -188,7 +220,7 @@ func (m *MemStore) AuthenticateDeployToken(_ context.Context, hash []byte) (Acco
 		m.deployTokenByHash[string(hash)] = t
 		return Account{}, APIKey{}, ErrAPIKeyExpired
 	}
-	return acct, APIKey{ID: t.ID, AccountID: t.AccountID, AppID: t.AppID,
+	return acct, APIKey{ID: t.ID, AccountID: principal, OrgID: orgID, AppID: t.AppID,
 		Hash: append([]byte(nil), t.Hash...), Label: t.Label,
 		Scopes: append([]string(nil), t.Scopes...), CreatedAt: t.CreatedAt,
 		ExpiresAt: t.ExpiresAt, Status: t.Status}, nil
@@ -209,6 +241,15 @@ func (m *MemStore) TouchDeployTokenLastUsed(_ context.Context, tokenID string) e
 	m.deployTokens[tokenID] = t
 	m.deployTokenByHash[string(t.Hash)] = t
 	return nil
+}
+
+// principalID is the account a token authenticates as: its minter when it
+// has one, else the app's creator it was minted under.
+func (t DeployToken) principalID() string {
+	if t.CreatedByAccountID != "" {
+		return t.CreatedByAccountID
+	}
+	return t.AccountID
 }
 
 func cloneDeployToken(t DeployToken) DeployToken {

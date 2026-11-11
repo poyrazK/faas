@@ -1038,6 +1038,11 @@ func (p *Provider) PublishManagedPostgresCharge(ctx context.Context, step billin
 			"storage_pool_bytes":               step.StoragePoolBytes,
 			"billed_storage_byte_seconds":      step.BilledStorageByteSeconds,
 			"storage_millicents_per_gib_month": api.ManagedPostgresStorageOverageMillicentsPerGiBMonth,
+			"used_egress_bytes":                step.UsedEgressBytes,
+			"app_egress_bytes":                 step.AppEgressBytes,
+			"egress_allowance_bytes":           step.EgressAllowanceBytes,
+			"billed_egress_bytes":              step.BilledEgressBytes,
+			"egress_millicents_per_gb":         api.ManagedPostgresEgressOverageMillicentsPerGB,
 		},
 		Timestamp: step.At.UTC().Format(time.RFC3339),
 	}}}

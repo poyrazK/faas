@@ -347,6 +347,23 @@ databases by up to two hours.
 - Storage: at the pooled storage limit, writes that would grow a database
   fail. Reads, deletes and `VACUUM` keep working, and nothing is suspended or
   deleted.
+- Egress: your apps and databases share the plan's monthly egress
+  allowance. `usage` shows `egress_allowance_bytes`, what the databases sent
+  (`egress_bytes`) and what the apps sent (`app_egress_bytes`).
+  `egress_state` is `warning` at 80% of the allowance and `held` once the two
+  together reach it: the databases then refuse connections until the 1st of
+  next month or an upgrade. Data a database sends your app counts as
+  database egress.
+- With egress overage on (`gregale billing egress-overage`), your apps use
+  the allowance first and database egress past it is billed at $0.105 per GB.
+  `egress_state` is then `overage`, and the databases are held only at twice
+  the allowance.
+
+When the platform stops a database that is still `ready`, `get`, `list` and
+the API say why in `hold`: `compute_ceiling`, `egress`, `inactive` (the
+account is suspended), `plan_excess` or `preview` (a PR preview database once
+the account used 80% of its compute). `usage` shows `hold` when every database
+of the account is held. A held database keeps its data.
 
 ## Delete, recover and purge
 
