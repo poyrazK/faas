@@ -39,8 +39,8 @@ func TestPGBackend_ResponseCacheMetricsRefreshAfterInvalidation(t *testing.T) {
 	if got := testutil.ToFloat64(metrics.responseCacheEntries); got != 1 {
 		t.Fatalf("app purge entries gauge = %v, want 1", got)
 	}
-	if got := testutil.ToFloat64(metrics.responseCacheBytes); got != 5 {
-		t.Fatalf("app purge bytes gauge = %v, want 5", got)
+	if got, want := testutil.ToFloat64(metrics.responseCacheBytes), float64(cache.Bytes()); got != want || got <= 5 {
+		t.Fatalf("app purge bytes gauge = %v, want retained entry size %v including metadata", got, want)
 	}
 
 	put("app-2", "/products/2", "four")

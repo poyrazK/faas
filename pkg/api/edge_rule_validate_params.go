@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/edgevalidate"
 	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
@@ -96,10 +97,8 @@ func validateParamSchemaBytes(location string, schema json.RawMessage) *Problem 
 		return ErrValidation(fmt.Sprintf("validate action: parameters.%s exceeds %d bytes (got %d)",
 			location, MaxEdgeRuleValidateSchemaBytes, len(schema)))
 	}
-	if match := edgeRuleValidateRefURLPattern.FindStringIndex(string(schema)); match != nil {
-		return ErrValidation(fmt.Sprintf(
-			"validate action: parameters.%s contains an external $ref or $id URL (around byte %d); inline schemas only",
-			location, match[0]))
+	if _, err := edgevalidate.Compile(schema, false); err != nil {
+		return ErrValidation(fmt.Sprintf("validate action: parameters.%s cannot be compiled: %v", location, err))
 	}
 	return nil
 }
@@ -332,8 +331,8 @@ func EdgeRuleParamInstance(kinds map[string]EdgeRuleParamKind, values map[string
 func convertParamValue(kind, value string) any {
 	switch kind {
 	case "integer":
-		if _, err := strconv.ParseInt(value, 10, 64); err == nil {
-			return json.Number(value)
+		if n, err := strconv.ParseInt(value, 10, 64); err == nil {
+			return json.Number(strconv.FormatInt(n, 10))
 		}
 	case "number":
 		var n json.Number

@@ -82,6 +82,49 @@ func (q *Queries) AgentRunQueueStats(ctx context.Context, db DBTX) (AgentRunQueu
 	return i, err
 }
 
+const agentVersionPrivatePeak = `-- name: AgentVersionPrivatePeak :one
+SELECT count(*)::integer AS runs,
+       coalesce(percentile_disc(0.95) WITHIN GROUP (ORDER BY h.peak_private_mb), 0)::bigint AS peak_mb
+  FROM (SELECT u.peak_private_mb
+          FROM agent_run_usage u JOIN agent_runs r ON r.id = u.run_id
+         WHERE u.account_id = $1::text::uuid AND r.agent_id = $2::text::uuid
+           AND r.agent_version = $3::integer
+           AND (r.checkout_repository IS NOT NULL) = $4::boolean
+           AND u.samples::bigint * 100 >= u.expected_samples::bigint * (100 - $5::integer)
+         ORDER BY u.recorded_at DESC
+         LIMIT $6::integer) h
+`
+
+type AgentVersionPrivatePeakParams struct {
+	AccountID     string
+	AgentID       string
+	AgentVersion  int32
+	Checkout      bool
+	MaxGapPercent int32
+	WindowRuns    int32
+}
+
+type AgentVersionPrivatePeakRow struct {
+	Runs   int32
+	PeakMb int64
+}
+
+// ADR-20261027090015 §3: the p95 private peak of a version's recent measured
+// runs of one input class, leaving out runs with too many missing samples.
+func (q *Queries) AgentVersionPrivatePeak(ctx context.Context, db DBTX, arg AgentVersionPrivatePeakParams) (AgentVersionPrivatePeakRow, error) {
+	row := db.QueryRow(ctx, agentVersionPrivatePeak,
+		arg.AccountID,
+		arg.AgentID,
+		arg.AgentVersion,
+		arg.Checkout,
+		arg.MaxGapPercent,
+		arg.WindowRuns,
+	)
+	var i AgentVersionPrivatePeakRow
+	err := row.Scan(&i.Runs, &i.PeakMb)
+	return i, err
+}
+
 const bumpAgentVersion = `-- name: BumpAgentVersion :one
 UPDATE agents SET latest_version=latest_version+1, updated_at=now()
  WHERE id=$1::text::uuid AND account_id=$2::text::uuid AND state='active'

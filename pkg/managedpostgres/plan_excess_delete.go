@@ -20,6 +20,11 @@ import (
 // owner can undo the delete for api.ManagedPostgresDeleteGracePeriod more.
 // The clock is the database's plan excess notice, which the sweep records at
 // the first suspension and clears once the database fits the plan again.
+// A database is deleted only on the date its queued suspension email named:
+// the mail outbox stores that date when it links the email to the notice, so
+// an owner who was never mailed a date never loses a database. While
+// deletion is on, a notice mailed without a date (deletion was off then) or
+// never mailed inside its window starts again, so its email names one.
 
 // PlanExcessDeleteEnv selects the deletion pass: off, shadow (the default:
 // log the databases due) or on. On deletes only while the plan excess sweep
@@ -38,11 +43,26 @@ func ParsePlanExcessDeleteMode(value string) (CapEnforcementMode, error) {
 	}
 }
 
+// PlanExcessClock is a suspended database's deletion clock.
+type PlanExcessClock struct {
+	// RecordedAt is when the sweep first suspended it past its plan.
+	RecordedAt time.Time
+	// DeleteAt is the deletion date its queued email named; zero until an
+	// email named one.
+	DeleteAt time.Time
+}
+
 // PlanExcessSinceStore is the optional store capability the deletion pass
-// reads: when each of the given databases was first suspended past its plan.
-// A database with no notice is absent from the map.
+// reads and writes.
 type PlanExcessSinceStore interface {
-	PlanExcessSince(ctx context.Context, databaseIDs []string) (map[string]time.Time, error)
+	// PlanExcessSince reports the clock of each of the given databases; a
+	// database with no notice is absent from the map.
+	PlanExcessSince(ctx context.Context, databaseIDs []string) (map[string]PlanExcessClock, error)
+	// RearmPlanExcessNotices restarts at now the notice of each of the given
+	// databases whose email named no deletion date: mailed while deletion
+	// was off, or recorded at or before staleBefore and never mailed. The
+	// next pass mails it again with a date. It reports how many it restarted.
+	RearmPlanExcessNotices(ctx context.Context, databaseIDs []string, now, staleBefore time.Time) (int, error)
 }
 
 // PlanExcessDeleteFunc schedules a database's delete with the grace period.
@@ -50,9 +70,15 @@ type PlanExcessSinceStore interface {
 type PlanExcessDeleteFunc func(ctx context.Context, database Database) (pending bool, err error)
 
 // PlanExcessDeleteDue reports whether a database suspended past its plan
-// since `since` is due for deletion at now.
+// since `since` is due for deletion at now. The shadow pass logs by it.
 func PlanExcessDeleteDue(since, now time.Time) bool {
 	return !since.IsZero() && !now.Before(since.Add(api.ManagedPostgresPlanExcessDeleteAfter))
+}
+
+// Due reports whether the database is deleted at now: only once an email
+// named its deletion date and that date has come.
+func (c PlanExcessClock) Due(now time.Time) bool {
+	return !c.DeleteAt.IsZero() && !now.Before(c.DeleteAt)
 }
 
 // PlanExcessDeleteAt is when a database suspended past its plan since
@@ -75,7 +101,17 @@ func (e *CapEnforcer) deletePlanExcess(ctx context.Context, subjectID string, da
 		return
 	}
 	ids := sortedKeys(suspended)
-	since, err := store.PlanExcessSince(ctx, ids)
+	deleting := e.planExcessDelete == CapEnforcementOn && e.planDelete != nil
+	if deleting {
+		rearmed, err := store.RearmPlanExcessNotices(ctx, ids, now, now.Add(-api.InternalMailManagedPostgresPlanExcessTTL))
+		summary.PlanExcessDeleteRearmed += rearmed
+		if err != nil {
+			summary.PlanExcessDeleteFailed++
+			e.logger.Warn("managed postgres plan excess notices not restarted", "subject_id", subjectID, "error", err)
+			return
+		}
+	}
+	clocks, err := store.PlanExcessSince(ctx, ids)
 	if err != nil {
 		summary.PlanExcessDeleteFailed++
 		e.logger.Warn("managed postgres plan excess deletion clock not read", "subject_id", subjectID, "error", err)
@@ -87,12 +123,17 @@ func (e *CapEnforcer) deletePlanExcess(ctx context.Context, subjectID string, da
 	}
 	for _, id := range ids {
 		database, ok := byID[id]
-		if !ok || database.State != StateReady || !PlanExcessDeleteDue(since[id], now) {
+		clock := clocks[id]
+		due := PlanExcessDeleteDue(clock.RecordedAt, now)
+		if deleting {
+			due = clock.Due(now)
+		}
+		if !ok || database.State != StateReady || !due {
 			continue
 		}
 		summary.PlanExcessDeleteDue++
-		attrs := []any{"subject_id", subjectID, "database", id, "reason", suspended[id], "suspended_since", since[id]}
-		if e.planExcessDelete != CapEnforcementOn || e.planDelete == nil {
+		attrs := []any{"subject_id", subjectID, "database", id, "reason", suspended[id], "suspended_since", clock.RecordedAt}
+		if !deleting {
 			summary.PlanExcessDeleteShadowed++
 			e.logger.Info("managed postgres plan excess due for deletion (shadow)", attrs...)
 			continue
@@ -143,7 +184,7 @@ func (s *Service) RetirePastPlan(ctx context.Context, bindings RestoreSlotBindin
 }
 
 // PlanExcessSince implements PlanExcessSinceStore.
-func (s *PostgresStore) PlanExcessSince(ctx context.Context, databaseIDs []string) (map[string]time.Time, error) {
+func (s *PostgresStore) PlanExcessSince(ctx context.Context, databaseIDs []string) (map[string]PlanExcessClock, error) {
 	ids := make([]pgtype.UUID, 0, len(databaseIDs))
 	for _, id := range databaseIDs {
 		uid, err := postgresUUID(id)
@@ -156,22 +197,67 @@ func (s *PostgresStore) PlanExcessSince(ctx context.Context, databaseIDs []strin
 	if err != nil {
 		return nil, mapPostgresError(err)
 	}
-	since := make(map[string]time.Time, len(rows))
+	clocks := make(map[string]PlanExcessClock, len(rows))
 	for _, row := range rows {
-		since[databaseUUID(row.DatabaseID)] = row.RecordedAt.Time.UTC()
+		clock := PlanExcessClock{RecordedAt: row.RecordedAt.Time.UTC()}
+		if row.DeleteAt.Valid {
+			clock.DeleteAt = row.DeleteAt.Time.UTC()
+		}
+		clocks[databaseUUID(row.DatabaseID)] = clock
 	}
-	return since, nil
+	return clocks, nil
+}
+
+// RearmPlanExcessNotices implements PlanExcessSinceStore.
+func (s *PostgresStore) RearmPlanExcessNotices(ctx context.Context, databaseIDs []string, now, staleBefore time.Time) (int, error) {
+	if now.IsZero() || staleBefore.IsZero() {
+		return 0, ErrInvalid
+	}
+	ids := make([]pgtype.UUID, 0, len(databaseIDs))
+	for _, id := range databaseIDs {
+		uid, err := postgresUUID(id)
+		if err != nil {
+			return 0, ErrInvalid
+		}
+		ids = append(ids, uid)
+	}
+	n, err := new(sqlc.Queries).RearmManagedPostgresPlanExcessNotices(ctx, s.catalog, sqlc.RearmManagedPostgresPlanExcessNoticesParams{
+		Now: databaseNullableTime(now), DatabaseIds: ids, StaleBefore: databaseNullableTime(staleBefore)})
+	if err != nil {
+		return 0, mapPostgresError(err)
+	}
+	return int(n), nil
 }
 
 // PlanExcessSince implements PlanExcessSinceStore.
-func (s *MemoryStore) PlanExcessSince(_ context.Context, databaseIDs []string) (map[string]time.Time, error) {
+func (s *MemoryStore) PlanExcessSince(_ context.Context, databaseIDs []string) (map[string]PlanExcessClock, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	since := make(map[string]time.Time, len(databaseIDs))
+	clocks := make(map[string]PlanExcessClock, len(databaseIDs))
 	for _, id := range databaseIDs {
 		if n, ok := s.planExcessNotices[id]; ok {
-			since[id] = n.RecordedAt
+			clocks[id] = PlanExcessClock{RecordedAt: n.RecordedAt, DeleteAt: n.deleteAt}
 		}
 	}
-	return since, nil
+	return clocks, nil
+}
+
+// RearmPlanExcessNotices implements PlanExcessSinceStore.
+func (s *MemoryStore) RearmPlanExcessNotices(_ context.Context, databaseIDs []string, now, staleBefore time.Time) (int, error) {
+	if now.IsZero() || staleBefore.IsZero() {
+		return 0, ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rearmed := 0
+	for _, id := range databaseIDs {
+		n, ok := s.planExcessNotices[id]
+		if !ok || !n.deleteAt.IsZero() || (!n.mailed && n.RecordedAt.After(staleBefore)) {
+			continue
+		}
+		n.RecordedAt, n.mailed = now.UTC(), false
+		s.planExcessNotices[id] = n
+		rearmed++
+	}
+	return rearmed, nil
 }

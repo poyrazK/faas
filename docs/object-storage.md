@@ -420,6 +420,22 @@ from being deleted or overwritten:
   `COMPLIANCE` cannot be changed to `GOVERNANCE`.
 - **A legal hold** protects a version until you turn it off.
 
+Object Lock is included on paid plans, and retention is capped by plan
+([ADR-20261111123000](adr/20261111123000-object-storage-over-ceiling-retention.md)):
+
+| Plan | Longest retention | Legal holds |
+|---|---|---|
+| Free | Not included | Not included |
+| Hobby | 90 days | Yes |
+| Pro | 1 year (366 days) | Yes |
+| Scale | 7 years (2,557 days) | Yes |
+
+The cap applies to retention dates, event-hold durations and bucket default
+retention, in both modes, measured from the time of the request. A longer one
+is refused with `403 object_lock_plan_limit` (S3 SDKs: `AccessDenied`), naming
+the limit and the days you asked for. Clearing a default and releasing a hold
+always work. Retention set before these caps is kept as it was.
+
 `GET /v1/apps/{app}/buckets/{bucket-id}/object-lock-capabilities` shows what
 your bucket supports. Enabling Object Lock on a bucket is permanent. Each
 change takes an operation ID you choose, which makes retries safe:
@@ -539,6 +555,7 @@ what you used.
 | Uploads and upload parts in progress through `s3.gregale.dev` | A few per account; more wait up to 15 seconds for a turn, then answer `503 SlowDown` |
 | Stored data | Free stops at 1 GiB, Hobby at 20 GiB, Pro at 250 GiB and Scale at 1,000 GiB. A lower spend cap lowers it to the included storage plus what the cap buys at $0.03 per GiB-month; a $0 cap stops at the included storage. Need more? Ask support to raise your account's ceiling; your spend cap still applies. At the ceiling, uploads are refused; while you store more than it, downloads answer `402` until you delete objects. Listing, `HEAD` and deletes keep working, and nothing is deleted for you. A downgrade is refused while your data does not fit the new plan |
 | Objects per account, counting retained versions | 1,000,000 on every plan |
+| Object Lock retention | Free not included, Hobby 90 days, Pro 366 days, Scale 2,557 days (`object_lock_plan_limit`) |
 | Egress each month | 10 times your plan's included storage: Free 10 GiB, Hobby 100 GiB, Pro 500 GiB, Scale 2,000 GiB ([plans](plans.md#object-storage)). Public objects served from the CDN's cache do not count. At the limit, every request except deletes is refused until the month ends |
 
 The platform also caps stored bytes, requests and egress per account; the

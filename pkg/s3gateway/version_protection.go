@@ -165,7 +165,7 @@ func decodeProtectionIntent(body []byte, id, key, version, kind string) (state.O
 	return j, err
 }
 func (h *Handler) protectionError(w http.ResponseWriter, r *http.Request, req requestContext, err error) {
-	if h.configurationAdmissionError(w, r, req, err) {
+	if objectLockPlanError(w, r, req, err) || h.configurationAdmissionError(w, r, req, err) {
 		return
 	}
 	if h.writeAWSChunkedError(w, r, req.requestID, err) {

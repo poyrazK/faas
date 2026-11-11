@@ -1,17 +1,14 @@
 package edgevalidate
 
 import (
+	"bytes"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/santhosh-tekuri/jsonschema/v6/kind"
@@ -29,26 +26,12 @@ type CompiledSchema struct {
 	// documents this as the only safe concurrency mode.
 	Schema *jsonschema.Schema
 
-	// Digest is sha256(schema) of the bytes that produced this
+	// Digest identifies the source and closed-object policy that produced this
 	// CompiledSchema. The same digest is stashed on the resolved
 	// edge rule at load time so the hot path can look up the
 	// CompiledSchema without re-hashing.
 	Digest [32]byte
 }
-
-// schemaRefURLPattern matches any "$ref" or "$id" value that is a
-// URL (has a scheme). JSON Pointer refs (`#/definitions/...`) do
-// not match because they have no scheme. The apid-Validate path
-// uses a tighter regex; this is defence-in-depth on the compiler
-// side.
-var schemaRefURLPattern = regexp.MustCompile(`(?i)"\$(?:ref|id)"\s*:\s*"[a-z][a-z0-9+.-]*://`)
-
-// jsonschemaDraft2020 is the singleton Draft 2020-12 value.
-// The library uses Draft2020 (the spec alias for 2020-12); pinning
-// here so the dependency upgrade surface is one line. The
-// schemaMempool factory below takes the address (`*Draft`) so the
-// pointer is stable across Compiler instances.
-var jsonschemaDraft2020 = *jsonschema.Draft2020
 
 // defaultPrinter aliases the shared jsonschemautil.DefaultPrinter
 // so the existing call sites stay unchanged. LocalizedString
@@ -58,36 +41,14 @@ var jsonschemaDraft2020 = *jsonschema.Draft2020
 // into pkg/jsonschemautil so pkg/openapiimport can share it.
 var defaultPrinter = jsonschemautil.DefaultPrinter
 
-// schemaMempool is a sync.Pool of *jsonschema.Compiler. We keep a
-// per-call compiler (the library has no safe Compile-on-existing-
-// compiler API), so pooling is the cheapest path. Capped to a
-// goroutine-local pool: a high-concurrency gateway will see one
-// pool hit per request.
-//
-// NOTE: jsonschema.Compiler is not safe for concurrent Compile
-// calls (it builds internal maps during AddResource). Pooling
-// defeats that risk because Get/ Put bracketing means at most
-// one goroutine owns a compiler at a time.
-//
-// IMPORTANT: AddResource rejects duplicate URLs with
-// "resource for ... already exists". To make pool reuse safe,
-// every Compile call uses a unique URL of the form
-// "mem://schema-<monotonic-id>" so successive Compile calls on
-// the same pooled compiler don't collide.
-var schemaMempool = sync.Pool{
-	New: func() any {
-		c := jsonschema.NewCompiler()
-		// Pin to Draft 2020-12. The library will reject any
-		// schema whose $schema is a different draft.
-		c.DefaultDraft(&jsonschemaDraft2020)
-		return c
-	},
-}
+// inlineSchemaLoader prevents the compiler (including meta-schema resolution)
+// from consulting the filesystem or network. Standard metaschemas are embedded
+// by jsonschema and are resolved before this loader is consulted.
+type inlineSchemaLoader struct{}
 
-// schemaIDCounter is an atomic counter paired with the pool. It
-// guarantees that every Compile call uses a unique URL even when
-// the underlying Compiler is recycled from the pool.
-var schemaIDCounter atomic.Uint64
+func (inlineSchemaLoader) Load(string) (any, error) {
+	return nil, ErrSchemaExternalRef
+}
 
 // Compile compiles a Draft 2020-12 JSON Schema into a
 // CompiledSchema. It performs two safety checks before handing off
@@ -111,29 +72,27 @@ func Compile(schema []byte, rejectUnknownFields bool) (*CompiledSchema, error) {
 	if len(schema) > MaxSchemaBytes {
 		return nil, fmt.Errorf("%w: %d bytes", ErrSchemaTooLarge, len(schema))
 	}
-	if schemaRefURLPattern.Match(schema) {
-		// Stash the URL that matched for the audit log.
-		return nil, fmt.Errorf("%w: %s", ErrSchemaExternalRef, extractFirstExternalRef(schema))
-	}
 
-	// SHA-256 the post-strip bytes so the digest matches what the
+	// SHA-256 the source bytes so the digest matches what the
 	// applier cached on the resolved rule.
-	digest := sha256.Sum256(schema)
-	if rejectUnknownFields {
-		digest = sha256.Sum256(append(append([]byte(nil), schema...), rejectUnknownFieldsDigestSuffix...))
-	}
+	digest := schemaDigest(schema, rejectUnknownFields)
 
-	compiler := schemaMempool.Get().(*jsonschema.Compiler)
-	defer schemaMempool.Put(compiler)
+	// Each compile owns its resource maps. Reusing a compiler retains every
+	// document and compiled node independently of the bounded schema LRU.
+	compiler := jsonschema.NewCompiler()
+	compiler.DefaultDraft(jsonschema.Draft2020)
+	compiler.UseLoader(inlineSchemaLoader{})
+	const loc = "mem://schema"
 
-	// Per-call unique URL — AddResource rejects duplicates, and
-	// the Compiler is recycled from the pool so successive calls
-	// would collide on a fixed URL.
-	loc := fmt.Sprintf("mem://schema-%d", schemaIDCounter.Add(1))
-
-	var doc any
-	if err := json.Unmarshal(schema, &doc); err != nil {
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(schema))
+	if err != nil {
 		return nil, errors.Join(ErrSchemaInvalid, err)
+	}
+	if err := checkNumberWork(doc, MaxSchemaBytes); err != nil {
+		return nil, errors.Join(ErrSchemaInvalid, err)
+	}
+	if err := checkInlineSchema(doc); err != nil {
+		return nil, err
 	}
 	if err := CheckSchemaComplexity(doc); err != nil {
 		return nil, err
@@ -152,11 +111,37 @@ func Compile(schema []byte, rejectUnknownFields bool) (*CompiledSchema, error) {
 	return &CompiledSchema{Schema: compiled, Digest: digest}, nil
 }
 
+func schemaDigest(schema []byte, rejectUnknownFields bool) [32]byte {
+	if rejectUnknownFields {
+		h := sha256.New()
+		_, _ = h.Write(schema)
+		_, _ = h.Write([]byte(rejectUnknownFieldsDigestSuffix))
+		var digest [32]byte
+		copy(digest[:], h.Sum(nil))
+		return digest
+	}
+	return sha256.Sum256(schema)
+}
+
 // CheckSchemaComplexity refuses a decoded schema document whose combinators
 // nest deeper than MaxSchemaCombinatorDepth (ErrSchemaTooComplex). Every
 // place that compiles a customer's schema runs it first.
 func CheckSchemaComplexity(doc any) error {
-	if depth := (&combinatorWalk{root: doc, memo: map[string]int{}, open: map[string]bool{}}).depth(doc); depth > MaxSchemaCombinatorDepth {
+	walk := &combinatorWalk{root: doc, memo: map[string]int{}, open: map[string]bool{}, anchors: map[string]any{}}
+	walkSchemaNodes(doc, func(node map[string]any) {
+		for _, keyword := range []string{"$anchor", "$dynamicAnchor", "$id", "id"} {
+			if name, ok := node[keyword].(string); ok && name != "" {
+				if keyword == "$id" || keyword == "id" {
+					if !strings.HasPrefix(name, "#") {
+						continue
+					}
+					name = strings.TrimPrefix(name, "#")
+				}
+				walk.anchors[name] = node
+			}
+		}
+	})
+	if depth := walk.depth(doc); depth > MaxSchemaCombinatorDepth {
 		return fmt.Errorf("%w: %d levels, at most %d", ErrSchemaTooComplex, depth, MaxSchemaCombinatorDepth)
 	}
 	return nil
@@ -166,9 +151,10 @@ func CheckSchemaComplexity(doc any) error {
 // following local "#..." $refs once per path (a recursive $ref stops there)
 // and memoizing each ref's depth so the walk stays linear.
 type combinatorWalk struct {
-	root any
-	memo map[string]int
-	open map[string]bool
+	root    any
+	anchors map[string]any
+	memo    map[string]int
+	open    map[string]bool
 }
 
 func (c *combinatorWalk) depth(node any) int {
@@ -185,7 +171,7 @@ func (c *combinatorWalk) depth(node any) int {
 			switch key {
 			case "anyOf", "oneOf", "allOf", "not", "if", "then", "else":
 				deepest = max(deepest, 1+c.depth(val))
-			case "$ref":
+			case "$ref", "$dynamicRef", "$recursiveRef":
 				if ref, ok := val.(string); ok {
 					deepest = max(deepest, c.refDepth(ref))
 				}
@@ -205,7 +191,14 @@ func (c *combinatorWalk) refDepth(ref string) int {
 	if d, ok := c.memo[ref]; ok {
 		return d
 	}
-	target, ok := resolveLocalPointer(c.root, strings.TrimPrefix(ref, "#"))
+	fragment, err := url.PathUnescape(strings.TrimPrefix(ref, "#"))
+	if err != nil {
+		return 0
+	}
+	target, ok := resolveLocalPointer(c.root, fragment)
+	if !ok {
+		target, ok = c.anchors[fragment]
+	}
 	if !ok {
 		return 0
 	}
@@ -355,8 +348,8 @@ func (c *CompiledSchema) Validate(body []byte) (*FieldError, error) {
 	if c == nil || c.Schema == nil {
 		return nil, fmt.Errorf("%w: compiled schema is nil", ErrSchemaInvalid)
 	}
-	var v any
-	if err := json.Unmarshal(body, &v); err != nil {
+	v, err := jsonschema.UnmarshalJSON(bytes.NewReader(body))
+	if err != nil {
 		// Body is not JSON. Treat as a single-field failure
 		// with the path "" (root) and the expected "json"
 		// rather than bubbling the unmarshal error — the
@@ -367,6 +360,11 @@ func (c *CompiledSchema) Validate(body []byte) (*FieldError, error) {
 	}
 	if fe := duplicateKeyProblem(body); fe != nil {
 		return fe, nil
+	}
+	if err := checkNumberWork(v, MaxNumberWorkBytes); err != nil {
+		// Numeric bounds follow the rule's block/observe/warn handling through
+		// FieldError, just like other client-side schema mismatches.
+		return &FieldError{Field: "", Expected: "number", Got: err.Error()}, nil //nolint:nilerr
 	}
 	if err := c.Schema.Validate(v); err != nil {
 		// jsonschema/v6 returns a *ValidationError. errors.As
@@ -442,47 +440,3 @@ func translateValidationError(ve *jsonschema.ValidationError) *FieldError {
 // share the canonical JSON Pointer shape. The local copy was
 // identical to the openapiimport copy; the dedup lands here as
 // part of the #975-item-2 review-fix cluster (Fix #8).
-
-// extractFirstExternalRef pulls the first $ref or $id URL value
-// out of the schema, for the audit log. It does a quick pass; not
-// a real JSON parser (the regex already validated that there IS a
-// match, so a partial extraction is enough).
-//
-// The regex match spans from the opening quote of "$ref"/"$id"
-// through the opening quote of the URL value. We walk forward
-// from idx[1] (end of regex match) backwards one byte to land
-// on the opening quote of the URL value, then walk to its
-// closing quote.
-func extractFirstExternalRef(schema []byte) string {
-	idx := schemaRefURLPattern.FindIndex(schema)
-	if idx == nil {
-		return ""
-	}
-	// idx[1] is one byte past the last matched char (the opening
-	// quote of the URL value). So the URL value starts at
-	// idx[1]-1 and ends at the next unescaped quote.
-	start := idx[1] - 1
-	if start < 0 || start >= len(schema) || schema[start] != '"' {
-		return ""
-	}
-	end := start + 1
-	for end < len(schema) && schema[end] != '"' {
-		// Skip escaped backslashes: \"
-		if schema[end] == '\\' && end+1 < len(schema) {
-			end += 2
-			continue
-		}
-		end++
-	}
-	if end > len(schema) {
-		end = len(schema)
-	}
-	if end <= start+1 {
-		return ""
-	}
-	raw := string(schema[start+1 : end])
-	if _, err := url.Parse(raw); err != nil {
-		return raw
-	}
-	return raw
-}

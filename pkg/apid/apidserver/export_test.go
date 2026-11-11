@@ -2359,6 +2359,10 @@ var CSVSafeCell = csvSafeCell
 // enforcement.
 var ManagedPostgresCapNoticeReady = managedPostgresCapNoticeReady
 
+// ManagedPostgresPlanExcessDeleteReady exposes the startup gate on deleting
+// databases past their plan (ADR-20261110184700).
+var ManagedPostgresPlanExcessDeleteReady = managedPostgresPlanExcessDeleteReady
+
 func (s *server) GetEnvironmentRollbackReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	s.getEnvironmentRollbackReceipt(w, r, acct)
 }

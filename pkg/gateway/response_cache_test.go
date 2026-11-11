@@ -95,8 +95,8 @@ func TestResponseCache_PutThenGet_FreshHit(t *testing.T) {
 	if c.Len() != 1 {
 		t.Errorf("Len = %d, want 1", c.Len())
 	}
-	if c.Bytes() != len(entry.body) {
-		t.Errorf("Bytes = %d, want %d", c.Bytes(), len(entry.body))
+	if c.Bytes() <= len(entry.body) {
+		t.Errorf("Bytes = %d must include metadata as well as %d body bytes", c.Bytes(), len(entry.body))
 	}
 }
 
@@ -291,17 +291,15 @@ func TestResponseCache_PutOverPerEntryCap_Rejected(t *testing.T) {
 // three small entries then a fourth one larger than the
 // remaining headroom; the oldest must be evicted.
 func TestResponseCache_PutBeyondMaxBytes_LRUEvicts(t *testing.T) {
-	c := NewResponseCacheWithClock(200, time.Now)
+	c := NewResponseCacheWithClock(3*1024, time.Now)
 	ruleAct := &state.EdgeRuleCacheAction{MaxAgeSeconds: 60}
 	now := time.Now()
-	// Three entries of 80 bytes each: total 240, ceiling 200.
-	// Putting the fourth must evict the LRU (oldest).
+	// Two complete entries fit; adding a third must evict the oldest.
 	c.Put(responseCacheSampleKey(1), 200, nil, bytes.Repeat([]byte("a"), 80), now.Add(time.Minute), now.Add(2*time.Minute), ruleAct)
 	c.Put(responseCacheSampleKey(2), 200, nil, bytes.Repeat([]byte("b"), 80), now.Add(time.Minute), now.Add(2*time.Minute), ruleAct)
 	c.Put(responseCacheSampleKey(3), 200, nil, bytes.Repeat([]byte("c"), 80), now.Add(time.Minute), now.Add(2*time.Minute), ruleAct)
-	// Total bytes = 240 > 200, so the Put must evict entry 1.
-	if c.Bytes() > 200 {
-		t.Fatalf("Bytes = %d, want ≤ 200 (LRU eviction must keep the store under the ceiling)", c.Bytes())
+	if c.Bytes() > 3*1024 {
+		t.Fatalf("Bytes = %d, want ≤ 3072 (LRU eviction must keep the store under the ceiling)", c.Bytes())
 	}
 	if state, _ := c.Get(responseCacheSampleKey(1)); state != "" {
 		t.Errorf("LRU entry should have been evicted; Get returned %q", state)
@@ -465,7 +463,7 @@ func TestResponseCache_PutOverwrite_SameKey(t *testing.T) {
 // byte counter are the load-bearing safety against a memory
 // explosion under concurrent cold-boot traffic.
 func TestResponseCache_ConcurrentPutNoLeak(t *testing.T) {
-	c := NewResponseCacheWithClock(1024, time.Now)
+	c := NewResponseCacheWithClock(4096, time.Now)
 	now := time.Now()
 	ruleAct := &state.EdgeRuleCacheAction{MaxAgeSeconds: 60}
 	var wg sync.WaitGroup
@@ -479,8 +477,8 @@ func TestResponseCache_ConcurrentPutNoLeak(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
-	if c.Bytes() > 1024 {
-		t.Errorf("Bytes = %d, want ≤ 1024 (concurrent Puts must respect the byte ceiling)", c.Bytes())
+	if c.Len() == 0 || c.Bytes() > 4096 {
+		t.Errorf("Len = %d, Bytes = %d; concurrent Puts must retain entries within the 4096-byte ceiling", c.Len(), c.Bytes())
 	}
 }
 

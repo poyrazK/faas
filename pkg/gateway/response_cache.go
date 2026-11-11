@@ -54,12 +54,16 @@ type ResponseCache struct {
 	// first lookup and the complete fallback when the shared store is absent or
 	// unavailable.
 	shared SharedResponseCacheStore
-	mu     sync.Mutex
+	// Fills hold a read lock through both tiers; purges advance the
+	// generation and wait for earlier publications before acknowledging.
+	fillMu     sync.RWMutex
+	generation uint64
+	mu         sync.Mutex
 	// data maps CacheKey → *list.Element holding *cacheEntry.
 	// list is the LRU; Front = most recently used, Back = LRU.
 	data map[string]*list.Element
 	list *list.List
-	// bytes tracks the current sum of entry.body sizes. Decremented
+	// bytes tracks the estimated retained size of complete entries. Decremented
 	// on evict / drop. Bounded by maxBytes; Put never grows the
 	// store past the ceiling.
 	bytes int
@@ -146,6 +150,8 @@ func (k CacheKey) String() string {
 // ErrorUntil bound the independent stale-while-revalidate and stale-on-error
 // states; StaleUntil is their later retention boundary.
 type cacheEntry struct {
+	encodedKey         string
+	size               int
 	servedDeploymentID string // actual origin deployment; empty for legacy entries
 	key                CacheKey
 	statusCode         int
@@ -253,9 +259,9 @@ func (c *ResponseCache) appShareBytes() int {
 func (c *ResponseCache) removeLocked(el *list.Element) {
 	entry := el.Value.(*cacheEntry)
 	c.list.Remove(el)
-	delete(c.data, entry.key.String())
-	c.bytes = max(c.bytes-len(entry.body), 0)
-	if left := c.appBytes[entry.key.AppID] - len(entry.body); left > 0 {
+	delete(c.data, entry.encodedKey)
+	c.bytes = max(c.bytes-entry.size, 0)
+	if left := c.appBytes[entry.key.AppID] - entry.size; left > 0 {
 		c.appBytes[entry.key.AppID] = left
 	} else {
 		delete(c.appBytes, entry.key.AppID)
@@ -307,6 +313,7 @@ func (c *ResponseCache) Get(k CacheKey) (state string, entry *cacheEntry) {
 	if c == nil {
 		return "", nil
 	}
+	fill := c.beginFill()
 	state, entry = c.getLocal(k)
 	if state != "" || c.shared == nil {
 		return state, entry
@@ -317,6 +324,11 @@ func (c *ResponseCache) Get(k CacheKey) (state string, entry *cacheEntry) {
 	}
 	state = c.classify(sharedEntry)
 	if state == "" {
+		return "", nil
+	}
+	c.fillMu.RLock()
+	defer c.fillMu.RUnlock()
+	if fill.generation != c.generation {
 		return "", nil
 	}
 	// Best-effort L1 hydration. A deliberately disabled/small L1 must not
@@ -395,10 +407,19 @@ func (c *ResponseCache) PutWithWindowsAndTags(k CacheKey, statusCode int, header
 
 // PutWithDeployment retains the final origin identity separately from the cache-key cohort.
 func (c *ResponseCache) PutWithDeployment(k CacheKey, statusCode int, header map[string][]string, body []byte, freshUntil, revalidateUntil, errorUntil time.Time, ruleAction *state.EdgeRuleCacheAction, tags []string, servedDeploymentID string) bool {
+	return c.putWithDeployment(k, statusCode, header, body, freshUntil, revalidateUntil, errorUntil, ruleAction, tags, servedDeploymentID, nil)
+}
+
+func (c *ResponseCache) putWithDeployment(k CacheKey, statusCode int, header map[string][]string, body []byte, freshUntil, revalidateUntil, errorUntil time.Time, ruleAction *state.EdgeRuleCacheAction, tags []string, servedDeploymentID string, fill *responseCacheFill) bool {
 	if k.DeploymentID != "" && servedDeploymentID != "" && k.DeploymentID != servedDeploymentID {
 		return false
 	}
 	if c == nil {
+		return false
+	}
+	c.fillMu.RLock()
+	defer c.fillMu.RUnlock()
+	if fill != nil && (fill.cache != c || fill.generation != c.generation) {
 		return false
 	}
 	if len(tags) > api.CacheTagMaxCount {
@@ -455,6 +476,9 @@ func (c *ResponseCache) InvalidateByAppTag(appID, tag string) error {
 	if c == nil {
 		return nil
 	}
+	c.fillMu.Lock()
+	defer c.fillMu.Unlock()
+	c.generation++
 	c.mu.Lock()
 	for _, el := range c.data {
 		entry := el.Value.(*cacheEntry)
@@ -485,31 +509,33 @@ func (c *ResponseCache) putLocal(entry *cacheEntry) bool {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	entry.encodedKey = entry.key.String()
+	entry.size = responseCacheEntryBytes(entry)
 	// If we already have this key (race against a concurrent
 	// Put on the same key, e.g. two cold-boot threads), drop
 	// the old entry's bytes from the running total before
 	// inserting.
-	if el, ok := c.data[entry.key.String()]; ok {
+	if el, ok := c.data[entry.encodedKey]; ok {
 		c.removeLocked(el)
 	}
-	if len(entry.body) > c.appShareBytes() {
+	if entry.size > c.appShareBytes() {
 		return false
 	}
 	// The app's own least recently used entries go first while it is over
 	// its share, then the global LRU until the new entry fits.
 	app := entry.key.AppID
-	for c.appBytes[app]+len(entry.body) > c.appShareBytes() {
+	for c.appBytes[app]+entry.size > c.appShareBytes() {
 		if !c.evictAppLocked(app) {
 			break
 		}
 	}
-	for c.bytes+len(entry.body) > c.maxBytes && c.list.Len() > 0 {
+	for c.bytes+entry.size > c.maxBytes && c.list.Len() > 0 {
 		c.removeLocked(c.list.Back())
 	}
 	el := c.list.PushFront(entry)
-	c.data[entry.key.String()] = el
-	c.bytes += len(entry.body)
-	c.appBytes[app] += len(entry.body)
+	c.data[entry.encodedKey] = el
+	c.bytes += entry.size
+	c.appBytes[app] += entry.size
 	return true
 }
 
@@ -531,6 +557,9 @@ func (c *ResponseCache) InvalidateByAppStrict(appID string) error {
 	if appID == "" {
 		return fmt.Errorf("cache purge app id is required")
 	}
+	c.fillMu.Lock()
+	defer c.fillMu.Unlock()
+	c.generation++
 	c.invalidateLocalByApp(appID)
 	if c.shared != nil {
 		return c.shared.InvalidateByApp(appID)
@@ -564,6 +593,9 @@ func (c *ResponseCache) InvalidateByAppPath(appID, pathGlob string) error {
 	if _, err := pathGlobMatch(pathGlob, "/"); err != nil {
 		return fmt.Errorf("invalid cache path glob %q: %w", pathGlob, err)
 	}
+	c.fillMu.Lock()
+	defer c.fillMu.Unlock()
+	c.generation++
 	if err := c.invalidateLocalByAppPath(appID, pathGlob); err != nil {
 		return err
 	}
@@ -608,6 +640,9 @@ func (c *ResponseCache) InvalidateAllStrict() error {
 	if c == nil {
 		return nil
 	}
+	c.fillMu.Lock()
+	defer c.fillMu.Unlock()
+	c.generation++
 	c.mu.Lock()
 	c.data = make(map[string]*list.Element)
 	c.list = list.New()
