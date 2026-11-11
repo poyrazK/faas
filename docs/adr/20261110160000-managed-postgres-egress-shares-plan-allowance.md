@@ -120,6 +120,19 @@ why. The sweep now mails the hold once per month:
   email. Until every apid runs this release, a held subject's compute email
   can be skipped. Roll apid out in one step.
 
+## Amendment 2026-11-11: only public transfer is egress
+
+Neon's usage reader summed `public_network_transfer_bytes` and
+`private_network_transfer_bytes` into the database egress meter. Private
+network transfer (Private Link, VPC) never leaves for the internet, yet it
+counted toward the shared allowance, could trip the egress hold, and since
+slice 3 would be billed at the public transfer price. The meter now counts
+public transfer only; the reader still requests private transfer so a later
+COGS report can read it. Readings collected before this change keep what they
+recorded. Gregale apps reach Neon over its public endpoints, so a database's
+replies to an app are still public transfer and still egress; that is a
+separate open item.
+
 ## Later slices
 
 - **Slice 2:** meterd's app egress stop counts the databases' egress too, so

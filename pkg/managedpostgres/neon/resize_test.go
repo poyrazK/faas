@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -20,7 +21,11 @@ type resizeHTTPFixture struct {
 	suspendTimeout                                                          int64
 	policy                                                                  bool
 	pending, changedDefault, duplicatePrimary, drift, lostResponse, delayed bool
-	pooledStorage                                                           int64
+	// disabled serves the endpoint held by the cap sweep; refuseDisabled
+	// answers its PATCH with 409; namedDisabled records a PATCH that names
+	// the flag.
+	disabled, refuseDisabled, namedDisabled bool
+	pooledStorage                           int64
 }
 
 func resizeHTTPProvider(t *testing.T, f *resizeHTTPFixture) *Provider {
@@ -52,7 +57,7 @@ func resizeHTTPProvider(t *testing.T, f *resizeHTTPFixture) *Provider {
 			}
 			writeResponse(t, w, 200, map[string]any{"branches": branches})
 		case root + "/endpoints":
-			endpoints := []map[string]any{{"id": "ep-main-123", "branch_id": "br-main-123", "type": "read_write", "current_state": "idle", "autoscaling_limit_min_cu": 0.25, "autoscaling_limit_max_cu": f.maximum, "suspend_timeout_seconds": f.suspendTimeout}}
+			endpoints := []map[string]any{{"id": "ep-main-123", "branch_id": "br-main-123", "type": "read_write", "current_state": "idle", "autoscaling_limit_min_cu": 0.25, "autoscaling_limit_max_cu": f.maximum, "suspend_timeout_seconds": f.suspendTimeout, "disabled": f.disabled}}
 			if f.duplicatePrimary {
 				endpoints = append(endpoints, endpoints[0])
 			}
@@ -67,8 +72,20 @@ func resizeHTTPProvider(t *testing.T, f *resizeHTTPFixture) *Provider {
 			if r.Method != http.MethodPatch {
 				t.Error("unexpected mutation method", r.Method)
 			}
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Error(err)
+			}
+			if strings.Contains(string(body), `"disabled"`) {
+				f.namedDisabled = true
+			}
+			if f.disabled && f.refuseDisabled {
+				f.patches++
+				writeResponse(t, w, 409, map[string]any{"message": "endpoint is disabled"})
+				return
+			}
 			var payload map[string]map[string]float64
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			if err := json.Unmarshal(body, &payload); err != nil {
 				t.Error(err)
 			}
 			compute := payload["endpoint"]
@@ -117,6 +134,30 @@ func TestResizeAdoptsAppliedConfigurationAfterLostResponse(t *testing.T) {
 	}
 	if _, err = p.Update(t.Context(), r); err != nil || f.patches != 1 {
 		t.Fatal("replay not stable", err)
+	}
+}
+
+// A database the cap sweep holds keeps its endpoint disabled. A resize, which
+// the plan excess email asks for, converges without touching the flag, so it
+// neither fails forever in updating nor lifts the hold.
+func TestResizeConvergesOnAHeldEndpoint(t *testing.T) {
+	f := &resizeHTTPFixture{disabled: true}
+	p := resizeHTTPProvider(t, f)
+	r := resizeHTTPrequest()
+	observed, err := p.Update(t.Context(), r)
+	if err != nil || observed.Status != managedpostgres.ProviderStatusReady || observed.Spec != r.Spec || f.patches != 1 {
+		t.Fatal("held endpoint blocked the resize", observed, err, f.patches)
+	}
+	if f.namedDisabled {
+		t.Fatal("resize PATCH named the disabled flag, lifting the hold")
+	}
+	// A provider refusing the change on the held endpoint ends the resize
+	// instead of leaving it to retry forever in updating.
+	refused := &resizeHTTPFixture{disabled: true, refuseDisabled: true}
+	_, err = resizeHTTPProvider(t, refused).Update(t.Context(), r)
+	var rejected *managedpostgres.ChangeRejectedError
+	if !errors.As(err, &rejected) || rejected.Code != "compute_held" {
+		t.Fatalf("refused PATCH on a held endpoint = %v; want a compute_held rejection", err)
 	}
 }
 
