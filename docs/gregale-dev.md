@@ -388,9 +388,18 @@ stage failures reuse the platform error code and explain the failing phase,
 the next action, and the deployment log command. The runtime stream also
 recognizes high-confidence startup failures such as missing modules, bind
 errors, upstream connection refusals, panics, and runtime OOMs; each code is
-reported once per watch session. With `--json`, diagnostics are emitted as
-`{"event":"developer_diagnostic",...}` objects so editor integrations can
-surface the same guidance without parsing terminal prose.
+reported once per watch session, including after a log-stream reconnect.
+Connection refusals to localhost are reported as dependency failures; normal
+local development-server URLs do not imply a bind failure.
+
+With `--json`, each diagnostic is one NDJSON line with
+`"event":"developer_diagnostic"`, the developer `app`, and `source_dir`.
+Runtime diagnostics remain active without emitting raw runtime log lines;
+`--no-logs` disables the runtime follower, and `--once` does not start it.
+Recovery log commands explicitly target the developer app and include the
+failed deployment ID when known. Runtime messages without a deployment ID
+select that developer app's runtime logs. In `--all`, records also carry
+`dev_project` and `dev_path` so editor integrations can route the guidance.
 
 The URL is stable for an account, local developer installation, and source
 directory. Teammates and separate clones or worktrees therefore get independent
