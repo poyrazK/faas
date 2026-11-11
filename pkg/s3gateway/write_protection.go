@@ -2,6 +2,8 @@ package s3gateway
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -84,6 +86,11 @@ func (h *Handler) captureWriteProtection(w http.ResponseWriter, r *http.Request,
 	if err == nil && !selection.Empty() && req.credential.URL == nil && (!req.objectLockConfig.Enabled || !objectstorage.SupportsNativeObjectLock(req.provider)) {
 		err = objectstorage.ErrUnsupported
 	}
+	if err == nil && !selection.Empty() && req.credential.URL == nil {
+		err = objectstorage.CheckObjectLockPlan(r.Context(), h.store, req.bucket, func(l api.ObjectStoragePlanLimits) *api.ObjectLockPlanViolation {
+			return l.ObjectWriteProtectionViolation(selection, h.now())
+		})
+	}
 	if err == nil && req.credential.URL == nil && selection.Retention != nil && selection.Retention.EventHold != "" && !req.objectLockConfig.EventHolds {
 		err = objectstorage.ErrUnsupported
 	}
@@ -113,4 +120,20 @@ func (h *Handler) protectionContext(ctx context.Context, req requestContext, p s
 		}
 		return h.requestMetrics.RecordObjectStorageProviderRequest(ctx, req.bucket.ID, h.now().UTC())
 	})
+}
+
+// objectLockPlanError answers protection the bucket owner's plan does not
+// include (ADR-20261111123000 decision 8) with its limit and the observed
+// value. It reports whether it wrote the response.
+func objectLockPlanError(w http.ResponseWriter, r *http.Request, req requestContext, err error) bool {
+	var limit *state.ObjectStorageLimitError
+	if !errors.Is(err, objectstorage.ErrObjectLockPlan) || !errors.As(err, &limit) {
+		return false
+	}
+	message := fmt.Sprintf("The bucket owner's plan does not include this Object Lock protection: limit %d days of retention, observed %d. See %s.", limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
+	if limit.Kind == "legal_hold" {
+		message = fmt.Sprintf("The bucket owner's plan does not include Object Lock legal holds. See %s.", api.ObjectStorageLimitsDocsURL)
+	}
+	writeS3Error(w, http.StatusForbidden, "AccessDenied", message, r.URL.Path, req.requestID)
+	return true
 }
