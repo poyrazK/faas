@@ -61,10 +61,15 @@ production deployment.
   meterd, and `[meter] billing_usage_source` is `ledger_shadow` until a clean
   closed month in shadow (ADR-20261107105126).
 - **Accounts:** list paid accounts and organizations without a Polar
-  subscription (`gregalectl accounts list --plan hobby|pro|scale`). Each keeps
-  paid limits without paying and has its hours held as `identity_incomplete`,
-  which `FaasMeterdHeldUsageExpiring` reports. Move each to Free or record why
-  it stays.
+  subscription (`gregalectl accounts list --plan hobby|pro|scale`).
+  - Each keeps paid limits without paying.
+  - One with a Polar identity also has its hours held as
+    `identity_incomplete`, which `FaasMeterdHeldUsageExpiring` reports.
+  - Make each one complimentary (ADR-20261111140000) or move it to Free.
+    Complimentary is `gregalectl accounts complimentary --account-id ID
+    --plan pro [--until RFC3339] --reason slug --yes`: it is not billed, its
+    spend cap is $0 so it stops at the plan's included amounts, and meterd
+    neither bills nor holds it. Free is `--plan none`.
 - **Pass criterion:** both daemons boot with
   `billing provider loaded provider=polar` and
   `meterd billing provider loaded provider=polar`; neither daemon logs a
