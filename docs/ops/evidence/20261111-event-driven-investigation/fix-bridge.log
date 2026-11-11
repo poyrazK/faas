@@ -1,0 +1,10 @@
+=== RUN   TestAuditAcceptedEventIdentityCrossesBridge
+=== RUN   TestAuditAcceptedEventIdentityCrossesBridge/control
+=== RUN   TestAuditAcceptedEventIdentityCrossesBridge/id
+=== RUN   TestAuditAcceptedEventIdentityCrossesBridge/type
+--- PASS: TestAuditAcceptedEventIdentityCrossesBridge (0.00s)
+    --- PASS: TestAuditAcceptedEventIdentityCrossesBridge/control (0.00s)
+    --- PASS: TestAuditAcceptedEventIdentityCrossesBridge/id (0.00s)
+    --- PASS: TestAuditAcceptedEventIdentityCrossesBridge/type (0.00s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/vmmdgrpc	0.049s

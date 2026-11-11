@@ -1116,6 +1116,14 @@ func (s *server) retryTriggerRecord(w http.ResponseWriter, r *http.Request, acct
 	}
 	if err := s.store.RetryTriggerRecordByOperator(r.Context(), uuidFromPgtype(trigger.AppID).String(),
 		uuidFromPgtype(trigger.ID).String(), recID); err != nil {
+		if errors.Is(err, state.ErrDeadLetterNotReplayable) {
+			api.WriteProblem(w, api.ErrDeadLetterNotReplayable())
+			return
+		}
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Record is being delivered", "retry after the active claim settles"))
+			return
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such record")
 			return

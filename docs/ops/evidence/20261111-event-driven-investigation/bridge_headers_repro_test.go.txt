@@ -1,0 +1,107 @@
+package vmmdgrpc
+
+import (
+	"bytes"
+	"context"
+	"crypto/tls"
+	"encoding/json"
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
+	"net"
+	"net/http"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/eventcontract"
+	"golang.org/x/net/http2"
+)
+
+func TestAuditAcceptedEventIdentityCrossesBridge(t *testing.T) {
+	for _, field := range []string{"control", "id", "type"} {
+		t.Run(field, func(t *testing.T) {
+			store := state.NewMemStore()
+			account, err := store.CreateAccount(t.Context(), "bridge-"+uuid.NewString()+"@example.test", api.PlanPro)
+			if err != nil {
+				t.Fatal(err)
+			}
+			accountUUID, err := uuid.Parse(account.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			accountID := accountUUID.String()
+			app, err := store.CreateApp(t.Context(), state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "bridge-" + uuid.NewString()[:8], RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60})
+			if err != nil {
+				t.Fatal(err)
+			}
+			sub, _, err := store.UpsertEventSubscription(t.Context(), accountID, app.ID, "*", "*", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			envelope := eventcontract.Envelope{ID: "order-1", Source: "orders", Type: "order.created", Data: json.RawMessage(`{"id":1}`)}
+			if field == "id" {
+				envelope.ID = "order\ncreated"
+			}
+			if field == "type" {
+				envelope.Type = "order\ncreated"
+			}
+			envelope, err = envelope.Normalize(accountID, time.Now())
+			if err != nil {
+				return
+			} // Rejecting the invalid identity at admission fixes this path.
+			payload, err := json.Marshal(envelope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = store.AppendEvent(t.Context(), "apid", "event.published", &accountID, payload); err != nil {
+				t.Fatal(err)
+			}
+			receipt, err := store.ClaimDuePublishedEvent(t.Context(), time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := store.AdmitPublishedEventRecipient(t.Context(), state.PublishedEventRoutingClaim{OutboxID: receipt.ID, SubscriptionID: sub.ID, ClaimToken: receipt.ClaimToken})
+			if err != nil {
+				t.Fatal(err)
+			}
+			invocation, err := store.InvocationByID(t.Context(), result.DeliveryID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, err := newForwardHTTPRequest(t.Context(), &vmmdpb.ForwardHTTPRequestInit{Method: invocation.Method, RequestUri: invocation.Path, ContentLengthKnown: true, ContentLength: int64(len(invocation.Payload))}, bytes.NewReader(invocation.Payload))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var headers map[string]string
+			if err = json.Unmarshal(invocation.Headers, &headers); err != nil {
+				t.Fatal(err)
+			}
+			for name, value := range headers {
+				req.Header.Add(name, value)
+			}
+			var hits atomic.Int32
+			transport := newStreamBridgeH2CTransport("", bridgeIdentity{})
+			defer transport.CloseIdleConnections()
+			transport.DialTLSContext = func(ctx context.Context, _, _ string, _ *tls.Config) (net.Conn, error) {
+				client, server := net.Pipe()
+				go func() {
+					defer server.Close()
+					new(http2.Server).ServeConn(server, &http2.ServeConnOpts{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1); w.WriteHeader(http.StatusOK) })})
+				}()
+				return client, nil
+			}
+			client := newGuestHTTPClient(transport)
+			client.Timeout = 3 * time.Second
+			response, err := client.Do(req)
+			if err != nil {
+				t.Fatalf("accepted event %s cannot cross production bridge transport (handler hits=%d): %v", field, hits.Load(), err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != http.StatusOK || hits.Load() != 1 {
+				t.Fatalf("delivery status=%d hits=%d", response.StatusCode, hits.Load())
+			}
+		})
+	}
+}

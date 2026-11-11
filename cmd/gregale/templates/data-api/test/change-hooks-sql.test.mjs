@@ -204,9 +204,11 @@ test('change hooks record committed changes and only the relay reads them', { sk
       ALTER TABLE api.metrics ENABLE ROW LEVEL SECURITY;
       CREATE POLICY open_metrics ON api.metrics USING (true) WITH CHECK (true);`)
     await su.query("SELECT gregale_hooks.enable('api.metrics')")
+    await su.query("SELECT gregale_hooks.set_schema_version('api.metrics', 'v1')")
     await su.query('RESET ROLE')
     await as(serving, userClaims, () => serving.query("INSERT INTO api.metrics VALUES ('2026-10-22', 1, 5)"))
     assert.deepEqual((await events()).map(e => [e.relation_name, e.row_key]), [['metrics', { day: '2026-10-22', id: 1 }]])
+    assert.equal((await su.query("SELECT schema_version FROM api.gregale_change_events WHERE relation_name='metrics'")).rows[0].schema_version, 'v1', 'partition changes use the hooked parent version')
     await su.query('DELETE FROM api.gregale_change_events')
   })
 
@@ -228,6 +230,28 @@ test('change hooks record committed changes and only the relay reads them', { sk
       await assert.rejects(as(serving, relayClaims, () => serving.query(statement)), error => error.code === '22023', statement)
     }
   })
+
+  await t.test('schema versions are captured at write time and upgrade is repeatable', async () => {
+    await su.query(`SET ROLE ${owner}`)
+    await su.query(sql)
+    await su.query(`CREATE TABLE api.versioned (id integer PRIMARY KEY, body text)`)
+    await su.query("SELECT gregale_hooks.enable('api.versioned')")
+    await su.query("SELECT gregale_hooks.set_schema_version('api.versioned', 'v1')")
+    await su.query("INSERT INTO api.versioned VALUES(1, 'one')")
+    await su.query("SELECT gregale_hooks.set_schema_version('api.versioned', 'v2')")
+    await su.query("UPDATE api.versioned SET body='two' WHERE id=1")
+    await su.query("SELECT gregale_hooks.set_schema_version('api.versioned', NULL)")
+    await su.query("UPDATE api.versioned SET body='three' WHERE id=1")
+    const versions = await su.query("SELECT event_key, schema_version FROM api.gregale_change_events WHERE relation_name='versioned' ORDER BY id")
+    assert.deepEqual(versions.rows.map(row => row.schema_version), ['v1', 'v2', null])
+    await su.query("UPDATE api.gregale_change_events SET failed_at=clock_timestamp() WHERE event_key=$1", [versions.rows[0].event_key])
+    await su.query('SELECT gregale_hooks.retry_failed()')
+    const retried = await su.query('SELECT schema_version FROM api.gregale_change_events WHERE event_key=$1', [versions.rows[0].event_key])
+    assert.equal(retried.rows[0].schema_version, 'v1', 'owner retry must preserve the captured version after the selection changes')
+    await su.query('RESET ROLE')
+    await assert.rejects(as(serving, userClaims, () => serving.query("SELECT gregale_hooks.set_schema_version('api.versioned', 'v3')")), error => error.code === '42501')
+  })
+
 })
 
 // Amendment 2: while the bound's worth of changes waits, capture records no

@@ -14189,12 +14189,26 @@ where r.id=sqlc.arg(record_id)::uuid and t.kind='queue' and t.source in ('queue'
 
 -- name: RetryExternalTriggerRecordByOperator :execrows
 update trigger_records r set state='pending', attempts=0, last_error=null,
-  next_fire_at=clock_timestamp(), claim_generation=claim_generation+1, claim_expires_at=null
+  next_fire_at=clock_timestamp(), claim_generation=claim_generation+1, claim_expires_at=null, operator_replay=true
 from triggers t where r.id=sqlc.arg(id)::uuid and t.id=r.trigger_id
   and not (t.kind='queue' and coalesce(t.source in ('queue','delayed_task'),false))
   and r.state not in ('superseded','cancelled','expired')
   and (sqlc.narg(expected_account_id)::uuid is null or t.account_id=sqlc.narg(expected_account_id)::uuid)
   and (sqlc.narg(expected_app_id)::uuid is null or t.app_id=sqlc.narg(expected_app_id)::uuid);
+
+-- name: ExternalTriggerReplayRecord :one
+SELECT r.* FROM trigger_records r JOIN triggers t ON t.id=r.trigger_id
+WHERE r.id=sqlc.arg(id)::uuid
+ AND (sqlc.narg(expected_account_id)::uuid IS NULL OR t.account_id=sqlc.narg(expected_account_id)::uuid)
+ AND (sqlc.narg(expected_app_id)::uuid IS NULL OR t.app_id=sqlc.narg(expected_app_id)::uuid)
+FOR UPDATE OF r;
+
+-- name: ListDueExternalTriggerReplays :many
+SELECT r.* FROM trigger_records r JOIN triggers t ON t.id=r.trigger_id
+WHERE r.trigger_id=sqlc.arg(trigger_id)::uuid AND r.operator_replay
+ AND r.state IN ('pending','retry') AND r.next_fire_at<=clock_timestamp()
+ AND t.kind IN ('kafka','nats','redis_streams')
+ORDER BY r.next_fire_at,r.id LIMIT sqlc.arg(batch_limit)::integer;
 
 -- name: QueueFinishDeliveryClaims :many
 with targets as (

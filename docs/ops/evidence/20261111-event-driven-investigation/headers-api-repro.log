@@ -1,0 +1,21 @@
+=== RUN   TestAuditPublishRejectsHTTPUnsafeIdentity
+=== RUN   TestAuditPublishRejectsHTTPUnsafeIdentity/memory
+=== RUN   TestAuditPublishRejectsHTTPUnsafeIdentity/memory/id
+    zz_event_audit_repro_test.go:251: HTTP-unsafe id was durably accepted for delivery: status=202 response={"receipt_url":"/v1/events/receipt?id=order%0Acreated\u0026source=orders","id":"order\ncreated","accepted_at":"2026-11-11T13:19:24.924468058Z","account_id":"1d0616e549f88f981e76c4d4de99d775"}
+=== RUN   TestAuditPublishRejectsHTTPUnsafeIdentity/memory/type
+    zz_event_audit_repro_test.go:251: HTTP-unsafe type was durably accepted for delivery: status=202 response={"receipt_url":"/v1/events/receipt?id=order-1\u0026source=orders","id":"order-1","accepted_at":"2026-11-11T13:19:24.924622759Z","account_id":"1d0616e549f88f981e76c4d4de99d775"}
+=== RUN   TestAuditPublishRejectsHTTPUnsafeIdentity/postgres
+=== RUN   TestAuditPublishRejectsHTTPUnsafeIdentity/postgres/id
+    zz_event_audit_repro_test.go:251: HTTP-unsafe id was durably accepted for delivery: status=202 response={"receipt_url":"/v1/events/receipt?id=order%0Acreated\u0026source=orders","id":"order\ncreated","accepted_at":"2026-11-11T13:19:40.762534Z","account_id":"1643bd19-9ca2-4d82-843e-50b82aa54123"}
+=== RUN   TestAuditPublishRejectsHTTPUnsafeIdentity/postgres/type
+    zz_event_audit_repro_test.go:251: HTTP-unsafe type was durably accepted for delivery: status=202 response={"receipt_url":"/v1/events/receipt?id=order-1\u0026source=orders","id":"order-1","accepted_at":"2026-11-11T13:19:40.785071Z","account_id":"1643bd19-9ca2-4d82-843e-50b82aa54123"}
+--- FAIL: TestAuditPublishRejectsHTTPUnsafeIdentity (17.04s)
+    --- FAIL: TestAuditPublishRejectsHTTPUnsafeIdentity/memory (0.00s)
+        --- FAIL: TestAuditPublishRejectsHTTPUnsafeIdentity/memory/id (0.00s)
+        --- FAIL: TestAuditPublishRejectsHTTPUnsafeIdentity/memory/type (0.00s)
+    --- FAIL: TestAuditPublishRejectsHTTPUnsafeIdentity/postgres (17.04s)
+        --- FAIL: TestAuditPublishRejectsHTTPUnsafeIdentity/postgres/id (0.02s)
+        --- FAIL: TestAuditPublishRejectsHTTPUnsafeIdentity/postgres/type (0.01s)
+FAIL
+FAIL	github.com/onebox-faas/faas/pkg/apid/appevents	17.095s
+FAIL

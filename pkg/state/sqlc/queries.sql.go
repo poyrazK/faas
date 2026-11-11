@@ -22245,6 +22245,53 @@ func (q *Queries) ExtendWorkflowRunLeaseFenced(ctx context.Context, db DBTX, arg
 	return result.RowsAffected(), nil
 }
 
+const externalTriggerReplayRecord = `-- name: ExternalTriggerReplayRecord :one
+SELECT r.id, r.trigger_id, r.item_identifier, r.payload, r.headers, r.metadata, r.state, r.attempts, r.next_fire_at, r.received_at, r.last_error, r.last_dispatched_at, r.deadline_at, r.retry_policy, r.result_retention_until, r.claim_generation, r.claim_expires_at, r.work_policy_name, r.work_key_digest, r.work_sequence, r.work_policy_revision, r.work_fairness_digest, r.work_fairness_limit, r.work_expires_at, r.operator_replay FROM trigger_records r JOIN triggers t ON t.id=r.trigger_id
+WHERE r.id=$1::uuid
+ AND ($2::uuid IS NULL OR t.account_id=$2::uuid)
+ AND ($3::uuid IS NULL OR t.app_id=$3::uuid)
+FOR UPDATE OF r
+`
+
+type ExternalTriggerReplayRecordParams struct {
+	ID                pgtype.UUID
+	ExpectedAccountID pgtype.UUID
+	ExpectedAppID     pgtype.UUID
+}
+
+func (q *Queries) ExternalTriggerReplayRecord(ctx context.Context, db DBTX, arg ExternalTriggerReplayRecordParams) (TriggerRecord, error) {
+	row := db.QueryRow(ctx, externalTriggerReplayRecord, arg.ID, arg.ExpectedAccountID, arg.ExpectedAppID)
+	var i TriggerRecord
+	err := row.Scan(
+		&i.ID,
+		&i.TriggerID,
+		&i.ItemIdentifier,
+		&i.Payload,
+		&i.Headers,
+		&i.Metadata,
+		&i.State,
+		&i.Attempts,
+		&i.NextFireAt,
+		&i.ReceivedAt,
+		&i.LastError,
+		&i.LastDispatchedAt,
+		&i.DeadlineAt,
+		&i.RetryPolicy,
+		&i.ResultRetentionUntil,
+		&i.ClaimGeneration,
+		&i.ClaimExpiresAt,
+		&i.WorkPolicyName,
+		&i.WorkKeyDigest,
+		&i.WorkSequence,
+		&i.WorkPolicyRevision,
+		&i.WorkFairnessDigest,
+		&i.WorkFairnessLimit,
+		&i.WorkExpiresAt,
+		&i.OperatorReplay,
+	)
+	return i, err
+}
+
 const failAutomaticRouteCheck = `-- name: FailAutomaticRouteCheck :execrows
 UPDATE automatic_route_checks SET claimed_request_id = NULL, lease_token = NULL, lease_until = NULL,
     last_error_code = 'check_failed', next_attempt_at = now() + $1::bigint * interval '1 millisecond'
@@ -49231,6 +49278,65 @@ func (q *Queries) ListDueExclusiveWork(ctx context.Context, db DBTX, rowLimit in
 			&i.Attempts,
 			&i.QuotaReserved,
 			&i.JobID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDueExternalTriggerReplays = `-- name: ListDueExternalTriggerReplays :many
+SELECT r.id, r.trigger_id, r.item_identifier, r.payload, r.headers, r.metadata, r.state, r.attempts, r.next_fire_at, r.received_at, r.last_error, r.last_dispatched_at, r.deadline_at, r.retry_policy, r.result_retention_until, r.claim_generation, r.claim_expires_at, r.work_policy_name, r.work_key_digest, r.work_sequence, r.work_policy_revision, r.work_fairness_digest, r.work_fairness_limit, r.work_expires_at, r.operator_replay FROM trigger_records r JOIN triggers t ON t.id=r.trigger_id
+WHERE r.trigger_id=$1::uuid AND r.operator_replay
+ AND r.state IN ('pending','retry') AND r.next_fire_at<=clock_timestamp()
+ AND t.kind IN ('kafka','nats','redis_streams')
+ORDER BY r.next_fire_at,r.id LIMIT $2::integer
+`
+
+type ListDueExternalTriggerReplaysParams struct {
+	TriggerID  pgtype.UUID
+	BatchLimit int32
+}
+
+func (q *Queries) ListDueExternalTriggerReplays(ctx context.Context, db DBTX, arg ListDueExternalTriggerReplaysParams) ([]TriggerRecord, error) {
+	rows, err := db.Query(ctx, listDueExternalTriggerReplays, arg.TriggerID, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TriggerRecord{}
+	for rows.Next() {
+		var i TriggerRecord
+		if err := rows.Scan(
+			&i.ID,
+			&i.TriggerID,
+			&i.ItemIdentifier,
+			&i.Payload,
+			&i.Headers,
+			&i.Metadata,
+			&i.State,
+			&i.Attempts,
+			&i.NextFireAt,
+			&i.ReceivedAt,
+			&i.LastError,
+			&i.LastDispatchedAt,
+			&i.DeadlineAt,
+			&i.RetryPolicy,
+			&i.ResultRetentionUntil,
+			&i.ClaimGeneration,
+			&i.ClaimExpiresAt,
+			&i.WorkPolicyName,
+			&i.WorkKeyDigest,
+			&i.WorkSequence,
+			&i.WorkPolicyRevision,
+			&i.WorkFairnessDigest,
+			&i.WorkFairnessLimit,
+			&i.WorkExpiresAt,
+			&i.OperatorReplay,
 		); err != nil {
 			return nil, err
 		}
@@ -103186,7 +103292,7 @@ func (q *Queries) RetryCustomerOperationBlobCleanup(ctx context.Context, db DBTX
 
 const retryExternalTriggerRecordByOperator = `-- name: RetryExternalTriggerRecordByOperator :execrows
 update trigger_records r set state='pending', attempts=0, last_error=null,
-  next_fire_at=clock_timestamp(), claim_generation=claim_generation+1, claim_expires_at=null
+  next_fire_at=clock_timestamp(), claim_generation=claim_generation+1, claim_expires_at=null, operator_replay=true
 from triggers t where r.id=$1::uuid and t.id=r.trigger_id
   and not (t.kind='queue' and coalesce(t.source in ('queue','delayed_task'),false))
   and r.state not in ('superseded','cancelled','expired')

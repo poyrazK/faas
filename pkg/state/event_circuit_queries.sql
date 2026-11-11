@@ -33,3 +33,8 @@ WHERE id=sqlc.arg(outbox_id)::bigint AND account_id=sqlc.arg(account_id)::uuid;
 
 -- name: EventCircuitGetForApp :one
 SELECT * FROM event_subscription_circuit_breakers WHERE subscription_id=sqlc.arg(subscription_id)::uuid AND app_id=sqlc.arg(app_id)::uuid;
+
+-- name: EventCircuitProbeLease :one
+SELECT lease_until FROM event_fanout_recipients
+WHERE outbox_id=sqlc.arg(outbox_id)::bigint AND subscription_id=sqlc.arg(subscription_id)::text
+ AND claim_token=sqlc.arg(claim_token)::uuid AND state='processing';

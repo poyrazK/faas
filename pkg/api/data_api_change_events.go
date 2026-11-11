@@ -17,10 +17,11 @@ const DataAPIChangeEventKeyPrefix = "data-api.change."
 // ID is the change's UUID in the database; the platform derives the producer
 // key from it, so republishing a change deduplicates.
 type DataAPIChangeEvent struct {
-	ID   string          `json:"id"`
-	Type string          `json:"type"`
-	Time *time.Time      `json:"time,omitempty"`
-	Data json.RawMessage `json:"data"`
+	SchemaVersion string          `json:"schema_version,omitempty"`
+	ID            string          `json:"id"`
+	Type          string          `json:"type"`
+	Time          *time.Time      `json:"time,omitempty"`
+	Data          json.RawMessage `json:"data"`
 }
 
 // DataAPIChangeEventBatch is a runtime's private publication of recorded
@@ -43,6 +44,9 @@ var dataAPIChangeEventID = lazyregexp.New(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-
 // Validate checks one change event's identity, type and data bounds. Types
 // are SCHEMA.TABLE.inserted|updated|deleted.
 func (e DataAPIChangeEvent) Validate() error {
+	if _, err := NormalizeEventSchemaVersions([]string{e.SchemaVersion}); e.SchemaVersion != "" && err != nil {
+		return errors.New("schema_version must be a valid schema version identifier")
+	}
 	if !dataAPIChangeEventID.MatchString(e.ID) {
 		return errors.New("id must be a lowercase UUID")
 	}

@@ -23,6 +23,8 @@ class DataAPIChangeEvent:
     """SCHEMA.TABLE.inserted"""
     data: Any
     """The change"""
+    schema_version: str | Unset = UNSET
+    """Version captured with this row change; unchanged on retry."""
     time: datetime.datetime | Unset = UNSET
     """When the change was recorded."""
 
@@ -32,6 +34,8 @@ class DataAPIChangeEvent:
         type_ = self.type_
 
         data = self.data
+
+        schema_version = self.schema_version
 
         time: str | Unset = UNSET
         if not isinstance(self.time, Unset):
@@ -46,6 +50,8 @@ class DataAPIChangeEvent:
                 "data": data,
             }
         )
+        if schema_version is not UNSET:
+            field_dict["schema_version"] = schema_version
         if time is not UNSET:
             field_dict["time"] = time
 
@@ -60,6 +66,8 @@ class DataAPIChangeEvent:
 
         data = d.pop("data")
 
+        schema_version = d.pop("schema_version", UNSET)
+
         _time = d.pop("time", UNSET)
         time: datetime.datetime | Unset
         if isinstance(_time, Unset):
@@ -71,6 +79,7 @@ class DataAPIChangeEvent:
             id=id,
             type_=type_,
             data=data,
+            schema_version=schema_version,
             time=time,
         )
 

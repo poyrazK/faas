@@ -1,0 +1,11 @@
+make[1]: Entering directory '/workspace/faas'
+spec-sync: pkg/apid/openapi.yaml matches api/openapi.yaml
+docs-links-check: OK
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.555s
+
+OK
+sdk-spec-check: OK
+make[1]: Leaving directory '/workspace/faas'
+ok  	github.com/onebox-faas/faas/scripts/ci/speccompliance	3.397s

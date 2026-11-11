@@ -58464,6 +58464,7 @@ CREATE TABLE public.trigger_records (
     work_fairness_digest bytea,
     work_fairness_limit integer,
     work_expires_at timestamp with time zone,
+    operator_replay boolean DEFAULT false NOT NULL,
     CONSTRAINT trigger_records_attempts_check CHECK (((attempts >= 0) AND (attempts <= 25))),
     CONSTRAINT trigger_records_claim_generation_check CHECK ((claim_generation >= 0)),
     CONSTRAINT trigger_records_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'claimed'::text, 'succeeded'::text, 'retry'::text, 'dead_letter'::text, 'superseded'::text, 'cancelled'::text, 'expired'::text]))),
@@ -82925,6 +82926,13 @@ CREATE INDEX tenant_surfaces_platform_tenant_idx ON public.tenant_surfaces USING
 --
 
 CREATE INDEX trigger_dlq_trigger_reason_idx ON public.trigger_dead_letter USING btree (trigger_id, reason);
+
+
+--
+-- Name: trigger_operator_replay_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trigger_operator_replay_due_idx ON public.trigger_records USING btree (trigger_id, next_fire_at, id) WHERE (operator_replay AND (state = ANY (ARRAY['pending'::text, 'retry'::text])));
 
 
 --

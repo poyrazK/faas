@@ -1,0 +1,237 @@
+=== RUN   TestTerminalKafkaRedeliveryIsAcknowledged
+--- PASS: TestTerminalKafkaRedeliveryIsAcknowledged (0.00s)
+=== RUN   TestEventRecipientRoutingSelectiveRecoveryIntegratedRouting
+=== RUN   TestEventRecipientRoutingSelectiveRecoveryIntegratedRouting/memory
+=== RUN   TestEventRecipientRoutingSelectiveRecoveryIntegratedRouting/postgres
+--- PASS: TestEventRecipientRoutingSelectiveRecoveryIntegratedRouting (29.22s)
+    --- PASS: TestEventRecipientRoutingSelectiveRecoveryIntegratedRouting/memory (0.00s)
+    --- PASS: TestEventRecipientRoutingSelectiveRecoveryIntegratedRouting/postgres (29.21s)
+=== RUN   TestEventRecipientRoutingReplayRenewsExhaustedBudgetIntegratedRouting
+--- PASS: TestEventRecipientRoutingReplayRenewsExhaustedBudgetIntegratedRouting (0.01s)
+=== RUN   TestEventRecipientRoutingSelectiveRecovery
+--- PASS: TestEventRecipientRoutingSelectiveRecovery (0.01s)
+=== RUN   TestEventRecipientRoutingReplayRenewsExhaustedBudget
+--- PASS: TestEventRecipientRoutingReplayRenewsExhaustedBudget (0.00s)
+=== RUN   TestEventRecipientRoutingDefaultOwnership
+=== RUN   TestEventRecipientRoutingDefaultOwnership/memory
+=== RUN   TestEventRecipientRoutingDefaultOwnership/memory/empty
+=== RUN   TestEventRecipientRoutingDefaultOwnership/memory/application
+=== RUN   TestEventRecipientRoutingDefaultOwnership/memory/filtered
+=== RUN   TestEventRecipientRoutingDefaultOwnership/memory/disabled
+=== RUN   TestEventRecipientRoutingDefaultOwnership/postgres
+=== RUN   TestEventRecipientRoutingDefaultOwnership/postgres/empty
+=== RUN   TestEventRecipientRoutingDefaultOwnership/postgres/application
+=== RUN   TestEventRecipientRoutingDefaultOwnership/postgres/filtered
+=== RUN   TestEventRecipientRoutingDefaultOwnership/postgres/disabled
+--- PASS: TestEventRecipientRoutingDefaultOwnership (1.91s)
+    --- PASS: TestEventRecipientRoutingDefaultOwnership/memory (0.00s)
+        --- PASS: TestEventRecipientRoutingDefaultOwnership/memory/empty (0.00s)
+        --- PASS: TestEventRecipientRoutingDefaultOwnership/memory/application (0.00s)
+        --- PASS: TestEventRecipientRoutingDefaultOwnership/memory/filtered (0.00s)
+        --- PASS: TestEventRecipientRoutingDefaultOwnership/memory/disabled (0.00s)
+    --- PASS: TestEventRecipientRoutingDefaultOwnership/postgres (1.91s)
+        --- PASS: TestEventRecipientRoutingDefaultOwnership/postgres/empty (0.23s)
+        --- PASS: TestEventRecipientRoutingDefaultOwnership/postgres/application (0.20s)
+        --- PASS: TestEventRecipientRoutingDefaultOwnership/postgres/filtered (0.13s)
+        --- PASS: TestEventRecipientRoutingDefaultOwnership/postgres/disabled (0.09s)
+=== RUN   TestKafka_NackPoisonCommit
+=== PAUSE TestKafka_NackPoisonCommit
+=== RUN   TestKafka_NackPoisonSeekToOffset
+=== PAUSE TestKafka_NackPoisonSeekToOffset
+=== RUN   TestKafka_NackPoisonEmptyStrategyDefaultsToCommit
+=== PAUSE TestKafka_NackPoisonEmptyStrategyDefaultsToCommit
+=== RUN   TestKafka_NackBrokerErrorRedelivers
+=== PAUSE TestKafka_NackBrokerErrorRedelivers
+=== RUN   TestKafka_AckMultipleSucceeds
+=== PAUSE TestKafka_AckMultipleSucceeds
+=== RUN   TestKafka_AckCommitBrokerError
+=== PAUSE TestKafka_AckCommitBrokerError
+=== RUN   TestKafka_NackBrokerErrorNeverCommits
+=== PAUSE TestKafka_NackBrokerErrorNeverCommits
+=== RUN   TestNATSPoller_TranslateAckToBroker
+=== PAUSE TestNATSPoller_TranslateAckToBroker
+=== RUN   TestNATSPoller_TranslateNackToBroker
+=== PAUSE TestNATSPoller_TranslateNackToBroker
+=== RUN   TestNATSPoller_SeqFallbackIsUnique
+=== PAUSE TestNATSPoller_SeqFallbackIsUnique
+=== RUN   TestEventWorkflowRecipientRoutingSelectiveRecovery
+=== RUN   TestEventWorkflowRecipientRoutingSelectiveRecovery/memory
+=== RUN   TestEventWorkflowRecipientRoutingSelectiveRecovery/postgres
+--- PASS: TestEventWorkflowRecipientRoutingSelectiveRecovery (3.32s)
+    --- PASS: TestEventWorkflowRecipientRoutingSelectiveRecovery/memory (0.02s)
+    --- PASS: TestEventWorkflowRecipientRoutingSelectiveRecovery/postgres (3.30s)
+=== RUN   TestNATSBrokerPoolDialsOutsideItsLock
+--- PASS: TestNATSBrokerPoolDialsOutsideItsLock (0.01s)
+=== RUN   TestNATSBrokerPoolClosesIdleConnections
+--- PASS: TestNATSBrokerPoolClosesIdleConnections (0.11s)
+=== RUN   TestNATSBrokerPoolReplacesClosedConnections
+--- PASS: TestNATSBrokerPoolReplacesClosedConnections (0.00s)
+=== RUN   TestKafkaGroupLagFromCommittedOffsets
+=== RUN   TestKafkaGroupLagFromCommittedOffsets/committed_offsets,_summed_over_partitions
+=== RUN   TestKafkaGroupLagFromCommittedOffsets/a_group_with_no_commit_starts_at_the_log_start
+=== RUN   TestKafkaGroupLagFromCommittedOffsets/a_partition_the_group_never_committed
+=== RUN   TestKafkaGroupLagFromCommittedOffsets/a_log_truncated_past_the_commit
+=== RUN   TestKafkaGroupLagFromCommittedOffsets/caught_up
+=== RUN   TestKafkaGroupLagFromCommittedOffsets/a_partition_error_fails_the_reading
+=== RUN   TestKafkaGroupLagFromCommittedOffsets/no_watermarks_fails_the_reading
+--- PASS: TestKafkaGroupLagFromCommittedOffsets (0.00s)
+    --- PASS: TestKafkaGroupLagFromCommittedOffsets/committed_offsets,_summed_over_partitions (0.00s)
+    --- PASS: TestKafkaGroupLagFromCommittedOffsets/a_group_with_no_commit_starts_at_the_log_start (0.00s)
+    --- PASS: TestKafkaGroupLagFromCommittedOffsets/a_partition_the_group_never_committed (0.00s)
+    --- PASS: TestKafkaGroupLagFromCommittedOffsets/a_log_truncated_past_the_commit (0.00s)
+    --- PASS: TestKafkaGroupLagFromCommittedOffsets/caught_up (0.00s)
+    --- PASS: TestKafkaGroupLagFromCommittedOffsets/a_partition_error_fails_the_reading (0.00s)
+    --- PASS: TestKafkaGroupLagFromCommittedOffsets/no_watermarks_fails_the_reading (0.00s)
+=== RUN   TestKafkaPollerReportsCommittedLag
+--- PASS: TestKafkaPollerReportsCommittedLag (0.00s)
+=== RUN   TestKafkaPollReportsConsumerGroupErrors
+--- PASS: TestKafkaPollReportsConsumerGroupErrors (0.00s)
+=== RUN   TestBrokerReliabilityNATSConsumerSurvivesIdleSchedulingGap
+    broker_reliability_test.go:62: actual server config: Name="audit-consumer" Durable="audit-consumer" InactiveThreshold=0s
+--- PASS: TestBrokerReliabilityNATSConsumerSurvivesIdleSchedulingGap (15.17s)
+=== RUN   TestBrokerReliabilityNATSConsumerIsDurable
+--- PASS: TestBrokerReliabilityNATSConsumerIsDurable (0.00s)
+=== RUN   TestBrokerReliabilityNATSPoolPreservesRetryScheduling
+--- PASS: TestBrokerReliabilityNATSPoolPreservesRetryScheduling (0.00s)
+=== RUN   TestBrokerReliabilityKafkaPoisonRecordBoundsRetainedPayloads
+--- PASS: TestBrokerReliabilityKafkaPoisonRecordBoundsRetainedPayloads (0.03s)
+=== RUN   TestBrokerReliabilityRedisReplacementConsumerRecoversPending
+--- PASS: TestBrokerReliabilityRedisReplacementConsumerRecoversPending (0.01s)
+=== RUN   TestBrokerReliabilityNATSWrapperUsesScheduledDelay
+--- PASS: TestBrokerReliabilityNATSWrapperUsesScheduledDelay (0.00s)
+=== RUN   TestBrokerReliabilityRedisRenewalCannotStealChangedOwner
+--- PASS: TestBrokerReliabilityRedisRenewalCannotStealChangedOwner (0.05s)
+=== RUN   TestBrokerReliabilityNATSRebuildsDeletedConsumer
+--- PASS: TestBrokerReliabilityNATSRebuildsDeletedConsumer (0.32s)
+=== RUN   TestBrokerReliabilityNATSUpgradesEphemeralConsumer
+--- PASS: TestBrokerReliabilityNATSUpgradesEphemeralConsumer (8.02s)
+=== RUN   TestKafkaRecordIDNamesTopicAndGeneration
+--- PASS: TestKafkaRecordIDNamesTopicAndGeneration (0.00s)
+=== RUN   TestKafkaTerminalAckDoesNotCommitPastOpenOffset
+--- PASS: TestKafkaTerminalAckDoesNotCommitPastOpenOffset (0.00s)
+=== RUN   TestKafkaDeferAndRetryHold
+--- PASS: TestKafkaDeferAndRetryHold (0.00s)
+=== RUN   TestNATSRetriesWaitForTheirDueTime
+--- PASS: TestNATSRetriesWaitForTheirDueTime (0.00s)
+=== RUN   TestRedisPollDoesNotReadPastAFullPendingList
+--- PASS: TestRedisPollDoesNotReadPastAFullPendingList (0.00s)
+=== RUN   TestRedisStreamPollReturnsReadEntries
+--- PASS: TestRedisStreamPollReturnsReadEntries (0.00s)
+=== RUN   TestNATSBrokerPoolConnectsOncePerURL
+--- PASS: TestNATSBrokerPoolConnectsOncePerURL (0.00s)
+=== RUN   TestEventReliabilityPermanentRoutingFailureStopsImmediately
+=== RUN   TestEventReliabilityPermanentRoutingFailureStopsImmediately/memory
+=== RUN   TestEventReliabilityPermanentRoutingFailureStopsImmediately/postgres
+--- PASS: TestEventReliabilityPermanentRoutingFailureStopsImmediately (2.61s)
+    --- PASS: TestEventReliabilityPermanentRoutingFailureStopsImmediately/memory (0.00s)
+    --- PASS: TestEventReliabilityPermanentRoutingFailureStopsImmediately/postgres (2.60s)
+=== RUN   TestEventReliabilityCircuitProbeTracksRenewedClaim
+=== RUN   TestEventReliabilityCircuitProbeTracksRenewedClaim/memory
+=== RUN   TestEventReliabilityCircuitProbeTracksRenewedClaim/postgres
+--- PASS: TestEventReliabilityCircuitProbeTracksRenewedClaim (0.84s)
+    --- PASS: TestEventReliabilityCircuitProbeTracksRenewedClaim/memory (0.01s)
+    --- PASS: TestEventReliabilityCircuitProbeTracksRenewedClaim/postgres (0.83s)
+=== RUN   TestEventReliabilityNATSTokenNeverEntersConsumerHealth
+=== RUN   TestEventReliabilityNATSTokenNeverEntersConsumerHealth/memory
+=== RUN   TestEventReliabilityNATSTokenNeverEntersConsumerHealth/memory/password_control
+=== RUN   TestEventReliabilityNATSTokenNeverEntersConsumerHealth/memory/token
+=== RUN   TestEventReliabilityNATSTokenNeverEntersConsumerHealth/postgres
+=== RUN   TestEventReliabilityNATSTokenNeverEntersConsumerHealth/postgres/password_control
+=== RUN   TestEventReliabilityNATSTokenNeverEntersConsumerHealth/postgres/token
+--- PASS: TestEventReliabilityNATSTokenNeverEntersConsumerHealth (0.84s)
+    --- PASS: TestEventReliabilityNATSTokenNeverEntersConsumerHealth/memory (0.00s)
+        --- PASS: TestEventReliabilityNATSTokenNeverEntersConsumerHealth/memory/password_control (0.00s)
+        --- PASS: TestEventReliabilityNATSTokenNeverEntersConsumerHealth/memory/token (0.00s)
+    --- PASS: TestEventReliabilityNATSTokenNeverEntersConsumerHealth/postgres (0.84s)
+        --- PASS: TestEventReliabilityNATSTokenNeverEntersConsumerHealth/postgres/password_control (0.15s)
+        --- PASS: TestEventReliabilityNATSTokenNeverEntersConsumerHealth/postgres/token (0.04s)
+=== RUN   TestEventReliabilityExternalDeadLetterReplayDoesNotNeedBrokerRedelivery
+=== RUN   TestEventReliabilityExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/memory
+=== RUN   TestEventReliabilityExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/memory/record_retry
+=== RUN   TestEventReliabilityExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/memory/unified_dlq
+=== RUN   TestEventReliabilityExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/postgres
+=== RUN   TestEventReliabilityExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/postgres/record_retry
+=== RUN   TestEventReliabilityExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/postgres/unified_dlq
+--- PASS: TestEventReliabilityExternalDeadLetterReplayDoesNotNeedBrokerRedelivery (1.38s)
+    --- PASS: TestEventReliabilityExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/memory (0.01s)
+        --- PASS: TestEventReliabilityExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/memory/record_retry (0.00s)
+        --- PASS: TestEventReliabilityExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/memory/unified_dlq (0.00s)
+    --- PASS: TestEventReliabilityExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/postgres (1.37s)
+        --- PASS: TestEventReliabilityExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/postgres/record_retry (0.21s)
+        --- PASS: TestEventReliabilityExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/postgres/unified_dlq (0.07s)
+=== RUN   TestKafkaFailedRecordIsRedeliveredAndHoldsCommits
+--- PASS: TestKafkaFailedRecordIsRedeliveredAndHoldsCommits (0.00s)
+=== RUN   TestKafkaExhaustedRecordCommits
+--- PASS: TestKafkaExhaustedRecordCommits (0.00s)
+=== RUN   TestKafkaSASLMechanism_Unknown_Mega4
+=== PAUSE TestKafkaSASLMechanism_Unknown_Mega4
+=== RUN   TestRedisTriggerOptionsDialTLSWhenAsked
+=== RUN   TestRedisTriggerOptionsDialTLSWhenAsked/tls
+=== RUN   TestRedisTriggerOptionsDialTLSWhenAsked/plain
+--- PASS: TestRedisTriggerOptionsDialTLSWhenAsked (0.00s)
+    --- PASS: TestRedisTriggerOptionsDialTLSWhenAsked/tls (0.00s)
+    --- PASS: TestRedisTriggerOptionsDialTLSWhenAsked/plain (0.00s)
+=== RUN   TestRedisTriggerDialerHandshakesTLS
+--- PASS: TestRedisTriggerDialerHandshakesTLS (0.01s)
+=== RUN   TestRedisTriggerDialerRefusesAPlaintextServer
+--- PASS: TestRedisTriggerDialerRefusesAPlaintextServer (0.00s)
+=== CONT  TestKafka_NackPoisonCommit
+--- PASS: TestKafka_NackPoisonCommit (0.00s)
+=== CONT  TestKafkaSASLMechanism_Unknown_Mega4
+--- PASS: TestKafkaSASLMechanism_Unknown_Mega4 (0.00s)
+=== CONT  TestNATSPoller_SeqFallbackIsUnique
+--- PASS: TestNATSPoller_SeqFallbackIsUnique (0.00s)
+=== CONT  TestNATSPoller_TranslateNackToBroker
+=== RUN   TestNATSPoller_TranslateNackToBroker/broker_error
+=== PAUSE TestNATSPoller_TranslateNackToBroker/broker_error
+=== RUN   TestNATSPoller_TranslateNackToBroker/poison_record
+=== PAUSE TestNATSPoller_TranslateNackToBroker/poison_record
+=== RUN   TestNATSPoller_TranslateNackToBroker/max_attempts
+=== PAUSE TestNATSPoller_TranslateNackToBroker/max_attempts
+=== CONT  TestNATSPoller_TranslateNackToBroker/broker_error
+=== CONT  TestNATSPoller_TranslateAckToBroker
+--- PASS: TestNATSPoller_TranslateAckToBroker (0.00s)
+=== CONT  TestKafka_NackBrokerErrorNeverCommits
+=== RUN   TestKafka_NackBrokerErrorNeverCommits/offset=10
+=== PAUSE TestKafka_NackBrokerErrorNeverCommits/offset=10
+=== RUN   TestKafka_NackBrokerErrorNeverCommits/offset=20
+=== PAUSE TestKafka_NackBrokerErrorNeverCommits/offset=20
+=== RUN   TestKafka_NackBrokerErrorNeverCommits/offset=30
+=== PAUSE TestKafka_NackBrokerErrorNeverCommits/offset=30
+=== CONT  TestKafka_NackBrokerErrorNeverCommits/offset=10
+=== CONT  TestKafka_AckCommitBrokerError
+--- PASS: TestKafka_AckCommitBrokerError (0.00s)
+=== CONT  TestKafka_AckMultipleSucceeds
+--- PASS: TestKafka_AckMultipleSucceeds (0.00s)
+=== CONT  TestKafka_NackBrokerErrorRedelivers
+=== RUN   TestKafka_NackBrokerErrorRedelivers/strategy=commit
+=== PAUSE TestKafka_NackBrokerErrorRedelivers/strategy=commit
+=== RUN   TestKafka_NackBrokerErrorRedelivers/strategy=seek-to-offset
+=== PAUSE TestKafka_NackBrokerErrorRedelivers/strategy=seek-to-offset
+=== RUN   TestKafka_NackBrokerErrorRedelivers/strategy=
+=== PAUSE TestKafka_NackBrokerErrorRedelivers/strategy=
+=== CONT  TestKafka_NackBrokerErrorRedelivers/strategy=commit
+=== CONT  TestKafka_NackPoisonEmptyStrategyDefaultsToCommit
+--- PASS: TestKafka_NackPoisonEmptyStrategyDefaultsToCommit (0.00s)
+=== CONT  TestKafka_NackPoisonSeekToOffset
+--- PASS: TestKafka_NackPoisonSeekToOffset (0.00s)
+=== CONT  TestNATSPoller_TranslateNackToBroker/max_attempts
+=== CONT  TestNATSPoller_TranslateNackToBroker/poison_record
+--- PASS: TestNATSPoller_TranslateNackToBroker (0.00s)
+    --- PASS: TestNATSPoller_TranslateNackToBroker/broker_error (0.00s)
+    --- PASS: TestNATSPoller_TranslateNackToBroker/max_attempts (0.00s)
+    --- PASS: TestNATSPoller_TranslateNackToBroker/poison_record (0.00s)
+=== CONT  TestKafka_NackBrokerErrorNeverCommits/offset=30
+=== CONT  TestKafka_NackBrokerErrorNeverCommits/offset=20
+--- PASS: TestKafka_NackBrokerErrorNeverCommits (0.00s)
+    --- PASS: TestKafka_NackBrokerErrorNeverCommits/offset=10 (0.00s)
+    --- PASS: TestKafka_NackBrokerErrorNeverCommits/offset=30 (0.00s)
+    --- PASS: TestKafka_NackBrokerErrorNeverCommits/offset=20 (0.00s)
+=== CONT  TestKafka_NackBrokerErrorRedelivers/strategy=
+=== CONT  TestKafka_NackBrokerErrorRedelivers/strategy=seek-to-offset
+--- PASS: TestKafka_NackBrokerErrorRedelivers (0.00s)
+    --- PASS: TestKafka_NackBrokerErrorRedelivers/strategy=commit (0.00s)
+    --- PASS: TestKafka_NackBrokerErrorRedelivers/strategy= (0.00s)
+    --- PASS: TestKafka_NackBrokerErrorRedelivers/strategy=seek-to-offset (0.00s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/sched	64.000s

@@ -1,0 +1,4 @@
+CREATE DATABASE
+{"time":"2026-11-11T15:50:03.835477047Z","level":"INFO","msg":"migrations applied"}
+schema-dump: schema.sql regenerated (107005 lines)
+DROP DATABASE

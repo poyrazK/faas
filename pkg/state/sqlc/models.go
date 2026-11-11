@@ -15819,6 +15819,7 @@ type TriggerRecord struct {
 	WorkFairnessDigest   []byte
 	WorkFairnessLimit    pgtype.Int4
 	WorkExpiresAt        pgtype.Timestamptz
+	OperatorReplay       bool
 }
 
 type TriggerWorkBinding struct {

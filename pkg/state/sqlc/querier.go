@@ -1453,6 +1453,7 @@ type Querier interface {
 	EventCircuitEnsureControl(ctx context.Context, db DBTX, arg EventCircuitEnsureControlParams) error
 	EventCircuitGet(ctx context.Context, db DBTX, arg EventCircuitGetParams) (EventSubscriptionCircuitBreaker, error)
 	EventCircuitGetForApp(ctx context.Context, db DBTX, arg EventCircuitGetForAppParams) (EventSubscriptionCircuitBreaker, error)
+	EventCircuitProbeLease(ctx context.Context, db DBTX, arg EventCircuitProbeLeaseParams) (pgtype.Timestamptz, error)
 	EventCircuitProbeOutcome(ctx context.Context, db DBTX, arg EventCircuitProbeOutcomeParams) ([]byte, error)
 	EventCircuitSave(ctx context.Context, db DBTX, arg EventCircuitSaveParams) (int64, error)
 	EventCircuitWindow(ctx context.Context, db DBTX, arg EventCircuitWindowParams) (EventCircuitWindowRow, error)
@@ -1851,6 +1852,7 @@ type Querier interface {
 	ExtendQueueLeaseInvocation(ctx context.Context, db DBTX, arg ExtendQueueLeaseInvocationParams) (pgtype.Timestamptz, error)
 	ExtendQueueLeaseReceipt(ctx context.Context, db DBTX, arg ExtendQueueLeaseReceiptParams) error
 	ExtendWorkflowRunLeaseFenced(ctx context.Context, db DBTX, arg ExtendWorkflowRunLeaseFencedParams) (int64, error)
+	ExternalTriggerReplayRecord(ctx context.Context, db DBTX, arg ExternalTriggerReplayRecordParams) (TriggerRecord, error)
 	FailAutomaticRouteCheck(ctx context.Context, db DBTX, arg FailAutomaticRouteCheckParams) (int64, error)
 	FailCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) error
 	FailCrashCapture(ctx context.Context, db DBTX, arg FailCrashCaptureParams) (CrashCapture, error)
@@ -3828,6 +3830,7 @@ type Querier interface {
 	// have none, so the sweeper stops them.
 	ListDueCustomerOperationDeadlines(ctx context.Context, db DBTX, arg ListDueCustomerOperationDeadlinesParams) ([]string, error)
 	ListDueExclusiveWork(ctx context.Context, db DBTX, rowLimit int32) ([]ExclusiveWorkOperation, error)
+	ListDueExternalTriggerReplays(ctx context.Context, db DBTX, arg ListDueExternalTriggerReplaysParams) ([]TriggerRecord, error)
 	ListDueInvocationRows(ctx context.Context, db DBTX, arg ListDueInvocationRowsParams) ([]Invocation, error)
 	ListDueInvocationRowsAfter(ctx context.Context, db DBTX, arg ListDueInvocationRowsAfterParams) ([]Invocation, error)
 	ListDueMCPCatalogOAuthRevocations(ctx context.Context, db DBTX, batchLimit int32) ([]ListDueMCPCatalogOAuthRevocationsRow, error)

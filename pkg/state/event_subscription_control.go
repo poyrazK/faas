@@ -234,6 +234,7 @@ func (m *MemStore) eventSubscriptionControlResponseLocked(account, app, sub stri
 	out.EffectiveMaxPendingDeliveries = effectiveEventConsumerCapacity(limits.PerConsumer, out.MaxPendingDeliveries)
 	out.LiveDeliveries, _, _ = m.eventDeliveryCountsLocked(eventDeliverySlot{account, app, canonicalMemUUID(sub)}, nil)
 	if breaker := m.eventCircuitBreakers[out.SubscriptionID]; breaker != nil {
+		m.refreshCircuitProbeLeaseLocked(breaker)
 		status := circuitResponse(sub, breaker, out.Paused, time.Now().UTC())
 		out.CircuitBreaker = &status
 	}

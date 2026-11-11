@@ -1,0 +1,21 @@
+=== RUN   TestAuditExternalDeadLetterReplayDoesNotNeedBrokerRedelivery
+=== RUN   TestAuditExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/memory
+=== RUN   TestAuditExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/memory/record_retry
+    zz_event_recovery_audit_test.go:110: record_retry reported success after Kafka committed offset 7, but three dispatches did no work: record state=pending
+=== RUN   TestAuditExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/memory/unified_dlq
+    zz_event_recovery_audit_test.go:110: unified_dlq reported success after Kafka committed offset 7, but three dispatches did no work: record state=pending
+=== RUN   TestAuditExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/postgres
+=== RUN   TestAuditExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/postgres/record_retry
+    zz_event_recovery_audit_test.go:110: record_retry reported success after Kafka committed offset 7, but three dispatches did no work: record state=pending
+=== RUN   TestAuditExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/postgres/unified_dlq
+    zz_event_recovery_audit_test.go:110: unified_dlq reported success after Kafka committed offset 7, but three dispatches did no work: record state=pending
+--- FAIL: TestAuditExternalDeadLetterReplayDoesNotNeedBrokerRedelivery (23.55s)
+    --- FAIL: TestAuditExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/memory (0.00s)
+        --- FAIL: TestAuditExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/memory/record_retry (0.00s)
+        --- FAIL: TestAuditExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/memory/unified_dlq (0.00s)
+    --- FAIL: TestAuditExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/postgres (23.55s)
+        --- FAIL: TestAuditExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/postgres/record_retry (0.17s)
+        --- FAIL: TestAuditExternalDeadLetterReplayDoesNotNeedBrokerRedelivery/postgres/unified_dlq (0.07s)
+FAIL
+FAIL	github.com/onebox-faas/faas/pkg/sched	23.611s
+FAIL

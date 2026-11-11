@@ -98,7 +98,7 @@ func (h Handler) publish(ctx context.Context, acct state.Account, appID string, 
 			results[i] = api.PublishEventBatchResult{Status: "rejected", Problem: api.ErrValidation(invalid.Error())}
 		default:
 			results[i] = h.Publisher.PublishAppProducerEvent(ctx, acct, appID, appevents.AppProducerEvent{
-				Key: api.DataAPIChangeEventKeyPrefix + event.ID, Type: event.Type, Time: event.Time, Data: event.Data})
+				Key: api.DataAPIChangeEventKeyPrefix + event.ID, Type: event.Type, Time: event.Time, Data: event.Data, SchemaVersion: event.SchemaVersion})
 			accepted = accepted || results[i].Status == "accepted"
 			stopped = results[i].Retryable
 		}

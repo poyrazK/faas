@@ -23,7 +23,9 @@ func (m *MemStore) GetEventCircuitBreaker(ctx context.Context, account, app, sub
 	if c := m.eventSubscriptionControls[canonicalMemUUID(sub)]; c != nil {
 		paused = c.Paused
 	}
-	return circuitResponse(sub, m.eventCircuitBreakers[canonicalMemUUID(sub)], paused, time.Now().UTC()), nil
+	r := m.eventCircuitBreakers[canonicalMemUUID(sub)]
+	m.refreshCircuitProbeLeaseLocked(r)
+	return circuitResponse(sub, r, paused, time.Now().UTC()), nil
 }
 func (m *MemStore) SetEventCircuitBreaker(ctx context.Context, account, app, sub string, p *api.EventCircuitBreakerPolicy) (api.EventCircuitBreakerResponse, error) {
 	return m.changeEventCircuit(ctx, account, app, sub, p, false)
@@ -80,6 +82,7 @@ func (m *MemStore) changeEventCircuit(ctx context.Context, account, app, sub str
 	return circuitResponse(sub, r, paused, now), nil
 }
 func (m *MemStore) circuitObservationLocked(r *eventCircuitRecord, now time.Time) eventCircuitObservation {
+	m.refreshCircuitProbeLeaseLocked(r)
 	out := eventCircuitObservation{}
 	if (r.Runtime.State == "closed" || r.Runtime.State == "draining") && now.Sub(r.Runtime.EvaluatedAt) >= api.EventCircuitEvaluationInterval {
 		out.Sampled = true
@@ -115,6 +118,18 @@ func (m *MemStore) circuitObservationLocked(r *eventCircuitRecord, now time.Time
 		}
 	}
 	return out
+}
+
+func (m *MemStore) refreshCircuitProbeLeaseLocked(r *eventCircuitRecord) {
+	if r == nil || r.Runtime.State != "half_open" || r.Runtime.ProbeToken == "" {
+		return
+	}
+	if receipt := m.routingReceiptLocked(r.Runtime.ProbeOutboxID); receipt != nil {
+		claim := receipt.routingRecipients[r.SubscriptionID]
+		if claim != nil && claim.State == "processing" && claim.ClaimToken == r.Runtime.ProbeToken {
+			r.Runtime.ProbeUntil = claim.LeaseUntil
+		}
+	}
 }
 func (m *MemStore) AcquireEventCircuitPermit(ctx context.Context, work *PublishedEventRecipientWork, now time.Time) (string, time.Time, error) {
 	if err := ctx.Err(); err != nil {

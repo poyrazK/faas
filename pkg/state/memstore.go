@@ -29821,7 +29821,7 @@ func (m *MemStore) ReplayDeadLetterEventsForAccount(_ context.Context, accountID
 		} else {
 			_, err = m.replayAccountJobDeadLetterLocked(accountID, ev)
 		}
-		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) || errors.Is(err, ErrDeadLetterNotReplayable) || errors.Is(err, ErrConflict) {
 			continue
 		}
 		if IsQueueCapError(err) {
@@ -30058,7 +30058,7 @@ func (m *MemStore) ReplayDeadLetterEvents(_ context.Context, accountID, appID st
 			continue
 		}
 		if _, err := m.replayDeadLetterEventLocked(accountID, appID, ev.ID); err != nil {
-			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) {
+			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) || errors.Is(err, ErrDeadLetterNotReplayable) || errors.Is(err, ErrConflict) {
 				continue
 			}
 			if IsQueueCapError(err) {

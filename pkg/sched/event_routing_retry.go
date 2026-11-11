@@ -45,7 +45,7 @@ func eventRoutingRetryOutcome(recipient state.PublishedEventRecipient, previous 
 	p.FailureCode, p.Retryable = eventFanoutFailureDetails(routeErr)
 	p.RetrySpentMS += max(0, elapsed.Milliseconds())
 	switch {
-	case !matched && !p.Retryable || errors.Is(routeErr, state.ErrNotFound):
+	case !p.Retryable || errors.Is(routeErr, state.ErrNotFound):
 		p.RetryStopReason = "non_retryable"
 	case attempts >= policy.MaxAttempts:
 		p.RetryStopReason = "max_attempts"
