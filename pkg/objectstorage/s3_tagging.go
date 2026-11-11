@@ -72,7 +72,7 @@ func (p *S3) PutObjectVersionTags(ctx context.Context, bucket, key, version stri
 	}
 	out, err := p.client.PutObjectTagging(ctx, &s3.PutObjectTaggingInput{Bucket: aws.String(bucket), Key: aws.String(key), VersionId: stringPtrOrNil(version), Tagging: &types.Tagging{TagSet: tagSet}}, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	if err != nil {
-		return ObjectTaggingResult{}, normalizeTaggingError(err)
+		return ObjectTaggingResult{}, p.taggingWriteError(err)
 	}
 	if out == nil {
 		return ObjectTaggingResult{}, ErrUnavailable
@@ -87,7 +87,7 @@ func (p *S3) DeleteObjectVersionTags(ctx context.Context, bucket, key, version s
 	}
 	out, err := p.client.DeleteObjectTagging(ctx, &s3.DeleteObjectTaggingInput{Bucket: aws.String(bucket), Key: aws.String(key), VersionId: stringPtrOrNil(version)}, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	if err != nil {
-		return ObjectTaggingResult{}, normalizeTaggingError(err)
+		return ObjectTaggingResult{}, p.taggingWriteError(err)
 	}
 	if out == nil {
 		return ObjectTaggingResult{}, ErrUnavailable
@@ -108,6 +108,14 @@ func taggingResponseVersion(metadata middleware.Metadata, returned, expected str
 		return "", ErrUnavailable
 	}
 	return returned, nil
+}
+
+func (p *S3) taggingWriteError(err error) error {
+	cause := normalizeTaggingError(err)
+	if definiteS3WriteRejection(err) && !p.ownedReceiptConflict(err) {
+		return errors.Join(ErrWriteRejected, cause)
+	}
+	return cause
 }
 
 func normalizeTaggingError(err error) error {

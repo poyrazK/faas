@@ -150,7 +150,11 @@ type SynthServer struct {
 	// drain lets connections accepted before Stop deliver their requests.
 	drain *wire.HTTPDrain
 	mux   *http.ServeMux
-	calls atomic.Int64
+	// hopPath, when set, is a second socket serving the same handler in
+	// binary HTTP to this node's compute edge (ADR-20261110081523).
+	hopPath string
+	hop     *BinaryHopServer
+	calls   atomic.Int64
 	// internalSvcVerifier (ADR-119) is the per-service
 	// public-key allowlist consulted by the synth-side gate
 	// (synth_internal_only.go). nil = gate disabled; an
@@ -303,29 +307,78 @@ func (s *SynthServer) Start() error {
 	}
 	if ok {
 		s.serve(inherited)
+		s.startBinaryHop()
 		return nil
 	}
-	// Remove any stale socket from a previous run (server crashed, etc).
-	// The platform treats the socket as owned by this process; recreate
-	// is safer than failing on EADDRINUSE.
-	if err := os.Remove(s.socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("gateway synth: remove stale socket: %w", err)
-	}
-	lis, err := net.Listen("unix", s.socketPath)
+	lis, err := listenSynthSocket(s.socketPath)
 	if err != nil {
-		return fmt.Errorf("gateway synth: listen %s: %w", s.socketPath, err)
+		return err
 	}
-	// Mode 0660 group `faas` — only schedd in that group can dial.
-	// The wire package's ListenOrRecreateByName handles chmod in
-	// production; this server keeps the lock tight regardless of who
-	// ran cmd/gatewayd-internal/
-	if err := os.Chmod(s.socketPath, 0o660); err != nil {
-		_ = lis.Close()
-		return fmt.Errorf("gateway synth: chmod: %w", err)
-	}
-	wire.Share(lis) // a hand-off successor serves the same socket (ADR-1736)
 	s.serve(lis)
+	s.startBinaryHop()
 	return nil
+}
+
+// listenSynthSocket listens on path for this process. Any stale socket from
+// a previous run (server crashed, etc.) is removed first: the platform treats
+// the socket as owned by this process, and recreating it is safer than
+// failing on EADDRINUSE. Mode 0660, group `faas`: only that group's daemons
+// can dial, whoever ran cmd/gatewayd-internal. A hand-off successor serves
+// the same socket (ADR-1736).
+func listenSynthSocket(path string) (net.Listener, error) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("gateway synth: remove stale socket: %w", err)
+	}
+	lis, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, fmt.Errorf("gateway synth: listen %s: %w", path, err)
+	}
+	if err := os.Chmod(path, 0o660); err != nil {
+		_ = lis.Close()
+		return nil, fmt.Errorf("gateway synth: chmod: %w", err)
+	}
+	wire.Share(lis)
+	return lis, nil
+}
+
+// WithBinaryHop also serves the handler in binary HTTP on path, for this
+// node's compute edge (ADR-20261110081523). Call before Start.
+func (s *SynthServer) WithBinaryHop(path string) *SynthServer {
+	s.hopPath = path
+	return s
+}
+
+// startBinaryHop serves the binary hop with the HTTP/1.1 listener's handler
+// and limits. A failure only logs: the edge then uses HTTP/1.1. No systemd
+// socket unit holds this socket, so while gatewayd-internal restarts the
+// edge's dials fail and it uses the HTTP/1.1 socket, which one does hold.
+func (s *SynthServer) startBinaryHop() {
+	if s.hopPath == "" {
+		return
+	}
+	lis, ok, err := inheritedSynthListener("unix", s.hopPath)
+	if err == nil && !ok {
+		lis, err = listenSynthSocket(s.hopPath)
+	}
+	if err != nil {
+		s.log.Warn("gateway synth: binary hop not served; the edge uses HTTP/1.1", "socket", s.hopPath, "err", err)
+		return
+	}
+	s.hop = &BinaryHopServer{
+		Handler:           func() http.Handler { return s.srv.Handler },
+		ReadHeaderTimeout: s.srv.ReadHeaderTimeout,
+		ReadTimeout:       s.srv.ReadTimeout,
+		WriteTimeout:      s.srv.WriteTimeout,
+		IdleTimeout:       s.srv.IdleTimeout,
+		MaxHeaderBytes:    s.srv.MaxHeaderBytes,
+		Log:               s.log,
+	}
+	s.log.Info("gateway synth: binary hop listening", "socket", s.hopPath)
+	go func() {
+		if err := s.hop.Serve(lis); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			s.log.Warn("gateway synth: binary hop serve", "err", err)
+		}
+	}()
 }
 
 func (s *SynthServer) serve(lis net.Listener) {
@@ -347,6 +400,14 @@ var inheritedSynthListener = wire.InheritedListener
 func (s *SynthServer) Stop(ctx context.Context) error {
 	if s.srv == nil {
 		return nil
+	}
+	if s.hop != nil {
+		hopDone := make(chan struct{})
+		go func() {
+			defer close(hopDone)
+			_ = s.hop.Shutdown(ctx)
+		}()
+		defer func() { <-hopDone }()
 	}
 	if s.drain != nil {
 		return s.drain.Shutdown(ctx, s.srv)

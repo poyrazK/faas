@@ -319,6 +319,16 @@ service Schedd {
   // Cancel stops the harness, or ends the run before the boot. Events after
   // proceed: booted, output chunks, then one result.
   rpc RunAgent(stream AgentRunRequest) returns (stream AgentRunEvent);
+  // RunSandbox admits one sandbox session on the agent pool and keeps its VM
+  // for the stream's life (ADR-20261027090013 §4). The first client frame is
+  // start; after placed (the reservation is held, nothing booted) schedd
+  // waits for proceed, which agentd sends once it has recorded the session's
+  // placement. Then agentd may freeze or close the session; schedd relays
+  // vmmd's booted, activity, frozen, freeze_refused and thawed events, and
+  // relays a workspace persist's request and done events up and agentd's
+  // grant and recorded answers down. The VM is destroyed and the
+  // reservation released when the stream ends.
+  rpc RunSandbox(stream SandboxRunRequest) returns (stream SandboxRunEvent);
   // ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
   // memory-pressure report: MemAvailable fell to the pressure share of
   // MemTotal while a profile collector was registered. schedd queues one
@@ -836,6 +846,14 @@ message InstanceStatsRow {
   // absent-versus-zero semantics for older nodes and first samples.
   google.protobuf.Int64Value disk_used_bytes = 11;
   google.protobuf.Int64Value disk_capacity_bytes = 12;
+  // departed marks the last row of an instance that has left this schedd's
+  // stats snapshot (it parked or moved to another node), served for
+  // api.MeterFinalNetworkReadingRetention so meterd can checkpoint its final
+  // network counters (ADR-20261103121407). Only its network counters are
+  // meaningful. A live row for the same instance from any node wins over it:
+  // a live-migrated instance keeps its ID and restarts its counters on the new
+  // node (ADR-20261104090000). Older schedds never set it.
+  bool departed = 13;
 }
 
 message ListInstanceStatsRequest {
@@ -1145,6 +1163,11 @@ message InstanceTelemetry {
   google.protobuf.Timestamp quiet_last_pause_started_at = 22;
   google.protobuf.Timestamp quiet_last_pause_ended_at = 23;
   google.protobuf.Int64Value quiet_paused_ns_total = 24;
+  // ADR-20261107122928: vmmd's InstanceStats.idle_ladder_level, the idle
+  // ladder level vmmd holds the instance at (1 quiet-paused, 2 quiet-paused
+  // and quiet for the ladder's freeze delay). 0 when off, running or not on
+  // the ladder.
+  int32 idle_ladder_level = 25;
 }
 
 // ReportCapacityAck is the typed "I consumed all your messages"
@@ -1236,6 +1259,105 @@ message FlowSummary {
 
 // AgentRunRequest is a client frame on RunAgent. Start occurs exactly once,
 // first.
+message SandboxRunRequest {
+  oneof frame {
+    SandboxRunStart start = 1;
+    AgentRunProceed proceed = 2;
+    SandboxRunFreeze freeze = 3;
+    SandboxRunClose close = 4;
+    SandboxRunPersistGrant persist_grant = 5;
+    SandboxRunPersistRecorded persist_recorded = 6;
+  }
+}
+
+// SandboxRunStart is the session's machine, already checked against the
+// account's plan.
+message SandboxRunStart {
+  string sandbox_id = 1;
+  string account_id = 2;
+  string plan = 3;
+  int32 ram_mb = 4;
+  int32 vcpu = 5;
+  int32 cpu_millicores = 6;
+  // network_mode is "none" or "registries" (ADR-20261027090013 §6).
+  string network_mode = 7;
+  // workspace_key is the persisted workspace the session starts from
+  // (ADR-20261027090013 step 7).
+  string workspace_key = 8;
+  // image_key is the seller image's full-rootfs artifact (the image-run
+  // cache's jobs/<job>.ext4) the session boots as drive1 in place of the
+  // platform sandbox layer; empty for a preset session.
+  string image_key = 9;
+  // start_cmd, ready_cmd and ready_timeout_ms are a template session's
+  // commands (ADR-20261027090013 step 10): guest-init runs the start command
+  // at boot and serves once the ready command exits 0.
+  string start_cmd = 10;
+  string ready_cmd = 11;
+  int64 ready_timeout_ms = 12;
+}
+
+message SandboxRunFreeze {}
+
+message SandboxRunClose {}
+
+message SandboxRunEvent {
+  oneof frame {
+    AgentRunPlaced placed = 1;
+    AgentRunBooted booted = 2;
+    SandboxRunActivity activity = 3;
+    SandboxRunFrozen frozen = 4;
+    SandboxRunFreezeRefused freeze_refused = 5;
+    SandboxRunThawed thawed = 6;
+    SandboxRunPersistRequested persist_requested = 7;
+    SandboxRunPersistDone persist_done = 8;
+    // usage relays vmmd's cumulative usage of the session VM.
+    AgentRunUsage usage = 9;
+  }
+}
+
+// SandboxRunActivity is vmmd's report of the session's calls.
+message SandboxRunActivity {
+  int32 calls_in_flight = 1;
+  int64 last_call_ended_unix_ms = 2;
+}
+
+message SandboxRunFrozen {}
+
+message SandboxRunFreezeRefused {
+  string reason = 1;
+}
+
+message SandboxRunThawed {}
+
+// The workspace persist exchange (ADR-20261027090013 step 7), relayed
+// between vmmd and agentd: see vmmd's RunSandboxPersist* messages.
+message SandboxRunPersistRequested {
+  string request_id = 1;
+}
+
+message SandboxRunPersistGrant {
+  string request_id = 1;
+  string snapshot_id = 2;
+  string storage_key = 3;
+  int64 max_bytes = 4;
+  int64 expires_at_unix_ms = 5;
+  // refusal is an RFC 7807 problem as JSON.
+  bytes refusal = 6;
+}
+
+message SandboxRunPersistDone {
+  string request_id = 1;
+  string snapshot_id = 2;
+  int64 bytes = 3;
+  string sha256 = 4;
+  bool failed = 5;
+}
+
+message SandboxRunPersistRecorded {
+  string request_id = 1;
+  bool recorded = 2;
+}
+
 message AgentRunRequest {
   oneof frame {
     AgentRunStart start = 1;
@@ -1267,6 +1389,11 @@ message AgentRunStart {
   // (ADR-20261027090012 §1). false (a version that opted out, or an older
   // agentd) keeps the run's VM running while it waits on the model.
   bool pause_during_model_calls = 10;
+  // history_peak_private_mb is the agent version's p95 private memory peak
+  // over its recent measured runs (ADR-20261027090015 §3), 0 until the
+  // version has AgentSizeHistoryMinRuns of them. schedd's measured charge
+  // books and charges the run from it; an older agentd sends 0.
+  int32 history_peak_private_mb = 11;
 }
 
 // AgentRunRelay is placement data for the run's relay assertion (ADR-20261027090010
@@ -1328,6 +1455,8 @@ message AgentRunUsage {
   int64 billable_mb_ms = 8;
   int64 peak_private_mb = 9;
   bool cold_boot = 10;
+  int64 frozen_ms = 11;
+  bool final = 12;
 }
 
 message ReportMemoryPressureRequest {
@@ -1464,6 +1593,16 @@ message DatabaseRuntime {
   // The database's current or last in-place major upgrade; absent if it
   // never had one.
   DatabaseUpgrade upgrade = 21;
+  // Complete persisted major history, including an explicitly empty history.
+  // Older schedulers omit the completeness marker; an upgraded source then
+  // cannot safely resolve historical restore specifications through them.
+  repeated DatabaseMajorSpan major_history = 22;
+  bool major_history_complete = 23;
+}
+
+message DatabaseMajorSpan {
+  int32 postgres_major = 1;
+  google.protobuf.Timestamp until = 2;
 }
 
 message UpgradeDatabaseRequest {

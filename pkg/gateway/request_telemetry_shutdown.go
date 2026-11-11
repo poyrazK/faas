@@ -57,6 +57,8 @@ func (p *requestTelemetryPublisher) stopLocked(ctx context.Context) {
 }
 
 func (p *requestTelemetryPublisher) drainFinal() {
+	// The HTTP drain is over: ship every buffered analytics minute first.
+	p.recorder.analytics.tick(p.finalCtx, true)
 	if p.minutes != nil {
 		p.drainFinalMinutes()
 		return
@@ -97,6 +99,13 @@ func (p *requestTelemetryPublisher) dropPending(message string) {
 	}
 	count := requestTelemetryCount(p.pending)
 	p.log.Warn(message, slog.Int("batch_size", len(p.pending)), slog.Int64("request_count", count))
-	p.recordDroppedRows(p.pending)
+	if p.receiverAnswered {
+		// The receiver took other rows of this batch and kept refusing these:
+		// the loss belongs to their apps (for example an ingest cap).
+		p.recordDroppedRows(p.pending)
+	} else {
+		p.recordPlatformDroppedRows(p.pending)
+	}
 	p.pending = nil
+	p.receiverAnswered = false
 }

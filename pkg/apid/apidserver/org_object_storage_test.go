@@ -207,6 +207,14 @@ func orgObjectStorageJourney(t *testing.T, server *apidserver.Server, store stat
 		// admins' (ManageObjectStorage), whoever created the app.
 		{"PUT", "/v1/apps/" + app.Slug + "/buckets/" + bucket.ID + "/encryption", nil, developerHeaders, 403},
 		{"POST", "/v1/apps/" + app.Slug + "/buckets/" + bucket.ID + "/signed-url", nil, developerHeaders, 403},
+		// Object storage audit OS-4: every reviewed storage route is also
+		// served under the organization, with the same role checks. These
+		// answered 404 when only 14 of them were mirrored.
+		{"GET", path + "/write-receipts", nil, viewerHeaders, 200},
+		{"GET", path + "/versioning", nil, viewerHeaders, 200},
+		{"PUT", path + "/encryption", nil, developerHeaders, 403},
+		{"POST", path + "/signed-url", nil, developerHeaders, 403},
+		{"GET", strings.Replace(path, org.Slug, "another-company", 1) + "/versioning", nil, adminHeaders, 404},
 	} {
 		if rec := send(tc.method, tc.path, tc.body, tc.headers); rec.Code != tc.want {
 			t.Fatalf("%s %s: %d %s; want %d", tc.method, tc.path, rec.Code, rec.Body, tc.want)

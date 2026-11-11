@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -70,7 +71,7 @@ func newResolvedEgressHook(clients vmmdClientLookup, localNode *localNodeID, dat
 				return fmt.Errorf("local vmmd %s unavailable for DNS grant", nodeID)
 			}
 			defer func() { _ = lease.Close() }()
-			return allowResolvedEgress(ctx, client, host, owner, addrs, ttl, databasePort)
+			return allowResolvedEgress(ctx, client, host, name, owner, addrs, ttl, databasePort)
 		}, nil
 	}
 }
@@ -221,16 +222,27 @@ func (l *localNodeID) Forget() {
 	l.mu.Unlock()
 }
 
-func allowResolvedEgress(ctx context.Context, cli allowResolvedEgressClient, host string, owner resolvedEgressOwner, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
+func allowResolvedEgress(ctx context.Context, cli allowResolvedEgressClient, host, name string, owner resolvedEgressOwner, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
 	if owner.instance == "" || owner.generation == "" {
 		return fmt.Errorf("DNS grant requires its original network owner")
 	}
-	req := &vmmdpb.AllowResolvedEgressRequest{SourceIp: host, InstanceId: owner.instance, NetworkGeneration: owner.generation, TtlSeconds: uint32(min(ttl/time.Second, 1<<31)), DatabasePort: uint32(databasePort)}
+	req := &vmmdpb.AllowResolvedEgressRequest{SourceIp: host, Name: name, InstanceId: owner.instance, NetworkGeneration: owner.generation, TtlSeconds: uint32(min(ttl/time.Second, 1<<31)), DatabasePort: uint32(databasePort)}
 	for _, a := range addrs {
 		req.Addresses = append(req.Addresses, a.String())
 	}
-	if _, err := cli.AllowResolvedEgress(ctx, req); err != nil && status.Code(err) != codes.Unimplemented {
+	ack, err := cli.AllowResolvedEgress(ctx, req)
+	if status.Code(err) == codes.Unimplemented {
+		return nil
+	}
+	if err != nil {
 		return err
+	}
+	if !ack.GetMatched() {
+		return fmt.Errorf("%w: instance %s", errResolvedEgressRefused, owner.instance)
 	}
 	return nil
 }
+
+// errResolvedEgressRefused: vmmd refused the grant, so the guest's
+// connections to the answer are dropped. vmmd logs the check that refused it.
+var errResolvedEgressRefused = errors.New("vmmd refused the DNS grant to the query's network owner")

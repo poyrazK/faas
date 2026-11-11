@@ -1382,6 +1382,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		captureActions = newTestActionCollector(ctx, client, &receipt, names)
 		defer captureActions()
 	}
+	internalServices := scenarioInternalServices(manifestDir, scenario)
 	for _, workload := range workloads {
 		tcpSpec := scenario.Services[workload.name]
 		if workload.name == scenario.Project {
@@ -1397,6 +1398,10 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		}
 		if err := configureTestWorkloadAccess(ctx, client, workload.session.App.Slug, mode); err != nil {
 			receipt.Error = fmt.Sprintf("configure test workload %s access: %v", workload.name, err)
+			return
+		}
+		if err := configureTestWorkloadVisibility(ctx, client, workload.session.App.Slug, workload.name != scenario.Project && internalServices[workload.name]); err != nil {
+			receipt.Error = fmt.Sprintf("configure test workload %s visibility: %v", workload.name, err)
 			return
 		}
 	}
@@ -2314,7 +2319,7 @@ func prepareTestProfile(ctx context.Context, client *Client, slug, profile strin
 		if response.WakeID == "" {
 			return errors.New("wake response omitted wake_id")
 		}
-		_, err = waitForAppWake(ctx, client, slug, response.WakeID, 2*time.Minute, 250*time.Millisecond)
+		_, err = waitForAppWakeOrInstance(ctx, client, slug, response.WakeID, response.InstanceID, 2*time.Minute, 250*time.Millisecond)
 		return err
 	case "cold":
 		return client.ParkPreviewFresh(ctx, slug)

@@ -276,7 +276,7 @@ func (l *NodeLedger) FrozenToYield(needMB, limit int) (nodeID string, ids []stri
 			if ceiling <= 0 {
 				ceiling = l.ceilingForNode_locked(node, api.Limits{})
 			}
-			used, basis := l.admissionUsed_locked(node, r.residentRAM, r.frozenRAM, ceiling)
+			used, basis := l.admissionUsed_locked(node, r.residentRAM, r.frozenRAM, r.agentDiscountMB, ceiling)
 			if basis != "measured" && basis != "resident" {
 				continue // the reservations' cap binds, and frozen VMs are not in it
 			}
@@ -348,6 +348,6 @@ func (l *NodeLedger) FrozenCompressNeed(nodeID string) (usedMB, ceilingMB int, o
 	if ceiling <= 0 {
 		ceiling = l.ceilingForNode_locked(nodeID, api.Limits{})
 	}
-	used, basis := l.admissionUsed_locked(nodeID, node.residentRAM, node.frozenRAM, ceiling)
+	used, basis := l.admissionUsed_locked(nodeID, node.residentRAM, node.frozenRAM, node.agentDiscountMB, ceiling)
 	return used, ceiling, basis == "measured" || basis == "resident"
 }

@@ -96,11 +96,11 @@ def sync_detailed(
     plaintext.
 
     Args:
-        body (CreateAccountReleaseWebhookRequest): Subscribe to account release outcomes and
-            environment GitOps status transitions. Example: {'target_url':
-            'https://example.com/releases', 'webhook_secret': 'replace-with-random-secret',
-            'event_filter': ['deployment.live', 'deployment.failed'], 'retry_policy': 'default',
-            'delivery_format': 'cloudevents', 'enabled': True}.
+        body (CreateAccountReleaseWebhookRequest): Subscribe to account release outcomes,
+            environment GitOps status transitions, and agent approval requests and decisions. Example:
+            {'target_url': 'https://example.com/releases', 'webhook_secret': 'replace-with-random-
+            secret', 'event_filter': ['deployment.live', 'deployment.failed'], 'retry_policy':
+            'default', 'delivery_format': 'cloudevents', 'enabled': True}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -132,11 +132,11 @@ def sync(
     plaintext.
 
     Args:
-        body (CreateAccountReleaseWebhookRequest): Subscribe to account release outcomes and
-            environment GitOps status transitions. Example: {'target_url':
-            'https://example.com/releases', 'webhook_secret': 'replace-with-random-secret',
-            'event_filter': ['deployment.live', 'deployment.failed'], 'retry_policy': 'default',
-            'delivery_format': 'cloudevents', 'enabled': True}.
+        body (CreateAccountReleaseWebhookRequest): Subscribe to account release outcomes,
+            environment GitOps status transitions, and agent approval requests and decisions. Example:
+            {'target_url': 'https://example.com/releases', 'webhook_secret': 'replace-with-random-
+            secret', 'event_filter': ['deployment.live', 'deployment.failed'], 'retry_policy':
+            'default', 'delivery_format': 'cloudevents', 'enabled': True}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -163,11 +163,11 @@ async def asyncio_detailed(
     plaintext.
 
     Args:
-        body (CreateAccountReleaseWebhookRequest): Subscribe to account release outcomes and
-            environment GitOps status transitions. Example: {'target_url':
-            'https://example.com/releases', 'webhook_secret': 'replace-with-random-secret',
-            'event_filter': ['deployment.live', 'deployment.failed'], 'retry_policy': 'default',
-            'delivery_format': 'cloudevents', 'enabled': True}.
+        body (CreateAccountReleaseWebhookRequest): Subscribe to account release outcomes,
+            environment GitOps status transitions, and agent approval requests and decisions. Example:
+            {'target_url': 'https://example.com/releases', 'webhook_secret': 'replace-with-random-
+            secret', 'event_filter': ['deployment.live', 'deployment.failed'], 'retry_policy':
+            'default', 'delivery_format': 'cloudevents', 'enabled': True}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -197,11 +197,11 @@ async def asyncio(
     plaintext.
 
     Args:
-        body (CreateAccountReleaseWebhookRequest): Subscribe to account release outcomes and
-            environment GitOps status transitions. Example: {'target_url':
-            'https://example.com/releases', 'webhook_secret': 'replace-with-random-secret',
-            'event_filter': ['deployment.live', 'deployment.failed'], 'retry_policy': 'default',
-            'delivery_format': 'cloudevents', 'enabled': True}.
+        body (CreateAccountReleaseWebhookRequest): Subscribe to account release outcomes,
+            environment GitOps status transitions, and agent approval requests and decisions. Example:
+            {'target_url': 'https://example.com/releases', 'webhook_secret': 'replace-with-random-
+            secret', 'event_filter': ['deployment.live', 'deployment.failed'], 'retry_policy':
+            'default', 'delivery_format': 'cloudevents', 'enabled': True}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

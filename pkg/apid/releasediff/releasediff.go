@@ -60,7 +60,50 @@ func Compare(in Inputs) api.ReleaseDiff {
 	}
 	out.Database.Changed = out.Database.FromReleaseCommand != out.Database.ToReleaseCommand
 	out.Summary = Summary(out)
+	if clause := unknownRuntimeClause(*in.From, in.To); clause != "" {
+		if out.Summary == "no changes found" {
+			out.Summary = "no changes found; " + clause
+		} else {
+			out.Summary += "; " + clause
+		}
+	}
 	return out
+}
+
+// buildEvidenceMissing reports a deployment whose build made no artifact
+// yet (failed, cancelled or still running), so it has no recorded runtime
+// base. imaged stamps the base with the artifact; an image deploy carries its
+// digest instead.
+func buildEvidenceMissing(d state.Deployment) bool {
+	return d.RuntimeBase == "" && d.RootfsPath == "" && d.ImageDigest == ""
+}
+
+// unknownRuntimeClause names a runtime base the diff cannot compare because
+// one side has no build evidence. A failed build read as "runtime_base:
+// node24 → empty", one runtime setting changed, though nothing was asked to
+// change (CLI journey 2026-11-05, #6638). It stays out of Runtime and its
+// count; the summary says it is unknown and why.
+func unknownRuntimeClause(from, to state.Deployment) string {
+	if from.RuntimeBase == to.RuntimeBase {
+		return ""
+	}
+	var missing []string
+	for _, d := range []state.Deployment{from, to} {
+		if buildEvidenceMissing(d) {
+			missing = append(missing, releaseName(d))
+		}
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	return "runtime base unknown: " + strings.Join(missing, " and ") + " made no build artifact"
+}
+
+func releaseName(d state.Deployment) string {
+	if d.Revision > 0 {
+		return "v" + strconv.Itoa(d.Revision)
+	}
+	return "deployment " + d.ID
 }
 
 func side(d state.Deployment) api.ReleaseDiffSide {
@@ -198,7 +241,11 @@ func RuntimeChanges(from, to state.Deployment) []api.ReleaseDiffField {
 	}
 	add("kind", string(from.Kind), string(to.Kind))
 	add("handler", from.Handler, to.Handler)
-	add("runtime_base", from.RuntimeBase, to.RuntimeBase)
+	// A side with no build artifact has no runtime base to compare; Compare
+	// reports it as unknown instead (#6638).
+	if !buildEvidenceMissing(from) && !buildEvidenceMissing(to) {
+		add("runtime_base", from.RuntimeBase, to.RuntimeBase)
+	}
 	add("port", portText(from.OverridePort), portText(to.OverridePort))
 	add("entrypoint", strings.Join(from.OverrideEntrypoint, " "), strings.Join(to.OverrideEntrypoint, " "))
 	add("command", strings.Join(from.OverrideCmd, " "), strings.Join(to.OverrideCmd, " "))

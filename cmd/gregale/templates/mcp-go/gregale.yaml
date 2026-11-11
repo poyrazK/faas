@@ -1,4 +1,5 @@
+# The Go build compiles this package and runs the binary; the runtime has no
+# Go toolchain, so hosting.start must not be `go run .` (Hunt 32 H32-75).
 hosting:
-  start: go run .
   port: 8080
   health: /healthz

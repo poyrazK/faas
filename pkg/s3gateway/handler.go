@@ -356,11 +356,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
 		return
 	}
+	if presigned && applyPresignedObjectHeaders(r) != nil {
+		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "The signed object request fields are invalid or ambiguous.", r.URL.Path, requestID)
+		return
+	}
 	if h.accountLimiter != nil && !h.accountLimiter.Allow(bucket) {
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.", r.URL.Path, requestID)
 		return
 	}
 	if !h.applyBucketCORS(w, r, bucket, requestID) || !h.boundURLRequest(w, r, credential, bucket, requestID) {
+		return
+	}
+	// A key-scoped binding is checked before every route (ADR-20261106114500).
+	if !keyScopeAllows(r, credential, bucket) {
+		writeS3Error(w, http.StatusForbidden, "AccessDenied", "Access Denied.", r.URL.Path, requestID)
 		return
 	}
 	if h.routeWriteReceipt(w, r, requestContext{requestID: requestID, credential: credential, bucket: bucket, signature: parsed}) {
@@ -720,7 +729,10 @@ const bucketSettingsPermission = "bucket_settings"
 
 func (h *Handler) can(credential state.ObjectS3Credential, permission string) bool {
 	if permission == bucketSettingsPermission {
-		return credential.Permission == state.ObjectBucketPermissionReadWrite && credential.ManagedAppID == ""
+		// A rotation stage keeps a compute binding's previous key without
+		// the binding's app ID; it is still a compute key.
+		return credential.Permission == state.ObjectBucketPermissionReadWrite && credential.ManagedAppID == "" &&
+			credential.RotationParentID == "" && credential.KeyPrefix == ""
 	}
 	return credential.Permission == permission || credential.Permission == state.ObjectBucketPermissionReadWrite
 }
@@ -1200,6 +1212,9 @@ const (
 
 func (h *Handler) providerError(w http.ResponseWriter, r *http.Request, req requestContext, err error, key string) {
 	resource := r.URL.Path
+	if objectLockPlanError(w, r, req, err) {
+		return
+	}
 	if errors.Is(err, objectstorage.ErrPreconditionFailed) {
 		writeS3Error(w, http.StatusPreconditionFailed, "PreconditionFailed", "The destination does not satisfy the write condition.", resource, req.requestID)
 		return
@@ -1302,6 +1317,7 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 	if response.StatusCode == http.StatusNotModified || response.StatusCode == http.StatusPreconditionFailed {
 		copyObjectHeaders(w.Header(), response.Header)
 		setURLDownloadHeaders(w.Header(), r, req)
+		sandboxObjectResponse(w.Header())
 		keepEdgeFromRewritingHTML(w.Header(), h.registry.Transfer.Profile)
 		w.Header().Del("Content-Length")
 		w.WriteHeader(response.StatusCode)
@@ -1330,6 +1346,7 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 	}
 	copyObjectHeaders(w.Header(), response.Header)
 	setURLDownloadHeaders(w.Header(), r, req)
+	sandboxObjectResponse(w.Header())
 	keepEdgeFromRewritingHTML(w.Header(), h.registry.Transfer.Profile)
 	writeEncryptionHeaders(w.Header(), encryption)
 	w.WriteHeader(response.StatusCode)

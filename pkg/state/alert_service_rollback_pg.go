@@ -28,7 +28,7 @@ func (s *PgStore) requestServiceAlertRollbackTx(ctx context.Context, tx pgx.Tx, 
 	if !found || previous.id != r.PredecessorDeploymentID {
 		return r, ErrAlertRollbackChanged
 	}
-	r, target, err = queueAlertServiceRollback(r, target)
+	r, target, err = queueAlertServiceRollback(ctx, r, target)
 	if err != nil {
 		return r, err
 	}

@@ -61,3 +61,44 @@ func TestPreviewGatesFollowTheReleaseDecision(t *testing.T) {
 		t.Fatal("the platform flag must override the environment gate")
 	}
 }
+
+// A preview released to the account but missing on a realtime node answers
+// as off (ADR 20261021080640, amendment of 2026-11-09): apid must not issue
+// tickets or accept access changes the nodes would not honor.
+func TestPreviewGatesNeedEveryNode(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	s := &Service{PreviewReleased: func(*http.Request, state.Account, string, bool) bool { return true }}
+	s.NodesServePreview = func(name string) bool { return name != realtime.NodePreviewTickets }
+	if s.previewOn(r, state.Account{}, platformflags.RealtimeTickets, false) {
+		t.Fatal("tickets released but not served by the nodes must be off")
+	}
+	if !s.previewOn(r, state.Account{}, platformflags.RealtimeAccess, false) {
+		t.Fatal("access served by the nodes must follow the release")
+	}
+	s.PreviewReleased = func(*http.Request, state.Account, string, bool) bool { return false }
+	if s.previewOn(r, state.Account{}, platformflags.RealtimeAccess, true) {
+		t.Fatal("the nodes never release a preview the flag keeps off")
+	}
+}
+
+func TestNodesServePreviewReadsFreshReports(t *testing.T) {
+	o := &leasedRealtimeOwner{}
+	if !o.NodesServePreview(realtime.NodePreviewAccess) {
+		t.Fatal("no reports must leave the decision to the flags")
+	}
+	o.endpointSync.recordPreviews("old-node", nil)
+	if !o.NodesServePreview(realtime.NodePreviewAccess) {
+		t.Fatal("a node that predates the report must not count")
+	}
+	o.endpointSync.recordPreviews("node-a", []string{realtime.NodePreviewAccess, realtime.NodePreviewTickets})
+	o.endpointSync.recordPreviews("node-b", []string{realtime.NodePreviewAccess})
+	if !o.NodesServePreview(realtime.NodePreviewAccess) || o.NodesServePreview(realtime.NodePreviewTickets) {
+		t.Fatal("a preview is served only when every reporting node lists it")
+	}
+	o.endpointSync.mu.Lock()
+	o.endpointSync.previewsAt["node-b"] = o.endpointSync.previewsAt["node-b"].Add(-endpointInventoryFresh)
+	o.endpointSync.mu.Unlock()
+	if !o.NodesServePreview(realtime.NodePreviewTickets) {
+		t.Fatal("a node silent past the inventory window must not count")
+	}
+}

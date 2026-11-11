@@ -556,6 +556,12 @@ def call_tool(request_id, params, authenticator, granted_scopes, protocol=CURREN
     entry = MCP_CATALOG.get("tool", name)
     if entry is None:
         return tool_error(request_id, "unknown tool")
+    validator = entry.get("input_validator")
+    if validator is not None:
+        try:
+            validator.validate(arguments)
+        except Exception:
+            return tool_error(request_id, "tool arguments do not match inputSchema")
     metadata = params.get("_meta", {})
     client_capabilities = metadata.get(CLIENT_CAPABILITIES_META_KEY, {}) if isinstance(metadata, dict) else {}
     extensions = client_capabilities.get("extensions", {}) if isinstance(client_capabilities, dict) else {}
@@ -564,11 +570,11 @@ def call_tool(request_id, params, authenticator, granted_scopes, protocol=CURREN
             and task_runtime.can_create(name)):
         if name == "build_report" and arguments.get("request_approval") is True:
             elicitation = client_capabilities.get("elicitation") if isinstance(client_capabilities, dict) else None
-            form_capable = isinstance(elicitation, dict) and (bool(elicitation.get("form")) or not elicitation)
+            form_capable = isinstance(elicitation, dict) and (isinstance(elicitation.get("form"), dict) or not elicitation)
             if not form_capable:
                 return tool_error(request_id, "request_approval requires client support for elicitation form requests")
         try:
-            return rpc_response(request_id, task_runtime.create(name, arguments, granted_scopes, client_capabilities))
+            return rpc_response(request_id, task_runtime.create(name, arguments, granted_scopes, client_capabilities, output_schema=entry["definition"].get("outputSchema")))
         except ValueError:
             return tool_error(request_id, "invalid task arguments or task queue capacity reached")
         except Exception:
@@ -581,6 +587,16 @@ def call_tool(request_id, params, authenticator, granted_scopes, protocol=CURREN
         if (not isinstance(result, dict) or not isinstance(result.get("content"), list)
                 or not serializable_json(result)):
             return tool_error(request_id, "tool handler returned an invalid result")
+        validator = entry.get("output_validator")
+        if (validator is not None and result.get("isError") is not True
+                and result.get("resultType") != "input_required"):
+            try:
+                output = result.get("structuredContent")
+                if not isinstance(output, dict):
+                    raise ValueError("outputSchema requires structuredContent")
+                validator.validate(output)
+            except Exception:
+                return tool_error(request_id, "tool output does not match outputSchema")
         return rpc_response(request_id, result)
     if name == "greet":
         value = arguments.get("name")
@@ -862,6 +878,10 @@ class MCPHandler(BaseHTTPRequestHandler):
             if self._protocol_observation:self._protocol_observation.finish()
 
     def _handle_post(self):
+        # An early rejection must not leave unread body bytes on a reusable
+        # connection. Successful framing below restores normal keep-alive.
+        close_after_body = self.close_connection
+        self.close_connection = True
         if self.server.draining.is_set():
             self.send_json(503, {"error": "mcp_server_draining"})
             return
@@ -870,6 +890,7 @@ class MCPHandler(BaseHTTPRequestHandler):
         if urlsplit(self.path).path != self.server.app_config["endpoint"]:
             self.send_response(404)
             self.send_header("Content-Length", "0")
+            self.send_header("Connection", "close")
             self.end_headers()
             return
         health = runtime_catalog_health(
@@ -895,6 +916,7 @@ class MCPHandler(BaseHTTPRequestHandler):
             self.close_connection = True
             self.send_text(error.status, str(error))
             return
+        self.close_connection = close_after_body
         try:
             message = json.loads(
                 body,
@@ -1493,6 +1515,8 @@ class MCPHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
+        if self.close_connection:
+            self.send_header("Connection", "close")
         for name, value in (extra_headers or {}).items():
             self.send_header(name, value)
         self.end_headers()

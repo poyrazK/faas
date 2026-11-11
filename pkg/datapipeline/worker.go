@@ -137,14 +137,26 @@ func runWorkerQueues(ctx context.Context, queues ...workerQueue) error {
 			group.Go(func() error {
 				timer := time.NewTimer(api.DataPipelineWorkerIdleInterval)
 				defer timer.Stop()
+				retry := api.DataPipelineWorkerIdleInterval
 				for {
 					if err := running.Err(); err != nil {
 						return err
 					}
 					claimed, err := queue.next(running)
 					if err != nil && !errors.Is(err, ErrConflict) {
-						return err
+						if !errors.Is(err, ErrUnavailable) {
+							return err
+						}
+						timer.Reset(retry)
+						retry = min(retry*2, api.DataPipelineCatalogRetryMax)
+						select {
+						case <-running.Done():
+							return running.Err()
+						case <-timer.C:
+						}
+						continue
 					}
+					retry = api.DataPipelineWorkerIdleInterval
 					if claimed {
 						continue
 					}

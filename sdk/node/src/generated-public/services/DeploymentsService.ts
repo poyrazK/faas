@@ -28,8 +28,10 @@ import type { DeploymentSummaryResponse } from '../models/DeploymentSummaryRespo
 import type { LatestDeploymentsByAppResponse } from '../models/LatestDeploymentsByAppResponse.js';
 import type { ListDeploymentAuditResponse } from '../models/ListDeploymentAuditResponse.js';
 import type { Problem } from '../models/Problem.js';
+import type { RecordReleaseOutcomeCheckRequest } from '../models/RecordReleaseOutcomeCheckRequest.js';
 import type { RecoverRolloutRequest } from '../models/RecoverRolloutRequest.js';
 import type { ReleaseDiff } from '../models/ReleaseDiff.js';
+import type { ReleaseOutcomeCheck } from '../models/ReleaseOutcomeCheck.js';
 import type { ReleaseTimeline } from '../models/ReleaseTimeline.js';
 import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js';
 import type { RollbackOperation } from '../models/RollbackOperation.js';
@@ -611,6 +613,9 @@ export class DeploymentsService {
        * Startup readiness for this developer-source deployment, encoded as JSON with one HTTP path or standard gRPC health selector.
        */
       healthcheck?: string;
+      /**
+       * Build directory within the developer-source archive. Empty or omitted inherits the app's configured root; '.' selects the archive root.
+       */
       source_root?: string;
       /**
        * Named environment scope read by the deployment; omitted uses default.
@@ -737,7 +742,9 @@ export class DeploymentsService {
         \`profile_investigation_limit\`.
         `,
         503: `The GitHub integration unreachable or source-ref tarball fetch failed
-        (code: source_ref_unavailable). Retry in ~30s.
+        (code: source_ref_unavailable). Retry in ~30s. A PR preview whose
+        managed PostgreSQL database is still provisioning answers
+        code: preview_database_provisioning; retry after Retry-After.
         `,
       },
     });
@@ -929,7 +936,7 @@ export class DeploymentsService {
    * completion also waits for the existing gateway ACK and drain handoff.
    * Stored binding enforcement requires this exact workflow.
    *
-   * @returns DeploymentResponse The selected deployment and, for an exact checked request, its accepted durable rollback operation. Acceptance does not imply completion.
+   * @returns DeploymentResponse The selected deployment and, for an exact checked request or service rollback, its accepted durable rollback operation. Acceptance does not imply completion.
    * @throws ApiError
    */
   public static rollbackApp({
@@ -949,7 +956,7 @@ export class DeploymentsService {
      */
     idempotencyKey?: string,
     /**
-     * Persisted opaque identity for an exact default-scope request rollback without alert attribution or release acknowledgement. The accepted operation UUID is this hexadecimal identity. Reuse returns 409 rollback_attempt_accepted or rollback_attempt_conflict without starting another operation; GET the original operation separately.
+     * Persisted opaque identity for an exact default-scope request or service rollback without alert attribution, database restoration or release acknowledgement. The accepted operation UUID is this hexadecimal identity. Reuse returns 409 rollback_attempt_accepted or rollback_attempt_conflict without starting another operation; GET the original operation separately.
      */
     rollbackAttemptId?: string,
     requestBody?: RollbackRequest,
@@ -1630,6 +1637,44 @@ export class DeploymentsService {
         `,
         500: `Application adoption promotion could not finish its observation read or traffic transaction.`,
         503: `Strict promotion cannot share a transaction fence across its binding catalogs and traffic backend.`,
+      },
+    });
+  }
+  /**
+   * Record a database check after a release command with an unknown outcome.
+   * A release command that started but ended without an exit code (its worker was lost, it timed out or it was cancelled while running) may have changed the database partly. Until a person checks the database and records it here, or a later release command of the same scope succeeds, the app's next release fails with `release_outcome_uncertain` before its own command runs. 409 when this release's command never ran, ended with a known exit, or was checked already.
+   * @returns ReleaseOutcomeCheck The recorded check.
+   * @throws ApiError
+   */
+  public static recordReleaseOutcomeCheck({
+    id,
+    requestBody,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: RecordReleaseOutcomeCheckRequest,
+  }): CancelablePromise<ReleaseOutcomeCheck> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/deployments/{id}/release-outcome',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
       },
     });
   }

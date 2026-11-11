@@ -102,10 +102,10 @@ has not finished without a failed account for more than 45 minutes. The sweep
 runs after every usage sweep, while `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` is
 `shadow` or `on`.
 
-Running databases keep the Neon quotas last written, so a stalled sweep neither
-lifts a suspension nor imposes a new one. Customers who upgraded, or who reached
-a new month, stay suspended until a sweep succeeds. The 1st-of-month reset is
-Neon's own and does not need apid.
+Running databases keep the Neon quotas and holds last written, so a stalled
+sweep neither lifts a suspension nor imposes a new one. Customers who upgraded,
+or who reached a new month, stay suspended until a sweep succeeds: Neon resets
+its counters on the 1st by itself, but only a sweep releases a hold.
 
 1. If `FaasManagedPostgresUsageCollectionStale` is also firing, recover the
    usage collector first; the cap sweep runs on its goroutine.
@@ -115,13 +115,23 @@ Neon's own and does not need apid.
    - `period_mismatch` means Neon's consumption period does not start at the
      UTC month. Those accounts are skipped rather than capped; compare
      `consumption_period_start` on one project before changing anything.
-3. `apid_managed_postgres_cap_quota_decisions_total{outcome}` shows whether
-   writes are happening (`applied`) or only computed (`shadowed`).
+3. `apid_managed_postgres_cap_quota_decisions_total{outcome}` and
+   `apid_managed_postgres_cap_hold_decisions_total{outcome}` show whether
+   writes are happening (`applied`, `held`, `released`) or only computed
+   (`shadowed`). `apid_managed_postgres_cap_held_databases` counts the
+   databases held now.
 
-To lift one customer's suspension by hand during an outage, raise that project's
-`settings.quota.compute_time_seconds` in the Neon console. Never set it to 0,
-which means unlimited. The next successful sweep rewrites it from the ledger.
-Switching enforcement to `off` stops new writes but leaves every quota in place.
+The sweep stops a database by holding its compute: it disables the branch's
+read-write endpoint, as the delete grace period does (ADR-20261025094915
+amendment 2026-11-05). Holds outlive apid, and Neon's month reset does not
+lift them, so customers stay held until a sweep succeeds. To lift one
+customer's suspension by hand during an outage, enable that database's
+endpoint in the Neon console (Computes, Edit, untick "Disabled"), and raise
+the project's `settings.quota.compute_time_seconds` if Neon has also tripped
+the backstop quota. Never set the quota to 0, which means unlimited. Never
+enable the endpoint of a database in its delete grace period (`deleting`).
+The next successful sweep rewrites both. Switching enforcement to `off`
+stops new writes but leaves every quota and hold in place.
 
 ## Production approval and fleet ceilings
 
@@ -141,6 +151,9 @@ To renew:
 3. Set a new window: `FAAS_MANAGED_POSTGRES_PRODUCTION_APPROVED_AT` (now) and
    `FAAS_MANAGED_POSTGRES_PRODUCTION_UNTIL` (at most 90 days later).
 4. Restart apid.
+
+`FaasManagedPostgresProductionApprovalImminent` pages when the approval ends
+within 48 hours. Renew as above now.
 
 `FaasManagedPostgresProductionApprovalExpired` pages because provisioning is
 already closed. Renew as above.

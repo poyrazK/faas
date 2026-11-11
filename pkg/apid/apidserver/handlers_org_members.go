@@ -34,6 +34,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/authz"
+	mailpkg "github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -72,6 +73,13 @@ func (s *server) listOrgMembers(w http.ResponseWriter, r *http.Request, _ state.
 		return
 	}
 	out := api.ListMembersResponse{Members: make([]api.OrgMemberResponse, 0, len(rows))}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.RemovedAt == nil {
+			ids = append(ids, row.AccountID)
+		}
+	}
+	names := s.displayNames(r.Context(), ids)
 	for _, row := range rows {
 		if row.RemovedAt != nil {
 			continue // Filter at the API boundary; removed rows stay in DB for audit.
@@ -82,7 +90,9 @@ func (s *server) listOrgMembers(w http.ResponseWriter, r *http.Request, _ state.
 		// that JOINs org_memberships.account_id = accounts.id in
 		// a single query. Acceptable for PR 5 (small orgs); flag
 		// here so PR 6 picks it up alongside the api_keys cut-over.
-		out.Members = append(out.Members, api.OrgMemberResponseFromRow(s.memberToRow(r.Context(), row)))
+		member := s.memberToRow(r.Context(), row)
+		member.DisplayName = names[row.AccountID]
+		out.Members = append(out.Members, api.OrgMemberResponseFromRow(member))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -152,6 +162,10 @@ func (s *server) inviteOrgMember(w http.ResponseWriter, r *http.Request, acct st
 		"org_id": org.ID, "slug": org.Slug, "email": email,
 		"role": string(role), "expires_at": inv.ExpiresAt,
 	})
+	if role == state.OrgRoleAdmin {
+		s.mailOrgSecurityEvent(r.Context(), "org_admin_invited", org.ID,
+			s.orgMemberLabel(r.Context(), acct.ID)+" invited "+mailpkg.MaskEmail(email)+" as an admin", acct.ID)
+	}
 	writeJSON(w, http.StatusCreated, api.OrgInvitationWithToken{
 		OrgInvitationResponse: api.OrgInvitationResponseFromRow(invitationToRow(inv, org.Slug, now)),
 		Token:                 token,
@@ -262,6 +276,8 @@ func (s *server) changeOrgMemberRole(w http.ResponseWriter, r *http.Request, acc
 		"target_account": targetID,
 		"new_role":       string(role),
 	})
+	s.mailOrgSecurityEvent(r.Context(), "org_role_changed", mem.OrgID,
+		s.orgMemberLabel(r.Context(), acct.ID)+" changed the role of "+s.orgMemberLabel(r.Context(), targetID)+" to "+string(role), targetID)
 	// Re-read the row so the response carries the joined account
 	// email / role pair (the store doesn't return the updated
 	// row, so a single-org lookup is the only way to surface it).
@@ -269,7 +285,7 @@ func (s *server) changeOrgMemberRole(w http.ResponseWriter, r *http.Request, acc
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, api.OrgMemberResponseFromRow(s.memberToRow(r.Context(), updated)))
+	writeJSON(w, http.StatusOK, api.OrgMemberResponseFromRow(s.memberRowWithName(r.Context(), updated)))
 }
 
 // removeOrgMember stamps removed_at on the membership row. The
@@ -327,7 +343,62 @@ func (s *server) removeOrgMember(w http.ResponseWriter, r *http.Request, acct st
 		"org_id":         mem.OrgID,
 		"target_account": targetID,
 	})
+	s.mailOrgSecurityEvent(r.Context(), "org_member_removed", mem.OrgID,
+		s.orgMemberLabel(r.Context(), acct.ID)+" removed "+s.orgMemberLabel(r.Context(), targetID), targetID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// leaveOrg lets the caller end their own membership. DELETE on
+// /members/{user_id} refuses self-removal because an admin removing
+// themselves by accident locks them out; leaving is a separate, explicit
+// verb any role may use. The owner must transfer ownership first (the
+// exactly-one-owner invariant), nobody leaves their personal org, and
+// the billing contact must be replaced first, as with removal.
+//
+// Mounted at POST /v1/orgs/{slug}/leave.
+func (s *server) leaveOrg(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	mem, ok := s.requireMembership(w, r)
+	if !ok {
+		return
+	}
+	if problem := s.leaveOrgRefusal(r.Context(), mem); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if s.refuseBillingContactRemoval(r.Context(), w, mem.OrgID, acct.ID) {
+		return
+	}
+	activity := newOrgAccessActivity(r, acct, mem.OrgID, "org.member.left", "member", nil)
+	if err := s.removeOrgMemberWithActivity(r.Context(), mem.OrgID, acct.ID, activity); err != nil {
+		switch {
+		case errors.Is(err, state.ErrOrgLastOwner):
+			api.WriteProblem(w, api.ErrOrgLastOwner())
+		case errors.Is(err, state.ErrNotFound):
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+				"Not a member", "you are not an active member of this org"))
+		default:
+			api.WriteProblem(w, api.ErrCapacity("could not leave the org; try again"))
+		}
+		return
+	}
+	s.audit.Emit(r.Context(), "org.member.left", &acct.ID, map[string]any{"org_id": mem.OrgID})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) leaveOrgRefusal(ctx context.Context, mem *state.OrgMembership) *api.Problem {
+	if mem.Role == state.OrgRoleOwner {
+		return api.NewProblem(http.StatusConflict, api.CodeOrgLastOwner,
+			"Owner cannot leave", "transfer ownership to another member before leaving")
+	}
+	org, err := s.store.OrgByID(ctx, mem.OrgID)
+	if err != nil {
+		return api.ErrCapacity("could not read the org; try again")
+	}
+	if org.Personal {
+		return api.NewProblem(http.StatusConflict, api.CodeValidation,
+			"Personal org", "you cannot leave your personal org")
+	}
+	return nil
 }
 
 // containsOrgMemberRoleForInvite is the membership check for the

@@ -19,10 +19,31 @@ func TestPostCaptureUnknownPostgres(t *testing.T) {
 	}
 	_, d := postCaptureCandidate(t, s, account.ID, "unknown")
 	published := postCapturePublish(t, s, d, state.SnapshotTierInit)
-	for _, raw := range []string{`{"current":"snapshot_prepare"}`, `{"current":"snapshot_prepare","current_started_at":"yesterday"}`, `{"current":"snapshot_prepare","current_started_at":"2026-02-30T00:00:00Z"}`, `[]`, `{"current":null,"current_started_at":"2026-01-01T00:00:00Z"}`, `{"current":"snapshot_prepare","current_started_at":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano) + `"}`} {
-		if _, err := pool.Exec(ctx, "UPDATE deployments SET stage_state=$2::jsonb WHERE id=$1", d.ID, raw); err != nil {
+	// Historical corruption predates the retry-intent preservation trigger.
+	// Bypass only that trigger while creating the fixture, then restore it
+	// before querying the normal observation path. This database is private.
+	setLegacyStage := func(raw string) {
+		t.Helper()
+		tx, err := pool.Begin(ctx)
+		if err != nil {
 			t.Fatal(err)
 		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if _, err := tx.Exec(ctx, "ALTER TABLE deployments DISABLE TRIGGER deployments_retry_intent"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, "UPDATE deployments SET stage_state=$2::jsonb WHERE id=$1", d.ID, raw); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, "ALTER TABLE deployments ENABLE TRIGGER deployments_retry_intent"); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, raw := range []string{`{"current":"snapshot_prepare"}`, `{"current":"snapshot_prepare","current_started_at":"yesterday"}`, `{"current":"snapshot_prepare","current_started_at":"2026-02-30T00:00:00Z"}`, `[]`, `{"current":null,"current_started_at":"2026-01-01T00:00:00Z"}`, `{"current":"snapshot_prepare","current_started_at":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano) + `"}`} {
+		setLegacyStage(raw)
 		got, err := s.PostCaptureSnapshot(ctx)
 		if err != nil || got[state.PostCaptureUnknown].Pending != 1 || got[state.PostCaptureUnknown].UnknownAge != 1 {
 			t.Fatalf("raw=%s result=%+v %v", raw, got, err)

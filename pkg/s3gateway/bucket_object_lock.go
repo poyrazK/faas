@@ -58,7 +58,7 @@ func (h *Handler) bucketObjectLock(w http.ResponseWriter, r *http.Request, req r
 		h.unsupported(w, r, req.requestID)
 		return
 	}
-	svc := objectstorage.BucketObjectLockService{Store: st, Provider: native, Versioning: versioning, BeforeRequest: objectstorage.VersioningRequestRecorder(h.requestMetrics, req.bucket.ID)}
+	svc := objectstorage.BucketObjectLockService{Store: st, Provider: native, Versioning: versioning, BeforeRequest: h.configurationRequestRecorder(req.bucket)}
 	if r.Method == http.MethodGet {
 		h.getBucketObjectLock(w, r, req, svc, st)
 		return
@@ -110,6 +110,7 @@ func (h *Handler) putBucketObjectLock(w http.ResponseWriter, r *http.Request, re
 	}
 	j, err := svc.Request(r.Context(), req.bucket, configuration)
 	if err == nil && j.State != "ready" {
+		svc.BeforeRequest = objectstorage.VersioningRequestRecorder(h.requestMetrics, req.bucket.ID)
 		j, err = svc.Reconcile(r.Context(), req.bucket)
 		if errors.Is(err, state.ErrConflict) {
 			j, err = st.GetObjectBucketObjectLock(r.Context(), req.bucket.AccountID, req.bucket.AppID, req.bucket.ID)
@@ -127,6 +128,9 @@ func (h *Handler) putBucketObjectLock(w http.ResponseWriter, r *http.Request, re
 }
 
 func (h *Handler) bucketObjectLockError(w http.ResponseWriter, r *http.Request, req requestContext, err error) {
+	if objectLockPlanError(w, r, req, err) || h.configurationAdmissionError(w, r, req, err) {
+		return
+	}
 	if h.writeAWSChunkedError(w, r, req.requestID, err) {
 		return
 	}

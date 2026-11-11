@@ -59,7 +59,7 @@ The opt-in apid reporter has a separate PostgreSQL journey for API variables, ro
 After normal review, approval and merge, CI can wait for recorded serving proof
 for that exact merged commit:
 
-    gregale projects environments gitops wait shop production \
+    gregale environment gitops wait shop production \
       --commit "$MERGED_SHA" --timeout 15m --json
 
 The commit must be a full lowercase 40-character SHA from the environment's
@@ -110,7 +110,7 @@ remains pending. See [ADR-20261017190812](adr/20261017190812-gitops-wait-for-ser
 
 ## Try review and reporting
 
-Use `gregale projects environments gitops explain shop production` for a
+Use `gregale environment gitops explain shop production` for a
 read-only explanation of the current recorded state, or add `--json` for
 automation. The existing status API includes the same assessment under
 `explanation`, and the GitOps dashboard shows its workload progress and actions.
@@ -139,9 +139,9 @@ work nor approves, adopts, activates, rolls back or enables production gates.
 Use an existing GitHub-linked project and registered environment. Start in `report` mode with manual approval and pruning disabled:
 
 ```sh
-gregale projects environments gitops bind shop staging \
+gregale environment gitops bind shop staging \
   --manifest-path environments/staging.yaml --mode report --approval-policy manual
-gregale projects environments gitops review shop staging \
+gregale environment gitops review shop staging \
   --commit "$REVIEWED_COMMIT" > revision-review.json
 ```
 
@@ -155,11 +155,11 @@ sealed at rest and can be disconnected on the account page. A GitLab source
 may be bound to a Gregale project without a GitHub installation:
 
 ```sh
-gregale projects environments gitops bind shop staging \
+gregale environment gitops bind shop staging \
   --provider gitlab --repository group/subgroup/service \
   --ref refs/heads/main --manifest-path environments/staging.yaml \
   --mode report --approval-policy manual
-gregale projects environments gitops review shop staging \
+gregale environment gitops review shop staging \
   --commit "$REVIEWED_COMMIT" > revision-review.json
 ```
 
@@ -183,9 +183,9 @@ Production qualification and enforcement remain gated on exclusive native accept
 `REVIEWED_COMMIT` must be a complete immutable commit SHA. Inspect the returned definition digest and generation before approving its receipt:
 
 ```sh
-gregale projects environments gitops approve shop staging \
+gregale environment gitops approve shop staging \
   --file revision-review.json --yes
-gregale projects environments gitops adoption-preview shop staging > adoption-plan.json
+gregale environment gitops adoption-preview shop staging > adoption-plan.json
 ```
 
 Status reports and adoption previews omit before/after values, including
@@ -195,8 +195,8 @@ reconciliation and adoption revalidate against the complete internal observation
 Inspect the mapped resource IDs, owned fields and blocking reasons. Adoption preserves existing values and transfers the reviewed ownership; it does not activate a new workload:
 
 ```sh
-gregale projects environments gitops adopt shop staging --file adoption-plan.json --yes
-gregale projects environments gitops status shop staging
+gregale environment gitops adopt shop staging --file adoption-plan.json --yes
+gregale environment gitops status shop staging
 ```
 
 Stale or blocked receipts are rejected. Re-run the preview after changing relevant intent or source controls.
@@ -355,7 +355,7 @@ Preview a candidate before approving it, including on a binding that has no
 approved revision yet:
 
 ```sh
-gregale projects environments gitops plan shop staging \
+gregale environment gitops plan shop staging \
   --commit "$CANDIDATE_SHA" --format markdown --fail-on-blocked
 ```
 
@@ -381,7 +381,7 @@ candidate plans always require a fresh request and grant no write authority.
 Preview an immutable image promotion from a currently proven serving release:
 
 ```sh
-gregale projects environments gitops promotion-plan shop production \
+gregale environment gitops promotion-plan shop production \
   --from staging --target-commit "$TARGET_COMMIT" --fail-on-blocked \
   > promotion-plan.json
 ```
@@ -464,7 +464,7 @@ An explicit artifact pin takes precedence. See [ADR-20261017190809](adr/20261017
 Review the plan and reuse its `plan_hash` in a fresh request before exporting:
 
 ```sh
-gregale projects environments gitops promotion-plan shop production \
+gregale environment gitops promotion-plan shop production \
   --from staging --target-commit "$TARGET_COMMIT" \
   --expected-plan-hash "$REVIEWED_PLAN_HASH" --format manifest \
   --manifest environments/production.yaml > proposed-production.json
@@ -492,7 +492,7 @@ After reviewing a `promotion-plan`, use its hash and the current target branch
 commit to preview a draft proposal:
 
 ```sh
-gregale projects environments gitops promotion-pr shop production \
+gregale environment gitops promotion create shop production \
   --from staging --target-commit "$TARGET_COMMIT" \
   --expected-plan-hash "$REVIEWED_PLAN_HASH"
 ```
@@ -500,7 +500,7 @@ gregale projects environments gitops promotion-pr shop production \
 Add `--yes` to create the draft PR/MR and `--json` for its portable receipt:
 
 ```sh
-gregale projects environments gitops promotion-pr shop production \
+gregale environment gitops promotion create shop production \
   --from staging --target-commit "$TARGET_COMMIT" \
   --expected-plan-hash "$REVIEWED_PLAN_HASH" --yes --json
 ```
@@ -568,7 +568,7 @@ See [ADR-20261017190807](adr/20261017190807-gitops-bounded-recovery-retention.md
 Find retained releases and current eligibility for your target manifest:
 
 ```sh
-gregale projects environments gitops releases shop production \
+gregale environment gitops releases shop production \
   --target-commit "$TARGET_COMMIT"
 ```
 
@@ -588,7 +588,7 @@ Select a release previously served by this Git source in this environment. The r
 image/build artifact and historical serving time:
 
 ```sh
-gregale projects environments gitops rollback-plan shop production \
+gregale environment gitops rollback-plan shop production \
   --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" --fail-on-blocked
 ```
 
@@ -596,7 +596,7 @@ Review the result, then request a fresh observation with its `plan_hash` before
 exporting a patch or manifest:
 
 ```sh
-gregale projects environments gitops rollback-plan shop production \
+gregale environment gitops rollback-plan shop production \
   --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" \
   --expected-plan-hash "$REVIEWED_PLAN_HASH" --format patch > rollback-plan.json
 ```
@@ -634,7 +634,7 @@ Choose an eligible release from `gitops releases`, then review its fresh
 `rollback-plan`. Preview the recovery draft with that plan's hash:
 
 ```sh
-gregale projects environments gitops rollback-pr shop production \
+gregale environment gitops recovery create shop production \
   --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" \
   --expected-plan-hash "$REVIEWED_ROLLBACK_HASH"
 ```
@@ -643,7 +643,7 @@ Add `--yes` to create the draft PR/MR, and `--json` for a receipt that includes
 the selected `release_set_id`:
 
 ```sh
-gregale projects environments gitops rollback-pr shop production \
+gregale environment gitops recovery create shop production \
   --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" \
   --expected-plan-hash "$REVIEWED_ROLLBACK_HASH" --yes --json
 ```
@@ -681,7 +681,7 @@ exclusive native acceptance requirements remain unchanged. See
 Subscribe an account receiver explicitly to `environment.gitops.changed`:
 
 ```sh
-printf '%s' "$WEBHOOK_SECRET" | gregale webhooks account add \
+printf '%s' "$WEBHOOK_SECRET" | gregale webhook account add \
   --target-url https://alerts.example.test/gregale \
   --event environment.gitops.changed --from-stdin
 ```
@@ -1382,9 +1382,9 @@ source. Release that reservation explicitly during a reviewed handoff to Git.
 Use the dashboard source controls or the CLI to rebind or disconnect:
 
 ```sh
-gregale projects environments gitops rebind shop staging \
+gregale environment gitops rebind shop staging \
   --expected-generation 3 --manifest-path environments/staging-v2.yaml --yes
-gregale projects environments gitops unbind shop staging \
+gregale environment gitops unbind shop staging \
   --expected-generation 5 --yes
 ```
 

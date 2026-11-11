@@ -18,7 +18,7 @@ func TestRmCommandsAcceptYes(t *testing.T) {
 		path string
 	}{
 		{"alerts rm", []string{"alerts", "rm", "--app", "web", alertID, "--yes"}, "/v1/apps/web/alerts/" + alertID},
-		{"synthetics rm", []string{"synthetics", "rm", "--app", "web", "chk-1", "--yes"}, "/v1/apps/web/synthetics/chk-1"},
+		{"synthetics rm", []string{"synthetics", "rm", "--app", "web", "0b5c3c1e-6a4f-4c39-9d1a-2f6c1a7e9b10", "--yes"}, "/v1/apps/web/synthetics/0b5c3c1e-6a4f-4c39-9d1a-2f6c1a7e9b10"},
 		{"slos rm", []string{"slos", "rm", "--yes", "--app", "web", "slo-1"}, "/v1/apps/web/slos/slo-1"},
 		{"release-gates rm", []string{"release-gates", "rm", "no-new-errors", "--app", "web", "--yes"}, "/v1/apps/web/release-gates/no-new-errors"},
 	}

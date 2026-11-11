@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/livequery"
@@ -28,7 +29,9 @@ var volatileClaims = []string{"exp", "iat", "nbf", "jti"}
 // overwrites them on every REST request. A live read must present the same
 // claims, or a policy on gregale_access would show different rows live than
 // over REST; an identity provider's token cannot set them either.
-var gatewayClaims = []string{"gregale_access", "gregale_server_key", "gregale_sql_deadline", "gregale_refresh_hash", "gregale_serving_fingerprint"}
+// gregale_storage is the storage endpoints' write grant, which the gateway
+// strips from every token it receives.
+var gatewayClaims = []string{"gregale_access", "gregale_server_key", "gregale_storage", "gregale_sql_deadline", "gregale_refresh_hash", "gregale_serving_fingerprint"}
 
 // rlsClaims canonicalizes verified token claims for an RLS-mode session: the
 // claims a signed-in Data API request carries, without the volatile ones.
@@ -155,7 +158,29 @@ func (h *Hub) compileREST(ctx context.Context, f liveproto.ClientFrame) (*rest.C
 	case err != nil:
 		return nil, &rlsRefusal{liveproto.CodeInternal, "read the catalog"}
 	}
+	if no := rowSecurityRefusal(f, compiled.Relations); no != nil {
+		return nil, no
+	}
 	return compiled, nil
+}
+
+// rowSecurityRefusal applies the Data API's row-security gate (ADR
+// 20261026140223) to a live read, which REST answers 403 rls_required: a
+// signed-in read reaches only row-secured relations or those the app exempts,
+// an anonymous one only row-secured relations (the public-read rule), and a
+// server key, a trusted backend, is not checked.
+func rowSecurityRefusal(f liveproto.ClientFrame, relations []rest.Relation) *rlsRefusal {
+	if f.Access == liveproto.AccessServer {
+		return nil
+	}
+	for _, r := range relations {
+		name := r.Schema + "." + r.Name
+		if r.RowSecured || (f.Access == "" && slices.Contains(f.AllowWithoutRLS, name)) {
+			continue
+		}
+		return &rlsRefusal{liveproto.CodeForbidden, "rls_required: " + name + " has no row-level security; enable it, or exempt it with gregale data-api configure --allow-without-rls"}
+	}
+	return nil
 }
 
 func rlsFingerprint(f liveproto.ClientFrame, s *livequery.Session) string {

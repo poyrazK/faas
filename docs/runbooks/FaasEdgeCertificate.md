@@ -1,11 +1,12 @@
 # FaasEdgeCertificate: the apps domains' certificate
 
-Decision: ADR-20261103163954 §3. Source:
+Decision: ADR-20261103163954 §3, ADR-20261108100000. Source:
 `deploy/ansible/roles/prometheus/files/faas.rules.yml`.
 
 `edgednsd` on the control plane orders the apps domains' certificate (for
-example `*.gregale.dev`) from Let's Encrypt with the DNS-01 challenge and
-renews it 30 days before it expires. Each certificate gets a new ECDSA P-256
+example `*.gregale.dev`) from Let's Encrypt with the DNS-01 challenge,
+under the `shortlived` profile (about 160 hours), and renews it 4 days
+before it expires: a new certificate about every 64 hours. Each certificate gets a new ECDSA P-256
 key, sealed to the `edge-tls` seal domain and stored in
 `edge_tls_certificates`; `edgednsd` cannot read it back. Each compute edge's
 `gatewayd-public` (with `FAAS_EDGE_PUBLIC_TLS_CERT_SOURCE=database`) loads
@@ -33,8 +34,9 @@ Logs: `journalctl -u faas-edgednsd | grep edgecert` on the control plane,
 
 ## FaasEdgeCertificateRenewalOverdue (warn)
 
-The newest stored certificate expires within 21 days: edgednsd's orders have
-been failing for about a week. Find why:
+The newest stored certificate expires within 3 days: edgednsd's orders have
+been failing for about a day. Edges fail every direct handshake when it
+expires, so this is urgent. Find why:
 
 ```bash
 journalctl -u faas-edgednsd --since -2d | grep 'edgecert: certificate order failed'
@@ -55,6 +57,14 @@ Usual causes:
   edgednsd in a loop: each start retries at once.
 - **The edge-tls recipient is missing** after a seal_domains change; edgednsd
   then refuses to start (`the edge-tls recipient`).
+- **`longer than` in the failure:** the CA issued a certificate without the
+  `shortlived` profile and edgednsd refused it. **`unknown profile`:** the
+  CA's directory no longer lists the profile. Either way the CA changed;
+  check Let's Encrypt's status page and the ACME directory's `meta.profiles`
+  (`curl -s https://acme-v02.api.letsencrypt.org/directory`).
+- **Rate limit (`too many certificates`):** more than 5 orders for the same
+  names in 7 days, usually from repeated key rotations. Wait for the
+  oldest of those orders to age out of the window.
 
 Once the cause is fixed, restart edgednsd to order at once:
 `sudo systemctl restart faas-edgednsd`. The edges load the new certificate on
@@ -62,7 +72,7 @@ its notification.
 
 ## FaasEdgeCertificateExpiringSoon (warn)
 
-An edge serves a certificate with under 14 days left. Either renewal is
+An edge serves a certificate with under 2 days left. Either renewal is
 failing (the alert above fired first), or this edge has not loaded the
 renewed certificate:
 
@@ -108,8 +118,9 @@ Decide what it is:
 
 - **A single app host** (`h1.gregale.dev`) from any CA: what a compromised
   compute node could get by answering a CA's TLS-ALPN challenge for a host it
-  serves. Treat the node as compromised: follow "A lost or exposed key"
-  below, and revoke that certificate too (its CA's problem-reporting address
+  serves. Treat the node as compromised
+  ([compute-node-compromise.md](compute-node-compromise.md)): follow "A lost
+  or exposed key" below, and revoke that certificate too (its CA's problem-reporting address
   is in the issuance's `problem_reporting`).
 - **A wildcard** or the apex: needs control of the zone's DNS. Check
   Cloudflare's audit log for TXT records edgednsd did not write, rotate the
@@ -132,8 +143,10 @@ control plane's outbound HTTPS, or Postgres for the stored keys).
 
 ## A lost or exposed key
 
-Every compute node holds the key in memory. If a node is compromised, revoke
-the certificate and order a new one before the attacker can use it:
+Every compute node holds the key in memory, so a compromised node may have
+copied it. That copy is good until the certificate expires, at most about
+6.7 days (ADR-20261108100000). Browsers mostly don't check revocation, so
+cut the window short by replacing the key:
 
 1. Rotate the `edge-tls` domain (`gregalectl seal-domain init --domain
    edge-tls --force`, then the seal_domains role), so the old identity no

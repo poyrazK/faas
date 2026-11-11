@@ -40,6 +40,8 @@ func (s *server) runScheduledReleaseWorker(ctx context.Context) {
 }
 
 func (s *server) startDueScheduledReleases(ctx context.Context, now time.Time) {
+	s.scheduledReleaseMu.Lock()
+	defer s.scheduledReleaseMu.Unlock()
 	store, ok := s.scheduledReleases()
 	if !ok {
 		return
@@ -50,7 +52,7 @@ func (s *server) startDueScheduledReleases(ctx context.Context, now time.Time) {
 		s.releaseMetrics.Pass(releasemetrics.WorkerScheduledReleases, now)
 		return
 	}
-	due, err := store.DueScheduledReleases(ctx, now, api.ScheduledReleaseBatch)
+	due, err := store.DueScheduledReleasesPage(ctx, now, api.ScheduledReleaseBatch, s.scheduledReleaseCursor)
 	if err != nil {
 		if ctx.Err() == nil {
 			s.log.Warn("scheduled releases: list due", "err", err)
@@ -63,10 +65,16 @@ func (s *server) startDueScheduledReleases(ctx context.Context, now time.Time) {
 		if ctx.Err() != nil {
 			return
 		}
+		// Advance past attempted rows, including waits and read errors. A
+		// cancelled sweep leaves unattempted rows for the next tick.
+		s.scheduledReleaseCursor = state.ReleaseScanCursor{At: sr.ReleaseAt, ID: sr.ID}
 		if err := s.runScheduledRelease(ctx, store, sr, now); err != nil {
 			s.log.Warn("scheduled releases: start", "schedule", sr.ID, "deployment", sr.DeploymentID, "err", err)
 			s.releaseMetrics.Error(releasemetrics.WorkerScheduledReleases)
 		}
+	}
+	if len(due) < api.ScheduledReleaseBatch {
+		s.scheduledReleaseCursor = state.ReleaseScanCursor{}
 	}
 }
 

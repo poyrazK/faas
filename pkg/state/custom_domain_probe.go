@@ -33,7 +33,7 @@ func CustomDomainProbe(ctx context.Context) (CustomDomain, bool) {
 }
 
 func SameCustomDomainClaim(a, b CustomDomain) bool {
-	return strings.EqualFold(a.Domain, b.Domain) && a.AppID == b.AppID && a.ChallengeToken == b.ChallengeToken
+	return strings.EqualFold(a.Domain, b.Domain) && a.AppID == b.AppID && a.EnvironmentID == b.EnvironmentID && a.ChallengeToken == b.ChallengeToken
 }
 
 func customDomainProbeMatches(ctx context.Context, current CustomDomain) bool {

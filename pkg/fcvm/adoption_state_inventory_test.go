@@ -28,6 +28,7 @@ var adoptionStateInventory = map[string]map[string]string{
 		"appDatabaseResolved":               "reset",    // bound database pairs for seeding (ADR-20261026150000)
 		"backingDigests":                    "reset",    // file digest cache
 		"backingHashing":                    "reset",    // in-flight file digests
+		"backingKeys":                       "reset",    // bases the digest primer follows; wakes note them again, recorded digests cover the rest
 		"backingPending":                    "reset",    // in-flight instance identities; adoption restores instanceBacking
 		"baseGenerations":                   "reset",    // base image generation cache
 		"cidToID":                           "rebuilt",
@@ -59,6 +60,8 @@ var adoptionStateInventory = map[string]map[string]string{
 		"qualificationConfigReceiptWaiters": "bootonly", // qualification guests are never adopted
 		"qualificationInstances":            "bootonly",
 		"quietStates":                       "reset", // quiet pause waits one idle period after adoption
+		"idleStates":                        "reset", // the idle ladder observe pass measures from adoption
+		"idleColdCeilings":                  "reset", // compression ceilings relearn from the next wakes; a restarted vmmd starts at the defaults
 		"readinessLoopCancels":              "rebuilt",
 		"resourceLinks":                     "rebuilt",
 		"resourceNetworks":                  "rebuilt",
@@ -69,6 +72,7 @@ var adoptionStateInventory = map[string]map[string]string{
 		"staticEgressAliases":               "refused",
 		"staticEgressAliasAccounts":         "bootonly", // operator bundle is reloaded at startup
 		"waking":                            "reset",
+		"bootingEgress":                     "reset",    // booting guests' network owners; a restart ends every in-flight boot
 		"computeLeases":                     "bootonly", // financial compute authority: wired only with native process recovery
 		"functionMigrationDestinations":     "bootonly", // function VM resources: native qualification builds only; adoption refuses function guests there
 		"functionMigrationSources":          "bootonly",
@@ -120,6 +124,7 @@ var adoptionInstanceInventory = map[string]string{
 	"runtimeAdmissionEgress":          "rebuilt",
 	"admissionHeldFrom":               "rebuilt",
 	"ExecutionOnly":                   "refused", // execution kind
+	"SandboxID":                       "refused", // sandbox sessions are execution-only
 	"ExecutionID":                     "refused",
 	"ExecutionLeaseToken":             "refused",
 	"ExecutionOutboundIntegrationIDs": "refused",
@@ -130,8 +135,11 @@ var adoptionInstanceInventory = map[string]string{
 	"QualificationOnly":               "refused", // qualification kind
 	"Paused":                          "rebuilt", // warm-pool restore, claimed or not
 	"QuietPauseAfter":                 "rebuilt",
+	"IdleLadderEligible":              "rebuilt",
+	"IdleLadderGuardedPause":          "rebuilt",
 	"Frozen":                          "rebuilt",
 	"FrozenSince":                     "rebuilt",
+	"FrozenTotal":                     "reset",   // read only by a sandbox session's usage meter; sessions are not adopted
 	"freezing":                        "reset",   // no freeze is in flight at startup
 	"parking":                         "reset",   // no park is in flight at startup
 	"parkHeld":                        "reset",   // nor a forward held on one
@@ -161,6 +169,7 @@ var adoptionInstanceInventory = map[string]string{
 	"HealthcheckPath":                 "rebuilt",
 	"ImageHealthcheckRequired":        "rebuilt",
 	"StartupDeadlineS":                "rebuilt",
+	"RequestConcurrency":              "rebuilt",
 	"ExecutionMode":                   "rebuilt",
 	"WorkloadNames":                   "rebuilt",
 	"Characterization":                "rebuilt", // ObservedClass only: the liveness contract of an undeclared worker
@@ -175,11 +184,15 @@ var adoptionInstanceInventory = map[string]string{
 	"EgressFloodDropsPerMin":          "reset",
 	"StaticEgressExcluded":            "rebuilt",
 	"networkPolicyMu":                 "reset",
-	"resolvedEgress":                  "reset", // cache; the nft entries keep their own timeouts
-	"resolvedEgressGeneration":        "reset", // restart invalidates outstanding DNS grants
-	"databaseEgress":                  "reset", // same for egress_db pairs (ADR-20261026150000)
-	"TailCount":                       "reset", // the host only ever sees decrements
-	"tailSecondsAccum":                "reset", // informational, not billed
+	"resolvedEgress":                  "rebuilt", // surviving nft entries retain their remaining lifetimes
+	"resolvedEgressGeneration":        "reset",   // restart invalidates outstanding DNS grants
+	"booting":                         "reset",   // only set on a booting network owner, which is never adopted
+	"awaitingExit":                    "reset",   // only set while a teardown call waits on the guest
+	"egressAllowlistUncertain":        "reset",   // adopted guests re-prove their journaled allowlist
+	"egressPortsUncertain":            "reset",   // adopted guests read the surviving port sets
+	"databaseEgress":                  "rebuilt", // surviving egress_db pairs retain their remaining lifetimes
+	"TailCount":                       "reset",   // the host only ever sees decrements
+	"tailSecondsAccum":                "reset",   // informational, not billed
 	"adoptionVCPUs":                   "rebuilt",
 	"adoptionMemSizeMiB":              "rebuilt",
 	"adoptionOp":                      "reset", // resolved before adoption (slice 3)
@@ -194,6 +207,10 @@ var adoptionInstanceInventory = map[string]string{
 	"functionMigration":               "bootonly",
 	"publicForwardTarget":             "bootonly", // captured only under native process recovery
 	"wakeID":                          "bootonly", // function VM migration authority
+	// ADR-20261107160000: an adopted guest's later resumes send no identity and
+	// its file keeps the last one published, the same instance. A warm spare
+	// promoted after a vmmd restart keeps the capture's identity in the file.
+	"resumeIdentity": "reset",
 }
 
 func TestAdoptionStateInventoryClassifiesEveryInstanceField(t *testing.T) {

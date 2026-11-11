@@ -42,15 +42,19 @@ func (w Worker) Step(ctx context.Context) (bool, error) {
 				result = state.IssueSlackResult{Status: "canceled", Error: "destination_unavailable"}
 			} else {
 				if e = w.Store.BeginIssueSlackAttempt(attempt, c); e != nil {
-					return w.finishPreflight(ctx, c, e)
+					if !errors.Is(e, state.ErrIssuePolicyChanged) {
+						return w.finishPreflight(ctx, c, e)
+					}
+					result = state.IssueSlackResult{Status: "canceled", Error: "destination_unavailable"}
+				} else {
+					client := w.Client
+					if client == nil {
+						client = NewClient(nil)
+					}
+					sendCtx, cancelSend := context.WithTimeout(ctx, api.IssueSlackAttemptTimeout)
+					result = client.Send(sendCtx, c, token, w.DashboardBase)
+					cancelSend()
 				}
-				client := w.Client
-				if client == nil {
-					client = NewClient(nil)
-				}
-				sendCtx, cancelSend := context.WithTimeout(ctx, api.IssueSlackAttemptTimeout)
-				result = client.Send(sendCtx, c, token, w.DashboardBase)
-				cancelSend()
 			}
 		}
 	}
@@ -76,19 +80,24 @@ func (w Worker) finishPreflight(ctx context.Context, c state.IssueSlackClaim, ca
 	return true, cause
 }
 func (w Worker) Batch(ctx context.Context) error {
+	var batchErr error
 	for range api.IssueSlackBatch {
 		if err := ctx.Err(); err != nil {
-			return err
+			return errors.Join(batchErr, err)
 		}
 		ok, err := w.Step(ctx)
 		if err != nil {
-			return err
+			batchErr = errors.Join(batchErr, err)
+			if !ok {
+				return batchErr
+			}
+			continue
 		}
 		if !ok {
-			return nil
+			return batchErr
 		}
 	}
-	return nil
+	return batchErr
 }
 func retry(c state.IssueSlackClaim, reason string, code int, after string) state.IssueSlackResult {
 	now := time.Now()

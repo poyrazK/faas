@@ -20,6 +20,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
@@ -272,9 +273,22 @@ type Server struct {
 	// appTaskAttach pairs interactive app tasks with their attached client
 	// (ADR-1037). The zero value is ready to use.
 	appTaskAttach appTaskAttachRegistry
+	// resolvedEgressRefusals rate-limits the refused DNS grant log
+	// (ADR-373). The zero value is ready to use.
+	resolvedEgressRefusals refusalLog
 	// hostCPU is the host CPU busy window Stats reports (ADR 20261030100950).
 	// The zero value is ready to use.
 	hostCPU hostCPUSampler
+	// sandboxRuns tracks the calls of each sandbox session VM RunSandbox
+	// keeps (ADR-20261027090013 §5), keyed by instance. The zero value is
+	// ready to use.
+	sandboxRuns sync.Map
+	// sandboxUsageEvery is how often RunSandbox reports a session's usage;
+	// zero is api.SandboxUsageReportSec. Tests shorten it.
+	sandboxUsageEvery time.Duration
+	// sandboxStorage keeps persisted sandbox workspaces (ADR-20261027090013
+	// step 7); nil persists none. See WithSandboxWorkspaces.
+	sandboxStorage storage.StorageBackend
 
 	vmm VmmdAPI
 	ops *wire.OpsMetrics
@@ -1114,6 +1128,10 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
+	if err := s.snapshotKeysOwned(req.GetInstance(), req.GetStorageKey(), req.GetVmstateStorageKey()); err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, err
+	}
 	if s.diverged.Has(req.GetInstance()) {
 		// The caller expects the VM to be gone after PauseAndSnapshot; destroy
 		// it instead of capturing a snapshot of patched, non-artifact source.
@@ -1174,6 +1192,10 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 			WithDocs(wire.DocsBaseURL + "/vmmd#warm-snapshot")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
+	}
+	if err := s.snapshotKeysOwned(req.GetInstance(), req.GetStorageKey(), req.GetVmstateStorageKey()); err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, err
 	}
 	if s.diverged.Has(req.GetInstance()) {
 		// Refuse before pausing. The scheduler's warm-capture failure path

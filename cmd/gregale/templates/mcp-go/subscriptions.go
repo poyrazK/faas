@@ -27,9 +27,34 @@ const (
 	maxResourceSubscriptions  = 64
 	maxResourceURIBytes       = 16 * 1024
 	taskSubscriptionKeepAlive = 15 * time.Second
+	subscriptionWriteTimeout  = 15 * time.Second
 )
 
 var subscriptionStreamSlots = make(chan struct{}, maxSubscriptionStreams)
+
+// Idle streams may outlive ordinary HTTP deadlines. Each actual write must
+// finish within its own budget and before the verified token expires.
+func flushSubscription(w http.ResponseWriter, identity *authContext, write func() error) error {
+	if taskSubscriptionAuthExpired(identity) {
+		return errors.New("subscription authentication expired")
+	}
+	deadline := time.Now().Add(subscriptionWriteTimeout)
+	if identity != nil && identity.expiresAt > 0 && identity.expiresAt < float64(deadline.UnixNano())/float64(time.Second) {
+		deadline = time.Unix(0, int64(identity.expiresAt*float64(time.Second)))
+	}
+	controller := http.NewResponseController(w)
+	if err := controller.SetWriteDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return err
+	}
+	if err := write(); err != nil {
+		return err
+	}
+	if err := controller.Flush(); err != nil {
+		return err
+	}
+	_ = controller.SetWriteDeadline(time.Time{})
+	return nil
+}
 
 func (runtime *mcpTaskRuntime) reserveTaskSubscription() bool {
 	runtime.subscriptionMu.Lock()
@@ -346,9 +371,9 @@ func serveTaskSubscription(w http.ResponseWriter, r *http.Request, id, rawParams
 		listFingerprints[key] = fingerprint
 	}
 
-	// Ordinary requests have a bounded write deadline; SSE subscriptions clear it.
+	// Clear the request deadline while idle; flushSubscription bounds each write.
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
-	flusher, ok := w.(http.Flusher)
+	_, ok := w.(http.Flusher)
 	if !ok {
 		writeRPCError(w, id, -32603, "streaming is unavailable", http.StatusInternalServerError)
 		return
@@ -359,14 +384,7 @@ func serveTaskSubscription(w http.ResponseWriter, r *http.Request, id, rawParams
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	flushSSE := func(message any) error {
-		if taskSubscriptionAuthExpired(identity) {
-			return errors.New("subscription authentication expired")
-		}
-		if err := writeSSEMessage(w, message); err != nil {
-			return err
-		}
-		flusher.Flush()
-		return nil
+		return flushSubscription(w, identity, func() error { return writeSSEMessage(w, message) })
 	}
 	acknowledged := map[string]any{}
 	if hasTaskFilter && len(requestedIDs) > 0 {
@@ -527,10 +545,12 @@ func serveTaskSubscription(w http.ResponseWriter, r *http.Request, id, rawParams
 			if taskSubscriptionAuthExpired(identity) {
 				return
 			}
-			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+			if err := flushSubscription(w, identity, func() error {
+				_, err := fmt.Fprint(w, ": keepalive\n\n")
+				return err
+			}); err != nil {
 				return
 			}
-			flusher.Flush()
 		}
 	}
 }

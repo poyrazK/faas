@@ -1,13 +1,24 @@
 from typing import Literal
 
 PlanResponseScanSource = Literal[
-    "compose", "convention", "fly", "k8s", "procfile", "render", "serverless", "single", "unknown", "workspace"
+    "compose",
+    "convention",
+    "fly",
+    "functions",
+    "k8s",
+    "procfile",
+    "render",
+    "serverless",
+    "single",
+    "unknown",
+    "workspace",
 ]
 
 PLAN_RESPONSE_SCAN_SOURCE_VALUES: set[PlanResponseScanSource] = {
     "compose",
     "convention",
     "fly",
+    "functions",
     "k8s",
     "procfile",
     "render",

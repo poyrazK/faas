@@ -535,6 +535,7 @@ func TestReconcileServiceApp_ReadinessTimeoutRestoresPrevious(t *testing.T) {
 	}
 
 	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e.now = func() time.Time { return time.Now().Add(serviceRolloutTimeout + time.Minute) }
 	e.ReconcileServiceApp(context.Background(), app.ID)
 
 	failed, err := store.DeploymentByID(context.Background(), rollout.ID)
@@ -572,10 +573,9 @@ func TestReconcileServiceApp_ExactFitRolloutUsesSurgeBeforeRetiringPredecessor(t
 	}
 
 	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
-	limits := api.MustLimitsFor(api.PlanPro)
 	if err := e.ledger.Admit(Request{
 		Instance: old.ID, AppID: app.ID, DeploymentID: stable.ID, Plan: api.PlanPro,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: api.SizeVCPUs(app.RAMMB), MaxConcurrency: app.MaxConcurrency,
 		NodeID: "node-1",
 	}); err != nil {
 		t.Fatalf("seed predecessor ledger reservation: %v", err)
@@ -637,10 +637,9 @@ func TestReconcileServiceApp_PhysicalCapacityHoldsWithoutParkingPredecessor(t *t
 	}
 
 	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
-	limits := api.MustLimitsFor(api.PlanPro)
 	if err := e.ledger.Admit(Request{
 		Instance: old.ID, AppID: app.ID, DeploymentID: stable.ID, Plan: api.PlanPro,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: api.SizeVCPUs(app.RAMMB), MaxConcurrency: app.MaxConcurrency,
 		NodeID: node.ID, NodeCeilingMB: node.AdmissionCeilingMB, VCPUBudget: node.VCPUBudget,
 	}); err != nil {
 		t.Fatalf("seed predecessor ledger reservation: %v", err)

@@ -5,7 +5,9 @@
       "lane": "control-plane",
       "services": [
         {"name": "apid", "readyz": "http://127.0.0.1:9101/readyz"},
-        {"name": "apid-clone-worker", "optional": true}
+        {"name": "apid-clone-worker", "optional": true},
+        {"name": "apid-data-pipeline-worker", "optional": true},
+        {"name": "apid-data-pipeline-alert-worker", "optional": true}
       ]
     },
     "meterd": {
@@ -32,6 +34,10 @@
     "edgednsd": {
       "lane": "control-plane",
       "services": [{"name": "edgednsd", "optional": true}]
+    },
+    "signd": {
+      "lane": "control-plane",
+      "services": [{"name": "signd", "optional": true}]
     },
     "bridged": {
       "lane": "control-plane",
@@ -94,7 +100,7 @@
     "go_modules": ["go.mod", "go.sum"],
     "migrations": ["migrations/"],
     "deploy": ["deploy/"],
-    "control_plane_bundle": ["pkg/promqlrules/data_placement.yaml", "docs/DPA.md"],
+    "control_plane_bundle": ["pkg/promqlrules/data_placement.yaml", "docs/DPA.md", "scripts/ci/faas_billing_mode.sh"],
     "release_contents": [
       "scripts/build-canonical-tarball.sh",
       "scripts/materialize-release-manifest.sh",
@@ -122,7 +128,8 @@
       "deploy/ansible/roles/s3_gateway_service/files/faas-s3-gatewayd.service",
       "deploy/ansible/roles/livequeryd_service/files/faas-livequeryd.service",
       "deploy/ansible/roles/agentd_service/files/faas-agentd.service",
-      "deploy/ansible/roles/edgednsd_service/files/faas-edgednsd.service"
+      "deploy/ansible/roles/edgednsd_service/files/faas-edgednsd.service",
+      "deploy/ansible/roles/signd_service/files/faas-signd.service"
     ]
   },
   "_deploy_classes_comment": "Every deploy/ path has exactly one class (docs/adr/20261027151755-unit-lane-deploy-path-classes.md; scripts/ci/affected_units.py deploy_class), first match wins: a release unit (host_config.release_units, blocking); a path a host role reads (host_config on the control plane, compute_deploy on compute); then the first class below with a pattern that names it. A pattern is a directory (trailing /), an exact path, or a glob (* inside one segment, **/ across segments). inert: nothing a host runs reads it at activation, so it maps to no flag: documentation, tests, samples (*.example, which roles install only as /etc/faas/*.example for operators to copy), the legacy unit tree deployctl generate writes for dev VMs (deploy/systemd/), the grafana role's dashboard mirror (deploy/grafana/, make grafana-mirror-check) and Cloudflare workers, which deploy through their own workflows. compute_only: playbooks only compute hosts run; pending for the control-plane lane, they hold the edge lane while it restarts a gateway on a compute host (compute_deploy). blocking: read by a full release or an operator path the lanes cannot vouch for, so a change waits for the next full tag (deploy). A path none of these names blocks, and scripts/ci/affected_units_test.py fails until it is classified. Whatever its class, a path no host role reads whose change since base only touches blank and # comment lines maps to no flag.",
@@ -145,7 +152,6 @@
       "deploy/ansible/node_join_contract_probe.yml"
     ],
     "blocking": [
-      "deploy/ansible/.cache/",
       "deploy/ansible/control_plane_converge.yml",
       "deploy/ansible/cp_state_restore.yml",
       "deploy/ansible/database_node.yml",
@@ -171,6 +177,7 @@
       "deploy/ansible/roles/database_vmmd/",
       "deploy/ansible/roles/dbbackupd_service/",
       "deploy/ansible/roles/github_actions_runner/",
+      "deploy/ansible/roles/go_cache_retention/",
       "deploy/ansible/roles/metal-h2c-acceptance/",
       "deploy/ansible/roles/native_acceptance_host/",
       "deploy/ansible/roles/pgproxyd_service/",

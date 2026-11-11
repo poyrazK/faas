@@ -26,7 +26,7 @@ func TestSendRecordsReplaysFrameWhenStreamSendFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantErr := errors.New("stream closed")
-	err = server.sendRecords(records, func(*egresspb.BytesFrame) error { return wantErr })
+	err = server.sendRecords(records, true, func(*egresspb.BytesFrame) error { return wantErr })
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("sendRecords error = %v, want %v", err, wantErr)
 	}

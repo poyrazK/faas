@@ -63,7 +63,6 @@ var cliTreeNouns = []cliTreeNoun{
 	{"worker", "Inspect and scale background worker pools", "Work"},
 	{"workflow", "Manage durable workflows", "Work"},
 	{"operation", "Inspect your customers' operations and their deliveries", "Work"},
-	{"automation", "Build, monitor and recover automations", "Work"},
 	{"event", "Publish and send events, manage subscriptions and replays", "Work"},
 	{"webhook", "Register webhooks and deliver events to them", "Work"},
 	{"queue", "Inspect and feed an app's queues", "Work"},
@@ -108,6 +107,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"release recover", "deploy recover"},
 	{"release diff", "deployment diff"},
 	{"release timeline", "deployment timeline"},
+	{"release resolve", "deployment resolve"},
 	{"release hide", "deploys clear"},
 	{"release prune", "deploys clear-obsolete"},
 	{"release reorder", "deploys reorder"},
@@ -128,6 +128,9 @@ var cliTreeAliases = []cliTreeAlias{
 	{"preview", "preview"},
 	{"environment migration recover", "projects environments recover-migration"},
 	{"environment", "projects environments"},
+	// #6612 added `projects preview-secrets`; the tree takes no hyphenated
+	// words, so its verbs sit under `project preview secret`.
+	{"project preview secret", "projects preview-secrets"},
 	{"project", "projects"},
 	{"build", "build"},
 	{"github", "github"},
@@ -153,6 +156,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"app deploy-token", "deploy-tokens"},
 	{"app streaming-cap", "apps streaming-cap"},
 	{"sandbox run", "run"},
+	{"sandbox template publish", "sandbox-templates build"},
+	{"sandbox template", "sandbox-templates"},
 	{"sandbox", "runs"},
 	{"invocation watch", "tail"},
 	{"invocation", "invocations"},
@@ -224,16 +229,16 @@ var cliTreeAliases = []cliTreeAlias{
 	{"operation outcome summary", "customer-operations outcome-summary"},
 	{"operation binding generate", "customer-operations bindings"},
 	{"operation", "customer-operations"},
-	{"automation recovery health", "automations recovery-health"},
-	{"automation recovery suppress", "automations recovery-suppress"},
-	{"automation recovery create", "automations recovery-start"},
-	{"automation recovery cancel", "automations recovery-cancel"},
-	{"automation recovery run", "automations recovery-plan"},
-	{"automation failure list", "automations failures"},
-	{"automation failure policy", "automations failure-policy"},
-	{"automation failure resume", "automations failure-resume"},
-	{"automation policy publish", "automations publish-policy"},
-	{"automation", "automations"},
+	{"workflow stored recovery health", "stored-workflows recovery-health"},
+	{"workflow stored recovery suppress", "stored-workflows recovery-suppress"},
+	{"workflow stored recovery create", "stored-workflows recovery-start"},
+	{"workflow stored recovery cancel", "stored-workflows recovery-cancel"},
+	{"workflow stored recovery run", "stored-workflows recovery-plan"},
+	{"workflow stored failure list", "stored-workflows failures"},
+	{"workflow stored failure policy", "stored-workflows failure-policy"},
+	{"workflow stored failure resume", "stored-workflows failure-resume"},
+	{"workflow stored policy publish", "stored-workflows publish-policy"},
+	{"workflow stored", "stored-workflows"},
 	{"event send", "send"},
 	{"event subscription list", "events subscriptions"},
 	{"event subscription get", "events subscription-status"},
@@ -305,6 +310,7 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Agents. Hosting verbs and client verbs sit directly under `mcp` today.
 	{"mcp serve", "mcp serve"},
+	{"mcp connect", "mcp connect"},
 	{"mcp connection", "mcp connections"},
 	{"mcp server", "mcp"},
 	{"mcp client tools", "mcp tools"},
@@ -398,12 +404,12 @@ var cliTreeAliases = []cliTreeAlias{
 	{"api tenant trial get", "platform-tenants trial"},
 	{"api tenant trial end", "platform-tenants trial-end"},
 	{"api tenant trial set", "platform-tenants trial-set"},
-	{"automation event recover", "automations event-recover"},
-	{"automation event-recovery start", "automations event-recovery-start"},
-	{"automation failure-recovery review", "automations failure-recovery-review"},
-	{"automation recovery-policy evaluate", "automations recovery-policy-evaluate"},
-	{"automation recovery-response apply", "automations recovery-response-apply"},
-	{"automation recovery-response status", "automations recovery-response-status"},
+	{"workflow stored event recover", "stored-workflows event-recover"},
+	{"workflow stored event-recovery start", "stored-workflows event-recovery-start"},
+	{"workflow stored failure-recovery review", "stored-workflows failure-recovery-review"},
+	{"workflow stored recovery-policy evaluate", "stored-workflows recovery-policy-evaluate"},
+	{"workflow stored recovery-response apply", "stored-workflows recovery-response-apply"},
+	{"workflow stored recovery-response status", "stored-workflows recovery-response-status"},
 	{"debug issue releases compare", "issues compare-releases"},
 	{"debug issue token create", "issues create-token"},
 	{"debug issue token revoke", "issues revoke-token"},
@@ -460,9 +466,12 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp readiness notification", "mcp readiness notifications"},
 	{"mcp readiness reminder", "mcp readiness reminder-defaults"},
 	{"mcp server export", "mcp config"},
+	{"mcp server approval channels", "mcp approval-channels"},
 	{"mcp server monitor check", "mcp monitor provider-check"},
 	{"mcp server retirements ack", "mcp retirements acknowledge-manual"},
 	{"mcp server tasks deploy", "mcp tasks release"},
+	{"mcp server approvals get", "mcp approval-channels"},
+	{"mcp server approvals set", "mcp approval-channels"},
 	{"mcp observer", "mcp tasks observer"},
 	{"environment check", "projects environments preflight"},
 	{"environment cancel", "projects environments abort"},
@@ -495,13 +504,17 @@ var cliTreeAliases = []cliTreeAlias{
 	{"app binding call", "bindings smoke"},
 	{"app binding probe-policy set", "bindings probe-policy"},
 	{"app binding verification", "bindings verification-runs"},
-	{"automation failure-recovery evidence", "automations failure-recovery-evidence"},
-	{"automation failure-recovery list", "automations failure-recovery-reviews"},
-	{"automation recovery evidence", "automations recovery-retry-evidence"},
-	{"automation recovery-policy history", "automations recovery-policy-reviews"},
-	{"automation recovery-response check", "automations recovery-response-preview"},
-	{"automation live check", "automations live gate"},
-	{"automation live run", "automations live suite"},
+	{"workflow stored failure-recovery evidence", "stored-workflows failure-recovery-evidence"},
+	{"workflow stored failure-recovery list", "stored-workflows failure-recovery-reviews"},
+	{"workflow stored recovery evidence", "stored-workflows recovery-retry-evidence"},
+	{"workflow stored recovery-policy history", "stored-workflows recovery-policy-reviews"},
+	{"workflow stored recovery-response check", "stored-workflows recovery-response-preview"},
+	{"workflow stored live check", "stored-workflows live gate"},
+	{"workflow stored live run", "stored-workflows live suite"},
+	// `live baseline <verb>` would be five words under `workflow stored`.
+	{"workflow stored baseline", "stored-workflows live baseline"},
+	{"billing egress-overage get", "billing egress-overage"},
+	{"billing egress-overage set", "billing egress-overage"},
 	{"billing payment-method get", "billing payment-method"},
 	{"bucket copy-source", "bucket copy-sources"},
 	{"bucket encryption keys", "bucket encryption-keys"},
@@ -557,8 +570,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"ai request-policy set", "ai request-policy"},
 	{"api tenant activation get", "platform-tenants activation"},
 	{"api tenant activation wait", "platform-tenants activation"},
-	{"automation recovery-policy get", "automations recovery-policy"},
-	{"automation recovery-policy set", "automations recovery-policy"},
+	{"workflow stored recovery-policy get", "stored-workflows recovery-policy"},
+	{"workflow stored recovery-policy set", "stored-workflows recovery-policy"},
 	{"bucket protection legal-hold get", "bucket protection legal-hold"},
 	{"bucket protection legal-hold set", "bucket protection legal-hold"},
 	{"bucket protection event-hold set", "bucket protection event-hold"},
@@ -594,6 +607,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"postgres compute-policy set", "postgres compute-policy"},
 	{"postgres compute-policy status", "postgres compute-policy-status"},
 	{"postgres resize status", "postgres resize-status"},
+	// ADR-20261102123523: what a database gives PR previews is a setting.
+	{"postgres previews set", "postgres previews"},
 
 	// Operator tools live under the hidden admin command (rule 7) and keep
 	// their names; the naming rules cover the customer tree.
@@ -644,14 +659,31 @@ func cliTreeStandardVerb(verb string) string {
 }
 
 // cliTreeVerbFor spells a verb of siblings in its standard form. A synonym
-// whose standard verb is also a sibling (`rm` beside `delete`) is not
-// listed: the standard verb runs the sibling.
+// whose standard verb is also a sibling alias of it (`rm` beside `delete`)
+// is not listed: the standard verb runs the sibling. A synonym that is a
+// command of its own (`flags inspect` beside `flags get`) keeps its name;
+// folding it hid the command from help (Hunt 32 H32-72).
 func cliTreeVerbFor(verb string, siblings []cliSub) (string, bool) {
 	standard := cliTreeStandardVerb(verb)
-	if standard != verb && slices.ContainsFunc(siblings, func(sub cliSub) bool { return sub.Name == standard }) {
+	if standard == verb {
+		return verb, true
+	}
+	i := slices.IndexFunc(siblings, func(sub cliSub) bool { return sub.Name == standard })
+	if i < 0 {
+		return standard, true
+	}
+	j := slices.IndexFunc(siblings, func(sub cliSub) bool { return sub.Name == verb })
+	if j < 0 || cliSubsAreOneCommand(siblings[j], siblings[i]) {
 		return "", false
 	}
-	return standard, true
+	return verb, true
+}
+
+// cliSubsAreOneCommand reports whether two sibling verbs run one command:
+// one names the other as an alias, or both carry the same description.
+func cliSubsAreOneCommand(a, b cliSub) bool {
+	return a.Short == b.Short || a.Short == "Alias for "+b.Name || b.Short == "Alias for "+a.Name ||
+		slices.Contains(a.Aliases, b.Name) || slices.Contains(b.Aliases, a.Name)
 }
 
 func lookupCliTreeNoun(name string) (cliTreeNoun, bool) {
@@ -770,6 +802,13 @@ func rewriteTreePath(args []string) ([]string, error) {
 	}
 	if folded, ok := rewriteFlagFold(args); ok {
 		return folded, nil
+	}
+	if path, flags, ok := onlyFoldPath(args); ok {
+		// Help for the path comes from the tree manifest (treeHelpWords).
+		if hasHelpFlag(args) {
+			return args, nil
+		}
+		return nil, errFoldFlagRequired{fmt.Errorf("gregale %s needs %s; run 'gregale %s --help' for usage", path, strings.Join(flags, " or "), path)}
 	}
 	alias, used, ok := matchCliTreeAlias(args)
 	if !ok {
@@ -1239,6 +1278,13 @@ func treeHelpWords(typed []string) ([]string, bool) {
 	if len(words) == 0 {
 		return nil, false
 	}
+	// A fold flag names another command (`realtime send --principal P`
+	// runs `realtime send-principal`); its help is that command's, which
+	// lists the flags the fold adds. The tree's help for the path has only
+	// the path's own flags.
+	if _, folded := rewriteFlagFold(words); folded {
+		return nil, false
+	}
 	// `--help --all` on one of today's commands (`github`, `deploy`, `app`)
 	// asks for that command's full manifest help, every option grouped; a
 	// tree-only noun (`release`) has no such help, so the tree's answers.
@@ -1263,7 +1309,9 @@ func printTreeManifestHelp(w io.Writer, words []string) bool {
 	if noun, ok := lookupCliTreeNoun(words[0]); ok {
 		// An operator command (postgres) stays out of the tree.
 		if !cliTreeListsNoun(noun.Name) {
-			return false
+			// A path that exists only through its folds (`edge cache set`)
+			// has no command of today's to print help for.
+			return printOnlyFoldHelp(w, words)
 		}
 		tree, ok := d.treeCommand(noun)
 		if !ok {
@@ -1282,6 +1330,26 @@ func printTreeManifestHelp(w io.Writer, words []string) bool {
 	}
 	// printLocalHelpFlags spells flags for display (cliTreeFlagsForDisplay).
 	return printManifestHelp(w, command, words[1:])
+}
+
+// printOnlyFoldHelp prints help for a path that exists only through its
+// flag folds, or for its parent (`edge cache`, whose command of today's
+// lists the folded verbs GET and HEAD), from the tree manifest the reference
+// renders. It reports false for any other path.
+func printOnlyFoldHelp(w io.Writer, words []string) bool {
+	path := leadingTreeWords(words)
+	if !slices.ContainsFunc(cliTreeFlagFolds, func(fold cliTreeFlagFold) bool {
+		fields := strings.Fields(fold.New)
+		return fold.Only && len(path) > 1 && len(path) <= len(fields) && slices.Equal(fields[:len(path)], path)
+	}) {
+		return false
+	}
+	for _, command := range cliTreeManifest(discoverableCliCommands()) {
+		if command.Name == words[0] {
+			return printManifestHelp(w, command, words[1:])
+		}
+	}
+	return false
 }
 
 // cliHelpRenderedByCommand reports today's paths whose help is written by

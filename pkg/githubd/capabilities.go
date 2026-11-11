@@ -57,6 +57,7 @@ func (s *Service) scanOptions(subject platformflags.Subject) reposcan.ScanOption
 		KubernetesManifests:       s.capabilityAllowed(reposcan.KubernetesManifestsCapability, subject),
 		HTTPSTransportUnavailable: !s.capabilityAllowed(api.PrivateServiceHTTPSCapability, subject),
 		ResourceLabels:            s.capabilityAllowed(labels.Capability, subject),
+		Functions:                 s.capabilityAllowed(reposcan.RepositoryFunctionsCapability, subject),
 	}
 }
 

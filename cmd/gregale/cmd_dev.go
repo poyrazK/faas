@@ -29,6 +29,9 @@ type devSourceConfig struct {
 }
 
 func resolveDevSourceConfig(sourceDir string) (devSourceConfig, error) {
+	if err := refuseDevFunctionSet(sourceDir); err != nil {
+		return devSourceConfig{}, err
+	}
 	resolvedShape, runtime, handler, err := resolveDeployShape(sourceDir, false, false, jsonOutput)
 	if err != nil {
 		return devSourceConfig{}, err
@@ -316,6 +319,10 @@ func cmdDev(args []string) int {
 	if len(args) > 0 && args[0] == "trigger" {
 		return cmdDevTrigger(args[1:])
 	}
+	// ADR-20261107210000: run the functions on this machine instead.
+	if rest, isLocal := hasLocalFlag(args); isLocal {
+		return cmdDevLocal(rest)
+	}
 	fs := newFlagSet("dev", flag.ContinueOnError)
 	name := fs.String("name", "", "developer-session project name (default: selected source directory)")
 	sourcePath := fs.String("path", "", "source directory (relative to the current directory)")
@@ -404,7 +411,7 @@ func cmdDev(args []string) int {
 	var linkedContext localProjectContext
 	linkedErr := errProjectContextNotFound
 	if *name == "" {
-		linkedContext, _, linkedErr = linkedProjectContext(sourceDir)
+		linkedContext, _, linkedErr = targetProjectContext(sourceDir)
 		if linkedErr != nil && !errors.Is(linkedErr, errProjectContextNotFound) {
 			return printErr("Could not read local project context", linkedErr)
 		}
@@ -418,10 +425,11 @@ func cmdDev(args []string) int {
 	}
 	// --stop only tears the environment down, so team defaults for files that
 	// would be synced on start must not turn it into a flag conflict.
+	debugFromManifest := false
 	if !*stop {
 		applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion, ttl)
 		applyDevSeedManifestDefault(manifest, explicitFlags, postgresSeed)
-		applyDevDebugManifestDefault(manifest, explicitFlags, debug)
+		debugFromManifest = applyDevDebugManifestDefault(manifest, explicitFlags, debug, debugPort)
 		applyDevWatchManifestDefault(manifest, explicitFlags, watch, watchCommand)
 	}
 	var buckets []api.DevBucketRequest
@@ -429,6 +437,17 @@ func cmdDev(args []string) int {
 		buckets, err = resolveDevBuckets(manifest, bucketNames, explicitFlags["bucket"])
 		if err != nil {
 			return printErr("Invalid developer buckets", err)
+		}
+	}
+	if *debugPort < 1 || *debugPort > 65535 {
+		return printErr("Invalid debug port", fmt.Errorf("dev.debug_port must be between 1 and 65535"))
+	}
+	if *debug && *once && debugFromManifest {
+		// gregale.yaml's dev.debug is a team default for interactive loops; a
+		// one-shot sync (CI, scripts) just skips the debugger.
+		*debug = false
+		if !jsonOutput {
+			PrintProgress(osStdout, "dev.debug skipped: --once exits after one sync")
 		}
 	}
 	if *debug && *once {
@@ -541,8 +560,14 @@ func cmdDev(args []string) int {
 		PrintProgress(osStdout, "Source: %s; connection: %s; isolated developer session: %s", sourceDir, currentProfile(), project)
 	}
 
+	if *debug && !devDebugSupported(sourceDir, config) && debugFromManifest {
+		*debug = false
+		if !jsonOutput {
+			PrintProgress(osStdout, "dev.debug skipped: the debugger supports Node.js workloads only (not Bun or Deno)")
+		}
+	}
 	if *debug && !devDebugSupported(sourceDir, config) {
-		return printErr("Invalid flags", fmt.Errorf("--debug supports Node.js workloads only"))
+		return printErr("Invalid flags", fmt.Errorf("--debug supports Node.js workloads only (not Bun or Deno)"))
 	}
 	devWatch, err := resolveDevWatch(sourceDir, config, *watch, *watchCommand)
 	if err != nil {

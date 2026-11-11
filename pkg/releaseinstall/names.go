@@ -13,12 +13,18 @@ import (
 // starts the bridge helpers, imaged injects init as the guest PID 1, the
 // upgrade path invokes gregalectl, and the optional object-storage role starts
 // s3-gatewayd from the active release tree. The optional hosted management MCP
-// server, mcp-bridged, starts the same way (ADR-20261026195952).
+// server, mcp-bridged, starts the same way (ADR-20261026195952), and so does
+// the control plane's edgednsd (ADR-20261102081618): rc.323 enabled it and
+// its unit exited 203/EXEC because no release had carried the binary.
 var supportBinaryNames = []string{
 	"gregale",
 	"gregalectl",
 	"init",
 	"mcp-bridged",
+	"edgednsd",
+	// ADR-20261109170000: the control plane's artifact signer, started by
+	// the signd_service role from the active release.
+	"signd",
 	"schedd-brokerq-apply",
 	"s3-gatewayd",
 	"vmmd-jail-helper",
@@ -31,6 +37,10 @@ var supportBinaryNames = []string{
 	// the signed bundle so compute hosts never rebuild a host-specific kernel
 	// during a production join.
 	"vmlinux",
+	// firecracker-vmm is the release-built Firecracker with the host-owned
+	// virtio-net header patch (ADR-20261108170000). node_join installs it as
+	// the upstream-named binary; releases built before it simply lack it.
+	"firecracker-vmm",
 	// imaged verifies platform base provenance offline against the Sigstore
 	// root its own release shipped, and admits the frozen pre-attestation
 	// digest list without an attestation (ADR-20261029155852).

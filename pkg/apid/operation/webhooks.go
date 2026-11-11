@@ -122,7 +122,7 @@ func writeOperationWebhookBindingError(w http.ResponseWriter, err error) {
 	case errors.Is(err, state.ErrOperationWebhookVersionConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "operation_webhook_binding_conflict", "Binding changed", "the binding version changed; read it again before writing"))
 	case errors.Is(err, state.ErrOperationWebhookRoutingConflict):
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "inbound_webhook_routing_conflict", "Endpoint already routed", "the endpoint already starts an automation or a managed exclusive operation"))
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "inbound_webhook_routing_conflict", "Endpoint already routed", "the endpoint already starts a stored workflow or a managed exclusive operation"))
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "the operation binding, platform tenant or its active tenant surface for this app is unavailable"))
 	default:

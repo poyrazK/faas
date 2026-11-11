@@ -88,6 +88,20 @@ func (q *Queries) ClearNodeConnectionsExcept(ctx context.Context, db DBTX, arg C
 	return err
 }
 
+const clearNodeEndpointConnectionsExcept = `-- name: ClearNodeEndpointConnectionsExcept :exec
+DELETE FROM realtime_node_endpoint_connections WHERE node_name=$1::text AND NOT (endpoint_id=ANY($2::uuid[]))
+`
+
+type ClearNodeEndpointConnectionsExceptParams struct {
+	NodeName    string
+	EndpointIds []pgtype.UUID
+}
+
+func (q *Queries) ClearNodeEndpointConnectionsExcept(ctx context.Context, db DBTX, arg ClearNodeEndpointConnectionsExceptParams) error {
+	_, err := db.Exec(ctx, clearNodeEndpointConnectionsExcept, arg.NodeName, arg.EndpointIds)
+	return err
+}
+
 const completeMeasuredMessage = `-- name: CompleteMeasuredMessage :one
 WITH removed AS (
  DELETE FROM managed_realtime_consumer_group_messages WHERE group_id=$1::text::uuid AND sequence=$2::bigint
@@ -1370,6 +1384,47 @@ func (q *Queries) ReadRemoteNodeConnections(ctx context.Context, db DBTX, arg Re
 	return items, nil
 }
 
+const readRemoteNodeEndpointConnections = `-- name: ReadRemoteNodeEndpointConnections :many
+SELECT c.endpoint_id::text AS endpoint_id,sum(c.connections)::bigint AS connections
+FROM realtime_node_endpoint_connections c JOIN realtime_node_connection_syncs s ON s.node_name=c.node_name
+WHERE c.node_name<>$1::text
+ AND c.endpoint_id=ANY($2::uuid[])
+ AND s.synced_at>clock_timestamp()-make_interval(secs=>$3::double precision)
+GROUP BY c.endpoint_id
+`
+
+type ReadRemoteNodeEndpointConnectionsParams struct {
+	NodeName     string
+	EndpointIds  []pgtype.UUID
+	StaleSeconds float64
+}
+
+type ReadRemoteNodeEndpointConnectionsRow struct {
+	EndpointID  string
+	Connections int64
+}
+
+// Other nodes' fresh counts for the endpoints this node reported.
+func (q *Queries) ReadRemoteNodeEndpointConnections(ctx context.Context, db DBTX, arg ReadRemoteNodeEndpointConnectionsParams) ([]ReadRemoteNodeEndpointConnectionsRow, error) {
+	rows, err := db.Query(ctx, readRemoteNodeEndpointConnections, arg.NodeName, arg.EndpointIds, arg.StaleSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadRemoteNodeEndpointConnectionsRow{}
+	for rows.Next() {
+		var i ReadRemoteNodeEndpointConnectionsRow
+		if err := rows.Scan(&i.EndpointID, &i.Connections); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readReplayJob = `-- name: ReadReplayJob :one
 SELECT id, group_id, state, rate, selection, outcomes, error_count, last_error, position, created_at, next_at, updated_at, dry_run, reviewed_job_id, started_job_id FROM managed_realtime_replay_jobs WHERE group_id=$1::uuid AND id=$2::uuid FOR UPDATE
 `
@@ -1864,6 +1919,26 @@ type UpsertNodeConnectionsParams struct {
 // Writes only the counts that changed since the node's previous sync.
 func (q *Queries) UpsertNodeConnections(ctx context.Context, db DBTX, arg UpsertNodeConnectionsParams) error {
 	_, err := db.Exec(ctx, upsertNodeConnections, arg.NodeName, arg.AccountIds, arg.Counts)
+	return err
+}
+
+const upsertNodeEndpointConnections = `-- name: UpsertNodeEndpointConnections :exec
+INSERT INTO realtime_node_endpoint_connections AS t (node_name,endpoint_id,connections)
+SELECT $1::text,($2::uuid[])[g.i],($3::integer[])[g.i]
+FROM generate_subscripts($2::uuid[],1) AS g(i)
+ON CONFLICT (node_name,endpoint_id) DO UPDATE SET connections=excluded.connections
+WHERE t.connections<>excluded.connections
+`
+
+type UpsertNodeEndpointConnectionsParams struct {
+	NodeName    string
+	EndpointIds []pgtype.UUID
+	Counts      []int32
+}
+
+// Writes only the counts that changed since the node's previous sync.
+func (q *Queries) UpsertNodeEndpointConnections(ctx context.Context, db DBTX, arg UpsertNodeEndpointConnectionsParams) error {
+	_, err := db.Exec(ctx, upsertNodeEndpointConnections, arg.NodeName, arg.EndpointIds, arg.Counts)
 	return err
 }
 

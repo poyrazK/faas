@@ -98,6 +98,13 @@ type Config struct {
 	// this process (docs/adr/20261018-runtime-admission-rebind.md). Off,
 	// they are refused and re-admitted. Requires adopt_running_vms.
 	AdoptAdmittedRuntimes bool `toml:"adopt_admitted_runtimes"`
+	// FlatTenantCgroups launches every new tenant VM directly under
+	// faas-tenant.slice instead of its plan's sub-slice
+	// (ADR-20261109172421 step 6.5). This release adopts and tears down VMs
+	// in either place; an older vmmd only knows the sub-slices, so turn it
+	// off, and let flat VMs park, before rolling vmmd back past this
+	// release. Not with native_process_recovery.
+	FlatTenantCgroups bool `toml:"flat_tenant_cgroups"`
 	// FailureReportDir is persistent root-owned storage for liveness/OOM
 	// reports (ADR-471). Keep it outside /run and the Firecracker jail tmpfs.
 	FailureReportDir string `toml:"failure_report_dir"`
@@ -122,6 +129,15 @@ type Config struct {
 	// returns guest-freed pages to the host. It is on by default on
 	// Firecracker 1.14+; FAAS_FREE_PAGE_REPORTING=0 overrides TOML.
 	DisableFreePageReporting bool `toml:"disable_free_page_reporting"`
+	// DisableRestoreClockRealtime stops advancing a restored guest's
+	// kvm-clock by the time its capture spent parked (ADR-20261109120000).
+	// It is on by default on Firecracker 1.16+ hosts with the tsc
+	// clocksource; FAAS_RESTORE_CLOCK_REALTIME=0 overrides TOML.
+	DisableRestoreClockRealtime bool `toml:"disable_restore_clock_realtime"`
+	// DisableReleaseConnectionsOnDestroy stops asking an app guest to reset
+	// its TCP connections before teardown destroys it (ADR-20261109130000).
+	// It is on by default; FAAS_RELEASE_CONNECTIONS_ON_DESTROY=0 overrides TOML.
+	DisableReleaseConnectionsOnDestroy bool `toml:"disable_release_connections_on_destroy"`
 	// RestoreReseedThread boots app VMs whose Node processes answer the
 	// restore reseed barrier from a native thread instead of their event
 	// loop (ADR-20261024105607). Off by default; FAAS_RESTORE_RESEED_THREAD
@@ -144,6 +160,34 @@ type Config struct {
 	// quiet_pause wins when both are set. Off by default.
 	// FAAS_QUIET_PAUSE_OBSERVE overrides TOML.
 	QuietPauseObserve bool `toml:"quiet_pause_observe"`
+	// IdleLadder selects the idle ladder mode (ADR-20261107122928,
+	// proposed): "off" (the default), "observe" or "on". Observe measures,
+	// for every request-serving instance whatever its declared pause, the
+	// ladder level its idle time reaches, the RAM held at each level and the
+	// billed MB-seconds the unbilled levels would not bill
+	// (vmmd_idle_ladder_observed_*); it pauses nothing and runs beside quiet
+	// pause. On also applies levels L1 and L2 to the instances quiet pause
+	// pauses: it pauses them after 1 s, and reports those quiet for 10 s at
+	// L2 (InstanceStats.idle_ladder_level), whose memory measured admission
+	// charges with the frozen floor. On needs quiet_pause. FAAS_IDLE_LADDER
+	// overrides TOML.
+	IdleLadder string `toml:"idle_ladder"`
+	// IdleLadderApps lets the idle ladder quiet-pause apps that declared no
+	// pause (schedd marks them; ADR-20261107122928 §6), but only when its
+	// activity guard agrees they are idle: no request for 1 s and, over that
+	// second, VM CPU <= 10 ms and veth <= 512 bytes each way. Any inbound
+	// byte on a paused app's veth resumes it. Needs idle_ladder = "on". Off
+	// by default. FAAS_IDLE_LADDER_APPS overrides TOML.
+	IdleLadderApps bool `toml:"idle_ladder_apps"`
+	// IdleLadderCompress applies the idle ladder's L3 and L4
+	// (ADR-20261107122928): vmmd ages a quiet-paused VM's memory after the
+	// guest ran and, at 60 s and 180 s of quiet, compresses into memory-only
+	// zswap every multi-gen LRU generation but the youngest 3 and 2. A wake
+	// over its budget (100 ms, or the instance's restore time if shorter)
+	// makes the app keep one more generation. Needs idle_ladder = "on", and
+	// does nothing on a node without the zswap role or the multi-gen LRU.
+	// Off by default. FAAS_IDLE_LADDER_COMPRESS overrides TOML.
+	IdleLadderCompress bool `toml:"idle_ladder_compress"`
 	// AgentWaitPause enables the model-wait pause of agent runs
 	// (ADR-20261027090012): vmmd pauses a run VM while it waits on the
 	// outbound relay and nothing else, and resumes it on the relay's next
@@ -450,6 +494,16 @@ type ComputeNodeConfig struct {
 	// rebuilds. Both are supplied by the vmmd systemd egress drop-in.
 	PrivateIngressCIDRs    []string `toml:"private_ingress_cidrs"`
 	PrivateIngressTCPPorts []int    `toml:"private_ingress_tcp_ports"`
+	// PrivateControlIngressCIDRs, when set, replaces PrivateIngressCIDRs as
+	// the sources of the control-plane rule: the control plane's exact
+	// addresses (ADR-20261110120000). PrivateIngressCIDRs keeps the wider
+	// list for a vmmd that predates these fields.
+	PrivateControlIngressCIDRs []string `toml:"private_control_ingress_cidrs"`
+	// PrivatePeerIngressCIDRs and PrivatePeerIngressTCPPorts admit the other
+	// compute nodes to the ports they use on this one (vmmd forwards, schedd
+	// wakes), as the boot policy's compute-peer rule does.
+	PrivatePeerIngressCIDRs    []string `toml:"private_peer_ingress_cidrs"`
+	PrivatePeerIngressTCPPorts []int    `toml:"private_peer_ingress_tcp_ports"`
 	// PublicIngressCIDRs, when set, restricts the public 80/443 accept to
 	// these sources, as the nftables role does for
 	// faas_cloudflare_origin_only. The vmmd egress drop-in supplies
@@ -747,6 +801,7 @@ func LoadConfig(path string) (*Config, error) {
 		{"FAAS_VMMD_ADOPTION_RECORD", &c.AdoptionRecord},
 		{"FAAS_VMMD_ADOPT_RUNNING_VMS", &c.AdoptRunningVMs},
 		{"FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES", &c.AdoptAdmittedRuntimes},
+		{"FAAS_VMMD_FLAT_TENANT_CGROUPS", &c.FlatTenantCgroups},
 	} {
 		if v := os.Getenv(sw.env); v != "" {
 			on, perr := strconv.ParseBool(v)
@@ -763,6 +818,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if c.AdoptAdmittedRuntimes && !c.AdoptRunningVMs {
 		return nil, errors.New("vmmd: adopt_admitted_runtimes requires adopt_running_vms = true")
+	}
+	if c.FlatTenantCgroups && c.NativeProcessRecovery {
+		return nil, errors.New("vmmd: flat_tenant_cgroups is not supported with native_process_recovery")
 	}
 	if err := validateAdoptionConfig(c.AdoptionRecord, c.AdoptRunningVMs, c.NativeProcessRecovery); err != nil {
 		return nil, err
@@ -851,6 +909,19 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if v := os.Getenv("FAAS_PUBLIC_INGRESS_CIDRS"); v != "" {
 		c.ComputeNode.PublicIngressCIDRs = splitNonEmpty(v)
+	}
+	if v := os.Getenv("FAAS_PRIVATE_CONTROL_INGRESS_CIDRS"); v != "" {
+		c.ComputeNode.PrivateControlIngressCIDRs = splitNonEmpty(v)
+	}
+	if v := os.Getenv("FAAS_PRIVATE_PEER_INGRESS_CIDRS"); v != "" {
+		c.ComputeNode.PrivatePeerIngressCIDRs = splitNonEmpty(v)
+	}
+	if v := os.Getenv("FAAS_PRIVATE_PEER_INGRESS_TCP_PORTS"); v != "" {
+		ports, perr := parseTCPPorts(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_PRIVATE_PEER_INGRESS_TCP_PORTS %q invalid: %w", v, perr)
+		}
+		c.ComputeNode.PrivatePeerIngressTCPPorts = ports
 	}
 	if v := os.Getenv("FAAS_PUBLIC_ENTRY_ADDRS"); v != "" {
 		c.ComputeNode.PublicEntryAddrs = splitNonEmpty(v)
@@ -971,6 +1042,37 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.QuietPauseObserve = enabled
 	}
+	if v := os.Getenv("FAAS_IDLE_LADDER"); v != "" {
+		c.IdleLadder = v
+	}
+	if v := os.Getenv("FAAS_IDLE_LADDER_APPS"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_IDLE_LADDER_APPS must be a boolean (got %q)", v)
+		}
+		c.IdleLadderApps = enabled
+	}
+	if v := os.Getenv("FAAS_IDLE_LADDER_COMPRESS"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_IDLE_LADDER_COMPRESS must be a boolean (got %q)", v)
+		}
+		c.IdleLadderCompress = enabled
+	}
+	idleLadder, ierr := parseIdleLadderMode(c.IdleLadder)
+	if ierr != nil {
+		return nil, ierr
+	}
+	c.IdleLadder = idleLadder
+	if c.IdleLadder == idleLadderOn && !c.QuietPause {
+		return nil, fmt.Errorf("vmmd: idle_ladder = on needs quiet_pause on (FAAS_IDLE_LADDER, FAAS_QUIET_PAUSE)")
+	}
+	if c.IdleLadderApps && c.IdleLadder != idleLadderOn {
+		return nil, fmt.Errorf("vmmd: idle_ladder_apps needs idle_ladder = on (FAAS_IDLE_LADDER_APPS, FAAS_IDLE_LADDER)")
+	}
+	if c.IdleLadderCompress && c.IdleLadder != idleLadderOn {
+		return nil, fmt.Errorf("vmmd: idle_ladder_compress needs idle_ladder = on (FAAS_IDLE_LADDER_COMPRESS, FAAS_IDLE_LADDER)")
+	}
 	if v := os.Getenv("FAAS_VMMD_AGENT_WAIT_PAUSE"); v != "" {
 		enabled, perr := strconv.ParseBool(v)
 		if perr != nil {
@@ -1066,6 +1168,20 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_FREE_PAGE_REPORTING must be a boolean (got %q)", v)
 		}
 		c.DisableFreePageReporting = !enabled
+	}
+	if v := os.Getenv("FAAS_RESTORE_CLOCK_REALTIME"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_CLOCK_REALTIME must be a boolean (got %q)", v)
+		}
+		c.DisableRestoreClockRealtime = !enabled
+	}
+	if v := os.Getenv("FAAS_RELEASE_CONNECTIONS_ON_DESTROY"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RELEASE_CONNECTIONS_ON_DESTROY must be a boolean (got %q)", v)
+		}
+		c.DisableReleaseConnectionsOnDestroy = !enabled
 	}
 	// A shared acceptance host runs several vmmd builds over time; each test
 	// run points its own vmmd at a private journal so a record written by a
@@ -1218,6 +1334,9 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: private_ingress_tcp_ports contains invalid TCP port %d", port)
 		}
 	}
+	if err := validatePrivatePeerIngress(&c.ComputeNode); err != nil {
+		return nil, err
+	}
 	for i, raw := range c.ComputeNode.PublicIngressCIDRs {
 		prefix, perr := netip.ParsePrefix(strings.TrimSpace(raw))
 		if perr != nil {
@@ -1366,16 +1485,12 @@ func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix, serviceHTTPS 
 	}
 	policy.TenantEgressIface = strings.TrimSpace(cfg.TenantEgressIface)
 	policy.MasqueradeCIDR = bridge.Masked().String()
-	for _, raw := range cfg.PrivateIngressCIDRs {
-		prefix, err := netip.ParsePrefix(raw)
-		if err != nil {
-			continue // LoadConfig validates; retain a safe pure helper for tests.
-		}
-		policy.PrivateInputAllowRules = append(policy.PrivateInputAllowRules, netns.PrivateInputAllowRule{
-			Source: prefix.Masked(),
-			Ports:  append([]int(nil), cfg.PrivateIngressTCPPorts...),
-		})
+	controlSources := cfg.PrivateIngressCIDRs
+	if len(cfg.PrivateControlIngressCIDRs) > 0 {
+		controlSources = cfg.PrivateControlIngressCIDRs
 	}
+	policy.PrivateInputAllowRules = appendPrivateInputRules(policy.PrivateInputAllowRules, controlSources, cfg.PrivateIngressTCPPorts)
+	policy.PrivateInputAllowRules = appendPrivateInputRules(policy.PrivateInputAllowRules, cfg.PrivatePeerIngressCIDRs, cfg.PrivatePeerIngressTCPPorts)
 	for _, raw := range cfg.PublicIngressCIDRs {
 		if prefix, err := netip.ParsePrefix(raw); err == nil {
 			policy.PublicInputSourceCIDRs = append(policy.PublicInputSourceCIDRs, prefix.Masked())
@@ -1511,5 +1626,24 @@ func (c *Config) resourceJournal() fcvm.ResourceJournalConfig {
 		Dir:            c.ResourceJournalDir,
 		VolatileDir:    c.ResourceJournalVolatileDir,
 		VolatileWrites: c.ResourceJournalVolatileWrites,
+	}
+}
+
+// Idle ladder modes (ADR-20261107122928).
+const (
+	idleLadderOff     = "off"
+	idleLadderObserve = "observe"
+	idleLadderOn      = "on"
+)
+
+// parseIdleLadderMode normalizes idle_ladder / FAAS_IDLE_LADDER; empty is off.
+func parseIdleLadderMode(v string) (string, error) {
+	switch mode := strings.ToLower(strings.TrimSpace(v)); mode {
+	case "", idleLadderOff:
+		return idleLadderOff, nil
+	case idleLadderObserve, idleLadderOn:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("vmmd: idle_ladder (FAAS_IDLE_LADDER) must be off, observe or on (got %q)", v)
 	}
 }

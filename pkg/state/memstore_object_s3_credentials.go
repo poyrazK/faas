@@ -94,13 +94,15 @@ func (m *MemStore) createObjectS3ComputeBindingLocked(req ObjectS3ComputeBinding
 	if active >= req.MaxCredentialsPerBucket {
 		return ObjectS3Credential{}, ErrConflict
 	}
+	// Managed binding values are bounded by the binding limits, not the plan's
+	// secret count (ADR-20261109180000): only customer-authored secrets count.
 	secretCount := 0
 	for _, existing := range m.secrets {
-		if existing.AccountID == c.AccountID && existing.AppID == c.ManagedAppID {
+		if existing.AccountID == c.AccountID && existing.AppID == c.ManagedAppID && existing.ManagedPostgresBindingID == "" && existing.ManagedObjectStorageCredentialID == "" {
 			secretCount++
 		}
 	}
-	if secretCount+len(req.Secrets) > req.MaxSecretsPerApp {
+	if secretCount > req.MaxSecretsPerApp {
 		return ObjectS3Credential{}, ErrConflict
 	}
 	for _, secret := range req.Secrets {
@@ -275,6 +277,21 @@ func (m *MemStore) PendingObjectS3CredentialRotation(ctx context.Context, accoun
 		}
 	}
 	return "", nil
+}
+
+func (m *MemStore) PendingObjectS3CredentialRotations(ctx context.Context, accountID, bucketID string) (map[string]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, c := range m.objectS3Credentials {
+		if c.AccountID == accountID && c.BucketID == bucketID && c.RotationParentID != "" && c.Status == ObjectS3CredentialStatusActive {
+			out[c.RotationParentID] = c.RotationWakeID
+		}
+	}
+	return out, nil
 }
 
 func (m *MemStore) StageObjectS3CredentialRotation(ctx context.Context, req ObjectS3CredentialRotationRequest) (ObjectS3Credential, error) {

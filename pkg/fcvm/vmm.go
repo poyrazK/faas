@@ -92,6 +92,9 @@ type JailerVMM struct {
 	// pmemBase holds the per-account base copies attached as pmem (ADR-908);
 	// nil keeps drive0 on virtio-blk.
 	pmemBase *pmemBaseStore
+	// clockRealtime advances the guest's kvm-clock by the time a capture
+	// spent parked (ADR-20261109120000).
+	clockRealtime restoreClockRealtime
 	// restoreReseedThread boots app VMs with the thread-mode reseed barrier
 	// client (ADR-20261024105607).
 	restoreReseedThread bool
@@ -113,6 +116,10 @@ type JailerVMM struct {
 	// the executable across filesystems on every wake. Older bundles use vmmd.
 	mountHelperMu   sync.Mutex
 	mountHelperPath string
+	// resident holds verified copies of the jailer and firecracker executables
+	// on the jail tmpfs (ADR-20261105100000), launched in place of the
+	// installed ones so a wake after an idle spell reads nothing from disk.
+	resident residentExecs
 	// guestDisk is the sandboxed editor every drive read and write goes
 	// through (ADR-20261025090100).
 	guestDisk guestDiskState
@@ -314,13 +321,15 @@ type restoreTimingBreakdown struct {
 	MaterializeVMStateMs int64
 	ResolveImagesMs      int64
 	StageDrivesMs        int64
-	// TunWaitMntnsMs .. CgroupFenceMs split the bind_tun window so an
+	// TunJournalChecksMs .. CgroupFenceMs split the bind_tun window so an
 	// optimisation targets the right thing; see bindTunTimings. Operator-
-	// facing only: they ride the Debug record and are deliberately NOT on
+	// facing only: they ride the Debug record and the tun_* / cgroup_fence
+	// vmmd_restore_phase_duration_seconds phases, and are deliberately NOT on
 	// the wake.restore_breakdown event, which is a customer contract.
-	TunWaitMntnsMs  int64
-	TunWaitChrootMs int64
-	TunSetupJailMs  int64
+	TunJournalChecksMs int64
+	TunWaitMntnsMs     int64
+	TunWaitChrootMs    int64
+	TunSetupJailMs     int64
 	// TunSetupJailWorkUs is the helper's own in-namespace duration, self
 	// reported on stdout. TunSetupJailMs minus this is process-spawn cost.
 	TunSetupJailWorkUs int64
@@ -393,6 +402,8 @@ type restoreArtifactResolution struct {
 // of timings in one value prevents pre-guest storage work from disappearing
 // behind Manager's aggregate bring_up phase.
 type coldBootTimingBreakdown struct {
+	// Backing (ADR-510) ran before this boot window and is outside TotalMs.
+	Backing          BackingCheckTimings
 	ResolveImagesMs  int64
 	ChrootMs         int64
 	ProvisionMs      int64
@@ -762,6 +773,11 @@ func firecrackerControlLine(line []byte) bool {
 		// queue worker's customer log on production-us rc.294 (Hunt 14
 		// H14-5).
 		"spurious notification from api thread",
+		// Firecracker's vsock device losing a host-side stream, e.g. "vsock:
+		// error writing to local stream (lp=1027, pp=…): GuestMemoryMmap(
+		// IOError(Os { code: 32, kind: BrokenPipe … }))". It reached a
+		// function's customer log on production-us rc.336 (Hunt 32 H32-69).
+		"vsock: error ",
 	} {
 		if strings.Contains(body, marker) {
 			return true
@@ -1281,7 +1297,7 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	if err := spec.Validate(); err != nil {
 		return fmt.Errorf("vmm: cold boot: %w", err)
 	}
-	breakdown := coldBootTimingBreakdown{}
+	breakdown := coldBootTimingBreakdown{Backing: spec.Backing}
 	kernelSrc, timing, err := v.resolveColdBootArtifact(ctx, l.Instance, "kernel", spec.KernelKey)
 	if err != nil {
 		return fmt.Errorf("vmm: stage kernel: %w", err)
@@ -1430,6 +1446,11 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if jobManifest != nil {
 		if err := v.stageJobManifestForOwner(ctx, stagingOwner, l.Instance, *jobManifest); err != nil {
 			return fmt.Errorf("vmm: stage job manifest: %w", err)
+		}
+	}
+	if len(l.SandboxManifest) > 0 {
+		if err := v.stageSandboxManifestForOwner(ctx, stagingOwner, l.Instance, []byte(l.SandboxManifest)); err != nil {
+			return fmt.Errorf("vmm: stage sandbox manifest: %w", err)
 		}
 	}
 	stagedRuntimeAt := time.Now()
@@ -1846,7 +1867,7 @@ func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) e
 // child is kept in sync for accurate cgroup inspection even though guest
 // processes do not join that host-side leaf.
 func (v *JailerVMM) restoreConfiguredCPUFence(l Lease, workloads []WorkloadSpec, configuredMillicores int) error {
-	parentScope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
+	parentScope := filepath.Join(cgroupRoot, tenantCgroupParent(l), PerInstanceScope(l.Instance))
 	value, err := appCPUMax(l.Plan, configuredMillicores)
 	if err != nil {
 		return err
@@ -1878,16 +1899,16 @@ func (v *JailerVMM) UpdateCPULimit(ctx context.Context, l Lease, cpuMillicores i
 		return fmt.Errorf("vmm: update CPU limit: invalid cpu_millicores %d", cpuMillicores)
 	}
 
-	value, err := appCPUMax(l.Plan, cpuMillicores)
+	value, err := liveAppCPUMax(l, cpuMillicores)
 	if err != nil {
 		return fmt.Errorf("vmm: update CPU limit for %s: %w", l.Instance, err)
 	}
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	scope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
+	scope := filepath.Join(cgroupRoot, tenantCgroupParent(l), PerInstanceScope(l.Instance))
 	revert := v.trackFenceValue(l.Instance, fenceCPUMax, value)
-	if err := writeAppCPUMaxTo(scope, l.Plan, cpuMillicores); err != nil {
+	if err := writeCPUMaxValueTo(scope, value); err != nil {
 		revert()
 		return fmt.Errorf("vmm: update CPU limit for %s: %w", l.Instance, err)
 	}
@@ -2367,12 +2388,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tBindTun := time.Now()
-	body := map[string]any{
-		"snapshot_path": stateName,
-		"mem_backend":   map[string]any{"backend_type": "File", "backend_path": memName},
-		"resume_vm":     !spec.KeepPaused,
-	}
+	body := v.snapshotLoadBody(stateName, memName, !spec.KeepPaused)
 	if err = v.loadRestoredSnapshot(ctx, l, root, spec, body); err != nil {
+		v.noteSnapshotLoadError(err)
 		return fmt.Errorf("vmm: load snapshot: %w", err)
 	}
 	if err = v.checkRestoredVCPUs(l, spec.VCPUs); err != nil {
@@ -2435,6 +2453,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		MaterializeVMStateMs: vmstateReady.Sub(vmstateStart).Milliseconds(),
 		ResolveImagesMs:      tResolve.Sub(vmstateReady).Milliseconds(),
 		StageDrivesMs:        tStageDrives.Sub(tResolve).Milliseconds(),
+		TunJournalChecksMs:   tunTimings.JournalChecksMs,
 		TunWaitMntnsMs:       tunTimings.WaitMntnsMs,
 		TunWaitChrootMs:      tunTimings.WaitChrootMs,
 		TunSetupJailMs:       tunTimings.SetupJailMs,
@@ -2500,6 +2519,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"start_jailer_ms", breakdown.StartJailerMs,
 		"network_wait_ms", breakdown.NetworkWaitMs,
 		"bind_tun_ms", breakdown.BindTunMs,
+		"tun_journal_checks_ms", breakdown.TunJournalChecksMs,
 		"tun_wait_mntns_ms", breakdown.TunWaitMntnsMs,
 		"tun_wait_chroot_ms", breakdown.TunWaitChrootMs,
 		"tun_setup_jail_ms", breakdown.TunSetupJailMs,
@@ -3160,8 +3180,11 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 		// snapshot booted under; an older vmmd omits the field.
 		EventPublishVerdict  bool                            `json:"eventPublishVerdict,omitempty"`
 		QualificationReceipt *resumeHookQualificationReceipt `json:"qualificationReceipt,omitempty"`
+		// ADR-20261107160000: the serving instance's identity, which a
+		// restored process's environment cannot reflect.
+		Identity *resumeIdentityWire `json:"identity,omitempty"`
 	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy), Traceparent: traceparent, EventPublishVerdict: true,
-		QualificationReceipt: qualificationReceipt})
+		QualificationReceipt: qualificationReceipt, Identity: resumeIdentityWireFromContext(ctx)})
 	if err != nil {
 		return fmt.Errorf("vmm: marshal resume body: %w", err)
 	}
@@ -3233,6 +3256,12 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 	if guest != nil {
 		attrs = append(attrs, resumeGuestTimingAttrs(*guest, ackWait)...)
 		v.wakePhaseMetrics.ObserveResumeGuestStages(*guest, ackWait)
+		v.wakePhaseMetrics.ObserveReseedUnregistered(*guest)
+		if guest.ReseedUnregistered > 0 {
+			slog.Default().Warn("restore: guest processes not covered by the userspace RNG reseed",
+				"instance", l.Instance, "processes", guest.ReseedUnregistered,
+				"runtimes", guest.ReseedUnregisteredRuntimes, "adr", "ADR-20261109140000")
+		}
 	}
 	slog.Default().Info("resume hook timing", attrs...)
 	return nil
@@ -3262,6 +3291,7 @@ func resumeGuestTimingAttrs(t resumetimingproto.Timings, ackWait time.Duration) 
 		"guest_reseed_clients", t.ReseedClients,
 		"guest_reseed_slowest_us", t.ReseedSlowestUs,
 		"guest_reseed_slowest_runtime", t.ReseedSlowestRuntime,
+		"guest_reseed_unregistered", t.ReseedUnregistered,
 		"guest_profiles_us", t.ProfilesUs,
 		"guest_after_restore_us", t.AfterRestoreUs,
 	}
@@ -4215,10 +4245,7 @@ func (v *JailerVMM) Kill(ctx context.Context, l Lease) (err error) {
 	if err := v.sweepMaterialised(l.Instance); err != nil {
 		return err
 	}
-	parent := ParentCgroupFor(l.Plan)
-	if l.IsBuilder {
-		parent = BuilderCgroupParent
-	}
+	parent := vmCgroupParent(l)
 	scope := filepath.Join(cgroupRoot, parent, PerInstanceScope(l.Instance))
 	if err := os.RemoveAll(scope); err != nil {
 		return fmt.Errorf("vmm: remove cgroup scope %s: %w", l.Instance, err)
@@ -5585,20 +5612,21 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	if err := v.prepareJournalLaunch(l); err != nil {
 		return err
 	}
-	execFile, err := exec.LookPath(FirecrackerBin)
+	// Pass the resolved real binary so jailer's chroot basename matches v.fcName
+	// (jailer follows the symlink); see resolveFCChrootName. The resident copy
+	// keeps that basename.
+	execFile, err := resolveExecutable(FirecrackerBin)
 	if err != nil {
 		return fmt.Errorf("vmm: locate firecracker binary: %w", err)
 	}
-	// Pass the resolved real binary so jailer's chroot basename matches v.fcName
-	// (jailer follows the symlink); see resolveFCChrootName.
-	if real, rErr := filepath.EvalSymlinks(execFile); rErr == nil {
-		execFile = real
-	}
+	execFile = v.residentExecutable(FirecrackerBin, execFile)
 	argv := append(JailerCommand(JailerSpec{
 		Instance: l.Instance, UID: l.UID, GID: l.GID, Netns: l.Netns, ExecFile: execFile,
-		Plan:        l.Plan,
-		Networkless: l.Networkless,
-		IsBuilder:   l.IsBuilder,
+		Plan:         l.Plan,
+		ParentCgroup: l.cgroupParent,
+		Networkless:  l.Networkless,
+		IsBuilder:    l.IsBuilder,
+		CPUWeight:    l.CPUWeight,
 		MemoryMaxBytes: func() int64 {
 			if l.MemoryMaxMiB < 1 {
 				return 0
@@ -5610,6 +5638,9 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 			return int64(memoryMB) << 20
 		}(),
 	}), extraFCArgs...)
+	if jailerPath, err := resolveExecutable(argv[0]); err == nil {
+		argv[0] = v.residentExecutable("jailer", jailerPath)
+	}
 	// The caller's gRPC context often ends as soon as the boot RPC returns.
 	// Jailer/firecracker must remain alive until the explicit Destroy/Kill path
 	// tears it down, otherwise a successful builder boot is killed immediately.
@@ -6329,6 +6360,9 @@ func writeConfigFIFOWithFallback(ctx context.Context, path string, body []byte, 
 // the jailer twice, one nsenter process spawn, then the cgroup fence), so it
 // is split before anything is optimised.
 type bindTunTimings struct {
+	// JournalChecksMs is the native path's ownership and journal checks before
+	// it starts waiting for the jailer; zero on the legacy path.
+	JournalChecksMs int64
 	// WaitMntnsMs waits for jailer to unshare its mount namespace.
 	WaitMntnsMs int64
 	// WaitChrootMs waits for the jailed helper and /dev to appear, which
@@ -6943,7 +6977,7 @@ func characterizationBootOutcome(report api.CharacterizationReport, executionMod
 		if len(tail) > 0 {
 			detail += ": " + string(tail)
 		}
-		return true, api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
+		return true, startupCrashProblem(report.LogTail, detail)
 	}
 
 	switch executionMode {
@@ -7196,9 +7230,19 @@ func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
 	// and exited. Without it the guest itself failed (overlay, pivot, init),
 	// which stays a platform failure (production-us hunt #9, H9-106).
 	if supervisedWorkloadExited(lines) {
-		return api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
+		return startupCrashProblem(strings.Join(lines, "\n"), detail)
 	}
 	return errors.New(detail)
+}
+
+// startupCrashProblem names a workload that exited during startup. A
+// function whose init hook failed says so in its output, and gets its own
+// code (ADR-20261110190000).
+func startupCrashProblem(output, detail string) *api.Problem {
+	if strings.Contains(output, api.FunctionInitFailedMarker) {
+		return api.NewProblem(422, api.CodeFunctionInitFailed, "function init failed", detail)
+	}
+	return api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
 }
 
 // supervisedWorkloadMarkers are guest-init's own console lines for a
@@ -7403,6 +7447,10 @@ func (v *JailerVMM) emitRestoreBreakdown(ctx context.Context, l Lease, at time.T
 		EnvPrepareMs:         b.Prepare.EnvPrepareMs,
 		PreNetworkMs:         b.Prepare.PreNetworkMs,
 		SetupNetworkMs:       b.Prepare.SetupNetworkMs,
+		BackingCheckMs:       b.Prepare.Backing.TotalMs,
+		BackingSidecarMs:     b.Prepare.Backing.SidecarMs,
+		BackingFetchMs:       b.Prepare.Backing.FetchMs,
+		BackingHashMs:        b.Prepare.Backing.HashMs,
 		RestoreGateWaitMs:    b.RestoreGateWaitMs,
 		ChrootMs:             b.ChrootMs,
 		MaterializeMemMs:     b.MaterializeMemMs,
@@ -7456,6 +7504,10 @@ func (v *JailerVMM) emitColdBootBreakdown(ctx context.Context, l Lease, at time.
 		WakeID:           fields.WakeID,
 		AppID:            fields.AppID,
 		InstanceID:       l.Instance,
+		BackingCheckMs:   b.Backing.TotalMs,
+		BackingSidecarMs: b.Backing.SidecarMs,
+		BackingFetchMs:   b.Backing.FetchMs,
+		BackingHashMs:    b.Backing.HashMs,
 		ResolveImagesMs:  b.ResolveImagesMs,
 		ChrootMs:         b.ChrootMs,
 		ProvisionMs:      b.ProvisionMs,
@@ -7498,6 +7550,7 @@ func (v *JailerVMM) logColdBootBreakdown(ctx context.Context, l Lease, b coldBoo
 		"quota_restore_ms", b.QuotaRestoreMs,
 		"total_ms", b.TotalMs,
 	}
+	attrs = append(attrs, b.Backing.attrs()...)
 	if time.Duration(b.TotalMs)*time.Millisecond >= slowColdBootBreakdownThreshold {
 		slog.Default().Warn("slow cold boot timing breakdown", attrs...)
 		return

@@ -100,6 +100,21 @@ func (m *management) outcomeRecoveryReference(entry actionRecord, now time.Time)
 		return nil
 	}
 	switch {
+	case entry.Action == "operation_config_rollback_guarded":
+		ref, found := m.configRollbacks[entry.PlanID]
+		if !found || !validConfigRollbackLookup(ref) || ref.Binding != actionOutcomeBinding(entry) {
+			return nil
+		}
+	case entry.Action == "operation_env":
+		ref, found := m.configOutcomes[entry.PlanID]
+		if !found || !validConfigOutcomeLookup(ref) || ref.Binding != configOutcomeBinding(entry) {
+			return nil
+		}
+	case entry.Action == "operation_scale":
+		ref, found := m.scalingOutcomes[entry.PlanID]
+		if !found || !validScalingOutcomeLookup(ref) || ref.Binding != actionOutcomeBinding(entry) {
+			return nil
+		}
 	case entry.Action == "route_budgets":
 		ref, found := m.budgetOutcomes[entry.PlanID]
 		if !found || !validBudgetOutcomeLookup(ref) || ref.Binding != budgetOutcomeBinding(entry) {
@@ -108,6 +123,11 @@ func (m *management) outcomeRecoveryReference(entry actionRecord, now time.Time)
 	case entry.Action == "service_abort":
 		ref, found := m.serviceAbortOutcomes[entry.PlanID]
 		if !found || !serviceAbortReferenceMatches(entry, ref) || !serviceAbortReferenceMatches(current, ref) {
+			return nil
+		}
+	case entry.Action == "rollback" && m.serviceRollbackOutcomes[entry.PlanID].AttemptID != "":
+		ref := m.serviceRollbackOutcomes[entry.PlanID]
+		if _, collision := m.rollbackOutcomes[entry.PlanID]; collision || !serviceRollbackReferenceMatches(entry, ref) || !serviceRollbackReferenceMatches(current, ref) {
 			return nil
 		}
 	case entry.Action == "rollback":
@@ -154,8 +174,19 @@ func (m *management) addOutcomeRecoveryLinks(view actionView, now time.Time) act
 }
 
 func (m *management) currentEnvironmentRecoveryLinks(view environmentActionView, now time.Time) environmentActionView {
+	hadOutcome := view.Recovery != nil && view.Recovery.Outcome != nil
 	if view.PlanAvailable && !m.environmentActionPlanAvailable(view.environmentActionRecord, now) {
-		return m.environmentActionView(view.environmentActionRecord, now)
+		view = m.environmentActionView(view.environmentActionRecord, now)
+	}
+	if view.Recovery != nil {
+		links := *view.Recovery
+		if !hadOutcome || m.environmentOutcomeReference(view.environmentActionRecord, now) == nil {
+			links.Outcome = nil
+		}
+		view.Recovery = &links
+		if !view.PlanAvailable && links.Outcome == nil {
+			view.Recovery = nil
+		}
 	}
 	return view
 }

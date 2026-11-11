@@ -688,13 +688,18 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		return fmt.Errorf("imaged: Compose healthcheck: %w", err)
 	}
 	config = applySourceBuildProcess(config, *dep)
+	if app.SandboxTemplate && len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
+		// A template image never runs its own command: sessions run
+		// guest-init's sandbox server, and their commands need a shell.
+		config.Cmd = []string{sandboxTemplateShell}
+	}
 	manifest, err := manifestFromLocalOCIConfig(config, *dep)
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest: %w", err)
 	}
-	// F8 fixup: shared default-seeding helper — same rule the
-	// registry pull path applies in manifestFromImageConfig.
-	applyContainerDefaults(&manifest)
+	// Seed health defaults before reviewed fields, which may explicitly
+	// clear the HTTP path for TCP readiness. PORT follows the final contract.
+	applyContainerHealthDefault(&manifest)
 	manifest = applyAppStartCommand(manifest, app)
 	if dep.Handler != "" {
 		manifest.Entrypoint = []string{dep.Handler}
@@ -704,19 +709,29 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		return fmt.Errorf("imaged: built OCI manifest overrides: %w", err)
 	}
 	manifest = h.stampPostgresPool(h.stampProfiling(applyAppLifecycle(manifest, app), app, acct), app, acct)
+	manifest, err = state.ApplyDeploymentRuntime(manifest, *dep)
+	if err != nil {
+		return fmt.Errorf("imaged: scoped source runtime: %w", err)
+	}
+	// Seed PORT from the final guest contract, after reviewed runtime fields
+	// and explicit environment values have been applied.
+	applyContainerEnvDefaults(&manifest)
 	if err := manifest.Validate(); err != nil {
 		return fmt.Errorf("imaged: built OCI manifest invalid: %w", err)
 	}
 	if err := checkCompanionPorts(manifest, *dep); err != nil {
 		return fmt.Errorf("imaged: workload ports: %w", err)
 	}
-	// The built image's command HEALTHCHECK gates readiness whether it came
-	// from the Dockerfile or a Compose override (ADR-20261024100000).
-	if err := h.recordSourceHealthcheck(ctx, dep, manifest); err != nil {
+	// Publish the built image's runtime contract before the scheduler can
+	// prime it, including ports inherited from the base image.
+	if err := h.recordSourceRuntimeProfile(ctx, dep, manifest); err != nil {
 		return err
 	}
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
 		return fmt.Errorf("imaged: persist local OCI secret reload support: %w", err)
+	}
+	if err := h.store.SetDeploymentBeforeCheckpointHook(ctx, dep.ID, manifest.BeforeCheckpoint != nil); err != nil {
+		return fmt.Errorf("imaged: persist local OCI before_checkpoint hook: %w", err)
 	}
 
 	be, err := h.storageFor()
@@ -726,6 +741,11 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	appsKey := storagekey.AppLayer(app.Slug, dep.ID)
 	buildLayers := layersAsReaders(layers)
 	runtime := sharedRuntimeClaim(app, source)
+	if app.SandboxTemplate {
+		// A template boots as a whole root filesystem over the agent base,
+		// never on a runner base (ADR-20261027090013).
+		return h.publishSandboxTemplateRootfs(ctx, app, *dep, acct, source, be, appsKey, buildLayers, manifest)
+	}
 	if source == nil {
 		unsigned, provErr := h.sharedRuntimeFromProvenance(ctx, app, *dep)
 		if provErr != nil {

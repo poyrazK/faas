@@ -55,6 +55,17 @@ export {
 } from './idempotency.js';
 // SSE streaming helpers.
 export { streamSse, parseFrame, type SseEvent } from './sse.js';
+// Function config declared next to the handler (ADR-20261107193000).
+export {
+  defineConfig,
+  type FunctionConfig,
+  type FunctionBucketEventConfig,
+  type FunctionEventTriggerConfig,
+  type FunctionHookContext,
+  type FunctionQueueBindingConfig,
+  type FunctionSnapshotHooks,
+  type FunctionWebhookConfig,
+} from './function-config.js';
 // Request-scoped release propagation for app-to-app calls.
 export {
   createGregaleFetch,

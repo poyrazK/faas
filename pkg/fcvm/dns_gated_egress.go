@@ -10,9 +10,48 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ErrResolvedEgressNoInstance is returned when no live instance owns the
-// resolver query's source address.
+// ErrResolvedEgressNoInstance is returned when the captured owner no longer
+// holds the resolver query's source address. ResolvedEgressRefusal names the
+// check that refused it.
 var ErrResolvedEgressNoInstance = errors.New("fcvm: no live instance for the resolver source address")
+
+// resolvedEgressRefused is ErrResolvedEgressNoInstance with the refusing check.
+type resolvedEgressRefused struct{ reason string }
+
+func (e resolvedEgressRefused) Error() string {
+	return ErrResolvedEgressNoInstance.Error() + ": " + e.reason
+}
+
+func (e resolvedEgressRefused) Unwrap() error { return ErrResolvedEgressNoInstance }
+
+// ResolvedEgressRefusal returns the check that refused a DNS grant, or "".
+func ResolvedEgressRefusal(err error) string {
+	var refused resolvedEgressRefused
+	if errors.As(err, &refused) {
+		return refused.reason
+	}
+	return ""
+}
+
+// resolvedEgressRefusalLocked names the check that refuses owner's grant for
+// source, or returns "" when owner still holds it. Teardown that is only
+// waiting for the guest to exit (a builder finishing its build) has not
+// started: the guest keeps its grants until it exits. Caller holds m.mu.
+func (m *Manager) resolvedEgressRefusalLocked(inst *Instance, source netip.Addr, owner ServiceCallerIdentity) string {
+	switch {
+	case owner.InstanceID == "" || owner.NetworkGeneration == "":
+		return "owner not captured"
+	case inst == nil || m.resolvedEgressOwnerLocked(owner.InstanceID) != inst:
+		return "instance is not live"
+	case m.pendingCleanup[owner.InstanceID] != nil && !inst.awaitingExit:
+		return "teardown started"
+	case inst.Net.HostIP != source:
+		return "source address changed"
+	case inst.resolvedEgressGeneration != owner.NetworkGeneration:
+		return "network generation changed"
+	}
+	return ""
+}
 
 // databaseEgressKey is one address . port pair of a bound managed database
 // (ADR 20261026150000).
@@ -39,41 +78,56 @@ func clampResolvedTTL(ttl time.Duration) time.Duration {
 // databases (ADR 20261026150000): the addresses are also allowed on that
 // port, outside the plan's egress ports, in the same nft transaction.
 func (m *Manager) AllowResolvedEgress(ctx context.Context, source netip.Addr, owner ServiceCallerIdentity, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
+	return m.AllowResolvedEgressNamed(ctx, source, owner, "", addrs, ttl, databasePort)
+}
+
+// AllowResolvedEgressNamed is AllowResolvedEgress for an answer to name. A
+// registries-mode sandbox session's VM admits addresses only for a name
+// api.SandboxRegistryHost allows (ADR-20261027090013 §6), so a resolver bug
+// cannot open another destination to it; an empty name admits none.
+func (m *Manager) AllowResolvedEgressNamed(ctx context.Context, source netip.Addr, owner ServiceCallerIdentity, name string, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
 	// Cleanup records its intent before joining this lock in circuit unregister.
 	// Finish an admitted grant before namespace teardown can recycle its name.
 	m.egressCircuitMu.Lock()
 	defer m.egressCircuitMu.Unlock()
 	ttl = clampResolvedTTL(ttl)
-	now := time.Now()
 	source = source.Unmap()
 	m.mu.Lock()
 	id := owner.InstanceID
-	inst := m.live[id]
-	if inst == nil || m.pendingCleanup[id] != nil || inst.Net.HostIP != source || owner.NetworkGeneration == "" || inst.resolvedEgressGeneration != owner.NetworkGeneration {
+	inst := m.resolvedEgressOwnerLocked(id)
+	if reason := m.resolvedEgressRefusalLocked(inst, source, owner); reason != "" {
 		m.mu.Unlock()
-		return ErrResolvedEgressNoInstance
+		return resolvedEgressRefused{reason}
 	}
 	m.mu.Unlock()
 	unlock := m.lockInstanceNetworkPolicy(inst)
 	defer unlock()
 	m.mu.Lock()
-	if m.live[id] != inst || m.pendingCleanup[id] != nil || inst.Net.HostIP != source || inst.resolvedEgressGeneration != owner.NetworkGeneration {
+	if reason := m.resolvedEgressRefusalLocked(inst, source, owner); reason != "" {
 		m.mu.Unlock()
-		return ErrResolvedEgressNoInstance
+		return resolvedEgressRefused{reason}
 	}
 	gated := inst.Net.DNSGated && inst.Net.Netns != ""
+	if inst.Net.SandboxRegistries && !api.SandboxRegistryHost(name) {
+		gated = false
+	}
 	database := databasePort != 0 && inst.Net.DatabaseEgress && inst.Net.Netns != ""
 	if !gated && !database {
 		m.mu.Unlock()
 		return nil
 	}
+	now := time.Now()
+	pruneTimedGrants(inst.resolvedEgress, now)
+	pruneTimedGrants(inst.databaseEgress, now)
 	var add []netip.Addr
 	var addDatabase []netip.Addr
+	seen := make(map[netip.Addr]bool, len(addrs))
 	for _, a := range addrs {
 		a = a.Unmap()
-		if !a.IsValid() {
+		if !a.IsValid() || seen[a] {
 			continue
 		}
+		seen[a] = true
 		if until, ok := inst.resolvedEgress[a]; gated && (!ok || until.Sub(now) <= ttl/2) {
 			add = append(add, a)
 		}
@@ -81,24 +135,47 @@ func (m *Manager) AllowResolvedEgress(ctx context.Context, source netip.Addr, ow
 			addDatabase = append(addDatabase, a)
 		}
 	}
-	nc, appID := inst.Net, inst.AppID
+	until := now.Add(ttl)
+	resolved := make(map[netip.Addr]time.Time, len(add))
+	pairs := make(map[databaseEgressKey]time.Time, len(addDatabase))
+	for _, a := range add {
+		resolved[a] = until
+	}
+	for _, a := range addDatabase {
+		pairs[databaseEgressKey{a, databasePort}] = until
+	}
+	if err := timedGrantCapacity(inst.resolvedEgress, resolved, api.DNSGatedEgressInstanceFamilyMax, func(a netip.Addr) bool { return a.Is4() }); err != nil {
+		m.mu.Unlock()
+		return err
+	}
+	if err := timedGrantCapacity(inst.databaseEgress, pairs, api.DatabaseEgressInstanceFamilyMax, func(k databaseEgressKey) bool { return k.addr.Is4() }); err != nil {
+		m.mu.Unlock()
+		return err
+	}
+	nc, appID, generation, booting := inst.Net, inst.AppID, inst.nativeGeneration, inst.booting
 	m.mu.Unlock()
 	if len(add) == 0 && len(addDatabase) == 0 {
 		return nil
 	}
-	ctx, err := m.nativeInstanceNetworkContext(ctx, id, inst.nativeGeneration)
+	if booting && generation == "" {
+		// The VM's native owner is journalled once bringUp starts it; a
+		// lookup before that has nothing to grant on yet. The policy lock
+		// serializes this stamp with other grants to the same owner.
+		if err := m.stampNativeInstanceGeneration(inst); err != nil {
+			return resolvedEgressRefused{"booting VM has no native owner yet"}
+		}
+		generation = inst.nativeGeneration
+	}
+	ctx, err := m.nativeInstanceNetworkContext(ctx, id, generation)
 	if err != nil {
 		return err
 	}
-	cmds := nc.ResolvedEgressAddCommands(add, ttl)
-	cmds = append(cmds, nc.DatabaseEgressAddCommands(addDatabase, databasePort, ttl)...)
-	if err := m.runNftCommands(ctx, nc.Netns, cmds); err != nil {
+	if err := m.refreshTimedEgress(ctx, id, nc, resolved, pairs); err != nil {
 		return fmt.Errorf("fcvm: allow resolved egress for %s: %w", id, err)
 	}
-	until := now.Add(ttl)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if cur, ok := m.live[id]; ok && cur == inst {
+	if cur := m.resolvedEgressOwnerLocked(id); cur == inst {
 		if inst.resolvedEgress == nil {
 			inst.resolvedEgress = make(map[netip.Addr]time.Time, len(add))
 		}
@@ -195,10 +272,12 @@ func (m *Manager) seedResolvedEgress(ctx context.Context, instance string) {
 		return
 	}
 	now := time.Now()
+	pruneTimedGrants(inst.resolvedEgress, now)
+	pruneTimedGrants(inst.databaseEgress, now)
 	addrs := map[netip.Addr]time.Time{}
 	if inst.Net.DNSGated {
 		for a, until := range m.appResolved[inst.AppID] {
-			if until.Sub(now) >= time.Second {
+			if until.Sub(now) >= time.Second && until.After(inst.resolvedEgress[a]) {
 				addrs[a] = until
 			}
 		}
@@ -206,11 +285,14 @@ func (m *Manager) seedResolvedEgress(ctx context.Context, instance string) {
 	pairs := map[databaseEgressKey]time.Time{}
 	if inst.Net.DatabaseEgress {
 		for k, until := range m.appDatabaseResolved[inst.AppID] {
-			if until.Sub(now) >= time.Second {
+			if until.Sub(now) >= time.Second && until.After(inst.databaseEgress[k]) {
 				pairs[k] = until
 			}
 		}
 	}
+	// Seeds are best effort; retain valid grants when the instance is full.
+	limitTimedSeeds(inst.resolvedEgress, addrs, api.DNSGatedEgressInstanceFamilyMax, func(a netip.Addr) bool { return a.Is4() })
+	limitTimedSeeds(inst.databaseEgress, pairs, api.DatabaseEgressInstanceFamilyMax, func(k databaseEgressKey) bool { return k.addr.Is4() })
 	nc := inst.Net
 	m.mu.Unlock()
 	if len(addrs) == 0 && len(pairs) == 0 {
@@ -223,24 +305,7 @@ func (m *Manager) seedResolvedEgress(ctx context.Context, instance string) {
 		}
 		return
 	}
-	var cmds [][]string
-	for address, until := range addrs {
-		remaining := time.Until(until)
-		if remaining < time.Second {
-			delete(addrs, address)
-			continue
-		}
-		cmds = append(cmds, nc.ResolvedEgressAddCommands([]netip.Addr{address}, remaining)...)
-	}
-	for pair, until := range pairs {
-		remaining := time.Until(until)
-		if remaining < time.Second {
-			delete(pairs, pair)
-			continue
-		}
-		cmds = append(cmds, nc.DatabaseEgressAddCommands([]netip.Addr{pair.addr}, pair.port, remaining)...)
-	}
-	if err := m.runNftCommands(ctx, nc.Netns, cmds); err != nil {
+	if err := m.refreshTimedEgress(ctx, instance, nc, addrs, pairs); err != nil {
 		if m.log != nil {
 			m.log.Warn("fcvm: seed resolved egress failed", "instance", instance, "addresses", len(addrs), "databases", len(pairs), "err", err)
 		}

@@ -56,6 +56,10 @@ func (s *server) loadProjectEnvironmentState(ctx context.Context, acct state.Acc
 	if problem != nil {
 		return api.ProjectEnvironmentStateResponse{}, problem
 	}
+	sharedHash, err := s.projectEnvironmentSharedSecretsRevision(ctx, acct.ID, project.ID, environment.Slug)
+	if err != nil {
+		return api.ProjectEnvironmentStateResponse{}, api.ErrCapacity("could not fingerprint shared secret revisions")
+	}
 	flagHash, err := s.projectEnvironmentFeatureFlagsQualificationHash(ctx, environment)
 	if err != nil {
 		return api.ProjectEnvironmentStateResponse{}, api.ErrCapacity("could not fingerprint environment feature flags")
@@ -82,13 +86,26 @@ func (s *server) loadProjectEnvironmentState(ctx context.Context, acct state.Acc
 		status = "active"
 	}
 	return api.ProjectEnvironmentStateResponse{
-		FeatureFlagsHash: flagHash,
-		ActiveReleaseSet: release, ReleaseSetStatus: status,
+		ProjectSecretsRevisionHash: sharedHash,
+		FeatureFlagsHash:           flagHash,
+		ActiveReleaseSet:           release, ReleaseSetStatus: status,
 		ProjectSlug: project.Slug, Environment: environment.Slug, Protected: environment.Protected,
 		Configuration: projectEnvironmentConfigResponse(project.Slug, environment.Slug, config),
 		Workloads:     workloads, SharedResources: projectEnvironmentSharedResources(workloads),
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}, nil
+}
+
+func (s *server) projectEnvironmentSharedSecretsRevision(ctx context.Context, accountID, projectID, environment string) (string, error) {
+	reader, ok := s.store.(state.ProjectSharedSecretRevisionReader)
+	if !ok {
+		return "", nil
+	}
+	revision, err := reader.ProjectEnvironmentSharedSecretRevision(ctx, accountID, projectID, environment)
+	if err != nil {
+		return "", err
+	}
+	return revision.Hash, nil
 }
 
 func (s *server) projectEnvironmentFeatureFlagsQualificationHash(ctx context.Context, environment state.ProjectEnvironment) (string, error) {
@@ -105,21 +122,28 @@ func (s *server) projectEnvironmentFeatureFlagsQualificationHash(ctx context.Con
 
 func (s *server) loadProjectEnvironmentWorkloadState(ctx context.Context, accountID string, environment state.ProjectEnvironment, app state.App) (api.ProjectEnvironmentStateWorkloadResponse, *api.Problem) {
 	scope := environment.Slug
-	variables, err := s.store.ListAppEnvInScope(ctx, accountID, app.ID, scope)
+	release, legacyDefault, problem := s.projectEnvironmentReleaseState(ctx, environment, app)
+	if problem != nil {
+		return api.ProjectEnvironmentStateWorkloadResponse{}, problem
+	}
+	// While named production is dark, production is served by the legacy
+	// default lane (top-level deploys), whose values and bindings live in
+	// the default scope (ChronoLake finding 25.2).
+	valueScope := scope
+	if legacyDefault {
+		valueScope = state.DefaultEnvScope
+	}
+	variables, err := s.store.ListAppEnvInScope(ctx, accountID, app.ID, valueScope)
 	if err != nil {
 		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect project environment variables")
 	}
-	secrets, err := s.store.ListAppSecretsInScope(ctx, accountID, app.ID, scope)
+	secrets, err := s.store.ListAppSecretsInScope(ctx, accountID, app.ID, valueScope)
 	if err != nil {
 		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect project environment secrets")
 	}
 	domains, err := s.store.ListDomainsForApp(ctx, app.ID)
 	if err != nil {
 		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect project environment domains")
-	}
-	release, problem := s.projectEnvironmentReleaseState(ctx, environment, app)
-	if problem != nil {
-		return api.ProjectEnvironmentStateWorkloadResponse{}, problem
 	}
 	routes := api.ProjectEnvironmentRoutePolicyResponse{
 		Ownership: "application", OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes,
@@ -182,35 +206,44 @@ func projectEnvironmentDeclaredRoutes(rows []state.DeclaredRoute) []api.Declared
 	return out
 }
 
-func (s *server) projectEnvironmentReleaseState(ctx context.Context, environment state.ProjectEnvironment, app state.App) (api.ProjectEnvironmentReleaseWorkloadResponse, *api.Problem) {
+// projectEnvironmentReleaseState reports the deployment serving one workload
+// of an environment. legacyDefault is true when production is served by a
+// top-level (default-scope) deployment because named production is dark.
+func (s *server) projectEnvironmentReleaseState(ctx context.Context, environment state.ProjectEnvironment, app state.App) (api.ProjectEnvironmentReleaseWorkloadResponse, bool, *api.Problem) {
 	out := api.ProjectEnvironmentReleaseWorkloadResponse{
 		WorkloadSlug: app.Slug, WorkloadName: app.WorkloadName, Status: "not_deployed",
 		URL: projectEnvironmentWorkloadURL(environment.ID, app.ID),
 	}
 	active, problem := s.activeProjectEnvironmentReleaseSet(ctx, app.AccountID, app.ProjectID, environment.Slug)
 	if problem != nil {
-		return out, problem
+		return out, false, problem
 	}
 	var selected *state.ProjectReleaseSet
 	if active.ID != "" {
 		selected = &active
 	}
 	deployment, err := projectEnvironmentPromotionSelectedDeployment(ctx, s.store, app, environment.Slug, selected)
+	if errors.Is(err, state.ErrNotFound) && selected == nil && environment.Slug == "production" {
+		// Production routing falls back to the legacy default lane
+		// (state.ProductionRoutingDeployments); report what serves it.
+		deployment, err = state.ResolveProductionDeployment(ctx, s.store, app.ID)
+	}
 	if errors.Is(err, state.ErrNotFound) {
-		return out, nil
+		return out, false, nil
 	}
 	if err != nil {
-		return out, api.ErrCapacity("could not inspect project environment releases")
+		return out, false, api.ErrCapacity("could not inspect project environment releases")
 	}
+	legacyDefault := state.IsProductionScope(deployment.Scope) && deployment.Scope != "production"
 	out.Status, out.DeploymentID, out.BuildID = "live", deployment.ID, deployment.BuildID
 	out.ImageDigest, out.SourceURL, out.CommitSHA = deployment.ImageDigest, deployment.SourceURL, deployment.CommitSHA
 	out.SourceSHA256, out.TrafficPercent = deployment.SourceSHA256, deployment.TrafficPercent
 	out.CreatedAt = deployment.CreatedAt.UTC().Format(time.RFC3339Nano)
 	out.WorkloadConfigHash, _, err = s.projectEnvironmentWorkloadConfigIdentity(ctx, app, environment.Slug, deployment.ID)
 	if err != nil {
-		return out, api.ErrCapacity("could not fingerprint released workload settings")
+		return out, false, api.ErrCapacity("could not fingerprint released workload settings")
 	}
-	return out, nil
+	return out, legacyDefault, nil
 }
 
 func (s *server) projectEnvironmentWorkloadConfigIdentity(ctx context.Context, app state.App, environment, deploymentID string) (string, int64, error) {

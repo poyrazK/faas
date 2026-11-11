@@ -26,13 +26,17 @@ func freshNodePlacement(ctx context.Context) bool {
 func (e *Engine) nodePlacementContext(ctx context.Context, p Placement, r Request) context.Context {
 	admission := state.NodeAdmission{NodeID: p.NodeID, Generation: p.LifecycleGeneration,
 		BookedCPUMillicores: r.BookedCPUMillicores}
+	if r.BookedCPUMillicores > 0 {
+		// An app instance stores the vCPU count it boots with, its size's
+		// (ADR-20261109172421).
+		admission.BookedVCPU = r.VCPU
+	}
 	if e.ledger != nil {
 		admission.ReservationPercent = e.ledger.ReservationPercent(p.NodeID)
-		if !r.AllowResidentRecovery {
-			discountVCPU, discountCPU := e.ledger.CPUDiscount(p.NodeID)
-			admission.Compute = state.NodeCompute{VCPU: r.VCPU, CPUMillicores: r.CPUMillicores,
-				QuietVCPU: discountVCPU, QuietCPUMillicores: discountCPU}
-		}
+		// ADR-20261107122928: the idle ladder discount placement applied.
+		admission.ReservationDiscountMB = e.ledger.ReservationDiscountMB(p.NodeID)
+		// No Compute: memory is the only capacity limit, so the durable
+		// node reservation checks memory alone (ADR-20261109172421).
 	}
 	return state.WithNodeAdmission(ctx, admission)
 }

@@ -110,6 +110,16 @@ type Manifest struct {
 	// renderer uses the same endpoint port for per-daemon target_url entries.
 	Overlay Overlay `yaml:"overlay"`
 
+	// SSH limits who may reach sshd (ADR-20261109100000). Absent keeps the
+	// provider boundary in charge (GCP IAP); present, sshd answers only the
+	// private network (overlay.cidr, on overlay.interface when set) and
+	// AllowedCIDRs. Bare-metal fleets with a public address on every host set it.
+	SSH *SSH `yaml:"ssh,omitempty"`
+
+	// DiskEncryption encrypts each host's data volume at rest, unlocked by
+	// the other hosts' Tang servers (ADR-20261109120000). Absent: plain.
+	DiskEncryption *DiskEncryption `yaml:"disk_encryption,omitempty"`
+
 	// DNS is the public-facing hostname contract. apps_domain is the
 	// single source of truth — gatewayd-internal, apid, and the CLI
 	// PrintOK paths all read from it; a value of `gregale.dev` produces
@@ -129,9 +139,17 @@ type Manifest struct {
 	// platform zone. Today that is customer custom domains (ADR-520).
 	PublicEdge PublicEdge `yaml:"public_edge,omitempty"`
 
+	// HotPath turns on the compute nodes' request- and wake-path switches
+	// (hot_path.go).
+	HotPath HotPath `yaml:"hot_path,omitempty"`
+
 	// ManagedPostgres turns on native managed PostgreSQL (ADR-1027) on the
 	// fleet's database hosts (managed_postgres.go).
 	ManagedPostgres *ManagedPostgres `yaml:"managed_postgres,omitempty"`
+
+	// ServiceTCP stages private TCP service addressing (ADR-576) on the
+	// compute-only hosts (service_tcp.go).
+	ServiceTCP *ServiceTCP `yaml:"service_tcp,omitempty"`
 
 	// PostgreSQL is the database cluster configuration. The renderer
 	// needs the role names, the database name, and the migration
@@ -184,6 +202,10 @@ type Manifest struct {
 	// LogArchive is the bucket customer logs are archived to. Absent leaves
 	// each host's archive credential envelope untouched.
 	LogArchive LogArchive `yaml:"log_archive,omitempty"`
+
+	// ArtifactSigner turns on the control plane's artifact signer
+	// (ADR-20261109170000). Absent keeps sign.key on the compute nodes.
+	ArtifactSigner ArtifactSigner `yaml:"artifact_signer,omitempty"`
 
 	// WorkloadIdentity turns on workload-identity tokens (ADR-1141): the
 	// renderer hands its source directory to every control-plane and
@@ -742,6 +764,19 @@ type Overlay struct {
 	// CIDR is the overlay subnet (e.g. "10.42.0.0/24"). The renderer
 	// asserts each host's Address falls within CIDR.
 	CIDR string `yaml:"cidr"`
+	// Interface names the private network card for the "static" provider
+	// (ADR-20261109100000), e.g. an OVH vRack NIC. Empty keeps the
+	// default-route interface, which is right on a cloud VPC with one NIC and
+	// wrong on bare metal, where the default route is the public card. When
+	// set, the host firewall accepts private-service traffic only on it.
+	Interface string `yaml:"interface,omitempty"`
+}
+
+// SSH is the sshd source boundary (ADR-20261109100000).
+type SSH struct {
+	// AllowedCIDRs are the sources outside the private network that may reach
+	// sshd: an operator bastion or VPN. Empty means the private network only.
+	AllowedCIDRs []string `yaml:"allowed_cidrs,omitempty"`
 }
 
 // DNS is the public-facing hostname contract. apps_domain is the
@@ -819,6 +854,11 @@ type PublicEdge struct {
 	// certificate, the peer address as client, port 443 open on each compute
 	// host's entry_ipv4 and the client limits, together. Needs entry both.
 	Front string `yaml:"front,omitempty"`
+	// Overload is the compute edges' node-wide overload level
+	// (ADR-20261110123517): "off", the default; "observe", which measures
+	// and exports it and refuses nothing; or "on", which sheds by it. Needs
+	// front none, whose client limits it extends.
+	Overload string `yaml:"overload,omitempty"`
 }
 
 // PublicEdgeDNS is the Cloudflare zone and the names edgednsd manages.
@@ -903,6 +943,9 @@ const (
 const (
 	PublicEdgeFrontCloudflare = "cloudflare"
 	PublicEdgeFrontNone       = "none"
+	PublicEdgeOverloadOff     = "off"
+	PublicEdgeOverloadObserve = "observe"
+	PublicEdgeOverloadOn      = "on"
 )
 
 // DirectEntry reports whether the compute edges take Cloudflare's direct
@@ -935,6 +978,15 @@ func (e PublicEdge) validate(hosts []Host) Errors {
 		}
 	default:
 		return Errors{{"public_edge.front", fmt.Sprintf("%q is not cloudflare or none", e.Front)}}
+	}
+	switch e.Overload {
+	case "", PublicEdgeOverloadOff:
+	case PublicEdgeOverloadObserve, PublicEdgeOverloadOn:
+		if !e.NoFront() {
+			return Errors{{"public_edge.overload", "needs public_edge.front: none, whose client limits it extends"}}
+		}
+	default:
+		return Errors{{"public_edge.overload", fmt.Sprintf("%q is not off, observe or on", e.Overload)}}
 	}
 	if e.PlacementNodeSet && !e.PlacementRouting {
 		return Errors{{"public_edge.placement_node_set", "needs public_edge.placement_routing: it spreads the routed requests"}}
@@ -1486,10 +1538,13 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.validateFleetEndpoints()...)
 	errs = append(errs, m.Daemons.validate()...)
 	errs = append(errs, m.Overlay.validate()...)
+	errs = append(errs, m.SSH.validate()...)
+	errs = append(errs, m.validateDiskEncryption()...)
 	errs = append(errs, m.DNS.validate()...)
 	errs = append(errs, m.PrivateDNS.validate()...)
 	errs = append(errs, m.PublicEdge.CustomDomains.validate(m.DNS)...)
 	errs = append(errs, m.PublicEdge.validate(m.Fleet.Hosts)...)
+	errs = append(errs, m.HotPath.validate(m.PublicEdge)...)
 	errs = append(errs, m.validatePrivateResolution()...)
 	errs = append(errs, m.PostgreSQL.validate()...)
 	errs = append(errs, m.validatePostgresStandby()...)
@@ -1499,9 +1554,11 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.PKI.validate()...)
 	errs = append(errs, m.Egress.validate(m.Overlay.CIDR)...)
 	errs = append(errs, m.validateManagedPostgres()...)
+	errs = append(errs, m.validateServiceTCP()...)
 	errs = append(errs, m.ObjectStorage.validate()...)
 	errs = append(errs, m.ObjectStorage.validateOnCompute(m.PublicEdge, m.Fleet.Hosts)...)
 	errs = append(errs, m.LogArchive.validate()...)
+	errs = append(errs, m.ArtifactSigner.validate()...)
 	errs = append(errs, m.WorkloadIdentity.validate()...)
 	if len(errs) > 0 {
 		return errs
@@ -1925,11 +1982,41 @@ func (o *Overlay) validate() Errors {
 		errs = append(errs, Error{"overlay.provider",
 			fmt.Sprintf("unsupported %q (allowed: wireguard|tailscale|static)", o.Provider)})
 	}
+	if o.Interface != "" {
+		if !ifaceNameRe.MatchString(o.Interface) {
+			errs = append(errs, Error{"overlay.interface",
+				fmt.Sprintf("%q is not a network interface name (at most 15 of [A-Za-z0-9_.-])", o.Interface)})
+		} else if o.Provider != "static" {
+			errs = append(errs, Error{"overlay.interface",
+				fmt.Sprintf("applies to the static provider only; %s names its own interface", o.Provider)})
+		}
+	}
 	if o.CIDR == "" {
 		errs = append(errs, Error{"overlay.cidr", "is required"})
 	} else if !validCIDR(o.CIDR) {
 		errs = append(errs, Error{"overlay.cidr",
 			fmt.Sprintf("cidr %q must be a valid IPv4 CIDR (e.g. 10.42.0.0/24)", o.CIDR)})
+	}
+	return errs
+}
+
+var ifaceNameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,15}$`)
+
+func (s *SSH) validate() Errors {
+	if s == nil {
+		return nil
+	}
+	var errs Errors
+	for i, cidr := range s.AllowedCIDRs {
+		path := fmt.Sprintf("ssh.allowed_cidrs[%d]", i)
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			errs = append(errs, Error{path, fmt.Sprintf("%q is not a CIDR", cidr)})
+			continue
+		}
+		if ones, _ := network.Mask.Size(); ones == 0 {
+			errs = append(errs, Error{path, fmt.Sprintf("%q admits every address; leave the ssh section out instead", cidr)})
+		}
 	}
 	return errs
 }

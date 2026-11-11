@@ -7,12 +7,145 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
+import * as z from 'zod/v4';
+import { createApp } from '../app.js';
 import { createPostgresMcpTaskStore, createMcpTaskQueueObserver } from '../task-store.js';
 import { createMcpTaskPayloadCipher } from '../task-crypto.js';
 import { createMcpTaskRuntime, RetryableMcpTaskError } from '../tasks.js';
 
 const databaseURL = process.env.MCP_TASKS_TEST_DATABASE_URL;
 const postgresOnly = { skip: databaseURL ? false : 'set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests' };
+
+const taskOutputContract = { type: 'object', required: ['amount'], additionalProperties: false,
+  $defs: { amount: { type: 'integer', minimum: 1 } }, properties: { amount: { $ref: '#/$defs/amount' } } };
+
+test('output-schema task handles survive HTTP validation and retained workers enforce the saved catalog', postgresOnly, async t => {
+  const { store, pool } = await harness(t);
+  const producer = createMcpTaskRuntime({ store, workerEnabled: false, handlers: { build_report: {
+    version: '1', async validate(args) { await Promise.resolve(); if (args.report === 'reject') throw new Error('invalid arguments'); },
+    async execute() { throw new Error('producer must not execute'); },
+  } } });
+  await producer.start();
+  t.after(() => producer.stop());
+  const api = createApp({ version: 1, endpoint: '/mcp', transport: 'streamable-http', mode: 'stateless',
+    legacy: true, allowed_origins: [], tasks: { enabled: true }, auth: { mode: 'open' } }, { taskRuntime: producer, log() {} });
+  const definition = { inputSchema: z.object({ report: z.string() }), outputSchema: z.object({ amount: z.number().int().min(1) }) };
+  api.replaceTool('build_report', definition, async () => ({ content: [], structuredContent: { amount: 2 } }));
+  const server = api.app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(async () => { api.closeTaskSubscriptions(); await api.handler.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  async function call(report) {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/mcp`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream',
+        'MCP-Protocol-Version': '2026-07-28', 'Mcp-Method': 'tools/call', 'Mcp-Name': 'build_report' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'build_report', arguments: { report }, _meta: {
+        'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+        'io.modelcontextprotocol/clientInfo': { name: 'output-postgres-test', version: '1' },
+        'io.modelcontextprotocol/clientCapabilities': { extensions: { 'io.modelcontextprotocol/tasks': {} } },
+      } } }),
+    });
+    const text = await response.text();
+    assert.equal(response.status, 200, text);
+    const message = JSON.parse(text.startsWith('{') ? text : text.split('\n').find(line => line.startsWith('data: ')).slice(6));
+    assert.equal(message.error, undefined);
+    return message.result;
+  }
+  assert.equal((await call('reject')).isError, true);
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM gregale_mcp_tasks')).rows[0].count, 0);
+  const handles = [];
+  for (const report of ['good', 'bad', 'business-error']) {
+    const handle = await call(report);
+    assert.equal(handle.resultType, 'task');
+    assert.equal(handle.isError, undefined);
+    assert.ok(handle.taskId);
+    handles.push([report, handle]);
+  }
+  const rows = (await pool.query('SELECT output_schema FROM gregale_mcp_tasks')).rows;
+  assert.equal(rows.length, 3, 'each delivered handle has exactly one persisted task');
+  for (const row of rows) assert.equal(row.output_schema.properties.amount.type, 'integer');
+  api.replaceTool('build_report', { ...definition, outputSchema: z.object({ label: z.string() }) }, async () => ({ content: [] }));
+  await producer.stop();
+  const execute = async ({ report }) => report === 'business-error' ? { isError: true, content: [] }
+    : { content: [], structuredContent: { amount: report === 'bad' ? 'secret-output' : 2 } };
+  // The replacement worker has only executors, with the original version retained.
+  const worker = createMcpTaskRuntime({ store, pollIntervalMs: 500, handlers: { build_report: {
+    version: '2', execute, previousVersions: { '1': execute },
+  } } });
+  await worker.start();
+  try {
+    for (const [report, handle] of handles) {
+      const task = await eventually(async () => {
+        const result = await worker.get(handle.taskId, undefined, 'open');
+        return ['completed', 'failed'].includes(result.status) ? result : null;
+      }, 'worker did not settle task');
+      assert.equal(task.status, report === 'bad' ? 'failed' : 'completed');
+      if (report === 'bad') {
+        assert.deepEqual(task.error, { code: -32603, message: 'Task execution failed' });
+        assert.equal(JSON.stringify(task).includes('secret-output'), false);
+        assert.equal((await pool.query('SELECT result_encrypted FROM gregale_mcp_tasks WHERE task_id=$1', [handle.taskId])).rows[0].result_encrypted, null);
+      }
+    }
+  } finally { await worker.stop(); }
+});
+
+test('output contracts survive retry and input pauses across a replacement worker', postgresOnly, async t => {
+  for (const pause of [false, true]) await t.test(pause ? 'input' : 'retry', async t => {
+    const { store, pool } = await harness(t);
+    const contract = structuredClone(taskOutputContract);
+    const request = { method: 'elicitation/create', params: { message: 'Approve?', requestedSchema: { type: 'object', properties: {} } } };
+    const initial = createMcpTaskRuntime({ store, pollIntervalMs: 500, retryBaseDelayMs: 1000, retryMaxDelayMs: 1000, handlers: {
+      build_report: { version: '1', async execute(_args, { requestInput }) {
+        if (pause) return requestInput('approval', request);
+        throw new RetryableMcpTaskError();
+      } },
+    } });
+    await initial.start();
+    t.after(() => initial.stop());
+    const handle = await initial.create('build_report', {}, undefined, 'open', { elicitation: { form: {} } }, contract);
+    await eventually(async () => {
+      const row = (await pool.query('SELECT status,attempt_count FROM gregale_mcp_tasks WHERE task_id=$1', [handle.taskId])).rows[0];
+      return row.attempt_count === 1 && row.status === (pause ? 'input_required' : 'queued');
+    }, 'task did not pause');
+    await initial.stop();
+    contract.$defs.amount.type = 'string';
+    if (pause) await store.updateInputs({ taskID: handle.taskId, authMode: 'open', inputResponses: { approval: { action: 'accept', content: {} } } });
+    else await pool.query('UPDATE gregale_mcp_tasks SET next_attempt_at=clock_timestamp() WHERE task_id=$1', [handle.taskId]);
+    const execute = async (_args, { requestInput }) => {
+      if (pause) assert.equal((await requestInput('approval', request)).action, 'accept');
+      return { content: [], structuredContent: { amount: 2 } };
+    };
+    const replacement = createMcpTaskRuntime({ store, pollIntervalMs: 500, handlers: { build_report: { version: '2', execute, previousVersions: { '1': execute } } } });
+    await replacement.start();
+    try {
+      await eventually(async () => (await replacement.get(handle.taskId, undefined, 'open')).status === 'completed', 'replacement worker lost the saved output contract');
+    } finally { await replacement.stop(); }
+  });
+});
+
+test('output contract expansion requires an explicit migration and preserves legacy tasks', postgresOnly, async t => {
+  const { store, pool } = await harness(t);
+  await pool.query('ALTER TABLE gregale_mcp_tasks DROP COLUMN output_schema');
+  await assert.rejects(store.initialize());
+  await store.migrate({ admissionHandlers: [{ name: 'build_report', version: '1' }] });
+  await store.initialize();
+  const producer = createMcpTaskRuntime({ store, workerEnabled: false, handlers: {
+    build_report: { version: '1', async execute() { return { content: [] }; } },
+  } });
+  await producer.start();
+  try {
+    for (const schema of [{ type: 42 }, { $ref: 'https://provider.example/schema' }]) {
+      await assert.rejects(producer.create('build_report', {}, undefined, 'open', {}, schema));
+    }
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM gregale_mcp_tasks')).rows[0].count, 0);
+    const handle = await producer.create('build_report', {}, undefined, 'open');
+    assert.equal((await pool.query('SELECT output_schema FROM gregale_mcp_tasks WHERE task_id=$1', [handle.taskId])).rows[0].output_schema, null);
+    const worker = createMcpTaskRuntime({ store, pollIntervalMs: 500, handlers: { build_report: { version: '1', async execute() { return { content: [] }; } } } });
+    await worker.start();
+    try {
+      await eventually(async () => (await worker.get(handle.taskId, undefined, 'open')).status === 'completed', 'legacy task failed after migration');
+    } finally { await worker.stop(); }
+  } finally { await producer.stop(); }
+});
 
 if (process.env.MCP_TASKS_REQUIRE_POSTGRES === '1' && !databaseURL) {
   throw new Error('MCP_TASKS_TEST_DATABASE_URL is required for the PostgreSQL integration job');
@@ -1412,7 +1545,7 @@ async function taskDoctorFixture(t, { schema, namespace, ownerKey }) {
   const root = dirname(dirname(fileURLToPath(import.meta.url)));
   const fixture = await mkdtemp(join(root, 'doctor-fixture-'));
   t.after(() => rm(fixture, { recursive: true, force: true }));
-  for (const file of ['task-doctor.js', 'tasks-compatibility.js', 'task-compatibility.js', 'tasks.js', 'task-lease.js', 'task-runtime.js', 'task-handlers.js', 'task-store.js', 'task-owners.js', 'task-crypto.js', 'task-admission.js', 'task-schema.js', 'tasks-admission.js', 'tasks-migrate.js', 'tasks-roles.js', 'task-metrics.js', 'task-limits.json']) await copyFile(join(root, file), join(fixture, file));
+  for (const file of ['task-doctor.js', 'tasks-compatibility.js', 'task-compatibility.js', 'tasks.js', 'task-output.js', 'task-lease.js', 'task-runtime.js', 'task-handlers.js', 'task-store.js', 'task-owners.js', 'task-crypto.js', 'task-admission.js', 'task-schema.js', 'tasks-admission.js', 'tasks-migrate.js', 'tasks-roles.js', 'task-metrics.js', 'task-limits.json']) await copyFile(join(root, file), join(fixture, file));
   await writeFile(join(fixture, 'package.json'), JSON.stringify({ type: 'module' }));
   await writeFile(join(fixture, 'gregale-mcp.json'), JSON.stringify({ tasks: { enabled: true, database_url_env: 'DOCTOR_DATABASE', owner_key_env: 'DOCTOR_OWNER' } }));
   const url = new URL(databaseURL);
@@ -1785,7 +1918,7 @@ test('release CLI executes bounded adapters without migration credentials', post
   const root = dirname(dirname(fileURLToPath(import.meta.url)));
   const fixture = await mkdtemp(join(root, 'release-fixture-'));
   t.after(() => rm(fixture, { recursive: true, force: true }));
-  for (const file of ['task-release.js', 'tasks-release.js', 'tasks-release-readiness.js', 'task-compatibility.js', 'tasks.js', 'task-lease.js', 'task-runtime.js', 'task-handlers.js', 'task-store.js', 'task-owners.js', 'task-crypto.js', 'task-admission.js', 'task-schema.js', 'task-metrics.js', 'task-limits.json']) await copyFile(join(root, file), join(fixture, file));
+  for (const file of ['task-release.js', 'tasks-release.js', 'tasks-release-readiness.js', 'task-compatibility.js', 'tasks.js', 'task-output.js', 'task-lease.js', 'task-runtime.js', 'task-handlers.js', 'task-store.js', 'task-owners.js', 'task-crypto.js', 'task-admission.js', 'task-schema.js', 'task-metrics.js', 'task-limits.json']) await copyFile(join(root, file), join(fixture, file));
   await writeFile(join(fixture, 'package.json'), '{"type":"module"}');
   await writeFile(join(fixture, 'gregale-mcp.json'), JSON.stringify({ tasks: { enabled: true, database_url_env: 'RELEASE_DATABASE', owner_key_env: 'RELEASE_OWNER' } }));
   // The current candidate executes version 2 and retains version 1 for queued work.

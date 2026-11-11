@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -25,10 +24,14 @@ func (h *Handler) validateEdgeRuleParameters(w http.ResponseWriter, r *http.Requ
 		}
 		values, ok := edgeRuleParamValues(r, loc.name, p.PathTemplate, loc.schema.Kinds)
 		var res *EdgeValidateResult
-		if !ok {
+		switch {
+		case !ok && loc.name == "query":
+			// A query whose percent-escapes do not decode cannot be checked.
+			res = &EdgeValidateResult{FirstError: &EdgeValidateFieldError{Field: "query", Expected: "query_string", Got: "undecodable percent-escape"}}
+		case !ok:
 			// The rule glob matched but the path does not fit the template.
 			res = &EdgeValidateResult{FirstError: &EdgeValidateFieldError{Field: "path", Expected: "path_template", Got: r.URL.EscapedPath()}}
-		} else {
+		default:
 			instance, err := api.EdgeRuleParamInstance(loc.schema.Kinds, values)
 			if err == nil {
 				digest := loc.schema.Digest
@@ -73,27 +76,12 @@ func edgeRuleParamValues(r *http.Request, location, pathTemplate string, kinds m
 		}
 		return out, true
 	case "query":
-		return r.URL.Query(), true
+		// The app reads the raw query; url.Query drops pairs with ";"
+		// (ADR-20261107190000).
+		values, err := api.ParseEdgeRuleQuery(r.URL.RawQuery)
+		return values, err == nil
 	default:
-		out := make(map[string][]string, len(kinds))
-		for name, kind := range kinds {
-			raw := r.Header.Values(name)
-			if len(raw) == 0 {
-				continue
-			}
-			if kind.Type != "array" {
-				out[name] = raw
-				continue
-			}
-			var items []string
-			for _, v := range raw {
-				for _, item := range strings.Split(v, ",") {
-					items = append(items, strings.TrimSpace(item))
-				}
-			}
-			out[name] = items
-		}
-		return out, true
+		return api.EdgeRuleHeaderParamValues(r.Header, kinds), true
 	}
 }
 

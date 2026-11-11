@@ -121,6 +121,9 @@ func TestCmdLogDrainsRmAcceptsTheSlugAfterFlags(t *testing.T) {
 		{"rm", "--id", "drain-1", "web"},
 		{"rm", "web", "--id", "drain-1"},
 		{"rm", "--app", "web", "--id", "drain-1"},
+		// Hunt 32 H32-52: --yes was rejected.
+		{"rm", "web", "--id", "drain-1", "--yes"},
+		{"rm", "-y", "--id", "drain-1", "web"},
 	} {
 		out := captureLogDrainOutput(t, false)
 		if code := main.CmdLogDrains(args); code != 0 {

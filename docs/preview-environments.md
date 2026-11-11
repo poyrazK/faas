@@ -112,6 +112,13 @@ does not fit, no new preview rows are kept, no builds are queued, and the PR's
 `gregale-preview` check and status comment say which limit was reached.
 Existing rows for the same PR are preserved on retries.
 
+Each build of a preview workload uses one deploy from the PR preview share of
+the account's hourly deploy limit. Every push to the pull request rebuilds every
+workload in its preview, unless only ignored paths changed. When the share left
+this hour cannot build all of them, none is rebuilt: the preview stays on its
+previous commit, and the check says how many deploys it needs and when the
+window resets ([ADR-20261108140000](adr/20261108140000-previews-refuse-missing-datastores-and-partial-builds.md)).
+
 A closed PR's preview keeps serving through its 24-hour grace but no longer
 holds an environment, so the next pull request can be previewed at once.
 Reopening a PR takes an environment again. The 7-day default TTL and the
@@ -403,6 +410,12 @@ host of an app the pull request previews, its preview is built with that app's
 preview host instead, so the preview's browser calls reach the PR's own
 backend. URLs on other hosts, including custom domains, are built as they are
 ([ADR-20261105090226](adr/20261105090226-previews-without-a-project-stay-in-their-set.md)).
+
+A preview service that reads a Compose datastore's address, such as
+`DATABASE_URL: postgres://app:secret@db:5432/app`, needs a value for previews:
+without one the preview is not built, and its `gregale-preview` check names
+the variable and the `gregale env set --app … --env pr-preview` command that
+gives previews a test datastore ([ADR-20261108140000](adr/20261108140000-previews-refuse-missing-datastores-and-partial-builds.md)).
 
 ## Configuration
 

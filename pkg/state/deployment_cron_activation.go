@@ -359,7 +359,12 @@ func (s *PgStore) ReconcileDeploymentCrons(ctx context.Context) ([]CronActivatio
 	}
 	changes := []CronActivationChange{}
 	for _, id := range ids {
-		change, err := s.reconcileDeploymentCron(ctx, id)
+		var change *CronActivationChange
+		err := s.retryAfterDetachingCronHistory(ctx, func() error {
+			var err error
+			change, err = s.reconcileDeploymentCron(ctx, id)
+			return err
+		})
 		if err != nil {
 			return changes, err
 		}

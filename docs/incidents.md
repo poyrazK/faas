@@ -76,8 +76,13 @@ gregale alert incident ack INCIDENT_ID
 gregale alert incident note INCIDENT_ID "rolled back to v41; watching error rate"
 ```
 
-Acknowledging an open incident tells everyone in your account that someone
-is on it: the list shows `yes` under `ACK`, and `show` says who and when. An
+In an organization, the list also holds the incidents of the organization's
+apps your teammates created, as far as your role lets you read those apps;
+you can open, acknowledge and annotate them like your own.
+
+Acknowledging an open incident tells everyone in your account, and on an
+organization's app every teammate who can read it, that someone is on it:
+the list shows `yes` under `ACK`, and `show` says who and when. An
 incident is acknowledged once; acknowledging it again keeps the first. A
 resolved incident cannot be acknowledged, but it still takes notes, which is
 where follow-ups and links to a postmortem go.
@@ -93,7 +98,9 @@ enabled switch still decide what it sends.
 Deleting an alert rule — or the SLO, synthetic check or app it watches —
 keeps its incidents, with their acknowledgements and notes. They keep the
 rule's name, an open one is resolved at the delete, and they are removed
-90 days after they resolved.
+90 days after they resolved. Once a deleted app is gone for good (after its
+7-day restore window), its incidents show no app, and only the account
+itself sees them, not organization members or an app's deploy token.
 
 The dashboard shows the same list at **Incidents**, and each incident's page
 has an Acknowledge button and a note form.

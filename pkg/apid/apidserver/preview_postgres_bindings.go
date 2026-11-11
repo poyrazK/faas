@@ -13,6 +13,8 @@ import (
 // a PR preview being torn down. Previews can no longer be bound, but a binding
 // made before ADR-20261105090226 kept the database's credentials attached to
 // a deleted preview. Only the binding goes; the database is the customer's.
+// It runs after releasePreviewDatabases, which removes the bindings to the
+// preview's own databases (ADR-20261102123523) and purges those databases.
 func (s *server) cleanupPRPreviewPostgresBindings(ctx context.Context, app state.App) error {
 	if !state.IsPRPreviewApp(app) || s.managedPostgresBindings == nil {
 		return nil

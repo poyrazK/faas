@@ -108,6 +108,9 @@ func (s *server) transferOrgOwnership(w http.ResponseWriter, r *http.Request, ac
 	if !s.requireOrgAction(w, r, authz.OrgActionTransferOwnership) {
 		return
 	}
+	if !s.sessionPresenceForIrreversible(w, r, acct, "org_ownership_transfer") {
+		return
+	}
 	mem, ok := s.requireMembership(w, r)
 	if !ok {
 		return
@@ -164,6 +167,8 @@ func (s *server) transferOrgOwnership(w http.ResponseWriter, r *http.Request, ac
 		"from_account": acct.ID,
 		"to_account":   newOwnerID,
 	})
+	s.mailOrgSecurityEvent(responseCtx, "org_ownership_transferred", mem.OrgID,
+		"ownership moved from "+s.orgMemberLabel(responseCtx, acct.ID)+" to "+s.orgMemberLabel(responseCtx, newOwnerID), acct.ID, newOwnerID)
 	updated, ok := s.rehydrateOrg(responseCtx, w, mem)
 	if !ok {
 		return
@@ -259,7 +264,7 @@ func (s *server) acceptInvitation(w http.ResponseWriter, r *http.Request, acct s
 		"invitation": inv.ID,
 	})
 
-	writeJSON(w, http.StatusOK, api.OrgMemberResponseFromRow(s.memberToRow(r.Context(), membership)))
+	writeJSON(w, http.StatusOK, api.OrgMemberResponseFromRow(s.memberRowWithName(r.Context(), membership)))
 }
 
 // revokeInvitation stamps revoked_at on a still-pending invitation

@@ -1,132 +1,44 @@
-// adr: 20261101160231
+// adr: 20261109172421
 
 package sched
 
 import (
-	"context"
-	"fmt"
-	"strings"
-
-	"github.com/google/uuid"
-
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// guestVCPUAppSet is the parsed schedd `guest_vcpu_from_cpu_apps` list: app
-// IDs, or every app for "*".
-type guestVCPUAppSet struct {
-	all bool
-	ids map[string]struct{}
+// An app instance's CPU follows its size, never its plan
+// (ADR-20261109172421): one guest vCPU per GB of instance RAM, a cpu.weight
+// of one per 16 MB, no CPU quota unless the app chose 250 or 500 millicores,
+// and a booking of its RAM's CPU baseline. Builders, jobs, data-repair
+// sandboxes and agent runs keep their own CPU rules.
+
+// appVCPUs is the guest vCPU count an instance of app boots and books with.
+func appVCPUs(app state.App) int {
+	return api.SizeVCPUs(app.RAMMB)
 }
 
-func (s *guestVCPUAppSet) includes(appID string) bool {
-	if s == nil {
-		return false
-	}
-	if s.all {
-		return true
-	}
-	_, ok := s.ids[strings.ToLower(appID)]
-	return ok
+// appCPUWeight is the cpu.weight an app instance's AppSpec carries. The
+// AppSpec also sets CPUUncapped: no quota while the app's ceiling is the
+// default; vmmd keeps a 250 or 500 millicore choice as a cap.
+func appCPUWeight(app state.App) int32 {
+	return int32(api.SizeCPUWeight(app.RAMMB)) //nolint:gosec // bounded by SizeCPUWeightMax
 }
 
-// SetGuestVCPUFromCPUApps makes the listed apps boot one guest vCPU per
-// 1,000 sustained millicores instead of their plan's count
-// (ADR-20261101160231). An entry is an app ID or "*" for every app; an empty
-// list keeps every app on its plan. Snapshots captured at the other count are
-// refused by vmmd at restore, so a listed app cold-boots once.
-func (e *Engine) SetGuestVCPUFromCPUApps(entries []string) error {
-	set := &guestVCPUAppSet{ids: map[string]struct{}{}}
-	for _, entry := range entries {
-		entry = strings.TrimSpace(entry)
-		switch entry {
-		case "":
-			continue
-		case "*":
-			set.all = true
-		default:
-			id, err := uuid.Parse(entry)
-			if err != nil {
-				return fmt.Errorf("sched: guest_vcpu_from_cpu_apps: %q is not an app ID or *", entry)
-			}
-			set.ids[id.String()] = struct{}{}
-		}
-	}
-	if !set.all && len(set.ids) == 0 {
-		set = nil
-	}
-	e.guestVCPUApps.Store(set)
-	return nil
+// appCPUMillicores is the CPU ceiling an app instance's AppSpec and live CPU
+// policy carry: the app's own value. vmmd runs the default without a quota.
+func appCPUMillicores(app state.App) int {
+	return effectiveAppCPUMillicores(app)
 }
 
-// guestVCPUs is the guest vCPU count app boots and books with: the plan's,
-// or for a listed app one per core of its CPU ceiling (appCPUMillicores).
-func (e *Engine) guestVCPUs(app state.App, limits api.Limits) int {
-	if !e.guestVCPUApps.Load().includes(app.ID) {
-		return limits.VCPU
+// appCPUBookingMillicores is what an app instance books against a node's
+// CPU, and its share of a busy host: the baseline for its own RAM, never more
+// than it can use (its vCPUs, or the cap it chose).
+func appCPUBookingMillicores(app state.App) int {
+	usable := appVCPUs(app) * 1000
+	if chosen := effectiveAppCPUMillicores(app); chosen < api.DefaultAppCPUMillicores {
+		usable = chosen
 	}
-	return api.GuestVCPUsForCPUMillicores(e.appCPUMillicores(app, limits))
-}
-
-// appCPUMillicores is the sustained CPU ceiling (cpu.max) app boots, books
-// and is policed with. A listed app on the app default gets its plan's burst
-// ceiling: one core on Free, Hobby and Pro, two on Scale. An app that chose
-// less than a core keeps its choice (ADR-20261101160231 decision 1). Every
-// other app keeps its configured value.
-func (e *Engine) appCPUMillicores(app state.App, limits api.Limits) int {
-	return listedAppCPUMillicores(e.guestVCPUApps.Load().includes(app.ID), effectiveAppCPUMillicores(app), limits)
-}
-
-// appCPUBookingMillicores is what an instance of app books against a node's
-// CPU budget once its startup boost ends, and its share when the node is
-// busy. A listed app books the smaller of its ceiling and its plan's
-// baseline, 1,000 m per GB of plan RAM: 250 m on Free … 2,000 m on Scale
-// (ADR-20261101160231 step 5b). Every other app books its configured value.
-func (e *Engine) appCPUBookingMillicores(app state.App, limits api.Limits) int {
-	ceiling := e.appCPUMillicores(app, limits)
-	if !e.guestVCPUApps.Load().includes(app.ID) || limits.RAMMB <= 0 {
-		return ceiling
-	}
-	return max(1, min(ceiling, api.AppCPUBaselineMillicoresForPlanRAM(limits.RAMMB)))
-}
-
-// appCPUBookingStamp is the booking a new instance of app stores on its row:
-// appCPUBookingMillicores for a listed app, zero (the app's own value) for
-// every other.
-func (e *Engine) appCPUBookingStamp(app state.App, limits api.Limits) int {
-	if !e.guestVCPUApps.Load().includes(app.ID) {
-		return 0
-	}
-	return e.appCPUBookingMillicores(app, limits)
-}
-
-// listedAppCPUMillicores maps an app's configured CPU to its ceiling.
-func listedAppCPUMillicores(listed bool, configured int, limits api.Limits) int {
-	if !listed || configured < api.DefaultAppCPUMillicores || limits.RAMMB <= 0 {
-		return configured
-	}
-	return max(configured, api.AppCPUCeilingMillicoresForPlanRAM(limits.RAMMB))
-}
-
-// policyAppCPUMillicores maps a live CPU policy's configured value to the
-// ceiling the app's instances boot with, so the policy push and the wake
-// agree. Only a listed app needs its account's plan.
-func (e *Engine) policyAppCPUMillicores(ctx context.Context, appID string, configured int) (int, error) {
-	if !e.guestVCPUApps.Load().includes(appID) || configured < api.DefaultAppCPUMillicores {
-		return configured, nil
-	}
-	app, err := e.store.AppByID(ctx, appID)
-	if err != nil {
-		return 0, fmt.Errorf("sched: app CPU policy: read app %s: %w", appID, err)
-	}
-	acct, err := state.AppResourceAccount(ctx, e.store, app)
-	if err != nil {
-		return 0, fmt.Errorf("sched: app CPU policy: read account of app %s: %w", appID, err)
-	}
-	limits, ok := api.LimitsFor(acct.Plan)
-	if !ok {
-		return 0, fmt.Errorf("sched: app CPU policy: app %s has unknown plan %q", appID, acct.Plan)
-	}
-	return listedAppCPUMillicores(true, configured, limits), nil
+	baseline := app.RAMMB * api.AppCPUBaselineMillicoresPerGB / 1024
+	return max(1, min(usable, baseline, api.AppCPUBookingMaxMillicores))
 }

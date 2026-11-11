@@ -11,9 +11,10 @@ import (
 )
 
 // Bug hunt 33 H1: the create route refused Free-plan databases unless compute
-// caps are enforced, but Compose and dev databases did not, so a Free account
-// got an uncapped database through either.
-func TestFreePlanComposeAndDevDatabasesNeedEnforcedCaps(t *testing.T) {
+// caps were enforced, but Compose and dev databases did not, so a Free account
+// got an uncapped database through either. ADR-20261110184700: Free includes
+// no managed PostgreSQL, so every path refuses it whatever the cap mode.
+func TestFreePlanComposeAndDevDatabasesAreNotInPlan(t *testing.T) {
 	env := apidserver.NewSourceRefTestServer(t, api.PlanFree, "free-db-gate", 9033)
 	ctx := t.Context()
 	store := *env.Store()
@@ -28,7 +29,7 @@ func TestFreePlanComposeAndDevDatabasesNeedEnforcedCaps(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, mode := range []managedpostgres.CapEnforcementMode{managedpostgres.CapEnforcementShadow, managedpostgres.CapEnforcementOff} {
+	for _, mode := range []managedpostgres.CapEnforcementMode{managedpostgres.CapEnforcementShadow, managedpostgres.CapEnforcementOff, managedpostgres.CapEnforcementOn} {
 		srv.SetManagedPostgresCapModeForTest(mode)
 		provided, reason, err := apidserver.ComposePostgresPlanFor(srv, ctx, acct)
 		if err != nil || provided || reason != "plan" {
@@ -37,13 +38,5 @@ func TestFreePlanComposeAndDevDatabasesNeedEnforcedCaps(t *testing.T) {
 		if _, err := srv.EnsureDevPostgresForTest(ctx, acct, app); !errors.Is(err, managedpostgres.ErrNotInPlan) {
 			t.Fatalf("caps %s: dev database err = %v, want ErrNotInPlan", mode, err)
 		}
-	}
-
-	srv.SetManagedPostgresCapModeForTest(managedpostgres.CapEnforcementOn)
-	if provided, reason, err := apidserver.ComposePostgresPlanFor(srv, ctx, acct); err != nil || !provided {
-		t.Fatalf("caps on: Compose database provided=%v reason=%q err=%v; want provided", provided, reason, err)
-	}
-	if _, err := srv.EnsureDevPostgresForTest(ctx, acct, app); errors.Is(err, managedpostgres.ErrNotInPlan) {
-		t.Fatalf("caps on: dev database refused for the plan: %v", err)
 	}
 }

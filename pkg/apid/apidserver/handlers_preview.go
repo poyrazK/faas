@@ -129,6 +129,16 @@ func (s *server) previewEnvironmentMembers(ctx context.Context, app state.App) (
 // returns false on failure.
 func (s *server) tearDownPreviewApp(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, auditKind string) bool {
 	if err := s.cleanupDevSessionBuckets(r.Context(), app); err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			problem, lookupErr := s.object.DevBucketBusyProblem(r.Context(), app)
+			if lookupErr != nil {
+				s.log.WarnContext(r.Context(), "destroy dev session: explain busy bucket", "app", app.ID, "err", lookupErr)
+			}
+			if problem != nil {
+				api.WriteProblem(w, problem)
+				return false
+			}
+		}
 		object.BucketProblem(w, err)
 		return false
 	}
@@ -137,6 +147,10 @@ func (s *server) tearDownPreviewApp(w http.ResponseWriter, r *http.Request, acct
 		return false
 	}
 	if err := s.cleanupDevPostgres(r.Context(), app); err != nil {
+		managedPostgresProblem(w, err)
+		return false
+	}
+	if err := s.releasePreviewDatabases(r.Context(), app); err != nil {
 		managedPostgresProblem(w, err)
 		return false
 	}

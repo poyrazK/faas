@@ -22,6 +22,13 @@ const (
 	GuestGateway = "10.0.0.1"
 	GuestPrefix  = "10.0.0.2/30"
 	TapPrefix    = "10.0.0.1/30" // host (tap0) side of the /30 inside the netns
+	// SandboxGuestMAC is every sandbox session guest's MAC, as identical
+	// across VMs as GuestIP (ADR-009): locally administered, unicast.
+	SandboxGuestMAC = "06:00:0a:00:00:02"
+	// GuestGuardTable is the netdev table holding the tap ingress guard.
+	GuestGuardTable = "faas_guard"
+	// GuestSpoofCounter counts the frames the guard dropped.
+	GuestSpoofCounter = "faas_guest_spoof"
 	// TapARPRetransMs is the tap's ARP retry interval inside the netns. The
 	// readiness probe dials the guest before its network exists; with the
 	// kernel default (1000 ms) the first unanswered ARP left the host blind
@@ -29,13 +36,17 @@ const (
 	// ~1 s however early the guest came up. The /30 has exactly one
 	// neighbour, so a short interval costs a handful of tiny frames.
 	TapARPRetransMs         = 50
-	AppPort                 = 8080         // the :8080 contract (spec §2)
-	ServiceProxyPort        = 10081        // Fetch-compatible service proxy on HostBridgeIP (ADR-384)
-	LegacyServiceProxyPort  = 10080        // compatibility for persisted bindings (ADR-169)
-	ServiceProxyHTTPSPort   = 443          // opt-in private HTTPS service proxy on HostBridgeIP
-	ServiceDiscoveryDNSPort = 53           // guest service-name resolver on HostBridgeIP (ADR-170)
-	DatabaseRoutePort       = 5432         // managed-database route port on DatabaseRouteAddress (ADR-1027); mirrors api.DatabaseRoutePort
-	TenantBridge            = "br-tenants" // root-ns bridge the veth host-side enslaves to
+	AppPort                 = 8080  // the :8080 contract (spec §2)
+	ServiceProxyPort        = 10081 // Fetch-compatible service proxy on HostBridgeIP (ADR-384)
+	LegacyServiceProxyPort  = 10080 // compatibility for persisted bindings (ADR-169)
+	ServiceProxyHTTPSPort   = 443   // opt-in private HTTPS service proxy on HostBridgeIP
+	ServiceDiscoveryDNSPort = 53    // guest service-name resolver on HostBridgeIP (ADR-170)
+	// SandboxRegistriesDNSPort is the bridge resolver that answers only
+	// package-registry and git-host names, for sandbox sessions in
+	// registries mode (ADR-20261027090013 §6).
+	SandboxRegistriesDNSPort = 5356
+	DatabaseRoutePort        = 5432         // managed-database route port on DatabaseRouteAddress (ADR-1027); mirrors api.DatabaseRoutePort
+	TenantBridge             = "br-tenants" // root-ns bridge the veth host-side enslaves to
 	// nft chain-policy words (ADR-031). Forwarded as the `policy`
 	// value in the per-netns forward-chain argv, so goconst demands
 	// the literals live in named constants.
@@ -144,8 +155,19 @@ type Config struct {
 	// Tenant egress policy, operator exceptions, private service addresses, and
 	// the legacy proxy do not apply to candidate code.
 	QualificationOnly bool
-	HostBits          int // prefix length for HostIP (16)
-	EgressMbit        int // per-plan egress cap via tc on VethHost; 0 = no cap (legacy / disabled)
+	// SandboxRegistries marks a sandbox session VM in registries mode
+	// (ADR-20261027090013 §6): its DNS goes to the registries-only resolver,
+	// it reaches none of the bridge's service ports, and the DNS gate with
+	// port 443 alone leaves it only the addresses that resolver answered.
+	SandboxRegistries bool
+	// GuestMAC, when set, is the only MAC the guest may send from: with it,
+	// an ingress guard on the tap accepts only IPv4 from GuestIP and ARP for
+	// GuestIP, both from GuestMAC, and drops every other frame
+	// (ADR-20261027090013 §10). Sandbox sessions set it to SandboxGuestMAC,
+	// because their tenant is root in the guest.
+	GuestMAC   string
+	HostBits   int // prefix length for HostIP (16)
+	EgressMbit int // per-plan egress cap via tc on VethHost; 0 = no cap (legacy / disabled)
 	// DenySet is the typed egress denylist applied at the per-netns
 	// forward chain. Defaults to NewDefaultDenySet() when zero
 	// (pkg/fcvm/manager.go::Wake does not set it; the renderer falls
@@ -172,9 +194,9 @@ type Config struct {
 	// emits one or two rules in the per-netns forward chain(s),
 	// partitioned by `prefix.Addr().Is4()`:
 	//   * the v4 half lands on `ip faas forward` as
-	//     `iifname "tap0" ip daddr { … } tcp dport != 25 accept`
+	//     `iifname "tap0" ip daddr { … } tcp dport != { blocked ports } accept`
 	//   * the v6 half lands on `ip6 faas forward` as
-	//     `iifname "tap0" ip6 daddr { … } accept`
+	//     `iifname "tap0" ip6 daddr { … } tcp dport != { blocked ports } accept`
 	// (nft rejects mixing `ip` and `ip6` matches in one table —
 	// ADR-023; the renderer partitions internally so the wire shape
 	// stays a single repeated string at proto AppSpec field 7).
@@ -348,9 +370,14 @@ func (c Config) databaseRouteRules(nft func(...string) []string) [][]string {
 	if !addr.IsValid() || !addr.Is4() {
 		return nil
 	}
+	drop := nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", addr.String(), "drop")
+	if c.SandboxRegistries {
+		// A sandbox session reaches no managed database (ADR-20261027090013 §6).
+		return [][]string{drop}
+	}
 	return [][]string{
 		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", addr.String(), "tcp", "dport", strconv.Itoa(DatabaseRoutePort), "accept"),
-		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", addr.String(), "drop"),
+		drop,
 	}
 }
 
@@ -367,9 +394,14 @@ func (c Config) serviceAddressRules(nft func(...string) []string) [][]string {
 		return nil
 	}
 	block := prefix.Masked().String()
+	drop := nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", block, "drop")
+	if c.SandboxRegistries {
+		// A sandbox session reaches no private service (ADR-20261027090013 §6).
+		return [][]string{drop}
+	}
 	return [][]string{
 		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", block, "meta", "l4proto", "tcp", "accept"),
-		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", block, "drop"),
+		drop,
 	}
 }
 
@@ -720,6 +752,9 @@ func (c Config) NftCommands() [][]string {
 		if c.QualificationOnly {
 			proxyPorts = []int{ServiceProxyPort}
 		}
+		if c.SandboxRegistries {
+			proxyPorts = nil
+		}
 		if c.RehearsalRunID != "" && !c.QualificationOnly {
 			proxyPorts = append(proxyPorts, rehearsalPostgresProxyPort, rehearsalObjectProxyPort)
 		}
@@ -727,13 +762,16 @@ func (c Config) NftCommands() [][]string {
 			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(port), "accept")
 		}
-		if c.ServiceProxyHTTPS {
+		if c.ServiceProxyHTTPS && !c.SandboxRegistries {
 			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceProxyHTTPSPort), "accept")
 		}
 		dnsPort := ServiceDiscoveryDNSPort
-		if c.RehearsalRunID != "" {
+		switch {
+		case c.RehearsalRunID != "":
 			dnsPort = RehearsalServiceDiscoveryDNSPort
+		case c.SandboxRegistries:
+			dnsPort = SandboxRegistriesDNSPort
 		}
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 			"ip", "daddr", c.HostBridgeIP.String(), "udp", "dport", strconv.Itoa(dnsPort), "accept")
@@ -984,7 +1022,33 @@ func (c Config) NftCommands() [][]string {
 	}
 	cmds = append(cmds, c.privateConntrackPolicyCommands(nft)...)
 	cmds = append(cmds, c.RehearsalNftCommands()...)
+	cmds = append(cmds, c.GuestGuardCommands()...)
 	return cmds
+}
+
+// GuestGuardCommands installs the anti-spoofing guard when GuestMAC is set
+// (ADR-20261027090013 §10). It hooks the tap's ingress, ahead of every
+// other rule and of NAT, so a guest that is root cannot send a frame from
+// another MAC, an IPv4 packet from another address, an ARP claim for
+// another address, or any other protocol, IPv6 included.
+func (c Config) GuestGuardCommands() [][]string {
+	if c.GuestMAC == "" {
+		return nil
+	}
+	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
+	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
+	return [][]string{
+		nft("add", "table", "netdev", GuestGuardTable),
+		nft("add", "counter", "netdev", GuestGuardTable, GuestSpoofCounter, "{}"),
+		nft("add", "chain", "netdev", GuestGuardTable, "ingress", "{", "type", "filter", "hook", "ingress", "device", c.Tap,
+			"priority", "-500", ";", "policy", "drop", ";", "}"),
+		nft("add", "rule", "netdev", GuestGuardTable, "ingress", "ether", "saddr", "!=", c.GuestMAC,
+			"counter", "name", GuestSpoofCounter, "drop"),
+		nft("add", "rule", "netdev", GuestGuardTable, "ingress", "ether", "type", "ip", "ip", "saddr", GuestIP, "accept"),
+		nft("add", "rule", "netdev", GuestGuardTable, "ingress", "ether", "type", "arp", "arp", "saddr", "ether", c.GuestMAC,
+			"arp", "saddr", "ip", GuestIP, "accept"),
+		nft("add", "rule", "netdev", GuestGuardTable, "ingress", "counter", "name", GuestSpoofCounter, "drop"),
+	}
 }
 
 // Counter and set names for the ADR-361 tenant egress policy.
@@ -1033,7 +1097,7 @@ const (
 	EgressDatabaseSet = "egress_db"
 	// egressDatabaseSetSize bounds the set: a database host answers with a
 	// handful of addresses and an app binds a few databases.
-	egressDatabaseSetSize = 1024
+	egressDatabaseSetSize = api.DatabaseEgressInstanceFamilyMax
 )
 
 // egressPolicyObjects declares the policy counters and the egress_ports set
@@ -1066,7 +1130,7 @@ func (c Config) egressPolicyObjects(nft func(...string) []string, family string)
 		cmds = append(cmds,
 			nft("add", "counter", family, "faas", EgressUnresolvedCounter, "{}"),
 			nft("add", "set", family, "faas", EgressResolvedSet, "{", "type", addrType, ";", "flags", "timeout", ";",
-				"size", strconv.Itoa(egressDstSetSize), ";", "}"))
+				"size", strconv.Itoa(api.DNSGatedEgressInstanceFamilyMax), ";", "}"))
 	}
 	if c.DatabaseEgress {
 		cmds = append(cmds, nft("add", "set", family, "faas", EgressDatabaseSet, "{", "type", addrType, ".", "inet_service", ";", "flags", "timeout", ";",
@@ -1171,9 +1235,10 @@ func (c Config) egressDNSGateRule(nft func(...string) []string, family string) [
 		family, "daddr", "!=", "@"+EgressResolvedSet, "counter", "name", EgressUnresolvedCounter, "drop")
 }
 
-// ResolvedEgressAddCommands adds resolved addresses to the egress_resolved
+// ResolvedEgressAddCommands adds fresh addresses to the egress_resolved
 // sets (ADR-373), each expiring after ttl. v4 and v6 addresses go to their
 // family's set. Run them as one nft -f transaction.
+// Use ResolvedEgressRefreshCommands to renew existing elements.
 func (c Config) ResolvedEgressAddCommands(addrs []netip.Addr, ttl time.Duration) [][]string {
 	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
 	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
@@ -1221,6 +1286,7 @@ func (c Config) egressDatabaseRule(nft func(...string) []string, family string) 
 // DatabaseEgressAddCommands adds address . port pairs to the egress_db sets,
 // each expiring after ttl. v4 and v6 addresses go to their family's set. Run
 // them as one nft -f transaction.
+// Use DatabaseEgressRefreshCommands to renew existing elements.
 func (c Config) DatabaseEgressAddCommands(addrs []netip.Addr, port uint16, ttl time.Duration) [][]string {
 	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
 	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
@@ -1244,6 +1310,35 @@ func (c Config) DatabaseEgressAddCommands(addrs []netip.Addr, port uint16, ttl t
 	return cmds
 }
 
+// ResolvedEgressRefreshCommands renews timeouts on Linux 6.8 too, where
+// adding an existing element succeeds without updating its expiration.
+// Run the entire result in one atomic nft transaction.
+func (c Config) ResolvedEgressRefreshCommands(addrs []netip.Addr, ttl time.Duration) [][]string {
+	return refreshTimedElements(c.ResolvedEgressAddCommands(addrs, ttl))
+}
+
+// DatabaseEgressRefreshCommands renews bound database grants atomically.
+func (c Config) DatabaseEgressRefreshCommands(addrs []netip.Addr, port uint16, ttl time.Duration) [][]string {
+	return refreshTimedElements(c.DatabaseEgressAddCommands(addrs, port, ttl))
+}
+
+func refreshTimedElements(adds [][]string) [][]string {
+	var cmds [][]string
+	for _, add := range adds {
+		// Ensure an absent key exists before deletion. Deleting and adding it
+		// in the same transaction resets the expiration without a traffic gap.
+		del := append([]string(nil), add...)
+		del[5] = "delete"
+		keys := strings.Split(del[len(del)-2], ", ")
+		for i, key := range keys {
+			keys[i], _, _ = strings.Cut(key, " timeout ")
+		}
+		del[len(del)-2] = strings.Join(keys, ", ")
+		cmds = append(cmds, add, del, add)
+	}
+	return cmds
+}
+
 // egressPortRule drops guest-originated TCP to any port outside egress_ports.
 func (c Config) egressPortRule(nft func(...string) []string, family string) []string {
 	return nft("add", "rule", family, "faas", "forward", "iifname", c.Tap,
@@ -1251,14 +1346,19 @@ func (c Config) egressPortRule(nft func(...string) []string, family string) []st
 }
 
 // GuestDNSPinCommands redirects every DNS query the guest sends, to any
-// destination, to the bridge resolver (ADR-361, ADR-170). It is its own nat
+// destination, to the bridge resolver (ADR-361, ADR-170), or to the
+// registries-only resolver for a sandbox in registries mode. It is its own nat
 // chain so RetargetAppPortCommands, which flushes prerouting, never removes
 // it.
 func (c Config) GuestDNSPinCommands(nft func(...string) []string) [][]string {
 	if !c.HostBridgeIP.IsValid() || !c.HostBridgeIP.Is4() {
 		return nil
 	}
-	target := fmt.Sprintf("%s:%d", c.HostBridgeIP, ServiceDiscoveryDNSPort)
+	resolver := ServiceDiscoveryDNSPort
+	if c.SandboxRegistries {
+		resolver = SandboxRegistriesDNSPort
+	}
+	target := fmt.Sprintf("%s:%d", c.HostBridgeIP, resolver)
 	port := strconv.Itoa(ServiceDiscoveryDNSPort)
 	return [][]string{
 		nft("add", "chain", "ip", "faas", guestDNSChain, "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}"),
@@ -1524,7 +1624,8 @@ func AllowlistBlockedPortsSet() string {
 // ADR-023). Order in the v6 chain: AFTER the v6 lateral-movement
 // deny (deny > allow on overlap), BEFORE chain-default accept
 // (unlisted destinations drop when an allowlist exists on the v6
-// chain).
+// chain). The canonical TCP blocked-port exclusion matches the v4 public rule
+// and distinguishes its handle from private and database exceptions.
 //
 // Exported for the same reason as ForwardAllowlistRule: the live
 // in-place patch path runs against the same argv shape, just on
@@ -1619,7 +1720,7 @@ func prefixStrings(prefixes []netip.Prefix) []string {
 func (c Config) NftResetCommands() [][]string {
 	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
 	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
-	return [][]string{
+	cmds := [][]string{
 		nft("delete", "table", "ip", "faas"),
 		// Mirror the IPv6 table reset (ADR-023 split). Same best-effort
 		// shape as the v4 entry: if the table is absent (first boot, freshly
@@ -1630,6 +1731,11 @@ func (c Config) NftResetCommands() [][]string {
 		// itself does not exercise this branch.
 		nft("delete", "table", "ip6", "faas"),
 	}
+	// Only a guarded VM has the guard table; others spawn no extra process.
+	if c.GuestMAC != "" {
+		cmds = append(cmds, nft("delete", "table", "netdev", GuestGuardTable))
+	}
+	return cmds
 }
 
 // TcCommands returns the argv list that applies the per-plan bandwidth

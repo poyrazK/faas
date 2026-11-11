@@ -196,6 +196,9 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 // returns the same envelope (status + scheduled_at + restore_until)
 // without re-stamping the timestamp or re-sending the email.
 func (s *server) deleteAccount(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !s.sessionPresenceForIrreversible(w, r, acct, "account_delete") {
+		return
+	}
 	fresh, err := s.scheduleDeletion(r.Context(), acct, "rest", r.URL.Query().Get(includeManagedPostgresParam) == "true")
 	if err != nil {
 		api.WriteProblem(w, err)
@@ -1080,6 +1083,12 @@ func (s *server) setGraceWindow(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid grace window",
 			"days must be >= 0 (0 = atomic rotation, null = use plan default)"))
+		return
+	}
+	if req.Days != nil && *req.Days > api.APIKeyGraceWindowMaxDays {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid grace window",
+			fmt.Sprintf("days must be at most %d (got %d); see %s", api.APIKeyGraceWindowMaxDays, *req.Days, wire.DocsBaseURL+"/api-keys")))
 		return
 	}
 

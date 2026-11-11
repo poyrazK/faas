@@ -9,6 +9,8 @@ import (
 // Organization paths disambiguate the same project slug in different companies.
 // The existing handlers retain their scope, verification and replay middleware.
 func (s *server) registerOrganizationProjectRoutes(mux *http.ServeMux) {
+	// The organization's own GitHub installations (ADR-20261110200000).
+	mux.HandleFunc("GET /v1/orgs/{organization}/github/installations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listOrgGitHubInstallations))))
 	mux.HandleFunc("GET /v1/orgs/{organization}/projects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listOrgProjects))))
 	mux.HandleFunc("GET /v1/orgs/{organization}/projects/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProject))))
 	mux.HandleFunc("GET /v1/orgs/{organization}/projects/{slug}/environments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectEnvironments))))
@@ -23,6 +25,8 @@ func (s *server) registerOrganizationProjectRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/config/diff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.diffProjectEnvironmentConfig))))
 	mux.HandleFunc("GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotion-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.previewProjectEnvironmentPromotion))))
 	mux.HandleFunc("GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/approvals/{approval}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentApprovalStatus))))
+	mux.HandleFunc("GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback-attempts/{attempt_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEnvironmentRollbackReceipt))))
+	mux.HandleFunc("GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotion-attempts/{attempt_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEnvironmentPromotionReceipt))))
 	mux.HandleFunc("GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentPromotionStatus))))
 	mux.HandleFunc("GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectEnvironmentPromotions))))
 	mux.HandleFunc("GET /v1/orgs/{organization}/projects/{slug}/delete-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewDeleteProject))))

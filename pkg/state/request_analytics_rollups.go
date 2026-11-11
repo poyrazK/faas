@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -119,11 +120,65 @@ func (s *PgStore) AddRequestAnalyticsRollups(ctx context.Context, rows []Request
 		return fmt.Errorf("begin request analytics rollups: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := addRequestAnalyticsRollupsTx(ctx, tx, rows, coverage); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit request analytics rollups: %w", err)
+	}
+	return nil
+}
+
+// RequestAnalyticsRollupBatchStore applies gateway rollup batches once
+// (ADR-20261103113952 amendment 5).
+type RequestAnalyticsRollupBatchStore interface {
+	AddRequestAnalyticsRollupBatch(ctx context.Context, batchID uuid.UUID, nodeID string, rows []RequestAnalyticsRollup, coverage []RequestAnalyticsCoverage) (replayed bool, err error)
+}
+
+var _ RequestAnalyticsRollupBatchStore = (*PgStore)(nil)
+
+// AddRequestAnalyticsRollupBatch applies a gateway's rollup batch and
+// records its batch_id in one transaction; a batch_id applied before is
+// left alone and reported as replayed.
+func (s *PgStore) AddRequestAnalyticsRollupBatch(ctx context.Context, batchID uuid.UUID, nodeID string, rows []RequestAnalyticsRollup, coverage []RequestAnalyticsCoverage) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin request analytics rollup batch: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	claimed, err := sqlc.New().ClaimRequestAnalyticsRollupBatch(ctx, tx, sqlc.ClaimRequestAnalyticsRollupBatchParams{
+		BatchID: NewPgtypeUUID(batchID), NodeID: nodeID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("claim request analytics rollup batch: %w", mapErr(err))
+	}
+	if claimed == 0 {
+		return true, nil
+	}
+	if err := addRequestAnalyticsRollupsTx(ctx, tx, rows, coverage); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit request analytics rollup batch: %w", err)
+	}
+	return false, nil
+}
+
+func addRequestAnalyticsRollupsTx(ctx context.Context, tx pgx.Tx, rows []RequestAnalyticsRollup, coverage []RequestAnalyticsCoverage) error {
 	q := sqlc.New()
 	for start := 0; start < len(rows); start += api.RequestAnalyticsRollupFlushRowsMax {
 		end := min(start+api.RequestAnalyticsRollupFlushRowsMax, len(rows))
 		if err := q.AddRequestAnalyticsMinutes(ctx, tx, requestAnalyticsMinutesParams(rows[start:end])); err != nil {
 			return fmt.Errorf("add request analytics rollups: %w", mapErr(err))
+		}
+	}
+	// The same flush, folded to UTC hours, feeds the hourly tier long
+	// windows read (ADR-20261103113952 amendment 2).
+	hours := requestAnalyticsHourRows(rows)
+	for start := 0; start < len(hours); start += api.RequestAnalyticsRollupFlushRowsMax {
+		end := min(start+api.RequestAnalyticsRollupFlushRowsMax, len(hours))
+		if err := q.AddRequestAnalyticsHours(ctx, tx, sqlc.AddRequestAnalyticsHoursParams(requestAnalyticsMinutesParams(hours[start:end]))); err != nil {
+			return fmt.Errorf("add hourly request analytics rollups: %w", mapErr(err))
 		}
 	}
 	if len(coverage) > 0 {
@@ -139,9 +194,6 @@ func (s *PgStore) AddRequestAnalyticsRollups(ctx context.Context, rows []Request
 			return fmt.Errorf("record request analytics rollup coverage: %w", mapErr(err))
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit request analytics rollups: %w", err)
-	}
 	return nil
 }
 
@@ -155,7 +207,54 @@ func (s *PgStore) RequestAnalyticsRollupCoverage(ctx context.Context, appID uuid
 		}
 		return time.Time{}, false, fmt.Errorf("read request analytics rollup coverage: %w", mapErr(err))
 	}
-	return since.Time, since.Valid, nil
+	return since.CoveredSince.Time, since.CoveredSince.Valid, nil
+}
+
+// RequestAnalyticsRollupHoursCoverage returns the first minute the hourly
+// tier holds, and false when it holds none for the app.
+func (s *PgStore) RequestAnalyticsRollupHoursCoverage(ctx context.Context, appID uuid.UUID) (time.Time, bool, error) {
+	row, err := sqlc.New().GetRequestAnalyticsRollupCoverage(ctx, s.pool, NewPgtypeUUID(appID))
+	if err != nil {
+		if errors.Is(mapErr(err), ErrNotFound) {
+			return time.Time{}, false, nil
+		}
+		return time.Time{}, false, fmt.Errorf("read request analytics rollup coverage: %w", mapErr(err))
+	}
+	return row.HoursCoveredSince.Time, row.HoursCoveredSince.Valid, nil
+}
+
+// requestAnalyticsHourRows folds minute rows into UTC hour rows, merging
+// rows that share an hour key, in a stable order.
+func requestAnalyticsHourRows(rows []RequestAnalyticsRollup) []RequestAnalyticsRollup {
+	type key struct {
+		app, deployment   uuid.UUID
+		hour              int64
+		kind, dim, method string
+		status            int16
+	}
+	index := make(map[key]int, len(rows))
+	hours := make([]RequestAnalyticsRollup, 0, len(rows))
+	for _, r := range rows {
+		hour := r.BucketStart.UTC().Truncate(time.Hour)
+		k := key{r.AppID, r.DeploymentID, hour.Unix(), r.DimensionKind, r.Dimension, r.Method, r.Status}
+		i, ok := index[k]
+		if !ok {
+			r.BucketStart = hour
+			hours = append(hours, r)
+			index[k] = len(hours) - 1
+			continue
+		}
+		h := &hours[i]
+		h.Requests += r.Requests
+		h.ErrorRequests += r.ErrorRequests
+		h.ColdBoots += r.ColdBoots
+		h.RequestTimeMS += r.RequestTimeMS
+		h.LatencyMaxMS = max(h.LatencyMaxMS, r.LatencyMaxMS)
+		for b := range h.LatencyHist {
+			h.LatencyHist[b] += r.LatencyHist[b]
+		}
+	}
+	return hours
 }
 
 func requestAnalyticsMinutesParams(rows []RequestAnalyticsRollup) sqlc.AddRequestAnalyticsMinutesParams {
@@ -198,12 +297,46 @@ func requestAnalyticsMinutesParams(rows []RequestAnalyticsRollup) sqlc.AddReques
 // RequestAnalyticsRollupReader reads the analytics rollups.
 type RequestAnalyticsRollupReader interface {
 	RequestAnalyticsRollupCoverage(ctx context.Context, appID uuid.UUID) (time.Time, bool, error)
+	RequestAnalyticsRollupHoursCoverage(ctx context.Context, appID uuid.UUID) (time.Time, bool, error)
 	RequestAnalyticsRollupGroups(ctx context.Context, arg sqlc.RequestAnalyticsRollupGroupsParams) ([]sqlc.RequestAnalyticsRollupGroupsRow, error)
 	RequestAnalyticsRollupHasGap(ctx context.Context, appID uuid.UUID, from, until time.Time) (bool, error)
 	RequestAnalyticsRollupRouteDeployments(ctx context.Context, arg sqlc.RequestAnalyticsRollupRouteDeploymentsParams) ([]sqlc.RequestAnalyticsRollupRouteDeploymentsRow, error)
+	RequestTelemetryExistsBetween(ctx context.Context, appID uuid.UUID, from, until time.Time) (bool, error)
 }
 
 var _ RequestAnalyticsRollupReader = (*PgStore)(nil)
+
+// RequestTelemetryExistsBetween reports whether the app has raw telemetry
+// received in [from, until), under the analytics statement budget.
+func (s *PgStore) RequestTelemetryExistsBetween(ctx context.Context, appID uuid.UUID, from, until time.Time) (bool, error) {
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) (bool, error) {
+		return sqlc.New().RequestTelemetryExistsBetween(ctx, db, sqlc.RequestTelemetryExistsBetweenParams{
+			AppID:       NewPgtypeUUID(appID),
+			WindowFrom:  pgtype.Timestamptz{Time: from, Valid: true},
+			WindowUntil: pgtype.Timestamptz{Time: until, Valid: true},
+		})
+	})
+}
+
+// RequestAnalyticsRollupCrashStore marks the rollups an apid lost by
+// stopping without its final flush (amendment 4).
+type RequestAnalyticsRollupCrashStore interface {
+	RecordRequestAnalyticsRollupGapsFromTelemetry(ctx context.Context, from, until time.Time) error
+}
+
+var _ RequestAnalyticsRollupCrashStore = (*PgStore)(nil)
+
+// RecordRequestAnalyticsRollupGapsFromTelemetry marks every app minute with
+// raw telemetry received in [from, until) as having lost rollups.
+func (s *PgStore) RecordRequestAnalyticsRollupGapsFromTelemetry(ctx context.Context, from, until time.Time) error {
+	if err := sqlc.New().RecordRequestAnalyticsRollupGapsFromTelemetry(ctx, s.pool, sqlc.RecordRequestAnalyticsRollupGapsFromTelemetryParams{
+		WindowFrom:  pgtype.Timestamptz{Time: from, Valid: true},
+		WindowUntil: pgtype.Timestamptz{Time: until, Valid: true},
+	}); err != nil {
+		return fmt.Errorf("record request analytics rollup gaps from telemetry: %w", mapErr(err))
+	}
+	return nil
+}
 
 // RequestAnalyticsRollupGroups reads rollup groups under the analytics
 // statement budget, as the raw analytics reads do.

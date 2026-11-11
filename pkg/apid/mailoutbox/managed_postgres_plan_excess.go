@@ -36,6 +36,9 @@ type ManagedPostgresPlanExcessNotice struct {
 	ServiceClass string
 	Reason       string
 	RecordedAt   time.Time
+	// DeleteAt is when the database is deleted if it still does not fit
+	// (ADR-20261110184700); zero while deletion is off.
+	DeleteAt time.Time
 }
 
 type managedPostgresPlanExcessPayload struct {
@@ -43,6 +46,7 @@ type managedPostgresPlanExcessPayload struct {
 	DatabaseName string    `json:"database_name"`
 	ServiceClass string    `json:"service_class"`
 	RecordedAt   time.Time `json:"recorded_at"`
+	DeleteAt     time.Time `json:"delete_at,omitzero"`
 }
 
 // managedPostgresPlanExcessExpiry is when a notice's email stops being
@@ -102,7 +106,7 @@ func (s *Service) NoticeManagedPostgresPlanExcess(ctx context.Context, accountID
 		return internalmail.ErrDisabled
 	}
 	payload := managedPostgresPlanExcessPayload{Reason: notice.Reason, DatabaseName: notice.DatabaseName, ServiceClass: notice.ServiceClass,
-		RecordedAt: notice.RecordedAt.UTC()}
+		RecordedAt: notice.RecordedAt.UTC(), DeleteAt: notice.DeleteAt.UTC()}
 	if _, _, ok := mail.ManagedPostgresPlanExcessBodyV1("", managedPostgresPlanExcessMailNotice(payload)); !ok || payload.RecordedAt.IsZero() {
 		return internalmail.ErrInvalid
 	}
@@ -141,8 +145,14 @@ func (s *Service) NoticeManagedPostgresPlanExcess(ctx context.Context, accountID
 	if err != nil {
 		return err
 	}
+	// The notice keeps the deletion date this email names: the cap sweep
+	// deletes the database only on a date its owner was mailed.
+	var deleteAt pgtype.Timestamptz
+	if !payload.DeleteAt.IsZero() {
+		deleteAt = pgtype.Timestamptz{Time: payload.DeleteAt, Valid: true}
+	}
 	linked, err := s.queries.LinkManagedPostgresPlanExcessNotice(ctx, tx, q.LinkManagedPostgresPlanExcessNoticeParams{IntentID: intent.ID,
-		DatabaseID: pgID(notice.DatabaseID)})
+		DeleteAt: deleteAt, DatabaseID: pgID(notice.DatabaseID)})
 	if err != nil || linked != 1 {
 		return err // already mailed, or the notice is gone: roll the intent back
 	}
@@ -225,5 +235,5 @@ func (s *Service) managedPostgresPlanExcessMessage(r q.PlatformMailProducerOutbo
 }
 
 func managedPostgresPlanExcessMailNotice(p managedPostgresPlanExcessPayload) mail.ManagedPostgresPlanExcessNotice {
-	return mail.ManagedPostgresPlanExcessNotice{Reason: p.Reason, DatabaseName: p.DatabaseName, ServiceClass: p.ServiceClass}
+	return mail.ManagedPostgresPlanExcessNotice{Reason: p.Reason, DatabaseName: p.DatabaseName, ServiceClass: p.ServiceClass, DeleteAt: p.DeleteAt}
 }

@@ -357,6 +357,10 @@ var workloadAppFieldPolicies = map[string]WorkloadFieldPolicy{
 	"CORSDefaultEnabled":        WorkloadFieldCopy,
 	"CORSDefaultOrigins":        WorkloadFieldCopy,
 	"CreatedAt":                 WorkloadFieldOperational,
+
+	// The database's own counter for EgressAllowlist and EgressPorts
+	// (#6742); a clone's row starts its own.
+	"EgressAllowlistRevision": WorkloadFieldOperational,
 }
 
 func WorkloadAppFieldPolicies() map[string]WorkloadFieldPolicy {
@@ -410,6 +414,9 @@ func AppForDeployment(ctx context.Context, store interface {
 }
 
 func ResolveAppForDeployment(ctx context.Context, store any, app App, deployment Deployment) (App, error) {
+	if deployment.DeletedAt != nil {
+		return App{}, ErrConflict
+	}
 	if reader, ok := store.(ProjectMigrationFenceReader); ok {
 		retired, err := reader.ProjectMigrationDeploymentRetired(ctx, deployment.ID)
 		if err != nil {

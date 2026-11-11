@@ -111,6 +111,10 @@ the upload; after that, deploy again from your source. A build waiting in the
 queue for 6 hours, or a deployment making no progress for 3 hours, fails
 with a stable error code.
 
+When a build finishes while no compute node has room for the app's first
+boot, the deployment waits in `snapshot_prepare` for up to 5 minutes and is
+retried each minute; only then does it fail with `capacity_unavailable`.
+
 ## Waiting and resuming
 
 Interrupted single-app deploys save a local session. Run
@@ -231,6 +235,14 @@ request tears them down. Turn an app's previews off with `gregale github setup
 my-api --no-preview` or `PATCH /v1/apps/my-api/github/deployment-policy`
 with `{"preview_enabled": false}`.
 
+A new commit on the pull request rebuilds only the preview services whose
+files changed since the previous commit, by the same rule as production
+pushes: a file outside every service's directory rebuilds them all, and
+ignored paths are left out. The other services keep serving the build they
+already have, and take only the deploys the rebuilt services need. A service
+whose preview is not live, and every service when the previous commit's
+preview failed or the pull request was just opened or reopened, rebuilds.
+
 **Release tags.** A tag push deploys the apps bound to the branch whose head
 the tag points at; a tag on an older commit deploys nothing. A project's tags
 deploy its production branch. Annotated tags (`git tag -a`) and lightweight
@@ -315,9 +327,15 @@ repository.
 
 ### Deploy tokens
 
-Other CI systems deploy with a deploy token: a credential that can only deploy
-one app. Minting and rotating one needs an MFA step-up from the last five
-minutes, so run `gregale account mfa verify` first. The token is shown once;
+Other CI systems deploy with a deploy token: a credential bound to one app.
+It deploys that app and applies the configuration a deploy carries (app
+settings, crons, queue bindings, routes, edge rules, inbound webhooks). It
+cannot delete or rename the app, add log drains, mirrors or outbound webhooks,
+mint consumer keys, AI access tokens or issue ingest tokens, or read the app's
+debug requests, crash snapshots or forks; those answer `403` and need an API
+key. The OIDC bearer the deploy Action uses has the same limits. Browser sessions with MFA enabled need verification from the last
+five minutes when minting or rotating one. CLI requests use their scoped
+bearer credential. The token is shown once;
 store it as `FAAS_TOKEN` in the CI secret store.
 
 A deploy token can also manage its app's edge rules, but only for that app's
@@ -328,7 +346,10 @@ other hosts (`*`, a wildcard, another app's host), or a route that sends
 another app's host to this app, needs an account API key, because edge rules
 apply to every host they cover across your apps. A route rule written with a
 deploy token may serve only the token's app: routing its hosts to another app
-needs an account API key too.
+needs an account API key too. For the same reason a deploy token cannot
+change, delete or roll back over a rule an account credential wrote for wider
+hosts, even when the rule is listed under its app: that answers 403 naming the
+rule's host, and an account API key makes the change.
 
 ```bash
 gregale app deploy-token create --app my-api --label ci   # default expiry: 90 days
@@ -398,6 +419,29 @@ release it replaces keeps serving while the command runs and through the
 rollout, so the old code always runs against the new schema for a while.
 Write migrations that the previous release can live with: add columns and
 tables first, and remove what the old code uses only in a later release.
+
+If the command exits non-zero or times out, the deployment fails with
+`release_command_failed`. If Gregale could not run the command or read its
+result (the task's environment could not be prepared, or its result channel
+broke), it fails with `release_infrastructure_failed`; deploy again. In both
+cases the previous release keeps serving.
+
+Release commands of one app run one at a time per environment, oldest first.
+If you deploy again while a release's command is still waiting to start, the
+newer release replaces it and the older command never runs. A command that
+already started finishes before the next one starts.
+
+A release command can end without an exit code: its worker was lost, it timed
+out, or it was cancelled while running. It may have changed part of the
+database. The next release of that environment then fails with
+`release_outcome_uncertain` before its own command runs. Check the database,
+record what you found, and deploy again:
+
+```bash
+gregale release resolve v41 --app my-api --note "migration 42 applied; schema matches"
+```
+
+A later release command of the environment that succeeds also clears it.
 
 A rollback restores code, never the database. Rolling back to the release
 that was serving when the migration ran is the usual case and needs nothing
@@ -575,6 +619,10 @@ How each gate judges:
   at least `min_samples` values (default 20) in the window, or the gate is not
   judged. Custom metrics are reported per app, not per revision, so these
   gates are most useful after the release takes all the traffic.
+- Both metric gate kinds read the metric's aggregate. Add
+  `--metric-label key=value` (repeatable; `labels` in the API) to judge the one
+  labelled series with exactly those labels, for example
+  `--metric orders_per_minute --metric-label region=eu --below 5`.
 - **`metric_change` gates** (`--max-rise` or `--max-drop`) compare the
   metric's average, read from its history the same way, with its average over
   the same length of time before the rollout started. Use them when a fixed
@@ -634,6 +682,9 @@ It reports:
 
 A section shows as unknown when its history is gone: config history keeps
 the last 100 revisions per scope, and image releases have no build SBOM.
+A release whose build made no artifact (failed, cancelled or still running)
+has no runtime base yet: the runtime base is not listed as a changed setting,
+and the summary ends with `runtime base unknown: v2 made no build artifact`.
 The approval page and the "approval needed" message show the same
 comparison. `gregale release summary` remains the quick cockpit view:
 rollout status, rollback target, and release fields against the previous
@@ -909,7 +960,9 @@ every account
 and new schedules then fail with 503 `platform_release_paused`, which nothing
 in the request overrides. A release you deployed earlier with `--no-traffic`
 can't take its first traffic during the pause either. Queued builds wait, and
-scheduled releases start once the pause is lifted. Your running apps keep
+scheduled releases start once the pause is lifted. A release deployed before
+the pause still finishes its build, but its release command (a migration)
+waits for the pause to be lifted. Your running apps keep
 serving, rollbacks to a release that served before still
 work, and you can still change env vars and secrets, so you can rotate a
 credential during the incident. Retry the deploy after the pause is lifted.
@@ -1018,6 +1071,32 @@ Revision numbers are per app, so `v41` of one app is unrelated to `v41` of
 another. Numbers may skip values: preview deploys and retries consume them
 too.
 
+## Cancel
+
+`gregale release cancel <id>` stops a deployment that is still pending,
+building, imaging or snapshotting. A live deployment cannot be cancelled
+(`deployment_cancel_live_forbidden`); roll back to an earlier one with
+`gregale deploys rollback` instead.
+
+`gregale release hide <id>` hides a finished deployment from lists. It does
+not stop anything, so a deployment that is still in progress is refused with
+`deployment_hide_in_flight`: cancel it first, then hide it.
+
+## Deployment aliases
+
+A deployment alias gives one exact revision a stable hostname of its own:
+
+```bash
+gregale release alias set --app my-api --name candidate --release v44
+```
+
+An alias can point only at a live or in-progress deployment, and that
+deployment's build is kept while the alias exists. Each app can have 5
+aliases on Free, 10 on Hobby, 25 on Pro and 50 on Scale. Setting a new alias
+above the limit fails with `plan_limit_deployment_aliases` (403), which reports
+the limit and the current count; re-pointing an existing alias always works,
+so delete one (`gregale release alias delete`) to make room.
+
 ## Dark deployments
 
 Stage a revision, wait until it is ready, and keep production traffic on the
@@ -1087,7 +1166,12 @@ replaced. The check runs every 15 seconds, and the release keeps serving until
 the previous one is ready again. While a rollout runs, a plain
 `gregale rollback my-api` is refused because traffic is split; to stop the
 rollout and return its traffic to the release it replaced, run
-`gregale rollouts recover my-api --action abort`. If a rollout wedges,
+`gregale release traffic rollback my-api` (the same as
+`gregale rollouts recover my-api --action abort`). For a split you set by
+hand with `release traffic set`, the same command gives the release with the
+largest share all traffic; `--to v6` names another, and a tie needs it. It
+acts on one environment (`--env`, or the only one the app is live in), and
+refuses if traffic changes while it runs. If a rollout wedges,
 `gregale rollouts recover my-api --action advance|promote|abort` is the manual
 escape hatch.
 
@@ -1677,7 +1761,7 @@ gregale environment promote shop --from staging --to production --sync-config --
 The server returns an accepted running operation. Two complete healthy rounds,
 one minute apart, are required while candidates serve no normal traffic. Graph
 and configuration then cut over atomically, followed by two new healthy rounds
-before success. Probe requests preserve destination scope and customer auth.
+before success. Probe requests preserve destination scope and pass only Gregale's own auth gates; your app's own auth still applies.
 Use a dependency-checking application endpoint to test database access.
 
 Inspect `gregale environment status shop PROMOTION_ID --to production`
