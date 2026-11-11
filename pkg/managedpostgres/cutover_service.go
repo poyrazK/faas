@@ -3,6 +3,7 @@ package managedpostgres
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"github.com/google/uuid"
 )
@@ -222,6 +223,10 @@ func (s *CutoverService) release(ctx context.Context, c Cutover, code string, ca
 		return ctx.Err()
 	}
 	normalized := normalizeProviderError(cause)
+	// The cutover only records the code; keep the cause in the log
+	// (Hunt 33 H33-58: verifying stayed at credential_verification_failed
+	// with no reason anywhere).
+	slog.Default().Warn("managed postgres cutover released", "cutover_id", c.ID, "code", code, "err", cause)
 	now := s.bindings.now()
 	finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultStoreTimeout)
 	defer cancel()
