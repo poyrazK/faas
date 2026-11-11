@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [ADR-20261111162000: Reload selected local development environment files](20261111162000-local-development-env-reload.md) — accepted; local flags override manifest defaults, valid env edits restart apps and functions, and invalid files preserve running processes
+
 - [ADR-20261111145512: Exact numbers with bounded edge validation arithmetic](20261111145512-edge-validation-exact-number-bounds.md) — accepted; preserve JSON numeric precision while bounding numeric token length, exponent expansion and aggregate arithmetic work
 
 - [ADR-20261111140000: Run ordinary HTTP apps with local development](20261111140000-local-http-app-development.md) — accepted; reuses framework commands and local Postgres/bucket bindings, with a stable loopback proxy, source reload, and owned process-group cleanup
