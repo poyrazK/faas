@@ -274,6 +274,7 @@ type Querier interface {
 	// ADR-20261107105126. A secondary-meter delivery receipt with its usage source.
 	BillingMeterUsageDeliveryRecordFromSource(ctx context.Context, db DBTX, arg BillingMeterUsageDeliveryRecordFromSourceParams) error
 	BillingMeterUsageDeliverySource(ctx context.Context, db DBTX, arg BillingMeterUsageDeliverySourceParams) (string, error)
+	BillingPlanActivationHead(ctx context.Context, db DBTX) (int64, error)
 	// Each customer who held a plan with a monthly fee in the run's month, with
 	// or without runs (ADR-20261021154511): the assignment in force when the
 	// month starts, or one made during it.
@@ -540,6 +541,7 @@ type Querier interface {
 	ClaimRuntimeUpgradeVerification(ctx context.Context, db DBTX, leaseSeconds int32) (RuntimeUpgradeVerification, error)
 	ClaimScenarioWorkerFault(ctx context.Context, db DBTX, id string) (int64, error)
 	ClaimServiceRecovery(ctx context.Context, db DBTX, arg ClaimServiceRecoveryParams) (ServiceRecovery, error)
+	ClaimSpendCapNotice(ctx context.Context, db DBTX, arg ClaimSpendCapNoticeParams) (SpendCapNoticeOutbox, error)
 	// Persist ownership before returning. SKIP LOCKED alone would release the
 	// claim at statement end and let another scheduler deliver the same row.
 	// A lost dispatcher becomes eligible again after the ten-minute lease.
@@ -1932,6 +1934,7 @@ type Querier interface {
 	FinancialBudgetEvaluationPut(ctx context.Context, db DBTX, arg FinancialBudgetEvaluationPutParams) (pgtype.UUID, error)
 	FinancialBudgetGet(ctx context.Context, db DBTX, arg FinancialBudgetGetParams) (FinancialBudgetPolicy, error)
 	FinancialBudgetInsert(ctx context.Context, db DBTX, arg FinancialBudgetInsertParams) (FinancialBudgetPolicy, error)
+	FinancialBudgetJobs(ctx context.Context, db DBTX, arg FinancialBudgetJobsParams) ([]FinancialBudgetJobsRow, error)
 	FinancialBudgetList(ctx context.Context, db DBTX, arg FinancialBudgetListParams) ([]FinancialBudgetPolicy, error)
 	// The subjects meterd evaluates: one read per pass instead of one per account.
 	FinancialBudgetMonitoredSubjects(ctx context.Context, db DBTX) ([]pgtype.UUID, error)
@@ -3709,6 +3712,7 @@ type Querier interface {
 	// DESC) makes this DISTINCT scan cheap.
 	ListAppsWithRecentTelemetry(ctx context.Context, db DBTX, dollar_1 pgtype.Interval) ([]pgtype.UUID, error)
 	ListAuditLogAnchors(ctx context.Context, db DBTX, arg ListAuditLogAnchorsParams) ([]AuditLogAnchor, error)
+	ListBillingPlanActivations(ctx context.Context, db DBTX, arg ListBillingPlanActivationsParams) ([]ListBillingPlanActivationsRow, error)
 	ListBindingVerificationRunSummaries(ctx context.Context, db DBTX, arg ListBindingVerificationRunSummariesParams) ([]ListBindingVerificationRunSummariesRow, error)
 	ListBindingVerificationTasks(ctx context.Context, db DBTX, arg ListBindingVerificationTasksParams) ([]ListBindingVerificationTasksRow, error)
 	ListBuildsAwaitingImage(ctx context.Context, db DBTX, arg ListBuildsAwaitingImageParams) ([]ListBuildsAwaitingImageRow, error)
@@ -4834,6 +4838,8 @@ type Querier interface {
 	LockWorkflowStepsForManualRetry(ctx context.Context, db DBTX, runID string) ([]WorkflowStep, error)
 	// The deletion request the account's archived-log snapshot was taken for.
 	LogArchiveErasureRequestedAt(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.Timestamptz, error)
+	// Seconds until the address may try a password again; no row when it may.
+	LoginFailureRetryAfter(ctx context.Context, db DBTX, arg LoginFailureRetryAfterParams) (float64, error)
 	LookupCustomerOperationSubmission(ctx context.Context, db DBTX, arg LookupCustomerOperationSubmissionParams) (LookupCustomerOperationSubmissionRow, error)
 	MCPAdmissionEvidenceExists(ctx context.Context, db DBTX, arg MCPAdmissionEvidenceExistsParams) (bool, error)
 	MCPConnectionHealthBindings(ctx context.Context, db DBTX, arg MCPConnectionHealthBindingsParams) ([][]byte, error)
@@ -5954,6 +5960,7 @@ type Querier interface {
 	// signature, by its SHA-256. A signature is deterministic for one envelope and
 	// key, so writing it again replaces only a row that held something else.
 	PutRuntimeSecretSignature(ctx context.Context, db DBTX, arg PutRuntimeSecretSignatureParams) error
+	PutSpendCapHoldWithNotice(ctx context.Context, db DBTX, arg PutSpendCapHoldWithNoticeParams) error
 	PutTCPListenerTLSObservation(ctx context.Context, db DBTX, arg PutTCPListenerTLSObservationParams) (int64, error)
 	// A rule whose episode ends without it recovering owes each bound channel a
 	// recovery notice (ADR-20261104142830): the channels of its open episode,
@@ -6779,6 +6786,10 @@ type Querier interface {
 	RecordInstanceApplicationStandardPromotionReceipt(ctx context.Context, db DBTX, arg RecordInstanceApplicationStandardPromotionReceiptParams) (int64, error)
 	RecordInstanceApplicationStandardReceipt(ctx context.Context, db DBTX, arg RecordInstanceApplicationStandardReceiptParams) (int64, error)
 	RecordInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, arg RecordInstanceRuntimeConfigReceiptParams) (int64, error)
+	// Failed password checks per keyed email hash, shared by every apid (ADR
+	// 20261111150000). One fixed window per address; notify is true when this
+	// failure used up the budget and the owner was not told within the window.
+	RecordLoginFailure(ctx context.Context, db DBTX, arg RecordLoginFailureParams) (bool, error)
 	// ---------------------------------------------------------------------------
 	// Issue #246 acceptance item 7 — hard-bounce + complaint suppression list
 	// (ADR-115 §D.3, RFC 8058 follow-on). One row per (source,
@@ -7211,6 +7222,7 @@ type Querier interface {
 	RequeueFireNowRequest(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	RequeueWorkflowRunForRetry(ctx context.Context, db DBTX, arg RequeueWorkflowRunForRetryParams) (WorkflowRun, error)
 	ReserveAccountCreditConsumption(ctx context.Context, db DBTX, arg ReserveAccountCreditConsumptionParams) (pgtype.UUID, error)
+	ReserveBillingUsageIntent(ctx context.Context, db DBTX, arg ReserveBillingUsageIntentParams) (int64, error)
 	ReserveEnvironmentQualificationRestore(ctx context.Context, db DBTX, arg ReserveEnvironmentQualificationRestoreParams) error
 	ReserveEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) (int32, error)
 	ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accountID string) (int32, error)
@@ -7229,6 +7241,7 @@ type Querier interface {
 	ReserveRuntimeUpgradeCandidate(ctx context.Context, db DBTX, arg ReserveRuntimeUpgradeCandidateParams) (pgtype.UUID, error)
 	ResetCustomerOperationDelivery(ctx context.Context, db DBTX, arg ResetCustomerOperationDeliveryParams) (int64, error)
 	ResetEnvironmentWorkloadServingReceipt(ctx context.Context, db DBTX, arg ResetEnvironmentWorkloadServingReceiptParams) (int64, error)
+	ResetLoginFailures(ctx context.Context, db DBTX, emailHash string) error
 	ResetManagedPostgresCutoverVerification(ctx context.Context, db DBTX, id string) error
 	ResetManagedPostgresReconciliationCoverage(ctx context.Context, db DBTX, databaseID pgtype.UUID) error
 	ResetRuntimeUpgradeGatewayHeartbeats(ctx context.Context, db DBTX) error
@@ -7811,6 +7824,7 @@ type Querier interface {
 	SetWorkflowScheduleOccurrenceReplay(ctx context.Context, db DBTX, arg SetWorkflowScheduleOccurrenceReplayParams) (int64, error)
 	SettleCustomerOperationWorkflow(ctx context.Context, db DBTX, arg SettleCustomerOperationWorkflowParams) (int64, error)
 	SettleEventSubscriptionIntent(ctx context.Context, db DBTX, arg SettleEventSubscriptionIntentParams) error
+	SettleSpendCapNotice(ctx context.Context, db DBTX, arg SettleSpendCapNoticeParams) (pgtype.UUID, error)
 	ShareProjectBindingVerificationRun(ctx context.Context, db DBTX, arg ShareProjectBindingVerificationRunParams) (ProjectBindingVerificationRun, error)
 	ShareRuntimeUpgradeExternalFenceAuthority(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradeExternalFenceAuthority, error)
 	ShareRuntimeUpgradeGatewayRosterHead(ctx context.Context, db DBTX) (pgtype.UUID, error)
@@ -7916,6 +7930,8 @@ type Querier interface {
 	SupersedeTriggerRecordItems(ctx context.Context, db DBTX, arg SupersedeTriggerRecordItemsParams) (int64, error)
 	SuppressMCPReminder(ctx context.Context, db DBTX, arg SuppressMCPReminderParams) error
 	SweepCountedMirrorResults(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (int64, error)
+	// Bounded sweep of windows that ended; run after each recorded failure.
+	SweepLoginFailures(ctx context.Context, db DBTX, windowSeconds float64) (int64, error)
 	SweepUnboundNativeWorkflowRuns(ctx context.Context, db DBTX, ageMs int64) (int64, error)
 	SyncProductionScalingStates(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	// Realtime fan-out counts as the app's egress (ADR-20261104132753). Every

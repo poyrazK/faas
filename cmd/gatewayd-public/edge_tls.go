@@ -350,11 +350,28 @@ func newEdgeServerErrors(log *slog.Logger, failures prometheus.Counter) *edgeSer
 func (e *edgeServerErrors) Write(p []byte) (int, error) {
 	msg := strings.TrimSpace(string(p))
 	if !strings.Contains(msg, "TLS handshake error") {
+		if clientLeftServerError(msg) {
+			e.log.Debug("gatewayd-public: public server", "err", msg)
+			return len(p), nil
+		}
 		e.log.Warn("gatewayd-public: public server", "err", msg)
 		return len(p), nil
 	}
 	e.handshake(msg)
 	return len(p), nil
+}
+
+// clientLeftServerError reports net/http's lines for a client that went away
+// before or during its request, such as an HTTP/2 preface read cut by a
+// reset. The edge sees dozens an hour and none is a server fault, so they are
+// Debug; other server errors stay Warn (Hunt 33 P-3).
+func clientLeftServerError(msg string) bool {
+	for _, gone := range []string{"connection reset by peer", "broken pipe", "use of closed network connection"} {
+		if strings.Contains(msg, gone) {
+			return true
+		}
+	}
+	return strings.Contains(msg, "error reading preface from client") && strings.HasSuffix(msg, ": EOF")
 }
 
 // handshakeFailed counts a handshake the client limits' gate saw fail, before

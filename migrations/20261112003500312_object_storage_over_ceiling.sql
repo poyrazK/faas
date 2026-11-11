@@ -1,4 +1,4 @@
--- filename: 20261111160545312_object_storage_over_ceiling.sql
+-- filename: 20261112003500312_object_storage_over_ceiling.sql
 -- migration-compat: expand
 
 -- +goose Up
