@@ -1,4 +1,4 @@
--- filename: 20261111124321000_environment_deployment_crons.sql
+-- filename: 20261111195305770_environment_deployment_crons.sql
 -- migration-compat: expand
 
 -- +goose Up
