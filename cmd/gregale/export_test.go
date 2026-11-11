@@ -1874,6 +1874,7 @@ var RunBindingVerificationJobs = runBindingVerificationJobs
 var RunBucketCapacity = runBucketCapacity
 var RunBucketCopySources = runBucketCopySources
 var RunBucketDefaultEncryption = runBucketDefaultEncryption
+var BucketStatusAlias = bucketStatusAlias
 var RunBucketDelete = runBucketDelete
 var RunBucketLifecycle = runBucketLifecycle
 var RunBucketList = runBucketList
@@ -2847,3 +2848,5 @@ var WorkerNoInstancesLine = workerNoInstancesLine
 var PrintPublicURLs = printPublicURLs
 
 var RenderRequestAnalytics = renderRequestAnalytics
+
+var RenderDeploymentHostingReceiptFor = renderDeploymentHostingReceiptFor

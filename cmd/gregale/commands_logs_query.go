@@ -338,7 +338,7 @@ func renderHTTPLogQueryEvent(w io.Writer, event api.LogQueryEvent) {
 		requestID = event.ID
 	}
 	_, _ = fmt.Fprintf(w, "%s http status=%d method=%s route=%q latency=%dms request=%s deployment=%s",
-		event.Timestamp, event.Status, event.Method, event.Route, event.LatencyMS, requestID, event.DeploymentID)
+		event.Timestamp, event.Status, event.Method, event.Route, logQueryLatencyMS(event), requestID, event.DeploymentID)
 	if event.TraceID != "" {
 		_, _ = fmt.Fprintf(w, " trace=%s", event.TraceID)
 	}

@@ -320,9 +320,9 @@ func TestGCSMultipartOAuthProtocolAndCompletionRecovery(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Query().Has("uploads"):
 			if initiated {
-				_, _ = io.WriteString(w, `<ListBucketMultipartUploadsResult><IsTruncated>false</IsTruncated><Upload><Key>folder/large.bin</Key><UploadId>provider-id</UploadId></Upload></ListBucketMultipartUploadsResult>`)
+				_, _ = io.WriteString(w, `<ListMultipartUploadsResult><IsTruncated>false</IsTruncated><Upload><Key>folder/large.bin</Key><UploadId>provider-id</UploadId></Upload></ListMultipartUploadsResult>`)
 			} else {
-				_, _ = io.WriteString(w, `<ListBucketMultipartUploadsResult><IsTruncated>false</IsTruncated></ListBucketMultipartUploadsResult>`)
+				_, _ = io.WriteString(w, `<ListMultipartUploadsResult><IsTruncated>false</IsTruncated></ListMultipartUploadsResult>`)
 			}
 		case r.Method == http.MethodPost && r.URL.Query().Has("uploads"):
 			initiateCalls++

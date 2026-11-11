@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261111183000: Automatically select supported developer watch mode](20261111183000-automatic-developer-watch-selection.md) — accepted; flags and manifest settings override detection, server eligibility can fall back for automatic choices, and workspace children preserve explicit opt-outs
 - [ADR-20261111162000: Reload selected local development environment files](20261111162000-local-development-env-reload.md) — accepted; local flags override manifest defaults, valid env edits restart apps and functions, and invalid files preserve running processes
 - [ADR-20261111140000: Analytics delivery evidence and attribution](20261111140000-analytics-correctness.md) — accepted; durable legacy ingestion evidence, historical raw/counting coverage, consistent deployment attribution, and bounded custom-metric writes
 
