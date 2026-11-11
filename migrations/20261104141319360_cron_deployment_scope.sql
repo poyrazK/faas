@@ -17,12 +17,10 @@ DO $$ BEGIN
         (deployment_scope ~ '^[a-z][a-z0-9-]{0,62}$' AND environment_id IS NOT NULL)) NOT VALID;
   END IF;
 END $$;
-CREATE INDEX IF NOT EXISTS crons_environment_idx ON crons (environment_id) WHERE environment_id IS NOT NULL;
--- A stage may hold the same schedule, path and command as production: the
--- identity is unique within one environment of an app.
-CREATE UNIQUE INDEX IF NOT EXISTS crons_app_scope_schedule_path_command_unique
-  ON crons (app_id, deployment_scope, schedule, path, command);
-ALTER TABLE crons DROP CONSTRAINT IF EXISTS crons_app_schedule_path_command_unique;
+-- The environment index and the per-environment identity are built
+-- concurrently by 20261111221012012_cron_scope_indexes; the app-wide
+-- identity is dropped by the contract migration
+-- 20261111221013566_cron_drop_unscoped_identity.
 
 -- A scoped cron resolves its environment from the app's project when it is
 -- written; its environment never changes afterwards.
@@ -60,10 +58,7 @@ CREATE TRIGGER guard_cron_environment_scope BEFORE INSERT OR UPDATE OF deploymen
 SET LOCAL lock_timeout = '5s';
 DROP TRIGGER IF EXISTS guard_cron_environment_scope ON crons;
 DROP FUNCTION IF EXISTS guard_cron_environment_scope();
-DROP INDEX IF EXISTS crons_environment_idx;
 DELETE FROM crons WHERE deployment_scope<>'';
-DROP INDEX IF EXISTS crons_app_scope_schedule_path_command_unique;
-ALTER TABLE crons ADD CONSTRAINT crons_app_schedule_path_command_unique UNIQUE (app_id, schedule, path, command);
 ALTER TABLE crons DROP CONSTRAINT IF EXISTS cron_scope_shape;
 ALTER TABLE crons DROP COLUMN IF EXISTS environment_id;
 ALTER TABLE crons DROP COLUMN IF EXISTS deployment_scope;
