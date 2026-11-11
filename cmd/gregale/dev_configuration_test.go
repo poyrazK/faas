@@ -243,18 +243,28 @@ func TestCmdDevMissingConfigurationStopsBeforeUpload(t *testing.T) {
 	if upserts.Load() != 1 {
 		t.Fatalf("upserts=%d stderr=%s", upserts.Load(), stderr.String())
 	}
-	if bytes.Count(out.Bytes(), []byte("\n")) != 1 {
-		t.Fatalf("configuration event is not one NDJSON line: %s", out.String())
+	configurationEvents := 0
+	for _, line := range bytes.Split(bytes.TrimSpace(out.Bytes()), []byte("\n")) {
+		var event struct {
+			Type    string   `json:"type"`
+			Missing []string `json:"missing"`
+		}
+		if err := json.Unmarshal(line, &event); err != nil {
+			t.Fatal(err, out.String())
+		}
+		switch event.Type {
+		case "developer_configuration":
+			configurationEvents++
+			if !reflect.DeepEqual(event.Missing, []string{"APP_TEST_ALPHA"}) {
+				t.Fatalf("event=%+v", event)
+			}
+		case "developer_mode": // Mode confirmation can precede configuration preflight.
+		default:
+			t.Fatalf("unexpected event before configuration failure: %+v", event)
+		}
 	}
-	var event struct {
-		Type    string   `json:"type"`
-		Missing []string `json:"missing"`
-	}
-	if err := json.Unmarshal(out.Bytes(), &event); err != nil {
-		t.Fatal(err, out.String())
-	}
-	if event.Type != "developer_configuration" || !reflect.DeepEqual(event.Missing, []string{"APP_TEST_ALPHA"}) {
-		t.Fatalf("event=%+v", event)
+	if configurationEvents != 1 {
+		t.Fatalf("configuration events=%d output=%s", configurationEvents, out.String())
 	}
 }
 
