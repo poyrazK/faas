@@ -244,6 +244,13 @@ type Middleware struct {
 	// ApprovalReviewURL is the page where a person decides an agent's
 	// approval request (ADR-20261104140058).
 	ApprovalReviewURL func(id string) string
+	// RemoteAgentGate, when set, decides agent requests that need approval
+	// instead of the store: a gateway asks apid, the only approvals writer
+	// (ADR-20261111150000).
+	RemoteAgentGate RemoteAgentGate
+	// ActivityRecorder records agent activity when Authn cannot: a gateway
+	// sends the rows to apid (ADR-20261111150000).
+	ActivityRecorder AgentActivityRecorder
 
 	// CookieDomain is the cookie attribute on the session-cookie
 	// issued/cleared by RequireSession. Empty = omit Domain
@@ -629,7 +636,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				// recorded once the handler answers; the approval gate
 				// notes the approval a request went through on.
 				var activity *agentActivityNote
-				if ProjectLimitable(key) && agentWrite(r.Method) {
+				if ProjectLimitable(key) && (agentWrite(r.Method) || agentapproval.RecordedRead(r.Pattern)) {
 					*r = *r.WithContext(withAgentActivityNote(r.Context(), &activity))
 					// ADR-20261111114059: a budget approval binds the exact
 					// change, so take the binding before the handler reads
@@ -664,8 +671,16 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				}
 				if activity != nil {
 					aw := &activityWriter{ResponseWriter: w}
+					recorded := false
+					//nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed
+					aw.onHijack = func() {
+						recorded = true
+						m.recordAgentActivity(r, acct, key, aw.status, activity)
+					}
 					next(aw, r, acct)
-					m.recordAgentActivity(r, acct, key, aw.status, activity) //nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed
+					if !recorded {
+						m.recordAgentActivity(r, acct, key, aw.status, activity) //nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed
+					}
 					return
 				}
 				next(w, r, acct)

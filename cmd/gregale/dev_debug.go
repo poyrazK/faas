@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -97,17 +98,39 @@ func newDevDebugDialer(tunnelURL, token string) devDebugDialer {
 	headers := http.Header{"Authorization": {"Bearer " + token}}
 	return func(ctx context.Context) (net.Conn, error) {
 		socket, response, err := dialer.DialContext(ctx, tunnelURL, headers)
-		if response != nil && response.Body != nil {
-			_ = response.Body.Close()
-		}
 		if err != nil {
 			if response != nil {
-				return nil, fmt.Errorf("debugger tunnel refused (HTTP %d): %w", response.StatusCode, err)
+				return nil, devDebugRefusal(response, err)
 			}
 			return nil, err
 		}
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
 		return devbridge.NewWebSocketConn(socket), nil
 	}
+}
+
+// devDebugRefusal explains a refused tunnel. An agent key's tunnel waits
+// for a person's approval (ADR-20261111150000): the error names the review
+// link, and the next debugger connection after they approve goes through.
+func devDebugRefusal(response *http.Response, err error) error {
+	var problem api.Problem
+	if response.Body != nil {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+		_ = response.Body.Close()
+		_ = json.Unmarshal(body, &problem)
+	}
+	if response.StatusCode == http.StatusPreconditionRequired {
+		if problem.AgentApproval != nil && problem.AgentApproval.ReviewURL != "" {
+			return fmt.Errorf("debugger access needs a person's approval: ask them to open %s; once approved, debugger connections work for %s", problem.AgentApproval.ReviewURL, api.DevDebugApprovalWindow)
+		}
+		return errors.New("debugger access needs a person's approval: ask them to review this agent's pending approvals")
+	}
+	if problem.Detail != "" {
+		return fmt.Errorf("debugger tunnel refused (HTTP %d): %s", response.StatusCode, problem.Detail)
+	}
+	return fmt.Errorf("debugger tunnel refused (HTTP %d): %w", response.StatusCode, err)
 }
 
 // serveDevDebugProxy accepts local debugger connections until ctx ends and

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/agentapproval"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -69,10 +70,37 @@ func (m *Middleware) ChargeAgentBudget(w http.ResponseWriter, r *http.Request, p
 	}
 	detail := fmt.Sprintf("this change adds about %s a month, past this agent's monthly budget of %s (%s used), so it needs a person's approval",
 		usd(api.CentsCeil(millicents)), usd(view.Cents), usd(api.CentsCeil(spent)))
-	if m.approveOrAsk(w, r, gate, acct, *key, *note.binding, state.AgentApproval{Category: api.AgentApprovalBudget, BudgetCostMillicents: millicents}, detail) {
+	reason := api.SanitizeAgentReason(r.Header.Get(api.AgentReasonHeader))
+	decision, err := m.decideBudget(ctx, gate, acct, *key, *note.binding, reason, millicents, detail)
+	if err != nil {
+		m.storeUnavailable(w, r, err, "could not check the request's approval; retry shortly")
 		return noop, true
 	}
+	if !decision.Allow {
+		api.WriteProblem(w, decision.Problem)
+		return noop, true
+	}
+	noteApprovalUsed(ctx, decision.ApprovalID)
 	return commit, false
+}
+
+// decideBudget allows an over-budget change on a person's approval of
+// exactly this request, answers an agent repeating a denied or expired one,
+// or opens a budget approval request.
+func (m *Middleware) decideBudget(ctx context.Context, gate AgentApprovalGate, acct state.Account, key state.APIKey, binding state.AgentApprovalBinding, reason string, cost int64, why string) (AgentGateDecision, error) {
+	if approvalID, used, err := gate.ConsumeAgentApproval(ctx, binding); err != nil {
+		return AgentGateDecision{}, gateUnavailable("could not check the request's approval; retry shortly", err)
+	} else if used {
+		return AgentGateDecision{Allow: true, ApprovalID: approvalID}, nil
+	}
+	outcome, decided, err := gate.RecentAgentApprovalOutcome(ctx, binding, api.AgentApprovalOutcomeWindow)
+	if err != nil {
+		return AgentGateDecision{}, gateUnavailable("could not check the request's approval; retry shortly", err)
+	}
+	if decided {
+		return AgentGateDecision{Problem: m.approvalOutcomeProblem(acct, key, outcome)}, nil
+	}
+	return m.requestApproval(ctx, gate, acct, key, agentapproval.Rule{Category: api.AgentApprovalBudget}, binding, reason, cost, why)
 }
 
 // usd formats cents as dollars.

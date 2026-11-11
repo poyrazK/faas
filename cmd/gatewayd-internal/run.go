@@ -2435,6 +2435,11 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		// either. nil ⇒ the cross-check is a no-op.
 		nil,
 	)
+	// ADR-20261111150000: an agent key's gated request here (the developer
+	// debugger tunnel) is decided, and its activity recorded, by apid, the
+	// only writer of approval requests and the activity log.
+	agentGate := apidgrpc.AgentGate{Auth: credentialAuth}
+	deps.authMw.RemoteAgentGate, deps.authMw.ActivityRecorder = agentGate, agentGate
 	// Issue #560: per-deployment require_authn (pro/Scale opt-in).
 	// Build the narrow gateway.RequireAuthnAuthenticator
 	// adapter around the production middleware and the

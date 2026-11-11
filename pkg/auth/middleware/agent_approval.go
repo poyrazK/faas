@@ -84,23 +84,48 @@ func productionApp(app state.App) bool {
 	return app.PreviewOfSlug == ""
 }
 
+// AgentApprovalWindowGate is the optional store seam behind a rule whose one
+// approval covers the same request for a window (ADR-20261111150000). A
+// store without it holds such a rule to one request per approval.
+type AgentApprovalWindowGate interface {
+	AgentApprovalUsedWithin(ctx context.Context, binding state.AgentApprovalBinding, window time.Duration) (string, bool, error)
+}
+
+// AgentGateDecision is the approval gate's answer to one agent request:
+// Allow, naming the approval it went through on when there was one, or the
+// Problem to answer with.
+type AgentGateDecision struct {
+	Allow      bool
+	ApprovalID string
+	Problem    *api.Problem
+}
+
+// AgentGateUnavailableError is a gate decision the store could not make;
+// Detail is what the agent is told.
+type AgentGateUnavailableError struct {
+	Detail string
+	Err    error
+}
+
+func (e *AgentGateUnavailableError) Error() string { return e.Detail + ": " + e.Err.Error() }
+func (e *AgentGateUnavailableError) Unwrap() error { return e.Err }
+
+func gateUnavailable(detail string, err error) error {
+	return &AgentGateUnavailableError{Detail: detail, Err: err}
+}
+
+// RemoteAgentGate decides agent requests for a process that does not write
+// approvals: a gateway asks apid, the only writer (ADR-20261111150000).
+// pattern is the request's route pattern; apid classifies it again.
+type RemoteAgentGate interface {
+	DecideAgentRequest(ctx context.Context, acct state.Account, key state.APIKey, pattern string, binding state.AgentApprovalBinding, reason string) (AgentGateDecision, error)
+}
+
 func (m *Middleware) gateAgentRequest(w http.ResponseWriter, r *http.Request, acct state.Account, key state.APIKey, rule agentapproval.Rule) bool {
-	ctx := r.Context()
-	gate, ok := m.Authn.(AgentApprovalGate)
-	if !ok {
-		// Without the store seam no request could ever be approved, so
-		// refuse rather than let a gated request through.
-		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Approval unavailable",
-			"this request needs a person's approval, which this server cannot record"))
-		return true
-	}
-	categories, err := ApprovalCategoriesFor(ctx, m.Authn, key)
-	if err != nil {
-		m.storeUnavailable(w, r, err, "could not load the agent's approval settings; retry shortly")
-		return true
-	}
-	if !categories[rule.Category] {
-		return false
+	if m.RemoteAgentGate == nil {
+		if skip, answered := m.ungatedCategory(w, r, key, rule); answered || skip {
+			return answered
+		}
 	}
 	if rule.Target != agentapproval.TargetNone {
 		production, answered := m.productionTarget(w, r, rule.Target)
@@ -116,32 +141,98 @@ func (m *Middleware) gateAgentRequest(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeBadRequest, "Unreadable request body", "the request body could not be read"))
 		return true
 	}
-	return m.approveOrAsk(w, r, gate, acct, key, binding, state.AgentApproval{Category: rule.Category}, "")
+	reason := api.SanitizeAgentReason(r.Header.Get(api.AgentReasonHeader))
+	var decision AgentGateDecision
+	if m.RemoteAgentGate != nil {
+		decision, err = m.RemoteAgentGate.DecideAgentRequest(r.Context(), acct, key, r.Pattern, binding, reason)
+	} else {
+		decision, err = m.DecideAgentRequest(r.Context(), acct, key, rule, binding, reason)
+	}
+	if err != nil {
+		detail := "could not check the request's approval; retry shortly"
+		var unavailable *AgentGateUnavailableError
+		if errors.As(err, &unavailable) {
+			detail = unavailable.Detail
+		}
+		m.storeUnavailable(w, r, err, detail)
+		return true
+	}
+	if decision.Allow {
+		if decision.ApprovalID != "" {
+			noteApprovalUsed(r.Context(), decision.ApprovalID)
+		}
+		return false
+	}
+	api.WriteProblem(w, decision.Problem)
+	return true
 }
 
-// approveOrAsk lets the request through on an approval of exactly this
-// request, answers an agent repeating a denied or expired one, or opens an
-// approval request of the given kind and answers 428, saying why in
-// detail (a default when empty). It reports whether it has answered.
-func (m *Middleware) approveOrAsk(w http.ResponseWriter, r *http.Request, gate AgentApprovalGate, acct state.Account, key state.APIKey, binding state.AgentApprovalBinding, kind state.AgentApproval, detail string) bool {
-	ctx := r.Context()
-	rule := agentapproval.Rule{Category: kind.Category}
+// ungatedCategory reports skip when the key's categories leave out the
+// rule's, so the gate's target and body work is not done; it reports
+// answered when it wrote 503 because the categories could not be loaded.
+// Without the store seam it skips nothing: DecideAgentRequest refuses.
+func (m *Middleware) ungatedCategory(w http.ResponseWriter, r *http.Request, key state.APIKey, rule agentapproval.Rule) (skip, answered bool) {
+	if _, ok := m.Authn.(AgentApprovalGate); !ok {
+		return false, false
+	}
+	categories, err := ApprovalCategoriesFor(r.Context(), m.Authn, key)
+	if err != nil {
+		m.storeUnavailable(w, r, err, "could not load the agent's approval settings; retry shortly")
+		return false, true
+	}
+	return !categories[rule.Category], false
+}
+
+// DecideAgentRequest decides an agent key's request under rule: allowed
+// when the key's categories do not include the rule's, or on a person's
+// approval (one use, or every use within rule.Window of the first);
+// otherwise the outcome of a decided request, or a new request for a
+// person to decide. apid answers gateways with it (ADR-20261111150000).
+func (m *Middleware) DecideAgentRequest(ctx context.Context, acct state.Account, key state.APIKey, rule agentapproval.Rule, binding state.AgentApprovalBinding, reason string) (AgentGateDecision, error) {
+	gate, ok := m.Authn.(AgentApprovalGate)
+	if !ok {
+		// Without the store seam no request could ever be approved, so
+		// refuse rather than let a gated request through.
+		return AgentGateDecision{Problem: api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Approval unavailable",
+			"this request needs a person's approval, which this server cannot record")}, nil
+	}
+	categories, err := ApprovalCategoriesFor(ctx, m.Authn, key)
+	if err != nil {
+		return AgentGateDecision{}, gateUnavailable("could not load the agent's approval settings; retry shortly", err)
+	}
+	if !categories[rule.Category] {
+		return AgentGateDecision{Allow: true}, nil
+	}
+	if windows, ok := m.Authn.(AgentApprovalWindowGate); ok && rule.Window > 0 {
+		approvalID, open, err := windows.AgentApprovalUsedWithin(ctx, binding, rule.Window)
+		if err != nil {
+			return AgentGateDecision{}, gateUnavailable("could not check the request's approval; retry shortly", err)
+		}
+		if open {
+			return AgentGateDecision{Allow: true, ApprovalID: approvalID}, nil
+		}
+	}
 	if approvalID, used, err := gate.ConsumeAgentApproval(ctx, binding); err != nil {
-		m.storeUnavailable(w, r, err, "could not check the request's approval; retry shortly")
-		return true
+		return AgentGateDecision{}, gateUnavailable("could not check the request's approval; retry shortly", err)
 	} else if used {
-		noteApprovalUsed(ctx, approvalID)
-		return false
+		return AgentGateDecision{Allow: true, ApprovalID: approvalID}, nil
 	}
 	outcome, decided, err := gate.RecentAgentApprovalOutcome(ctx, binding, api.AgentApprovalOutcomeWindow)
 	if err != nil {
-		m.storeUnavailable(w, r, err, "could not check the request's approval; retry shortly")
-		return true
+		return AgentGateDecision{}, gateUnavailable("could not check the request's approval; retry shortly", err)
 	}
 	if decided {
-		m.writeApprovalOutcome(w, acct, key, outcome)
-		return true
+		return AgentGateDecision{Problem: m.approvalOutcomeProblem(acct, key, outcome)}, nil
 	}
+	return m.requestApproval(ctx, gate, acct, key, rule, binding, reason, 0, "")
+}
+
+// requestApproval records a new request for a person to decide, or finds
+// the key's pending one, and answers 428 approval_required with its link.
+//
+// A budget request (ADR-20261111114059) records its added cost and says why
+// in why; other requests pass 0 and "".
+func (m *Middleware) requestApproval(ctx context.Context, gate AgentApprovalGate, acct state.Account, key state.APIKey, rule agentapproval.Rule, binding state.AgentApprovalBinding, reason string, cost int64, why string) (AgentGateDecision, error) {
 	// The id is chosen here so a new request's webhook event can carry its
 	// review link (ADR-20261107140000 §4).
 	id := uuid.NewString()
@@ -149,32 +240,32 @@ func (m *Middleware) approveOrAsk(w http.ResponseWriter, r *http.Request, gate A
 		ID: id, KeyID: key.ID, AccountID: key.AccountID, OrgID: key.OrgID, Category: rule.Category,
 		Method: binding.Method, Path: binding.Path, BodySHA256: binding.BodySHA256,
 		ExpiresAt: time.Now().Add(api.AgentApprovalTTL), ReviewURL: m.reviewURL(id), AgentName: key.Label,
-		Reason:               api.SanitizeAgentReason(r.Header.Get(api.AgentReasonHeader)),
-		BudgetCostMillicents: kind.BudgetCostMillicents,
+		Reason: reason, BudgetCostMillicents: cost,
 	})
 	if errors.Is(err, state.ErrTooManyAgentApprovals) {
 		limit, observed := int64(api.MaxPendingAgentApprovals), int64(api.MaxPendingAgentApprovals)
-		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeApprovalRequired, "Too many requests awaiting approval",
-			"this agent has too many requests waiting for a person; ask them to decide those first").WithLimit(limit, observed))
-		return true
+		return AgentGateDecision{Problem: api.NewProblem(http.StatusTooManyRequests, api.CodeApprovalRequired, "Too many requests awaiting approval",
+			"this agent has too many requests waiting for a person; ask them to decide those first").WithLimit(limit, observed)}, nil
 	}
 	if err != nil {
-		m.storeUnavailable(w, r, err, "could not record the approval request; retry shortly")
-		return true
+		return AgentGateDecision{}, gateUnavailable("could not record the approval request; retry shortly", err)
 	}
 	reviewURL := m.reviewURL(request.ID)
-	if detail == "" {
-		detail = "this " + rule.Category + " request needs a person's approval"
+	if why == "" {
+		why = "this " + rule.Category + " request needs a person's approval"
 	}
-	problem := api.NewProblem(http.StatusPreconditionRequired, api.CodeApprovalRequired, "Approval required",
-		detail+": ask them to open "+reviewURL+", then repeat the same request").
-		WithHint("Show the person the review link and wait; after they approve, repeat exactly the same request once.")
+	detail := why + ": ask them to open " + reviewURL + ", then repeat the same request"
+	hint := "Show the person the review link and wait; after they approve, repeat exactly the same request once."
+	if rule.Window > 0 {
+		detail += "; the approval covers it for " + rule.Window.String() + " from its first use"
+		hint = "Show the person the review link and wait; after they approve, repeat the same request."
+	}
+	problem := api.NewProblem(http.StatusPreconditionRequired, api.CodeApprovalRequired, "Approval required", detail).WithHint(hint)
 	problem.AgentApproval = &api.AgentApprovalPendingInfo{ID: request.ID, Category: rule.Category, ReviewURL: reviewURL, ExpiresAt: request.ExpiresAt.UTC().Format(time.RFC3339)}
 	if m.Log != nil {
 		m.Log.Info("agent_approval.required", "key_id", key.ID, "account_id", acct.ID, "category", rule.Category, "approval_id", request.ID)
 	}
-	api.WriteProblem(w, problem)
-	return true
+	return AgentGateDecision{Problem: problem}, nil
 }
 
 // reviewURL is the page where a person decides request id; empty when the
@@ -186,9 +277,9 @@ func (m *Middleware) reviewURL(id string) string {
 	return m.ApprovalReviewURL(id)
 }
 
-// writeApprovalOutcome tells an agent that repeats a denied or expired
+// approvalOutcomeProblem tells an agent that repeats a denied or expired
 // request what happened, so it stops asking (ADR-20261107140000 §6).
-func (m *Middleware) writeApprovalOutcome(w http.ResponseWriter, acct state.Account, key state.APIKey, outcome state.AgentApproval) {
+func (m *Middleware) approvalOutcomeProblem(acct state.Account, key state.APIKey, outcome state.AgentApproval) *api.Problem {
 	reviewURL := m.reviewURL(outcome.ID)
 	retryAt := outcome.DecidedAt
 	status := api.AgentApprovalDenied
@@ -216,7 +307,7 @@ func (m *Middleware) writeApprovalOutcome(w http.ResponseWriter, acct state.Acco
 	if m.Log != nil {
 		m.Log.Info("agent_approval.outcome", "key_id", key.ID, "account_id", acct.ID, "category", outcome.Category, "approval_id", outcome.ID, "status", status)
 	}
-	api.WriteProblem(w, problem)
+	return problem
 }
 
 // productionConfigScope reports whether a config write targets the app's

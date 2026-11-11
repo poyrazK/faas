@@ -444,7 +444,7 @@ func TestGCTick_EvictsExpiredStaleSnapshotsWithoutAnFCSweep(t *testing.T) {
 	})
 	recent, _ := store.CreateSnapshot(ctx, state.Snapshot{
 		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100, Stale: true, FCVersion: "1.7.0",
-		StorageKey: "snap/recent/mem", CreatedAt: time.Now().Add(-time.Hour),
+		StorageKey: "snap/recent/mem", CreatedAt: time.Now().Add(-api.SnapshotStaleRetention / 2),
 	})
 	be, _ := storage.NewLocalStorageBackend(t.TempDir())
 	loop := &Loop{

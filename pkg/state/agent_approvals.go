@@ -95,6 +95,10 @@ type AgentApprovalStore interface {
 	// denial may carry a note. It enqueues the agent.approval.approved or
 	// .denied webhook event. ErrNotFound when there is no such request.
 	DecideAgentApproval(ctx context.Context, id string, approve bool, deciderID, note string) error
+	// AgentApprovalUsedWithin returns the key's approval with the binding
+	// whose first use was within window (ADR-20261111150000). It reports
+	// false when there is none.
+	AgentApprovalUsedWithin(ctx context.Context, binding AgentApprovalBinding, window time.Duration) (string, bool, error)
 	// RecentAgentApprovalOutcome returns the key's most recent request with
 	// the binding when it was denied, or expired undecided or unused, within
 	// window (ADR-20261107140000 §6). It reports false otherwise.
@@ -275,6 +279,20 @@ func decisionStatusNote(approve bool, note string) (string, string) {
 	return api.AgentApprovalDenied, note
 }
 
+func (s *PgStore) AgentApprovalUsedWithin(ctx context.Context, binding AgentApprovalBinding, window time.Duration) (string, bool, error) {
+	id, err := sqlc.New().AgentApprovalUsedWithin(ctx, s.pool, sqlc.AgentApprovalUsedWithinParams{
+		KeyID: mustPgUUID(binding.KeyID), Method: binding.Method, Path: binding.Path, BodySha256: binding.BodySHA256,
+		WindowSeconds: int32(window / time.Second),
+	})
+	if err != nil {
+		if err = mapErr(err); errors.Is(err, ErrNotFound) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return pgUUIDString(id), true, nil
+}
+
 func (s *PgStore) RecentAgentApprovalOutcome(ctx context.Context, binding AgentApprovalBinding, window time.Duration) (AgentApproval, bool, error) {
 	row, err := sqlc.New().RecentAgentApprovalOutcome(ctx, s.pool, sqlc.RecentAgentApprovalOutcomeParams{
 		KeyID: mustPgUUID(binding.KeyID), Method: binding.Method, Path: binding.Path, BodySha256: binding.BodySHA256,
@@ -391,6 +409,26 @@ func (m *MemStore) ConsumeAgentApproval(_ context.Context, binding AgentApproval
 	}
 	found.Status, found.ConsumedAt = api.AgentApprovalConsumed, now
 	m.agentApprovals[found.ID] = *found
+	return found.ID, true, nil
+}
+
+func (m *MemStore) AgentApprovalUsedWithin(_ context.Context, binding AgentApprovalBinding, window time.Duration) (string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	since := time.Now().Add(-window)
+	var found *AgentApproval
+	for id, approval := range m.agentApprovals {
+		if approval.Status != api.AgentApprovalConsumed || !approval.ConsumedAt.After(since) || !sameApprovalBinding(approval, binding) {
+			continue
+		}
+		if found == nil || approval.ConsumedAt.After(found.ConsumedAt) {
+			candidate := m.agentApprovals[id]
+			found = &candidate
+		}
+	}
+	if found == nil {
+		return "", false, nil
+	}
 	return found.ID, true, nil
 }
 
