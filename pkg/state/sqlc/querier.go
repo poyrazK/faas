@@ -792,6 +792,11 @@ type Querier interface {
 	CountLiveOperationSchedules(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountMCPOAuthRetirements(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountMCPPagerDutyAcknowledgementEvents(ctx context.Context, db DBTX, incidentID pgtype.UUID) (int64, error)
+	// ADR-20261106103654 amendment 1: the reservation owner's short-lived
+	// branches (a TTL of at most 7 days), read under its reservation lock and
+	// counted as the database limit counts, with the owner chosen as
+	// CountManagedPostgresPreviewDatabases chooses it.
+	CountManagedPostgresAllowanceBranches(ctx context.Context, db DBTX, arg CountManagedPostgresAllowanceBranchesParams) (int64, error)
 	CountManagedPostgresCutoverSourceBindings(ctx context.Context, db DBTX, id string) (int64, error)
 	CountManagedPostgresCutoverTargetBindings(ctx context.Context, db DBTX, id string) (int64, error)
 	CountManagedPostgresHealth(ctx context.Context, db DBTX, arg CountManagedPostgresHealthParams) (CountManagedPostgresHealthRow, error)
@@ -799,6 +804,9 @@ type Querier interface {
 	// kept for its restore copies (ADR-20261103091657).
 	// A PR preview environment's database is outside the plan's database limit
 	// (ADR-20261102123523) and is counted by CountManagedPostgresPreviewDatabases.
+	// So is a short-lived branch, a restore with a TTL of at most 7 days
+	// (api.ManagedPostgresAllowanceBranchTTLMax; ADR-20261106103654 amendment 1),
+	// counted by CountManagedPostgresAllowanceBranches.
 	CountManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	// Counts as CountManagedPostgresLifecycleDatabases does.
 	CountManagedPostgresOrgDatabases(ctx context.Context, db DBTX, orgID pgtype.UUID) (int64, error)
