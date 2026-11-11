@@ -38,7 +38,7 @@ var cliTreeVerbs = []string{
 
 // A path may end with a noun it lists or shows (`app instances`).
 var cliTreeReadNouns = []string{
-	"instances", "requests", "tools", "prompts", "resources", "plan", "invoices", "spend-cap",
+	"instances", "requests", "tools", "prompts", "resources", "plan", "invoices", "spend-cap", "budget",
 	"streaming-cap", "wake-timeline", "trace", "runtime", "chaos", "items", "history", "health",
 	"policy", "actions", "activity", "alerts", "artifacts", "attempts", "backlog", "bundle",
 	"capabilities", "captures", "catalog", "channels", "codeowners", "completeness", "connections",

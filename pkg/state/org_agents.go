@@ -20,6 +20,9 @@ type OrgAgentPolicy struct {
 	// ApprovalCategories must have a person's approval for every agent
 	// acting in the organization (ADR-20261104140058).
 	ApprovalCategories []string
+	// MaxAgentBudgetCents caps every agent's monthly budget in the
+	// organization (ADR-20261111114059); nil is no ceiling.
+	MaxAgentBudgetCents *int64
 	// UpdatedAt is zero for an organization that never set a policy.
 	UpdatedAt time.Time
 	UpdatedBy string
@@ -64,6 +67,7 @@ func (s *PgStore) SetOrgAgentPolicy(ctx context.Context, policy OrgAgentPolicy) 
 	row, err := sqlc.New().UpsertOrgAgentPolicy(ctx, s.pool, sqlc.UpsertOrgAgentPolicyParams{
 		OrgID: mustPgUUID(policy.OrgID), AgentsAllowed: policy.AgentsAllowed, AllowedScopes: nonNilStrings(policy.AllowedScopes),
 		ApprovalCategories: nonNilStrings(policy.ApprovalCategories), UpdatedBy: updatedBy,
+		MaxAgentBudgetCents: pgInt8Ptr(policy.MaxAgentBudgetCents),
 	})
 	if err != nil {
 		return OrgAgentPolicy{}, mapErr(err)
@@ -73,7 +77,8 @@ func (s *PgStore) SetOrgAgentPolicy(ctx context.Context, policy OrgAgentPolicy) 
 
 func orgAgentPolicyFromRow(row sqlc.OrgAgentPolicy) OrgAgentPolicy {
 	return OrgAgentPolicy{OrgID: pgUUIDString(row.OrgID), AgentsAllowed: row.AgentsAllowed, AllowedScopes: nonNilStrings(row.AllowedScopes),
-		ApprovalCategories: nonNilStrings(row.ApprovalCategories), UpdatedAt: row.UpdatedAt.Time, UpdatedBy: pgUUIDString(row.UpdatedBy)}
+		ApprovalCategories: nonNilStrings(row.ApprovalCategories), UpdatedAt: row.UpdatedAt.Time, UpdatedBy: pgUUIDString(row.UpdatedBy),
+		MaxAgentBudgetCents: int8Ptr(row.MaxAgentBudgetCents)}
 }
 
 func (s *PgStore) SetCliAuthCodeOrg(ctx context.Context, tokenHash []byte, orgID string) error {
@@ -110,6 +115,7 @@ func (m *MemStore) OrgAgentPolicy(_ context.Context, orgID string) (OrgAgentPoli
 	if policy, ok := m.orgAgentPolicies[orgID]; ok {
 		policy.AllowedScopes = slices.Clone(policy.AllowedScopes)
 		policy.ApprovalCategories = nonNilStrings(slices.Clone(policy.ApprovalCategories))
+		policy.MaxAgentBudgetCents = cloneInt64Ptr(policy.MaxAgentBudgetCents)
 		return policy, nil
 	}
 	return DefaultOrgAgentPolicy(orgID), nil
@@ -136,6 +142,10 @@ func (m *MemStore) SetOrgAgentPolicy(_ context.Context, policy OrgAgentPolicy) (
 	}
 	policy.AllowedScopes = nonNilStrings(slices.Clone(policy.AllowedScopes))
 	policy.ApprovalCategories = nonNilStrings(slices.Clone(policy.ApprovalCategories))
+	if c := policy.MaxAgentBudgetCents; c != nil && (*c < 0 || *c > api.MaxAgentBudgetCents) {
+		return OrgAgentPolicy{}, ErrConflict
+	}
+	policy.MaxAgentBudgetCents = cloneInt64Ptr(policy.MaxAgentBudgetCents)
 	policy.UpdatedAt = time.Now()
 	m.orgAgentPolicies[policy.OrgID] = policy
 	return policy, nil
