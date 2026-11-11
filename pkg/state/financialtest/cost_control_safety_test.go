@@ -262,7 +262,7 @@ func TestCostControlMigrationReplayPreservesDurableDecisions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := migrations.FS.ReadFile("20261111170000000_cost_control_delivery_safety.sql")
+	raw, err := migrations.FS.ReadFile("20261111160000419_cost_control_delivery_safety.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
