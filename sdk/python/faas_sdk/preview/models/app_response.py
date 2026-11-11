@@ -118,8 +118,8 @@ class AppResponse:
     """Requests one Node or Python function worker serves at once. 0 or 1 keeps one request per worker; the plan's
     concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy."""
     function_callables: AppResponseFunctionCallables | Unset = UNSET
-    """Names this function's typed client may call and their app slugs, set by functions-
-    project deploys. Stamped into the guest as GREGALE_FUNCTIONS on the next deploy."""
+    """Names this function's typed client may call and their app slugs, set by functions-project deploys. Stamped
+    into the guest as GREGALE_FUNCTIONS on the next deploy."""
     deployment_availability: AppResponseDeploymentAvailability | Unset = UNSET
     """Present on app list/detail reads. Reports whether any deployment is currently live; this is independent from
     the app lifecycle status and does not assert that a historical artifact is safe to restore."""

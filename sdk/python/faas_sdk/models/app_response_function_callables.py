@@ -11,8 +11,8 @@ T = TypeVar("T", bound="AppResponseFunctionCallables")
 
 @_attrs_define
 class AppResponseFunctionCallables:
-    """Names this function's typed client may call and their app slugs, set by functions-project
-    deploys. Stamped into the guest as GREGALE_FUNCTIONS on the next deploy.
+    """Names this function's typed client may call and their app slugs, set by functions-project deploys. Stamped into the
+    guest as GREGALE_FUNCTIONS on the next deploy.
 
     """
 
