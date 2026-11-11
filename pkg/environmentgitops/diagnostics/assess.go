@@ -18,7 +18,12 @@ func Assess(status api.EnvironmentGitOpsStatusResponse, now time.Time) api.Envir
 		ApprovedRevisionID: source.ApprovedRevisionID, AppliedRevisionID: source.AppliedRevisionID,
 		ObservedCommitSHA: source.SourceCommitSHA, SourceFreshness: sourceFreshness(source, now),
 		Issues: []api.EnvironmentGitOpsDiagnostic{}, Workloads: []api.EnvironmentWorkloadProgress{}}
-	add := func(resource, code string) { result.Issues = append(result.Issues, Explain(resource, code)) }
+	add := func(resource, code string) {
+		issue := Explain(resource, code)
+		if !slices.Contains(result.Issues, issue) {
+			result.Issues = append(result.Issues, issue)
+		}
+	}
 	if source.ID == "" {
 		add("", "source_binding_unknown")
 		return result
@@ -45,6 +50,28 @@ func Assess(status api.EnvironmentGitOpsStatusResponse, now time.Time) api.Envir
 	}
 	if source.Spec.Mode == "report" {
 		add("", "report_mode")
+	}
+	report, plan := currentReport(status, now)
+	if report != nil {
+		result.ReportID, result.ReportStatus = report.ID, report.Status
+		observedAt := report.CompletedAt.UTC()
+		result.ReportObservedAt = &observedAt
+		result.ReportFreshness = "fresh"
+		if !observedAt.After(now.Add(-api.EnvironmentGitOpsReportStaleAfter)) {
+			result.ReportFreshness = "stale"
+			add("", "report_stale")
+		} else {
+			if report.ErrorCode != "" {
+				add("", report.ErrorCode)
+			}
+			for _, blocker := range plan.BlockingReasons {
+				resource, code := reportBlocker(blocker)
+				add(resource, code)
+			}
+		}
+	} else if len(status.Runs) > 0 {
+		result.ReportFreshness = "unknown"
+		add("", "current_report_missing")
 	}
 	evidence := status.WorkloadEvidence
 	if evidence == nil {
@@ -91,6 +118,28 @@ func Assess(status api.EnvironmentGitOpsStatusResponse, now time.Time) api.Envir
 	}
 	if source.Spec.Mode == "report" {
 		result.Status, result.Summary = "reporting", "Report mode records drift against the approved revision; it does not apply changes."
+	}
+	if report != nil && result.ReportFreshness == "fresh" && (source.Spec.Mode == "report" || evidence == nil) {
+		switch report.Status {
+		case "blocked", "partial":
+			result.Status, result.Summary = "blocked", "The current reconciliation report is blocked. Inspect its diagnostics and ownership plan."
+		case "failed":
+			result.Status, result.Summary = "blocked", "The current reconciliation attempt could not establish an observation. Inspect its diagnostics."
+		case "drifted":
+			if source.Spec.Mode != "report" {
+				result.Status = "progressing"
+			}
+			result.Summary = "The current report records drift against the approved revision."
+		case "overridden":
+			if source.Spec.Mode != "report" {
+				result.Status = "blocked"
+			}
+			result.Summary = "A temporary override keeps approved fields from reconciliation."
+		case "converged":
+			if source.Spec.Mode == "report" {
+				result.Summary = "The current report found no drift; report mode does not apply changes."
+			}
+		}
 	}
 	return result
 }

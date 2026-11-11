@@ -92,6 +92,26 @@ func (m *MemStore) currentEnvironmentGitOpsWorkloadEvidenceLocked(accountID, sou
 	}
 	evidence := m.environmentWorkloadActivationEvidenceLocked(memory, graph, true)
 	evidence.CommitSHA = revision.CommitSHA
+	blockers := []string{}
+	for _, target := range m.gitOpsRuntimeTargetsInScopeLocked(memory) {
+		if !target.Fresh() {
+			blockers = append(blockers, "environment_runtime_unacknowledged")
+			break
+		}
+	}
+	for _, effect := range memory.runtime {
+		if effect.CompletedAt == nil {
+			blockers = append(blockers, "environment_runtime_unacknowledged")
+			break
+		}
+	}
+	for _, effect := range memory.effects {
+		if effect.CompletedAt == nil {
+			blockers = append(blockers, "environment_fleet_unacknowledged")
+			break
+		}
+	}
+	applyEnvironmentGitOpsRuntimeReadiness(&evidence, blockers)
 	return &evidence, nil
 }
 

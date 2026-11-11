@@ -78,6 +78,12 @@ type Service interface {
 	RetryCheckUpdate(ctx context.Context, deploymentID string) (bool, error)
 }
 
+// RepositoryCatalogService preserves request cancellation during provider
+// pagination. Optional for compatibility with older service implementations.
+type RepositoryCatalogService interface {
+	ListInstallableReposContext(context.Context, string, int64) ([]Repo, error)
+}
+
 // AppActivityService is an optional extension implemented by the recovery
 // decorator. Keeping it outside Service lets older/test RealService
 // implementations retain the existing OAuth contract while the production
@@ -174,7 +180,13 @@ func (s *Server) ExchangeOAuthCode(ctx context.Context, req *githubdpb.ExchangeO
 func (s *Server) ListInstallableRepos(ctx context.Context, req *githubdpb.ListInstallableReposRequest) (*githubdpb.ListInstallableReposResponse, error) {
 	const op = "ListInstallableRepos"
 	start := time.Now()
-	repos, err := s.svc.ListInstallableRepos(req.GetAccountId(), req.GetInstallationId())
+	var repos []Repo
+	var err error
+	if catalog, ok := s.svc.(RepositoryCatalogService); ok {
+		repos, err = catalog.ListInstallableReposContext(ctx, req.GetAccountId(), req.GetInstallationId())
+	} else {
+		repos, err = s.svc.ListInstallableRepos(req.GetAccountId(), req.GetInstallationId())
+	}
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		return nil, toStatusErr(err)

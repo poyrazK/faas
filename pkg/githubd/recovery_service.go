@@ -62,6 +62,13 @@ func NewRecoveryService(base githubdgrpc.Service, deliveries WebhookRecoveryStor
 	return &RecoveryService{Service: base, deliveries: deliveries, checks: checks}
 }
 
+func (s *RecoveryService) ListInstallableReposContext(ctx context.Context, accountID string, installationID int64) ([]githubdgrpc.Repo, error) {
+	if catalog, ok := s.Service.(githubdgrpc.RepositoryCatalogService); ok {
+		return catalog.ListInstallableReposContext(ctx, accountID, installationID)
+	}
+	return s.ListInstallableRepos(accountID, installationID)
+}
+
 func (s *RecoveryService) ListRecoveryQueueItems(ctx context.Context, status string, limit int) (githubdgrpc.RecoveryQueueItems, error) {
 	deliveries, err := s.deliveries.ListWebhookDeliveries(ctx, status, limit)
 	if err != nil {

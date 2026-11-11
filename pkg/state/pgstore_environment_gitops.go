@@ -374,6 +374,11 @@ func (s *PgStore) FinishEnvironmentGitOps(ctx context.Context, lease Environment
 	}
 	var notificationPlan api.EnvironmentGitOpsPlan
 	_ = json.Unmarshal(plan, &notificationPlan)
+	if notificationPlan.Hash == "" {
+		// A failure before observation belongs to the claimed intent, not to
+		// changes that arrived while this attempt was running.
+		notificationPlan.ObservedVersion = lease.Source.IntentVersion
+	}
 	if err := pgEnvironmentGitRolloutNotification(ctx, tx, lease.Source.ID, lease.RunID, &notificationPlan, now); err != nil {
 		return err
 	}

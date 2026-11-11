@@ -1581,6 +1581,8 @@ from .environment_git_ops_changed_webhook_payload_version import EnvironmentGitO
 from .environment_git_ops_diagnostic import EnvironmentGitOpsDiagnostic
 from .environment_git_ops_diagnostic_actor import EnvironmentGitOpsDiagnosticActor
 from .environment_git_ops_explanation import EnvironmentGitOpsExplanation
+from .environment_git_ops_explanation_report_freshness import EnvironmentGitOpsExplanationReportFreshness
+from .environment_git_ops_explanation_report_status import EnvironmentGitOpsExplanationReportStatus
 from .environment_git_ops_explanation_source_freshness import EnvironmentGitOpsExplanationSourceFreshness
 from .environment_git_ops_explanation_status import EnvironmentGitOpsExplanationStatus
 from .environment_git_ops_override_request import EnvironmentGitOpsOverrideRequest
@@ -7936,6 +7938,8 @@ __all__ = (
     "EnvironmentGitOpsDiagnostic",
     "EnvironmentGitOpsDiagnosticActor",
     "EnvironmentGitOpsExplanation",
+    "EnvironmentGitOpsExplanationReportFreshness",
+    "EnvironmentGitOpsExplanationReportStatus",
     "EnvironmentGitOpsExplanationSourceFreshness",
     "EnvironmentGitOpsExplanationStatus",
     "EnvironmentGitOpsOverrideRequest",

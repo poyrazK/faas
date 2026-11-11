@@ -32,7 +32,7 @@ func environmentGitReportNotificationStatus(status string, plan api.EnvironmentG
 	if len(plan.BlockingReasons) > 0 || status == "blocked" || status == "partial" {
 		return "blocked"
 	}
-	if plan.HasDrift() {
+	if status == "drifted" || plan.HasDrift() {
 		return "drifted"
 	}
 	return "in_sync"
