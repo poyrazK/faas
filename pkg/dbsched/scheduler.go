@@ -748,6 +748,11 @@ func (s *Scheduler) wakeLocked(ctx context.Context, id string) (VM, error) {
 	if err != nil {
 		return VM{}, err
 	}
+	// A held database runs nothing (hold.go): a running one is not handed
+	// out either, and the idle sweep parks it.
+	if vm.Held {
+		return vm, fmt.Errorf("dbsched: wake %s: %w", id, ErrHeld)
+	}
 	switch vm.State {
 	case StateRunning:
 		_ = s.store.Touch(ctx, id, s.now())
@@ -758,6 +763,12 @@ func (s *Scheduler) wakeLocked(ctx context.Context, id string) (VM, error) {
 	case StateParked:
 	default:
 		return vm, ErrConflict
+	}
+	// The quota reads the usage ledger, so only a boot checks it, not every
+	// connection to a running database; the idle sweep parks a running
+	// database once it passes its quota.
+	if err := s.refusal(ctx, vm); err != nil {
+		return vm, fmt.Errorf("dbsched: wake %s: %w", id, err)
 	}
 	resume := s.resumesStandby(ctx, vm)
 	if vm, err = s.admitWake(ctx, vm, resume); err != nil {
@@ -1125,7 +1136,7 @@ func (s *Scheduler) KeepWarm(ctx context.Context) (int, error) {
 	}
 	woke := 0
 	for _, vm := range vms {
-		if !vm.AlwaysOn || !vm.Bootstrapped {
+		if !vm.AlwaysOn || !vm.Bootstrapped || s.refusal(ctx, vm) != nil {
 			continue
 		}
 		if vm.State == StateRunning && !s.vmLost(ctx, vm) {
@@ -1288,6 +1299,11 @@ func (s *Scheduler) RunIdleLoop(ctx context.Context, interval time.Duration) {
 				s.log.Warn("dbsched: idle sweep failed", "err", err)
 			} else if n > 0 {
 				s.log.Info("dbsched: parked idle databases", "count", n)
+			}
+			if n, err := s.ParkHeld(ctx); err != nil {
+				s.log.Warn("dbsched: held sweep failed", "err", err)
+			} else if n > 0 {
+				s.log.Info("dbsched: parked held databases", "count", n)
 			}
 			if n, err := s.KeepWarm(ctx); err != nil {
 				s.log.Warn("dbsched: keep-warm sweep failed", "err", err)

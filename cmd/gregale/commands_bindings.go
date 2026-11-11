@@ -174,7 +174,7 @@ func cmdBindingsObjectStorageList(args []string) int {
 
 func cmdBindingsObjectStorageRotate(args []string) int {
 	usage := "usage: gregale app binding object-storage rotate <app> <bucket> <binding-id> [--wait] [--wait-timeout DURATION] [--poll-interval DURATION]"
-	positionals, waitOptions, ok := parseBindingRotationWaitArgs(args, "bindings object-storage rotate", 3)
+	positionals, waitOptions, ok := parseBindingRotationWaitArgs(args, "bindings object-storage rotate", 3, bindingRotationWaitTimeoutDefault)
 	if !ok {
 		PrintUsage(osStderr, usage, "bindings")
 		return 1

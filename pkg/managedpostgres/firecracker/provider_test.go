@@ -247,6 +247,28 @@ func (f *fakeScheduler) DeleteDatabase(_ context.Context, in *scheddpb.DatabaseR
 	return &scheddpb.DeleteDatabaseResponse{}, nil
 }
 
+func (f *fakeScheduler) HoldDatabase(_ context.Context, in *scheddpb.HoldDatabaseRequest, _ ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rt, ok := f.vms[in.GetDatabaseId()]
+	if !ok {
+		return nil, status.Error(codes.NotFound, "dbsched: database not found")
+	}
+	rt.Held = in.GetHeld()
+	return rt, nil
+}
+
+func (f *fakeScheduler) SetDatabaseComputeQuota(_ context.Context, in *scheddpb.SetDatabaseComputeQuotaRequest, _ ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rt, ok := f.vms[in.GetDatabaseId()]
+	if !ok {
+		return nil, status.Error(codes.NotFound, "dbsched: database not found")
+	}
+	rt.ComputeQuotaUnitSeconds = in.GetQuotaUnitSeconds()
+	return rt, nil
+}
+
 func (f *fakeScheduler) SetDatabaseAlwaysOn(_ context.Context, in *scheddpb.SetDatabaseAlwaysOnRequest, _ ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

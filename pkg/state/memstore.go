@@ -1336,6 +1336,9 @@ type MemStore struct {
 	// objectStorageCeilingGrants mirrors object_storage_ceiling_grants by
 	// owner id (ADR-20261101214152); nil until the first grant.
 	objectStorageCeilingGrants map[string]ObjectStorageCeilingGrant
+	// complimentaryAccounts mirrors complimentary_accounts by account ID
+	// (ADR-20261111140000).
+	complimentaryAccounts map[string]ComplimentaryAccount
 	// gdprRequests is the in-memory mirror of the gdpr_requests ledger
 	// row. MemStore does not auto-cascade on DeleteAccount (the
 	// production pgstore does), but AppendGdprRequest rows here are
@@ -4367,11 +4370,11 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	}
 
 	for _, app := range m.apps {
-		if app.ProjectID != projectID {
+		if app.ProjectID != projectID || app.Status == AppDeleted {
 			continue
 		}
 		for _, deployment := range m.deployments {
-			if deployment.AppID == app.ID && !deployment.Status.IsTerminal() &&
+			if deployment.AppID == app.ID && !deployment.Status.IsTerminal() && deployment.DeletedAt == nil &&
 				normalizedDeploymentScope(deployment.Scope) == slug {
 				return ProjectEnvironmentCleanupJob{}, ErrConflict
 			}
@@ -10583,7 +10586,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 			return err
 		}
 		for otherID, other := range m.deployments {
-			if otherID == id || other.AppID != d.AppID || normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(d.Scope) || other.Status != DeployLive {
+			if otherID == id || other.AppID != d.AppID || !sameServingLane(other.Scope, d.Scope) || other.Status != DeployLive {
 				continue
 			}
 			ttl := m.apps[d.AppID].Manifest.RevisionPinTTLSeconds

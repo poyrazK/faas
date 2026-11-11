@@ -234,6 +234,22 @@ func (m *MemStore) RecordBackup(_ context.Context, id string, at time.Time) erro
 }
 
 func (m *MemStore) SetAlwaysOn(_ context.Context, id string, alwaysOn bool) error {
+	return m.update(id, func(vm *VM) { vm.AlwaysOn = alwaysOn })
+}
+
+func (m *MemStore) SetHeld(_ context.Context, id string, held bool) error {
+	return m.update(id, func(vm *VM) { vm.Held = held })
+}
+
+func (m *MemStore) SetComputeQuota(_ context.Context, id string, quotaUnitSeconds int64) error {
+	if quotaUnitSeconds < 0 {
+		return ErrInvalid
+	}
+	return m.update(id, func(vm *VM) { vm.ComputeQuotaUnitSeconds = quotaUnitSeconds })
+}
+
+// update changes a database that is not being deleted.
+func (m *MemStore) update(id string, change func(*VM)) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	vm, ok := m.vms[id]
@@ -243,7 +259,7 @@ func (m *MemStore) SetAlwaysOn(_ context.Context, id string, alwaysOn bool) erro
 	if vm.State == StateDeleting {
 		return ErrConflict
 	}
-	vm.AlwaysOn = alwaysOn
+	change(&vm)
 	m.vms[id] = vm
 	return nil
 }

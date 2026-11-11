@@ -3044,6 +3044,16 @@ type CommitSource struct {
 	Destination          string
 }
 
+// Accounts given a paid plan without a subscription; not billed, held to the plan allowance; written only by apid (ADR-20261111140000).
+type ComplimentaryAccount struct {
+	AccountID pgtype.UUID
+	Plan      string
+	Reason    string
+	GrantedBy pgtype.UUID
+	GrantedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+}
+
 type ComputeNode struct {
 	ID                 pgtype.UUID
 	Name               string
@@ -3991,40 +4001,42 @@ type DatabaseUsage struct {
 }
 
 type DatabaseVm struct {
-	DatabaseID           pgtype.UUID
-	NodeID               string
-	PostgresMajor        int32
-	VcpuCount            int32
-	MemMib               int32
-	VolumeBytes          int64
-	State                string
-	Bootstrapped         bool
-	AlwaysOn             bool
-	LastBackupAt         pgtype.Timestamptz
-	RestoreWindowSeconds int64
-	RestoreSource        pgtype.UUID
-	RestoreTarget        pgtype.Timestamptz
-	RestoreRecoveredTo   pgtype.Timestamptz
-	RestoreLeaseUntil    pgtype.Timestamptz
-	ResizePending        bool
-	LastError            pgtype.Text
-	LastActiveAt         pgtype.Timestamptz
-	StateChangedAt       pgtype.Timestamptz
-	CreatedAt            pgtype.Timestamptz
-	MoveNode             pgtype.Text
-	MoveLeaseUntil       pgtype.Timestamptz
-	Replicated           bool
-	StandbyNode          pgtype.Text
-	StandbyRunning       bool
-	StandbySynced        bool
-	PromotePending       bool
-	DropStandbySlot      bool
-	UpgradeMajor         pgtype.Int4
-	UpgradeFrom          pgtype.Int4
-	UpgradeOperation     pgtype.Text
-	UpgradeResult        pgtype.Text
-	UpgradeLeaseUntil    pgtype.Timestamptz
-	MajorHistory         []byte
+	DatabaseID              pgtype.UUID
+	NodeID                  string
+	PostgresMajor           int32
+	VcpuCount               int32
+	MemMib                  int32
+	VolumeBytes             int64
+	State                   string
+	Bootstrapped            bool
+	AlwaysOn                bool
+	LastBackupAt            pgtype.Timestamptz
+	RestoreWindowSeconds    int64
+	RestoreSource           pgtype.UUID
+	RestoreTarget           pgtype.Timestamptz
+	RestoreRecoveredTo      pgtype.Timestamptz
+	RestoreLeaseUntil       pgtype.Timestamptz
+	ResizePending           bool
+	LastError               pgtype.Text
+	LastActiveAt            pgtype.Timestamptz
+	StateChangedAt          pgtype.Timestamptz
+	CreatedAt               pgtype.Timestamptz
+	MoveNode                pgtype.Text
+	MoveLeaseUntil          pgtype.Timestamptz
+	Replicated              bool
+	StandbyNode             pgtype.Text
+	StandbyRunning          bool
+	StandbySynced           bool
+	PromotePending          bool
+	DropStandbySlot         bool
+	UpgradeMajor            pgtype.Int4
+	UpgradeFrom             pgtype.Int4
+	UpgradeOperation        pgtype.Text
+	UpgradeResult           pgtype.Text
+	UpgradeLeaseUntil       pgtype.Timestamptz
+	MajorHistory            []byte
+	Held                    bool
+	ComputeQuotaUnitSeconds pgtype.Int8
 }
 
 type DeadLetterEvent struct {

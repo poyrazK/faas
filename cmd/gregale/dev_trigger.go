@@ -57,7 +57,7 @@ func cmdDevInfo(args []string) int {
 	PrintOK(osStdout, "Developer environment: %s", canonicalAppURL(session.App))
 	_, _ = fmt.Fprintf(osStdout, "  project: %s\n  app:     %s\n", target.Project, session.App.Slug)
 	if !session.ExpiresAt.IsZero() {
-		_, _ = fmt.Fprintf(osStdout, "  lease:   expires %s (renewed by each sync)\n", session.ExpiresAt.Local().Format(time.RFC822))
+		_, _ = fmt.Fprintf(osStdout, "  lease:   expires %s (renewed by each sync)\n", session.ExpiresAt.UTC().Format("2006-01-02 15:04 MST"))
 	}
 	if session.Postgres != nil {
 		_, _ = fmt.Fprintf(osStdout, "  postgres: %s (%s; binding %s, injected as %s)\n", session.Postgres.Name,

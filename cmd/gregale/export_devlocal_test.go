@@ -80,7 +80,7 @@ func DevLocalServerForTest(t *testing.T, projectDir string) (http.Handler, strin
 	srv.port = devLocalDefaultPort
 	t.Cleanup(func() {
 		for _, fn := range fns {
-			local.Reload(fn.proc)
+			local.Reload(fn.process())
 		}
 	})
 	return srv, srv.token, nil

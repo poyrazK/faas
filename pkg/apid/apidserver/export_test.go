@@ -629,6 +629,8 @@ var NewObsPR3Env = newObsPR3Env
 var NewPgBackupPushedSampler = newPgBackupPushedSampler
 var NewPreviewJanitor = newPreviewJanitor
 var NewProjectLifecycleFixture = newProjectLifecycleFixture
+
+var CopyPromotedArtifactStamps = copyPromotedArtifactStamps
 var NewRuntimeConfigManager = newRuntimeConfigManager
 
 func (s *server) ConfigureHostingForTest(getenv func(string) string) error {
@@ -2116,6 +2118,11 @@ func (r *server) ResetTOTPAttempts(ctx context.Context, accountID string) {
 
 // TOTPMaxFailures is the per-account TOTP attempt limit.
 const TOTPMaxFailures = totpMaxFailures
+
+// ExpireComplimentaryAccounts runs one complimentary-account expiry sweep at now.
+func (r *server) ExpireComplimentaryAccounts(ctx context.Context, now time.Time) int {
+	return r.expireComplimentaryAccounts(ctx, now)
+}
 
 // ExpireUnverifiedAccounts runs one unverified-account expiry sweep.
 func (r *server) ExpireUnverifiedAccounts(ctx context.Context) int {
