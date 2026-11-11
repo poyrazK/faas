@@ -1792,7 +1792,7 @@ FROM managed_postgres_bindings b
 JOIN managed_postgres_databases d ON d.id = b.database_id AND d.account_id = b.database_account_id
 JOIN orgs o ON o.id = d.org_id AND o.personal_org AND o.personal_owner_account_id = b.account_id
 WHERE b.account_id = $1 AND b.app_id = $2
-  AND b.scope IN ('default', 'production') AND b.state NOT IN ('deleting', 'deleted')
+  AND b.scope IN ('default', 'production') AND b.state IN ('provisioning', 'ready')
   AND d.previews IN ('empty', 'copy') AND d.preview_pr_number IS NULL
   AND d.state NOT IN ('deleting', 'deleted')
 ORDER BY b.environment_key

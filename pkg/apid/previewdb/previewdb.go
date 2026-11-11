@@ -350,8 +350,7 @@ func (m Manager) productionBindings(ctx context.Context, parent state.App, sourc
 	seen := map[string]bool{}
 	for _, scope := range []string{api.DefaultEnvScope, "production"} {
 		for _, binding := range bindings {
-			if binding.AppID != parent.ID || binding.Scope != scope || seen[binding.EnvironmentKey] ||
-				binding.State == managedpostgres.BindingStateDeleting || binding.State == managedpostgres.BindingStateDeleted {
+			if binding.AppID != parent.ID || binding.Scope != scope || seen[binding.EnvironmentKey] || !copiedState(binding.State) {
 				continue
 			}
 			seen[binding.EnvironmentKey] = true
@@ -359,6 +358,14 @@ func (m Manager) productionBindings(ctx context.Context, parent state.App, sourc
 		}
 	}
 	return wanted, nil
+}
+
+// copiedState reports whether a production binding in this state is copied
+// to previews: only one production can use. A failed binding never delivered
+// a credential, and a retiring or deleting one is on its way out.
+// state.AppPreviewDatabaseEnvKeys selects the same states.
+func copiedState(s managedpostgres.BindingState) bool {
+	return s == managedpostgres.BindingStateReady || s == managedpostgres.BindingStateProvisioning
 }
 
 // StorageLimitBytes is a preview database's storage limit on plan:

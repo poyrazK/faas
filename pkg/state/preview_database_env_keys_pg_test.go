@@ -46,6 +46,11 @@ func TestPgAppPreviewDatabaseEnvKeys(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_bindings SET state='deleted', deleted_at=now() WHERE id=$1`, removed); err != nil {
 		t.Fatal(err)
 	}
+	// A failed binding never delivered a credential; previews do not copy it.
+	failed := bind(empty, "default", "FAILED_URL")
+	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_bindings SET state='failed' WHERE id=$1`, failed); err != nil {
+		t.Fatal(err)
+	}
 	got, err := st.AppPreviewDatabaseEnvKeys(ctx, acct.ID, app.ID)
 	if err != nil {
 		t.Fatal(err)
