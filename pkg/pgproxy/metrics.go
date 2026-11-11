@@ -12,6 +12,7 @@ type Metrics struct {
 	active   prometheus.Gauge
 	wake     prometheus.Histogram
 	cancels  *prometheus.CounterVec
+	reads    *prometheus.CounterVec
 }
 
 // NewMetrics registers the proxy metrics on reg.
@@ -34,8 +35,12 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "pgproxyd_cancel_requests_total",
 			Help: "Cancel requests by result: ok (sent to the backend), forwarded (to the instance that issued the key), unknown (no such key) or failed.",
 		}, []string{"result"}),
+		reads: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "pgproxyd_read_sessions_total",
+			Help: "Server sessions opened for a read-only endpoint, by where they went: replica (the database's standby) or primary.",
+		}, []string{"served_by"}),
 	}
-	reg.MustRegister(m.sessions, m.active, m.wake, m.cancels)
+	reg.MustRegister(m.sessions, m.active, m.wake, m.cancels, m.reads)
 	return m
 }
 
@@ -66,5 +71,11 @@ func (m *Metrics) woke(d time.Duration) {
 func (m *Metrics) cancelled(result string) {
 	if m != nil {
 		m.cancels.WithLabelValues(result).Inc()
+	}
+}
+
+func (m *Metrics) readSession(servedBy string) {
+	if m != nil {
+		m.reads.WithLabelValues(servedBy).Inc()
 	}
 }

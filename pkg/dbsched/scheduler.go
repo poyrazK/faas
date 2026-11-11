@@ -873,11 +873,31 @@ func (s *Scheduler) Get(ctx context.Context, id string) (VM, error) {
 	return s.withTarget(ctx, vm), nil
 }
 
+// withTarget fills the node's vmmd target and, while the database's
+// standby serves reads, the standby's (ReplicaTarget).
 func (s *Scheduler) withTarget(ctx context.Context, vm VM) VM {
-	if node, err := s.node(ctx, vm.NodeID); err == nil {
-		vm.NodeTarget = node.TargetURL
+	nodes, err := s.store.Nodes(ctx)
+	if err != nil {
+		return vm
+	}
+	for _, n := range nodes {
+		switch {
+		case n.ID == vm.NodeID:
+			vm.NodeTarget = n.TargetURL
+		case n.ID == vm.StandbyNode && vm.servesReads() && n.Lifecycle == NodeActive:
+			vm.ReplicaTarget = n.TargetURL
+		}
 	}
 	return vm
+}
+
+// servesReads reports whether the database's standby takes its read
+// sessions (ADR-1027 amendment 2026-11-11): a running database whose
+// standby runs and holds every acknowledged commit. Its reads then trail
+// the primary by no more than the standby's replay.
+func (vm VM) servesReads() bool {
+	return vm.State == StateRunning && vm.Replicated && vm.StandbyNode != "" && vm.StandbyNode != vm.NodeID &&
+		vm.StandbyRunning && vm.StandbySynced
 }
 
 // Touch records client activity, deferring idle parking.

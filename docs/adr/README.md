@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261111183000: Automatically select supported developer watch mode](20261111183000-automatic-developer-watch-selection.md) — accepted; flags and manifest settings override detection, server eligibility can fall back for automatic choices, and workspace children preserve explicit opt-outs
 - [ADR-20261111162000: Reload selected local development environment files](20261111162000-local-development-env-reload.md) — accepted; local flags override manifest defaults, valid env edits restart apps and functions, and invalid files preserve running processes
 
 - [ADR-20261111145512: Exact numbers with bounded edge validation arithmetic](20261111145512-edge-validation-exact-number-bounds.md) — accepted; preserve JSON numeric precision while bounding numeric token length, exponent expansion and aggregate arithmetic work

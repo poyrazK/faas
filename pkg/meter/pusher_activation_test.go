@@ -118,6 +118,12 @@ func (s *failingBoundaryStore) BillingIdentity(ctx context.Context, accountID, p
 	return s.Store.BillingIdentity(ctx, accountID, provider)
 }
 
+// This legacy Store-only wrapper must preserve the new optional durable
+// intent capability; production delivery refuses an adapter without it.
+func (s *failingBoundaryStore) ReserveBillingUsageIntent(ctx context.Context, provider, account string, meter state.BillingMeter, hour time.Time, quantity int64) (int64, error) {
+	return s.Store.(state.BillingUsageIntentStore).ReserveBillingUsageIntent(ctx, provider, account, meter, hour, quantity)
+}
+
 func TestPushPendingRetriesFailedBoundaryRead(t *testing.T) {
 	for _, kind := range []state.BillingMeter{state.BillingMeterCompute, state.BillingMeterEgress} {
 		t.Run(string(kind), func(t *testing.T) {

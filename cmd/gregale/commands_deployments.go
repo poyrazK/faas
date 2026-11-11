@@ -42,6 +42,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 )
 
 // deploymentIDPattern enforces the 32-hex deployment id shape the API
@@ -765,6 +766,14 @@ func cmdDeploymentGet(args []string) int {
 // when the server has one. Legacy and in-flight deployments have an empty or
 // default receipt, which intentionally produces no extra output.
 func renderDeploymentHostingReceipt(w io.Writer, raw json.RawMessage) {
+	renderDeploymentHostingReceiptFor(w, raw, false)
+}
+
+// renderDeploymentHostingReceiptFor leaves out the container profile (port,
+// package manager, start command) for a function app: the function runner
+// serves it, so `profile: node (port 3000)` and `start_command: node
+// handler.js` described something that does not run (Hunt 33 H33-51).
+func renderDeploymentHostingReceiptFor(w io.Writer, raw json.RawMessage, function bool) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("{}")) {
 		return
@@ -801,6 +810,9 @@ func renderDeploymentHostingReceipt(w io.Writer, raw json.RawMessage) {
 	}
 	if !receipt.Smoke.VerifiedAt.IsZero() {
 		_, _ = fmt.Fprintf(w, "%-14s %s\n", "verified_at:", receipt.Smoke.VerifiedAt.UTC().Format(time.RFC3339))
+	}
+	if function {
+		receipt.Profile = frameworkprofile.Profile{}
 	}
 	if receipt.Profile.Framework != "" {
 		profile := receipt.Profile.Framework
