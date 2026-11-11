@@ -28,24 +28,15 @@ func (s *Service) HideDisabled(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Service) SalesPage(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	s.page(w, r, acct, true)
-}
 func (s *Service) CustomerPage(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	s.page(w, r, acct, false)
-}
-
-func (s *Service) page(w http.ResponseWriter, r *http.Request, acct state.Account, staff bool) {
-	scope, ok := s.scope(w, r, acct, staff)
+	_, ok := s.scope(w, r, acct, false)
 	if !ok {
 		return
 	}
 	var buf bytes.Buffer
 	if err := portal.Execute(&buf, struct {
-		Staff   bool
-		Manager bool
-		Nonce   string
-	}{staff, scope.All, httpsec.NonceFromContext(r.Context())}); err != nil {
+		Nonce string
+	}{httpsec.NonceFromContext(r.Context())}); err != nil {
 		unavailable(w)
 		return
 	}
@@ -59,7 +50,7 @@ func (s *Service) Asset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("file")
-	if name != "portal.css" && name != "portal.js" && name != "pipeline.js" && name != "reports.js" && name != "inquiries.js" && name != "activity.js" && name != "qualification.js" && name != "templates.js" {
+	if name != "portal.css" && name != "portal.js" {
 		http.NotFound(w, r)
 		return
 	}

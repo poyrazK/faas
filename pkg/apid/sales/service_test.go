@@ -257,8 +257,8 @@ func TestConfigRejectsInvalidMoneyAndRanges(t *testing.T) {
 func TestPortalRendersWithoutMockCustomerData(t *testing.T) {
 	s, _, acct := serviceFixture()
 	w := httptest.NewRecorder()
-	s.SalesPage(w, httptest.NewRequest("GET", "/dashboard/sales", nil), acct)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "Customer follow-up") || strings.Contains(w.Body.String(), "customer@example.com") {
+	s.CustomerPage(w, httptest.NewRequest("GET", "/dashboard/referrals", nil), acct)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "Bring someone on board.") || strings.Contains(w.Body.String(), "customer@example.com") || strings.Contains(w.Body.String(), "Message templates") {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	var result map[string]any

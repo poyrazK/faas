@@ -3,10 +3,8 @@ package apidserver
 import (
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/apid"
 	"github.com/onebox-faas/faas/pkg/apid/sales"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/referrals"
@@ -46,17 +44,10 @@ func (s *server) WithSales(cfg sales.Config, store referrals.Store) *server {
 }
 
 func (s *server) salesRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		if !s.sales.Enabled() || !strings.EqualFold(apid.HostWithoutPort(r.Host), "sales."+s.platformHost()) {
-			http.NotFound(w, r)
-			return
-		}
-		http.Redirect(w, r, "/dashboard/sales", http.StatusSeeOther)
-	})
 	mux.HandleFunc("GET /dashboard/referral-assets/{file}", s.sales.Asset)
 	mux.Handle("GET /dashboard/sales", s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		acct, _ := AccountFrom(r.Context())
-		s.sales.SalesPage(w, r, acct)
+		w.Header().Set("Cache-Control", "no-store")
+		http.Redirect(w, r, "https://sales."+s.platformHost()+"/", http.StatusSeeOther)
 	})))
 	mux.Handle("GET /dashboard/referrals", s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		acct, _ := AccountFrom(r.Context())

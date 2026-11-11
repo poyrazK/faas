@@ -1,32 +1,34 @@
 # Sales workspace and referrals
 
-Gregale's own sales portal lives at `https://sales.gregale.dev` (or
-`sales.<platform-domain>`). The edge forwards its root to apid, which redirects
-to `/dashboard/sales`. The same page can be opened on the API host. Customers
-use `https://api.gregale.dev/dashboard/referrals`.
+Gregale's sales frontend belongs to its own repository, `poyrazK/faas-sales`,
+with an independent deployment at `https://sales.gregale.dev`. It is separate
+from `faas-web` and is not embedded in apid. This repository owns the sales and
+referral APIs, PostgreSQL migrations, staff configuration and program policy.
+Customers use `https://api.gregale.dev/dashboard/referrals`; the product website
+only adds customer referral-code signup and public inquiry capture.
 
-This feature requires PostgreSQL. It ships disabled. Enabling it exposes
-referral registration and authenticated pages; it never enables payouts.
+This feature requires PostgreSQL. It ships disabled. It never enables payouts.
 
 ## Configure and roll out
 
-1. Apply `20261103180000000_sales_referrals.sql` and
-   `20261103190000000_short_referral_codes.sql` and
-   `20261103191000000_validate_referral_codes.sql` before the new apid release.
-   This is additive; an older release ignores the new tables and view.
-2. Deploy apid, gatewayd-public and the `faas-web` signup form, including the shared host classifiers.
-   `sales` is now a reserved platform label. Confirm an existing app is not
-   relying on that hostname before routing the subdomain.
-3. Add a proxied DNS record for `sales.gregale.dev` to the same public edge as
-   `api.gregale.dev`. The existing platform wildcard Origin CA certificate
-   and Caddy platform site cover it; no separate listener is introduced.
-4. Configure the sales team and enable the feature, then restart apid.
-   Use existing Gregale account email addresses. Reps and managers must verify
-   their email and enroll an authenticator. Removing an email and restarting
-   removes access on the next request, including already-issued sessions.
-5. Sign in at `/login?next=/dashboard/sales` on the sales host. Staff sessions
-   use that host's existing secure cookie; sessions are not shared through a
-   parent-domain cookie. Customers continue using the API-host dashboard.
+1. Apply all eight sales/referral migrations in timestamp order before the new
+   apid release. Exact names appear in the workflow sections below. They are
+   additive; older code ignores the new tables and view.
+2. Deploy apid and gatewayd-public, including the exact sales-origin session
+   policy and host classifiers. Keep `sales` reserved from customer apps.
+3. Deploy `faas-sales` as its own service/project and route `sales.gregale.dev`
+   to that frontend over HTTPS. Its server proxies only sales and required
+   authentication routes to `https://api.gregale.dev`. Do not route the sales
+   root to apid. The legacy API-host `/dashboard/sales` redirects to the frontend.
+4. Configure manager and rep email lists and enable the backend feature. Use
+   existing Gregale accounts with verified email and an enrolled authenticator.
+   Removing an email removes access on the next request, including existing
+   sessions. Deployment does not invent accounts or enable payouts.
+5. Sign in on the sales host with an existing Gregale email/password and complete
+   MFA. OAuth-only staff can add a password in product account settings first.
+   Sales sessions use Secure, HttpOnly, host-only cookies; no parent-domain
+   session cookie is shared. Deploy the customer `faas-web` integration after
+   backend readiness.
 
 The control-plane Ansible role accepts `faas_sales_enabled`,
 `faas_sales_emails` and `faas_sales_manager_emails`. Its reward variables mirror
@@ -139,10 +141,10 @@ rewrite attribution, grant operator rights or issue payments.
 
 ## Lead pipeline and follow-up tasks
 
-Apply `20261103193823000_sales_pipeline.sql` before the matching apid release.
+Apply `20261111125847978_sales_pipeline.sql` before the matching apid release.
 The existing `FAAS_SALES_ENABLED` flag covers the lead pipeline and task inbox.
-No `faas-web` change is needed for these additions; they are served inside the
-sales portal. Existing sales membership, verified email and MFA rules apply.
+No `faas-web` change is needed for these additions; the independently deployed
+`faas-sales` frontend presents them. Existing sales membership, verified email and MFA rules apply.
 
 Use **Add lead** before a prospect signs up. Record their name and email, company,
 stage and notes. Reps own their new leads; managers can choose an active sales
@@ -236,7 +238,7 @@ and that comparison/collection CSVs preserve the selected period and scope.
 
 ## Website contact/demo intake
 
-Apply `20261103211600000_sales_intake.sql` after the CRM migration, then deploy
+Apply `20261111125848993_sales_intake.sql` after the CRM migration, then deploy
 apid and the website. The website `/contact` route, footer **Contact sales**
 link and pricing **Request a demo** action are enabled by the build-time flag
 `VITE_FEATURE_SALES_INTAKE=1`. Both `/v1/*` and the website must share the
@@ -281,7 +283,7 @@ agent. Disable the intake flag to stop capture while retaining staff access.
 
 ## Activity history and leads needing attention
 
-Apply `20261103221800000_sales_activity.sql` before the new apid release. The
+Apply `20261111125850162_sales_activity.sql` before the new apid release. The
 existing `FAAS_SALES_ENABLED` flag covers activity history and attention alerts;
 there is no website build or new public endpoint for this release.
 
@@ -322,7 +324,7 @@ establish referral attribution, account access, rewards or commission.
 
 ## Lead qualification and closing reasons
 
-Apply `20261103225000000_sales_qualification.sql` before deploying the new apid.
+Apply `20261111125851200_sales_qualification.sql` before deploying the new apid.
 The embedded sales portal ships in the same binary; no `faas-web` release or new
 flag is required. Existing sales access, email verification, session MFA and
 origin checks apply. Drain the old apid writer when rolling out mandatory closing
@@ -368,7 +370,7 @@ staff data and backup controls, outside application clones.
 
 ## Sales message templates
 
-Apply `20261103233000000_sales_templates.sql` before apid. The existing sales
+Apply `20261111125852301_sales_templates.sql` before apid. The existing sales
 flag and staff/session restrictions cover these routes. Templates start empty.
 In **Message templates**, managers create introductions, demo invitations,
 follow-ups and stalled-deal messages. A template has a suggested stage, optional

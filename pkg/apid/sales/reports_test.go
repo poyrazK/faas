@@ -94,16 +94,8 @@ func TestReportsPassValidatedFiltersAndHideStoreErrors(t *testing.T) {
 	}
 }
 
-func TestReportsMarkupIsOnlyRenderedForManagers(t *testing.T) {
+func TestCustomerPortalDoesNotIncludeStaffMarkup(t *testing.T) {
 	s, _, acct := reportService()
-	for _, manager := range []bool{true, false} {
-		s.Config.Members[acct.Email] = manager
-		w := httptest.NewRecorder()
-		s.SalesPage(w, httptest.NewRequest("GET", "/dashboard/sales", nil), acct)
-		if w.Code != 200 || strings.Contains(w.Body.String(), `id="reports"`) != manager || strings.Contains(w.Body.String(), "/reports.js") != manager {
-			t.Fatal(manager, w.Code, w.Body.String())
-		}
-	}
 	s.Config.Members[acct.Email] = true
 	w := httptest.NewRecorder()
 	s.CustomerPage(w, httptest.NewRequest("GET", "/dashboard/referrals", nil), acct)

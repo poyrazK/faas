@@ -226,8 +226,8 @@ func (s *server) browserRequestFromTrustedOrigin(r *http.Request) bool {
 	return err == nil && origin.Host != "" && (s.isTrustedAdminOrigin(origin, r) || s.isWebDashboardOrigin(origin))
 }
 
-// isWebDashboardOrigin reports whether origin is the apex domain. The web
-// dashboard is served there and proxies /v1, /login and /signup to the API
+// isWebDashboardOrigin reports whether origin is the apex or dedicated sales
+// domain. Their independently deployed frontends proxy requests to the API
 // host, so its requests reach apid with Host api.<domain> and Origin
 // https://<domain>. production-us 2026-10-06: every dashboard change
 // (creating an app, ...) was refused as cross-origin. The apex is a
@@ -237,7 +237,7 @@ func (s *server) browserRequestFromTrustedOrigin(r *http.Request) bool {
 func (s *server) isWebDashboardOrigin(origin *url.URL) bool {
 	base := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s.platformHost()), "."))
 	return base != "" && base != domainUnset && strings.EqualFold(origin.Scheme, "https") &&
-		strings.ToLower(origin.Hostname()) == base && origin.Port() == ""
+		(strings.ToLower(origin.Hostname()) == base || strings.ToLower(origin.Hostname()) == "sales."+base) && origin.Port() == ""
 }
 
 // requireMFA delegates to pkg/auth.Middleware.RequireMFA. Behaviour
