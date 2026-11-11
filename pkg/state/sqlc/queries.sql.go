@@ -78329,6 +78329,7 @@ func (q *Queries) ProjectEnvironmentCloneSecretTargetExists(ctx context.Context,
 const projectEnvironmentHasActiveDeployments = `-- name: ProjectEnvironmentHasActiveDeployments :one
 SELECT EXISTS (SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
  WHERE a.project_id = $1::uuid AND d.scope = $2::text
+ AND a.status <> 'deleted' AND d.deleted_at IS NULL
  AND d.status NOT IN ('failed', 'superseded', 'cancelled'))
 `
 
@@ -78337,6 +78338,9 @@ type ProjectEnvironmentHasActiveDeploymentsParams struct {
 	Scope     string
 }
 
+// A deleted app's deployments never serve again, so they do not hold its
+// environment (Hunt 33 H33-37: staging stayed undeletable after every app
+// of the project was deleted).
 func (q *Queries) ProjectEnvironmentHasActiveDeployments(ctx context.Context, db DBTX, arg ProjectEnvironmentHasActiveDeploymentsParams) (bool, error) {
 	row := db.QueryRow(ctx, projectEnvironmentHasActiveDeployments, arg.ProjectID, arg.Scope)
 	var exists bool
@@ -106354,6 +106358,35 @@ func (q *Queries) ServiceCapacityProtection(ctx context.Context, db DBTX) ([]byt
 	var snapshot []byte
 	err := row.Scan(&snapshot)
 	return snapshot, err
+}
+
+const servicePolicyPRPreviewSetMemberIDs = `-- name: ServicePolicyPRPreviewSetMemberIDs :many
+SELECT DISTINCT member_id::text AS member_id
+FROM pr_preview_sets, unnest(member_app_ids) AS member_id
+WHERE member_app_ids @> ARRAY[$1::text]
+ORDER BY member_id
+`
+
+// The apps of the PR preview sets that hold an app. A preview of an app bound
+// without a project calls only these (ADR-20261105090226).
+func (q *Queries) ServicePolicyPRPreviewSetMemberIDs(ctx context.Context, db DBTX, appID string) ([]string, error) {
+	rows, err := db.Query(ctx, servicePolicyPRPreviewSetMemberIDs, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var member_id string
+		if err := rows.Scan(&member_id); err != nil {
+			return nil, err
+		}
+		items = append(items, member_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const servicePolicyPreviewAppIDs = `-- name: ServicePolicyPreviewAppIDs :many

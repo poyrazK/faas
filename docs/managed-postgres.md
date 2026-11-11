@@ -850,8 +850,8 @@ The billing seam emits stable internal line-item codes
 `managed_postgres.restore_history`, and `managed_postgres.egress`) with
 normalized quantities and provider-cost millicents. They are COGS/invoice
 mapping inputs only: customers never see provider costs. The only customer
-charge is compute overage, which an account turns on itself
-([Compute overage](#compute-overage)).
+charge is compute overage, which an account turns on itself, or which is on
+by default on Scale ([Compute overage](#compute-overage)).
 
 Customers can inspect the current account snapshot with
 `GET /v1/account/managed-postgres-usage` (the `usage:read` scope) or
@@ -1069,7 +1069,10 @@ The state is judged from the ledger, which can trail Neon by up to two hours.
 `GET` and `PUT /v1/postgres/overage` read and set a paid account's overage
 choice, `{"enabled": true|false}`:
 
-- Off is the default, and the databases are suspended at the allowance.
+- Off is the default on Hobby and Pro, and the databases are suspended at the
+  allowance. On Scale it is on until the account turns it off
+  (`api.ManagedPostgresPlanLimits.OverageOnByDefault`), so a busy production
+  database does not stop mid-month. An explicit choice either way is kept.
 - On, they keep running until twice the allowance (the ceiling), then are
   suspended.
 - A suspended, abuse-held or pending-deletion account's databases are
