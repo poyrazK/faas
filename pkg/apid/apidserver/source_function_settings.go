@@ -56,6 +56,21 @@ func (s *server) applySourceFunctionSettings(ctx context.Context, acct state.Acc
 	if hooksChanged {
 		req.AfterRestore, req.BeforeCheckpoint, changed = after, before, true
 	}
+	// Bindings to the siblings and `calls:` apps its typed client may call
+	// (ADR-20261111150000 §2); app-wide, so production pushes only.
+	calls, prob := s.sourceFunctionCalls(ctx, acct, app, spec)
+	if prob != nil {
+		return app, prob
+	}
+	if len(calls.Names) > 0 {
+		if bindings, bound := calls.BindingUpdate(appResponseBindings(app)); bound {
+			req.ServiceBindingTargets, req.ServiceBindingPolicy, changed = bindings.ServiceBindingTargets, bindings.ServiceBindingPolicy, true
+		}
+		if spec.Env == nil {
+			spec.Env = map[string]string{}
+		}
+		spec.Env[gregalemanifest.FunctionsEnv] = calls.Env()
+	}
 	if changed && push.Scope == state.DefaultEnvScope {
 		updated, prob := s.applySourceFunctionAppSettings(ctx, acct, app, req, limits, push)
 		if prob != nil {
@@ -96,7 +111,22 @@ func (s *server) applySourceFunctionAppSettings(ctx context.Context, acct state.
 	if req.BeforeCheckpoint != nil {
 		fields = append(fields, "before_checkpoint")
 	}
-	if manifest, ok := stateManifestForUpdate(app, &req); ok {
+	manifest, ok := stateManifestForUpdate(app, &req)
+	if req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil {
+		if !ok {
+			copied := app.Manifest
+			manifest, ok = &copied, true
+		}
+		if req.ServiceBindingTargets != nil {
+			manifest.ServiceBindings = api.ServiceBindingsForTargets(*req.ServiceBindingTargets)
+			fields = append(fields, "service_binding_targets")
+		}
+		if req.ServiceBindingPolicy != nil {
+			manifest.ServiceBindingPolicy = *req.ServiceBindingPolicy
+			fields = append(fields, "service_binding_policy")
+		}
+	}
+	if ok {
 		params.Manifest = manifest
 	}
 	updated, err := s.store.UpdateApp(ctx, app.ID, params)

@@ -257,6 +257,9 @@ func (m *Manifest) FunctionAppManifest(p FunctionPlan) *Manifest {
 		QueueBindings: p.Spec.QueueBindings,
 	}
 	spec := p.Spec
+	for _, fn := range m.Functions {
+		spec.ProjectFunctions = append(spec.ProjectFunctions, fn.Name)
+	}
 	out.FunctionSettings = &spec
 	for _, trigger := range p.Spec.EventTriggers {
 		trigger.App = p.Slug

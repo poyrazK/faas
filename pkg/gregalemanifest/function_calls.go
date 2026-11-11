@@ -123,7 +123,8 @@ func FunctionCallGraph(functions []FunctionSpec, slugOf func(name string) string
 
 // BindingUpdate is the app PATCH that gives a function exactly the bindings
 // it may call, under the declared policy; changed is false when the app
-// already has them.
+// already has them. An app under the project policy keeps it: its siblings
+// are reachable already, and the bindings add its `calls:` apps.
 func (c FunctionCalls) BindingUpdate(app api.AppResponse) (api.UpdateAppRequest, bool) {
 	current := make([]string, 0, len(app.ServiceBindings))
 	for _, b := range app.ServiceBindings {
@@ -139,9 +140,28 @@ func (c FunctionCalls) BindingUpdate(app api.AppResponse) (api.UpdateAppRequest,
 		}
 		update.ServiceBindingTargets, changed = &targets, true
 	}
-	if app.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
+	if app.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared && app.ServiceBindingPolicy != api.ServiceBindingPolicyProject {
 		policy := api.ServiceBindingPolicyDeclared
 		update.ServiceBindingPolicy, changed = &policy, true
 	}
 	return update, changed
+}
+
+// CallsFor is FunctionCallGraph for one function whose siblings' apps are
+// known by name (a repository push looks them up in the project). A sibling
+// with no app yet is left out until a later deploy binds it.
+func (fn FunctionSpec) CallsFor(self string, siblings map[string]string) (FunctionCalls, error) {
+	specs := []FunctionSpec{fn}
+	slugs := map[string]string{fn.Name: self}
+	for _, name := range fn.ProjectFunctions {
+		if slug, ok := siblings[name]; ok && name != fn.Name {
+			specs = append(specs, FunctionSpec{Name: name})
+			slugs[name] = slug
+		}
+	}
+	graph, err := FunctionCallGraph(specs, func(name string) string { return slugs[name] })
+	if err != nil {
+		return FunctionCalls{}, err
+	}
+	return graph[fn.Name], nil
 }

@@ -69,6 +69,12 @@ func resolveFS(fsys fs.FS, m *gregalemanifest.Manifest, app state.App) (Function
 	if m == nil || len(m.Functions) == 0 {
 		return Function{}, false, nil
 	}
+	// Input and output schemas shape the typed clients built from a checkout
+	// (ADR-20261111150000 §1); a push neither selects their files nor needs
+	// them, and the callee reads its own from its deployed root.
+	for i := range m.Functions {
+		m.Functions[i].Input, m.Functions[i].Output = nil, nil
+	}
 	plans, err := m.PlanFunctionsFS(fsys, "")
 	if err != nil {
 		return Function{}, false, err

@@ -2,6 +2,7 @@ package apidserver_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -111,5 +112,62 @@ func TestApplySourceFunctionSettings(t *testing.T) {
 	}
 	if len(stg) != 1 || stg[0].Key != "MODE" || stg[0].Value != "staging" {
 		t.Errorf("staging env = %+v, want only MODE=staging", stg)
+	}
+}
+
+// ADR-20261111150000 §2: a production push binds a function to its project
+// siblings and `calls:` apps and writes the GREGALE_FUNCTIONS map; an app
+// under the project policy keeps it.
+func TestApplySourceFunctionSettingsBindsSiblings(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "fn-calls@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := func(slug, workload string, policy api.ServiceBindingPolicy) state.App {
+		t.Helper()
+		app, err := store.CreateApp(ctx, state.App{
+			AccountID: acct.ID, Slug: slug, Type: state.AppTypeFunction, Runtime: "node22", ProjectID: project.ID, WorkloadName: workload,
+			RAMMB: 256, MaxConcurrency: 1, Status: state.AppActive, WorkloadClass: state.WorkloadClassHTTP,
+			Manifest: state.AppManifest{ServiceBindingPolicy: policy},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return app
+	}
+	web := create("shop-web", "web", api.ServiceBindingPolicyAccount)
+	users := create("shop-users", "users", api.ServiceBindingPolicyProject)
+	spec := gregalemanifest.FunctionSpec{Name: "web", Calls: []string{"billing-api"}, ProjectFunctions: []string{"web", "users"}}
+	got, prob := apidserver.ApplySourceFunctionSettingsForTest(ctx, store, acct, web, spec, "")
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	var targets []string
+	for _, b := range got.Manifest.ServiceBindings {
+		targets = append(targets, b.Service)
+	}
+	if !slices.Equal(targets, []string{"billing-api", "shop-users"}) || got.Manifest.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
+		t.Fatalf("web bindings = %v policy %q, want billing-api + shop-users under declared", targets, got.Manifest.ServiceBindingPolicy)
+	}
+	env, err := store.ListAppEnvInScope(ctx, acct.ID, web.ID, state.DefaultEnvScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(env) != 1 || env[0].Key != gregalemanifest.FunctionsEnv || env[0].Value != `{"billing-api":"billing-api","users":"shop-users"}` {
+		t.Fatalf("web env = %+v", env)
+	}
+
+	gotUsers, prob := apidserver.ApplySourceFunctionSettingsForTest(ctx, store, acct, users, gregalemanifest.FunctionSpec{Name: "users", ProjectFunctions: []string{"web", "users"}}, "")
+	if prob != nil {
+		t.Fatalf("apply users: %+v", prob)
+	}
+	if gotUsers.Manifest.ServiceBindingPolicy != api.ServiceBindingPolicyProject || len(gotUsers.Manifest.ServiceBindings) != 1 || gotUsers.Manifest.ServiceBindings[0].Service != "shop-web" {
+		t.Fatalf("users = policy %q bindings %+v, want project kept and shop-web bound", gotUsers.Manifest.ServiceBindingPolicy, gotUsers.Manifest.ServiceBindings)
 	}
 }

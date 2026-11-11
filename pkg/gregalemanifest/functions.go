@@ -71,6 +71,9 @@ type FunctionSpec struct {
 	// Calls names other apps of the account, by slug, the function may call
 	// through its typed client besides its siblings.
 	Calls []string `yaml:"calls,omitempty"`
+	// ProjectFunctions names every function of the project, set by
+	// FunctionAppManifest so a repository push can bind the siblings.
+	ProjectFunctions []string `yaml:"-"`
 	// InputSchema and OutputSchema are Input and Output resolved by the plan.
 	InputSchema  json.RawMessage `yaml:"-"`
 	OutputSchema json.RawMessage `yaml:"-"`
