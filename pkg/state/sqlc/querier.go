@@ -4694,6 +4694,12 @@ type Querier interface {
 	LockPromotionRecoveryWorkerInstances(ctx context.Context, db DBTX, deploymentID string) ([]string, error)
 	LockPromotionReleaseConfigurationDeployments(ctx context.Context, db DBTX, arg LockPromotionReleaseConfigurationDeploymentsParams) ([]string, error)
 	LockQueueCanaryApp(ctx context.Context, db DBTX, arg LockQueueCanaryAppParams) (pgtype.UUID, error)
+	// A queue claim takes its app's share lock before the binding lock (Hunt 33
+	// H33-27). Capped enqueues lock the app FOR UPDATE and then the binding FOR
+	// SHARE (invocation insert trigger); a claim that locked the binding first
+	// and reached the app through the invocation update triggers deadlocked
+	// against them.
+	LockQueueClaimApp(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.UUID, error)
 	LockQueueLeaseInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error)
 	LockReadinessNotification(ctx context.Context, db DBTX, arg LockReadinessNotificationParams) ([]byte, error)
 	LockReadinessSubscription(ctx context.Context, db DBTX, arg LockReadinessSubscriptionParams) (CustomerWorkflowReadinessSubscription, error)
@@ -4864,13 +4870,16 @@ type Querier interface {
 	// provider, so a step that was sent but not recorded is sent again with the
 	// same target instead of a new one charged on top of it.
 	ManagedPostgresOveragePending(ctx context.Context, db DBTX, arg ManagedPostgresOveragePendingParams) (ManagedPostgresOveragePendingRow, error)
+	// ADR-20261025094915 amendment 2026-11-11: the subject's stored choice; no
+	// row means it never chose and its plan's default applies.
+	ManagedPostgresOverageSetting(ctx context.Context, db DBTX, subjectID pgtype.UUID) (bool, error)
 	// ADR-20261031110037: managed PostgreSQL overage charges delivered per
 	// billing provider, usage subject and UTC month.
 	// Subjects that may owe overage for the month: those that reached the
 	// compute allowance (as the cap sweep recorded it), those with overage on,
 	// whose storage past the pool is billed (ADR-20261031110037 amendment 2), and
 	// those already charged or with a reserved step awaiting reconciliation.
-	ManagedPostgresOverageSubjects(ctx context.Context, db DBTX, periodStart pgtype.Timestamptz) ([]ManagedPostgresOverageSubjectsRow, error)
+	ManagedPostgresOverageSubjects(ctx context.Context, db DBTX, arg ManagedPostgresOverageSubjectsParams) ([]ManagedPostgresOverageSubjectsRow, error)
 	ManagedPostgresPersonalBindingReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalBindingReferenceParams) (bool, error)
 	ManagedPostgresPersonalDatabaseReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalDatabaseReferenceParams) (bool, error)
 	// ADR-20261031123259: whether a database of the reservation owner holds the
@@ -5770,6 +5779,9 @@ type Querier interface {
 	// Counts include reference intent in the shared environment-key quota.
 	ProjectEnvironmentCloneQuota(ctx context.Context, db DBTX, arg ProjectEnvironmentCloneQuotaParams) ([]ProjectEnvironmentCloneQuotaRow, error)
 	ProjectEnvironmentCloneSecretTargetExists(ctx context.Context, db DBTX, arg ProjectEnvironmentCloneSecretTargetExistsParams) (bool, error)
+	// A deleted app's deployments never serve again, so they do not hold its
+	// environment (Hunt 33 H33-37: staging stayed undeletable after every app
+	// of the project was deleted).
 	ProjectEnvironmentHasActiveDeployments(ctx context.Context, db DBTX, arg ProjectEnvironmentHasActiveDeploymentsParams) (bool, error)
 	ProjectEnvironmentIDForSecrets(ctx context.Context, db DBTX, arg ProjectEnvironmentIDForSecretsParams) (pgtype.UUID, error)
 	ProjectEnvironmentSharedSecretGeneration(ctx context.Context, db DBTX, arg ProjectEnvironmentSharedSecretGenerationParams) (ProjectEnvironmentSharedSecretGenerationRow, error)
@@ -7648,6 +7660,9 @@ type Querier interface {
 	SelectSourceBuildRootfs(ctx context.Context, db DBTX, arg SelectSourceBuildRootfsParams) error
 	ServiceCapacityPlacement(ctx context.Context, db DBTX) ([]byte, error)
 	ServiceCapacityProtection(ctx context.Context, db DBTX) ([]byte, error)
+	// The apps of the PR preview sets that hold an app. A preview of an app bound
+	// without a project calls only these (ADR-20261105090226).
+	ServicePolicyPRPreviewSetMemberIDs(ctx context.Context, db DBTX, appID string) ([]string, error)
 	// Two IDs suffice to refuse an ambiguous service name, as production does.
 	ServicePolicyPreviewAppIDs(ctx context.Context, db DBTX, arg ServicePolicyPreviewAppIDsParams) ([]pgtype.UUID, error)
 	ServiceProjectReleaseStages(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ProjectReleaseStage, error)
@@ -7696,6 +7711,8 @@ type Querier interface {
 	SetCustomerOperationJobIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationJobIdentityParams) (int64, error)
 	SetCustomerOperationWorkflowIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationWorkflowIdentityParams) (int64, error)
 	SetDatabaseVMAlwaysOn(ctx context.Context, db DBTX, arg SetDatabaseVMAlwaysOnParams) (int64, error)
+	SetDatabaseVMComputeQuota(ctx context.Context, db DBTX, arg SetDatabaseVMComputeQuotaParams) (int64, error)
+	SetDatabaseVMHeld(ctx context.Context, db DBTX, arg SetDatabaseVMHeldParams) (int64, error)
 	// imaged records whether it stamped a before_checkpoint hook into the
 	// deployment's guest manifest; NULL stays for deployments built earlier.
 	SetDeploymentBeforeCheckpointHook(ctx context.Context, db DBTX, arg SetDeploymentBeforeCheckpointHookParams) (int64, error)

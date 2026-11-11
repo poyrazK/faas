@@ -351,3 +351,38 @@ func TestDeployCheckProjectOnlyFlagNamesProject(t *testing.T) {
 		}
 	}
 }
+
+// Hunt 33 H33-60: a migration script reading MIGRATION_DATABASE_URL, the key
+// of the app's migration-access managed PostgreSQL binding, was reported as
+// an undeclared variable to set with `secrets set`.
+func TestDoctorEnvRequiredCountsManagedPostgresBindingKeys(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir := t.TempDir()
+	main.WriteFile(t, dir, "package.json", "{}")
+	main.WriteFile(t, dir, "migrate.js", "const url = process.env.MIGRATION_DATABASE_URL;\n")
+	for _, tc := range []struct {
+		scope      string
+		wantStatus string
+	}{{"default", "ok"}, {"staging", "error"}} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/v1/apps/pg/secrets":
+				main.WriteJSONTest(w, api.AppSecretListResponse{})
+			case "/v1/apps/pg/env":
+				main.WriteJSONTest(w, api.AppEnvListResponse{})
+			case "/v1/apps/pg/postgres-bindings":
+				main.WriteJSONTest(w, api.AppPostgresBindingList{Items: []api.AppPostgresBinding{{ID: "b1", Scope: tc.scope, EnvironmentKey: "MIGRATION_DATABASE_URL", Access: "migration", State: "ready"}}})
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		t.Setenv("FAAS_API", srv.URL)
+		t.Setenv("FAAS_TOKEN", "fp_live_fixture")
+		code, check := doctorEnvCheck(t, dir, "--app", "pg")
+		srv.Close()
+		if check.Status != tc.wantStatus || (tc.wantStatus == "ok") != (code == 0) {
+			t.Errorf("binding in scope %s: exit=%d check=%+v, want %s", tc.scope, code, check, tc.wantStatus)
+		}
+	}
+}

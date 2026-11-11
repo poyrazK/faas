@@ -1294,8 +1294,12 @@ WHERE d.id = sqlc.arg(deployment_id)::uuid AND d.app_id = sqlc.arg(app_id)::uuid
     WHERE other.app_id = d.app_id AND other.scope = d.scope AND other.id <> d.id AND other.status = 'live');
 
 -- name: ProjectEnvironmentHasActiveDeployments :one
+-- A deleted app's deployments never serve again, so they do not hold its
+-- environment (Hunt 33 H33-37: staging stayed undeletable after every app
+-- of the project was deleted).
 SELECT EXISTS (SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
  WHERE a.project_id = sqlc.arg(project_id)::uuid AND d.scope = sqlc.arg(scope)::text
+ AND a.status <> 'deleted' AND d.deleted_at IS NULL
  AND d.status NOT IN ('failed', 'superseded', 'cancelled'));
 
 -- name: ProjectEnvironmentCleanupPending :one
@@ -9571,6 +9575,14 @@ SELECT id FROM apps WHERE account_id = sqlc.arg(account_id)::uuid AND project_id
   AND preview_of_slug IS NOT NULL AND status <> 'deleted'
 ORDER BY id
 LIMIT 2;
+
+-- name: ServicePolicyPRPreviewSetMemberIDs :many
+-- The apps of the PR preview sets that hold an app. A preview of an app bound
+-- without a project calls only these (ADR-20261105090226).
+SELECT DISTINCT member_id::text AS member_id
+FROM pr_preview_sets, unnest(member_app_ids) AS member_id
+WHERE member_app_ids @> ARRAY[sqlc.arg(app_id)::text]
+ORDER BY member_id;
 
 -- name: ReadServicePolicyTestApp :one
 SELECT id, account_id, org_id, slug, workload_name, status, project_id, preview_of_slug,
@@ -27094,7 +27106,8 @@ SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, 
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
     move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
-    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history
+    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history,
+    held, compute_quota_unit_seconds
 FROM database_vms WHERE database_id = sqlc.arg(database_id);
 
 -- name: ListDatabaseVMsByState :many
@@ -27102,7 +27115,8 @@ SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, 
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
     move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
-    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history
+    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history,
+    held, compute_quota_unit_seconds
 FROM database_vms WHERE state = ANY(sqlc.arg(states)::text[]) ORDER BY database_id;
 
 -- name: InsertDatabaseVM :execrows
@@ -27233,6 +27247,14 @@ WHERE database_id = sqlc.arg(database_id) AND state <> 'deleting';
 
 -- name: SetDatabaseVMAlwaysOn :execrows
 UPDATE database_vms SET always_on = sqlc.arg(always_on)
+WHERE database_id = sqlc.arg(database_id) AND state <> 'deleting';
+
+-- name: SetDatabaseVMHeld :execrows
+UPDATE database_vms SET held = sqlc.arg(held)
+WHERE database_id = sqlc.arg(database_id) AND state <> 'deleting';
+
+-- name: SetDatabaseVMComputeQuota :execrows
+UPDATE database_vms SET compute_quota_unit_seconds = sqlc.narg(compute_quota_unit_seconds)
 WHERE database_id = sqlc.arg(database_id) AND state <> 'deleting';
 
 -- name: TransitionDatabaseVM :execrows

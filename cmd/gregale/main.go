@@ -1003,6 +1003,11 @@ func printLocalCommandHelpDetail(w io.Writer, command cliCommand, showAll bool) 
 	usage := "gregale " + command.Name
 	if len(command.Subcommands) > 0 && !command.SubcommandsAfterPositionals && command.Name != "logs" {
 		choice := " <" + command.subcommandChoice() + ">"
+		if len(command.Flags) > 0 {
+			// A command with flags of its own also runs without a child:
+			// `release list [alias] [flags]` (Hunt 33 H33-4).
+			choice = " [" + command.subcommandChoice() + "]"
+		}
 		// Compact help stays within 80 columns; its Commands section lists
 		// the choices when they no longer fit on the usage line. Full help
 		// lists them too, so it takes the bad-invocation synopsis limit:

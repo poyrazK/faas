@@ -22,11 +22,19 @@ func (s *server) cleanupDevSessionResources(ctx context.Context, app state.App) 
 	if err := s.cleanupDevPostgres(ctx, app); err != nil {
 		return err
 	}
-	return s.releasePreviewDatabases(ctx, app)
+	// The preview's own databases go first, with their bindings
+	// (ADR-20261102123523); what remains are bindings to customer databases
+	// made before ADR-20261105090226, and only those bindings go.
+	if err := s.releasePreviewDatabases(ctx, app); err != nil {
+		return err
+	}
+	return s.cleanupPRPreviewPostgresBindings(ctx, app)
 }
 
+// A PR preview's buckets go too: previews can no longer create one, but a
+// bucket made before ADR-20261105090226 would outlive its preview.
 func (s *server) cleanupDevSessionBuckets(ctx context.Context, app state.App) error {
-	if app.PreviewOfSlug == "" || app.PreviewPrNumber != 0 {
+	if app.PreviewOfSlug == "" {
 		return nil
 	}
 	store, ok := s.store.(state.ObjectBucketStore)

@@ -47,7 +47,7 @@ func TestAIDeploymentsAndAIGateCommands(t *testing.T) {
 	if code := main.CmdAI([]string{"deployments", "--app", "my-api"}); code != 0 {
 		t.Fatalf("ai deployments exit = %d", code)
 	}
-	for _, want := range []string{"6f1c0e1e-6c1b-4c7a-9c8e-2f0b7c1d9a10", "4210", "0.40%", "1.10%", "USD 4.21000", "USD 0.00100", "380"} {
+	for _, want := range []string{"6f1c0e1e-6c1b-4c7a-9c8e-2f0b7c1d9a10", "4210", "0.40%", "1.10%", "USD 4.21 ", "USD 0.001 ", "380"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("ai deployments output lacks %q:\n%s", want, stdout.String())
 		}
