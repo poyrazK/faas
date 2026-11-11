@@ -272,13 +272,14 @@ All steps stay on local branches until the owner asks for PRs. Each sits behind 
    - reservation ≤ `ram_mb`;
    - `memory.max = ram_mb + 8`.
 
-   **Built locally (2026-10-31), behind schedd `FAAS_SCHEDD_AGENT_MEASURED_CHARGE=1` with measured admission on; not pushed.**
-   - **A gap it closes first.** Agent run VMs have no `instances` row, so the node measurement never included them. After one stats tick a run dropped out of the measured figure, and only the 2× overcommit cap held agent runs back. The ledger now adds every agent run to the measured figure, at `ram_mb` + 8 with the switch off (a separate fix).
+   **As built (2026-11-11), behind schedd `FAAS_SCHEDD_AGENT_MEASURED_CHARGE=1` with measured admission on (default off).**
+   - **Agent runs in the measured figure.** Agent run VMs have no `instances` row, so the node measurement never includes them; #6183 adds every agent run to the measured figure at its booking. This step replaces that booking with the charge below.
    - **Size history.** A query over `agent_run_usage` stands in for the `agent_size_history` table. It takes the p95 `peak_private_mb` of a version's last `AgentSizeHistoryWindowRuns` measured runs of one input class (with or without a checkout), and leaves out runs missing more than `AgentSizeHistoryMaxGapPercent` of their samples. agentd sends it in `AgentRunStart.history_peak_private_mb` once a version has `AgentSizeHistoryMinRuns` such runs, and 0 before that.
    - **Charge.** max(memory, peak, `AgentChargeFloorMB`) + 8, capped at `ram_mb` + 8. The memory is the VM's `memory.current` from vmmd's stats rows, the reclaimable file pages included. A run the latest sample cannot have seen is charged its peak.
    - **Reservation.** min(`ram_mb`, max(`AgentReservationFloorMB`, `AgentReservationPeakFactorPercent` × peak)) + 8 is booked against the overcommit bound. Without a fresh measurement the node falls back to reservations, and every agent run counts at `ram_mb` + 8 again.
    - **Deferred.** The thaw headroom waits for compress-on-wait (step 5), since only a compressed run can grow back above its charge.
    - **Tests.** Unit tests cover the charge and reservation functions and the ledger, and a property test checks the bounds over random admissions, releases and samples. `memory.max` is unchanged.
+   - **Density under RAM-only admission.** CPU decides where, never whether (ADR-20261109172421), so RAM is the only gate on agent runs and this step alone sets their density. On a 16 CPU / 64 GB compute-only node (49,725 MB ceiling) `TestAgentNodeDensity` admits 24 Pro runs at plan RAM, and 48 / 161 / 388 / 690 at a version peak of 1 GiB / 300 / 120 / 64 MB. The charge binds before the 2× reservation bound in every case. At a 64 MB peak that is 1,380 guest vCPUs against 128 vCPU slots: fine while runs wait on the model (≈20 millicores each), contended when many run tools at once.
 5. **vmmd compress-on-wait** behind `agent_wait_compress` (default off). Metal tests:
    - a held relay response pauses and compresses the VM, and the first byte resumes it;
    - no swap is opened without writeback disabled;

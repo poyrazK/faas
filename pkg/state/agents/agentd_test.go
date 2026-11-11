@@ -405,9 +405,8 @@ func TestRecordUsage(t *testing.T) {
 func TestVersionPeak(t *testing.T) {
 	pool, s := agentdFixture(t)
 	ctx := context.Background()
-	record := func(peakMB int64, samples int, checkout bool) {
+	record := func(run agents.Run, peakMB int64, samples int, checkout bool) {
 		t.Helper()
-		run := admit(t, s, agents.Admission{})
 		token := "tok-" + run.ID
 		if _, found, err := s.ClaimRun(ctx, "agentd-1", token, ttl, maxLive(100)); err != nil || !found {
 			t.Fatalf("claim %v %v", found, err)
@@ -435,10 +434,10 @@ func TestVersionPeak(t *testing.T) {
 		t.Fatalf("an unmeasured version: %d MB over %d runs, %v", peak, runs, err)
 	}
 	for mb := int64(1); mb <= 20; mb++ {
-		record(mb*10, 10, false)
+		record(admit(t, s, agents.Admission{}), mb*10, 10, false)
 	}
-	record(5000, 7, false) // 30% of samples missing: left out
-	record(9000, 10, true) // another input class
+	record(admit(t, s, agents.Admission{}), 5000, 7, false) // 30% of samples missing: left out
+	record(admit(t, s, agents.Admission{}), 9000, 10, true) // another input class
 	peak, runs, err := s.VersionPeak(ctx, account, agent.ID, 1, false)
 	if err != nil || runs != 20 || peak != 190 {
 		t.Fatalf("peak %d MB over %d runs, %v; want the p95 190 over 20", peak, runs, err)
