@@ -155,6 +155,18 @@
     "kind": "account_identity"
   },
   {
+    "table": "complimentary_accounts",
+    "columns": [
+      "account_id",
+      "expires_at",
+      "granted_at",
+      "granted_by",
+      "plan",
+      "reason"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "financial_budget_alert_channel_deliveries",
     "columns": [
       "account_id",
@@ -20675,9 +20687,11 @@
     "columns": [
       "always_on",
       "bootstrapped",
+      "compute_quota_unit_seconds",
       "created_at",
       "database_id",
       "drop_standby_slot",
+      "held",
       "last_active_at",
       "last_backup_at",
       "last_error",

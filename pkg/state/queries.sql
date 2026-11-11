@@ -5901,6 +5901,29 @@ ON CONFLICT (owner_id) DO UPDATE SET max_bytes = EXCLUDED.max_bytes, reason = EX
 -- name: ClearObjectStorageCeilingGrant :exec
 DELETE FROM object_storage_ceiling_grants WHERE owner_id=$1;
 
+-- name: ComplimentaryAccount :one
+-- ADR-20261111140000: an account given a paid plan without a subscription.
+SELECT account_id, plan, reason, granted_by, granted_at, expires_at FROM complimentary_accounts WHERE account_id=$1;
+
+-- name: SetComplimentaryAccount :exec
+INSERT INTO complimentary_accounts (account_id, plan, reason, granted_by, granted_at, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (account_id) DO UPDATE SET plan = EXCLUDED.plan, reason = EXCLUDED.reason,
+  granted_by = EXCLUDED.granted_by, granted_at = EXCLUDED.granted_at, expires_at = EXCLUDED.expires_at;
+
+-- name: ClearComplimentaryAccount :exec
+DELETE FROM complimentary_accounts WHERE account_id=$1;
+
+-- name: ListComplimentaryAccountIDs :many
+-- Every complimentary account, for meterd's push pass.
+SELECT account_id FROM complimentary_accounts ORDER BY account_id;
+
+-- name: ListExpiredComplimentaryAccounts :many
+-- Complimentary accounts whose end date has passed, oldest first.
+SELECT account_id, plan, reason, granted_by, granted_at, expires_at FROM complimentary_accounts
+WHERE expires_at IS NOT NULL AND expires_at <= sqlc.arg(now)::timestamptz
+ORDER BY expires_at, account_id LIMIT sqlc.arg(batch_size);
+
 -- name: ObjectUsageBucketAccount :one
 SELECT account_id FROM object_buckets WHERE id=$1;
 
@@ -9509,6 +9532,14 @@ SELECT id FROM apps WHERE account_id = sqlc.arg(account_id)::uuid AND project_id
   AND preview_of_slug IS NOT NULL AND status <> 'deleted'
 ORDER BY id
 LIMIT 2;
+
+-- name: ServicePolicyPRPreviewSetMemberIDs :many
+-- The apps of the PR preview sets that hold an app. A preview of an app bound
+-- without a project calls only these (ADR-20261105090226).
+SELECT DISTINCT member_id::text AS member_id
+FROM pr_preview_sets, unnest(member_app_ids) AS member_id
+WHERE member_app_ids @> ARRAY[sqlc.arg(app_id)::text]
+ORDER BY member_id;
 
 -- name: ReadServicePolicyTestApp :one
 SELECT id, account_id, org_id, slug, workload_name, status, project_id, preview_of_slug,
@@ -27046,7 +27077,8 @@ SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, 
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
     move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
-    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history
+    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history,
+    held, compute_quota_unit_seconds
 FROM database_vms WHERE database_id = sqlc.arg(database_id);
 
 -- name: ListDatabaseVMsByState :many
@@ -27054,7 +27086,8 @@ SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, 
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
     move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
-    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history
+    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history,
+    held, compute_quota_unit_seconds
 FROM database_vms WHERE state = ANY(sqlc.arg(states)::text[]) ORDER BY database_id;
 
 -- name: InsertDatabaseVM :execrows
@@ -27185,6 +27218,14 @@ WHERE database_id = sqlc.arg(database_id) AND state <> 'deleting';
 
 -- name: SetDatabaseVMAlwaysOn :execrows
 UPDATE database_vms SET always_on = sqlc.arg(always_on)
+WHERE database_id = sqlc.arg(database_id) AND state <> 'deleting';
+
+-- name: SetDatabaseVMHeld :execrows
+UPDATE database_vms SET held = sqlc.arg(held)
+WHERE database_id = sqlc.arg(database_id) AND state <> 'deleting';
+
+-- name: SetDatabaseVMComputeQuota :execrows
+UPDATE database_vms SET compute_quota_unit_seconds = sqlc.narg(compute_quota_unit_seconds)
 WHERE database_id = sqlc.arg(database_id) AND state <> 'deleting';
 
 -- name: TransitionDatabaseVM :execrows
