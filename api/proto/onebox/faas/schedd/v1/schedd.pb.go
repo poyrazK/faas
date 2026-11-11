@@ -5938,8 +5938,14 @@ type DatabaseRuntime struct {
 	// for the UTC month (zero: none). Older schedulers report neither.
 	Held                    bool  `protobuf:"varint,24,opt,name=held,proto3" json:"held,omitempty"`
 	ComputeQuotaUnitSeconds int64 `protobuf:"varint,25,opt,name=compute_quota_unit_seconds,json=computeQuotaUnitSeconds,proto3" json:"compute_quota_unit_seconds,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// The standby node's vmmd target while the standby serves the database's
+	// read sessions (ADR-1027 amendment 2026-11-11): the database runs and
+	// its standby runs and holds every acknowledged commit. Its node is
+	// standby_node_id. Empty otherwise, and from older schedulers; read
+	// sessions then go to the primary.
+	ReplicaVmmdTarget string `protobuf:"bytes,26,opt,name=replica_vmmd_target,json=replicaVmmdTarget,proto3" json:"replica_vmmd_target,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *DatabaseRuntime) Reset() {
@@ -6145,6 +6151,13 @@ func (x *DatabaseRuntime) GetComputeQuotaUnitSeconds() int64 {
 		return x.ComputeQuotaUnitSeconds
 	}
 	return 0
+}
+
+func (x *DatabaseRuntime) GetReplicaVmmdTarget() string {
+	if x != nil {
+		return x.ReplicaVmmdTarget
+	}
+	return ""
 }
 
 type DatabaseMajorSpan struct {
@@ -7440,7 +7453,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x1eSetDatabaseComputeQuotaRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12,\n" +
-	"\x12quota_unit_seconds\x18\x02 \x01(\x03R\x10quotaUnitSeconds\"\xc0\b\n" +
+	"\x12quota_unit_seconds\x18\x02 \x01(\x03R\x10quotaUnitSeconds\"\xf0\b\n" +
 	"\x0fDatabaseRuntime\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12\x17\n" +
@@ -7474,7 +7487,8 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\rmajor_history\x18\x16 \x03(\v2(.onebox.faas.schedd.v1.DatabaseMajorSpanR\fmajorHistory\x124\n" +
 	"\x16major_history_complete\x18\x17 \x01(\bR\x14majorHistoryComplete\x12\x12\n" +
 	"\x04held\x18\x18 \x01(\bR\x04held\x12;\n" +
-	"\x1acompute_quota_unit_seconds\x18\x19 \x01(\x03R\x17computeQuotaUnitSeconds\"l\n" +
+	"\x1acompute_quota_unit_seconds\x18\x19 \x01(\x03R\x17computeQuotaUnitSeconds\x12.\n" +
+	"\x13replica_vmmd_target\x18\x1a \x01(\tR\x11replicaVmmdTarget\"l\n" +
 	"\x11DatabaseMajorSpan\x12%\n" +
 	"\x0epostgres_major\x18\x01 \x01(\x05R\rpostgresMajor\x120\n" +
 	"\x05until\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05until\"\x83\x01\n" +

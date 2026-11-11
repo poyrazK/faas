@@ -574,10 +574,14 @@ func (p *Provider) IssueCredentials(ctx context.Context, req managedpostgres.Cre
 		ProviderIdentityID: role, Username: role, Password: password, Database: p.cfg.Database, TLSMode: p.cfg.TLSMode,
 		// The pooled endpoint shares a few server connections among many
 		// clients, transaction by transaction; runtime credentials use it,
-		// migrations the direct one.
+		// migrations the direct one. Read-only credentials use the pooled
+		// read-only endpoint, served by the database's standby while it
+		// holds every acknowledged commit, else by the primary (ADR-1027
+		// amendment 2026-11-11).
 		Endpoints: []managedpostgres.Endpoint{
 			{Role: managedpostgres.EndpointDirect, Host: req.ProviderResourceID + "." + p.cfg.HostSuffix, Port: p.cfg.Port},
 			{Role: managedpostgres.EndpointPooled, Host: req.ProviderResourceID + "-pooler." + p.cfg.HostSuffix, Port: p.cfg.Port},
+			{Role: managedpostgres.EndpointReadOnly, Host: req.ProviderResourceID + "-ro-pooler." + p.cfg.HostSuffix, Port: p.cfg.Port},
 		},
 	}
 	return material, material.Validate()

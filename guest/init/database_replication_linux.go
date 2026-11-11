@@ -236,6 +236,9 @@ func (g *databaseGuest) promote() dbguest.Response {
 		resp.Error = dbguest.ErrCodeNotStandby
 		return resp
 	}
+	// Read sessions end first: the primary they would find after the
+	// promotion takes writes (database_replica_sessions.go).
+	g.replicas.end()
 	ctx, cancel := context.WithTimeout(context.Background(), databasePromoteTimeout+databaseSettingWait+5*time.Second)
 	defer cancel()
 	out, err := g.query(ctx, fmt.Sprintf("SELECT pg_catalog.pg_promote(true, %d)", int(databasePromoteTimeout/time.Second)))
@@ -247,6 +250,11 @@ func (g *databaseGuest) promote() dbguest.Response {
 	}
 	if err != nil {
 		g.log.Warn("database promotion failed", "err", err)
+		// Only a volume PostgreSQL still recovers serves reads again; one
+		// that promoted but failed after (or cannot say) takes no more.
+		if out, qerr := g.query(ctx, "SELECT pg_catalog.pg_is_in_recovery()"); qerr == nil && out == "t" {
+			g.replicas.resume()
+		}
 		resp := g.response()
 		resp.Error = dbguest.ErrCodePromoteFailed
 		return resp
