@@ -238,6 +238,12 @@ func BucketProblem(w http.ResponseWriter, err error) {
 		status, code, detail = 501, "object_storage_unsupported", "This object storage operation is not supported by the selected provider."
 	case errors.Is(err, objectstorage.ErrNotEmpty):
 		status, code, detail = 409, "bucket_not_empty", "Empty the bucket, including any versions, before deleting it."
+	case errors.Is(err, state.ErrObjectBucketTransition):
+		status, code, detail = 503, "object_storage_bucket_transition", "The bucket is finishing a versioning or capacity inventory; retry after the Retry-After delay."
+		w.Header().Set("Retry-After", strconv.Itoa(api.ObjectBucketTransitionRetryAfterSeconds))
+	case errors.Is(err, state.ErrObjectBucketBusy):
+		status, code, detail = 503, "object_storage_busy", "Other work on this object has not settled yet; retry after the Retry-After delay."
+		w.Header().Set("Retry-After", "1")
 	case errors.Is(err, state.ErrConflict), errors.Is(err, objectstorage.ErrConflict):
 		status, code, detail = 409, "object_storage_conflict", "Bucket is busy, conflicts with this request, or the bucket limit was reached."
 	}
@@ -346,6 +352,12 @@ func (s *Service) CreateBucket(w http.ResponseWriter, r *http.Request, acct stat
 	if !ok {
 		return
 	}
+	// A PR preview runs unreviewed code and is torn down with its pull
+	// request; a bucket on it would outlive it (ADR-20261105090226).
+	if state.IsPRPreviewApp(app) {
+		api.WriteProblem(w, api.ErrPRPreviewResourceUnsupported("object storage buckets"))
+		return
+	}
 	var req CreateBucketRequest
 	if !decodeBucketRequest(w, r, &req) {
 		return
@@ -388,10 +400,33 @@ func (s *Service) CreateBucket(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	b, err = s.ProvisionBucket(r.Context(), st, b)
 	if err != nil {
+		if pending, ok := s.provisioningRetry(r.Context(), st, b, err); ok {
+			httpkit.WriteJSON(w, http.StatusAccepted, viewBucket(pending))
+			return
+		}
 		BucketProblem(w, err)
 		return
 	}
 	httpkit.WriteJSON(w, 201, viewBucket(b))
+}
+
+// provisioningRetry reports a bucket whose first provider attempt failed
+// temporarily and is scheduled for retry. The bucket exists and will become
+// ready, so the request is accepted and the client waits for it, as for any
+// provisioning bucket. Answering 503 made `gregale add bucket` exit before
+// attaching its binding, although the bucket was ready 30 s later (Hunt 33
+// H33-22).
+func (s *Service) provisioningRetry(ctx context.Context, st state.ObjectBucketStore, b state.ObjectBucket, cause error) (state.ObjectBucket, bool) {
+	if code, _ := ObjectRetryPolicy(cause, b.AttemptCount); code != "temporary" {
+		return b, false
+	}
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	current, err := st.GetObjectBucket(readCtx, b.AccountID, b.AppID, b.ID)
+	if err != nil || current.State != "provisioning" {
+		return b, false
+	}
+	return current, true
 }
 
 func (s *Service) reserveBucket(ctx context.Context, st state.ObjectBucketStore, account, app string, req CreateBucketRequest) (state.ObjectBucket, error) {

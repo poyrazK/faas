@@ -972,6 +972,11 @@ jobs:
           # while the one just built runs the same code, so the runtime bases
           # keep their bytes and ADR-510 keeps restoring snapshots.
           REUSE_GUEST_INIT: "true"
+          # Release train (ADR-20261105150000 amendment): guest-init code that
+          # changed only through pkg/api or pkg/productcap waits up to 72 h
+          # unless a commit carries "Guest-Init-Ship: now"; any other change
+          # to its closure ships. 0 turns it off.
+          GUEST_INIT_HOLD_HOURS: "72"
           # The production manifest is not a repository variable or the
           # illustrative manifest
           # in deploy/manifest/examples. The production manifest is
@@ -1112,6 +1117,7 @@ jobs:
             ${{ runner.temp }}/gregale-release/release-manifest.json
             ${{ runner.temp }}/gregale-release/production-manifest.yaml
             ${{ runner.temp }}/gregale-release/runtime-bases.env
+            ${{ runner.temp }}/gregale-release/guest-init.json
             ${{ runner.temp }}/gregale-release/SHA256SUMS
             ${{ runner.temp }}/gregale-release/controller-tools.tar.gz
             ${{ runner.temp }}/gregale-release/controller-tools.cosign.bundle

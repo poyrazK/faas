@@ -27,3 +27,22 @@ func TestHTTPLogRowMarksMinuteWindow(t *testing.T) {
 		}
 	}
 }
+
+// Hunt 33 H33-6: latency is a pointer on the wire, and the row printed its
+// address (latency=44358373218936ms) instead of the value.
+func TestHTTPLogRowPrintsLatencyValue(t *testing.T) {
+	latency := 42
+	for _, tc := range []struct {
+		event api.LogQueryEvent
+		want  string
+	}{
+		{api.LogQueryEvent{Timestamp: "2026-11-11T10:00:01Z", Status: 200, Method: "GET", Route: "GET /", ID: "r1", LatencyMS: &latency}, " latency=42ms "},
+		{api.LogQueryEvent{Timestamp: "2026-11-11T10:00:01Z", Status: 200, Method: "GET", Route: "GET /", ID: "r2"}, " latency=0ms "},
+	} {
+		var out bytes.Buffer
+		main.RenderHTTPLogQueryEvent(&out, tc.event)
+		if !strings.Contains(out.String(), tc.want) {
+			t.Errorf("row %q does not contain %q", out.String(), tc.want)
+		}
+	}
+}

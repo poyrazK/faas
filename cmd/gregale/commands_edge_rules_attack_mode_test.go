@@ -66,7 +66,8 @@ func TestRenderEdgeAttackMode(t *testing.T) {
 	until := now.Add(90 * time.Minute)
 	var buf bytes.Buffer
 	main.RenderEdgeAttackMode(&buf, "shop", api.EdgeAttackModeStatus{Active: true, ExpiresAt: &until}, now)
-	for _, want := range []string{"Attack mode is ON for shop until", "(1h30m0s left)", "403 challenge_required", "attack-mode off --app shop"} {
+	// Hunt 33 H33-21: UTC, like activity and audit, whatever the local zone.
+	for _, want := range []string{"Attack mode is ON for shop until 2026-10-22 13:30 UTC", "(1h30m0s left)", "403 challenge_required", "attack-mode off --app shop"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("on output missing %q:\n%s", want, buf.String())
 		}

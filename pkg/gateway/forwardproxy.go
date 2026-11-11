@@ -70,6 +70,16 @@ func WithSyntheticInvocation(ctx context.Context) context.Context {
 	return context.WithValue(ctx, syntheticInvocationContextKey{}, true)
 }
 
+// isPlatformDeliveryHeader reports a header only the platform may set on a
+// request it delivers: operation headers, event delivery metadata
+// (x-gregale-event-*) and verified inbound webhook metadata
+// (x-gregale-webhook-*). A public request carrying one has it dropped. The
+// webhook prefix was not dropped, so any caller could send
+// `X-Gregale-Webhook-Provider: stripe` to an app (production-us 2026-11-07).
+func isPlatformDeliveryHeader(name string) bool {
+	return api.IsReservedOperationHeader(name) || api.HasLowerPrefix(name, "x-gregale-event-") || api.HasLowerPrefix(name, "x-gregale-webhook-")
+}
+
 func isSyntheticInvocation(ctx context.Context) bool {
 	v, _ := ctx.Value(syntheticInvocationContextKey{}).(bool)
 	return v

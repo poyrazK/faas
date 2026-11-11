@@ -761,12 +761,18 @@ const (
 
 // A scan is reused only while the scanner and vulnerability database that
 // made it are still the installed ones (ADR-20261028102540). imaged reads that
-// identity with `grype version` and `grype db status` and keeps it this long;
-// every real scan also refreshes it.
+// identity with `grype version` and `grype db status` and keeps it
+// ScannerIdentityCacheTTL; every real scan also refreshes it. While a stat of
+// the Grype binary and of every file under GRYPE_DB_CACHE_DIR (at most
+// ScannerInstallStampMaxEntries entries) is unchanged it keeps the identity up
+// to ScannerIdentityUnchangedMaxAge: the probe took 3-10 s, and deploys are
+// rarer than one a minute, so every deploy paid it.
 const (
-	ScannerIdentityCacheTTL       = time.Minute
-	ScannerIdentityProbeTimeout   = 30 * time.Second
-	ScannerIdentityMaxOutputBytes = 64 << 10
+	ScannerIdentityCacheTTL        = time.Minute
+	ScannerIdentityUnchangedMaxAge = 6 * time.Hour
+	ScannerInstallStampMaxEntries  = 256
+	ScannerIdentityProbeTimeout    = 30 * time.Second
+	ScannerIdentityMaxOutputBytes  = 64 << 10
 )
 
 // Reused scans no longer run Grype often enough for its own update check to
@@ -2949,6 +2955,20 @@ const MaxObjectCopyDateHeaderBytes = 128
 // including exact-version protection reads. Further batches use durable retries.
 const ObjectOwnedCleanupBatchSize = 100
 
+// ObjectOwnedCleanupProtectedPages bounds how many version pages one cleanup
+// pass reads past versions it must keep (COMPLIANCE retention, or protection
+// the pass may not release) before it waits for the earliest of them to end
+// (ADR-20261111123000 decision 8). A pass that deleted something stops after
+// its page and continues on the next retry. ObjectOwnedCleanupProtectedRetryMin
+// and ObjectOwnedCleanupProtectedRetryMax bound that wait: protection without a
+// date is checked again after the minimum, and a far date is checked again
+// after the maximum in case the provider ended it early.
+const (
+	ObjectOwnedCleanupProtectedPages    = 3
+	ObjectOwnedCleanupProtectedRetryMin = time.Hour
+	ObjectOwnedCleanupProtectedRetryMax = 30 * 24 * time.Hour
+)
+
 // ObjectOwnedCleanupBucketBatch bounds the account grace sweep, including
 // buckets attached to app tombstones.
 const ObjectOwnedCleanupBucketBatch = 20
@@ -3072,6 +3092,10 @@ const (
 	// deletes cannot starve inventory (ADR-20261025115958).
 	ObjectInventoryDeletionDrain = 10 * time.Second
 	ObjectInventoryDeletionYield = ObjectInventoryDeletionDrain + ObjectCapacityInventoryTimeout
+	// ObjectBucketTransitionRetryAfterSeconds is the Retry-After a deletion
+	// refused by a running versioning or capacity inventory carries: about
+	// half of one inventory scan (ObjectCapacityInventoryTimeout).
+	ObjectBucketTransitionRetryAfterSeconds = 30
 	// A bucket's listing resumes across attempts from its last listed key
 	// (ADR-20261030100835). While it advanced within
 	// ObjectInventoryScanProgressWindow, its bucket stays fresh on an
