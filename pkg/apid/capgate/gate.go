@@ -25,6 +25,7 @@ import (
 // and metrics are platform plumbing. They are never capability-gated.
 var operatorRoutes = []string{
 	"/v1/admin",
+	"/dashboard/admin/support",
 	"/v1/internal",
 	"/v1/compute-nodes",
 	// Admin-only and schedd-to-gateway routes that live beside customer ones.

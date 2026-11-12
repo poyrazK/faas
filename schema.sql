@@ -46116,6 +46116,7 @@ CREATE TABLE public.managed_postgres_plan_excess_notices (
     recorded_at timestamp with time zone NOT NULL,
     mail_intent_id uuid,
     delete_at timestamp with time zone,
+    reminder_mail_intent_id uuid,
     CONSTRAINT managed_postgres_plan_excess_notices_reason_check CHECK ((reason = ANY (ARRAY['database_limit'::text, 'service_class'::text]))),
     CONSTRAINT managed_postgres_plan_excess_notices_recorded_at_check CHECK (isfinite(recorded_at))
 );

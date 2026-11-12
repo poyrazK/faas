@@ -10828,7 +10828,8 @@
       "delete_at",
       "mail_intent_id",
       "reason",
-      "recorded_at"
+      "recorded_at",
+      "reminder_mail_intent_id"
     ],
     "kind": "operational"
   },
