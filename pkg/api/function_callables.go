@@ -50,6 +50,14 @@ const (
 	FunctionInvokeAsync  = "async"
 )
 
+// FunctionOnCompleteHeader on a send names the function that receives the
+// completion: a name in the caller's function_callables, or
+// FunctionOnCompleteSelf for the caller itself.
+const (
+	FunctionOnCompleteHeader = "X-Gregale-On-Complete"
+	FunctionOnCompleteSelf   = "self"
+)
+
 // FunctionInputSchemaMaxBytes caps a function's input schema.
 const FunctionInputSchemaMaxBytes = 64 << 10
 

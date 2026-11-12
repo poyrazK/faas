@@ -60,3 +60,32 @@ def test_an_uncallable_name_says_what_is_callable():
     fns = Functions({"users": "shop-users"}, env={})
     with pytest.raises(AttributeError, match="callable: users"):
         _ = fns.billing
+
+
+def test_send_names_the_completion_and_wait_long_polls():
+    seen, transport = _recorder([
+        httpx.Response(202, json={"id": "inv-2"}),
+        httpx.Response(200, json={"id": "inv-2", "state": "dispatching", "done": False, "attempts": 1}),
+        httpx.Response(200, json={"id": "inv-2", "state": "completed", "done": True, "attempts": 1, "result": {"sent": True}}),
+    ])
+    fns = Functions({"mailer": "shop-mailer"}, env={}, sync_transport=transport)
+    sent = fns.mailer.send_sync({"to": "a@example.com"}, on_complete="self")
+    assert seen[0].headers["x-gregale-on-complete"] == "self"
+    assert sent.wait_sync(timeout=5) == {"sent": True}
+    assert str(seen[1].url).startswith("http://api.svc.gregale:10081/v1/invocations/inv-2?wait=")
+
+
+def test_wait_raises_for_a_failed_invocation():
+    _, transport = _recorder([
+        httpx.Response(202, json={"id": "inv-3"}),
+        httpx.Response(200, json={"id": "inv-3", "state": "failed", "done": True, "attempts": 3, "error": "boom"}),
+    ])
+    fns = Functions({"mailer": "shop-mailer"}, env={}, async_transport=transport)
+
+    async def run():
+        sent = await fns.mailer.send({})
+        await sent.wait()
+
+    with pytest.raises(FunctionCallError) as err:
+        asyncio.run(run())
+    assert err.value.code == "function_invocation_failed"
