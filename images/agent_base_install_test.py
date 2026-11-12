@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent / "agent-base" / "finish-install.sh"
+BROWSER_TEST = Path(__file__).resolve().parent / "agent-base" / "gregale-browser.test.mjs"
 CATALOG = Path(__file__).resolve().parent.parent / "pkg" / "agentpresets" / "presets.json"
 
 
@@ -40,15 +41,19 @@ class FinishInstallTest(unittest.TestCase):
         (m / "@anthropic-ai" / "claude-code" / "bin").mkdir(parents=True)
         os.link(m / "@anthropic-ai" / "claude-code-linux-x64-musl" / "claude", m / "@anthropic-ai" / "claude-code" / "bin" / "claude.exe")
         fake_binary(m / "@openai" / "codex" / "bin" / "codex.js", presets["codex"]["version"], "codex")
+        fake_binary(m / "@playwright" / "mcp" / "cli.js", "0.0.83", "playwright-mcp")
+        self.browser = self.root / "gregale-browser.mjs"
+        self.browser.write_text("// launcher\n")
         (m / ".bin").mkdir()
         for name, target in (("codex", "../@openai/codex/bin/codex.js"),
                              ("opencode", "../opencode-ai/bin/opencode.exe"),
-                             ("claude", "../@anthropic-ai/claude-code/bin/claude.exe")):
+                             ("claude", "../@anthropic-ai/claude-code/bin/claude.exe"),
+                             ("playwright-mcp", "../@playwright/mcp/cli.js")):
             os.symlink(target, m / ".bin" / name)
 
     def run_script(self) -> subprocess.CompletedProcess:
         env = dict(os.environ, AGENT_BASE_MODULES=str(self.modules), AGENT_BASE_BINDIR=str(self.bindir),
-                   AGENT_BASE_CATALOG=str(CATALOG))
+                   AGENT_BASE_CATALOG=str(CATALOG), AGENT_BASE_BROWSER=str(self.browser))
         return subprocess.run(["sh", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=60)
 
     def test_links_prunes_and_checks_versions(self) -> None:
@@ -56,8 +61,9 @@ class FinishInstallTest(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         left = sorted(p.name for p in self.modules.glob("opencode-linux-*"))
         self.assertEqual(left, ["opencode-linux-x64-musl"])
-        for name in ("codex", "opencode", "claude"):
+        for name in ("codex", "opencode", "claude", "playwright-mcp", "gregale-browser"):
             self.assertTrue((self.bindir / name).is_symlink(), name)
+        self.assertEqual(os.readlink(self.bindir / "gregale-browser"), str(self.browser))
         self.assertEqual(out.stdout.count(" ok"), 3, out.stdout)
 
     def test_refuses_an_opencode_binary_from_outside_the_lock(self) -> None:
@@ -84,6 +90,19 @@ class FinishInstallTest(unittest.TestCase):
         out = self.run_script()
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("want 0.163.0", out.stderr)
+
+    def test_refuses_a_missing_browser_launcher(self) -> None:
+        self.browser.unlink()
+        out = self.run_script()
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("gregale-browser.mjs is missing", out.stderr)
+
+
+class BrowserRelayTest(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_relay(self) -> None:
+        out = subprocess.run(["node", "--test", str(BROWSER_TEST)], capture_output=True, text=True, timeout=120)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
 
 
 if __name__ == "__main__":
