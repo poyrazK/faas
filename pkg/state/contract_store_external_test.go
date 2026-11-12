@@ -102,6 +102,7 @@ type contractTestStore interface {
 	state.ObjectCapacityStore
 	state.ObjectInventoryBacklogStore
 	state.ObjectInventoryQueueStore
+	state.ObjectInventoryVerificationStore
 	state.ObjectInventoryScanStore
 	state.ObjectMultipartCompletionStore
 	state.ObjectMultipartTransferStore

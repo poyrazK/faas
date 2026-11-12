@@ -22260,6 +22260,49 @@ $$;
 
 
 --
+-- Name: object_bucket_activity_stamp(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_bucket_activity_stamp() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+  PERFORM object_bucket_mark_mutated(OLD.bucket_id);
+  RETURN OLD;
+ END IF;
+ PERFORM object_bucket_mark_mutated(NEW.bucket_id);
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: object_bucket_mark_mutated(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_bucket_mark_mutated(target uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+ observed timestamptz;
+BEGIN
+ IF target IS NULL THEN
+  RETURN;
+ END IF;
+ SELECT observed_at INTO observed FROM object_storage_bucket_usage WHERE bucket_id=target;
+ -- A plain UPDATE whose WHERE fails takes no row lock, so a request within
+ -- the granularity of the last stamp reads the row and moves on.
+ UPDATE object_bucket_activity a SET mutated_at=now(),
+  active_since=CASE WHEN a.mutated_at < COALESCE(observed,'-infinity'::timestamptz) - interval '30 seconds' THEN now() ELSE a.active_since END
+ WHERE a.bucket_id=target AND a.mutated_at < now() - interval '30 seconds';
+ IF NOT FOUND THEN
+  INSERT INTO object_bucket_activity(bucket_id,mutated_at,active_since) VALUES(target,now(),now())
+  ON CONFLICT (bucket_id) DO NOTHING;
+ END IF;
+END $$;
+
+
+--
 -- Name: object_compute_trigger_ownership_valid(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -22309,6 +22352,88 @@ BEGIN
  RETURN r ? 'retain_until_date';
 EXCEPTION WHEN invalid_datetime_format OR datetime_field_overflow OR numeric_value_out_of_range THEN RETURN false;
 END $_$;
+
+
+--
+-- Name: object_inventory_quiet_mode(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_inventory_quiet_mode() RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+SELECT COALESCE((
+  SELECT e.effective_value #>> '{}' FROM runtime_config_entries e
+  WHERE e.config_key='object_inventory_quiet' AND e.scope='global' AND e.scope_id='' AND e.status='applied'
+    AND jsonb_typeof(e.effective_value)='string' AND e.effective_value #>> '{}' IN ('off','shadow','on')
+), 'off')
+$$;
+
+
+--
+-- Name: object_inventory_schedule_activity(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_inventory_schedule_activity() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP = 'DELETE' THEN
+  UPDATE object_inventory_schedule SET mutated_at = '-infinity' WHERE bucket_id = OLD.bucket_id;
+  RETURN OLD;
+ END IF;
+ UPDATE object_inventory_schedule SET mutated_at = NEW.mutated_at WHERE bucket_id = NEW.bucket_id;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: object_inventory_schedule_bucket(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_inventory_schedule_bucket() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.state = 'deleted' THEN
+  DELETE FROM object_inventory_schedule WHERE bucket_id = NEW.id;
+  RETURN NEW;
+ END IF;
+ -- A new bucket has no usage or activity yet. A bucket that leaves deleted
+ -- is taken as mutated now, like the fill below.
+ INSERT INTO object_inventory_schedule (bucket_id, mutated_at)
+ VALUES (NEW.id, CASE WHEN TG_OP = 'INSERT' THEN '-infinity'::timestamptz ELSE now() END)
+ ON CONFLICT (bucket_id) DO NOTHING;
+ IF FOUND AND TG_OP = 'UPDATE' THEN
+  UPDATE object_inventory_schedule s SET attempt_at = COALESCE(u.attempt_at, '-infinity'),
+   observed_at = COALESCE(u.observed_at, '-infinity'),
+   quiet_after = CASE WHEN u.observed_at IS NOT NULL AND u.inventory_scope = 'current'
+    THEN u.observed_at - interval '30 seconds' ELSE '-infinity' END
+  FROM object_storage_bucket_usage u WHERE u.bucket_id = NEW.id AND s.bucket_id = NEW.id;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: object_inventory_schedule_usage(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_inventory_schedule_usage() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP = 'DELETE' THEN
+  UPDATE object_inventory_schedule SET attempt_at = '-infinity', observed_at = '-infinity', quiet_after = '-infinity'
+  WHERE bucket_id = OLD.bucket_id;
+  RETURN OLD;
+ END IF;
+ UPDATE object_inventory_schedule SET attempt_at = COALESCE(NEW.attempt_at, '-infinity'),
+  observed_at = COALESCE(NEW.observed_at, '-infinity'),
+  quiet_after = CASE WHEN NEW.observed_at IS NOT NULL AND NEW.inventory_scope = 'current'
+   THEN NEW.observed_at - interval '30 seconds' ELSE '-infinity' END
+ WHERE bucket_id = NEW.bucket_id;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -48152,6 +48277,18 @@ CREATE TABLE public.oauth_links (
 
 
 --
+-- Name: object_bucket_activity; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_activity (
+    bucket_id uuid NOT NULL,
+    mutated_at timestamp with time zone NOT NULL,
+    active_since timestamp with time zone NOT NULL,
+    CONSTRAINT object_bucket_activity_check CHECK ((active_since <= mutated_at))
+);
+
+
+--
 -- Name: object_bucket_cors; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -48431,6 +48568,20 @@ CREATE TABLE public.object_deletions (
     CONSTRAINT object_deletions_target_identity CHECK ((((selector = ANY (ARRAY[''::text, 'null'::text])) AND (target_provider_version_id = ''::text)) OR ((selector <> ALL (ARRAY[''::text, 'null'::text])) AND (target_provider_version_id <> ALL (ARRAY[''::text, 'null'::text])) AND (provider_status = ''::text) AND (baseline = '[]'::jsonb) AND (reserved_bytes = 0)))),
     CONSTRAINT object_deletions_target_provider_version_id_check CHECK ((octet_length(target_provider_version_id) <= 1024)),
     CONSTRAINT object_deletions_version_id_check CHECK (((version_id = ''::text) OR (version_id = 'null'::text) OR (version_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text)))
+);
+
+
+--
+-- Name: object_inventory_schedule; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_inventory_schedule (
+    bucket_id uuid NOT NULL,
+    attempt_at timestamp with time zone DEFAULT '-infinity'::timestamp with time zone NOT NULL,
+    observed_at timestamp with time zone DEFAULT '-infinity'::timestamp with time zone NOT NULL,
+    quiet_after timestamp with time zone DEFAULT '-infinity'::timestamp with time zone NOT NULL,
+    mutated_at timestamp with time zone DEFAULT '-infinity'::timestamp with time zone NOT NULL,
+    CONSTRAINT object_inventory_schedule_check CHECK ((quiet_after <= observed_at))
 );
 
 
@@ -67894,6 +68045,14 @@ ALTER TABLE ONLY public.oauth_links
 
 
 --
+-- Name: object_bucket_activity object_bucket_activity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_activity
+    ADD CONSTRAINT object_bucket_activity_pkey PRIMARY KEY (bucket_id);
+
+
+--
 -- Name: object_bucket_cors object_bucket_cors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -68003,6 +68162,14 @@ ALTER TABLE ONLY public.object_buckets
 
 ALTER TABLE ONLY public.object_deletions
     ADD CONSTRAINT object_deletions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_inventory_schedule object_inventory_schedule_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_inventory_schedule
+    ADD CONSTRAINT object_inventory_schedule_pkey PRIMARY KEY (bucket_id);
 
 
 --
@@ -80060,6 +80227,27 @@ CREATE INDEX object_deletions_due ON public.object_deletions USING btree (retry_
 
 
 --
+-- Name: object_inventory_schedule_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_inventory_schedule_active ON public.object_inventory_schedule USING btree (attempt_at, bucket_id) WHERE (mutated_at >= quiet_after);
+
+
+--
+-- Name: object_inventory_schedule_attempt; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_inventory_schedule_attempt ON public.object_inventory_schedule USING btree (attempt_at, bucket_id);
+
+
+--
+-- Name: object_inventory_schedule_quiet; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_inventory_schedule_quiet ON public.object_inventory_schedule USING btree (observed_at, bucket_id) WHERE (mutated_at < quiet_after);
+
+
+--
 -- Name: object_lifecycle_active_scan; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -80141,6 +80329,13 @@ CREATE INDEX object_storage_billing_progress_account_period_idx ON public.object
 --
 
 CREATE INDEX object_storage_gateway_storage_period_idx ON public.object_storage_gateway_storage USING btree (period_start, bucket_id);
+
+
+--
+-- Name: object_storage_inventory_scans_open; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_inventory_scans_open ON public.object_storage_inventory_scans USING btree (started_at) WHERE ((pages > 0) AND (NOT complete));
 
 
 --
@@ -88726,6 +88921,41 @@ CREATE TRIGGER object_bucket_account_cleanup_fence BEFORE INSERT ON public.objec
 
 
 --
+-- Name: object_bucket_mutations object_bucket_activity_stamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_activity_stamp AFTER INSERT OR DELETE ON public.object_bucket_mutations FOR EACH ROW EXECUTE FUNCTION public.object_bucket_activity_stamp();
+
+
+--
+-- Name: object_bucket_object_lock object_bucket_activity_stamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_activity_stamp AFTER INSERT OR UPDATE ON public.object_bucket_object_lock FOR EACH ROW EXECUTE FUNCTION public.object_bucket_activity_stamp();
+
+
+--
+-- Name: object_bucket_versioning object_bucket_activity_stamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_activity_stamp AFTER INSERT OR UPDATE ON public.object_bucket_versioning FOR EACH ROW EXECUTE FUNCTION public.object_bucket_activity_stamp();
+
+
+--
+-- Name: object_deletions object_bucket_activity_stamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_activity_stamp AFTER INSERT OR UPDATE OF state ON public.object_deletions FOR EACH ROW EXECUTE FUNCTION public.object_bucket_activity_stamp();
+
+
+--
+-- Name: object_storage_capacity_reconciliations object_bucket_activity_stamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_activity_stamp AFTER INSERT OR UPDATE OF state ON public.object_storage_capacity_reconciliations FOR EACH ROW EXECUTE FUNCTION public.object_bucket_activity_stamp();
+
+
+--
 -- Name: object_buckets object_bucket_capacity_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -88940,6 +89170,34 @@ CREATE TRIGGER object_grant_write_key_fence BEFORE INSERT OR UPDATE ON public.ob
 --
 
 CREATE TRIGGER object_immutable_deletion_fence BEFORE INSERT ON public.object_deletions FOR EACH ROW EXECUTE FUNCTION public.fence_immutable_object_deletion();
+
+
+--
+-- Name: object_bucket_activity object_inventory_schedule_copy; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_inventory_schedule_copy AFTER INSERT OR DELETE OR UPDATE OF mutated_at ON public.object_bucket_activity FOR EACH ROW EXECUTE FUNCTION public.object_inventory_schedule_activity();
+
+
+--
+-- Name: object_storage_bucket_usage object_inventory_schedule_copy; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_inventory_schedule_copy AFTER INSERT OR DELETE OR UPDATE OF attempt_at, observed_at, inventory_scope ON public.object_storage_bucket_usage FOR EACH ROW EXECUTE FUNCTION public.object_inventory_schedule_usage();
+
+
+--
+-- Name: object_buckets object_inventory_schedule_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_inventory_schedule_insert AFTER INSERT ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.object_inventory_schedule_bucket();
+
+
+--
+-- Name: object_buckets object_inventory_schedule_state; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_inventory_schedule_state AFTER UPDATE OF state ON public.object_buckets FOR EACH ROW WHEN (((old.state = 'deleted'::text) IS DISTINCT FROM (new.state = 'deleted'::text))) EXECUTE FUNCTION public.object_inventory_schedule_bucket();
 
 
 --
@@ -101187,6 +101445,14 @@ ALTER TABLE ONLY public.object_deletions
 
 ALTER TABLE ONLY public.object_deletions
     ADD CONSTRAINT object_deletions_lifecycle_scan_id_fkey FOREIGN KEY (lifecycle_scan_id) REFERENCES public.object_lifecycle_scans(id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: object_inventory_schedule object_inventory_schedule_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_inventory_schedule
+    ADD CONSTRAINT object_inventory_schedule_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
 
 
 --

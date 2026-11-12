@@ -117,6 +117,7 @@ var runtimeConfigCatalog = []runtimeConfigDefinition{
 	{Key: runtimeconfig.KeyCPUAdmission, Label: "CPU admission (retired)", Description: "Retired (ADR-20261109172421): CPU never refuses work, so no daemon reads this; the entry stays read-only for the value already stored. Was: Whether schedd refuses work for the per-node vCPU and CPU budgets (ADR-20261109172421). enforce refuses as before; observe admits on memory alone, prefers nodes with CPU room, and counts what the CPU gates would have refused in schedd_cpu_admission_would_refuse_total.", Category: "Retired", Kind: "enum", Default: json.RawMessage(`"enforce"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: false, Mutable: false, Validate: validateCPUAdmission},
 	{Key: runtimeconfig.KeyCPUSizeApps, Label: "Apps whose CPU follows instance size (retired)", Description: "Retired (ADR-20261109172421): every app instance's CPU follows its size, so no daemon reads this; the entry stays read-only for the value already stored. Was: Comma-separated app IDs, or * for every app, whose CPU follows instance size instead of plan (ADR-20261109172421): one guest vCPU per GB of instance RAM, a cpu.weight of one per 16 MB, no CPU quota unless the app chose 250 or 500 millicores, and a booking of its RAM's CPU baseline. Empty keeps every app on its plan; it takes precedence over guest_vcpu_from_cpu_apps. A listed app whose vCPU count changes cold-boots once. Before listing apps: every node runs a vmmd that accepts cpu_weight and cpu_uncapped, and cpu_admission is observe (the durable guard still books the plan's vCPUs); turn snapshot_refresh on before listing many.", Category: "Retired", Kind: "string", Default: json.RawMessage(`""`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: false, Mutable: false, Validate: validateGuestVCPUApps},
 	{Key: runtimeconfig.KeySnapshotRefresh, Label: "Snapshot refresh after a release", Description: "After a node takes a release, find the snapshots of recently active apps that the release made stale (ADR-20261106214916). off does nothing; shadow logs and counts them without booting anything; on boots each one on its node, captures a fresh snapshot and parks it, unbilled.", Category: "Snapshots", Kind: "enum", Default: json.RawMessage(`"off"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateSnapshotRefresh},
+	{Key: runtimeconfig.KeyObjectInventoryQuiet, Label: "Quiet bucket inventory", Description: "How long a bucket's inventory stays fresh when nothing was written to it since its last listing, under gateway-safety accounting (ADR-20261110151628). off holds every bucket to 900 s; shadow still does, but classifies quiet buckets and counts drift when one's listing changes (faas_object_storage_inventory_drift_total); on keeps a quiet bucket's inventory for 24 h and lists it once a day. Move to on only after a shadow week with no drift.", Category: "Object storage", Kind: "enum", Default: json.RawMessage(`"off"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateObjectInventoryQuiet},
 	{Key: runtimeconfig.KeySnapshotRefreshWindowHours, Label: "Snapshot refresh window (hours)", Description: "An app that parked on a node within this many hours is a snapshot refresh candidate on that node (ADR-20261106214916).", Category: "Snapshots", Kind: "integer", Default: json.RawMessage("168"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateIntSetting(api.SnapshotRefreshWindowHoursMin, api.SnapshotRefreshWindowHoursMax, api.ValidSnapshotRefreshWindowHours)},
 	{Key: runtimeConfigS3, Label: "S3 object storage", Description: "Allow bucket provisioning and new signed URLs. Disabling preserves metadata and cleanup; existing URLs expire normally. Provider configuration is still required.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigTenantSurfaces, Label: "Tenant surfaces", Description: "Expose the tenant surface and certificate lifecycle API.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
@@ -620,6 +621,17 @@ func validateRequestConcurrencySetting(value json.RawMessage) error {
 }
 
 // validateSnapshotRefresh checks a `snapshot_refresh` mode (ADR-20261106214916).
+func validateObjectInventoryQuiet(value json.RawMessage) error {
+	mode, err := runtimeconfig.String(value)
+	if err != nil {
+		return err
+	}
+	if !api.ValidObjectInventoryQuiet(mode) {
+		return fmt.Errorf("%q is not off, shadow or on", mode)
+	}
+	return nil
+}
+
 func validateSnapshotRefresh(value json.RawMessage) error {
 	mode, err := runtimeconfig.String(value)
 	if err != nil {
