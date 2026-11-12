@@ -2,7 +2,7 @@ package faas
 
 import (
 	"context"
-	"github.com/poyrazK/faas/sdk/go/internal/api"
+	"github.com/gregale-dev/gregale-go/internal/api"
 )
 
 // EnvironmentRouteBudgetReceipt describes original policy intent only.

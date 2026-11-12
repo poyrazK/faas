@@ -20,7 +20,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	faas "github.com/gregale-dev/gregale-go"
 )
 
 const (

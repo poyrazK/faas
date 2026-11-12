@@ -75,12 +75,18 @@ func chooseRegressionComparison(deps []sqlc.ListDeploymentsForCompareRow, now ti
 	if cur.first.After(out.curStart) {
 		out.curStart = cur.first
 	}
-	if len(serving) > 1 {
-		// Served side by side: compare the same stretch of time.
+	if len(serving) > 1 && serving[1].last.After(cur.first) {
+		// Served side by side (a canary beside its stable deployment, a
+		// traffic split): compare the same stretch of time. Only traffic
+		// that overlaps counts: a deployment replaced minutes ago also
+		// answered within the serving window, but it has no rows in the
+		// new one's window, and comparing it there found no baseline for
+		// half an hour after every ordinary rollout.
 		out.prev = serving[1].row
 		out.prevStart, out.prevEnd = out.curStart, out.curEnd
 		return out, true
 	}
+	others = append(others, serving[1:]...)
 	if len(others) == 0 {
 		return debugRegressionComparison{}, false
 	}
