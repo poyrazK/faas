@@ -174,7 +174,10 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 		access = append(access, managedpostgres.CredentialAuth)
 	}
 	return managedpostgres.Capabilities{
-		PostgresMajors:               []int{14, 15, 16, 17, 18},
+		// PostgreSQL 14 reached upstream end of life in November 2026 and is
+		// not offered at all (owner, 2026-11-12); Neon has no in-place major
+		// upgrade.
+		PostgresMajors:               []int{15, 16, 17, 18},
 		ServiceClasses:               []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction},
 		Availability:                 []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
 		CredentialAccess:             access,
@@ -192,9 +195,6 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 			managedpostgres.MeterHistoryByteSeconds,
 			managedpostgres.MeterEgressBytes,
 		},
-		// PostgreSQL 14 reaches upstream end of life in November 2026, and
-		// Neon has no in-place major upgrade.
-		RetiringMajors: []int{14},
 	}
 }
 

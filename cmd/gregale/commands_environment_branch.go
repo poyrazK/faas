@@ -44,6 +44,10 @@ func cmdProjectsEnvironmentBranch(args []string) int {
 		}
 		return renderProjectEnvironmentBranches(branches)
 	}
+	if len(positional) != 2 {
+		PrintUsage(os.Stderr, environmentBranchUsage, "projects environments")
+		return 1
+	}
 	if !api.ValidProjectEnvironmentSlug(positional[1]) || positional[1] == *from {
 		return printErr("Invalid environment", fmt.Errorf("the branch slug must be a valid environment slug that differs from --from"))
 	}
@@ -98,6 +102,9 @@ func renderProjectEnvironmentBranch(environment api.ProjectEnvironmentResponse) 
 		}
 		for _, w := range b.Workloads {
 			_, _ = fmt.Fprintf(osStdout, "  %s: deployment %s from %s (starts on first request)\n", w.Workload, w.DeploymentID, w.SourceDeployment)
+			if w.URL != "" {
+				_, _ = fmt.Fprintf(osStdout, "    %s\n", w.URL)
+			}
 		}
 	}
 	return 0

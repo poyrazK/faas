@@ -20,3 +20,8 @@ func (r *server) CreateProjectEnvironmentBranch(w http.ResponseWriter, req *http
 func (r *server) ReconcileEnvironmentBranchData(ctx context.Context, now time.Time) error {
 	return r.reconcileEnvironmentBranchData(ctx, r.store.(state.ProjectEnvironmentBranchDataStore), now)
 }
+
+// EnvironmentBranchDatabaseTTL is the TTL a branch's database copy carries.
+func EnvironmentBranchDatabaseTTL(branch state.ProjectEnvironmentBranch, point time.Time) time.Duration {
+	return environmentBranchDatabaseTTL(branch, point)
+}

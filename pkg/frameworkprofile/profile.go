@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -163,7 +164,8 @@ func Analyze(fsys fs.FS) (Profile, error) {
 			profile.StartCommand = web
 		}
 	}
-	if framework != markers.FrameworkDocker {
+	// An unknown tree may be a home directory, not a project: do not scan it.
+	if framework != markers.FrameworkDocker && framework != markers.FrameworkUnknown {
 		if health := inferHealthPath(fsys); health != "" {
 			profile.HealthPath = health
 		}
@@ -316,20 +318,7 @@ func pythonDependencyNamed(content, name string) bool {
 func inferGo(fsys fs.FS, profile *Profile) {
 	profile.Framework = "go-net-http"
 	profile.PackageManager = "go"
-	var files []string
-	_ = fs.WalkDir(fsys, ".", func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() || len(files) >= 128 {
-			return nil
-		}
-		if strings.HasSuffix(path, ".go") {
-			files = append(files, path)
-		}
-		return nil
-	})
-	sort.Strings(files)
+	files := collectSourceFiles(fsys, 128, func(name string) bool { return strings.HasSuffix(name, ".go") })
 	for _, path := range files {
 		body := readFile(fsys, path)
 		if strings.Contains(body, "github.com/gin-gonic/gin") {
@@ -435,22 +424,52 @@ func inferHealthPath(fsys fs.FS) string {
 }
 
 func sourceCodeFiles(fsys fs.FS) []string {
+	return collectSourceFiles(fsys, 512, isSourceCodeFile)
+}
+
+func isSourceCodeFile(name string) bool {
+	return strings.HasSuffix(name, ".js") || strings.HasSuffix(name, ".ts") || strings.HasSuffix(name, ".py") || strings.HasSuffix(name, ".go")
+}
+
+// Source inference reads conventional project layouts, so the walk is bounded:
+// it stops at the file limit, below sourceWalkMaxDepth directory levels, and
+// after sourceWalkMaxDirs directories. An unbounded walk made `gregale doctor`
+// run from a home directory read every folder under it and stall on
+// macOS-protected folders in ~/Library.
+const (
+	sourceWalkMaxDepth = 8
+	sourceWalkMaxDirs  = 4096
+)
+
+// collectSourceFiles returns up to limit files matching match, sorted, skipping
+// dependency, VCS and hidden directories.
+func collectSourceFiles(fsys fs.FS, limit int, match func(string) bool) []string {
 	files := []string{}
+	dirs := 0
 	_ = fs.WalkDir(fsys, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			base := filepath.Base(name)
-			if name != "." && (base == ".git" || base == "node_modules" || base == "vendor" || strings.HasPrefix(base, ".")) {
-				return filepath.SkipDir
+			if entry != nil && entry.IsDir() && name != "." {
+				return fs.SkipDir
 			}
 			return nil
 		}
-		switch {
-		case strings.HasSuffix(name, ".js"), strings.HasSuffix(name, ".ts"), strings.HasSuffix(name, ".py"), strings.HasSuffix(name, ".go"):
-			if len(files) < 512 {
-				files = append(files, name)
+		if entry.IsDir() {
+			if name == "." {
+				return nil
+			}
+			base := path.Base(name)
+			if base == "node_modules" || base == "vendor" || strings.HasPrefix(base, ".") || strings.Count(name, "/") >= sourceWalkMaxDepth {
+				return fs.SkipDir
+			}
+			if dirs++; dirs > sourceWalkMaxDirs {
+				return fs.SkipAll
+			}
+			return nil
+		}
+		if match(name) {
+			files = append(files, name)
+			if len(files) >= limit {
+				return fs.SkipAll
 			}
 		}
 		return nil
@@ -493,23 +512,7 @@ func findDjangoWSGI(fsys fs.FS) (string, bool) {
 }
 
 func pythonSourceFiles(fsys fs.FS) []string {
-	files := []string{}
-	_ = fs.WalkDir(fsys, ".", func(name string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			base := filepath.Base(name)
-			if name != "." && (base == ".git" || base == "node_modules" || base == "vendor" || strings.HasPrefix(base, ".")) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if strings.HasSuffix(name, ".py") && len(files) < 256 {
-			files = append(files, name)
-		}
-		return nil
-	})
+	files := collectSourceFiles(fsys, 256, func(name string) bool { return strings.HasSuffix(name, ".py") })
 	sort.SliceStable(files, func(i, j int) bool {
 		rank := func(name string) int {
 			switch filepath.Base(name) {
@@ -541,23 +544,7 @@ func pythonModuleName(name string) string {
 
 func loopbackWarnings(fsys fs.FS) []Warning {
 	var warnings []Warning
-	var files []string
-	_ = fs.WalkDir(fsys, ".", func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() || len(files) >= 256 {
-			return nil
-		}
-		base := filepath.Base(path)
-		if base == "node_modules" || base == "vendor" || strings.HasPrefix(base, ".") {
-			return nil
-		}
-		if strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".ts") || strings.HasSuffix(path, ".py") || strings.HasSuffix(path, ".go") {
-			files = append(files, path)
-		}
-		return nil
-	})
+	files := collectSourceFiles(fsys, 256, isSourceCodeFile)
 	for _, path := range files {
 		body := readFile(fsys, path)
 		if strings.Contains(body, "127.0.0.1") || strings.Contains(body, "localhost") {

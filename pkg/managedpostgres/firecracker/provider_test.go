@@ -416,7 +416,7 @@ func TestParseConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.HostSuffix != "db.gregale.test" || cfg.Port != 5432 || cfg.TLSMode != "verify-full" || cfg.Database != "gregale" ||
-		!slices.Equal(cfg.Majors, []int{14, 15, 16, 17, 18}) || cfg.MaxStorageBytes != 100<<30 {
+		!slices.Equal(cfg.Majors, []int{15, 16, 17, 18}) || cfg.MaxStorageBytes != 100<<30 {
 		t.Fatalf("defaults = %+v", cfg)
 	}
 	cfg, err = ParseConfig(base(settingPort, "6432", settingTLSMode, "require", settingDatabase, "app_db", settingMajors, "16, 17", settingMaxStorage, "2147483648"))
@@ -1048,7 +1048,7 @@ func TestUpdateUpgradesTheMajor(t *testing.T) {
 	sched.upgradeHeld = true
 	ctx := context.Background()
 	spec := devSpec()
-	spec.PostgresMajor = 14
+	spec.PostgresMajor = 15
 	if _, err := p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: testDatabaseID, Spec: spec}); err != nil {
 		t.Fatal(err)
 	}

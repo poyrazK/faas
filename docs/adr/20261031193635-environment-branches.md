@@ -276,10 +276,16 @@ As built in slice 2:
   deleted or expires, the reconciler claims each orphaned copy and deletes its bindings,
   then the copy, then the row. A copy whose restore never recorded its ID is found by
   name.
-- **Accounting.** For now a copy is an ordinary database: it needs point-in-time restore
-  (Pro and Scale) and a free slot under the plan's database limit, and it counts toward
-  pooled storage and CU-hours. A separate `EnvironmentBranchDatabases` allowance, and a
-  check of Neon's per-project branch limit, are follow-ups.
+- **Accounting.** A copy carries a TTL that ends it with its branch, counted from the
+  branch point (rounded up to a second) so a retry adopts the same copy. A branch that
+  lives at most 7 days therefore makes a copy in the plan's PostgreSQL branch allowance
+  (ADR-20261106103654 amendment 1: Hobby 2, Pro 5, Scale 20 at once), not its database
+  limit, and the copy never takes the restore slot. A longer branch makes an ordinary
+  restore under the database limit that still ends on its own. Past the allowance the
+  branch's data fails with the quota message. Either way the copy needs point-in-time
+  restore on the source and counts toward pooled storage and CU-hours. A check of Neon's
+  per-project branch limit is a follow-up. (Amended 2026-11-12; this replaces the planned
+  `EnvironmentBranchDatabases` allowance.)
 - **Isolation.** Writes stay in the branch, and the parent database is never touched.
   Data never merges back.
 
@@ -511,10 +517,19 @@ or `production` (refused for branches).
   - `EnvironmentBranchMaxDepth` = 2;
   - `EnvironmentBranchDefaultTTL` 7 days, `EnvironmentBranchMinTTL` 1 hour,
     `EnvironmentBranchMaxTTL` 30 days;
-  - `EnvironmentBranchDatabases` arrives with slice 2.
-- **Organizations.** The branch routes are not yet in the reviewed project-access table
-  (`pkg/apid/projectaccess/routes.go`), so shared organization projects cannot branch, the
-  same as full clones today. Adding them is a follow-up once the routes are reviewed.
+  - copies use the PostgreSQL branch allowance (`ManagedPostgresBranchesMax`), see Accounting.
+- **Organizations** (amended 2026-11-12, owner decision). Company projects branch through
+  the reviewed project-access table (`pkg/apid/projectaccess/routes.go`):
+  - listing branches needs the read action; creating one needs the configure action
+    (Owner, Admin, Developer);
+  - a branch copies its parent's configuration and secrets into an unprotected environment
+    a developer may deploy to, so branching a protected environment other than production
+    also needs the approve action (Owner, Admin). Production is exempt, as it is for
+    releases (ADR-20261019071733 amendment 9): a developer already deploys to it;
+  - deleting a branch needs the configure action; deleting any other environment still
+    needs the delete action;
+  - the branch data reconciler resolves the project's resource owner, so a company that
+    owns its resources gets its copies under the organization's account and ownership.
 - **Billing.** Instance-seconds bill as usual. Branch databases are metered by managed
   PostgreSQL and overlay bytes by the S3 gateway. Data inherited from the parent is never
   billed twice.
@@ -530,7 +545,7 @@ or `production` (refused for branches).
 |---|---|---|
 | 0 | Prerequisites: #6034, #6037, #6044 merged; the clone-database cleanup fixes (E1/E2 from the 2026-10-30 stage audit) merged. | Already tracked. |
 | 1 | Branch primitive: schema, create/list/delete, TTL sweeper, config copy, unprimed artifact deployments, cold boot on first request, limits, gate. | Create p99 < 100 ms apid-side. First request cold-boots with no build row. Parent deployments, traffic and snapshots unchanged. Delete leaves nothing. |
-| 2 | PostgreSQL branches: branch data reconciler (restore at T, bind into the branch, data-gated activation), orphaned-copy deletion. A separate database allowance is a follow-up. | The copy is restored at T and bound with new credentials. Workloads stay dark until it exists. The copy and its binding are gone after delete. |
+| 2 | PostgreSQL branches: branch data reconciler (restore at T, bind into the branch, data-gated activation), orphaned-copy deletion. Copies sit in the PostgreSQL branch allowance (amended 2026-11-12). | The copy is restored at T and bound with new credentials. Workloads stay dark until it exists. The copy and its binding are gone after delete. |
 | 3 | Overlay buckets with `live_parent` consistency, created by the branch data reconciler; overlay-bucket cleanup. `as_of` and read-through copy are follow-ups. | Read-through, write isolation, tombstones, merged listing. Parent unchanged. Nothing copied at branch time. The bucket and its credential are gone after delete. |
 | 4 | Network and identity scoping. Service calls, egress and identity come from #6034 and #6044, which key on the deployment scope. Built here: branches and private networks refuse each other per project. Branch instances without the parent's attachments are a follow-up. | A branch caller never reaches a production service or private network. |
 | 5 | Restore with a new identity (opt-in) from a lazily made credential-free capture of the parent deployment (section 3). Splits into 5a, the capture (placeholder managed secrets, `branch-capture` identity, its own `environment_branch_captures` table that production lookups cannot read), and 5b, the restore (tmpfs identity file, digest acknowledgement, lineage checks). Both need `test-metal`. | No real parent credential in any memory a branch restores. Production never restores a credential-free capture. Identity digest acknowledged; a wrong or missing digest cold-boots. |
