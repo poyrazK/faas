@@ -162,10 +162,10 @@ func (c *capture) Write(b []byte) (int, error) { return c.body.Write(b) }
 func formPayload(form url.Values, d *Data) (string, any, error) {
 	action := form.Get("action")
 	bad := func() (string, any, error) {
-		return "", nil, errors.New("Unsupported support form or invalid revision.")
+		return "", nil, errors.New("unsupported support form or invalid revision")
 	}
 	if _, err := uuid.Parse(form.Get("idempotency_key")); err != nil {
-		return "", nil, errors.New("The request key is invalid. Reload the page before submitting.")
+		return "", nil, errors.New("the request key is invalid; reload the page before submitting")
 	}
 	if action == "create" {
 		if d.StaffMode || d.Ticket != nil {
