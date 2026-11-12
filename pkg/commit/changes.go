@@ -188,7 +188,69 @@ func InstallChanges(ctx context.Context, tx pgx.Tx, in ChangesInstall) (ChangesI
 	if err := grantRelay(ctx, tx, role); err != nil {
 		return ChangesInstallResult{}, err
 	}
+	if err := restrictCaptureTables(ctx, tx, role); err != nil {
+		return ChangesInstallResult{}, err
+	}
 	return ChangesInstallResult{RelayRole: role, Removed: removed}, nil
+}
+
+// CaptureTables are the outbox tables only their owner and the relay may
+// use. Managed credential roles and platform default privileges (Supabase's
+// anon and authenticated, a managed database's app logins) grant every table
+// in public; left in place, any of them could read, forge or delete changes.
+var CaptureTables = []string{"gregale_outbox", "gregale_commit_binding"}
+
+// restrictCaptureTables revokes every grant on the capture tables except the
+// relay's, then proves no other role can touch them. Superusers and members
+// of the table owner keep the owner's rights by design.
+func restrictCaptureTables(ctx context.Context, tx pgx.Tx, relay string) error {
+	for _, table := range CaptureTables {
+		qualified := "public." + pgx.Identifier{table}.Sanitize()
+		rows, err := tx.Query(ctx, `
+SELECT DISTINCT r.rolname FROM pg_catalog.pg_class c
+CROSS JOIN LATERAL (
+  SELECT (pg_catalog.aclexplode(c.relacl)).grantee
+  UNION SELECT (pg_catalog.aclexplode(a.attacl)).grantee FROM pg_catalog.pg_attribute a WHERE a.attrelid = c.oid AND a.attacl IS NOT NULL
+) g
+JOIN pg_catalog.pg_roles r ON r.oid = g.grantee
+WHERE c.oid = $1::regclass AND g.grantee <> c.relowner AND r.rolname <> $2`, qualified, relay)
+		if err != nil {
+			return fmt.Errorf("commit: read %s grants: %w", table, err)
+		}
+		grantees, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return fmt.Errorf("commit: read %s grants: %w", table, err)
+		}
+		statements := []string{"REVOKE ALL ON " + qualified + " FROM PUBLIC"}
+		for _, grantee := range grantees {
+			statements = append(statements, "REVOKE ALL ON "+qualified+" FROM "+pgx.Identifier{grantee}.Sanitize())
+		}
+		for _, stmt := range statements {
+			if _, err := tx.Exec(ctx, stmt); err != nil {
+				return fmt.Errorf("commit: restrict %s: %w", table, err)
+			}
+		}
+		var exposed []string
+		rows, err = tx.Query(ctx, `
+SELECT r.rolname FROM pg_catalog.pg_roles r, pg_catalog.pg_class c
+WHERE c.oid = $1::regclass AND r.rolname <> $2 AND NOT r.rolsuper AND r.rolname NOT LIKE 'pg\_%'
+  AND NOT pg_catalog.pg_has_role(r.oid, c.relowner, 'MEMBER')
+  -- Platform administrators (Neon's neon_superuser) read and write all data.
+  AND NOT pg_catalog.pg_has_role(r.oid, 'pg_read_all_data', 'MEMBER')
+  AND NOT pg_catalog.pg_has_role(r.oid, 'pg_write_all_data', 'MEMBER')
+  AND (pg_catalog.has_table_privilege(r.oid, c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE')
+       OR pg_catalog.has_any_column_privilege(r.oid, c.oid, 'SELECT,INSERT,UPDATE'))`, qualified, relay)
+		if err != nil {
+			return fmt.Errorf("commit: verify %s grants: %w", table, err)
+		}
+		if exposed, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
+			return fmt.Errorf("commit: verify %s grants: %w", table, err)
+		}
+		if len(exposed) > 0 {
+			return fmt.Errorf("commit: %s stays accessible to %s through a grant the installing role cannot revoke; revoke it as its grantor and retry", qualified, strings.Join(exposed, ", "))
+		}
+	}
+	return nil
 }
 
 // assumeSchemaOwner switches to the customer schema owner when one is given
