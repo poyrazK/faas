@@ -502,8 +502,11 @@ address, for example a VS Code configuration:
 or open `chrome://inspect` and add `127.0.0.1:9229`. Each debugger connection
 is its own tunnel through the API (`GET /v1/apps/{slug}/debug`, a WebSocket
 served by the gateway, not apid), authenticated with your CLI credentials; the
-inspector port is never published on the app's URL. Attaches and detaches are
-recorded in the audit log (`dev.debugger.attached` / `dev.debugger.detached`).
+inspector port is never published on the app's URL. Each debugging session is
+recorded in the audit log: `dev.debugger.attached` when the first connection
+opens and `dev.debugger.detached`, with the session's duration and connection
+count, a minute after the last one closes. The many short connections a
+debugger's target discovery opens belong to the same session.
 Only `gregale dev` environments accept a debugger: the platform marks them
 with `FAAS_DEVELOPER_ENVIRONMENT=1`, and the inspector switch is ignored on any
 other app.

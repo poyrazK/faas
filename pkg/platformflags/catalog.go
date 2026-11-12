@@ -256,7 +256,7 @@ var catalog = []Spec{
 	{
 		Key:         GuestTracing,
 		Label:       "Guest request tracing",
-		Description: "Release in-guest request tracing to accounts: apps may turn tracing on. vmmd's trace receiver still needs FAAS_GUEST_TRACING_ENABLED on the node; the flag only releases the setting.",
+		Description: "Release in-guest request tracing to accounts: apps may turn tracing on. vmmd's trace receiver is on by default on every node with a state store (FAAS_GUEST_TRACING_ENABLED=0 turns it off on a node).",
 		ADR:         "ADR-958",
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan},

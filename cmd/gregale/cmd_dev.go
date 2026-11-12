@@ -531,7 +531,9 @@ func cmdDev(args []string) int {
 		workspaceID = group
 	}
 
-	client, err := authedClient()
+	// Source syncs are uploads the server accepts synchronously; a cold first
+	// sync can take longer than the 30s JSON wait (as `gregale deploy` allows).
+	client, err := authedClientWithDeployTimeout(5 * time.Minute)
 	if err != nil {
 		return printErr("Not logged in", err)
 	}

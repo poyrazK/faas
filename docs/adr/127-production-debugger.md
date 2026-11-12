@@ -527,3 +527,33 @@ bucket: a 5xx bucket keeps five exact rows, any other bucket keeps
 `api.GatewayRequestTelemetryTracedExactPerBucket` (30) traced requests a
 minute. Request counts are unchanged; a traced app writes up to 30 rows per
 bucket-minute instead of 5.
+
+## Amendment (2026-11-11): what the detector compares after a rollout, and when it resolves
+
+Testing on prod: v2 (p95 20 ms) served 16:44–16:48 and v3 (p95 313 ms, 251
+requests) served 16:50–16:51. The regression was found only at 17:18 and
+resolved at 17:23, while v3 still served and was still 15x slower.
+
+- **Side by side needs overlapping traffic.** The detector treated every
+  deployment with a request in the last 30 minutes as serving beside the
+  current one and compared both over the current deployment's window. A
+  deployment replaced minutes ago has no rows there, so there was no baseline
+  until 30 minutes after its last request. Two deployments are compared over
+  the same window only when the predecessor still served after the current
+  one's first request (a canary, a traffic split); otherwise the predecessor
+  is compared over its own last 30 minutes of traffic.
+- **A pass resolves only what it judged.** The 2026-11-09 rule resolved every
+  observation a complete pass did not reconfirm, so a regression closed once
+  its traffic aged out of the window. A pass now resolves an observation of a
+  deployment other than the one it compares, or of a route the current
+  deployment served in the window and that no longer regressed. A pass with no
+  comparison (nothing serving, no predecessor) resolves nothing; quiet
+  observations still close through the 24-hour stale sweep.
+- **Tracing receiver.** `tracing.enabled` apps got `503 trace host
+  unavailable` from the guest's OTLP receiver on every export: the
+  `guest_tracing` platform flag released tracing to accounts while vmmd's
+  receiver still waited for `FAAS_GUEST_TRACING_ENABLED=1` on each node. The
+  receiver is now on by default wherever vmmd has a state store (`0` turns it
+  off on a node; a setup failure is logged rather than stopping vmmd unless
+  `1` asks for it). Whether an app may trace is still decided by apid and the
+  broker.
