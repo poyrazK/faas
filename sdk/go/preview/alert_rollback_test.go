@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	faas "github.com/gregale-dev/gregale-go"
 )
 
 func TestAlertRollbackStatusUsesGETAndPreservesPair(t *testing.T) {

@@ -6,9 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/poyrazK/faas/sdk/go/preview"
+	"github.com/gregale-dev/gregale-go/preview"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	faas "github.com/gregale-dev/gregale-go"
 )
 
 func TestStateExportRestoreSDKTransport(t *testing.T) {
