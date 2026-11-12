@@ -110,6 +110,12 @@ func TestRollbackOn5xxSweepRollsBackAFailingRelease(t *testing.T) {
 	if got := read(previous.ID); got.Status != state.DeploySnapshotting {
 		t.Fatalf("predecessor status = %s, want the readiness-gated %s", got.Status, state.DeploySnapshotting)
 	}
+	// Hunt 34 H34-17: the release records why it stopped serving.
+	var decision api.RolloutDecision
+	if err := json.Unmarshal(read(release.ID).RolloutDecision, &decision); err != nil || decision.Rule != api.RolloutRuleAbortPostRelease5xx ||
+		decision.StableDeploymentID != previous.ID || decision.RollbackSkipped != "" || decision.Candidate == nil || decision.Candidate.ServerErrors != 38 {
+		t.Fatalf("rolled-back release decision = %+v (%v), want abort_post_release_5xx to %s with 38/40", decision, err, previous.ID)
+	}
 
 	reads := store.reads
 	sweep()
