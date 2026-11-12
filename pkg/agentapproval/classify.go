@@ -229,6 +229,8 @@ func Classify(pattern string) (Rule, bool) {
 		}
 	}
 	switch {
+	case undoRoutes[key]:
+		return Rule{Category: api.AgentApprovalUndo}, true
 	case method == "DELETE" || destructivePosts[key]:
 		return Rule{Category: api.AgentApprovalDelete}, true
 	case billing[key] || (billingPath.MatchString(path) && !strings.HasSuffix(path, "/preview") && !strings.HasSuffix(path, "/portal")):
@@ -261,4 +263,17 @@ func Effective(own []string, chosen bool, floor []string) map[string]bool {
 		out[category] = true
 	}
 	return out
+}
+
+// Asks reports whether a request of rule's category needs a person's
+// approval under the effective categories. An agent's own undo always asks
+// (ADR-20261112080601 §4): it is not a category a key or organization
+// chooses.
+func Asks(categories map[string]bool, rule Rule) bool {
+	return rule.Category == api.AgentApprovalUndo || categories[rule.Category]
+}
+
+// undoRoutes apply an agent's undo of its own changes.
+var undoRoutes = map[string]bool{
+	"POST /v1/agent-connections/self/undo": true,
 }

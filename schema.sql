@@ -30253,7 +30253,7 @@ CREATE TABLE public.agent_approval_requests (
     reason text,
     budget_cost_millicents bigint,
     CONSTRAINT agent_approval_requests_body_sha256_check CHECK (((body_sha256 IS NULL) OR (length(body_sha256) = 32))),
-    CONSTRAINT agent_approval_requests_category_budget_check CHECK ((category = ANY (ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text, 'budget'::text]))),
+    CONSTRAINT agent_approval_requests_category_undo_check CHECK ((category = ANY (ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text, 'budget'::text, 'undo'::text]))),
     CONSTRAINT agent_approval_requests_check CHECK (((status = 'pending'::text) = (decided_at IS NULL))),
     CONSTRAINT agent_approval_requests_check1 CHECK (((status = 'consumed'::text) = (consumed_at IS NOT NULL))),
     CONSTRAINT agent_approval_requests_method_check CHECK ((method = ANY (ARRAY['POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text]))),
@@ -30660,6 +30660,37 @@ COMMENT ON TABLE public.agent_runs IS 'ADR-20261027090010 agent runs; apid inser
 --
 
 COMMENT ON COLUMN public.agent_runs.lease_owner IS 'ADR-20261027090014 agentd replica holding the lease; diagnostics only.';
+
+
+--
+-- Name: agent_undo_records; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_undo_records (
+    id uuid NOT NULL,
+    activity_id uuid NOT NULL,
+    key_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    org_id uuid,
+    method text NOT NULL,
+    path text NOT NULL,
+    kind text NOT NULL,
+    summary text NOT NULL,
+    inverse jsonb,
+    guard jsonb,
+    not_undoable_reason text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    undone_at timestamp with time zone,
+    undone_by uuid,
+    CONSTRAINT agent_undo_records_kind_check CHECK ((kind = ANY (ARRAY['settings'::text, 'deploy'::text, 'create'::text, 'delete'::text, 'other'::text]))),
+    CONSTRAINT agent_undo_records_method_check CHECK ((method = ANY (ARRAY['POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text]))),
+    CONSTRAINT agent_undo_records_not_undoable_reason_check CHECK (((not_undoable_reason IS NULL) OR ((char_length(not_undoable_reason) >= 1) AND (char_length(not_undoable_reason) <= 512)))),
+    CONSTRAINT agent_undo_records_path_check CHECK (((char_length(path) >= 1) AND (char_length(path) <= 512))),
+    CONSTRAINT agent_undo_records_summary_check CHECK (((char_length(summary) >= 1) AND (char_length(summary) <= 512))),
+    CONSTRAINT agent_undo_records_undoable_check CHECK (((inverse IS NULL) = (not_undoable_reason IS NOT NULL))),
+    CONSTRAINT agent_undo_records_undone_check CHECK (((undone_at IS NULL) = (undone_by IS NULL))),
+    CONSTRAINT agent_undo_records_undone_inverse_check CHECK (((undone_at IS NULL) OR (inverse IS NOT NULL)))
+);
 
 
 --
@@ -60834,6 +60865,14 @@ ALTER TABLE ONLY public.agent_runs
 
 
 --
+-- Name: agent_undo_records agent_undo_records_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_undo_records
+    ADD CONSTRAINT agent_undo_records_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: agent_versions agent_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -74351,6 +74390,20 @@ CREATE INDEX agent_runs_queue_idx ON public.agent_runs USING btree (queued_at, i
 --
 
 CREATE INDEX agent_runs_workflow_finished_idx ON public.agent_runs USING btree (finished_at, id) WHERE ((workflow_run_id IS NOT NULL) AND (finished_at IS NOT NULL));
+
+
+--
+-- Name: agent_undo_records_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_undo_records_created_idx ON public.agent_undo_records USING btree (created_at);
+
+
+--
+-- Name: agent_undo_records_key_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_undo_records_key_created_idx ON public.agent_undo_records USING btree (key_id, created_at DESC, id DESC);
 
 
 --
@@ -92905,6 +92958,14 @@ ALTER TABLE ONLY public.agent_runs
 
 ALTER TABLE ONLY public.agent_runs
     ADD CONSTRAINT agent_runs_version_fkey FOREIGN KEY (agent_id, agent_version) REFERENCES public.agent_versions(agent_id, version) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_undo_records agent_undo_records_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_undo_records
+    ADD CONSTRAINT agent_undo_records_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
 
 
 --

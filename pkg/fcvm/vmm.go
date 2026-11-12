@@ -298,10 +298,10 @@ type bindSourceMode struct {
 	// handle pins the original inode so teardown can restore its mode even
 	// when a snapshot writer atomically replaces the source pathname.
 	handle *os.File
-	// viaGuest: an adopted guest's source the cache had already re-staged,
-	// so the handle came through the guest's own read-only bind mount
-	// (adoptGuestBinds). It cannot change the mode, and the source path no
-	// longer names this inode, so a failed restoration does not hold the
+	// viaGuest: an adopted guest's source the cache had already re-staged or
+	// evicted, so the handle came through the guest's own read-only bind
+	// mount (adoptGuestBinds). It cannot change the mode, and the source path
+	// no longer names this inode, so a failed restoration does not hold the
 	// guest's teardown.
 	viaGuest bool
 }
