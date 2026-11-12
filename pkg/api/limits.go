@@ -22,6 +22,33 @@ import (
 	"time"
 )
 
+// Referral program bounds. Rewards are estimates only; payout execution is
+// deliberately unavailable until a separately reviewed payment integration.
+const (
+	ReferralPageSize               = 25
+	ReferralCodeGenerationAttempts = 8
+	ReferralNoteMaxBytes           = 2000
+	ReferralBodyMaxBytes           = 8192
+	ReferralRewardMaxCents         = 100_000_000
+	ReferralCommissionMaxBPS       = 10_000
+	ReferralPolicyMaxDays          = 365
+	ReferralSelectionTTL           = 15 * time.Minute
+	ReferralReadTimeout            = 10 * time.Second
+)
+
+// Sales workspace input and pagination bounds.
+const (
+	SalesReportMaxDays      = 366
+	SalesPageSize           = ReferralPageSize
+	SalesNameMaxBytes       = 120
+	SalesFieldMaxBytes      = 200
+	SalesEmailMaxBytes      = 254
+	SalesSearchMaxBytes     = 100
+	SalesTaskMinYear        = 2000
+	SalesTaskMaxYear        = 2100
+	SalesTaskRefreshSeconds = 60
+)
+
 // SSEMaxLineBytes bounds one line of a server-sent event stream read by the
 // CLI and SDK. A runtime log line may be up to 1 MiB (logbuf
 // MaxPartialLineBytes) and JSON escaping can grow it up to six times, so 8 MiB
@@ -18984,6 +19011,34 @@ func (l Limits) PendingTenantHostnamesPerSurface() int {
 	}
 	return l.TenantHostnamesPerSurface
 }
+
+// Website sales intake is independent of the authentication failure budget.
+const (
+	SalesIntakeMessageMaxBytes     = 1500
+	SalesIntakeFollowupDefaultDays = 1
+	SalesIntakeFollowupMaxDays     = 30
+	SalesIntakeChallengeMinAge     = 2 * time.Second
+	SalesIntakeChallengeTTL        = time.Hour
+	SalesIntakeRequestsPerMinute   = 10
+	SalesIntakeReceiptPurge        = 100
+)
+
+// Staff conversation history and computed lead attention.
+const (
+	SalesActivitySummaryMaxBytes = 1000
+	SalesActivityDetailMaxBytes  = 500
+	SalesStaleDefaultDays        = 14
+	SalesStaleMaxDays            = 365
+)
+
+// Staff qualification text and closing rationale.
+const (
+	SalesQualificationTextMaxBytes = 1000
+	SalesOutcomeNoteMaxBytes       = 1000
+)
+
+// SalesTemplateBodyMaxBytes bounds editable plain-text sales messages.
+const SalesTemplateBodyMaxBytes = 4000
 
 // App resource metadata pages are filtered by immutable app and scope before
 // counting or pagination. Offsets are bounded request selectors, not quotas.

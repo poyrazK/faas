@@ -5603,7 +5603,8 @@ func (s *server) getUsage(w http.ResponseWriter, r *http.Request, acct state.Acc
 // only legitimate path to land on a paid plan locally.
 func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req struct {
-		Plan string `json:"plan"`
+		Plan            string `json:"plan"`
+		SalespersonCode string `json:"salesperson_code"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
@@ -5613,6 +5614,9 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 	if !plan.Valid() {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Bad plan", "plan must be free|hobby|pro|scale"))
+		return
+	}
+	if !s.prepareSalesCheckout(w, r, acct, plan, req.SalespersonCode) {
 		return
 	}
 	// Any paid tier increase must be confirmed by the billing provider. A
