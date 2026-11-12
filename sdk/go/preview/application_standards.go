@@ -1,6 +1,6 @@
 package preview
 
-import "github.com/poyrazK/faas/sdk/go/internal/api"
+import "github.com/gregale-dev/gregale-go/internal/api"
 
 // Wire types for application standards, reviews and inspection.
 type (

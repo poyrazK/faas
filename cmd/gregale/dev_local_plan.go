@@ -24,10 +24,11 @@ import (
 
 // localFunction is one function served by `gregale dev --local`.
 type localFunction struct {
-	Name    string
-	Root    string // absolute
-	Family  string // node, python or go
-	Runtime string
+	Name        string
+	Root        string // absolute
+	ProjectRoot string // absolute workspace root, also for functions: projects
+	Family      string // node, python or go
+	Runtime     string
 	// HandlerFile is the Node or Python source the adapter loads (absolute).
 	HandlerFile string
 	Entry       bool
@@ -101,6 +102,7 @@ func planLocalFunctions(projectDir string) ([]*localFunction, error) {
 		if err != nil {
 			return nil, fmt.Errorf("function %q: %w", spec.Name, err)
 		}
+		fn.ProjectRoot = projectDir
 		fns = append(fns, fn)
 	}
 	return fns, nil
@@ -130,7 +132,7 @@ func newLocalFunction(spec gregalemanifest.FunctionSpec, absRoot string, crons [
 		return nil, err
 	}
 	fn := &localFunction{
-		Name: spec.Name, Root: absRoot, Family: runtimeFamily(runtime), Runtime: runtime,
+		Name: spec.Name, Root: absRoot, ProjectRoot: absRoot, Family: runtimeFamily(runtime), Runtime: runtime,
 		Entry: spec.Entry, Routes: spec.Routes, Env: spec.Env, TimeoutS: spec.RequestTimeoutS, Crons: crons,
 	}
 	switch fn.Family {
@@ -191,6 +193,14 @@ func (fn *localFunction) prepare(ctx context.Context, cacheDir string, baseEnv [
 	for _, k := range keys {
 		env = append(env, k+"="+fn.Env[k])
 	}
+	var python string
+	if fn.Family == "python" {
+		var err error
+		python, env, err = localPythonEnvironment(fn.Root, fn.ProjectRoot, env)
+		if err != nil {
+			return err
+		}
+	}
 	// Runner pools key commands by executable and arguments, and retain their
 	// initial environment. Distinct private paths give changed environments a
 	// new pool; source-only reloads keep using the existing path.
@@ -203,7 +213,7 @@ func (fn *localFunction) prepare(ctx context.Context, cacheDir string, baseEnv [
 	case "node":
 		return fn.prepareAdapter(dir, "adapter.cjs", "node", env, fnadapter.NodeFor)
 	case "python":
-		return fn.prepareAdapter(dir, "adapter.py", "python3", env, fnadapter.PythonFor)
+		return fn.prepareAdapter(dir, "adapter.py", python, env, fnadapter.PythonFor)
 	}
 	bin, err := buildLocalGo(ctx, fn.Root, dir)
 	if err != nil {

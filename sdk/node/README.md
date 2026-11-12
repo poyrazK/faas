@@ -57,13 +57,12 @@ npm install @gregale/sdk-node
 ```
 
 **Today it is not published yet**, so install from a locally built tarball.
-npm cannot install a package from a subdirectory of a git repo, so
-`npm install github:poyrazK/faas#<tag>` does *not* work — the repo root has
-no `package.json`, and `dist/` is a build artifact that is not committed.
+npm cannot install a package from a subdirectory of a git repo, and `dist/`
+is a build artifact that is not committed.
 
 ```sh
-git clone https://github.com/poyrazK/faas.git
-cd faas/sdk/node
+git clone https://github.com/gregale-dev/gregale-js.git
+cd gregale-js/packages/sdk-node
 npm ci && npm run build
 npm pack --pack-destination /tmp     # -> /tmp/gregale-sdk-node-0.1.0.tgz
 

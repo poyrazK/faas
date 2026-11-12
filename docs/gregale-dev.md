@@ -121,6 +121,19 @@ Serving 3 function(s) on this machine (ctrl-c to stop):
   http://localhost:8787 routes like the entry address (entry: web)
 ```
 
+Python functions use `.venv` before `venv` in their function directory, then
+the same directories in the workspace root. Without a project interpreter,
+they resolve `python3` through the function's effective `PATH`, including
+selected env-file and function `env:` overrides. A selected virtualenv also
+supplies `PATH` and `VIRTUAL_ENV` to subprocesses; `PYTHONHOME` is cleared.
+Install dependencies into that environment before starting; shell activation
+is unnecessary. A broken project interpreter reports how to repair it.
+
+Selected env-file PATH changes reload workers with the newly resolved Python.
+An invalid runtime selection keeps existing workers serving until the file is
+repaired. Virtualenv directories themselves are excluded from source watching;
+save a source file or restart the CLI after changing installed dependencies.
+
 - Each function has its own address, `http://<name>.localhost:8787`, as it
   has its own host on Gregale. With an `entry: true` function,
   `http://localhost:8787` routes by the functions' `routes:`, and a project
@@ -501,8 +514,11 @@ address, for example a VS Code configuration:
 or open `chrome://inspect` and add `127.0.0.1:9229`. Each debugger connection
 is its own tunnel through the API (`GET /v1/apps/{slug}/debug`, a WebSocket
 served by the gateway), authenticated with your CLI credentials; the
-inspector port is never published on the app's URL. Attaches and detaches are
-recorded in the audit log (`dev.debugger.attached` / `dev.debugger.detached`).
+inspector port is never published on the app's URL. Each debugging session is
+recorded in the audit log: `dev.debugger.attached` when the first connection
+opens and `dev.debugger.detached`, with the session's duration and connection
+count, a minute after the last one closes. The many short connections a
+debugger's target discovery opens belong to the same session.
 Only `gregale dev` environments accept a debugger: the platform marks them
 with `FAAS_DEVELOPER_ENVIRONMENT=1`, and the inspector switch is ignored on any
 other app.

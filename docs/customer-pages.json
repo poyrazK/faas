@@ -29,6 +29,7 @@
     {"path": "code-workflows", "source": "docs/code-workflows.md"},
     {"path": "companions", "source": "docs/companions.md"},
     {"path": "crash-snapshots", "source": "docs/crash-snapshots.md", "unpublished": "preview capability; published when it reaches beta"},
+    {"path": "customer-support", "source": "docs/customer-support.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "custom-domains", "source": "docs/domains.md"},
     {"path": "compliance", "source": "docs/compliance/overview.md"},
     {"path": "container-compatibility", "source": "docs/container-compatibility.md"},

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	faas "github.com/gregale-dev/gregale-go"
 )
 
 // EventOutboxControlReceipt is a retained command result, not a current status

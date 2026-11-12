@@ -89,7 +89,7 @@ async. Python durations are seconds, `timedelta` or strings such as `"3d"`.
 ## Go
 
 ```go
-import faas "github.com/poyrazK/faas/sdk/go"
+import faas "github.com/gregale-dev/gregale-go"
 
 var orderFollowup = faas.DefineWorkflow("order_followup", func(ctx context.Context, wf *faas.Workflow, input json.RawMessage) (any, error) {
 	order, err := faas.WorkflowDecode[Order](input)

@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/poyrazK/faas/sdk/go/preview"
+	"github.com/gregale-dev/gregale-go/preview"
 )
 
 // AdoptCallbackPolicy requires trusted owner UUIDs, an explicitly selected intent

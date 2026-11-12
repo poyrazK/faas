@@ -1,0 +1,25 @@
+{
+  "comment": "Public SDK repositories published from this repository by scripts/sdk_mirror.py (docs/adr/20261112110000-sdk-public-repositories.md). Each path maps tracked files under 'from' to 'to' in the public repository; '' is its root. A package not listed here stays private to this repository.",
+  "org": "gregale-dev",
+  "upstream": "poyrazK/faas",
+  "repos": [
+    {
+      "name": "gregale-go",
+      "key": "GO",
+      "paths": [{"from": "sdk/go", "to": ""}]
+    },
+    {
+      "name": "gregale-js",
+      "key": "JS",
+      "paths": [
+        {"from": "sdk/node", "to": "packages/sdk-node"},
+        {"from": "sdk/node/LICENSE", "to": "LICENSE"}
+      ]
+    },
+    {
+      "name": "gregale-python",
+      "key": "PYTHON",
+      "paths": [{"from": "sdk/python", "to": ""}]
+    }
+  ]
+}

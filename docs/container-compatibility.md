@@ -139,7 +139,7 @@ nothing.
 
 Go cannot be reseeded from outside the program. Use `crypto/rand` for anything
 that must be unique. To reseed generators your program owns, import
-`github.com/poyrazK/faas/sdk/go/reseed` and register a callback with
+`github.com/gregale-dev/gregale-go/reseed` and register a callback with
 `reseed.OnRestore`; Gregale runs it after each restore, before the instance
 serves traffic.
 
