@@ -44,11 +44,15 @@ func providerToken(value string) string {
 		return ""
 	}
 	for _, r := range value {
-		if !(r < utf8.RuneSelf && (unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("._:-", r))) {
+		if !providerTokenRune(r) {
 			return ""
 		}
 	}
 	return value
+}
+
+func providerTokenRune(r rune) bool {
+	return r < utf8.RuneSelf && (unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("._:-", r))
 }
 
 // redactedRefusalMessage bounds Neon's message and drops any word that could
