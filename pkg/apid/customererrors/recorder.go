@@ -231,8 +231,11 @@ func (r *Recorder) PruneExpired(ctx context.Context) (int64, error) {
 			return total, err
 		}
 		total += tag.RowsAffected()
-		if tag.RowsAffected() < pruneBatch || ctx.Err() != nil {
+		if tag.RowsAffected() < pruneBatch {
 			return total, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return total, err
 		}
 	}
 }
