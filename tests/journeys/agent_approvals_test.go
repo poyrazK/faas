@@ -3,8 +3,10 @@ package journeys
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +22,8 @@ import (
 // not; the journey checks everything up to that decision: the 428 and its
 // review link, the request waiting among the account's approvals, the CLI's
 // --wait-for-approval and the MCP gregale_wait_for_approval tool both waiting
-// on it. The key's own writes appear in its activity log
+// on it. Given a signed-in session (GREGALE_E2E_SESSION) it also approves the
+// request on the review page and checks the agent's retry goes through once. The key's own writes appear in its activity log
 // (ADR-20261107220000), and `gregale mcp connect` writes a Codex config
 // (ADR-20261109121411).
 
@@ -30,6 +33,7 @@ func (j *hostedMCPJourney) approvalSteps(s *story) {
 	s.check("approval_pending_listed", j.approvalPendingListed)
 	s.check("cli_waits_for_approval", j.cliWaitsForApproval)
 	s.check("mcp_waits_for_approval", j.mcpWaitsForApproval)
+	s.check("approve_and_retry", j.approveAndRetry)
 	s.check("activity_recorded", j.activityRecorded)
 	s.check("mcp_connect_codex", j.mcpConnectCodex)
 }
@@ -59,6 +63,7 @@ func (j *hostedMCPJourney) deleteWaitsForApproval(t *testing.T) {
 		t.Fatalf("problem code %q, want approval_required: %s", str(problem, "code"), compact(problem))
 	}
 	j.approvalID = str(problem, "agent_approval.id")
+	j.reviewURL = str(problem, "agent_approval.review_url")
 	if j.approvalID == "" || !strings.Contains(str(problem, "agent_approval.review_url"), j.approvalID) || str(problem, "agent_approval.category") != "delete" {
 		t.Fatalf("428 names no delete approval with a review link: %s", compact(problem))
 	}
@@ -115,6 +120,59 @@ func (j *hostedMCPJourney) mcpWaitsForApproval(t *testing.T) {
 	}
 	if out.Status != "pending" || out.Decided || out.Recovery.Action != "await_approval" || out.Recovery.Tool != "gregale_wait_for_approval" {
 		t.Fatalf("gregale_wait_for_approval = %+v, want pending with await_approval", out)
+	}
+}
+
+var csrfFieldRe = regexp.MustCompile(`name="csrf_token" value="([^"]+)"`)
+
+// approveAndRetry: a person approves the waiting delete on its review page,
+// the request reads approved, and the agent's retry passes the gate once:
+// the app never existed, so the delete itself answers 404, and the approval
+// is consumed. Approving needs a signed-in session, which only a person has:
+// GREGALE_E2E_SESSION is the dashboard's __Host-faas_sid cookie.
+func (j *hostedMCPJourney) approveAndRetry(t *testing.T) {
+	if j.tg.session == "" {
+		t.Skip("approving needs a signed-in session: set GREGALE_E2E_SESSION to the dashboard's __Host-faas_sid cookie")
+	}
+	review, err := url.Parse(j.reviewURL)
+	if err != nil || review.Host == "" {
+		t.Fatalf("the 428 gave no usable review link: %q", j.reviewURL)
+	}
+	page := fetch(http.MethodGet, j.reviewURL, map[string]string{"Cookie": "__Host-faas_sid=" + j.tg.session})
+	match := csrfFieldRe.FindSubmatch(page.body)
+	if page.err != nil || page.status != http.StatusOK || match == nil {
+		t.Fatalf("review page = %s; want 200 with the approve form (is GREGALE_E2E_SESSION a live session of the key's owner?): %s", page, tail(string(page.body), 400))
+	}
+	csrf := string(match[1])
+	form := url.Values{"agent_approval": {j.approvalID}, "csrf_token": {csrf}, "decision": {"approve"}}
+	origin := review.Scheme + "://" + review.Host
+	decided := send(http.MethodPost, origin+review.Path, map[string]string{
+		"Cookie":       "__Host-faas_sid=" + j.tg.session + "; faas_csrf=" + csrf,
+		"Content-Type": "application/x-www-form-urlencoded",
+		"Origin":       origin,
+		"Referer":      j.reviewURL,
+	}, []byte(form.Encode()))
+	if decided.err != nil || decided.status != http.StatusOK || !strings.Contains(string(decided.body), "You approved this request") {
+		t.Fatalf("approve = %s: %s", decided, tail(string(decided.body), 400))
+	}
+	j.approvalStatusIs(t, "approved")
+	retry := j.tg.apiCall(http.MethodDelete, "/v1/apps/"+j.ghost, nil, j.approvalKeyValue)
+	if retry.err != nil || retry.status != http.StatusNotFound {
+		t.Fatalf("agent retry DELETE /v1/apps/%s = %s, want 404 past the approval gate", j.ghost, retry)
+	}
+	j.approvalStatusIs(t, "consumed")
+	again := j.tg.apiCall(http.MethodDelete, "/v1/apps/"+j.ghost, nil, j.approvalKeyValue)
+	if again.status != http.StatusPreconditionRequired {
+		t.Fatalf("a second DELETE after the approval was used = %s, want a new 428", again)
+	}
+}
+
+// approvalStatusIs reads the request through the admin key.
+func (j *hostedMCPJourney) approvalStatusIs(t *testing.T, want string) {
+	t.Helper()
+	got := jsonBody(t, j.tg.apiCall(http.MethodGet, "/v1/agent-approvals/"+j.approvalID, nil, j.adminKey(t)))
+	if str(got, "status") != want {
+		t.Fatalf("approval %s is %q, want %q: %s", j.approvalID, str(got, "status"), want, compact(got))
 	}
 }
 
