@@ -344,15 +344,14 @@ paths:
     get:
       tags:
       - support
-      operationId: personalSupportNotifications
+      operationId: personalSupportNotificationsFeed
       summary: List personal support notifications
-      description: Metadata-only updates for the current caller. Read state is personal to this account
-        and support audience. Private notes never create customer notifications.
+      description: Personal support. Metadata-only updates for the current caller. Read state is personal to this account and support audience. Private notes never create customer notifications.
       parameters:
       - name: before
         in: query
         required: false
-        description: Sequence from the previous notification page.
+        description: Sequence from the previous notification page. Applies to personalSupportNotificationsFeed.
         schema:
           type: integer
           format: int64
@@ -360,7 +359,7 @@ paths:
       - name: unread
         in: query
         required: false
-        description: Return only unread updates.
+        description: Return only unread updates. Applies to personalSupportNotificationsFeed.
         schema:
           type: boolean
           default: false
@@ -382,7 +381,7 @@ paths:
         '503':
           $ref: '#/components/responses/SupportUnavailable'
         '200':
-          description: Current caller notification feed and scoped unread count.
+          description: Current caller notification feed and scoped unread count. Applies to personalSupportNotificationsFeed.
           content:
             application/json:
               schema:
@@ -393,22 +392,20 @@ paths:
     post:
       tags:
       - support
-      operationId: personalSupportRead
+      operationId: personalSupportMarkNotificationsRead
       summary: Mark personal support updates read
-      description: Marks only this caller's existing ticket notifications through the observed sequence.
-        Later updates stay unread. Repeating the request is intrinsically idempotent; no permanent receipt
-        or expected ticket revision is required.
+      description: Personal support. Marks only this caller's existing ticket notifications through the observed sequence. Later updates stay unread. Repeating the request is intrinsically idempotent; no permanent receipt or expected ticket revision is required.
       parameters:
       - name: ticket
         in: path
         required: true
-        description: Support ticket UUID in this scope.
+        description: Support ticket UUID in this scope. Applies to personalSupportMarkNotificationsRead.
         schema:
           type: string
           format: uuid
       responses:
         '202':
-          description: Read state committed without changing the ticket revision.
+          description: Read state committed without changing the ticket revision. Applies to personalSupportMarkNotificationsRead.
           content:
             application/json:
               schema:
@@ -441,23 +438,20 @@ paths:
     get:
       tags:
       - support
-      operationId: organizationSupportNotifications
+      operationId: organizationSupportNotificationsFeed
       summary: List organization support notifications
-      description: Metadata-only updates for the current caller. Read state is personal to this account
-        and support audience. Private notes never create customer notifications.
+      description: Organization support. Metadata-only updates for the current caller. Read state is personal to this account and support audience. Private notes never create customer notifications.
       parameters:
-      - &id001
-        name: org
+      - name: org
         in: path
         required: true
-        description: Organization slug; current owner or administrator membership is required. This parameter
-          belongs to organizationSupportList.
+        description: Organization slug; current owner or administrator membership is required. Applies to organizationSupportNotificationsFeed.
         schema:
           type: string
       - name: before
         in: query
         required: false
-        description: Sequence from the previous notification page.
+        description: Sequence from the previous notification page. Applies to organizationSupportNotificationsFeed.
         schema:
           type: integer
           format: int64
@@ -465,7 +459,7 @@ paths:
       - name: unread
         in: query
         required: false
-        description: Return only unread updates.
+        description: Return only unread updates. Applies to organizationSupportNotificationsFeed.
         schema:
           type: boolean
           default: false
@@ -487,7 +481,7 @@ paths:
         '503':
           $ref: '#/components/responses/SupportUnavailable'
         '200':
-          description: Current caller notification feed and scoped unread count.
+          description: Current caller notification feed and scoped unread count. Applies to organizationSupportNotificationsFeed.
           content:
             application/json:
               schema:
@@ -498,23 +492,26 @@ paths:
     post:
       tags:
       - support
-      operationId: organizationSupportRead
+      operationId: organizationSupportMarkNotificationsRead
       summary: Mark organization support updates read
-      description: Marks only this caller's existing ticket notifications through the observed sequence.
-        Later updates stay unread. Repeating the request is intrinsically idempotent; no permanent receipt
-        or expected ticket revision is required.
+      description: Organization support. Marks only this caller's existing ticket notifications through the observed sequence. Later updates stay unread. Repeating the request is intrinsically idempotent; no permanent receipt or expected ticket revision is required.
       parameters:
-      - *id001
+      - name: org
+        in: path
+        required: true
+        description: Organization slug; current owner or administrator membership is required. Applies to organizationSupportMarkNotificationsRead.
+        schema:
+          type: string
       - name: ticket
         in: path
         required: true
-        description: Support ticket UUID in this scope.
+        description: Support ticket UUID in this scope. Applies to organizationSupportMarkNotificationsRead.
         schema:
           type: string
           format: uuid
       responses:
         '202':
-          description: Read state committed without changing the ticket revision.
+          description: Read state committed without changing the ticket revision. Applies to organizationSupportMarkNotificationsRead.
           content:
             application/json:
               schema:
