@@ -229,7 +229,7 @@ RAM per session follows `AgentRunRAMMBMax`.
   - snapshot sanitization, and the post-restore reseed and clock step, which run before readiness.
 - **New requirements:**
   - **Anti-spoofing.** Each VM's netns accepts from `tap0` only source `10.0.0.2` and the VM's MAC. If the rule set does not have this yet, add it. A metal test sends spoofed packets as root and expects them dropped.
-  - **No kernel code.** The guest kernel is built without loadable-module support, or with module loading locked, so root cannot load kernel code.
+  - **No kernel code.** The guest kernel is built without loadable-module support, or with module loading locked, so root cannot load kernel code. Deferred until kernel artifacts are keyed by content ([ADR-20261112030000](20261112030000-guest-kernel-hardening-waits-for-kernel-keys.md)); sessions stay off in production until it ships.
   - **No platform secrets in session guests.** Guest-owned platform state (`/etc/faas`, guest-init sockets) is no more trusted than any guest message, which vmmd already assumes. Root can break guest-init only for its own session; health checks then fail the session and it is torn down.
 - **Registries.** Root makes OS package installs common. The `registries` network mode adds the Alpine, Debian and Ubuntu mirrors to its allowlist.
 - **The security rule.** CLAUDE.md's "nothing runs as root except vmmd" is about host processes. Root inside a guest stays inside the VM boundary, and this ADR records that reading explicitly.
