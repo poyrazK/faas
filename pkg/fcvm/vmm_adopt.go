@@ -195,10 +195,13 @@ func (v *JailerVMM) watchAdoptedProcess(l Lease, cmd *exec.Cmd, rec *instanceRec
 // adoptGuestBinds rebuilds bindMounts and bindSourceModes for one adopted
 // guest from its journaled bind assets. Each source is reopened and must
 // still be the recorded inode; its reference pins it for teardown. When the
-// cache has re-staged a source path since the guest bound it, the guest still
-// holds the recorded inode through its bind mount: it is reopened there, through
-// the Firecracker process pid, under the same (path, inode) key, so teardown
-// restores that inode's mode and a new bind of the refreshed file counts apart.
+// cache has re-staged a source path since the guest bound it, or evicted it,
+// the guest still holds the recorded inode through its bind mount: it is
+// reopened there, through the Firecracker process pid, under the same (path,
+// inode) key, so teardown restores that inode's mode and a new bind of a
+// refreshed file counts apart. Without the eviction case, a guest whose source
+// the cache evicted was refused and kept running unowned (production fsn-2,
+// 2026-11-12: the leaked guest failed the rollout's clean-adoption check).
 func (v *JailerVMM) adoptGuestBinds(instance string, pid int, binds []resourceAsset) error {
 	chroot := v.chrootRoot(instance)
 	for _, a := range binds {
@@ -207,15 +210,18 @@ func (v *JailerVMM) adoptGuestBinds(instance string, pid int, binds []resourceAs
 		}
 		f, err := openRecordedBindSource(a.Source, *a.SourceFile)
 		viaGuest := false
-		if errors.Is(err, errBindSourceReplaced) {
+		if errors.Is(err, errBindSourceReplaced) || errors.Is(err, os.ErrNotExist) {
 			viaGuest = true
-			// The path now names another file: take the recorded one from
-			// the guest's own view, where it is still bound.
+			// The path is gone or names another file: take the recorded one
+			// from the guest's own view, where it is still bound.
 			rel, relErr := filepath.Rel(chroot, a.Path)
 			if relErr != nil || rel == "." || strings.HasPrefix(rel, "..") {
 				err = fmt.Errorf("%w; bind target %s is outside the jail", err, a.Path)
-			} else if f, err = openAdoptedBindTarget(pid, rel, *a.SourceFile); err != nil {
-				err = fmt.Errorf("%w, and through the guest: %w", errBindSourceReplaced, err)
+			} else {
+				hostErr := err
+				if f, err = openAdoptedBindTarget(pid, rel, *a.SourceFile); err != nil {
+					err = fmt.Errorf("%w, and through the guest: %w", hostErr, err)
+				}
 			}
 		}
 		if err != nil {

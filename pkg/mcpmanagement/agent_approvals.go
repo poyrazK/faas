@@ -86,6 +86,42 @@ type agentActivityArgs struct {
 func registerAgentApprovals(s *mcp.Server, m *management) {
 	register(s, m, waitForApprovalTool, "Wait for a person to decide the approval request from an approval_required error. Follow recovery: retry_original repeats your call once with the same inputs; stop means tell the user.", m.waitForApproval)
 	register(s, m, agentActivityTool, "List this agent key's write requests of the last 7 days, newest first: method, path, status, approval used.", m.agentActivity)
+	register(s, m, planUndoTool, "Plan undoing your own changes (default: the last 24 hours): lists each, newest first, with what undoing it will do. Apply it with gregale_apply_undo and the plan_digest.", m.planUndo)
+	if m.opts.AllowWrites {
+		registerTool(s, m, applyUndoTool, "Undo your own changes from a plan. A person must approve every undo: follow the approval_required recovery, then repeat this call with the same inputs.", false, m.applyUndo)
+	}
+}
+
+// An agent undoes its own changes (ADR-20261112080601 §4): planning is
+// free, applying always waits for a person's approval.
+const (
+	planUndoTool  = "gregale_plan_undo"
+	applyUndoTool = "gregale_apply_undo"
+)
+
+type undoArgs struct {
+	Since      string   `json:"since,omitempty" jsonschema:"RFC 3339 time; default 24 hours ago, at most 7 days"`
+	Entries    []string `json:"entries,omitempty" jsonschema:"activity entry ids to undo instead of a time window"`
+	Force      bool     `json:"force,omitempty" jsonschema:"also undo changes someone changed again since"`
+	PlanDigest string   `json:"plan_digest,omitempty" jsonschema:"plan_digest of the plan to apply (gregale_apply_undo)"`
+}
+
+func (a undoArgs) request() api.AgentUndoRequest {
+	return api.AgentUndoRequest{Since: a.Since, Entries: a.Entries, Force: a.Force, PlanDigest: a.PlanDigest}
+}
+
+func (m *management) planUndo(ctx context.Context, args undoArgs) (any, error) {
+	if args.PlanDigest != "" {
+		return nil, invalid("invalid_argument", "plan_digest belongs to gregale_apply_undo")
+	}
+	return m.client.PlanSelfAgentUndo(ctx, args.request())
+}
+
+func (m *management) applyUndo(ctx context.Context, args undoArgs) (any, error) {
+	if args.PlanDigest == "" {
+		return nil, invalid("invalid_argument", "plan_digest is required: plan with gregale_plan_undo first")
+	}
+	return m.client.ApplySelfAgentUndo(ctx, args.request())
 }
 
 func (m *management) waitForApproval(ctx context.Context, args waitForApprovalArgs) (any, error) {

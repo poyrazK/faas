@@ -35,6 +35,9 @@ type Deps struct {
 	// ReviewURL is the page where a person decides an agent's approval
 	// request (ADR-20261104140058).
 	ReviewURL func(id string) string
+	// Undo plans and applies undos of an agent's changes
+	// (ADR-20261112080601).
+	Undo Undoer
 }
 
 // Kind reports how a key connects an agent, or "" for any other key. An

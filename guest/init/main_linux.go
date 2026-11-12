@@ -1234,6 +1234,21 @@ func runBuildOnce(m api.BuildManifest) error {
 	// mount policy. The VM plus this outer namespace remain the isolation
 	// boundary.
 	buildkitRoot := builderDriveMount + "/upper/build/.buildkit"
+	// ADR-20261030122204: a seeded build keeps BuildKit's root on drive2,
+	// which already holds the platform images. A build falls back to drive1
+	// when drive2 is unusable; the seed run cannot.
+	seedMounted := false
+	if wantBuildKitSeed(m) {
+		root, seedErr := mountBuildKitSeed()
+		switch {
+		case seedErr == nil:
+			buildkitRoot, seedMounted = root, true
+		case m.BuildKitSeedOnly:
+			return writeAndPoweroff(m, fmt.Errorf("mount buildkit seed drive: %w", seedErr), "")
+		default:
+			fmt.Fprintf(os.Stderr, "guest-init: buildkit seed drive unusable, keeping BuildKit on the builder drive: %v\n", seedErr)
+		}
+	}
 	if err := os.MkdirAll(buildkitRoot, 0o777); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("mkdir buildkit root: %w", err), "")
 	}
@@ -1505,6 +1520,14 @@ func runBuildOnce(m api.BuildManifest) error {
 	// successful halt. Quiesce the daemon before reading its log and syncing
 	// the writable drive so export cannot observe partially written metadata.
 	stopBuildkit()
+	if seedMounted {
+		if seedErr := unmountBuildKitSeed(); seedErr != nil {
+			if m.BuildKitSeedOnly && err == nil {
+				err = fmt.Errorf("unmount buildkit seed drive: %w", seedErr)
+			}
+			fmt.Fprintf(os.Stderr, "guest-init: unmount buildkit seed drive: %v\n", seedErr)
+		}
+	}
 	if m.DependencyCache && !deferCacheExport(m) {
 		cachePath := filepath.Join(m.OutDir, "cache")
 		removed, cacheErr := removeOversizedDependencyCache(cachePath, api.MaxExportedLayerBytes)
@@ -2454,6 +2477,7 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string, timings *
 		BuildkitVersion: buildkitVersion,
 		RailpackVersion: railpackVersion,
 		Timings:         timings,
+		BuildKitSeeded:  buildKitSeedUsed(),
 	}
 	if runErr == nil && !m.CacheExportOnly {
 		done.PublicBuildURLsSHA256 = api.PublicBuildURLsSHA256(m.PublicBuildURLs)

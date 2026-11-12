@@ -1,7 +1,7 @@
 # ADR-20261030122204 · Builder VMs start from a seeded BuildKit root
 
-- **Status:** Proposed. Implementation waits on the kernel overlayfs A/B
-  (ADR-20261029105325); see "Decision gate".
+- **Status:** Accepted (2026-11-12). The decision gate is met; see "Gate
+  result".
 - **Date:** 2026-10-30
 - **Amends:** the builder VM's drive layout (spec §4.6 describes drive0 and
   drive1; builders gain an optional drive2). ADR-003, under which builds run
@@ -123,3 +123,35 @@ withdrawn.
 - Not covered: Dockerfile builds, whose base images vary by app, and the
   `mise install` steps Railpack runs on top of the builder image. Seeding
   common runtime versions is a possible extension once this is measured.
+
+
+## Gate result (2026-11-12)
+
+Kernel overlayfs is on by default (ADR-20261029105325, accepted 2026-11-02),
+and the builder image step still costs a minute of every cold-cache build's
+time budget in production: over the seven days to 2026-11-11, 198 of 229
+Railpack builds ran `docker-image://ghcr.io/railwayapp/railpack-builder`,
+p50 34 s and p90 41 s, about half of the 69 s p50 build command (from the
+"slowest build steps" lines builderd writes to the deploy log). That is above
+the 20 s gate.
+
+## Implementation notes (2026-11-12)
+
+- **The seed run builds a platform-owned app.** builderd embeds a minimal
+  Node app and boots it as a build with `buildkit_seed_only`. Railpack plans
+  it exactly as it plans a customer build, so the seed holds the frontend,
+  the builder image and the runtime base under the same references and chain
+  IDs a customer build resolves. No separate pull logic tracks Railpack's
+  choice of builder image, which is pinned by tag inside Railpack's plan.
+- **Disk.** The production build disks had 21-22 GB free on 2026-11-12,
+  about the 20 GiB build-drive floor. builderd creates a seed only when free
+  space covers the floor plus the seed, and drops the seed before refusing a
+  build for space; a missing seed only means the build runs as today.
+- **Layout.** Seeds live in their own directory beside the build drives,
+  which the build-drive janitor does not sweep. vmmd stages drive2 in the
+  jail under its own name; the writable layer keeps `layer.ext4`.
+- **Warm builders** keep BuildKit on drive1, which their snapshot carries,
+  and never take a seed.
+- **Slices,** each shipped with the switch off: the guest and manifest
+  fields; vmmd's optional drive2; builderd's seed run, copy and janitor; the
+  metal test.

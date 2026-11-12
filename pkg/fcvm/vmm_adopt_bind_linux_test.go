@@ -5,6 +5,7 @@ package fcvm
 // adr: 20261017 vmmd restart adoption
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,6 +88,48 @@ func TestAdoptGuestBindsTakesARestagedSourceFromTheGuest(t *testing.T) {
 	}
 	if info, err := os.Stat(f.source); err != nil || info.Mode().Perm() != 0o640 {
 		t.Fatalf("refreshed file mode = %v, %v; want it untouched (0640)", info.Mode().Perm(), err)
+	}
+}
+
+// Production fsn-2, 2026-11-12: the cache evicted a guest's base-drive source
+// while the guest ran, so its path no longer existed at the next vmmd start.
+// The guest still binds the recorded inode; adoption takes it from there
+// instead of refusing the guest and leaving it running unowned.
+func TestAdoptGuestBindsTakesAnEvictedSourceFromTheGuest(t *testing.T) {
+	f := newRestagedBindFixture(t)
+	if err := os.Remove(f.source); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.v.adoptGuestBinds(idLive, 4242, []resourceAsset{f.bind}); err != nil {
+		t.Fatalf("adopt with an evicted source: %v", err)
+	}
+	st := f.v.bindSourceModes[bindSourceKey{path: f.source, file: f.recorded}]
+	if st.refs != 1 || st.handle == nil || !st.viaGuest {
+		t.Fatalf("bind source state = %+v", st)
+	}
+	if err := f.v.releaseBindSource(f.source, f.recorded); err != nil {
+		t.Fatalf("teardown of the evicted source: %v", err)
+	}
+	if len(f.v.bindSourceModes) != 0 {
+		t.Fatalf("teardown left references: %v", f.v.bindSourceModes)
+	}
+}
+
+func TestAdoptGuestBindsRefusesAnEvictedSourceTheGuestNoLongerBinds(t *testing.T) {
+	f := newRestagedBindFixture(t)
+	if err := os.Remove(f.source); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(f.guestRoot, "base.ext4")); err != nil {
+		t.Fatal(err)
+	}
+	err := f.v.adoptGuestBinds(idLive, 4242, []resourceAsset{f.bind})
+	if err == nil || !errors.Is(err, os.ErrNotExist) || !strings.Contains(err.Error(), "through the guest") {
+		t.Fatalf("adopt = %v, want a refusal naming the missing source and the guest's view", err)
+	}
+	f.v.dropAdoptedBinds(idLive)
+	if len(f.v.bindSourceModes) != 0 {
+		t.Fatalf("refusal left references: %v", f.v.bindSourceModes)
 	}
 }
 
