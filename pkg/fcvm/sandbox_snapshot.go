@@ -75,7 +75,7 @@ func (m *Manager) CaptureSandboxSnapshot(ctx context.Context, c SandboxCapture) 
 		return nil, SnapshotInfo{}, fmt.Errorf("fcvm: sandbox capture: %w", err)
 	}
 	return &Snapshot{StorageKey: memKey, VMStateStorageKey: spec.VMStateStorageKey, FCVersion: m.fcVersion,
-		MemBytes: info.MemBytes, Networkless: c.Wake.Network != api.SandboxNetworkRegistries}, info, nil
+		MemBytes: info.MemBytes, Networkless: c.Wake.Network == api.SandboxNetworkNone}, info, nil
 }
 
 // WaitSandboxReady waits for guest-init's sandbox-ready console line.

@@ -7,6 +7,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -54,6 +55,48 @@ func SandboxRegistryHost(name string) bool {
 		}
 	}
 	return false
+}
+
+// sandboxWebReservedTLDs are the last labels a web-mode session may not
+// resolve: special-use and private names (RFC 6761, RFC 6762, RFC 8375,
+// RFC 9476 and common private conventions), and Gregale's own internal
+// namespaces (`<name>.internal`, `<service>.svc.gregale`).
+var sandboxWebReservedTLDs = map[string]bool{
+	"localhost": true, "local": true, "internal": true, "arpa": true, "test": true, "invalid": true,
+	"example": true, "onion": true, "alt": true, "home": true, "lan": true, "corp": true,
+	"intranet": true, "private": true, "localdomain": true, "gregale": true,
+}
+
+// SandboxWebHost reports whether a web-mode session may resolve name
+// (ADR-20261112121456 §2): a public name of at least two labels, not an
+// address literal, whose last label is not reserved or internal.
+func SandboxWebHost(name string) bool {
+	name = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+	if name == "" || len(name) > 253 {
+		return false
+	}
+	if _, err := netip.ParseAddr(name); err == nil {
+		return false
+	}
+	labels := strings.Split(name, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, l := range labels {
+		if l == "" || len(l) > 63 || strings.HasPrefix(l, "-") || strings.HasSuffix(l, "-") {
+			return false
+		}
+		for _, r := range l {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != '_' {
+				return false
+			}
+		}
+	}
+	tld := labels[len(labels)-1]
+	if sandboxWebReservedTLDs[tld] || strings.Trim(tld, "0123456789") == "" {
+		return false
+	}
+	return true
 }
 
 // Sandbox problem codes.

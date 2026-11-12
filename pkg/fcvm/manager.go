@@ -740,6 +740,10 @@ type Instance struct {
 	// branch_db set expires (ADR-20261031193635).
 	environmentBranch    *environmentBranchContainment
 	branchDatabaseEgress map[databaseEgressKey]time.Time
+	// webDomains are the registrable domains a web-mode sandbox session
+	// was granted, which SandboxWebDistinctDomains bounds
+	// (ADR-20261112121456 §4).
+	webDomains map[string]struct{}
 	// TailCount (issue #667 / ADR-078) is the in-memory
 	// mirror of the per-instance `tail_count` SQL column.
 	// Incremented by the runner's WaitGroup each time a
@@ -960,6 +964,10 @@ type Manager struct {
 	// egress on this node (FAAS_EGRESS_DNS_GATING=off). Gating is on by
 	// default; turning it off keeps every other egress control.
 	dnsGatingOff bool
+	// sandboxWebNodeEgress lets web-mode sandbox sessions boot on a node
+	// without the ADR-372 tenant egress gateway (FAAS_SANDBOX_WEB_NODE_EGRESS,
+	// development and test fleets only; ADR-20261112121456 §3).
+	sandboxWebNodeEgress bool
 	// releaseConnectionsOnDestroy resets an app guest's TCP connections
 	// before teardown destroys it (ADR-20261109130000).
 	releaseConnectionsOnDestroy bool
@@ -1839,6 +1847,14 @@ func (m *Manager) SetParentMountRegistry(r *vmmdmount.Registry) {
 // for tenant VMs created from now on.
 func (m *Manager) WithDNSGatedEgress(enabled bool) *Manager {
 	m.dnsGatingOff = !enabled
+	return m
+}
+
+// WithSandboxWebNodeEgress lets web-mode sandbox sessions leave from the
+// node's own address when the host has no tenant egress gateway
+// (ADR-20261112121456 §3). Only development and test fleets set it.
+func (m *Manager) WithSandboxWebNodeEgress(allowed bool) *Manager {
+	m.sandboxWebNodeEgress = allowed
 	return m
 }
 
@@ -3833,11 +3849,13 @@ type WakeRequest struct {
 	// only with agentRunOnly (ADR-20261027090012).
 	agentRunWaitPauseAfter time.Duration
 	// sandboxID is set only by WakeSandbox (ADR-20261027090013), on top of
-	// ExecutionOnly; it becomes Instance.SandboxID. sandboxRegistries gives
-	// that VM a network in registries mode (§6): DNS-gated, TCP 443 only,
-	// through the registries-only resolver.
-	sandboxID         string
-	sandboxRegistries bool
+	// ExecutionOnly; it becomes Instance.SandboxID. sandboxNetwork gives
+	// that VM a network: api.SandboxNetworkRegistries (§6: DNS-gated, TCP 443
+	// only, through the registries-only resolver) or api.SandboxNetworkWeb
+	// (ADR-20261112121456: DNS-gated, TCP 80 and 443, through the
+	// public-names resolver). Empty is no network.
+	sandboxID      string
+	sandboxNetwork string
 	// sandboxManifest marks a session booted from an image: LayerKey is
 	// a full-rootfs job image, and vmmd stages sandbox.json on its private
 	// drive1 before boot (Lease.SandboxManifest). It holds that file.
@@ -4930,7 +4948,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.Plan = req.Plan
 	lease.AccountID = req.AccountID
 	lease.Networkless = req.networkless()
-	lease.AgentSized = req.sandboxRegistries
+	lease.AgentSized = req.sandboxNetwork != ""
 	lease.SandboxManifest = req.sandboxManifest
 	lease.Quarantine = req.Quarantine && !req.ExecutionOnly
 	if req.IdentityReload && !req.ExecutionOnly {
@@ -5070,11 +5088,16 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	nc.ConntrackCap = m.conntrackCap
 	// ADR-361: default-deny guest egress (base ports + per-plan rate).
 	switch {
-	case req.sandboxRegistries:
+	case req.sandboxNetwork == api.SandboxNetworkRegistries:
 		if m.dnsGatingOff {
 			return nil, fmt.Errorf("wake %s: sandbox registries egress needs DNS-gated egress, which this vmmd has switched off", req.Instance)
 		}
 		applySandboxRegistriesEgress(&nc, req.Plan)
+	case req.sandboxNetwork == api.SandboxNetworkWeb:
+		if err := m.sandboxWebEgressRefusal(); err != nil {
+			return nil, fmt.Errorf("wake %s: %w", req.Instance, err)
+		}
+		applySandboxWebEgress(&nc, req.Plan)
 	case !req.ExecutionOnly:
 		applyTenantEgressPolicy(&nc, req.Plan, req.EgressPorts)
 		nc.DNSGated = nc.DNSGated && !m.dnsGatingOff

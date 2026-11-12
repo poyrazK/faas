@@ -58,6 +58,9 @@ type Handler struct {
 	EnsureImage func(ctx context.Context, acct state.Account, src api.SandboxImageSource) (jobID, ref string, prob *api.Problem)
 	// TemplateApps creates and deletes sandbox templates' build apps.
 	TemplateApps TemplateApps
+	// WebNetwork is FAAS_SANDBOX_WEB_NETWORK: it admits network.mode web
+	// (ADR-20261112121456 §6). Off, web is sandbox_unsupported.
+	WebNetwork bool
 }
 
 // requestMaxBytes bounds a create or change request.

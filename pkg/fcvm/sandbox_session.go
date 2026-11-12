@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -84,7 +86,9 @@ type SandboxWakeRequest struct {
 	QuietPauseAfter time.Duration
 	// Network is the session's network mode (§6): api.SandboxNetworkNone
 	// boots it without a network, api.SandboxNetworkRegistries with
-	// DNS-gated egress to package registries and git hosts on TCP 443.
+	// DNS-gated egress to package registries and git hosts on TCP 443, and
+	// api.SandboxNetworkWeb with DNS-gated egress to public names on TCP 80
+	// and 443 through the tenant egress gateway (ADR-20261112121456).
 	Network string
 	// ImageKey boots a seller image (a materialized job image, full rootfs)
 	// as drive1 in place of LayerKey; vmmd stages /etc/faas/sandbox.json
@@ -100,13 +104,13 @@ type SandboxWakeRequest struct {
 	// took of the same drives and machine (ADR-20261027090013 §12), and
 	// falls back to a cold boot (ADR-005). It was captured before the
 	// template's commands, so a restored session gets them by
-	// template_start. A registries session restores only a networked
-	// snapshot, a none session only a networkless one.
+	// template_start. A registries or web session restores only a
+	// networked snapshot, a none session only a networkless one.
 	Snapshot *Snapshot
 }
 
 // WakeSandbox cold-boots one sandbox session VM on the execution-only path
-// (a fresh jail, cgroup and lease; a network only in registries mode) and
+// (a fresh jail, cgroup and lease; a network only in registries or web mode) and
 // returns once
 // guest-init's sandbox server answers, so the first call never races the
 // boot. The VM lives until Destroy.
@@ -118,11 +122,16 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 		req.LayerKey == "" || req.VcpuCount <= 0 || req.MemSizeMiB <= 0 || req.CPUMillicores <= 0 || req.QuietPauseAfter < 0 {
 		return nil, errors.New("fcvm: incomplete sandbox wake request")
 	}
-	registries := req.Network == api.SandboxNetworkRegistries
-	if !registries && req.Network != api.SandboxNetworkNone {
+	var network string
+	switch req.Network {
+	case api.SandboxNetworkNone:
+	case api.SandboxNetworkRegistries, api.SandboxNetworkWeb:
+		network = req.Network
+	default:
 		return nil, fmt.Errorf("fcvm: sandbox network mode %q is not supported", req.Network)
 	}
-	if req.Snapshot != nil && req.Snapshot.Networkless == registries {
+	networked := network != ""
+	if req.Snapshot != nil && req.Snapshot.Networkless == networked {
 		return nil, fmt.Errorf("fcvm: a %s sandbox cannot restore this snapshot's network", req.Network)
 	}
 	dialer, ok := m.vmm.(SandboxDialer)
@@ -142,7 +151,7 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 		return nil, errors.New("fcvm: sandbox commands need an image drive")
 	}
 	inst, err := m.Wake(ctx, WakeRequest{
-		Instance: req.Instance, ExecutionOnly: true, sandboxID: req.SandboxID, sandboxRegistries: registries,
+		Instance: req.Instance, ExecutionOnly: true, sandboxID: req.SandboxID, sandboxNetwork: network,
 		sandboxManifest: manifest, AccountID: req.AccountID, Plan: req.Plan,
 		BaseKey: req.BaseKey, LayerKey: layer, VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		CPUMillicores: req.CPUMillicores, QuietPauseAfter: req.QuietPauseAfter, Snapshot: req.Snapshot,
@@ -155,8 +164,9 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 		defer cancel()
 		return nil, errors.Join(cause, m.Destroy(destroyCtx, req.Instance))
 	}
-	if inst == nil || !inst.ExecutionOnly || inst.SandboxID != req.SandboxID || inst.Lease.Networkless == registries ||
-		registries && (!inst.Net.SandboxRegistries || !inst.Net.DNSGated) {
+	if inst == nil || !inst.ExecutionOnly || inst.SandboxID != req.SandboxID || inst.Lease.Networkless == networked ||
+		networked && !inst.Net.DNSGated || inst.Net.SandboxRegistries != (network == api.SandboxNetworkRegistries) ||
+		inst.Net.SandboxWeb != (network == api.SandboxNetworkWeb) {
 		return destroy(fmt.Errorf("fcvm: sandbox wake did not produce a %s sandbox VM", req.Network))
 	}
 	if err := awaitSandboxListener(ctx, dialer, req.Instance, agentRunDialWindow+req.ReadyTimeout); err != nil {
@@ -214,8 +224,8 @@ func awaitSandboxListener(ctx context.Context, dialer SandboxDialer, instance st
 }
 
 // networkless reports whether a wake boots without a tenant network: every
-// execution-only VM except a sandbox session in registries mode.
-func (r WakeRequest) networkless() bool { return r.ExecutionOnly && !r.sandboxRegistries }
+// execution-only VM except a sandbox session in registries or web mode.
+func (r WakeRequest) networkless() bool { return r.ExecutionOnly && r.sandboxNetwork == "" }
 
 // applySandboxRegistriesEgress is a registries-mode sandbox's egress
 // (ADR-20261027090013 §6, under ADR-361 and ADR-373): DNS pinned to the
@@ -233,4 +243,46 @@ func applySandboxRegistriesEgress(nc *netns.Config, plan api.Plan) {
 		nc.EgressConnRate, nc.EgressConnBurst = lim.EgressNewConnPerSecond, lim.EgressNewConnBurst
 		nc.EgressDestConnRate, nc.EgressDestConnBurst = lim.EgressNewConnPerDestPerSecond, lim.EgressNewConnPerDestBurst
 	}
+}
+
+// sandboxWebEgressPorts are the ports a web-mode session reaches
+// (ADR-20261112121456 §2). QUIC stays dropped (ADR-361), so browsers fall
+// back to TCP.
+var sandboxWebEgressPorts = []uint16{80, 443}
+
+// applySandboxWebEgress is a web-mode sandbox's egress (ADR-20261112121456
+// §2, under ADR-361 and ADR-373): DNS pinned to the public-names resolver,
+// new TCP only to addresses it answered and only on 80 and 443, and the
+// plan's connection rates. Like registries mode, no bridge service, database
+// or private service address is reachable.
+func applySandboxWebEgress(nc *netns.Config, plan api.Plan) {
+	nc.SandboxWeb = true
+	// The tenant is root in the guest (ADR-20261027090013 §10).
+	nc.GuestMAC = netns.SandboxGuestMAC
+	nc.DNSGated = true
+	nc.EgressPorts = slices.Clone(sandboxWebEgressPorts)
+	if lim, ok := api.LimitsFor(plan); ok {
+		nc.EgressConnRate, nc.EgressConnBurst = lim.EgressNewConnPerSecond, lim.EgressNewConnBurst
+		nc.EgressDestConnRate, nc.EgressDestConnBurst = lim.EgressNewConnPerDestPerSecond, lim.EgressNewConnPerDestBurst
+	}
+}
+
+// errSandboxWebNeedsGateway refuses a web-mode session on a node whose
+// tenant egress leaves from its own address (ADR-20261112121456 §3).
+var errSandboxWebNeedsGateway = errors.New("sandbox web egress needs the tenant egress gateway (FAAS_TENANT_EGRESS_IFACE), which this node does not route through")
+
+// sandboxWebEgressRefusal reports why this node cannot boot a web-mode
+// session, or nil. It fails closed: without DNS gating, or without the
+// ADR-372 gateway unless the operator allowed node egress for a test fleet.
+func (m *Manager) sandboxWebEgressRefusal() error {
+	if m.dnsGatingOff {
+		return errors.New("sandbox web egress needs DNS-gated egress, which this vmmd has switched off")
+	}
+	if m.sandboxWebNodeEgress {
+		return nil
+	}
+	if p := netns.ActiveHostPolicyForRender(); p == nil || strings.TrimSpace(p.TenantEgressIface) == "" {
+		return errSandboxWebNeedsGateway
+	}
+	return nil
 }

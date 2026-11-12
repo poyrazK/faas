@@ -4699,7 +4699,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if upstreams == nil {
 				upstreams = serviceDiscoveryUpstreams
 			}
-			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort, gateway.SandboxRegistriesDNSPort} {
+			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort, gateway.SandboxRegistriesDNSPort, gateway.SandboxWebDNSPort} {
 				dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, upstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
 				if dnsErr != nil {
 					return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
@@ -4711,6 +4711,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				// resolve package registries and git hosts only.
 				if dnsPort == gateway.SandboxRegistriesDNSPort {
 					dnsHandler.WithAllowedNamesOnly(api.SandboxRegistryHost)
+				}
+				// ADR-20261112121456 §2: web-mode sandbox sessions resolve
+				// public names only, never Gregale's internal ones.
+				if dnsPort == gateway.SandboxWebDNSPort {
+					dnsHandler.WithAllowedNamesOnly(api.SandboxWebHost)
 				}
 				if chaosMatchRecorder != nil {
 					dnsHandler.WithScenarioDNSChaos(newServiceDNSChaosResolver(deps.pgStore, cfg.NodeName), chaosMatchRecorder.Observe)

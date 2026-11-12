@@ -10666,6 +10666,11 @@ var (
 	// AgentRunConcurrentPerAccount and AgentRunQueuedPerAccount together with
 	// runs. SandboxMaxLifetimeSec is a session's longest life.
 	SandboxMaxLifetimeSec = [4]int{0, 3600, 14_400, 86_400}
+	// SandboxWebDistinctDomains bounds the registrable domains one web-mode
+	// session may reach (ADR-20261112121456 §4); vmmd grants no new one past
+	// it. A browser touches many domains per page, so it is above the per-run
+	// fetch limits of ADR-20261027090014 §4.7.
+	SandboxWebDistinctDomains = [4]int{0, 200, 1000, 5000}
 	// SandboxExecTimeoutMaxSec and SandboxExecOutputMaxBytes bound one
 	// command.
 	SandboxExecTimeoutMaxSec  = [4]int{0, 300, 1800, 3600}
