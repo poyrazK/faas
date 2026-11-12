@@ -116,7 +116,12 @@ Owner decisions on 2026-11-11 (all were the recommended options).
    `--check` fails without writing, for CI. `gregale deploy` refreshes only
    files that already exist, before any build (a Python function imports
    its `gregale_functions.py`), so a deploy never adds files the author did
-   not ask for. Regeneration in `dev --local` is still to come.
+   not ask for. `dev --local` refreshes the same files at start, gives each
+   function `GREGALE_FUNCTIONS` and a `GREGALE_SERVICE_<NAME>_URL` per
+   sibling pointing at the dev server's path route for it (no `*.localhost`
+   resolution needed inside the runtime), answers a send with 202 and runs
+   it in the background, and sets each function's input schema so the
+   local adapter checks calls as deployed.
 4. `send()`: the service proxy's async admission for function targets
    (`X-Gregale-Invoke: async`), reusing the async route enqueue path.
    As built: an admitter after private-service authorization enqueues any
