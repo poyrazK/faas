@@ -370,6 +370,21 @@ func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, 
 		Method: eventInvocationMethod, Path: eventInvocationPath,
 		Payload: eventPayload, Headers: headers, DueAt: now, CreatedAt: now,
 	}
+	if row.DeploymentScope != "" {
+		// ADR-20261104120000: a stage subscription's delivery is the stage's
+		// own work, pinned to the stage's live release like any stage ingress.
+		// Work policies are still the app's, so a stage binding is refused.
+		if row.Work != nil {
+			return true, eventWorkRouteError(row.ID, "bind environment work", errors.New("work policies are not available for environment event subscriptions"), false)
+		}
+		prepared, _, resolveErr := state.ResolveInvocationVersionForEnvironment(ctx, l.engine.store, invocation, row.DeploymentScope)
+		if resolveErr != nil {
+			return true, fmt.Errorf("subscription %s: resolve environment %s: %w", row.ID, row.DeploymentScope, &eventFanoutRouteError{
+				code: state.EventFanoutFailureCodeTargetUnavailable, retryable: !errors.Is(resolveErr, state.ErrNotFound), err: resolveErr,
+			})
+		}
+		invocation = prepared
+	}
 	if handled, routeErr := l.routeBoundEventWork(ctx, row, invocation, requireActiveApp && row.WorkSnapshotCaptured); handled || routeErr != nil {
 		return true, routeErr
 	}

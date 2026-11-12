@@ -46,6 +46,11 @@ type Envelope struct {
 	// when the account's owner has lost access to the company
 	// (ADR-20261025211616). An event without one routes as before.
 	Producer string `json:"producer,omitempty"`
+	// EnvironmentID is the server-stamped project environment the event
+	// belongs to; empty is production. Fanout gives an event only to
+	// subscriptions of its own environment, and only production events reach
+	// workflows (ADR-20261104120000).
+	EnvironmentID string `json:"environmentid,omitempty"`
 }
 
 // ProducerPersonal marks an event published outside any company: a personal

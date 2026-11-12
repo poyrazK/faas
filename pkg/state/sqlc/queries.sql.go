@@ -2200,7 +2200,8 @@ func (q *Queries) ApplyDeploymentRuntimeUpgradeCutover(ctx context.Context, db D
 
 const applyEventSubscriptionIntent = `-- name: ApplyEventSubscriptionIntent :many
 UPDATE event_subscriptions SET enabled = (id = ANY($1::uuid[])), updated_at = now()
-WHERE app_id = $2::uuid AND enabled IS DISTINCT FROM (id = ANY($1::uuid[]))
+WHERE app_id = $2::uuid AND deployment_scope = ''
+  AND enabled IS DISTINCT FROM (id = ANY($1::uuid[]))
 RETURNING id::text AS id, enabled
 `
 
@@ -2214,7 +2215,9 @@ type ApplyEventSubscriptionIntentRow struct {
 	Enabled bool
 }
 
-// Enable exactly the declared subscriptions of the app.
+// Enable exactly the declared production subscriptions of the app; another
+// environment's subscriptions are not production's to reconcile
+// (ADR-20261104120000).
 func (q *Queries) ApplyEventSubscriptionIntent(ctx context.Context, db DBTX, arg ApplyEventSubscriptionIntentParams) ([]ApplyEventSubscriptionIntentRow, error) {
 	rows, err := db.Query(ctx, applyEventSubscriptionIntent, arg.Declared, arg.AppID)
 	if err != nil {
@@ -50539,7 +50542,7 @@ func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([
 }
 
 const listEnabledEventSubscriptionsForAccount = `-- name: ListEnabledEventSubscriptionsForAccount :many
-select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds
+select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds, s.deployment_scope, s.environment_id
 from event_subscriptions s
 join apps a on a.id = s.app_id
 where s.account_id = $1 and s.enabled and a.status <> 'deleted'
@@ -50568,6 +50571,8 @@ func (q *Queries) ListEnabledEventSubscriptionsForAccount(ctx context.Context, d
 			&i.RoutingRetryPolicy,
 			&i.SchemaVersions,
 			&i.AcknowledgmentLeaseSeconds,
+			&i.DeploymentScope,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -51179,7 +51184,7 @@ func (q *Queries) ListEnvironmentWorkloadQualificationsForDispatch(ctx context.C
 
 const listEventSubscriptionsForApp = `-- name: ListEventSubscriptionsForApp :many
 
-select id, account_id, app_id, source, type, filter, enabled, created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds
+select id, account_id, app_id, source, type, filter, enabled, created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds, deployment_scope, environment_id
 from event_subscriptions
 where app_id = $1
 order by created_at asc, id asc
@@ -51210,6 +51215,8 @@ func (q *Queries) ListEventSubscriptionsForApp(ctx context.Context, db DBTX, app
 			&i.RoutingRetryPolicy,
 			&i.SchemaVersions,
 			&i.AcknowledgmentLeaseSeconds,
+			&i.DeploymentScope,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -53826,7 +53833,7 @@ func (q *Queries) ListManagedPostgresUsageResources(ctx context.Context, db DBTX
 }
 
 const listMatchingEventSubscriptionsForAccount = `-- name: ListMatchingEventSubscriptionsForAccount :many
-select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds
+select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds, s.deployment_scope, s.environment_id
 from event_subscriptions s
 join apps a on a.id = s.app_id
 where s.account_id = $1::uuid
@@ -53900,6 +53907,8 @@ func (q *Queries) ListMatchingEventSubscriptionsForAccount(ctx context.Context, 
 			&i.RoutingRetryPolicy,
 			&i.SchemaVersions,
 			&i.AcknowledgmentLeaseSeconds,
+			&i.DeploymentScope,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -113495,21 +113504,23 @@ func (q *Queries) UpsertEnvironmentWorkloadServingRoute(ctx context.Context, db 
 }
 
 const upsertEventSubscription = `-- name: UpsertEventSubscription :one
-insert into event_subscriptions (account_id, app_id, source, type, filter)
-values ($1, $2, $3, $4, $5::jsonb)
-on conflict (app_id, source, type, filter) do update
+insert into event_subscriptions (account_id, app_id, source, type, filter, deployment_scope)
+values ($1, $2, $3, $4, $5::jsonb, $6::text)
+on conflict (app_id, deployment_scope, source, type, filter) do update
 set enabled = true,
     updated_at = now()
 returning id, account_id, app_id, source, type, filter, enabled,
-          created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds, (xmax = 0) as inserted
+          created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds,
+          deployment_scope, environment_id, (xmax = 0) as inserted
 `
 
 type UpsertEventSubscriptionParams struct {
-	AccountID pgtype.UUID
-	AppID     pgtype.UUID
-	Source    string
-	Type      string
-	Column5   []byte
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	Source          string
+	Type            string
+	Column5         []byte
+	DeploymentScope string
 }
 
 type UpsertEventSubscriptionRow struct {
@@ -113525,11 +113536,15 @@ type UpsertEventSubscriptionRow struct {
 	RoutingRetryPolicy         []byte
 	SchemaVersions             []string
 	AcknowledgmentLeaseSeconds int32
+	DeploymentScope            string
+	EnvironmentID              pgtype.UUID
 	Inserted                   bool
 }
 
 // (xmax = 0) distinguishes a declaration first installed by this deploy from
 // an idempotent replay of the same manifest row.
+// The identity is unique within one environment of the app
+// (ADR-20261104120000); production is the empty scope.
 func (q *Queries) UpsertEventSubscription(ctx context.Context, db DBTX, arg UpsertEventSubscriptionParams) (UpsertEventSubscriptionRow, error) {
 	row := db.QueryRow(ctx, upsertEventSubscription,
 		arg.AccountID,
@@ -113537,6 +113552,7 @@ func (q *Queries) UpsertEventSubscription(ctx context.Context, db DBTX, arg Upse
 		arg.Source,
 		arg.Type,
 		arg.Column5,
+		arg.DeploymentScope,
 	)
 	var i UpsertEventSubscriptionRow
 	err := row.Scan(
@@ -113552,6 +113568,8 @@ func (q *Queries) UpsertEventSubscription(ctx context.Context, db DBTX, arg Upse
 		&i.RoutingRetryPolicy,
 		&i.SchemaVersions,
 		&i.AcknowledgmentLeaseSeconds,
+		&i.DeploymentScope,
+		&i.EnvironmentID,
 		&i.Inserted,
 	)
 	return i, err

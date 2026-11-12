@@ -462,7 +462,7 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	}
 	if len(m.Triggers) == 0 && len(m.EventTriggers) == 0 {
 		if sourceManifestReconcilesEvents(ctx) {
-			if problem := s.applySourceRefEventTriggers(ctx, acct, app, m, &staged); problem != nil {
+			if problem := s.applySourceRefEventTriggers(ctx, acct, app, m, deploymentScope, &staged); problem != nil {
 				return staged, problem
 			}
 		}
@@ -632,7 +632,7 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		})
 	}
 	if len(m.EventTriggers) > 0 || sourceManifestReconcilesEvents(ctx) {
-		if problem := s.applySourceRefEventTriggers(ctx, acct, app, m, &staged); problem != nil {
+		if problem := s.applySourceRefEventTriggers(ctx, acct, app, m, deploymentScope, &staged); problem != nil {
 			return staged, problem
 		}
 	}
@@ -668,13 +668,20 @@ func eventSubscriptionManifestKey(source, typ string, filter json.RawMessage) (s
 // applySourceRefEventTriggers installs the manifest's event_triggers for the
 // app and, on a production deploy, makes them the app's whole set
 // (ADR-20261031130000).
-func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest, staged *sourceRefManifestStaged) *api.Problem {
+func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest, deploymentScope string, staged *sourceRefManifestStaged) *api.Problem {
 	eventStore, ok := s.store.(state.EventSubscriptionStore)
 	if !ok {
 		if len(m.EventTriggers) == 0 {
 			return nil
 		}
 		return api.ErrCapacity("event subscriptions are unavailable")
+	}
+	// A deploy installs into its own environment (ADR-20261104120000): a
+	// stage's subscriptions receive the stage's events, never production's.
+	scope := state.NormalizeCronDeploymentScope(deploymentScope)
+	scoped, ok := s.store.(state.EventSubscriptionScopeStore)
+	if !ok && scope != "" {
+		return api.ErrCapacity("environment event subscriptions are unavailable")
 	}
 	workBindings, ok := s.store.(state.EventWorkBindingStore)
 	if !ok {
@@ -688,6 +695,9 @@ func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Acc
 	subscriptionKeys := make(map[string]state.EventSubscription, len(subscriptions))
 	ids := make([]string, 0, len(subscriptions))
 	for _, subscription := range subscriptions {
+		if subscription.DeploymentScope != scope {
+			continue
+		}
 		key, keyErr := eventSubscriptionManifestKey(subscription.Source, subscription.Type, subscription.Filter)
 		if keyErr == nil {
 			subscriptionKeys[key] = subscription
@@ -717,7 +727,11 @@ func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Acc
 		if !exists || !row.Enabled {
 			wasDisabled := exists && !row.Enabled
 			var inserted bool
-			row, inserted, err = eventStore.UpsertEventSubscription(ctx, acct.ID, app.ID, subscription.Source, subscription.Type, subscription.Filter)
+			if scope == "" {
+				row, inserted, err = eventStore.UpsertEventSubscription(ctx, acct.ID, app.ID, subscription.Source, subscription.Type, subscription.Filter)
+			} else {
+				row, inserted, err = scoped.UpsertEventSubscriptionInScope(ctx, acct.ID, app.ID, scope, subscription.Source, subscription.Type, subscription.Filter)
+			}
 			if err != nil {
 				return sourceRefEventSubscriptionProblem(err)
 			}

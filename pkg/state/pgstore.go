@@ -6028,6 +6028,13 @@ func deleteProjectEnvironmentRowsTx(ctx context.Context, tx pgx.Tx, accountID, p
 	`, accountID, projectID, slug); err != nil {
 		return mapErr(err)
 	}
+	// So do its event subscriptions; their work bindings cascade.
+	if _, err := tx.Exec(ctx, `
+		delete from event_subscriptions s using apps a
+		 where s.app_id = a.id and a.account_id = $1 and a.project_id = $2 and s.deployment_scope = $3
+	`, accountID, projectID, slug); err != nil {
+		return mapErr(err)
+	}
 
 	if _, err := tx.Exec(ctx, `
 		delete from project_environment_config_versions

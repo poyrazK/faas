@@ -1649,13 +1649,16 @@ limit sqlc.arg('limit')::int;
 -- name: UpsertEventSubscription :one
 -- (xmax = 0) distinguishes a declaration first installed by this deploy from
 -- an idempotent replay of the same manifest row.
-insert into event_subscriptions (account_id, app_id, source, type, filter)
-values ($1, $2, $3, $4, $5::jsonb)
-on conflict (app_id, source, type, filter) do update
+-- The identity is unique within one environment of the app
+-- (ADR-20261104120000); production is the empty scope.
+insert into event_subscriptions (account_id, app_id, source, type, filter, deployment_scope)
+values ($1, $2, $3, $4, $5::jsonb, sqlc.arg(deployment_scope)::text)
+on conflict (app_id, deployment_scope, source, type, filter) do update
 set enabled = true,
     updated_at = now()
 returning id, account_id, app_id, source, type, filter, enabled,
-          created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds, (xmax = 0) as inserted;
+          created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds,
+          deployment_scope, environment_id, (xmax = 0) as inserted;
 
 -- name: DeleteEventSubscription :exec
 delete from event_subscriptions
@@ -1689,9 +1692,12 @@ WHERE i.deployment_id = sqlc.arg(deployment_id)::uuid AND i.status = 'prepared'
 FOR UPDATE OF i;
 
 -- name: ApplyEventSubscriptionIntent :many
--- Enable exactly the declared subscriptions of the app.
+-- Enable exactly the declared production subscriptions of the app; another
+-- environment's subscriptions are not production's to reconcile
+-- (ADR-20261104120000).
 UPDATE event_subscriptions SET enabled = (id = ANY(sqlc.arg(declared)::uuid[])), updated_at = now()
-WHERE app_id = sqlc.arg(app_id)::uuid AND enabled IS DISTINCT FROM (id = ANY(sqlc.arg(declared)::uuid[]))
+WHERE app_id = sqlc.arg(app_id)::uuid AND deployment_scope = ''
+  AND enabled IS DISTINCT FROM (id = ANY(sqlc.arg(declared)::uuid[]))
 RETURNING id::text AS id, enabled;
 
 -- name: SettleEventSubscriptionIntent :exec
