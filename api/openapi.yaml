@@ -102975,6 +102975,10 @@ components:
         data: { description: Event data associated with this producer key. }
         time: { type: string, format: date-time, description: Original occurrence time; defaults to ingress time. }
         schemaversion: { type: string, maxLength: 64 }
+        environment:
+          type: string
+          maxLength: 40
+          description: Slug of the app's project environment the event belongs to; omitted is production. Only that environment's subscriptions receive the event.
     AppPublishEventResponse:
       type: object
       additionalProperties: false
@@ -103033,6 +103037,10 @@ components:
           type: string
           format: uuid
           deprecated: true
+        environmentid:
+          type: string
+          format: uuid
+          description: Project environment the event belongs to; omitted is production. Only that environment's subscriptions receive the event, and only production events start workflows.
 
     PublishEventResponse:
       description: Durable acceptance receipt for a published internal event.
@@ -106823,6 +106831,9 @@ components:
         work_action: { type: string, enum: [invoke, cancel_pending], description: "Action taken on a matching event." }
         ordered: { type: boolean, description: "Whether this subscription waits for earlier matching keyed deliveries before routing." }
         enabled: { type: boolean }
+        environment:
+          type: string
+          description: Project environment slug whose events the subscription receives; omitted is production.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 

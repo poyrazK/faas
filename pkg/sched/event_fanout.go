@@ -111,9 +111,15 @@ func (l *Loop) routePublishedEventAt(ctx context.Context, payload string, accept
 				// cannot have subscribed before this event either.
 				return errors.Join(routeErrs...)
 			}
+			// A subscription receives only its own environment's events
+			// (ADR-20261104120000).
+			if !strings.EqualFold(row.EnvironmentID, envelope.EnvironmentID) {
+				continue
+			}
 			if _, err := l.routeSubscription(ctx, envelope, eventPayload, state.PublishedEventRecipient{
 				ID: row.ID, AccountID: row.AccountID, AppID: row.AppID,
 				Source: row.Source, Type: row.Type, Filter: row.Filter, SchemaVersions: row.SchemaVersions,
+				DeploymentScope: row.DeploymentScope, EnvironmentID: row.EnvironmentID,
 			}, now, false, 0); err != nil {
 				routeErrs = append(routeErrs, err)
 			}
