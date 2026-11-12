@@ -11,6 +11,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// ChargesAgentBudget reports whether the request's credential pays from an
+// agent budget, so a handler can skip pricing work for any other caller.
+func (m *Middleware) ChargesAgentBudget(r *http.Request) bool {
+	_, key, _, ok := PrincipalFrom(r)
+	return ok && key != nil && ProjectLimitable(*key)
+}
+
 // ChargeAgentBudget prices a change an agent key is about to make: one that
 // adds millicents of committed cost to plan's account (ADR-20261111114059).
 // Within the key's monthly budget, or when the request went through on a

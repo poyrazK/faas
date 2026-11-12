@@ -71,6 +71,10 @@ func (s *server) createProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, problem)
 		return
 	}
+	commitBudget, answered := s.chargeEnvironmentClone(w, r, acct, project, parent, true)
+	if answered {
+		return
+	}
 	limits := api.MustLimitsFor(acct.Plan)
 	ctx := r.Context()
 	env, branch, _, err := store.CreateProjectEnvironmentBranch(ctx, state.ProjectEnvironmentBranchCreate{
@@ -94,6 +98,7 @@ func (s *server) createProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrCapacity("could not publish the branch's workloads; the branch was not created"))
 		return
 	}
+	commitBudget()
 	s.audit.Emit(ctx, "project.environment.branched", &acct.ID, map[string]any{
 		"project_id": project.ID, "project_slug": project.Slug, "environment_id": env.ID, "environment_slug": env.Slug,
 		"parent_slug": branch.ParentSlug, "expires_at": branch.ExpiresAt.Format(time.RFC3339), "workloads": len(workloads),
