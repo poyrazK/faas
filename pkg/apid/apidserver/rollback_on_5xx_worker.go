@@ -153,7 +153,10 @@ func (s *server) autoRollbackOn5xx(ctx context.Context, c state.RollbackOn5xxCan
 		return fmt.Errorf("record auto-rollback: %w", err)
 	}
 	// The rollback is requested, not yet done; the outcome worker records
-	// whether the previous release actually served again (ADR-1446).
+	// whether the previous release actually served again (ADR-1446). The
+	// decision tells the customer why their release stopped serving: before
+	// Hunt 34 (H34-17) release summary still showed the canary's "advance".
+	s.recordFirstWakeRollbackDecision(ctx, c.DeploymentID, firstWake5xxDecision(target.ID, requests, serverErrors, ""))
 	s.log.Warn("rollback-on-5xx: rollback requested", "app", app.ID, "deployment", c.DeploymentID,
 		"target", target.ID, "requests", requests, "server_errors", serverErrors)
 	s.audit.Emit(ctx, "app.auto_rollback_on_5xx", &acct.ID, map[string]any{
@@ -170,12 +173,7 @@ func (s *server) autoRollbackOn5xx(ctx context.Context, c state.RollbackOn5xxCan
 // log the skip on every sweep and tell no one (release review 2026-11-01).
 func (s *server) rollbackOn5xxSkipped(ctx context.Context, c state.RollbackOn5xxCandidate, acct state.Account, app state.App,
 	targetID string, requests, serverErrors int64, problem *api.Problem) error {
-	now := time.Now().UTC()
-	decision := api.RolloutDecision{Kind: api.RolloutDecisionAbort, Rule: api.RolloutRuleAbortPostRelease5xx,
-		Summary:        fmt.Sprintf("first-wake 5xx: %d of %d responses failed", serverErrors, requests),
-		TrafficPercent: 100, StableDeploymentID: targetID,
-		Candidate:       &api.RolloutDecisionSample{Requests: requests, ServerErrors: serverErrors},
-		RollbackSkipped: problem.Code, DecidedAt: now.Format(time.RFC3339Nano)}
+	decision := firstWake5xxDecision(targetID, requests, serverErrors, problem.Code)
 	if err := decision.Validate(); err != nil {
 		return fmt.Errorf("first-wake 5xx decision: %w", err)
 	}
@@ -197,6 +195,32 @@ func (s *server) rollbackOn5xxSkipped(ctx context.Context, c state.RollbackOn5xx
 		"requests": requests, "server_errors": serverErrors, "reason": problem.Code,
 	})
 	return nil
+}
+
+// firstWake5xxDecision is the ADR-1447 record of a first-wake 5xx breach:
+// rolled back to targetID, or kept serving when skipped names why not.
+func firstWake5xxDecision(targetID string, requests, serverErrors int64, skipped string) api.RolloutDecision {
+	return api.RolloutDecision{Kind: api.RolloutDecisionAbort, Rule: api.RolloutRuleAbortPostRelease5xx,
+		Summary:        fmt.Sprintf("first-wake 5xx: %d of %d responses failed", serverErrors, requests),
+		TrafficPercent: 100, StableDeploymentID: targetID,
+		Candidate:       &api.RolloutDecisionSample{Requests: requests, ServerErrors: serverErrors},
+		RollbackSkipped: skipped, DecidedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+}
+
+// recordFirstWakeRollbackDecision stores the decision of a rollback already
+// requested. The rollback stands either way, so a store error is logged.
+func (s *server) recordFirstWakeRollbackDecision(ctx context.Context, deploymentID string, decision api.RolloutDecision) {
+	store, ok := s.store.(state.PostReleaseWatchStore)
+	if !ok || decision.Validate() != nil {
+		return
+	}
+	raw, err := json.Marshal(decision)
+	if err == nil {
+		err = store.RecordPostReleaseRolloutDecision(ctx, deploymentID, raw)
+	}
+	if err != nil {
+		s.log.Warn("rollback-on-5xx: record decision", "deployment", deploymentID, "err", err)
+	}
 }
 
 // rollbackOn5xxTarget is the release the candidate replaced: the one a plain
