@@ -55523,7 +55523,7 @@ paths:
             schema: { $ref: '#/components/schemas/AgentUndoRequest' }
       responses:
         '200':
-          description: The undo plan.
+          description: The undo plan for the connected agent.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AgentUndoPlan' }
@@ -55539,7 +55539,7 @@ paths:
       - name: id
         in: path
         required: true
-        description: API key id of the connected agent whose changes to undo.
+        description: API key id of the connected agent whose changes are undone.
         schema: { type: string }
     post:
       tags: [keys]
@@ -55558,7 +55558,7 @@ paths:
             schema: { $ref: '#/components/schemas/AgentUndoRequest' }
       responses:
         '200':
-          description: What the undo did to each change.
+          description: What the undo did to each of the connected agent's changes.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AgentUndoResult' }
@@ -55749,7 +55749,7 @@ paths:
             schema: { $ref: '#/components/schemas/AgentUndoRequest' }
       responses:
         '200':
-          description: The undo plan.
+          description: The undo plan for the organization agent.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AgentUndoPlan' }
@@ -55766,7 +55766,7 @@ paths:
       - name: id
         in: path
         required: true
-        description: API key id of the organization agent whose changes to undo.
+        description: API key id of the organization agent whose changes are undone.
         schema: { type: string }
     post:
       tags: [orgs, keys]
@@ -55782,7 +55782,7 @@ paths:
             schema: { $ref: '#/components/schemas/AgentUndoRequest' }
       responses:
         '200':
-          description: What the undo did to each change.
+          description: What the undo did to each of the organization agent's changes.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AgentUndoResult' }

@@ -545,7 +545,7 @@ export class KeysService {
    * it was already undone. Apply the plan with its plan_digest. An agent
    * key cannot plan or apply an undo.
    *
-   * @returns AgentUndoPlan The undo plan.
+   * @returns AgentUndoPlan The undo plan for the connected agent.
    * @throws ApiError
    */
   public static planAgentUndo({
@@ -588,7 +588,7 @@ export class KeysService {
    * the older changes of its resource as they are. 409 when the changes
    * or their state differ from the plan. Needs an admin credential.
    *
-   * @returns AgentUndoResult What the undo did to each change.
+   * @returns AgentUndoResult What the undo did to each of the connected agent's changes.
    * @throws ApiError
    */
   public static applyAgentUndo({
@@ -596,7 +596,7 @@ export class KeysService {
     requestBody,
   }: {
     /**
-     * API key id of the connected agent whose changes to undo.
+     * API key id of the connected agent whose changes are undone.
      */
     id: string,
     requestBody: AgentUndoRequest,
@@ -835,7 +835,7 @@ export class KeysService {
    * The organization's variant of planning an undo, for its owners and
    * admins.
    *
-   * @returns AgentUndoPlan The undo plan.
+   * @returns AgentUndoPlan The undo plan for the organization agent.
    * @throws ApiError
    */
   public static planOrgAgentUndo({
@@ -881,7 +881,7 @@ export class KeysService {
    * The organization's variant of applying a reviewed undo plan, for its
    * owners and admins.
    *
-   * @returns AgentUndoResult What the undo did to each change.
+   * @returns AgentUndoResult What the undo did to each of the organization agent's changes.
    * @throws ApiError
    */
   public static applyOrgAgentUndo({
@@ -894,7 +894,7 @@ export class KeysService {
      */
     slug: string,
     /**
-     * API key id of the organization agent whose changes to undo.
+     * API key id of the organization agent whose changes are undone.
      */
     id: string,
     requestBody: AgentUndoRequest,

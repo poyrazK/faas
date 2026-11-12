@@ -276,7 +276,7 @@ export class OrgsService {
    * The organization's variant of planning an undo, for its owners and
    * admins.
    *
-   * @returns AgentUndoPlan The undo plan.
+   * @returns AgentUndoPlan The undo plan for the organization agent.
    * @throws ApiError
    */
   public static planOrgAgentUndo({
@@ -322,7 +322,7 @@ export class OrgsService {
    * The organization's variant of applying a reviewed undo plan, for its
    * owners and admins.
    *
-   * @returns AgentUndoResult What the undo did to each change.
+   * @returns AgentUndoResult What the undo did to each of the organization agent's changes.
    * @throws ApiError
    */
   public static applyOrgAgentUndo({
@@ -335,7 +335,7 @@ export class OrgsService {
      */
     slug: string,
     /**
-     * API key id of the organization agent whose changes to undo.
+     * API key id of the organization agent whose changes are undone.
      */
     id: string,
     requestBody: AgentUndoRequest,
