@@ -62,6 +62,10 @@ export type CronResponse = {
    * Project environment the cron runs in; omitted for production.
    */
   environment?: string;
+  /**
+   * A full environment clone copied this cron disabled although the source ran it; resuming the environment's automation enables it.
+   */
+  clone_paused?: boolean;
   schedule_policy?: SchedulePolicy;
   failure_rules?: FailureRules;
 };

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -24,4 +25,10 @@ func (r *server) ReconcileEnvironmentBranchData(ctx context.Context, now time.Ti
 // EnvironmentBranchDatabaseTTL is the TTL a branch's database copy carries.
 func EnvironmentBranchDatabaseTTL(branch state.ProjectEnvironmentBranch, point time.Time) time.Duration {
 	return environmentBranchDatabaseTTL(branch, point)
+}
+
+// EnvironmentBranchLifetimeProblem refuses an extend past a branch's longest
+// lifetime.
+func EnvironmentBranchLifetimeProblem(branch state.ProjectEnvironmentBranch, hasCopies bool, expiresAt time.Time) *api.Problem {
+	return environmentBranchLifetimeProblem(branch, hasCopies, expiresAt)
 }

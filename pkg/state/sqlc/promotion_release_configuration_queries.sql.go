@@ -83,7 +83,8 @@ WITH owner AS MATERIALIZED (
  JOIN project_environment_workload_specs spec ON spec.id=pin.spec_id
  WHERE a.id=$1::text::uuid AND d.id=$2::text::uuid
  AND d.environment_workload_runtime IS NULL
- AND (jsonb_array_length(coalesce(spec.settings::jsonb#>'{manifest,service_bindings}','[]'::jsonb))>0
+ AND ((jsonb_array_length(coalesce(spec.settings::jsonb#>'{manifest,service_bindings}','[]'::jsonb))>0
+   AND EXISTS(SELECT 1 FROM project_release_sets env_release WHERE env_release.project_id=a.project_id AND env_release.environment_slug=d.scope AND env_release.account_id=a.account_id))
  OR EXISTS(SELECT 1 FROM project_environment_promotions p JOIN project_environment_promotion_release_config capture ON capture.promotion_id=p.id
    WHERE p.account_id=a.account_id AND p.project_id=a.project_id AND p.to_environment=d.scope AND capture.payload ? 'destination_config'
    AND (EXISTS(SELECT 1 FROM project_environment_promotion_workload_specs prepared WHERE prepared.promotion_id=p.id AND prepared.app_id=a.id AND prepared.deployment_id=d.id)
@@ -151,6 +152,10 @@ type ReadProjectServiceGraphParams struct {
 	RequestedID        string
 }
 
+// A pinned caller with declared bindings is graph-routed once its project
+// environment has published a release set; until then a stage deployed with
+// "deploy --env" routes in its own environment lane (ADR-20261027120000,
+// Hunt 34 H34-33). Promotion candidates stay graph-routed regardless.
 func (q *Queries) ReadProjectServiceGraph(ctx context.Context, db DBTX, arg ReadProjectServiceGraphParams) ([]byte, error) {
 	row := db.QueryRow(ctx, readProjectServiceGraph, arg.CallerAppID, arg.CallerDeploymentID, arg.RequestedID)
 	var payload []byte

@@ -4221,6 +4221,7 @@
     "table": "crons",
     "columns": [
       "app_id",
+      "clone_paused",
       "command",
       "command_max_output_bytes",
       "command_shell",
@@ -4246,9 +4247,18 @@
       "timezone"
     ],
     "kind": "configuration",
-    "capabilities": [],
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "deployment_scope",
+          "source_scope": true
+        }
+      ]
     }
   },
   {
@@ -4821,6 +4831,17 @@
       "app_id",
       "config",
       "reported_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "data_api_shared_budgets",
+    "columns": [
+      "app_id",
+      "budget_key",
+      "requests",
+      "window_end",
+      "window_start"
     ],
     "kind": "operational"
   },

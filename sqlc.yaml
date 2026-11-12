@@ -241,6 +241,7 @@ sql:
     queries:
       - "pkg/state/account_flow_queries.sql"
       - "pkg/state/agent_connection_queries.sql"
+      - "pkg/state/ai_budget_alert_queries.sql"
       - "pkg/state/github_connection_queries.sql"
       - "pkg/state/audit_anchor_queries.sql"
       - "pkg/state/audit_outbox_delivery_queries.sql"
@@ -663,3 +664,20 @@ sql:
         sql_package: "pgx/v5"
         emit_methods_with_db_argument: true
         emit_empty_slices: true
+
+  - engine: postgresql
+    queries: pkg/state/dataapibudget/queries.sql
+    schema: pkg/state/dataapibudget/schema.sql
+    gen:
+      go:
+        package: sqlc
+        out: pkg/state/dataapibudget/sqlc
+        sql_package: pgx/v5
+        emit_methods_with_db_argument: true
+        overrides:
+          - column: apps.id
+            go_type: string
+          - column: apps.account_id
+            go_type: string
+          - column: data_api_shared_budgets.app_id
+            go_type: string

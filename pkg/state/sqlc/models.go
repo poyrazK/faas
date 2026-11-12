@@ -3358,6 +3358,7 @@ type Cron struct {
 	Labels                []byte
 	DeploymentScope       string
 	EnvironmentID         pgtype.UUID
+	ClonePaused           bool
 }
 
 type CronFireNowRequest struct {
@@ -3836,6 +3837,14 @@ type DataApiRuntimeConnectionObservation struct {
 	RefreshConnections   int32
 	ObservedAt           pgtype.Timestamptz
 	ExpiresAt            pgtype.Timestamptz
+}
+
+type DataApiSharedBudget struct {
+	AppID       pgtype.UUID
+	BudgetKey   string
+	WindowStart pgtype.Timestamptz
+	WindowEnd   pgtype.Timestamptz
+	Requests    int64
 }
 
 // ADR-20261019102108 Data API usage per app and UTC hour, from runtime deltas; owner telemetry, not billing.
