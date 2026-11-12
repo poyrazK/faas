@@ -76,7 +76,6 @@ export type AppResponse = {
    */
   function_input_schema?: Record<string, any>;
   min_instances: number;
-  min_instances: number;
   /**
    * Customer-visible app state. `undeployed` is projected when the app has no deployment rows; its persisted lifecycle remains active until the first deploy.
    */
