@@ -4923,6 +4923,7 @@ from .queue_send_request import QueueSendRequest
 from .queue_send_request_payload import QueueSendRequestPayload
 from .queue_send_response import QueueSendResponse
 from .queue_state_response import QueueStateResponse
+from .queue_state_response_backlog_by_source import QueueStateResponseBacklogBySource
 from .queue_state_response_plan import QueueStateResponsePlan
 from .queue_workload_profile_request import QueueWorkloadProfileRequest
 from .queue_workload_profile_request_workload_class import QueueWorkloadProfileRequestWorkloadClass
@@ -11065,6 +11066,7 @@ __all__ = (
     "QueueSendRequestPayload",
     "QueueSendResponse",
     "QueueStateResponse",
+    "QueueStateResponseBacklogBySource",
     "QueueStateResponsePlan",
     "QueueWorkloadProfileRequest",
     "QueueWorkloadProfileRequestWorkloadClass",
