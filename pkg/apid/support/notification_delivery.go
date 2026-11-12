@@ -97,10 +97,11 @@ func (s *Service) deliverNotification(ctx context.Context, queries *q.Queries, r
 		path = "/dashboard/orgs/" + url.PathEscape(current.OrgSlug) + "/support"
 	}
 	message := NotificationEmail{To: to, Kind: current.Kind, TicketID: id(current.TicketID), Path: path + "/" + id(current.TicketID), MessageID: "support-notification:" + id(row.ID)}
-	if s.Notify(ctx, message) != nil {
-		return notificationRetryState(row, now), nil
+	state := "accepted"
+	if err := s.Notify(ctx, message); err != nil {
+		state = notificationRetryState(row, now)
 	}
-	return "accepted", nil
+	return state, nil
 }
 
 func notificationAddress(value string) (string, bool) {
