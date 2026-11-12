@@ -303,6 +303,159 @@
         mode: "0600"
       no_log: true
 
+    # ADR-20261110210000 slice 1c-2 (faas_compute_db_cert_logins): instead of
+    # the shared per-daemon passwords, each daemon logs in as its own login on
+    # this node, authenticated by a fleet-CA client leaf whose CN is the login.
+    # The control plane creates the logins and maps them to this node's name
+    # (compute-node-db-logins.sql), so the database confines their writes to
+    # this node's placement inputs (slice 1c-1). The leaves are issued here,
+    # before anything on the node opens the database, so slice 1c-3 can point
+    # compute-db.env at vmmd's login; the activation play hands each key to
+    # its daemon's user.
+    - name: Name the database operator host — ADR-20261110210000
+      ansible.builtin.set_fact:
+        faas_join_db_unit_roles:
+          faas-vmmd: faas_vmmd
+          faas-schedd: faas_node_schedd
+          faas-imaged: faas_imaged
+          faas-builderd: faas_builderd
+          faas-gatewayd-internal: faas_gatewayd_internal
+          faas-gatewayd-public-edge: faas_gatewayd_edge
+        faas_join_db_cert_dir: /etc/faas/tls/db-client
+        faas_join_db_cert_issuer: "{{ faas_compute_db_cert_issuer_host | default(groups['control_plane'] | default([]) | first | default('')) }}"
+        # Slice 1c-3: with the shared compute passwords retired, a node's own
+        # login cannot write its identity, lifecycle or capacity, so node
+        # join makes those writes from the control plane.
+        faas_join_db_operator_host: >-
+          {{ (faas_compute_db_cert_issuer_host | default(groups['control_plane'] | default([]) | first | default('')))
+             if (faas_compute_db_password_logins_retired | default(false) | bool) else inventory_hostname }}
+
+    - name: Require per-node logins once the shared compute passwords are retired — ADR-20261110210000
+      ansible.builtin.assert:
+        that:
+          - faas_compute_db_cert_logins | default(false) | bool
+          - faas_join_db_operator_host | length > 0
+        fail_msg: >-
+          faas_compute_db_password_logins_retired leaves compute nodes no
+          password login: set faas_compute_db_cert_logins for this node and
+          name a control_plane host.
+        quiet: true
+      when: faas_compute_db_password_logins_retired | default(false) | bool
+
+    - name: Issue this node's database logins — ADR-20261110210000
+      when: faas_compute_db_cert_logins | default(false) | bool
+      block:
+        - name: Read the control plane's database address for per-node logins
+          ansible.builtin.slurp:
+            src: /etc/faas/compute-db.env
+          register: faas_join_compute_db_env
+          no_log: true
+
+        - name: Name this node's database logins
+          ansible.builtin.set_fact:
+            faas_join_db_cert_address: >-
+              {{ faas_join_compute_db_env.content | b64decode
+                 | regex_search('(?m)^(?:export\s+)?DATABASE_URL=\S*@([^/?\s@]+)/([A-Za-z0-9_]+)', '\1', '\2') | default([], true) }}
+            faas_join_db_cert_logins: >-
+              {{ dict(faas_join_db_unit_roles.keys() | list | zip(faas_join_db_unit_roles.keys() | list
+                 | map('extract', faas_join_db_unit_roles)
+                 | map('regex_replace', '$', '_' + (faas_join_database_node | hash('sha256'))[:12]))) }}
+          no_log: true
+
+        - name: Require an issuer, the node's name and the database address
+          ansible.builtin.assert:
+            that:
+              - faas_join_db_cert_issuer | length > 0
+              - faas_join_database_node is match('^[A-Za-z0-9._-]{1,253}$')
+              - faas_join_db_cert_address | length == 2
+              - faas_join_db_cert_logins.values() | map('regex_search', '^faas_[a-z0-9_]{1,58}$') | select | list | length
+                == faas_join_db_unit_roles | length
+            fail_msg: >-
+              faas_compute_db_cert_logins needs a control_plane host (the fleet CA's
+              and the database's), this node's compute_nodes.name and a
+              DATABASE_URL in /etc/faas/compute-db.env naming the database host.
+            quiet: true
+
+        - name: Create and map this node's logins on the control plane
+          ansible.builtin.command:
+            argv: [psql, -X, -q, -v, ON_ERROR_STOP=1, -d, faas,
+                   -v, "node={{ faas_join_database_node }}",
+                   -v, "logins={{ faas_join_db_cert_logins.values() | list | join(',') }}",
+                   -f, "-"]
+            stdin: "{{ lookup('ansible.builtin.file', playbook_dir + '/roles/postgres/files/compute-node-db-logins.sql') }}"
+          delegate_to: "{{ faas_join_db_cert_issuer }}"
+          become: true
+          become_user: postgres
+          changed_when: false
+
+        - name: Issue this node's database client leaves on the control plane
+          ansible.builtin.command:
+            argv: [/usr/local/bin/gregalectl, pki, issue-feature, --feature, db-login, --box-role, compute-only,
+                   --cn, "{{ faas_join_database_node }}", --ca-dir, /etc/faas/tls,
+                   --root-dir, "/var/lib/faas/pki-features/{{ faas_join_database_node }}"]
+          delegate_to: "{{ faas_join_db_cert_issuer }}"
+          register: faas_join_db_cert_issued
+          changed_when: (faas_join_db_cert_issued.stdout | from_json).issued | length > 0
+
+        - name: Read the staged database client leaves
+          ansible.builtin.slurp:
+            src: "/var/lib/faas/pki-features/{{ faas_join_database_node }}/db-client/{{ item }}"
+          delegate_to: "{{ faas_join_db_cert_issuer }}"
+          register: faas_join_db_cert_staged
+          loop: "{{ faas_join_db_unit_roles.keys() | list | product(['crt', 'key']) | map('join', '.') | list }}"
+          no_log: true
+
+        # The certificate the database serves; each DSN pins it
+        # (sslmode=verify-full), so its names must include the address above.
+        - name: Read the database's server certificate
+          ansible.builtin.slurp:
+            src: "{{ faas_postgres_replication_tls_dir | default('/etc/postgresql/faas-tls') }}/server.crt"
+          delegate_to: "{{ faas_join_db_cert_issuer }}"
+          register: faas_join_db_server_cert
+
+        - name: Create the database client leaf directory
+          ansible.builtin.file:
+            path: "{{ faas_join_db_cert_dir }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Pin the database's server certificate
+          ansible.builtin.copy:
+            content: "{{ faas_join_db_server_cert.content | b64decode }}"
+            dest: "{{ faas_join_db_cert_dir }}/server.crt"
+            owner: root
+            group: root
+            mode: "0444"
+
+
+        # Root-only until the activation play hands each key to its daemon.
+        - name: Install the database client leaves
+          ansible.builtin.copy:
+            content: "{{ item.content | b64decode }}"
+            dest: "{{ faas_join_db_cert_dir }}/{{ item.item }}"
+            owner: root
+            group: root
+            mode: "{{ '0400' if item.item.endswith('.key') else '0444' }}"
+          loop: "{{ faas_join_db_cert_staged.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+          no_log: true
+
+        # Slice 1c-3: the node's operator tools (seal-domain and fleet-seal
+        # proofs, the doctor) read compute-db.env as root; with the shared
+        # passwords retired they use vmmd's login on this node.
+        - name: Point compute-db.env at vmmd's login on this node
+          ansible.builtin.lineinfile:
+            path: /etc/faas/compute-db.env
+            regexp: "^(export\\s+)?{{ item }}="
+            line: >-
+              {{ item }}="postgresql://{{ faas_join_db_cert_logins['faas-vmmd'] }}@{{ faas_join_db_cert_address[0] }}/{{ faas_join_db_cert_address[1] }}?sslmode=verify-full&sslrootcert={{ faas_join_db_cert_dir }}/server.crt&sslcert={{ faas_join_db_cert_dir }}/faas-vmmd.crt&sslkey={{ faas_join_db_cert_dir }}/faas-vmmd.key"
+          loop: [DATABASE_URL, FAAS_VMMD_DBURL]
+          no_log: true
+          when: faas_compute_db_password_logins_retired | default(false) | bool
+
     - name: Stage the shared OCI storage environment
       ansible.builtin.copy:
         src: "{{ faas_join_storage_env_source }}"
@@ -382,6 +535,7 @@
       register: faas_join_existing_operator
 
     - name: Inspect existing compute-node certificate attestation before trust refresh
+      delegate_to: "{{ faas_join_db_operator_host | default(inventory_hostname) }}"
       ansible.builtin.command:
         argv:
           - /usr/local/bin/gregalectl
@@ -836,16 +990,9 @@
       - faas-builderd
       - faas-gatewayd-internal
       - faas-gatewayd-public-edge
-    # ADR-20261110210000 slice 1c-2: each unit's role, which names its
-    # per-node login (pkg/pki DBLoginDaemonRoles, DBNodeLogin).
-    faas_join_db_unit_roles:
-      faas-vmmd: faas_vmmd
-      faas-schedd: faas_node_schedd
-      faas-imaged: faas_imaged
-      faas-builderd: faas_builderd
-      faas-gatewayd-internal: faas_gatewayd_internal
-      faas-gatewayd-public-edge: faas_gatewayd_edge
-    faas_join_db_cert_dir: /etc/faas/tls/db-client
+    # ADR-20261110210000 slice 1c-2: faas_join_db_unit_roles (each unit's
+    # role, which names its per-node login: pkg/pki DBLoginDaemonRoles) and
+    # faas_join_db_cert_dir are set in the first play.
   tasks:
     - name: Refuse activation when the OCI cache is outside fast storage
       ansible.builtin.shell: |
@@ -1125,7 +1272,25 @@
     # temporary candidate vmmd starts so self-registration cannot make the
     # unfinished host schedulable. UpsertComputeNodeFromVmmd preserves this
     # operator-owned lifecycle on conflict.
+    # The row's values are this node's, resolved here: the write itself may
+    # run on the control plane (slice 1c-3), where ansible_host and other
+    # connection variables would name the control plane instead.
+    - name: Resolve the newly adopted node's registration
+      ansible.builtin.set_fact:
+        faas_join_preregister:
+          target_url: "{{ faas_vmmd_target_url }}"
+          schedd_target_url: "{{ faas_vmmd_schedd_target }}"
+          gateway_target_url: "{{ faas_gateway_target_url | default('tcp://' ~ ansible_host ~ ':8080', true) }}"
+          vpcpus: "{{ faas_join_tenant_vcpus }}"
+          mem_mb: "{{ ansible_memtotal_mb }}"
+          max_concurrency: "{{ faas_join_max_concurrency | default((faas_join_tenant_vcpus | int) * 5, true) }}"
+          admission_ceiling_mb: "{{ faas_join_admission_ceiling_mb | default(faas_node_sizing.admission_ceiling_mb, true) }}"
+      when:
+        - (faas_join_rollout_phase | default('full')) != 'activate'
+        - (faas_join_existing_compute_node.rc | default(3)) == 3
+
     - name: Pre-register the newly adopted node as unavailable before runtime pre-stage
+      delegate_to: "{{ faas_join_db_operator_host | default(inventory_hostname) }}"
       ansible.builtin.command:
         argv:
           - /usr/local/bin/gregalectl
@@ -1134,19 +1299,19 @@
           - --name
           - "{{ faas_join_database_node }}"
           - --target-url
-          - "{{ faas_vmmd_target_url }}"
+          - "{{ faas_join_preregister.target_url }}"
           - --schedd-target-url
-          - "{{ faas_vmmd_schedd_target }}"
+          - "{{ faas_join_preregister.schedd_target_url }}"
           - --gateway-target-url
-          - "{{ faas_gateway_target_url | default('tcp://' ~ ansible_host ~ ':8080', true) }}"
+          - "{{ faas_join_preregister.gateway_target_url }}"
           - --vpcpus
-          - "{{ faas_join_tenant_vcpus }}"
+          - "{{ faas_join_preregister.vpcpus }}"
           - --mem-mb
-          - "{{ ansible_memtotal_mb }}"
+          - "{{ faas_join_preregister.mem_mb }}"
           - --max-concurrency
-          - "{{ faas_join_max_concurrency | default((faas_join_tenant_vcpus | int) * 5, true) }}"
+          - "{{ faas_join_preregister.max_concurrency }}"
           - --admission-ceiling-mb
-          - "{{ faas_join_admission_ceiling_mb | default(faas_node_sizing.admission_ceiling_mb, true) }}"
+          - "{{ faas_join_preregister.admission_ceiling_mb }}"
           - --defer-activation
           # A newly adopted host deliberately has no interactive operator MFA
           # session. The trusted join already stages its root-only database
@@ -1323,6 +1488,9 @@
           CapabilityBoundingSet=cap_chown cap_dac_override cap_fowner cap_fsetid cap_kill cap_setgid cap_setuid cap_setpcap cap_net_bind_service cap_sys_chroot
           AmbientCapabilities=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER
           EnvironmentFile=-/etc/faas/compute-db.env
+          # imaged's own database login (ADR-20261023104734 step 3,
+          # ADR-20261110210000 slice 1c-2) once node join has proven it.
+          EnvironmentFile=-/etc/faas/secrets/db/faas-imaged.env
           EnvironmentFile=-/etc/faas/storage.env
           EnvironmentFile=-/etc/faas/imaged-storage.env
           EnvironmentFile=-/etc/faas/runtime-bases.env
@@ -1606,6 +1774,7 @@
         (faas_join_existing_compute_node.rc | default(3)) == 0)
       block:
         - name: Begin graceful drain of the existing node before release installation
+          delegate_to: "{{ faas_join_db_operator_host | default(inventory_hostname) }}"
           ansible.builtin.command:
             argv:
               - /usr/local/bin/gregalectl
@@ -1621,6 +1790,7 @@
           changed_when: true
 
         - name: Wait for the existing node to reach an empty maintenance hold
+          delegate_to: "{{ faas_join_db_operator_host | default(inventory_hostname) }}"
           ansible.builtin.command:
             argv:
               - /usr/local/bin/gregalectl
@@ -1670,6 +1840,7 @@
             - (faas_join_drain_vmmd_pid.stdout | default('0') | trim) not in ['', '0']
 
         - name: Restore an originally active node after graceful drain failure
+          delegate_to: "{{ faas_join_db_operator_host | default(inventory_hostname) }}"
           ansible.builtin.command:
             argv:
               - /usr/local/bin/gregalectl
@@ -2087,107 +2258,19 @@
         - (faas_join_compute_db_roles_source | default('') | trim) != ''
         - not (faas_compute_db_cert_logins | default(false) | bool)
 
-    # ADR-20261110210000 slice 1c-2 (faas_compute_db_cert_logins): instead of
-    # the shared per-daemon passwords, each daemon logs in as its own login on
-    # this node, authenticated by a fleet-CA client leaf whose CN is the login.
-    # The control plane creates the logins and maps them to this node's name
-    # (compute-node-db-logins.sql), so the database confines their writes to
-    # this node's placement inputs (slice 1c-1). The DSNs then go through the
-    # same proof, install and drop-in steps as the password logins.
+    # ADR-20261110210000 slice 1c-2 (faas_compute_db_cert_logins): the leaves
+    # issued in the first play now belong to each daemon's service user, and
+    # each daemon's DSN names its own login. The DSNs then go through the same
+    # proof, install and drop-in steps as the password logins.
     - name: Per-node database logins — ADR-20261110210000
       when: faas_compute_db_cert_logins | default(false) | bool
       block:
-        - name: Read the control plane's database address for per-node logins
-          ansible.builtin.slurp:
-            src: /etc/faas/compute-db.env
-          register: faas_join_compute_db_env
-          no_log: true
-
-        - name: Name this node's database logins
-          ansible.builtin.set_fact:
-            faas_join_db_cert_issuer: "{{ faas_compute_db_cert_issuer_host | default(groups['control_plane'] | default([]) | first | default('')) }}"
-            faas_join_db_cert_address: >-
-              {{ faas_join_compute_db_env.content | b64decode
-                 | regex_search('(?m)^(?:export\s+)?DATABASE_URL=\S*@([^/?\s@]+)/([A-Za-z0-9_]+)', '\1', '\2') | default([], true) }}
-            faas_join_db_cert_logins: >-
-              {{ dict(faas_join_db_role_units | zip(faas_join_db_role_units
-                 | map('extract', faas_join_db_unit_roles)
-                 | map('regex_replace', '$', '_' + (faas_join_database_node | hash('sha256'))[:12]))) }}
-          no_log: true
-
-        - name: Require an issuer, the node's name and the database address
-          ansible.builtin.assert:
-            that:
-              - faas_join_db_cert_issuer | length > 0
-              - faas_join_database_node is match('^[A-Za-z0-9._-]{1,253}$')
-              - faas_join_db_cert_address | length == 2
-              - faas_join_db_cert_logins.values() | map('regex_search', '^faas_[a-z0-9_]{1,58}$') | select | list | length
-                == faas_join_db_role_units | length
-            fail_msg: >-
-              faas_compute_db_cert_logins needs a control_plane host (the fleet CA's
-              and the database's), this node's compute_nodes.name and a
-              DATABASE_URL in /etc/faas/compute-db.env naming the database host.
-            quiet: true
-
-        - name: Create and map this node's logins on the control plane
-          ansible.builtin.command:
-            argv: [psql, -X, -q, -v, ON_ERROR_STOP=1, -d, faas,
-                   -v, "node={{ faas_join_database_node }}",
-                   -v, "logins={{ faas_join_db_cert_logins.values() | list | join(',') }}",
-                   -f, "-"]
-            stdin: "{{ lookup('ansible.builtin.file', playbook_dir + '/roles/postgres/files/compute-node-db-logins.sql') }}"
-          delegate_to: "{{ faas_join_db_cert_issuer }}"
-          become: true
-          become_user: postgres
-          changed_when: false
-
-        - name: Issue this node's database client leaves on the control plane
-          ansible.builtin.command:
-            argv: [/usr/local/bin/gregalectl, pki, issue-feature, --feature, db-login, --box-role, compute-only,
-                   --cn, "{{ faas_join_database_node }}", --ca-dir, /etc/faas/tls,
-                   --root-dir, "/var/lib/faas/pki-features/{{ faas_join_database_node }}"]
-          delegate_to: "{{ faas_join_db_cert_issuer }}"
-          register: faas_join_db_cert_issued
-          changed_when: (faas_join_db_cert_issued.stdout | from_json).issued | length > 0
-
-        - name: Read the staged database client leaves
-          ansible.builtin.slurp:
-            src: "/var/lib/faas/pki-features/{{ faas_join_database_node }}/db-client/{{ item }}"
-          delegate_to: "{{ faas_join_db_cert_issuer }}"
-          register: faas_join_db_cert_staged
-          loop: "{{ faas_join_db_role_units | product(['crt', 'key']) | map('join', '.') | list }}"
-          no_log: true
-
-        # The certificate the database serves; each DSN pins it
-        # (sslmode=verify-full), so its names must include the address above.
-        - name: Read the database's server certificate
-          ansible.builtin.slurp:
-            src: "{{ faas_postgres_replication_tls_dir | default('/etc/postgresql/faas-tls') }}/server.crt"
-          delegate_to: "{{ faas_join_db_cert_issuer }}"
-          register: faas_join_db_server_cert
-
         - name: Read each daemon's service user
           ansible.builtin.command:
             argv: [systemctl, show, -p, User, --value, "{{ item }}.service"]
           register: faas_join_db_unit_users
           changed_when: false
           loop: "{{ faas_join_db_role_units }}"
-
-        - name: Create the database client leaf directory
-          ansible.builtin.file:
-            path: "{{ faas_join_db_cert_dir }}"
-            state: directory
-            owner: root
-            group: root
-            mode: "0755"
-
-        - name: Pin the database's server certificate
-          ansible.builtin.copy:
-            content: "{{ faas_join_db_server_cert.content | b64decode }}"
-            dest: "{{ faas_join_db_cert_dir }}/server.crt"
-            owner: root
-            group: root
-            mode: "0444"
 
         # Each key belongs to its daemon's service user alone; vmmd's (root)
         # stays root's.

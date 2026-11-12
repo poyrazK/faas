@@ -175,6 +175,32 @@ logins (or `faas_compute`). The logins stay mapped, unused; dropping one is
 `DROP ROLE` plus deleting its `compute_node_db_logins` row as the owner.
 Slice 1c-3 retires the shared passwords once every node is moved.
 
+## Retire the shared compute passwords (ADR-20261110210000 slice 1c-3)
+
+Once every compute node runs on its per-node logins, the shared passwords
+(`faas_compute` and the per-daemon roles of step 3) only add risk: anyone
+holding one can write any node's placement inputs.
+
+1. Set `faas_compute_db_password_logins_retired: true` for the whole fleet
+   (the control plane and every compute node read it).
+2. Roll each compute node first. Node join now points the node's
+   `compute-db.env` at vmmd's per-node login (operator tools run as root on
+   the node use it), and makes the node's identity and lifecycle writes
+   (pre-register, drain, activate) from the control plane with
+   `gregalectl ... --break-glass-db` there.
+3. Then converge the control plane. It refuses, naming each blocker, while
+   the owner is not contracted, `faas_postgres_compute_cert_logins` is off,
+   any session from a non-loopback address uses a login other than a
+   per-node one (`replicator` and `faas_pgproxyd` aside), or any compute node
+   that is not retired has no mapped logins. Then pg_hba drops the
+   `+faas_runtime` password lines for the compute networks and leaves the
+   `faas-compute-passwords-retired` marker, so node joins keep them out.
+4. Remove `POSTGRES_COMPUTE_ROLE_KEY` and the `faas_compute` password from CD
+   when nothing has needed them for a release.
+
+To undo, set the variable to `false` and converge the control plane first,
+then roll the nodes.
+
 ## Roll back
 
 Undo the contract first: set `faas_postgres_owner_contracted: false` (or the

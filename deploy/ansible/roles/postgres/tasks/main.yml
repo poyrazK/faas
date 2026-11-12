@@ -306,6 +306,89 @@
     state: absent
   when: not (faas_postgres_owner_contracted | default(false) | bool)
 
+# ADR-20261110210000 slice 1c-3: with faas_compute_db_password_logins_retired
+# compute nodes log in only as their per-node certificate logins (1c-2):
+# pg_hba drops the faas_runtime password lines for the compute networks, so
+# a stolen shared compute password no longer opens the database and no node
+# can write another node's placement inputs. The switch refuses to act until
+# the owner is contracted, certificate logins are served, every session from
+# a non-loopback address is a per-node login (or the standby's or a database
+# node's own role), and every compute node that is not retired has its
+# per-node logins mapped (a node that is offline during the converge would
+# otherwise come back to no login).
+- name: postgres — require per-node logins before retiring compute passwords — ADR-20261110210000
+  ansible.builtin.assert:
+    that:
+      - faas_postgres_owner_contracted | default(false) | bool
+      - faas_postgres_compute_cert_logins | default(false) | bool
+    fail_msg: >-
+      faas_compute_db_password_logins_retired needs faas_postgres_owner_contracted
+      (no owner password lines) and faas_postgres_compute_cert_logins (the
+      per-node certificate logins compute nodes move to first).
+    quiet: true
+  when: faas_compute_db_password_logins_retired | default(false) | bool
+
+- name: postgres — read the compute sessions that still use a password login — ADR-20261110210000
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -X
+      - -A
+      - -t
+      - -d
+      - faas
+      - -c
+      - >-
+        SELECT DISTINCT a.usename || '@' || host(a.client_addr) FROM pg_stat_activity a
+        WHERE a.client_addr IS NOT NULL AND NOT (a.client_addr << '127.0.0.0/8'::inet OR a.client_addr = '::1'::inet)
+          AND a.backend_type = 'client backend' AND a.usename IS NOT NULL
+          AND a.usename NOT IN ('replicator', 'faas_pgproxyd')
+          AND NOT pg_has_role(a.usename, 'faas_node_logins', 'MEMBER')
+        UNION
+        SELECT 'unmapped node ' || n.name FROM compute_nodes n
+        WHERE n.lifecycle <> 'retired' AND n.role IS DISTINCT FROM 'control-plane'
+          AND n.name <> 'default-local'
+          AND NOT EXISTS (SELECT 1 FROM compute_node_db_logins d WHERE d.node_name = n.name)
+        ORDER BY 1
+  become: true
+  become_user: postgres
+  register: faas_compute_password_blockers
+  changed_when: false
+  when:
+    - faas_compute_db_password_logins_retired | default(false) | bool
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+- name: postgres — refuse to retire compute passwords while a node still uses one — ADR-20261110210000
+  ansible.builtin.assert:
+    that:
+      - faas_compute_password_blockers.stdout | trim | length == 0
+    fail_msg: >-
+      faas_compute_db_password_logins_retired would lock these sessions out:
+      {{ faas_compute_password_blockers.stdout_lines | join(', ') }}. Move each
+      compute node to its per-node logins (faas_compute_db_cert_logins,
+      docs/runbooks/postgres-runtime-roles.md), then converge again.
+    quiet: true
+  when:
+    - faas_compute_db_password_logins_retired | default(false) | bool
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+# control_plane_peer_access rewrites pg_hba.conf during a node join from the
+# rendered inventory alone; the marker tells it the passwords are retired.
+- name: postgres — record the compute password retirement for node joins — ADR-20261110210000
+  ansible.builtin.copy:
+    dest: "{{ postgres_config_dir }}/faas-compute-passwords-retired"
+    content: "ADR-20261110210000 slice 1c-3: compute nodes log in only with per-node certificates.\n"
+    owner: postgres
+    group: postgres
+    mode: "0644"
+  when: faas_compute_db_password_logins_retired | default(false) | bool
+
+- name: postgres — remove the compute password retirement marker when it is off — ADR-20261110210000
+  ansible.builtin.file:
+    path: "{{ postgres_config_dir }}/faas-compute-passwords-retired"
+    state: absent
+  when: not (faas_compute_db_password_logins_retired | default(false) | bool)
+
 - name: postgres — make /run/postgresql writable for faas (peer auth)
   ansible.builtin.file:
     path: /run/postgresql
@@ -379,9 +462,14 @@
       local   faas            +faas_runtime                           peer map=faas_map
       host    faas            +faas_runtime                           127.0.0.1/32            scram-sha-256
       host    faas            +faas_runtime                           ::1/128                  scram-sha-256
+      {% if not (faas_compute_db_password_logins_retired | default(false) | bool) %}
       {% for cidr in (faas_postgres_allowed_cidrs | default([])) %}
       host    faas            +faas_runtime                           {{ cidr }}                scram-sha-256
       {% endfor %}
+      {% else %}
+      # ADR-20261110210000 slice 1c-3: compute nodes log in only with their
+      # per-node certificates (the hostssl lines above).
+      {% endif %}
       # ADR-1027: database nodes' pgproxyd reads role verifiers as the
       # read-only faas_pgproxyd role (database_node.yml creates it).
       {% for cidr in (faas_postgres_pgproxyd_cidrs | default([])) %}
