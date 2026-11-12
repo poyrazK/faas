@@ -53,7 +53,9 @@ func TestEnvironmentBranchCopiesParentDatabases(t *testing.T) {
 		t.Fatal(err)
 	}
 	databaseStore := managedpostgres.NewMemoryStore()
-	service, err := managedpostgres.NewService(registry, databaseStore, managedpostgres.ServiceOptions{ProvisioningEnabled: func() bool { return true }})
+	service, err := managedpostgres.NewService(registry, databaseStore, managedpostgres.ServiceOptions{ProvisioningEnabled: func() bool { return true },
+		// One short-lived branch: the copy must take it, not a database slot.
+		MaxBranchesPerAccount: func(context.Context, string) (int, error) { return 1, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,6 +140,11 @@ func TestEnvironmentBranchCopiesParentDatabases(t *testing.T) {
 	copies, err := store.ListProjectEnvironmentBranchDatabases(ctx, branch.EnvironmentID)
 	if err != nil || len(copies) != 1 || copies[0].CopyDatabaseID != binding.DatabaseID || copies[0].SourceDatabaseID != source.ID {
 		t.Fatalf("recorded copies = %+v, %v", copies, err)
+	}
+	// A 2 h branch's copy sits in the PostgreSQL branch allowance and ends
+	// no earlier than the branch (ADR-20261106103654 amendment 1).
+	if copied, err := service.Get(ctx, acct.ID, binding.DatabaseID); err != nil || !copied.InBranchAllowance() || copied.ExpiresAt.Before(branch.ExpiresAt) {
+		t.Fatalf("branch copy = %+v, %v; want it in the branch allowance, ending at or after %s", copied, err, branch.ExpiresAt)
 	}
 	if ready, err := store.EnvironmentBranchDataReady(ctx, branchDeployment); err != nil || !ready {
 		t.Fatalf("data ready = %v, %v", ready, err)

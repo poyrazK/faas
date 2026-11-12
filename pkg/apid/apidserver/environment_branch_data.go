@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -157,7 +158,7 @@ func environmentBranchDataMessage(err error) string {
 	case errors.Is(err, objectstorage.ErrUnavailable), errors.Is(err, state.ErrObjectUsageStale):
 		return "object storage is unavailable; retrying"
 	case errors.Is(err, managedpostgres.ErrQuotaExceeded):
-		return "the plan has no room for a copy of the parent's database; branching a database needs point-in-time restore and a free database slot"
+		return "the plan has no room for a copy of the parent's database; a branch that lives 7 days or less takes a place in the plan's PostgreSQL branch allowance, a longer one a free database slot, and either needs point-in-time restore"
 	case errors.Is(err, managedpostgres.ErrInvalid), errors.Is(err, managedpostgres.ErrUnsupported):
 		return "the parent's database cannot be restored to the branch point"
 	case errors.Is(err, managedpostgres.ErrUnavailable):
@@ -165,6 +166,23 @@ func environmentBranchDataMessage(err error) string {
 	default:
 		return "copying the parent's database did not finish; retrying"
 	}
+}
+
+// environmentBranchDatabaseTTL ends a database copy with its branch. A branch
+// that lives at most api.ManagedPostgresAllowanceBranchTTLMax makes a copy
+// that sits in the plan's PostgreSQL branch allowance instead of its database
+// limit (ADR-20261106103654 amendment 1); a longer one makes an ordinary
+// restore that still ends on its own. The TTL is counted from the branch
+// point, which every retry shares, so a retry adopts the same copy. The copy
+// is restored after the branch is created, so it never ends before the
+// branch does; the branch's delete removes it either way.
+func environmentBranchDatabaseTTL(branch state.ProjectEnvironmentBranch, point time.Time) time.Duration {
+	// Rounded up, so the copy never ends a fraction of a second early.
+	ttl := (branch.ExpiresAt.Sub(point) + time.Second - 1).Truncate(time.Second)
+	if branch.ExpiresAt.Sub(branch.CreatedAt) <= api.ManagedPostgresAllowanceBranchTTLMax {
+		ttl = min(ttl, api.ManagedPostgresAllowanceBranchTTLMax)
+	}
+	return max(min(ttl, managedpostgres.MaxBranchTTL), managedpostgres.MinBranchTTL)
 }
 
 // environmentBranchDatabaseName is the copy's deterministic name: one copy
@@ -236,7 +254,8 @@ func (s *server) copyEnvironmentBranchDatabases(ctx context.Context, store state
 		// Copies are never compensated here: a failed copy stays recorded and
 		// owned by the branch, so a retry adopts it or the orphan sweep removes it.
 		var unused []func(context.Context) error
-		copied, err := s.ensureProjectEnvironmentDatabaseClone(ctx, acct, projectEnvironmentDatabaseCopy{source: source, name: row.CopyName, pointInTime: row.PointInTime}, &unused)
+		copied, err := s.ensureProjectEnvironmentDatabaseClone(ctx, acct, projectEnvironmentDatabaseCopy{source: source, name: row.CopyName, pointInTime: row.PointInTime,
+			ttl: environmentBranchDatabaseTTL(branch, row.PointInTime)}, &unused)
 		if err != nil {
 			return err
 		}

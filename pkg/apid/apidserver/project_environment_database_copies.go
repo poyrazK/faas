@@ -16,6 +16,9 @@ type projectEnvironmentDatabaseCopy struct {
 	source      managedpostgres.Database
 	name        string
 	pointInTime time.Time
+	// ttl, when set, ends the copy on its own (environment branches,
+	// ADR-20261106103654 amendment 1). Stage copies have none.
+	ttl time.Duration
 }
 
 func projectEnvironmentDatabaseCloneName(project state.Project, target, sourceDatabaseID string) string {
@@ -134,7 +137,7 @@ func projectEnvironmentDatabaseCopyPoint(copies map[string]projectEnvironmentDat
 
 func (s *server) ensureProjectEnvironmentDatabaseClone(ctx context.Context, acct state.Account, copy projectEnvironmentDatabaseCopy, cleanup *[]func(context.Context) error) (managedpostgres.Database, error) {
 	cloned, created, err := s.managedPostgres.RestoreWithResult(ctx, managedpostgres.RestoreDatabaseRequest{
-		AccountID: acct.ID, SourceDatabaseID: copy.source.ID, Name: copy.name, PointInTime: copy.pointInTime,
+		AccountID: acct.ID, SourceDatabaseID: copy.source.ID, Name: copy.name, PointInTime: copy.pointInTime, TTL: copy.ttl,
 		SourceDefinition: &managedpostgres.RestoreSourceDefinition{Spec: copy.source.Spec, BackendID: copy.source.BackendID,
 			BackendFingerprint: copy.source.BackendFingerprint, ProviderResourceID: copy.source.ProviderResourceID, DataResourceID: copy.source.DataResourceID},
 	})
