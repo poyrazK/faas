@@ -92,6 +92,7 @@ func TestMigrateEdge(t *testing.T) {
 		row(state.EdgeSealedCredentialLogDrain, "d5", true, seal(drainNS, "k: v", fleet)),
 		row(state.EdgeSealedCredentialLogDestination, "s1", true, seal(drainNS, "k: v", fleet)),
 		row(state.EdgeSealedCredentialLogDestination, "s2", true, seal(drainNS, "k: v", domain)),
+		row(state.EdgeSealedCredentialHeaderSecret, "h1", false, seal(api.EdgeRuleHeaderSecretSealNamespace, "Bearer t", fleet)),
 	} {
 		f.rows[c.Kind+"|"+c.ID] = c
 	}
@@ -101,12 +102,13 @@ func TestMigrateEdge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Re-sealed: a1, d1, and a2, which the fleet key still opens. Current:
+	// Re-sealed: a1, d1, the header secret h1, and a2, which the fleet key
+	// still opens. Current:
 	// a3 and the domain-sealed destination s2. Changed: d4, rotated between
 	// read and write. Failed: d2 (another key) and d3 (another namespace).
 	// Skipped: the managed drain d5 and destination s1.
 	want := sealmigrate.MigrationReport{Domain: sealdomain.Edge, Target: domain.Recipient().String(),
-		Scanned: 10, Resealed: 3, Current: 2, Changed: 1, Failed: 2, Skipped: 2}
+		Scanned: 11, Resealed: 4, Current: 2, Changed: 1, Failed: 2, Skipped: 2}
 	if report != want {
 		t.Fatalf("report = %+v, want %+v", report, want)
 	}
@@ -121,6 +123,9 @@ func TestMigrateEdge(t *testing.T) {
 	}
 	if ns, plain, err := secretbox.OpenBytes(domain, f.rows[state.EdgeSealedCredentialBasicAuth+"|a1"].Sealed); err != nil || ns != basicNS || string(plain) != "u\np" {
 		t.Errorf("basic auth re-sealed as %q %q, %v; want its namespace and value kept", ns, plain, err)
+	}
+	if ns, plain, err := secretbox.OpenBytes(domain, f.rows[state.EdgeSealedCredentialHeaderSecret+"|h1"].Sealed); err != nil || ns != api.EdgeRuleHeaderSecretSealNamespace || string(plain) != "Bearer t" {
+		t.Errorf("header secret re-sealed as %q %q, %v; want its namespace and value kept", ns, plain, err)
 	}
 	if _, _, err := secretbox.OpenBytes(fleet, f.rows[state.EdgeSealedCredentialLogDrain+"|d5"].Sealed); err != nil {
 		t.Error("a managed drain was rewritten")

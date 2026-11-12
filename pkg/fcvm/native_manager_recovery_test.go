@@ -26,7 +26,7 @@ type recoveryVMMFixture struct {
 	*fakeVMM
 	jailer               *JailerVMM
 	command              func(context.Context, []string, []byte) ([]byte, error)
-	restoreQualification func(context.Context, state.EnvironmentQualificationExecution, Lease, WakeRequest, [2]string, string, string) error
+	restoreQualification func(context.Context, state.EnvironmentQualificationExecution, Lease, WakeRequest, [2]string, string) error
 }
 
 type nativeOwnershipRunner struct {
@@ -233,15 +233,15 @@ func (v *recoveryVMMFixture) prepareNativeLease(ctx context.Context, l Lease) er
 func (v *recoveryVMMFixture) confirmNativeCleanup(ctx context.Context, l Lease, nc netns.Config) error {
 	return v.jailer.confirmNativeCleanup(ctx, l, nc)
 }
-func (v *recoveryVMMFixture) RestoreNativeQualification(ctx context.Context, frame state.EnvironmentQualificationExecution, lease Lease, req WakeRequest, candidates [2]string, fcVersion, serviceDiscoveryIP string) error {
+func (v *recoveryVMMFixture) RestoreNativeQualification(ctx context.Context, frame state.EnvironmentQualificationExecution, lease Lease, req WakeRequest, candidates [2]string, fcVersion string) error {
 	if v.restoreQualification != nil {
-		return v.restoreQualification(ctx, frame, lease, req, candidates, fcVersion, serviceDiscoveryIP)
+		return v.restoreQualification(ctx, frame, lease, req, candidates, fcVersion)
 	}
 	restore, ok := any(v.jailer).(nativeQualificationRestoreVMM)
 	if !ok {
 		return errors.New("fixture: native qualification restore is unavailable")
 	}
-	return restore.RestoreNativeQualification(ctx, frame, lease, req, candidates, fcVersion, serviceDiscoveryIP)
+	return restore.RestoreNativeQualification(ctx, frame, lease, req, candidates, fcVersion)
 }
 
 // Models scope fencing and dispatch only; physical process/group proofs are

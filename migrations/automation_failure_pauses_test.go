@@ -12,10 +12,11 @@ import (
 )
 
 func TestAutomationFailurePauseMigrationReplayAndGuardedRollback(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	pool := pgtest.Open(t)
 	defer pool.Close()
 	ctx := t.Context()
-	migrateUpOnce(ctx, t, pool)
+	// Stop at this migration: ADR-20261107190000 later renames its tables.
+	migrateUpTo(t, ctx, pool, 20261010071515271)
 	raw, err := migrations.FS.ReadFile("20261010071515271_automation_failure_pauses.sql")
 	if err != nil {
 		t.Fatal(err)

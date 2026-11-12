@@ -6,7 +6,7 @@ ALTER TABLE gregale_repair.plans ADD COLUMN IF NOT EXISTS replacement_plan_id uu
 
 CREATE OR REPLACE FUNCTION gregale_repair.replace_plan(parent uuid, expected_scope jsonb,
  expected_digest text, requested_plan uuid, checks_digest text, manifest jsonb DEFAULT NULL) RETURNS jsonb
-LANGUAGE plpgsql SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' SET jit = 'off' AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' SET lc_monetary = 'C' SET jit = 'off' AS $$
 DECLARE p gregale_repair.plans; prior gregale_repair.plans; e gregale_repair.enrollments;
  item jsonb; observed jsonb; current_row jsonb; reason text; state text; doc jsonb; fields text;
  items jsonb:='[]'; observed_bytes bigint; observed_total bigint:=0; omitted boolean;

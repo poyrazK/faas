@@ -314,6 +314,7 @@ Latency and the trace timeline come from the request log, so turn it on with
 | `403 outbound_ai_gateway_unavailable` | From the gateway: the AI gateway is not enabled for your account yet, or your plan does not include it. |
 | `503 outbound_ai_gateway_disabled` | The AI gateway is turned off on the platform. |
 | `403 outbound_account_suspended` | The account is suspended or being deleted. |
+| `403 outbound_stage_not_allowed` | The caller is a preview or staging environment. The gateway serves production deployments; previews inherit the SDK settings `gregale add ai` writes, so give a stage its own provider key (a scoped secret) instead. |
 | `403 outbound_ai_model_not_allowed` | The app's guardrails do not allow this model. |
 | `400 outbound_ai_max_tokens_exceeded` | The request asks for more output tokens than the app's guardrails allow. |
 | `413 outbound_ai_request_too_large` | The body is larger than the gateway can check or sign (4 MiB), for a guarded app or a Bedrock integration. |
@@ -324,7 +325,7 @@ Latency and the trace timeline come from the request log, so turn it on with
 | `400 outbound_ai_feedback_invalid`, `403 outbound_ai_feedback_not_authorized` | Feedback was malformed, or did not come from an app. |
 | `400 outbound_ai_translation_unsupported` | A route cannot translate this request for its target. |
 | `400 outbound_ai_content_flagged` | The moderation check found a blocked category. `X-Gregale-AI-Moderation` names it. |
-| `503 outbound_ai_moderation_unavailable` | The moderation check failed and its policy blocks on failure. |
+| `503 outbound_ai_moderation_unavailable` | The moderation check failed and its policy blocks on failure. A `block` policy fails closed unless set with `--moderation-on-error allow`; a `flag` policy lets the call through. |
 | `401 outbound_access_token_invalid` | The access token is missing, unknown, revoked or expired. |
 | `403 outbound_ai_endpoint_unmetered` | The gateway cannot meter this call against your caps. `gregale ai policy <id> --allow-unmetered on` lets such calls through, outside the caps. |
 | `400 outbound_ai_batch_unreadable` | The gateway could not read the batch's requests to size them against your caps. |

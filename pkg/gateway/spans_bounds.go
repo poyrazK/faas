@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"net/url"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -34,7 +35,11 @@ func boundSpan(sp summarizedSpan) summarizedSpan {
 	sp.Name = truncateUTF8(sp.Name, spanMaxNameBytes)
 	sp.StatusMessage = ""
 	sp.ErrorType = truncateUTF8(sp.ErrorType, spanMaxErrorTypeBytes)
-	sp.DBStatement = truncateUTF8(debugger.ScrubStatementLiterals(sp.DBStatement), spanMaxStatementBytes)
+	system := sp.Attributes["db.system.name"]
+	if system == "" {
+		system = sp.Attributes["db.system"]
+	}
+	sp.DBStatement = truncateUTF8(debugger.ScrubStatementForSystem(sp.DBStatement, system), spanMaxStatementBytes)
 	for _, key := range statementAttributes {
 		delete(sp.Attributes, key)
 	}
@@ -42,15 +47,52 @@ func boundSpan(sp summarizedSpan) summarizedSpan {
 	return sp
 }
 
-// boundAttributes keeps at most spanMaxAttributes attributes (by key order,
-// so the choice is stable across POSTs) with bounded keys and values.
+// retainedSpanAttributes are the only span attributes stored with a request:
+// what the debugger reads to classify a dependency (pkg/debugger). Anything
+// else an instrumentation records (enduser.id, captured request headers,
+// custom attributes) is dropped at ingest rather than kept for the plan's
+// retention window unread.
+var retainedSpanAttributes = map[string]bool{
+	"db.system": true, "db.system.name": true, "db.operation": true, "db.operation.name": true,
+	"db.collection.name": true, "db.sql.table": true, "db.mongodb.collection": true, "db.cassandra.table": true,
+	"rpc.system": true, "rpc.service": true, "rpc.method": true,
+	"messaging.system": true, "messaging.operation": true, "messaging.operation.name": true, "messaging.operation.type": true,
+	"messaging.destination": true, "messaging.destination.name": true,
+	"http.method": true, "http.request.method": true,
+	"server.address": true, "net.peer.name": true, "http.host": true, "net.host.name": true,
+	"url.full": true, "http.url": true,
+	"error.type": true, "exception.type": true,
+	"http.response.status_code": true, "http.status_code": true, "rpc.grpc.status_code": true,
+}
+
+// retainedSpanAttributePrefixes are platform-authored attribute families.
+var retainedSpanAttributePrefixes = []string{"gregale.dependency.", "gregale.service.", "gregale.outbound.", "gregale.internal."}
+
+func retainSpanAttribute(key string) bool {
+	if retainedSpanAttributes[key] {
+		return true
+	}
+	for _, prefix := range retainedSpanAttributePrefixes {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// boundAttributes keeps the retained attributes, at most spanMaxAttributes
+// (by key order, so the choice is stable across POSTs), with bounded keys and
+// values. A URL keeps only its scheme and host: its path and query routinely
+// carry identifiers and tokens, and only the host names a dependency.
 func boundAttributes(attrs map[string]string) map[string]string {
 	if len(attrs) == 0 {
 		return attrs
 	}
 	keys := make([]string, 0, len(attrs))
 	for key := range attrs {
-		keys = append(keys, key)
+		if retainSpanAttribute(key) {
+			keys = append(keys, key)
+		}
 	}
 	sort.Strings(keys)
 	if len(keys) > spanMaxAttributes {
@@ -58,9 +100,22 @@ func boundAttributes(attrs map[string]string) map[string]string {
 	}
 	out := make(map[string]string, len(keys))
 	for _, key := range keys {
-		out[truncateUTF8(key, spanMaxAttrKeyBytes)] = truncateUTF8(attrs[key], spanMaxAttrValueBytes)
+		value := attrs[key]
+		if key == "url.full" || key == "http.url" {
+			value = urlOrigin(value)
+		}
+		out[truncateUTF8(key, spanMaxAttrKeyBytes)] = truncateUTF8(value, spanMaxAttrValueBytes)
 	}
 	return out
+}
+
+// urlOrigin reduces a URL to scheme://host[:port], or "" when it has no host.
+func urlOrigin(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	return (&url.URL{Scheme: parsed.Scheme, Host: parsed.Host}).String()
 }
 
 // truncateUTF8 cuts s to at most n bytes without splitting a rune.

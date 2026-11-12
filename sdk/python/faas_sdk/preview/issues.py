@@ -10,6 +10,7 @@ import threading
 import time
 import traceback
 import uuid
+from http.client import HTTPException
 from collections import deque
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -106,7 +107,7 @@ def _copy_operational_context(event: dict[str, Any], context: dict[str, Any]) ->
 
 def _trim_event(event: dict[str, Any]) -> bool:
     """Bound grouping evidence independently of optional context."""
-    optional_keys = ("breadcrumbs", "breadcrumbs_dropped", "tags", "request_id", "trace_id", "span_id", "invocation_id", "route")
+    optional_keys = ("breadcrumbs", "breadcrumbs_dropped", "tags", "request_id", "trace_id", "span_id", "invocation_id", "route", "http_status")
     optional = {key: event.pop(key) for key in optional_keys if key in event}
 
     def size() -> int:
@@ -276,6 +277,9 @@ class IssueReporter:
         ):
             if key in context and isinstance(context[key], str):
                 event[key] = _bounded(context[key], 256)
+        status = context.get("http_status")
+        if type(status) is int and 400 <= status <= 599:
+            event["http_status"] = status
         for key, length in (("trace_id", 32), ("span_id", 16)):
             if key in event:
                 value = event[key].lower()
@@ -321,7 +325,7 @@ class IssueReporter:
                 self._retry_delay = _retry_after(error.headers.get("Retry-After") if error.headers else None)
             error.close()
             return None if status == 429 or status >= 500 else False
-        except (URLError, TimeoutError, OSError):
+        except (URLError, HTTPException, TimeoutError, OSError):
             return None
         except (UnicodeError, ValueError, TypeError):
             # A malformed event or request cannot succeed on retry. Do not

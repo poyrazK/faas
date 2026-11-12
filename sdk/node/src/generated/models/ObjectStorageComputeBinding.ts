@@ -12,6 +12,10 @@ export type ObjectStorageComputeBinding = {
   bucket_id: string;
   scope: string;
   prefix: string;
+  /**
+   * Object keys this binding is limited to; absent for a whole-bucket binding.
+   */
+  key_prefix?: string;
   credential: ObjectS3Credential;
   secret_keys: ObjectStorageComputeBindingSecretKeys;
   /**

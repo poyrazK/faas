@@ -52,8 +52,8 @@ func TestFetchSLOBurnRate_UsesBothWindows(t *testing.T) {
 				t.Fatalf("queries = %v; want 1h and 6h windows", stub.seen)
 			}
 			for _, query := range stub.seen {
-				if !strings.Contains(query, `code=~"5.."`) || !strings.Contains(query, `code=~"2..|5.."`) {
-					t.Fatalf("query = %q; want 5xx numerator over eligible 2xx/5xx outcomes", query)
+				if !strings.Contains(query, `class="5xx"`) || !strings.Contains(query, `class=~"2xx|5xx"`) || strings.Contains(query, "gateway_requests_total") {
+					t.Fatalf("query = %q; want the 5xx class over eligible 2xx/5xx classes (ADR-20261110090000)", query)
 				}
 				if !strings.Contains(query, "increase(") || !strings.Contains(query, ">= 20") {
 					t.Fatalf("query = %q; want low-traffic request floor", query)

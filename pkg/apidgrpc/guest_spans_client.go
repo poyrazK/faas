@@ -18,6 +18,9 @@ import (
 type GuestSpansClient interface {
 	IngestGuestSpans(ctx context.Context, req *apidpb.IngestGuestSpansRequest) (*apidpb.IngestGuestSpansResponse, error)
 	IngestGuestLogs(ctx context.Context, req *apidpb.IngestGuestSpansRequest) (*apidpb.IngestGuestLogsResponse, error)
+	// IngestGuestMetrics forwards in-guest metric exports
+	// (ADR-20261108160000 slice B).
+	IngestGuestMetrics(ctx context.Context, req *apidpb.IngestGuestSpansRequest) (*apidpb.IngestGuestMetricsResponse, error)
 	Close() error
 }
 
@@ -46,6 +49,10 @@ func (c *GuestSpansClientImpl) IngestGuestSpans(ctx context.Context, req *apidpb
 
 func (c *GuestSpansClientImpl) IngestGuestLogs(ctx context.Context, req *apidpb.IngestGuestSpansRequest) (*apidpb.IngestGuestLogsResponse, error) {
 	return c.cli.IngestGuestLogs(ctx, req)
+}
+
+func (c *GuestSpansClientImpl) IngestGuestMetrics(ctx context.Context, req *apidpb.IngestGuestSpansRequest) (*apidpb.IngestGuestMetricsResponse, error) {
+	return c.cli.IngestGuestMetrics(ctx, req)
 }
 
 func (c *GuestSpansClientImpl) Close() error {

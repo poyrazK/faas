@@ -621,6 +621,10 @@ type InstanceStatsRow struct {
 	DiskUsedBytes     int64
 	DiskCapacityBytes int64
 	DiskValid         bool
+	// Departed marks the final row of an instance that left the serving
+	// schedd's snapshot; only its network counters are meaningful, and a
+	// live row for the same instance wins over it (ADR-20261104090000).
+	Departed bool
 	// SidecarMBs (issue #463 / ADR-070 §Decision 6 / PR-C) is the
 	// per-sidecar RAM slice sourced from the deployment's
 	// `sidecars jsonb` column at Tick time. Empty/nil when the
@@ -659,6 +663,7 @@ func (c *Client) ListInstanceStats(ctx context.Context) ([]InstanceStatsRow, err
 			TxValid:      r.GetTxValid(),
 			NetRxBytes:   r.GetNetRxBytes(),
 			RxValid:      r.GetRxValid(),
+			Departed:     r.GetDeparted(),
 		}
 		if used, capacity := r.GetDiskUsedBytes(), r.GetDiskCapacityBytes(); used != nil && capacity != nil && capacity.GetValue() > 0 && used.GetValue() >= 0 && used.GetValue() <= capacity.GetValue() {
 			row.DiskUsedBytes = used.GetValue()

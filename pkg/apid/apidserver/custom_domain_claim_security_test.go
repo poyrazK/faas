@@ -119,10 +119,14 @@ func TestCustomDomainDoctorDiscardsPreviousClaimResults(t *testing.T) {
 	var swapErr error
 	var freshHealthy bool
 	*apidserver.CnameLookupFunc = func(ctx context.Context, _ string) (string, error) {
-		_, swapErr = store.TakeOverCustomDomainClaim(ctx, host, nextApp.ID, "", "new-proof", 100, 500)
+		replacement, err := store.TakeOverCustomDomainClaim(ctx, host, nextApp.ID, "", "new-proof", 100, 500)
+		swapErr = err
 		if swapErr == nil {
+			// Preserve cancellation but bind the simulated new owner's proof
+			// to its replacement claim; the outer doctor keeps the old claim.
+			replacementCtx := state.WithCustomDomainProbe(ctx, replacement)
 			var matched bool
-			matched, swapErr = store.MarkDomainVerifiedIfChallenge(ctx, host, "new-proof")
+			matched, swapErr = store.MarkDomainVerifiedIfChallenge(replacementCtx, host, "new-proof")
 			if !matched && swapErr == nil {
 				swapErr = errors.New("replacement did not verify")
 			}

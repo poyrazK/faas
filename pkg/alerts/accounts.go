@@ -2,6 +2,8 @@ package alerts
 
 import (
 	"context"
+	"slices"
+	"sort"
 	"sync"
 	"time"
 
@@ -30,6 +32,63 @@ func (e *Evaluator) SetRuleRelease(forAccount func(ctx context.Context, accountI
 	e.release = forAccount
 }
 
+// RuleLimit is the plan caps that apply to one rule: its owner's caps per app
+// and per billing subject. Subject is the owner the per-account cap counts
+// against: the organization for an app it owns, else the account
+// (ADR-20261109153000), as the API counts when a rule is created.
+type RuleLimit struct {
+	PerApp, PerAccount int
+	Subject            string
+}
+
+// RuleLimits returns the plan caps that apply to rule; ok is false when its
+// owner's plan cannot be read, and the rule then evaluates.
+type RuleLimits func(ctx context.Context, rule state.AlertRule) (limit RuleLimit, ok bool)
+
+// SetRuleLimits applies the account's plan caps to the rules it evaluates
+// (ADR-20261104142830): the API enforces them only when a rule is created,
+// so a downgrade used to leave every rule the old plan allowed running.
+func (e *Evaluator) SetRuleLimits(limits RuleLimits) {
+	if e == nil {
+		return
+	}
+	e.ruleLimits = limits
+}
+
+// overPlanLimits returns the rules past the caps: per app and per billing
+// subject, the oldest enabled rules keep evaluating, so a customer chooses
+// which run by disabling the others. A rule whose caps cannot be read is never
+// over. One account's tick sees only its own rules, so an organization's
+// subject count covers this account's share of it: the evaluator can only
+// under-count, never stand down a rule the plan allows.
+func overPlanLimits(ctx context.Context, rules []state.AlertRule, limitFor RuleLimits) map[string]bool {
+	sorted := slices.Clone(rules)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if !sorted[i].CreatedAt.Equal(sorted[j].CreatedAt) {
+			return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
+		}
+		return sorted[i].ID < sorted[j].ID
+	})
+	over := map[string]bool{}
+	byApp := map[string]int{}
+	bySubject := map[string]int{}
+	for _, r := range sorted {
+		limit, ok := limitFor(ctx, r)
+		if !ok {
+			continue
+		}
+		if r.AppID != "" && byApp[r.AppID] >= limit.PerApp || bySubject[limit.Subject] >= limit.PerAccount {
+			over[r.ID] = true
+			continue
+		}
+		if r.AppID != "" {
+			byApp[r.AppID]++
+		}
+		bySubject[limit.Subject]++
+	}
+	return over
+}
+
 // SetRuleOutcome installs a counter of the rules a tick did not evaluate:
 // reason "deferred" (the account spent its tick budget) or "not_released"
 // (its plan or capability flags no longer cover the rule). nil records
@@ -48,6 +107,7 @@ func (e *Evaluator) recordRuleOutcomes(stats Stats) {
 	}
 	e.ruleOutcome("deferred", stats.Deferred)
 	e.ruleOutcome("not_released", stats.SkippedNotReleased)
+	e.ruleOutcome("over_plan_limit", stats.SkippedOverPlanLimit)
 }
 
 // groupByAccount splits the enabled rules by account, keeping list order.
@@ -96,12 +156,20 @@ feed:
 
 // evalAccount evaluates one account's rules in order within its tick budget.
 // A rule already started always finishes; the budget is checked between rules.
-func (e *Evaluator) evalAccount(ctx context.Context, rules []state.AlertRule, now time.Time) Stats {
-	var stats Stats
+func (e *Evaluator) evalAccount(ctx context.Context, rules []state.AlertRule, now time.Time) (stats Stats) {
 	if len(rules) == 0 {
 		return stats
 	}
+	// Webhook deliveries leave the evaluation path; the account's counters
+	// include them once they are recorded (ADR-20261110090000).
+	pool := newWebhookPool()
+	ctx = withWebhookPool(ctx, pool)
+	defer func() { stats.add(pool.wait()) }()
 	accountID := rules[0].AccountID
+	var over map[string]bool
+	if e.ruleLimits != nil {
+		over = overPlanLimits(ctx, rules, e.ruleLimits)
+	}
 	rules = e.resumeOrder(accountID, rules)
 	var release RuleRelease
 	if e.release != nil {
@@ -119,11 +187,18 @@ func (e *Evaluator) evalAccount(ctx context.Context, rules []state.AlertRule, no
 				"account_id", accountID, "deferred", len(rules)-k, "budget", e.accountBudget)
 			return stats
 		}
+		if over[rule.ID] {
+			stats.SkippedOverPlanLimit++
+			e.standDown(ctx, rule, state.StandDownNotReleased, now, &stats)
+			continue
+		}
 		rctx := ctx
 		if release != nil {
 			evaluate, channels := release(ctx, rule)
 			if !evaluate {
 				stats.SkippedNotReleased++
+				// An episode it had open ends here (ADR-20261104142830).
+				e.standDown(ctx, rule, state.StandDownNotReleased, now, &stats)
 				continue
 			}
 			if !channels {

@@ -473,3 +473,21 @@ func TestPipelineAlertMonitorSurvivesMissingKeysAndDeleteCancels(t *testing.T) {
 		t.Fatal("deleted pipeline still delivers", a, err)
 	}
 }
+
+func TestPipelineAlertWorkerRefreshesAccountScope(t *testing.T) {
+	_, _, p, worker := alertFixture(t)
+	scope := []string{uuid.NewString()}
+	var scopeErr error
+	worker.AccountsSource = func() ([]string, error) { return scope, scopeErr }
+	if more, err := worker.CheckTick(t.Context()); err != nil || more {
+		t.Fatal("unlisted account was monitored", more, err)
+	}
+	scope = []string{p.AccountID}
+	if more, err := worker.CheckTick(t.Context()); err != nil || !more {
+		t.Fatal("new account was not monitored", more, err)
+	}
+	scopeErr = errors.New("invalid pilot config")
+	if more, err := worker.CheckTick(t.Context()); more || !errors.Is(err, ErrUnavailable) {
+		t.Fatal("invalid config kept monitoring", more, err)
+	}
+}

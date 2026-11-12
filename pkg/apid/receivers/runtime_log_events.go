@@ -16,8 +16,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -83,6 +86,12 @@ type RuntimeLogEventsReceiver struct {
 	outcomes *prometheus.CounterVec
 	log      *slog.Logger
 	nodes    wire.NodeIdentityResolver
+	now      func() time.Time // nil = time.Now
+
+	// marked is the minute each app last got its account-budget line, so
+	// one line per app and minute is written however many are dropped.
+	markMu sync.Mutex
+	marked map[string]int64
 }
 
 // runtimeLogApp is one app's account and release decision, looked up once
@@ -204,6 +213,7 @@ func (r *RuntimeLogEventsReceiver) record(ctx context.Context, ev *apidpb.Runtim
 	}
 	accountID := decided.accountID
 	if taken, _ := r.limiter.Take(account, api.RuntimeLogEventsPerAccountMinute); !taken {
+		r.markAccountBudget(ctx, event, accountID)
 		return runtimeLogRateLimited
 	}
 	event.AccountID = accountID
@@ -217,6 +227,46 @@ func (r *RuntimeLogEventsReceiver) record(ctx context.Context, ev *apidpb.Runtim
 		return runtimeLogDBError
 	}
 	return runtimeLogInserted
+}
+
+// markAccountBudget writes the one system line per app and minute that
+// tells a searcher the account's index budget dropped lines, as vmmd's
+// per-app budget does (ADR-20261104142830); without it the drops were
+// silent and a log_search_matches count looked complete. The line bypasses
+// the budget it reports, and its source_event_id makes another apid's copy
+// of the same minute a no-op.
+func (r *RuntimeLogEventsReceiver) markAccountBudget(ctx context.Context, event state.LogEvent, accountID string) {
+	now := time.Now
+	if r.now != nil {
+		now = r.now
+	}
+	minute := now().UTC().Unix() / 60
+	r.markMu.Lock()
+	if r.marked == nil {
+		r.marked = map[string]int64{}
+	}
+	if r.marked[event.AppID] == minute {
+		r.markMu.Unlock()
+		return
+	}
+	for app, m := range r.marked {
+		if m < minute {
+			delete(r.marked, app)
+		}
+	}
+	r.marked[event.AppID] = minute
+	r.markMu.Unlock()
+	mark := state.LogEvent{
+		OccurredAt: time.Unix((minute+1)*60, 0).Add(-time.Millisecond).UTC(),
+		AccountID:  accountID, AppID: event.AppID, DeploymentID: event.DeploymentID, InstanceID: event.InstanceID,
+		Source: state.LogEventSourceRuntime, SourceEventID: "account-budget:" + event.AppID + ":" + strconv.FormatInt(minute, 10),
+		Level: "warn", Stream: "system",
+		Message: fmt.Sprintf("this account's runtime lines this minute exceeded its %d-line search index budget; later ones were not indexed, and gregale logs still has them",
+			api.RuntimeLogEventsPerAccountMinute),
+	}
+	if _, err := r.store.InsertLogEvent(ctx, mark); err != nil {
+		r.log.Warn("runtime log events: record the account budget line", "app_id", event.AppID, "err", err)
+	}
 }
 
 // peerNode is the compute node a mutual-TLS caller's certificate names, or

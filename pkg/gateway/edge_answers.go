@@ -204,9 +204,9 @@ func isPerRequestPlatformHeader(key string) bool {
 	return api.HasLowerPrefix(strings.TrimSpace(key), "x-faas-")
 }
 
-// serveEdgeAnswer handles the three M1 paths after host resolution and before
-// any auth, limiter, or wake work. It returns true when the request is fully
-// answered at the gateway. Static answers intentionally use the normal
+// serveEdgeAnswer answers /favicon.ico and /robots.txt after host resolution
+// and before any auth, limiter, or wake work. It returns true when the request
+// is fully answered at the gateway. Static answers intentionally use the normal
 // request observation funnel so they remain visible as requests while never
 // creating an instance transition or usage row.
 func (h *Handler) serveEdgeAnswer(w http.ResponseWriter, r *http.Request, app App) bool {
@@ -216,43 +216,6 @@ func (h *Handler) serveEdgeAnswer(w http.ResponseWriter, r *http.Request, app Ap
 	// The generic handler starts with "hot" so early auth and policy exits
 	// expose a bounded wake value. Edge answers do not consult a VM at all.
 	w.Header().Del(wire.WakeHeader)
-
-	if r.URL.Path == normalizeHealthPath(app.HealthPath) && !app.HealthPathWakes && !h.authorizedDeploymentSmoke(r, app) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			return false
-		}
-		snapshot := h.healthSnapshotFor(r.Context(), app)
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("X-Faas-Health-Source", "edge")
-		if snapshot.ready {
-			w.Header().Set("Content-Type", "application/json")
-			body := `{"status":"ok","source":"edge"}`
-			w.Header().Set("Content-Length", itoa(uint64(len(body))))
-			w.WriteHeader(http.StatusOK)
-			if r.Method == http.MethodGet {
-				_, _ = w.Write([]byte(body))
-			}
-			if h.metrics != nil {
-				h.metrics.ObserveHealthEdgeAnswered(app.ID, "healthy")
-			}
-			return true
-		}
-		reason := snapshot.reason
-		if reason == "" {
-			reason = "unknown"
-		}
-		w.Header().Set("X-Faas-Health-Reason", reason)
-		if r.Method == http.MethodHead {
-			w.WriteHeader(http.StatusServiceUnavailable)
-		} else {
-			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
-				api.CodeAppHealthUnavailable, "App health is unavailable", "last wake status: "+reason))
-		}
-		if h.metrics != nil {
-			h.metrics.ObserveHealthEdgeAnswered(app.ID, "unhealthy")
-		}
-		return true
-	}
 
 	switch r.URL.Path {
 	case "/favicon.ico":
@@ -295,34 +258,100 @@ func (h *Handler) serveEdgeAnswer(w http.ResponseWriter, r *http.Request, app Ap
 		h.observeEdgeAnswer(w, r, app, EdgeAnswerRobots)
 		return true
 
-	case "/":
-		if r.Method != http.MethodHead || app.HeadWakes || h.headWakes {
-			return false
-		}
-		// The cached headers come from a live response to a client the
-		// app's public access gate admitted, and this answer runs before
-		// that gate: an IP-allowlisted or credential-gated app replayed them,
-		// with a 200, to clients the gate refuses. Its HEAD takes the gate.
-		if mode := app.PublicAuth.Mode; mode != "" && mode != publicAuthModeOpen {
-			return false
-		}
-		if h.backend.HealthyCount(app.ID) != 0 {
-			return false
-		}
-		if headers, ok := h.headHeaders.get(app.ID); ok {
-			for key, values := range headers {
-				for _, value := range values {
-					w.Header().Add(key, value)
-				}
-			}
-			w.WriteHeader(http.StatusOK)
-		} else {
-			w.WriteHeader(http.StatusNoContent)
-		}
-		h.observeEdgeAnswer(w, r, app, EdgeAnswerHead)
-		return true
 	}
 	return false
+}
+
+// edgeHealthPath reports whether path is the app's health path and the
+// gateway, not the app, answers it.
+func (h *Handler) edgeHealthPath(r *http.Request, app App, path string) bool {
+	return path == normalizeHealthPath(app.HealthPath) && !app.HealthPathWakes && !h.authorizedDeploymentSmoke(r, app)
+}
+
+// answersHealthAtEdge reports whether serveGatedEdgeAnswer will answer this
+// request from the gateway without a VM.
+func (h *Handler) answersHealthAtEdge(r *http.Request, app App, path string) bool {
+	if h == nil || r == nil || hasDevBridgeScope(r.Context()) {
+		return false
+	}
+	return (r.Method == http.MethodGet || r.Method == http.MethodHead) && h.edgeHealthPath(r, app, path)
+}
+
+// serveGatedEdgeAnswer answers the app's health path and a parked app's
+// HEAD / without a VM. It runs after the edge access gates (ip, geo, jwt,
+// maintenance, challenge, penalty box) and before rate limits and wake
+// (ADR-091 amendment 2026-11-04, round 12): it ran before them, so a client
+// those rules refuse got a 200 or 204 and the last wake failure reason. path
+// is the path the client asked for, before any rewrite.
+func (h *Handler) serveGatedEdgeAnswer(w http.ResponseWriter, r *http.Request, app App, path string) bool {
+	if h == nil || r == nil || hasDevBridgeScope(r.Context()) {
+		return false
+	}
+	if h.edgeHealthPath(r, app, path) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			return false
+		}
+		snapshot := h.healthSnapshotFor(r.Context(), app)
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Faas-Health-Source", "edge")
+		if snapshot.ready {
+			w.Header().Set("Content-Type", "application/json")
+			body := `{"status":"ok","source":"edge"}`
+			w.Header().Set("Content-Length", itoa(uint64(len(body))))
+			w.WriteHeader(http.StatusOK)
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(body))
+			}
+			if h.metrics != nil {
+				h.metrics.ObserveHealthEdgeAnswered(app.ID, "healthy")
+			}
+			return true
+		}
+		reason := snapshot.reason
+		if reason == "" {
+			reason = "unknown"
+		}
+		w.Header().Set("X-Faas-Health-Reason", reason)
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		} else {
+			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
+				api.CodeAppHealthUnavailable, "App health is unavailable", "last wake status: "+reason))
+		}
+		if h.metrics != nil {
+			h.metrics.ObserveHealthEdgeAnswered(app.ID, "unhealthy")
+		}
+		return true
+	}
+
+	if path != "/" {
+		return false
+	}
+	if r.Method != http.MethodHead || app.HeadWakes || h.headWakes {
+		return false
+	}
+	// The cached headers come from a live response to a client the
+	// app's public access gate admitted, and this answer runs before
+	// that gate: an IP-allowlisted or credential-gated app replayed them,
+	// with a 200, to clients the gate refuses. Its HEAD takes the gate.
+	if mode := app.PublicAuth.Mode; mode != "" && mode != publicAuthModeOpen {
+		return false
+	}
+	if h.backend.HealthyCount(app.ID) != 0 {
+		return false
+	}
+	if headers, ok := h.headHeaders.get(app.ID); ok {
+		for key, values := range headers {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusNoContent)
+	}
+	h.observeEdgeAnswer(w, r, app, EdgeAnswerHead)
+	return true
 }
 
 func (h *Handler) observeEdgeAnswer(w http.ResponseWriter, r *http.Request, app App, kind EdgeAnswerKind) {

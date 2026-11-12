@@ -134,3 +134,27 @@ func postgresCapacityDefault(t *testing.T, key string) int32 {
 	}
 	return int32(value)
 }
+
+func TestPooledDaemonConnectionBudgetFitsFleet(t *testing.T) {
+	t.Setenv(NotifyHubEnv, "1")
+	var direct int32
+	for _, daemon := range []string{"schedd", "gatewayd-internal", "vmmd", "imaged", "builderd"} {
+		direct += directMaxConns(daemon)
+	}
+	if declared := postgresCapacityDefault(t, "faas_postgres_per_compute_direct_budget"); declared != direct {
+		t.Fatalf("per-compute direct sessions = %d, capacity role declares %d", direct, declared)
+	}
+	control := postgresCapacityDefault(t, "faas_postgres_control_plane_pool_budget") + postgresCapacityDefault(t, "faas_pgbouncer_server_pool_budget")
+	reserved := postgresCapacityDefault(t, "faas_postgres_superuser_reserved_connections")
+	headroom := postgresCapacityDefault(t, "faas_postgres_min_operator_headroom")
+	overlap := postgresCapacityDefault(t, "faas_postgres_rollout_overlap_nodes")
+	for _, tc := range []struct{ nodes, want int32 }{{2, 240}, {12, 450}, {50, 1260}, {100, 2330}} {
+		steady := control + tc.nodes*direct
+		rollout := control + (tc.nodes+overlap)*direct
+		ordinary := max32((steady*4+2)/3, rollout+headroom)
+		got := roundUp10(ordinary + reserved)
+		if got != tc.want || steady*4 > (got-reserved)*3 || rollout+headroom > got-reserved {
+			t.Fatalf("%d nodes: max=%d want=%d steady=%d rollout=%d", tc.nodes, got, tc.want, steady, rollout)
+		}
+	}
+}

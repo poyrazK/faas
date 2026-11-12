@@ -17,9 +17,16 @@ func TestFeatureRoutesFollowOrganizationRoles(t *testing.T) {
 		pattern                         string
 		owner, admin, developer, viewer int
 	}{
+		{"GET /v1/apps/{slug}/scaling", ok, ok, ok, ok}, // adr: 20261104104521
+		{"POST /v1/apps/{slug}/scaling", ok, ok, ok, no},
+		{"GET /v1/apps/{slug}/scaling/requests/{request_id}", ok, ok, ok, ok},
 		{"POST /v1/apps/{slug}/deployments/source-ref", ok, ok, ok, no}, // deploy
 		{"POST /v1/apps/{slug}/deployments/dev-source", ok, ok, ok, no}, // deploy
 		{"GET /v1/apps/{slug}/instances", ok, ok, ok, ok},               // read
+		{"GET /v1/apps/{slug}/data-api/status", ok, ok, ok, ok},
+		{"GET /v1/apps/{slug}/postgres-bindings", ok, ok, ok, ok},
+		{"GET /v1/apps/{slug}/env/batch/requests/{request_id}", ok, ok, ok, ok},
+		{"GET /v1/apps/{slug}/config/rollback/requests/{request_id}", ok, ok, ok, ok},
 		{"GET /v1/apps/{slug}/debug/requests/{req_id}", ok, ok, ok, ok}, // read logs
 		{"PUT /v1/apps/{slug}/work-policies/{name}", ok, ok, ok, no},    // configure
 		{"PUT /v1/apps/{slug}/recovery-policy", ok, ok, no, no},         // policy

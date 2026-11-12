@@ -53,7 +53,11 @@ func releaseScope(scope string) string {
 }
 
 func (s *PgStore) ReleaseRunsCrossedBy(ctx context.Context, appID, targetID string) ([]ReleaseRun, error) {
-	rows, err := sqlc.New().ReleaseRunsCrossedBy(ctx, s.pool, sqlc.ReleaseRunsCrossedByParams{AppID: appID, TargetID: targetID})
+	return releaseRunsCrossedByDBTX(ctx, s.pool, appID, targetID)
+}
+
+func releaseRunsCrossedByDBTX(ctx context.Context, db sqlc.DBTX, appID, targetID string) ([]ReleaseRun, error) {
+	rows, err := sqlc.New().ReleaseRunsCrossedBy(ctx, db, sqlc.ReleaseRunsCrossedByParams{AppID: appID, TargetID: targetID})
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -82,9 +86,13 @@ func (s *PgStore) ReleaseMigrationDatabases(ctx context.Context, appID, scope st
 func (m *MemStore) ReleaseRunsCrossedBy(_ context.Context, appID, targetID string) ([]ReleaseRun, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.releaseRunsCrossedByLocked(appID, targetID), nil
+}
+
+func (m *MemStore) releaseRunsCrossedByLocked(appID, targetID string) []ReleaseRun {
 	target, ok := m.deployments[targetID]
 	if !ok || target.AppID != appID {
-		return nil, nil
+		return nil
 	}
 	since := target.CreatedAt
 	if ended, served := m.deploymentServingEndedAt[targetID]; served {
@@ -105,5 +113,5 @@ func (m *MemStore) ReleaseRunsCrossedBy(_ context.Context, appID, targetID strin
 		out = append(out, run)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.Before(out[j].StartedAt) })
-	return out, nil
+	return out
 }

@@ -44,7 +44,12 @@ type GitHubEvents struct {
 	Allowed func(state.Account) bool
 	// Notify wakes schedd's event fanout after a new event.
 	Notify func(context.Context)
-	Now    func() time.Time
+	// Subscriptions publishes the event to the threads subscribed to it
+	// with gregale_github_subscribe (Handler.DeliverGitHubEvent). It runs for
+	// a repeated delivery too, since a failure makes githubd retry it; nil
+	// publishes to none.
+	Subscriptions func(ctx context.Context, accountID, deliveryID string, event api.GitHubPullRequestEvent) error
+	Now           func() time.Time
 }
 
 // GitHubEventResult says what one delivery published.
@@ -92,6 +97,11 @@ func (g *GitHubEvents) Publish(ctx context.Context, deliveryID string, installat
 	}
 	if !accepted.Duplicate && g.Notify != nil {
 		g.Notify(ctx)
+	}
+	if g.Subscriptions != nil {
+		if err := g.Subscriptions(ctx, acct.ID, deliveryID, event); err != nil {
+			return GitHubEventResult{}, fmt.Errorf("publish github event to subscriptions: %w", err)
+		}
 	}
 	return GitHubEventResult{AccountID: acct.ID, Published: true, Duplicate: accepted.Duplicate}, nil
 }

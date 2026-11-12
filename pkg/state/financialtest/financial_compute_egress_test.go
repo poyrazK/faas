@@ -41,13 +41,15 @@ func TestFinancialEgressFunding(t *testing.T) {
 				store, _, _ = financialPostgres(t)
 			}
 			t.Run("compute_and_bytes_share_one_paid_limit", func(t *testing.T) {
-				f := newEgressFixture(t, store, 0, 0, 49)
+				// The compute reservation takes 209 millicents at $0.05/GB-h
+				// (ADR-20261107192333); the rest funds less than one egress credit.
+				f := newEgressFixture(t, store, 0, 0, 216)
 				l, err := store.AcquireFinancialCompute(t.Context(), f.request(0))
 				if err != nil {
 					t.Fatal(err)
 				}
 				b := f.balance(t)
-				if !l.EgressFunded || l.EgressSequence != 1 || l.EgressGrant < api.FinancialEgressMinimumCreditBytes || l.EgressGrant >= api.FinancialEgressCreditBytes || b.Egress == nil || b.ReservedMillicents != 49 || b.Egress.ReservedMillicents <= 0 {
+				if !l.EgressFunded || l.EgressSequence != 1 || l.EgressGrant < api.FinancialEgressMinimumCreditBytes || l.EgressGrant >= api.FinancialEgressCreditBytes || b.Egress == nil || b.ReservedMillicents != 216 || b.Egress.ReservedMillicents <= 0 {
 					t.Fatalf("shared headroom: lease=%+v balance=%+v", l, b)
 				}
 				if b.ReservedMillicents <= b.Egress.ReservedMillicents {

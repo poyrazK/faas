@@ -48,10 +48,13 @@ type TenantCgroupReapReport struct {
 	Failed         int
 }
 
-// tenantCgroupParents lists every plan's tenant slice, current and legacy.
+// tenantCgroupParents lists the flat tenant slice (ADR-20261109172421 step
+// 6.5) and every plan's tenant slice, current and legacy. Only
+// instance-named children are swept, so the plan sub-slices under the flat
+// slice are never candidates.
 func tenantCgroupParents() []string {
-	seen := map[string]bool{}
-	var out []string
+	seen := map[string]bool{CgroupMountRoot: true}
+	out := []string{CgroupMountRoot}
 	for _, plan := range api.Plans {
 		for _, parent := range []string{ParentCgroupFor(plan), LegacyParentCgroupFor(plan)} {
 			if parent != "" && !seen[parent] {

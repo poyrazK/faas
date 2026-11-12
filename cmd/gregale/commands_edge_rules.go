@@ -665,7 +665,12 @@ func warnSingleHostProtectiveRule(kind, matchHost, slug string) {
 	if !api.EdgeRuleKindUsesProtectivePathMatch(kind) || api.IsEdgeRuleAppHosts(host) || strings.ContainsAny(host, "*?") {
 		return
 	}
-	PrintWarn(osStderr, "This %s rule covers only %s. App %s is also served at its own platform hostname and any other domains; pass --match-host @app to cover every host it serves.", kind, host, slug)
+	others := "its own platform hostname and any other domains"
+	if strings.EqualFold(host, strings.TrimPrefix(deployedAppURL(slug), "https://")) {
+		// The rule names that platform hostname (Hunt 33 H33-19).
+		others = "any custom domains and companion hostnames"
+	}
+	PrintWarn(osStderr, "This %s rule covers only %s. App %s is also served at %s; pass --match-host @app to cover every host it serves.", kind, host, slug, others)
 }
 
 // warnRootOnlyProtectiveRule flags a gate created without --match-path. The
@@ -746,6 +751,9 @@ func cmdEdgeRulesUpdate(args []string) int {
 	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields", "retry-allow-non-idempotent", "jwt-require-exp", "clear-expiry", "clear-match", "clear-penalty", "template")
 	args = append(flags, positional...)
 	fs := newFlagSet("edge-rules update", flag.ContinueOnError)
+	// --app is accepted like on create; the rule id alone selects the rule,
+	// so the app is checked before the update (Hunt 32 H32-15).
+	ruleApp := fs.String("app", "", "app the rule belongs to (optional; checked before updating)")
 	matchHost := fs.String("match-host", "", "new host to match")
 	matchPath := fs.String("match-path", "", "new path to match")
 	var matchMethods multiFlag
@@ -1123,6 +1131,11 @@ func cmdEdgeRulesUpdate(args []string) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	if *ruleApp != "" {
+		if err := checkEdgeRuleApp(context.Background(), client, id, *ruleApp); err != nil {
+			return printErr("Could not update edge rule", err)
+		}
 	}
 	out, err := client.UpdateEdgeRule(context.Background(), id, req)
 	if err != nil {
@@ -2038,4 +2051,21 @@ func edgeRulePenaltyFromFlags(forDur time.Duration, after int, within time.Durat
 		return nil, fmt.Errorf("%s", prob.Detail)
 	}
 	return p, nil
+}
+
+// checkEdgeRuleApp refuses an update whose --app is not the app that owns
+// rule id.
+func checkEdgeRuleApp(ctx context.Context, client *Client, id, slug string) error {
+	rule, err := client.GetEdgeRule(ctx, id)
+	if err != nil {
+		return err
+	}
+	app, err := client.GetApp(ctx, slug)
+	if err != nil {
+		return err
+	}
+	if rule.AppID != app.ID {
+		return fmt.Errorf("edge rule %s does not belong to app %s", id, slug)
+	}
+	return nil
 }

@@ -51,6 +51,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/overlay"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 )
 
@@ -232,6 +233,18 @@ func newNodeCache(store *state.PgStore, vmmdTLS *tls.Config, log *slog.Logger, m
 		log,
 	)
 	if store != nil {
+		// Each remote dial accepts only the vmmd leaf of the node it is
+		// for; target_url is a row compute nodes can write
+		// (ADR-20261108124106). The local data socket has no TLS.
+		cache.WithNodeBinding(func(ctx context.Context, nodeID string) (string, bool) {
+			n, err := store.ComputeNodeByID(ctx, nodeID)
+			if err != nil || n.Name == "" {
+				return "", false
+			}
+			return n.Name, true
+		}, func(ctx context.Context, target, name string) (*grpc.ClientConn, error) {
+			return overlay.Dial(ctx, overlay.New(target), wire.ExpectPeerCN(local.tlsFor(target, vmmdTLS), name))
+		})
 		// vmmd restart adoption ADR: forwards wait out a planned restart.
 		cache.WithRestartNotices(store)
 	}

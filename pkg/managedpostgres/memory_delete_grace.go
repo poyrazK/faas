@@ -40,11 +40,14 @@ func (s *MemoryStore) ClaimScheduledDelete(ctx context.Context, accountID, datab
 	database.LeaseToken = leaseToken
 	database.LeaseUntil = leaseUntil
 	database.AttemptCount = 0
-	database.LastErrorCode = ""
+	database.LastErrorCode = deletionHoldPendingCode
 	database.RetryAt = purgeAfter
 	database.UpdatedAt = now
 	s.databases[databaseID] = database
 	s.trackUsageWaiverLocked(before, database)
+	if notice, expired := restoreSlotExpiryNotice(database, now); expired {
+		_, _ = s.recordRestoreSlotNoticeLocked(notice) // valid row under the same lock
+	}
 	return cloneDatabase(database), nil
 }
 
@@ -68,6 +71,7 @@ func (s *MemoryStore) ClaimUndelete(ctx context.Context, accountID, databaseID, 
 	}
 	database.LeaseToken = leaseToken
 	database.LeaseUntil = leaseUntil
+	database.LastErrorCode = deletionHoldPendingCode
 	database.UpdatedAt = now
 	s.databases[databaseID] = database
 	return cloneDatabase(database), nil

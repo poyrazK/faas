@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AccountOverageCapResponse } from '../models/AccountOverageCapResponse.js';
+import type { AgentActivityResponse } from '../models/AgentActivityResponse.js';
 import type { AgentConnectionsResponse } from '../models/AgentConnectionsResponse.js';
 import type { AgentConnectionsRevokeAllResponse } from '../models/AgentConnectionsRevokeAllResponse.js';
 import type { APIKeyResponse } from '../models/APIKeyResponse.js';
@@ -37,6 +38,8 @@ import type { CreateOrgAPIKeyRequest } from '../models/CreateOrgAPIKeyRequest.js
 import type { CreateOrgRequest } from '../models/CreateOrgRequest.js';
 import type { CreateReleaseFreezeRequest } from '../models/CreateReleaseFreezeRequest.js';
 import type { DeleteFinancialBudgetRequest } from '../models/DeleteFinancialBudgetRequest.js';
+import type { EgressOverageRequest } from '../models/EgressOverageRequest.js';
+import type { EgressOverageResponse } from '../models/EgressOverageResponse.js';
 import type { FinancialBudgetHistoryResponse } from '../models/FinancialBudgetHistoryResponse.js';
 import type { FinancialBudgetListResponse } from '../models/FinancialBudgetListResponse.js';
 import type { FinancialBudgetPreviewRequest } from '../models/FinancialBudgetPreviewRequest.js';
@@ -257,6 +260,62 @@ export class OrgsService {
       errors: {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the activity of an agent acting in an organization.
+   * The write requests an agent acting in the organization made in the
+   * last 7 days, newest first. Owners and admins only; an id that is not
+   * one of the organization's agents is 404.
+   *
+   * @returns AgentActivityResponse One page of the organization agent's write requests, newest first.
+   * @throws ApiError
+   */
+  public static orgAgentConnectionActivity({
+    slug,
+    id,
+    before,
+    limit,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * API key id of the organization agent whose activity to read.
+     */
+    id: string,
+    /**
+     * The `next_before` value of an earlier activity page; omit it for the newest rows.
+     */
+    before?: string,
+    /**
+     * Activity rows per page, 1 to 200. Default 50.
+     */
+    limit?: number,
+  }): CancelablePromise<AgentActivityResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/agent-connections/{id}/activity',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'before': before,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -2501,6 +2560,8 @@ export class OrgsService {
    * the organization bills to cannot be removed while the organization
    * has a billing customer (409 `billing_contact_member`); set another
    * billing email with `PUT /v1/orgs/{slug}/billing/email` first.
+   * If the billing-contact check cannot complete, returns retryable 503
+   * without removing the member.
    *
    * @returns void
    * @throws ApiError
@@ -2555,6 +2616,49 @@ export class OrgsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Leave an org.
+   * Ends the caller's own membership. Any role except owner may leave;
+   * the owner transfers ownership first. A personal org cannot be left,
+   * and the org's billing contact must be replaced first
+   * (`billing_contact_member`).
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static leaveOrg({
+    slug,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/leave',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `The caller is not an active member.`,
+        409: `The caller is the owner (\`org_last_owner\`), the org is personal, or the caller is the billing contact.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
       },
     });
   }
@@ -2565,7 +2669,9 @@ export class OrgsService {
    * (a single PostgreSQL tx with `FOR UPDATE` locks on both
    * rows). The exactly-one-owner invariant is enforced by the
    * partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
-   * member of the org.
+   * member of the org. For a Free organization, the recipient must have
+   * available Free-organization ownership capacity; admission is serialized
+   * with organization creation and other incoming transfers.
    *
    * @returns OrgResponse The org (post-transfer).
    * @throws ApiError
@@ -2595,8 +2701,9 @@ export class OrgsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         403: `\`403 Forbidden\` — caller is authenticated but is not the
-        active owner of the target org. Stable code
-        \`org_role_forbidden\`.
+        active owner of the target org (\`org_role_forbidden\`), or the
+        recipient already owns the maximum number of Free organizations
+        (\`org_free_limit_exceeded\`, with limit and observed count).
         `,
         404: `code: NotFound (new owner is not a member)`,
         409: `code: org_last_owner (caller not the active owner OR new owner already owner)`,
@@ -3201,6 +3308,95 @@ export class OrgsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the organization's egress overage election.
+   * Requires current organization membership and usage:read. An organization that owns its resources elects egress overage apart from its members.
+   * @returns EgressOverageResponse The organization's election.
+   * @throws ApiError
+   */
+  public static getOrgEgressOverage({
+    slug,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+  }): CancelablePromise<EgressOverageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/egress-overage',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Turn the organization's egress overage election on or off.
+   * Requires the organization owner, admin credential scope, verified email,
+   * MFA and recent step-up. `{"enabled": true|false}`; turning it on needs a
+   * paid plan (HTTP 402 `plan_egress_overage_not_allowed`).
+   *
+   * @returns EgressOverageResponse The organization's election after the change.
+   * @throws ApiError
+   */
+  public static setOrgEgressOverage({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    requestBody: EgressOverageRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<EgressOverageResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{slug}/egress-overage',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_egress_overage_not_allowed — the organization's plan stops at its egress allowance; move the organization to a paid plan.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses

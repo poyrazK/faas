@@ -132,12 +132,20 @@ func resolveInvocationVersionForApp(ctx context.Context, store invocationAppRead
 	// read already required for durable dispatch. Never trust inv.Source or a
 	// payload/header marker as a negative membership assertion.
 	ownerRead := false
+	if !ingress {
+		// The caller identity an edge jwt rule verified comes only from the
+		// stored row below, never from whatever named the invocation.
+		inv.EdgeJWTIssuer, inv.EdgeJWTSubject = "", ""
+	}
 	if reader, ok := store.(invocationDispatchAuthorityReader); ok && canonicalStateUUID(inv.ID) {
 		authority, readErr := reader.invocationDispatchAuthority(ctx, inv.ID)
 		if readErr != nil && !errors.Is(readErr, ErrNotFound) {
 			return inv, InvocationVersion{}, readErr
 		}
 		ownerRead = true
+		if readErr == nil && !ingress && authority.AppID == app.ID && authority.AccountID == app.AccountID {
+			inv.EdgeJWTIssuer, inv.EdgeJWTSubject = authority.EdgeJWTIssuer, authority.EdgeJWTSubject
+		}
 		if readErr == nil {
 			if authority.EnvironmentID != inv.EnvironmentID {
 				return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
@@ -200,7 +208,9 @@ func resolveInvocationVersionForApp(ctx context.Context, store invocationAppRead
 			return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
 		}
 	}
-	if inv.EnvironmentID != "" && revision == "" && release == "" {
+	// An environment cron's request carries no pin: its cron row, checked
+	// against the environment below, is the owner proof (ADR-20261104120000).
+	if inv.EnvironmentID != "" && revision == "" && release == "" && !stageCronInvocationShape(inv) {
 		return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
 	}
 	if InvocationHasOperation(inv) {
@@ -270,7 +280,15 @@ func resolveInvocationVersionForApp(ctx context.Context, store invocationAppRead
 		if env.AccountID != app.AccountID || env.ProjectID != app.ProjectID || env.Slug != scope {
 			return inv, InvocationVersion{}, ErrConflict
 		}
-		if (!boundQueue && invocationHasSharedWorkProducer(inv) && (inv.ID == "" || inv.EnvironmentID == "" || !stageQueueInvocationShape(inv))) ||
+		stageCron := false
+		if stageCronInvocationShape(inv) && inv.EnvironmentID != "" {
+			cronEnv, ok, cronErr := stageCronEnvironment(ctx, store, inv)
+			if cronErr != nil || !ok || cronEnv.ID != env.ID {
+				return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
+			}
+			stageCron = true
+		}
+		if (!boundQueue && invocationHasSharedWorkProducer(inv) && (inv.ID == "" || inv.EnvironmentID == "" || !stageQueueInvocationShape(inv) && !stageCron)) ||
 			inv.OnSuccessDestinationID != "" || inv.OnFailureDestinationID != "" {
 			return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
 		}

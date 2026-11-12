@@ -26,7 +26,7 @@ func (s *server) configureDataAPIUsage(pool *pgxpool.Pool) {
 }
 
 func (s *server) admitDataAPIBudget(w http.ResponseWriter, r *http.Request) {
-	h := dataapibudget.Handler{Verifier: s.workloadVerifier}
+	h := dataapibudget.Handler{Verifier: s.workloadVerifier, Workloads: s.store}
 	if s.dataAPIBudget != nil {
 		h.Store = s.dataAPIBudget
 	}
@@ -75,7 +75,7 @@ func (s *server) syncDataAPIAccess(ctx context.Context, appID string) {
 
 // reportDataAPIUsage is the private runtime surface; workload identity only.
 func (s *server) reportDataAPIUsage(w http.ResponseWriter, r *http.Request) {
-	handler := dataapiusage.ReportHandler{Verifier: s.workloadVerifier, AccessChanged: s.syncDataAPIAccess}
+	handler := dataapiusage.ReportHandler{Verifier: s.workloadVerifier, Workloads: s.store, AccessChanged: s.syncDataAPIAccess}
 	if s.dataAPIUsage != nil {
 		handler.Store = s.dataAPIUsage
 	}

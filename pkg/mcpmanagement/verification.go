@@ -31,6 +31,8 @@ type verificationCheck struct {
 type verificationTarget struct {
 	planID, app, appID, scope, project, projectID, environmentID string
 	wakeID, deploymentID                                         string
+	scalingRequestID                                             string
+	scalingPlan                                                  *releasePlan
 	revision                                                     int64
 }
 
@@ -73,6 +75,15 @@ func (m *management) planVerification(p *releasePlan) (Verification, verificatio
 	case t.deploymentID != "":
 		v.Status, v.Goal = "required", "release_readiness"
 		v.Checks = []verificationCheck{{"release_ready", "required", t.deploymentID, "exact_deployment_requires_observation"}}
+	case p.Operation != nil && p.Operation.Kind == "scale" && p.Operation.ScalingBefore != nil:
+		v.Status, v.Goal = "required", "scaling_configuration"
+		t.scalingRequestID = scalingRequestID(p)
+		// Copy only immutable review data; native reads happen after unlocking.
+		plan := *p
+		operation := *p.Operation
+		plan.Operation = &operation
+		t.scalingPlan = &plan
+		v.Checks = []verificationCheck{{"scaling_committed", "required", t.scalingRequestID, "exact_request_and_current_configuration_require_observation"}}
 	case p.localReceipt != nil && p.Operation != nil && p.Operation.Kind == "env":
 		v.Status, v.Goal = "not_required", "configuration_commit"
 		v.Checks = []verificationCheck{{"configuration_committed", "verified", "", "native_commit_receipt_without_requested_restart"}}
@@ -109,6 +120,8 @@ func (m *management) verifyPlan(ctx context.Context, args planLookupArgs) (any, 
 		v, err = m.verifyRestart(ctx, target, v)
 	case "release_readiness":
 		v, err = m.verifyRelease(ctx, target, v)
+	case "scaling_configuration":
+		v, err = m.verifyScaling(ctx, target, v)
 	}
 	if err != nil {
 		return nil, err

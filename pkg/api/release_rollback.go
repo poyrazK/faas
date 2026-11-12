@@ -80,6 +80,15 @@ func ErrDatabaseSwitchesActive(limit int) *Problem {
 		WithHint("wait for one to finish, or cancel one with gregale rollback switches")
 }
 
+// ErrProjectReleaseRollbackRequired directs graph-owned traffic recovery to
+// the project environment workflow.
+func ErrProjectReleaseRollbackRequired() *Problem {
+	return NewProblem(http.StatusConflict, CodeProjectReleaseRollbackRequired,
+		"Project release rollback required",
+		"The active project release still selects another deployment. Changing this app's traffic weights would not restore the environment.").
+		WithHint("Roll back the project environment release, then retry this app rollback if needed.")
+}
+
 // ErrRollbackCrossesRelease refuses an unacknowledged rollback over release
 // commands that ran after its target last served (ADR-1448).
 func ErrRollbackCrossesRelease(target string, crossed []RollbackCrossedRelease, restore []ReleaseRestorePoint) *Problem {

@@ -286,9 +286,11 @@ func handleLivenessConn(f *os.File, log *slog.Logger) {
 	if timeoutMs > VsockLivenessHardTimeoutMs {
 		timeoutMs = VsockLivenessHardTimeoutMs
 	}
-	if devDebugActive.Load() {
+	if devDebugActive.Load() && devDebugAttached() {
 		// ADR-741: a debugged process may be paused at a breakpoint. Report
-		// healthy so vmmd does not destroy the developer VM mid-session.
+		// healthy so vmmd does not destroy the developer VM mid-session. With
+		// no debugger attached nothing can pause it, so a hung app still
+		// fails liveness and is replaced.
 		writeLivenessResp(f, livenessResp{Status: http.StatusOK})
 		return
 	}

@@ -87,7 +87,7 @@ func renderPowershellHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  $__gregaleProfileArgs = @(); $skipProfile = $false")
 
 	_, _ = fmt.Fprintln(w, "  foreach ($token in @($contextTokens | Select-Object -Skip 1)) {")
-	_, _ = fmt.Fprintln(w, "    if (-not $afterSeparator -and $token -match '^(--json|-j|--non-interactive)(=.*)?$') { continue }")
+	_, _ = fmt.Fprintln(w, "    if (-not $afterSeparator -and $token -match '^(--json|-j|--non-interactive|--wait-for-approval)(=.*)?$') { continue }")
 	_, _ = fmt.Fprintln(w, "    if ($skipProfile) { $__gregaleProfileArgs = @('--profile', $token); $skipProfile = $false; continue }")
 	_, _ = fmt.Fprintln(w, "    if ($normalizedContext.Count -eq 1) {")
 	_, _ = fmt.Fprintln(w, "      if ($token -eq '--profile') { $skipProfile = $true; continue }")
@@ -190,6 +190,7 @@ func renderPowershellHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  }")
 	_, _ = fmt.Fprintln(w, "  if ($tokens.Count -lt 2) {")
 	_, _ = fmt.Fprintln(w, "    if ('--non-interactive' -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new('--non-interactive', '--non-interactive', 'ParameterName', 'Disable prompts and browser launches') }")
+	_, _ = fmt.Fprintln(w, "    if ('--wait-for-approval' -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new('--wait-for-approval', '--wait-for-approval', 'ParameterName', 'Wait for a person to approve an agent request') }")
 	for _, c := range completionCliCommands() {
 		_, _ = fmt.Fprintf(w, "    if (%s -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%s, %s, 'ParameterName', %s) }\n",
 			psLiteral(c.Name), psLiteral(c.Name), psLiteral(c.Name), psLiteral(c.Short))

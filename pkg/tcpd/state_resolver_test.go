@@ -17,7 +17,7 @@ func TestListenerStoreResolverUsesEnabledDurableRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "tcpd-" + uuid.NewString(), Status: state.AppActive, RAMMB: 256})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "tcpd-" + uuid.NewString(), Status: state.AppActive, RAMMB: 256, Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "postgres", Port: 5432}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

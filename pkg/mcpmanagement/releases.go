@@ -329,6 +329,10 @@ func (m *management) applyDeploy(ctx context.Context, args applyArgs) (any, erro
 			return nil, err
 		}
 	}
+	writeCtx, err := m.prepareDeploymentSubmission(ctx, p)
+	if err != nil {
+		return nil, err
+	}
 	p.attempted = true // Ambiguous retries must reuse the same key and payload.
 	if err := m.persistPlans(); err != nil {
 		return nil, err
@@ -340,9 +344,9 @@ func (m *management) applyDeploy(ctx context.Context, args applyArgs) (any, erro
 	}
 	var d api.DeploymentResponse
 	if p.Source != nil {
-		d, err = m.stageSourcePlan(ctx, p)
+		d, err = m.stageSourcePlan(writeCtx, p)
 	} else {
-		d, err = m.client.Deploy(api.ContextWithIdempotencyKey(ctx, "mcp-deploy-"+p.ID), p.App, request)
+		d, err = m.client.Deploy(api.ContextWithIdempotencyKey(writeCtx, "mcp-deploy-"+p.ID), p.App, request)
 	}
 	if err != nil {
 		return nil, err
@@ -424,11 +428,15 @@ func (m *management) promoteDeployment(ctx context.Context, args applyArgs) (any
 	if d.AppID != p.AppID || normalizedScope(d.Scope) != p.Scope || d.Status != "live" {
 		return nil, invalid("not_ready", "the planned revision is not live in the expected app and scope")
 	}
+	writeCtx, err := m.preparePromotionOutcome(ctx, p)
+	if err != nil {
+		return nil, err
+	}
 	p.promotionAttempted = true
 	if err := m.persistPlans(); err != nil {
 		return nil, err
 	}
-	writeCtx := api.ContextWithIdempotencyKey(ctx, "mcp-promote-"+p.ID)
+	writeCtx = api.ContextWithIdempotencyKey(writeCtx, "mcp-promote-"+p.ID)
 	if p.EnvironmentID != "" {
 		d, err = m.client.PatchDeploymentTrafficReviewed(writeCtx, d.ID, p.ExpectedCurrentID, *p.result.StagedReview)
 	} else {
@@ -459,11 +467,15 @@ func (m *management) applyRollback(ctx context.Context, args applyArgs) (any, er
 			return nil, err
 		}
 	}
+	ctx, err = m.prepareRollbackOutcome(ctx, p)
+	if err != nil {
+		return nil, err
+	}
 	p.attempted = true
 	if err := m.persistPlans(); err != nil {
 		return nil, err
 	}
-	d, err := m.client.CheckedRollback(api.ContextWithIdempotencyKey(ctx, "mcp-rollback-"+p.ID), p.App, api.RollbackRequest{ExpectedCurrentDeploymentID: &p.ExpectedCurrentID, TargetDeploymentID: &p.TargetDeploymentID, Reason: p.Reason})
+	d, err := m.client.CheckedRollback(api.ContextWithIdempotencyKey(ctx, "mcp-rollback-"+p.ID), p.App, rollbackRequest(p))
 	if err != nil {
 		return nil, err
 	}

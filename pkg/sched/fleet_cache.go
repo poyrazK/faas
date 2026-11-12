@@ -109,6 +109,9 @@ type NodeTelemetry struct {
 	EgressFloodDropsLimitPerMin int64
 	// QuietPaused (ADR-1151): vmmd holds the instance paused between requests.
 	QuietPaused bool
+	// IdleLadderLevel (ADR-20261107122928) is the idle ladder level vmmd
+	// holds a quiet-paused instance at: 1 quiet pause, 2 freeze. 0 otherwise.
+	IdleLadderLevel int32
 	// Frozen (ADR-1151): vmmd holds the instance frozen in place.
 	Frozen bool
 	// QuietPause is the instance's quiet pause record for the pause ledger

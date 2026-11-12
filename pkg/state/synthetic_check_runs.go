@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -139,7 +140,7 @@ func (m *MemStore) ListRunnableSyntheticChecks(_ context.Context) ([]RunnableSyn
 	var out []RunnableSyntheticCheck
 	for appID, checks := range m.syntheticChecks {
 		app, ok := m.apps[appID]
-		if !ok || app.Status == AppDeleted {
+		if !ok || app.Status == AppDeleted || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 			continue
 		}
 		for _, c := range checks {

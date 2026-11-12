@@ -10,6 +10,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.project_environment_branch_response import ProjectEnvironmentBranchResponse
     from ..models.project_environment_clone_operation_response import ProjectEnvironmentCloneOperationResponse
     from ..models.project_environment_clone_response import ProjectEnvironmentCloneResponse
 
@@ -35,6 +36,8 @@ class ProjectEnvironmentResponse:
     clone_operation: ProjectEnvironmentCloneOperationResponse | Unset = UNSET
     """Durable clone progress within one account and project, excluding private source configuration and worker
     credentials."""
+    branch: ProjectEnvironmentBranchResponse | Unset = UNSET
+    """How an environment branches from its parent."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -60,6 +63,10 @@ class ProjectEnvironmentResponse:
         if not isinstance(self.clone_operation, Unset):
             clone_operation = self.clone_operation.to_dict()
 
+        branch: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.branch, Unset):
+            branch = self.branch.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -78,11 +85,14 @@ class ProjectEnvironmentResponse:
             field_dict["clone"] = clone
         if clone_operation is not UNSET:
             field_dict["clone_operation"] = clone_operation
+        if branch is not UNSET:
+            field_dict["branch"] = branch
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.project_environment_branch_response import ProjectEnvironmentBranchResponse
         from ..models.project_environment_clone_operation_response import ProjectEnvironmentCloneOperationResponse
         from ..models.project_environment_clone_response import ProjectEnvironmentCloneResponse
 
@@ -115,6 +125,13 @@ class ProjectEnvironmentResponse:
         else:
             clone_operation = ProjectEnvironmentCloneOperationResponse.from_dict(_clone_operation)
 
+        _branch = d.pop("branch", UNSET)
+        branch: ProjectEnvironmentBranchResponse | Unset
+        if isinstance(_branch, Unset):
+            branch = UNSET
+        else:
+            branch = ProjectEnvironmentBranchResponse.from_dict(_branch)
+
         project_environment_response = cls(
             id=id,
             project_id=project_id,
@@ -125,6 +142,7 @@ class ProjectEnvironmentResponse:
             cloned_from=cloned_from,
             clone=clone,
             clone_operation=clone_operation,
+            branch=branch,
         )
 
         project_environment_response.additional_properties = d

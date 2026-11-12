@@ -59,8 +59,8 @@ def sync_detailed(
 ) -> Response[ObjectStorageComputeBindingList | Problem]:
     """List compute bindings for a bucket
 
-     Requires storage:manage or admin. Secret values are never returned; only the sealed app-secret names
-    are listed.
+     Requires storage:read, storage:manage or admin. Secret values are never returned; only the sealed
+    app-secret names are listed.
 
     Args:
         slug (str):
@@ -94,8 +94,8 @@ def sync(
 ) -> ObjectStorageComputeBindingList | Problem | None:
     """List compute bindings for a bucket
 
-     Requires storage:manage or admin. Secret values are never returned; only the sealed app-secret names
-    are listed.
+     Requires storage:read, storage:manage or admin. Secret values are never returned; only the sealed
+    app-secret names are listed.
 
     Args:
         slug (str):
@@ -124,8 +124,8 @@ async def asyncio_detailed(
 ) -> Response[ObjectStorageComputeBindingList | Problem]:
     """List compute bindings for a bucket
 
-     Requires storage:manage or admin. Secret values are never returned; only the sealed app-secret names
-    are listed.
+     Requires storage:read, storage:manage or admin. Secret values are never returned; only the sealed
+    app-secret names are listed.
 
     Args:
         slug (str):
@@ -157,8 +157,8 @@ async def asyncio(
 ) -> ObjectStorageComputeBindingList | Problem | None:
     """List compute bindings for a bucket
 
-     Requires storage:manage or admin. Secret values are never returned; only the sealed app-secret names
-    are listed.
+     Requires storage:read, storage:manage or admin. Secret values are never returned; only the sealed
+    app-secret names are listed.
 
     Args:
         slug (str):

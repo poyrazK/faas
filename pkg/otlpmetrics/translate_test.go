@@ -1,8 +1,10 @@
 package otlpmetrics
 
 import (
+	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,19 +60,32 @@ func TestTranslate_GaugesAndCountersKeepTheNewestPoint(t *testing.T) {
 
 func TestTranslate_RejectsWhatCannotBeStored(t *testing.T) {
 	withAttrs := dbl(1, 0)
-	withAttrs.Attributes = []*commonpb.KeyValue{{Key: "region", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "eu"}}}}
-	histogram := &metricspb.Metric{Name: "latency", Data: &metricspb.Metric_Histogram{Histogram: &metricspb.Histogram{
-		DataPoints: []*metricspb.HistogramDataPoint{{}, {}},
+	withAttrs.Attributes = []*commonpb.KeyValue{strAttr("a", "1"), strAttr("b", "2"), strAttr("c", "3"), strAttr("d", "4")}
+	exponential := &metricspb.Metric{Name: "latency", Data: &metricspb.Metric_ExponentialHistogram{ExponentialHistogram: &metricspb.ExponentialHistogram{
+		DataPoints: []*metricspb.ExponentialHistogramDataPoint{{}, {}},
+	}}}
+	summary := &metricspb.Metric{Name: "latency", Data: &metricspb.Metric_Summary{Summary: &metricspb.Summary{
+		DataPoints: []*metricspb.SummaryDataPoint{{}},
 	}}}
 	for _, tc := range []struct {
 		name   string
 		metric *metricspb.Metric
 		want   int64
 	}{
-		{"delta sum", sum("reqs", true, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA, dbl(1, 0)), 1},
-		{"non-monotonic sum", sum("depth", false, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE, dbl(1, 0), dbl(2, 0)), 2},
-		{"histogram", histogram, 2},
-		{"attributes", gauge("orders", withAttrs), 1},
+		{"exponential histogram", exponential, 2},
+		{"summary", summary, 1},
+		{"negative cumulative up-down", sum("depth", false, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE, dbl(-1, 0)), 1},
+		{"negative delta counter", sum("reqs", true, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA, dbl(-1, 0)), 1},
+		{"inconsistent histogram", histogramMetric("latency", metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
+			histPoint(0, 5, []float64{1, 2}, []uint64{1, 1})), 1},
+		{"histogram with negative bounds", histogramMetric("latency", metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
+			histPoint(0, 1, []float64{-1}, []uint64{1, 0})), 1},
+		{"histogram name too long", histogramMetric(strings.Repeat("h", 58), metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
+			histPoint(0, 1, []float64{1}, []uint64{1, 0})), 1},
+		{"four attributes", gauge("orders", withAttrs), 1},
+		{"unspecified temporality", sum("reqs", true, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_UNSPECIFIED, dbl(1, 0)), 1},
+		{"future timestamp", gauge("orders", dbl(1, 6*time.Minute)), 1},
+		{"timestamp out of range", gauge("orders", &metricspb.NumberDataPoint{TimeUnixNano: math.MaxUint64, Value: &metricspb.NumberDataPoint_AsDouble{AsDouble: 1}}), 1},
 		{"negative", gauge("orders", dbl(-1, 0)), 1},
 		{"non-finite", gauge("orders", dbl(math.Inf(1), 0)), 1},
 		{"invalid name", gauge("9lives", dbl(1, 0)), 1},
@@ -81,6 +96,221 @@ func TestTranslate_RejectsWhatCannotBeStored(t *testing.T) {
 				t.Fatalf("rejected=%d points=%d reason=%q, want %d rejected and none stored", res.Rejected, len(res.Points), res.Reason, tc.want)
 			}
 		})
+	}
+}
+
+func histPoint(at time.Duration, sumValue float64, bounds []float64, counts []uint64) *metricspb.HistogramDataPoint {
+	var total uint64
+	for _, c := range counts {
+		total += c
+	}
+	return &metricspb.HistogramDataPoint{TimeUnixNano: ts(at), Count: total, Sum: &sumValue, ExplicitBounds: bounds, BucketCounts: counts}
+}
+
+func histogramMetric(name string, temporality metricspb.AggregationTemporality, points ...*metricspb.HistogramDataPoint) *metricspb.Metric {
+	return &metricspb.Metric{Name: name, Data: &metricspb.Metric_Histogram{Histogram: &metricspb.Histogram{
+		AggregationTemporality: temporality, DataPoints: points,
+	}}}
+}
+
+func byName(points []Point) map[string]Point {
+	out := make(map[string]Point, len(points))
+	for _, p := range points {
+		out[p.Name] = p
+	}
+	return out
+}
+
+// adr: 20261108160000 — delta sums accumulate: points of one name in an
+// export are summed into one delta, counters stay counters.
+func TestTranslate_DeltaSumsAreSummedIntoOneDelta(t *testing.T) {
+	res := Translate(request(
+		sum("http.requests", true, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA, dbl(3, -2*time.Second), dbl(4, -time.Second)),
+	), now)
+	if res.Rejected != 0 || len(res.Points) != 1 {
+		t.Fatalf("res = %+v", res)
+	}
+	p := res.Points[0]
+	if p.Name != "http_requests" || p.Kind != "counter" || !p.Delta || p.Value != 7 || !p.ObservedAt.Equal(now.Add(-time.Second)) {
+		t.Fatalf("point = %+v, want one counter delta of 7 at the newest time", p)
+	}
+}
+
+// adr: 20261108160000 — up-down counters are gauges: cumulative ones replace
+// the value, delta ones (which may be negative) move it.
+func TestTranslate_UpDownCountersAreGauges(t *testing.T) {
+	res := Translate(request(
+		sum("queue.depth", false, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE, dbl(5, -time.Minute), dbl(8, -time.Second)),
+		sum("connections", false, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA, dbl(3, -time.Minute), dbl(-5, -time.Second)),
+	), now)
+	if res.Rejected != 0 {
+		t.Fatalf("rejected %d: %s", res.Rejected, res.Reason)
+	}
+	points := byName(res.Points)
+	if p := points["queue_depth"]; p.Kind != "gauge" || p.Delta || p.Value != 8 {
+		t.Fatalf("cumulative up-down = %+v", p)
+	}
+	if p := points["connections"]; p.Kind != "gauge" || !p.Delta || p.Value != -2 {
+		t.Fatalf("delta up-down = %+v, want a gauge delta of -2", p)
+	}
+}
+
+// adr: 20261108160000 — a histogram becomes _count and _sum counters and
+// _p50/_p95/_p99 gauges interpolated from its buckets.
+func TestTranslate_HistogramBecomesDerivedSeries(t *testing.T) {
+	// 100 observations: 50 in [0,10], 40 in (10,100], 10 in (100,1000].
+	cumulative := histogramMetric("http.server.duration", metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
+		histPoint(-time.Minute, 1, []float64{10, 100}, []uint64{1, 0, 0}),
+		histPoint(-time.Second, 9000, []float64{10, 100, 1000}, []uint64{50, 40, 10, 0}))
+	res := Translate(request(cumulative), now)
+	if res.Rejected != 0 {
+		t.Fatalf("rejected %d: %s", res.Rejected, res.Reason)
+	}
+	points := byName(res.Points)
+	want := map[string]struct {
+		kind  string
+		value float64
+	}{
+		"http_server_duration_count": {"counter", 100},
+		"http_server_duration_sum":   {"counter", 9000},
+		"http_server_duration_p50":   {"gauge", 10},
+		"http_server_duration_p95":   {"gauge", 550},
+		"http_server_duration_p99":   {"gauge", 910},
+	}
+	if len(points) != len(want) {
+		t.Fatalf("points = %+v", res.Points)
+	}
+	for name, w := range want {
+		p := points[name]
+		if p.Kind != w.kind || p.Delta || math.Abs(p.Value-w.value) > 1e-9 || !p.ObservedAt.Equal(now.Add(-time.Second)) {
+			t.Errorf("%s = %+v, want %s %v from the newest point", name, p, w.kind, w.value)
+		}
+	}
+
+	delta := histogramMetric("jobs", metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA,
+		histPoint(-2*time.Second, 3, []float64{1}, []uint64{2, 0}),
+		histPoint(-time.Second, 5, []float64{1}, []uint64{1, 2}))
+	points = byName(Translate(request(delta), now).Points)
+	if p := points["jobs_count"]; !p.Delta || p.Value != 5 || p.Kind != "counter" {
+		t.Fatalf("delta histogram count = %+v, want a counter delta of 5", p)
+	}
+	if p := points["jobs_sum"]; !p.Delta || p.Value != 8 {
+		t.Fatalf("delta histogram sum = %+v, want a delta of 8", p)
+	}
+	if p := points["jobs_p50"]; p.Delta || p.Kind != "gauge" {
+		t.Fatalf("delta histogram p50 = %+v, want a gauge set from the newest point", p)
+	}
+}
+
+func TestHistogramQuantileEdges(t *testing.T) {
+	maxV, minV := 400.0, 2.0
+	overflow := histPoint(0, 0, []float64{10, 100}, []uint64{0, 0, 4})
+	if got := HistogramQuantile(0.5, overflow); got != 100 {
+		t.Fatalf("overflow without max = %v, want the last bound", got)
+	}
+	overflow.Max = &maxV
+	if got := HistogramQuantile(0.5, overflow); got != 250 {
+		t.Fatalf("overflow with max = %v, want 250", got)
+	}
+	first := histPoint(0, 0, []float64{10}, []uint64{2, 0})
+	first.Min = &minV
+	if got := HistogramQuantile(0.5, first); got != 6 {
+		t.Fatalf("first bucket from min = %v, want 6", got)
+	}
+	noBuckets := &metricspb.HistogramDataPoint{Count: 4, Sum: &maxV}
+	if got := HistogramQuantile(0.99, noBuckets); got != 100 {
+		t.Fatalf("no buckets = %v, want the mean", got)
+	}
+	if res := Translate(request(histogramMetric("empty", metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
+		histPoint(0, 0, nil, nil))), now); len(byName(res.Points)) != 2 {
+		t.Fatalf("an empty histogram = %+v, want only _count and _sum", res.Points)
+	}
+}
+
+func strAttr(k, v string) *commonpb.KeyValue {
+	return &commonpb.KeyValue{Key: k, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: v}}}
+}
+
+func withLabels(dp *metricspb.NumberDataPoint, attrs ...*commonpb.KeyValue) *metricspb.NumberDataPoint {
+	dp.Attributes = attrs
+	return dp
+}
+
+// adr: 20261108160000 — slice C: attributes become labels; each label set is
+// a series with its own canonical key, newest/summed per series.
+func TestTranslate_AttributesBecomeSeries(t *testing.T) {
+	res := Translate(request(
+		sum("jobs.done", true, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA,
+			withLabels(dbl(2, -2*time.Second), strAttr("queue", "emails")),
+			withLabels(dbl(3, -time.Second), strAttr("queue", "emails")),
+			withLabels(dbl(5, -time.Second), strAttr("queue", "billing")),
+			dbl(1, -time.Second)),
+		gauge("depth", withLabels(dbl(7, 0), strAttr("Region.Name", "eu,west"),
+			&commonpb.KeyValue{Key: "shard", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_IntValue{IntValue: 3}}})),
+	), now)
+	if res.Rejected != 0 {
+		t.Fatalf("rejected %d: %s", res.Rejected, res.Reason)
+	}
+	var got []string
+	for _, p := range res.Points {
+		got = append(got, fmt.Sprintf("%s{%s}=%v", p.Name, p.SeriesKey, p.Value))
+	}
+	want := []string{"depth{region_name=eu%2Cwest,shard=3}=7", "jobs_done{}=1", "jobs_done{queue=billing}=5", "jobs_done{queue=emails}=5"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("points = %v, want %v", got, want)
+	}
+	if l := res.Points[0].Labels; l["region_name"] != "eu,west" || l["shard"] != "3" {
+		t.Fatalf("labels = %v", l)
+	}
+
+	hist := histogramMetric("latency", metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
+		histPoint(0, 4, []float64{10}, []uint64{2, 0}), histPoint(0, 4, []float64{10}, []uint64{2, 0}))
+	hist.GetHistogram().DataPoints[0].Attributes = []*commonpb.KeyValue{strAttr("route", "/a")}
+	hist.GetHistogram().DataPoints[1].Attributes = []*commonpb.KeyValue{strAttr("route", "/b")}
+	if n := len(Translate(request(hist), now).Points); n != 10 {
+		t.Fatalf("two labelled histogram series = %d points, want 10", n)
+	}
+}
+
+func TestLabelsRejections(t *testing.T) {
+	long := strings.Repeat("x", 129)
+	for name, attrs := range map[string][]*commonpb.KeyValue{
+		"bad key":     {strAttr("9x", "v")},
+		"duplicate":   {strAttr("a.b", "1"), strAttr("a_b", "2")},
+		"long value":  {strAttr("k", long)},
+		"array value": {{Key: "k", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_ArrayValue{ArrayValue: &commonpb.ArrayValue{}}}}},
+	} {
+		if _, _, err := Labels(attrs); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if _, key, err := Labels([]*commonpb.KeyValue{strAttr("b", "2"), strAttr("a", "x=y%")}); err != nil || key != "a=x%3Dy%25,b=2" {
+		t.Fatalf("key = %q, %v", key, err)
+	}
+}
+
+// adr: 20261031144636 — delta points are increments: an export's points for
+// one name are summed into one Delta point that the store adds to the
+// counter's total, so instances of an app add up instead of overwriting.
+func TestTranslate_DeltaSumsAreSummed(t *testing.T) {
+	delta := metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA
+	res := Translate(request(
+		sum("checkouts", true, delta, dbl(3, -2*time.Minute), dbl(4, -time.Minute)),
+		sum("checkouts", true, delta, dbl(5, -90*time.Second)),
+	), now)
+	if res.Rejected != 0 || len(res.Points) != 1 {
+		t.Fatalf("result = %+v, want one point", res)
+	}
+	if p := res.Points[0]; !p.Delta || p.Kind != "counter" || p.Value != 12 || !p.ObservedAt.Equal(now.Add(-time.Minute)) {
+		t.Fatalf("point = %+v, want a delta of 12 at the newest time", p)
+	}
+
+	mixed := Translate(request(
+		sum("checkouts", true, delta, dbl(3, -time.Minute)),
+		sum("checkouts", true, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE, dbl(40, 0)),
+	), now)
+	if mixed.Rejected != 1 || len(mixed.Points) != 1 || mixed.Points[0].Value != 3 {
+		t.Fatalf("mixed temporalities = %+v, want the cumulative point rejected", mixed)
 	}
 }
 

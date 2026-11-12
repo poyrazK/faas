@@ -27,7 +27,7 @@ func TestWorkflowTickEvaluatesFailurePoliciesBeforeScheduleAdmission(t *testing.
 		t.Fatal(err)
 	}
 	enabled := true
-	if _, err = store.SetAutomationFailurePolicy(ctx, app.ID, "report", api.SetAutomationFailurePolicyRequest{Enabled: &enabled, FailureThreshold: 1, MinCompletedRuns: 1, WindowSeconds: 300}); err != nil {
+	if _, err = store.SetStoredWorkflowFailurePolicy(ctx, app.ID, "report", api.SetStoredWorkflowFailurePolicyRequest{Enabled: &enabled, FailureThreshold: 1, MinCompletedRuns: 1, WindowSeconds: 300}); err != nil {
 		t.Fatal(err)
 	}
 	run := &state.WorkflowRun{AppID: app.ID, WorkflowName: "report", DefinitionSnapshot: json.RawMessage(`{"name":"report","steps":[{"name":"main","path":"/report"}]}`)}
@@ -43,7 +43,7 @@ func TestWorkflowTickEvaluatesFailurePoliciesBeforeScheduleAdmission(t *testing.
 	if err = loop.RunWorkflowSchedulesTick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	out, err := store.GetAutomationFailurePolicy(ctx, app.ID, "report")
+	out, err := store.GetStoredWorkflowFailurePolicy(ctx, app.ID, "report")
 	if err != nil || !out.Paused || out.Generation != 1 {
 		t.Fatalf("scheduler failed to latch pause: %+v %v", out, err)
 	}
@@ -68,7 +68,7 @@ func TestWorkflowTickSpacesFailurePolicyPasses(t *testing.T) {
 		t.Fatal(err)
 	}
 	enabled := true
-	if _, err = store.SetAutomationFailurePolicy(ctx, app.ID, "report", api.SetAutomationFailurePolicyRequest{Enabled: &enabled, FailureThreshold: 1, MinCompletedRuns: 1, WindowSeconds: 300}); err != nil {
+	if _, err = store.SetStoredWorkflowFailurePolicy(ctx, app.ID, "report", api.SetStoredWorkflowFailurePolicyRequest{Enabled: &enabled, FailureThreshold: 1, MinCompletedRuns: 1, WindowSeconds: 300}); err != nil {
 		t.Fatal(err)
 	}
 	engine, _ := sched.MakeEngine(t, store, &sched.FakeWakeVMM{})
@@ -76,7 +76,7 @@ func TestWorkflowTickSpacesFailurePolicyPasses(t *testing.T) {
 	loop := sched.NewLoop(nil, engine, nil).WithClock(func() time.Time { return now }).WithWorkflowsDispatched(true)
 	paused := func() bool {
 		t.Helper()
-		out, err := store.GetAutomationFailurePolicy(ctx, app.ID, "report")
+		out, err := store.GetStoredWorkflowFailurePolicy(ctx, app.ID, "report")
 		if err != nil {
 			t.Fatal(err)
 		}

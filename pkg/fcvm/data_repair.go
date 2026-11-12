@@ -421,6 +421,7 @@ func (m *Manager) releaseUnstartedDataRepair(ctx context.Context, id string) err
 	}
 	delete(m.pendingCleanup, id)
 	delete(m.waking, id)
+	delete(m.bootingEgress, id)
 	delete(m.pendingProcessExits, id)
 	delete(m.processGenerations, id)
 	delete(m.processStartedAt, id)

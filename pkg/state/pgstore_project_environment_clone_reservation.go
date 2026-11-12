@@ -18,6 +18,15 @@ func lockProjectEnvironmentCloneReservationTx(ctx context.Context, tx pgx.Tx, cl
 	}); err != nil {
 		return mapErr(err)
 	}
+	pending, err := q.ProjectEnvironmentCleanupPending(ctx, tx, sqlc.ProjectEnvironmentCleanupPendingParams{
+		ProjectID: mustPgUUID(clone.ProjectID), EnvironmentSlug: clone.TargetSlug,
+	})
+	if err != nil {
+		return mapErr(err)
+	}
+	if pending {
+		return ErrProjectEnvironmentCleanupPending
+	}
 	row, err := q.LockProjectEnvironmentCloneTargetReservation(ctx, tx, sqlc.LockProjectEnvironmentCloneTargetReservationParams{
 		AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), TargetEnvironment: clone.TargetSlug,
 	})

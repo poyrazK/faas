@@ -129,16 +129,11 @@ func (m *MemStore) nodeMigrationCapacityPendingLocked(node string) bool {
 func (m *MemStore) migrationInstanceCostLocked(i Instance) capacityResources {
 	a, d := m.apps[i.AppID], m.deployments[i.DeploymentID]
 	ram, cpu := capacitySidecarResources(d.Sidecars)
-	limits, _ := api.LimitsFor(m.accounts[a.AccountID].Plan)
-	vcpus := int64(limits.VCPU)
-	if vcpus <= 0 {
-		vcpus = 4
-	}
-	if i.AppID == "" {
-		vcpus = 1
-	}
+	// migration_admission_node_usage: the stored guest vCPU count, else the
+	// plan's (ADR-20261109172421).
+	vcpus := m.instanceCapacityVCPULocked(i, a)
 	captured := m.capacityInstanceResources[i.ID]
-	cost := capacityResources{RAM: max(captured.RAM, int64(i.RAMMB+api.PerVMOverheadMB)+ram), CPU: max(captured.CPU, int64(max(a.CPUMillicores, api.DefaultAppCPUMillicores))+cpu), VCPU: max(captured.VCPU, vcpus)}
+	cost := capacityResources{RAM: max(captured.RAM, int64(i.RAMMB+api.PerVMOverheadMB)+ram), CPU: max(captured.CPU, int64(m.instanceCapacityCPULocked(i, a))+cpu), VCPU: max(captured.VCPU, vcpus)}
 	return m.migrationResourceFloorLocked(i, cost)
 }
 
@@ -175,8 +170,10 @@ func (m *MemStore) migrationNodeUsedLocked(node, omit string) capacityResources 
 	return used
 }
 
+// migrationCapacityFits is memory alone: CPU and vCPUs are measured, never
+// refused (ADR-20261109172421).
 func migrationCapacityFits(n ComputeNode, used capacityResources) bool {
-	return (n.AdmissionCeilingMB <= 0 || used.RAM <= int64(n.AdmissionCeilingMB)) && (n.VPCPUs <= 0 || used.CPU <= int64(n.VPCPUs)*1000) && (n.VCPUBudget <= 0 || used.VCPU <= int64(n.VCPUBudget))
+	return n.AdmissionCeilingMB <= 0 || used.RAM <= int64(n.AdmissionCeilingMB)
 }
 
 func (m *MemStore) checkMigrationAdmissionCapacityLocked(i Instance) error {

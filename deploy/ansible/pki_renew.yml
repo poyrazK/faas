@@ -652,3 +652,15 @@
         name: vmmd_service
         tasks_from: outbound_relay_tls.yml
       when: faas_vmmd_outbound_relay_tls_managed | default(false) | bool
+
+    # ADR-20261109170000: the artifact signer's leaves.
+    - name: pki renewal — signd's server leaf
+      ansible.builtin.include_role:
+        name: signd_service
+      when: faas_signd_listen | default('') is match('tcp://')
+
+    - name: pki renewal — imaged's signd client leaf
+      ansible.builtin.include_role:
+        name: compute_only_service
+        tasks_from: signd_client.yml
+      when: faas_imaged_signd_target | default('') | length > 0

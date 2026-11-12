@@ -78,7 +78,7 @@ func (p *Provider) storageCapBranch(ctx context.Context, ref resourceRef) (branc
 	return found, nil
 }
 
-// SetStorageCap writes the per-branch logical size limit and, read back
+// SetStorageCap writes the per-branch logical size limit and keeps the
 // first, the project's current compute quota, so the write never changes the
 // compute cap whatever Neon's merge semantics for settings.quota. It reads the
 // project again to confirm, because an accepted PATCH alone is not evidence.
@@ -87,26 +87,5 @@ func (p *Provider) SetStorageCap(ctx context.Context, providerResourceID string,
 		// Zero is no limit to Neon; the pool never removes one this way.
 		return managedpostgres.ErrInvalid
 	}
-	ref, err := parseResourceRef(providerResourceID)
-	if err != nil {
-		return err
-	}
-	current, err := p.readComputeCapProject(ctx, ref.projectID)
-	if err != nil {
-		return err
-	}
-	var patch computeCapPatch
-	patch.Project.Settings.Quota = computeCapQuota{ComputeTimeSeconds: current.Settings.Quota.ComputeTimeSeconds, LogicalSizeBytes: &limitBytes}
-	if err := p.doJSON(ctx, http.MethodPatch, "/projects/"+url.PathEscape(ref.projectID), nil, patch, nil, http.StatusOK); err != nil {
-		return err
-	}
-	confirmed, err := p.readComputeCapProject(ctx, ref.projectID)
-	if err != nil {
-		return err
-	}
-	if !sameQuota(confirmed.Settings.Quota.LogicalSizeBytes, &limitBytes) ||
-		!sameQuota(confirmed.Settings.Quota.ComputeTimeSeconds, current.Settings.Quota.ComputeTimeSeconds) {
-		return managedpostgres.ErrUnavailable
-	}
-	return nil
+	return p.writeQuota(ctx, providerResourceID, func(q *computeCapQuota) { q.LogicalSizeBytes = &limitBytes })
 }

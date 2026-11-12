@@ -129,26 +129,21 @@ func FinalizeObjectStoragePeriods(ctx context.Context, accounts ObjectStorageAcc
 }
 
 // objectStorageMonthAllowance follows the period's plan history like compute
-// (ADR-1162): the largest allowance, per meter, among the plans whose
-// activations were recorded in the month. Without recorded activations the
-// account's current plan applies.
+// (ADR-20261030093512): each plan's allowance, per meter, counts for the share
+// of the month it held, and the plan active now holds until the month ends.
+// Without recorded activations the account's current plan applies all month
+// (ADR-20261103131742 amendment 2).
 func objectStorageMonthAllowance(ctx context.Context, store state.ObjectStorageBillingStore, account state.Account, periodStart time.Time) (api.ObjectStorageAllowance, error) {
-	plans := []api.Plan{}
+	var snapshots []state.FinancialPriceSnapshot
 	if history, ok := store.(state.FinancialStore); ok {
-		snapshots, err := history.ListFinancialPriceSnapshots(ctx, account.ID, periodStart)
-		if err != nil {
+		var err error
+		if snapshots, err = history.ListFinancialPriceSnapshots(ctx, account.ID, periodStart); err != nil {
 			return api.ObjectStorageAllowance{}, err
 		}
-		for _, snapshot := range snapshots {
-			if snapshot.Price.Meter == "compute" && snapshot.Plan.Valid() {
-				plans = append(plans, snapshot.Plan)
-			}
-		}
 	}
-	if len(plans) == 0 {
-		plans = append(plans, account.Plan)
-	}
-	return largestObjectStorageAllowance(plans, planObjectStorageAllowance)
+	monthStart := time.Date(periodStart.UTC().Year(), periodStart.UTC().Month(), 1, 0, 0, 0, 0, time.UTC)
+	spans := state.MonthPlanSpans(account.Plan, snapshots, monthStart, monthStart.AddDate(0, 1, 0))
+	return weightedObjectStorageAllowance(spans, monthStart, planObjectStorageAllowance)
 }
 
 func planObjectStorageAllowance(plan api.Plan) (api.ObjectStorageAllowance, bool) {
@@ -159,20 +154,28 @@ func planObjectStorageAllowance(plan api.Plan) (api.ObjectStorageAllowance, bool
 	return limits.ObjectStorage.Allowance(), true
 }
 
-// largestObjectStorageAllowance takes the per-meter maximum across plans, so
-// a mid-month downgrade never shrinks the month's allowance.
-func largestObjectStorageAllowance(plans []api.Plan, lookup func(api.Plan) (api.ObjectStorageAllowance, bool)) (api.ObjectStorageAllowance, error) {
-	var out api.ObjectStorageAllowance
-	for _, plan := range plans {
-		a, ok := lookup(plan)
-		if !ok {
-			return api.ObjectStorageAllowance{}, fmt.Errorf("unknown plan %q", plan)
+// weightedObjectStorageAllowance weights each meter's allowance by the share
+// of the month each span's plan held, so a few hours on a larger plan grant a
+// few hours' share of its allowance, and a downgrade keeps the larger plan's
+// share for the time it was held.
+func weightedObjectStorageAllowance(spans []state.PlanSpan, monthStart time.Time, lookup func(api.Plan) (api.ObjectStorageAllowance, bool)) (api.ObjectStorageAllowance, error) {
+	for _, span := range spans {
+		if _, ok := lookup(span.Plan); !ok {
+			return api.ObjectStorageAllowance{}, fmt.Errorf("unknown plan %q", span.Plan)
 		}
-		out.StoredByteHours = max(out.StoredByteHours, a.StoredByteHours)
-		out.Requests = max(out.Requests, a.Requests)
-		out.EgressBytes = max(out.EgressBytes, a.EgressBytes)
 	}
-	return out, nil
+	meter := func(pick func(api.ObjectStorageAllowance) int64) int64 {
+		weighted := state.WeightedMonthAllowance(spans, monthStart, func(plan api.Plan) int64 {
+			a, _ := lookup(plan)
+			return pick(a)
+		})
+		return min(weighted, api.MaxObjectStoragePolicyValue)
+	}
+	return api.ObjectStorageAllowance{
+		StoredByteHours: meter(func(a api.ObjectStorageAllowance) int64 { return a.StoredByteHours }),
+		Requests:        meter(func(a api.ObjectStorageAllowance) int64 { return a.Requests }),
+		EgressBytes:     meter(func(a api.ObjectStorageAllowance) int64 { return a.EgressBytes }),
+	}, nil
 }
 
 // FinalizeObjectStoragePeriod closes one completed UTC month and records the

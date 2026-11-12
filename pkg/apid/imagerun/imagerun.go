@@ -38,6 +38,7 @@ func EnabledFromEnv(getenv func(string) string) bool {
 // Store is the state the handler needs.
 type Store interface {
 	state.ImageRunJobStore
+	JobGetByName(ctx context.Context, accountID, name string) (state.Job, error)
 	JobRunCreate(ctx context.Context, jobID, accountID, triggerKind string, parallelism, retryMaxOverride, taskTimeoutOverride *int, envOverrides json.RawMessage, tasks int, options ...state.JobRunOptions) (state.JobRun, []state.JobTask, error)
 }
 
@@ -107,6 +108,12 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 	}
 	res, err := h.Store.JobEnsureImageRun(r.Context(), req.ensure)
 	if err != nil {
+		if errors.Is(err, state.ErrImageRunBusy) {
+			w.Header().Set("Retry-After", "2")
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"Image is in use", "wait for this image's queued and running tasks to finish before refreshing it"))
+			return
+		}
 		api.WriteProblem(w, h.ensureProblem(acct, req.ensure.Name, err))
 		return
 	}
@@ -121,6 +128,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 	}
 	h.announce(r.Context(), acct, res)
 	if res.Job.ImageMaterializationStatus != "ready" {
+		// Pulling is preparation, not an accepted run. The same logical
+		// idempotency key must be able to advance once the image is ready.
+		httpkit.SkipIdempotentReplay(w)
 		httpkit.WriteJSON(w, http.StatusAccepted, response(res.Job, api.ImageRunStatusPulling))
 		return
 	}
@@ -138,7 +148,8 @@ func (h *Handler) startRun(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Invalid command", fmt.Sprintf("the resolved command has %d entries; at most %d are allowed", len(argv), api.ImageRunArgvMax)))
 		return
 	}
-	opts := state.JobRunOptions{CommandArgs: &argv, ProcessUser: req.raw.User, ProcessWorkdir: req.raw.Workdir}
+	opts := state.JobRunOptions{CommandArgs: &argv, RAMMB: &req.ensure.RAMMB, ExpectedImageStorageKey: job.ImageStorageKey,
+		ProcessUser: req.raw.User, ProcessWorkdir: req.raw.Workdir}
 	token := ""
 	if req.raw.Interactive {
 		var prob *api.Problem
@@ -154,6 +165,7 @@ func (h *Handler) startRun(w http.ResponseWriter, r *http.Request, acct state.Ac
 		req.env, 1, opts)
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
+			w.Header().Set("Retry-After", "2")
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Image unavailable", "the image could not be prepared; run again to retry the pull"))
 			return
@@ -386,4 +398,52 @@ func encodeEnv(plan api.Plan, env map[string]string) (json.RawMessage, *api.Prob
 		return nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid env", err.Error())
 	}
 	return encoded, nil
+}
+
+// EnsureSessionImage gets or creates the runner job that caches image for a
+// sandbox session (ADR-20261027090013, seller-image sessions), so sessions
+// and image runs share one cache and one ImageRunCachedImages limit. It
+// returns the job and the normalized reference; the job may still be
+// pulling, and imaged is told so. A session never runs the job's tasks, so
+// an existing runner keeps its RAM and task timeout.
+func (h *Handler) EnsureSessionImage(ctx context.Context, acct state.Account, src api.SandboxImageSource) (state.Job, string, *api.Problem) {
+	image := strings.TrimSpace(src.Image)
+	if image == "" || len(image) > api.ImageRunImageMaxBytes {
+		return state.Job{}, "", api.ErrValidation(fmt.Sprintf("image must be 1-%d bytes", api.ImageRunImageMaxBytes))
+	}
+	ref, err := oci.ParseReference(image)
+	if err != nil {
+		return state.Job{}, "", api.ErrValidation("image: " + err.Error())
+	}
+	if src.Pull != "" && src.Pull != api.ImageRunPullMissing && src.Pull != api.ImageRunPullAlways {
+		return state.Job{}, "", api.ErrValidation(`pull must be "missing" or "always"`)
+	}
+	credential, prob := registryCredential(ref, src.RegistryAuth)
+	if prob != nil {
+		return state.Job{}, "", prob
+	}
+	if credential != nil && h.SetRegistryCredential == nil {
+		return state.Job{}, "", api.ErrCapacity("job registry credentials are unavailable")
+	}
+	normalized := ref.String()
+	idx := acct.Plan.PlanIndex()
+	in := state.ImageRunEnsure{AccountID: acct.ID, Name: RunnerName(normalized), ImageRef: normalized,
+		RAMMB: api.JobDefaultRAMMB, TaskTimeoutSec: api.JobTaskTimeoutSec[idx], MaxCached: api.ImageRunCachedImages[idx],
+		PullAlways: src.Pull == api.ImageRunPullAlways}
+	if job, err := h.Store.JobGetByName(ctx, acct.ID, in.Name); err == nil && job.Kind == state.JobKindImageRun {
+		in.RAMMB, in.TaskTimeoutSec = job.RAMMB, job.TaskTimeoutS
+	}
+	res, err := h.Store.JobEnsureImageRun(ctx, in)
+	if err != nil {
+		return state.Job{}, "", h.ensureProblem(acct, in.Name, err)
+	}
+	// As for an image run: the credential lands before imaged is told to
+	// pull, and every session that supplies it refreshes it (ADR-1790).
+	if credential != nil {
+		if prob := h.SetRegistryCredential(ctx, acct, res.Job, *credential); prob != nil {
+			return state.Job{}, "", prob
+		}
+	}
+	h.announce(ctx, acct, res)
+	return res.Job, normalized, nil
 }

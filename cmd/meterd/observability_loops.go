@@ -21,12 +21,13 @@ type observabilityLoops struct {
 	lastPass *prometheus.GaugeVec
 	passes   *prometheus.CounterVec
 	items    *prometheus.CounterVec
+	backlog  *prometheus.GaugeVec
 }
 
 // loopItemOutcomes are each loop's per-item outcomes, created at zero so
 // increase() sees the first event.
 var loopItemOutcomes = map[string][]string{
-	loopSyntheticChecks: {"ok", "failed", "record_error", "not_released"},
+	loopSyntheticChecks: {"ok", "failed", "record_error", "not_released", "deferred"},
 	loopSLORollup:       {"recorded", "failed", "not_released"},
 }
 
@@ -46,12 +47,17 @@ func newObservabilityLoops(reg prometheus.Registerer) *observabilityLoops {
 		}, []string{"loop", "outcome"}),
 		items: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "meterd_observability_loop_items_total",
-			Help: "Work items of a customer observability loop by outcome: synthetic_checks runs (ok, failed: the customer's check failed, record_error, not_released: the account's plan or flags no longer cover the check) and slo_rollup hours (recorded, failed) or SLOs (not_released: the account's plan or flags no longer cover them).",
+			Help: "Work items of a customer observability loop by outcome: synthetic_checks runs (ok, failed: the customer's check failed, record_error, not_released: the account's plan or flags no longer cover the check, deferred: due but waiting a pass for a probe slot) and slo_rollup hours (recorded, failed) or SLOs (not_released: the account's plan or flags no longer cover them).",
 		}, []string{"loop", "outcome"}),
+		backlog: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "meterd_observability_loop_backlog_seconds",
+			Help: "How late the loop's most overdue waiting item was at its last pass: a synthetic check due but waiting for a probe slot (ADR-20261104142830). 0 when nothing waits.",
+		}, []string{"loop"}),
 	}
 	for loop, outcomes := range loopItemOutcomes {
 		l.enabled.WithLabelValues(loop).Set(0)
 		l.lastPass.WithLabelValues(loop).Set(0)
+		l.backlog.WithLabelValues(loop).Set(0)
 		l.passes.WithLabelValues(loop, "ok").Add(0)
 		l.passes.WithLabelValues(loop, "error").Add(0)
 		for _, outcome := range outcomes {
@@ -59,7 +65,7 @@ func newObservabilityLoops(reg prometheus.Registerer) *observabilityLoops {
 		}
 	}
 	if reg != nil {
-		reg.MustRegister(l.enabled, l.lastPass, l.passes, l.items)
+		reg.MustRegister(l.enabled, l.lastPass, l.passes, l.items, l.backlog)
 	}
 	return l
 }
@@ -93,4 +99,12 @@ func (l *observabilityLoops) add(loop, outcome string, n int) {
 		return
 	}
 	l.items.WithLabelValues(loop, outcome).Add(float64(n))
+}
+
+// setBacklog records how late the loop's most overdue waiting item is.
+func (l *observabilityLoops) setBacklog(loop string, d time.Duration) {
+	if l == nil {
+		return
+	}
+	l.backlog.WithLabelValues(loop).Set(max(d.Seconds(), 0))
 }

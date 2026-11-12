@@ -142,9 +142,12 @@ func CurrentMonthComputeIncludedMBSeconds(current api.Plan, snapshots []Financia
 // so the month splits at each activation's hour into segments, and each
 // segment bills its usage above that segment's allowance. Without an
 // activation after the first this is usage above the allowance, and
-// usageBefore is not called. The spend cap compares this figure, not usage
-// above today's allowance, so a plan change can neither overrun the cap nor
-// spend it on usage that is never billed (ADR-20261031100000).
+// usageBefore is not called. A segment whose plan is Free bills nothing, as
+// the pusher never bills a Free hour (ADR-20261101143527): usage on Free
+// before a mid-month subscription is not billed and does not spend the cap.
+// The spend cap compares this figure, not usage above today's allowance, so a
+// plan change can neither overrun the cap nor spend it on usage that is never
+// billed (ADR-20261031100000).
 func MonthBilledComputeMBSeconds(current api.Plan, snapshots []FinancialPriceSnapshot, through time.Time, usage int64, usageBefore func(time.Time) (int64, error)) (int64, error) {
 	var activations []time.Time
 	var first time.Time
@@ -187,8 +190,10 @@ func MonthBilledComputeMBSeconds(current api.Plan, snapshots []FinancialPriceSna
 		if i > 0 {
 			allowanceAt = segmentStart.Add(time.Hour)
 		}
-		included := MonthComputeIncludedMBSeconds(current, snapshots, allowanceAt)
-		billed += api.BillableMBSecondsAbove(included, usageAtEnd) - api.BillableMBSecondsAbove(included, usageAtStart)
+		if MonthPlanAt(current, snapshots, allowanceAt) != api.PlanFree {
+			included := MonthComputeIncludedMBSeconds(current, snapshots, allowanceAt)
+			billed += api.BillableMBSecondsAbove(included, usageAtEnd) - api.BillableMBSecondsAbove(included, usageAtStart)
+		}
 		segmentStart, usageAtStart = end, usageAtEnd
 	}
 	return billed, nil

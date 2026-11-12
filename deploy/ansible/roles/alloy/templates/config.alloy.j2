@@ -79,6 +79,331 @@ loki.process "faas" {
   }
 }
 
+{% if alloy_security_enabled | bool %}
+// Host security evidence (ADR-20261107203000). These streams carry what an
+// intruder with root would erase first: logins, privilege use, account
+// changes, kernel lockdown and taint notices, and the auditd record. They
+// leave the host as they are written, so wiping the local journal or audit
+// log afterwards removes nothing from Loki. The stored line is the full
+// journal entry (pid, uid, executable) or the raw audit record.
+loki.source.journal "security" {
+  max_age        = "{{ alloy_effective_max_age }}"
+  format_as_json = true
+  matches        = "{{ alloy_security_identifiers | map('regex_replace', '^', 'SYSLOG_IDENTIFIER=') | join(' ') }}"
+  relabel_rules  = loki.relabel.security.rules
+  labels         = {
+    job         = "faas-security",
+    host        = "{{ alloy_host_label }}",
+    environment = "{{ alloy_environment }}",
+    source      = "journal",
+  }
+  forward_to = [loki.process.security.receiver]
+}
+
+// Matches on different fields are ANDed: kernel transport and a priority
+// from emergency to notice.
+loki.source.journal "kernel" {
+  max_age        = "{{ alloy_effective_max_age }}"
+  format_as_json = true
+  matches        = "_TRANSPORT=kernel {% for p in range(0, (alloy_security_kernel_max_priority | int) + 1) %}PRIORITY={{ p }}{{ ' ' if not loop.last else '' }}{% endfor %}"
+  relabel_rules  = loki.relabel.security.rules
+  labels         = {
+    job         = "faas-security",
+    host        = "{{ alloy_host_label }}",
+    environment = "{{ alloy_environment }}",
+    source      = "kernel",
+  }
+  forward_to = [loki.process.security.receiver]
+}
+
+loki.relabel "security" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__journal_syslog_identifier"]
+    target_label  = "ident"
+  }
+
+  rule {
+    target_label = "job"
+    replacement  = "faas-security"
+  }
+}
+
+// A host without auditd has no file to match; the source then idles.
+local.file_match "audit" {
+  path_targets = [{
+    "__path__"  = "{{ alloy_security_audit_log }}",
+    job         = "faas-security",
+    host        = "{{ alloy_host_label }}",
+    environment = "{{ alloy_environment }}",
+    source      = "auditd",
+  }]
+}
+
+// The first start reads from the end: the audit log's history before Alloy
+// is already local, and replaying it would page on old events.
+loki.source.file "audit" {
+  targets       = local.file_match.audit.targets
+  tail_from_end = true
+  forward_to    = [loki.process.security.receiver]
+}
+
+// Tetragon's kprobe events (ADR-20261110183000), one JSON object per line.
+local.file_match "tetragon" {
+  path_targets = [{
+    "__path__"  = "{{ alloy_security_tetragon_log }}",
+    job         = "faas-security",
+    host        = "{{ alloy_host_label }}",
+    environment = "{{ alloy_environment }}",
+    source      = "tetragon",
+  }]
+}
+
+loki.source.file "tetragon" {
+  targets       = local.file_match.tetragon.targets
+  tail_from_end = true
+  forward_to    = [loki.process.security.receiver]
+}
+
+// Every security line reaches Loki. A line that matches one of the event
+// selectors below also gets an event label and counts in
+// faas_security_events_total, which the faas_host_security alerts read.
+// Later selectors override earlier ones (ssh_root_login over ssh_login).
+loki.process "security" {
+  forward_to = [loki.write.loki.receiver]
+
+  stage.label_drop {
+    values = ["filename"]
+  }
+
+  stage.match {
+    selector = "{source=\"auditd\"}"
+
+    stage.regex {
+      expression = "^type=(?P<audit_type>[A-Z_]+) "
+    }
+
+    stage.drop {
+      source              = "audit_type"
+      expression          = "^({{ alloy_security_audit_drop_types | join('|') }})$"
+      drop_counter_reason = "audit_detail"
+    }
+
+    stage.regex {
+      expression = " key=\"(?P<audit_key>[a-z_]+)\""
+    }
+
+    stage.labels {
+      values = {
+        audit_type = "",
+        audit_key  = "",
+      }
+    }
+  }
+
+  // The policy stays a label; the process's binary and uid are labels only
+  // until the event stages below have read them.
+  stage.match {
+    selector = "{source=\"tetragon\"}"
+
+    stage.json {
+      expressions = {
+        tetragon_policy = "process_kprobe.policy_name",
+        tetragon_binary = "process_kprobe.process.binary",
+        tetragon_uid    = "process_kprobe.process.uid",
+      }
+    }
+
+    stage.labels {
+      values = {
+        tetragon_policy = "",
+        tetragon_binary = "",
+        tetragon_uid    = "",
+      }
+    }
+  }
+
+  stage.match {
+    selector = "{source=\"journal\", ident=~\"sshd|sshd-session\"} |~ \"Accepted publickey for \""
+
+    stage.template {
+      source   = "event"
+      template = "ssh_login"
+    }
+  }
+
+  stage.match {
+    selector = "{source=\"journal\", ident=~\"sshd|sshd-session\"} |~ \"Accepted (password|keyboard-interactive)\""
+
+    stage.template {
+      source   = "event"
+      template = "ssh_password_login"
+    }
+  }
+
+  stage.match {
+    selector = "{source=\"journal\", ident=~\"sshd|sshd-session\"} |~ \"Accepted [a-z-]+ for root \""
+
+    stage.template {
+      source   = "event"
+      template = "ssh_root_login"
+    }
+  }
+
+  stage.match {
+    selector = "{source=\"journal\", ident=\"sudo\"} |~ \"NOT in sudoers|incorrect password attempt|authentication failure|command not allowed|a password is required\""
+
+    stage.template {
+      source   = "event"
+      template = "sudo_denied"
+    }
+  }
+
+  stage.match {
+    selector = "{source=\"journal\", ident=~\"useradd|usermod|userdel|groupadd|groupmod|groupdel|passwd|chpasswd|chage|gpasswd|chsh\"}"
+
+    stage.template {
+      source   = "event"
+      template = "account_change"
+    }
+  }
+
+  stage.match {
+    selector = "{source=\"kernel\"} |~ \"Lockdown: \""
+
+    stage.template {
+      source   = "event"
+      template = "kernel_lockdown"
+    }
+  }
+
+  stage.match {
+    selector = "{source=\"kernel\"} |~ \"taints kernel|tainting kernel\""
+
+    stage.template {
+      source   = "event"
+      template = "kernel_taint"
+    }
+  }
+
+  stage.match {
+    selector = "{source=\"kernel\"} |~ \"audit: (backlog limit exceeded|rate limit exceeded)|audit_lost=\""
+
+    stage.template {
+      source   = "event"
+      template = "audit_lost"
+    }
+  }
+
+  stage.match {
+    selector = "{audit_type=\"CONFIG_CHANGE\"} |~ \" audit_enabled=0 \""
+
+    stage.template {
+      source   = "event"
+      template = "audit_disabled"
+    }
+  }
+
+  stage.match {
+    selector = "{audit_type=~\"DAEMON_END|DAEMON_ABORT\"}"
+
+    stage.template {
+      source   = "event"
+      template = "auditd_stopped"
+    }
+  }
+
+  stage.match {
+    selector = "{audit_type=\"SYSCALL\", audit_key=\"faas_secrets\"} !~ \" auid=4294967295 \" !~ \" exe=\\\"({{ alloy_security_deploy_reader_exes }})\\\"\""
+
+    stage.template {
+      source   = "event"
+      template = "secret_read_interactive"
+    }
+  }
+
+  stage.match {
+    selector = "{audit_type=\"SYSCALL\", audit_key=~\"sudo|faas_units|faas_nft\"} |~ \" success=yes \" |~ \" auid=4294967295 \" !~ \" exe=\\\"({{ alloy_security_unattended_writer_exes }})\\\"\""
+
+    stage.template {
+      source   = "event"
+      template = "host_config_write_unattended"
+    }
+  }
+
+  stage.match {
+    selector = "{tetragon_policy=\"faas-secret-open\", tetragon_binary!~\"{{ alloy_security_tetragon_secret_reader_exes }}\"}"
+
+    stage.template {
+      source   = "event"
+      template = "tetragon_secret_open"
+    }
+  }
+
+  stage.match {
+    selector = "{tetragon_policy=\"faas-module-load\"}"
+
+    stage.template {
+      source   = "event"
+      template = "tetragon_module_load"
+    }
+  }
+
+  stage.match {
+    selector = "{tetragon_policy=\"faas-ptrace\"}"
+
+    stage.template {
+      source   = "event"
+      template = "tetragon_ptrace"
+    }
+  }
+
+  // A jailer uid (20000-29999) is a Firecracker VM's: it never opens a node
+  // secret or asks for root.
+  stage.match {
+    selector = "{tetragon_policy=\"faas-secret-open\", tetragon_uid=~\"2[0-9]{4}\"}"
+
+    stage.template {
+      source   = "event"
+      template = "tetragon_jailed_secret_open"
+    }
+  }
+
+  stage.match {
+    selector = "{tetragon_policy=\"faas-setuid-root\", tetragon_uid=~\"2[0-9]{4}\"}"
+
+    stage.template {
+      source   = "event"
+      template = "tetragon_jailed_setuid_root"
+    }
+  }
+
+  stage.labels {
+    values = {
+      event = "",
+    }
+  }
+
+  // Counted only when an event was set. The series never idle out: a
+  // counter that vanished and came back would hide its first increment.
+  stage.metrics {
+    metric.counter {
+      name              = "security_events_total"
+      prefix            = "faas_"
+      description       = "Host security events Alloy saw in the journal, kernel log and audit log, by event."
+      source            = "event"
+      action            = "inc"
+      max_idle_duration = "8760h"
+    }
+  }
+
+  stage.label_drop {
+    values = ["tetragon_binary", "tetragon_uid"]
+  }
+}
+{% endif %}
+
 loki.write "loki" {
   endpoint {
 {% if alloy_dev_mode | bool %}

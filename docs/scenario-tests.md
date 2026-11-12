@@ -528,6 +528,8 @@ or PATCH) before replacement. Declare one to five read-only checkpoints on
 and no captures. Gregale polls until all checkpoints pass and the write remains
 pending, runs pre-restart storage checks, and checks again immediately before
 submitting the restart. A write that ends before submission fails the step.
+Receiving response headers alone does not end the write. Status-only expectations
+also wait for the response body, subject to the native HTTP response size limit.
 The background write always targets the primary app, including when replacing
 a service. Service checkpoints use the service URL without primary consumer
 credentials. References can use captures from preceding steps only.
@@ -835,11 +837,15 @@ claim lifecycle evidence. `--profile` requires at least one real-VM member.
 the next member starts. `--scenario` and `--suite` are mutually exclusive, and
 suite datasets must be declared on members rather than passed through `--data`.
 
-The CLI checks every selected member's source, engine requirements, data fields,
-and load configuration before starting the suite. `--load` requires all members
-to use the local engine and applies each scenario's load settings plus CLI
-overrides. `--base-url` supplies the origin for local members. Each managed local
-run starts a fresh app; fixtures finish and the app stops before the next run.
+The CLI checks every selected member's source, engine requirements, lifecycle
+profiles, data fields, and load configuration before starting the suite.
+Unsupported engine or profile combinations fail before any member starts.
+Simulation validation and CI generation check the simulation command and source
+directory. A simulated source can contain just test scripts.
+`--load` requires all members to use the local engine and applies each scenario's
+load settings plus CLI overrides. `--base-url` supplies the origin for local
+members. Each managed local run starts a fresh app; fixtures finish and the app
+stops before the next run.
 The VM workload-minute guard adds all real-VM members, profiles, and repeats,
 rather than granting each member a separate budget. `--preflight` requires all
 members to use real VMs and checks capacity for each sequential member.
@@ -853,6 +859,13 @@ with a `suite` field on each suite receipt. JUnit contains one suite with distin
 scenario/profile/case/attempt names, failures, and `<skipped>` entries. A partial
 suite never exits successfully. Human output ends with passed/failed/skipped
 counts. Reports continue to omit dataset values and credentials.
+
+JSON, JUnit, and HTML output paths must be distinct and must not overwrite the
+manifest, selected case-data files, or declared fixture and observer files. This
+also applies to symlink and hard-link aliases. Suite inputs and report destination
+availability are checked before any member runs. If an output becomes unavailable
+during execution, the CLI still attempts the other report formats and JSON stdout,
+then exits unsuccessfully with the collected output errors.
 
 Add `--html` to write a standalone report that can be opened in a browser or
 uploaded as a CI artifact:
@@ -876,12 +889,21 @@ gregale test ci init --manifest gregale-test.yaml --suite smoke
 
 When the manifest has exactly one suite, `--suite` can be omitted. The command
 validates the suite and creates `.github/workflows/gregale-test.yml` plus
-`gregale-test-budget.yaml`. It refuses to overwrite either file. The starter
-workflow runs on pushes and pull requests for the selected `--branch` (default
-`main`), and can also be started manually with **Run workflow**. Successful
-pushes and manual runs on the baseline branch publish a 30-day baseline
+`gregale-test-budget.yaml`. Inside a Git checkout, workflows are created at the
+repository root even when the command runs from a subdirectory. `--workflow` is
+relative to that root and must name a file directly inside `.github/workflows`;
+GitHub does not discover workflows in nested directories. Manifest and budget
+paths are relative to the invoking directory and must stay inside the repository.
+Outside a Git checkout, the
+invoking directory is used as the root. It refuses to overwrite an existing
+workflow and reuses a valid existing budget. The starter workflow runs on pushes
+and pull requests for the selected `--branch` (default `main`), and can also be
+started manually with **Run workflow**. Successful pushes and manual runs on the
+baseline branch publish a 30-day baseline
 artifact. Pull requests compare against the latest successful baseline and add
-Markdown results to the GitHub job summary. A pull request can run before the
+Markdown results to the GitHub job summary, including when the test suite fails
+but produces its JSON report. If no report was produced, the comparison step
+reports that it cannot run. A pull request can run before the
 first baseline exists; comparison is skipped with a job-summary note only while
 no successful baseline run exists. Once one exists, the workflow fails if its
 artifact is missing or expired, or if its run is older than the configured
@@ -899,10 +921,16 @@ manual workflow runs on the selected branch.
 The starter budget checks run outcomes and matching run identities. Add load,
 HTTP, or repeat-spread limits to make performance changes gate CI. The workflow
 supports local and simulated suites. Local suites must declare `local.command`;
-the generator supplies throwaway consumer keys and configures Node.js when it
-detects a Node command. Add other runtime and dependency installation steps to
-the generated workflow as needed. These workflows use read-only `contents` and
-`actions` permissions.
+the generator supplies throwaway consumer keys and configures Node.js 22 when it
+detects a Node command, including the simulation command. Add other runtime and
+dependency installation steps to the generated workflow as needed. These
+workflows use read-only `contents` and `actions` permissions.
+
+Local and simulated job timeouts cover the selected scenario timeout limits,
+repeats, data rows, cleanup, and time for installation and report processing,
+with a minimum of 30 minutes. Plans requiring more than GitHub's 360-minute job
+limit are rejected before files are created. Split a large suite or reduce its
+repeats, cases, or scenario timeout limits before generating the workflow.
 
 For real-VM suites, generate a manual profile matrix with an explicit workload
 limit:
@@ -915,12 +943,25 @@ gregale test ci init --manifest gregale-test.yaml --suite acceptance \
 The generated workflow is started with **Run workflow** in GitHub Actions. Its
 profile input runs every configured profile by default, or one selected profile;
 each profile gets a separate, serial job and evidence artifact. The repeat input
-allows one to three independent attempts. The CLI checks `--max-workload-minutes`
+offers counts from one to three independent attempts that fit the job runtime
+limit. The CLI checks `--max-workload-minutes`
 for each profile job using the selected repeat count, and each job performs a
 capacity preflight before execution. The command requires this limit so a
 credentialed workflow cannot be generated without a cost guard. Gregale cleans
 up each test environment after its profile; the workflow also retains reports
 for 14 days.
+
+VM job timeouts cover the largest offered repeat count for one profile, including
+every resilience run, fault-matrix case, and campaign execution. Each execution
+reserves its scenario timeout plus six minutes for independent cleanup and
+evidence collection, or eight minutes for contained commands. Installation and
+report processing receive another ten minutes per job, with a minimum job timeout
+of 30 minutes. Profiles run in separate jobs and do not multiply that timeout.
+If the requested default repeat count needs more than GitHub's 360-minute job
+limit, generation fails before creating files. Larger repeat choices that would
+exceed the limit are omitted and rejected if supplied through an API dispatch.
+Split the suite or reduce repeats, resilience runs, or scenario timeout limits
+when a plan cannot fit.
 
 The generated job uses the `gregale-test` GitHub environment by default. Create
 that environment (or pass `--environment NAME`), add the Gregale API URL as the
@@ -929,10 +970,10 @@ that environment (or pass `--environment NAME`), add the Gregale API URL as the
 before the workflow receives credentials. Real-VM workflows are manual-only so
 pull request code cannot receive those credentials automatically. The API
 credentials are scoped to the credential check and Gregale CLI steps. The
-workflow sets up Node.js when a scenario's trigger, assertion, setup, or cleanup
-command uses a Node executable; add dependency installation and other runtimes
-to the generated workflow when needed. Real-VM workflows store per-profile
-evidence and do not create a comparison budget.
+workflow sets up Node.js when a scenario's trigger, assertion, setup, cleanup,
+or staged command uses a Node executable; add dependency installation and other
+runtimes to the generated workflow when needed. Real-VM workflows store
+per-profile evidence and do not create a comparison budget.
 
 ### Compare two saved reports offline
 
@@ -951,6 +992,11 @@ added and removed runs, status changes, duration and phase changes, HTTP step
 timings, and aggregate, per-step, and arrival-rate load metrics when available.
 It also marks a changed load workload signature or label so those metric deltas
 are easy to spot.
+
+Comparison and rehearsal commands attempt every requested report output even
+if one cannot be written. They still print the result to stdout (`--json` emits
+the complete result) and return a nonzero exit code for output failures.
+
 Without `--budget`, run-outcome and performance comparisons are informational.
 Opt-in [behavior observations](#compare-declared-application-behavior) have a
 separate gate. Pass a versioned YAML budget file to enforce run outcomes and
@@ -981,10 +1027,17 @@ repeat:
 ```
 
 Run duration and each HTTP request duration use the configured percentage
-limit. HTTP steps must keep the same name, method, and path. Load limits apply
+limit. HTTP steps must keep the same name, method, and path and query template.
+Reports retain a SHA-256 fingerprint of the path template, including literal
+query values, rather than the query itself. Hashes are not secret: avoid placing
+credentials or sensitive low-entropy values in literal query strings. Use case
+inputs or captures for those values. HTTP timing budgets require the fingerprint
+in both reports; record new reports when comparing older ones.
+Load limits apply
 to aggregate and per-step percentiles; error-rate increases are absolute
 percentage points (`0.5` allows an increase of half a point). Load budgets
-require matching versioned workload signatures and labels, valid reports, and
+require matching versioned workload signatures and labels, complete load and
+per-step evidence with consistent request counts, and
 at least 20 samples in each report by default. A workload change, missing
 comparison step, or too few samples is reported as inconclusive and fails the
 gate so changed traffic cannot silently pass. A zero latency baseline permits
@@ -1000,6 +1053,8 @@ A group below `min_runs`, an undefined zero-median spread, or a group over
 either spread limit is inconclusive. `runs.require_passing` still checks
 each later attempt, and `runs.require_same_runs` still requires matching
 attempt identities.
+Explicit `repeat.min_runs` and `load.min_samples` enforce their evidence minima
+even when no latency or error-rate regression threshold is configured.
 
 When a budget fails or is inconclusive, the command returns a nonzero exit code
 after writing the requested JSON, HTML, or Markdown comparison report. The
@@ -1882,8 +1937,26 @@ the isolated run ID. Captured values in paths and queries are URL escaped.
 The JSON report lists each request's name, method, path without query, status,
 duration, and result; it does not include response bodies or credentials.
 Native requests stay on the isolated app URL and do not follow redirects.
-Request and inspected response JSON are limited to 1 MiB each. Each request
-has a 30-second timeout within the scenario timeout.
+Header names must be unique ignoring case, and header values must be valid HTTP
+field values after template expansion. Invalid literal values fail validation;
+values supplied by captures or case data are checked before each request.
+`expect.content_type` compares the media type and every explicitly declared
+parameter; extra response parameters are allowed. Charset values are compared
+case-insensitively. HEAD requests and responses expected to have status 204 or
+304 can check status and content type but cannot use JSON assertions or captures
+because they have no response body. Substituted path segments that resolve to
+`.` or `..` are percent-encoded to preserve them as data.
+Array indices in JSON Pointers use
+`0` or a positive decimal integer without leading zeros; signed indices are invalid.
+Request and inspected response JSON are limited to 1 MiB each. Inspected responses
+must contain exactly one complete JSON value; trailing data or additional values
+fail the step. Each request has a 30-second timeout within the scenario timeout.
+Request bodies and JSON expectations must contain JSON-encodable values, including
+finite numbers. Numeric assertions compare exact values, so `1`, `1.0`, and `1e0`
+match without rounding large integers, decimal literals, or changing array order.
+Omitting `json` sends no request body; an explicit `json: null` sends the JSON
+value `null` with `Content-Type: application/json`. JSON bodies, including `null`,
+are rejected on GET and HEAD requests.
 
 An asynchronous request may capture an invocation ID under the name used by
 `wait_for.invocations[].trigger_key`. The existing object, delivery, and queue
@@ -1899,10 +1972,21 @@ gregale test --validate
 ```
 
 The generator selects public GET routes with no path or required query
-parameters and a declared 2xx response. It adds status and JSON content-type
+parameters, no required request body, and a declared 2xx response. GET request
+bodies referenced through `$ref` are skipped because their requirements are not
+resolved. It adds status and JSON content-type
 checks where applicable, skips other operations, and never overwrites an
 existing manifest. Review the generated requests, then add authentication,
 fixtures, ownership, idempotency, and business assertions explicitly.
+An empty security alternative makes authentication optional. The generator
+uses the effective operation, path, or document server URL's path prefix while
+targeting the selected test app. Server URLs with variables or conflicting path
+prefixes must be resolved to an explicit choice before scaffolding. JSON content
+types are checked even when the response has no schema or uses a local response
+reference; unsupported response references stop scaffolding. Local path-item
+references are resolved, including chains; external, cyclic, unresolved, or
+ambiguous path-item references stop scaffolding rather than silently omitting
+routes. Input must be a regular, non-symlink file of at most 5 MiB.
 
 ## Local HTTP tests and case data
 
@@ -2494,8 +2578,11 @@ csv,small-export
 json,large-export
 ```
 
-Data files are limited to 1 MiB, 1–100 rows, and 1–32 fields. Field names begin
-with a lowercase letter and contain lowercase letters, digits, and underscores
+Data files are limited to 1 MiB, 1–100 rows, and 1–32 fields. Each row must fit
+within 64 KiB after JSON encoding so it can be passed in the command environment;
+this includes JSON escaping overhead. Oversized rows fail validation before any
+scenario runs. Field names begin with a lowercase letter and contain lowercase
+letters, digits, and underscores
 (at most 64 characters). JSON fields accept strings, numbers, and booleans;
 nested values and null are rejected. Unknown `${data.*}` references fail
 manifest validation for the selected scenario. Add `--scenario NAME` when other
@@ -2590,8 +2677,13 @@ including a failure or interruption. With `--data`, every row gets a separate
 load run and fixture lifecycle; rows run sequentially. `--repeat` repeats those
 runs. Commands receive `GREGALE_TEST_LOAD=1`, `GREGALE_TEST_LOAD_MODE`,
 `GREGALE_TEST_LOAD_VUS`, `GREGALE_TEST_LOAD_ITERATIONS`, and
-`GREGALE_TEST_LOAD_DURATION`. After load, assertions and cleanup can also inspect
-aggregate evidence in `GREGALE_TEST_LOAD_JSON`.
+`GREGALE_TEST_LOAD_DURATION`. After load, assertions and cleanup can read complete
+evidence from the private JSON file named by `GREGALE_TEST_LOAD_FILE`. The file
+remains available through cleanup and is removed before the run returns. For
+reports up to 64 KiB, `GREGALE_TEST_LOAD_JSON` also contains the same JSON for
+existing commands. Larger reports leave that inline variable unset to stay within
+OS environment limits; use the file variable for commands that handle any report
+size.
 
 ### Compare against a performance baseline
 
@@ -3570,7 +3662,7 @@ load:
         min_samples: 100
 ```
 
-`requests` selects named native requests or checks from this load step, in execution order. Every request must belong to exactly one stream. A stream executes its own sequential journey with private captures and unique iteration IDs; failure stops that journey, while the other streams continue. Captures produced by load requests can only be referenced later in the same stream. Captures supplied by an earlier staged step remain available.
+`requests` selects named native requests or checks from this load step, in execution order. Request definitions may appear in any order; capture validation follows each stream's `requests` list. Every request must belong to exactly one stream. A stream executes its own sequential journey with private captures and unique iteration IDs; failure stops that journey, while the other streams continue. Captures produced by load requests can only be referenced later in the same stream. Captures supplied by an earlier staged step remain available. Ordinary runs without `--load` follow request and check declaration order.
 
 Each stream has its own arrival rate and VU admission limit. Rate counts journeys per second, so a journey containing multiple requests can generate more HTTP requests. A busy stream drops arrivals instead of borrowing another stream's capacity, and any dropped arrival fails the load run. Reports retain each stream's rate, capacity, scheduled arrivals, and drops, alongside the existing endpoint metrics and budgets.
 
@@ -5370,11 +5462,15 @@ original baseline with **no extra allowance**. It also runs after cancellation,
 using an independent timeout bounded by `within + sustain + 500ms`. The interrupted
 campaign remains failed; reports distinguish its post-drain cleanup result.
 Retained sockets fail this check even when they fit the recovery allowance.
+Post-drain timing uses completed HTTP observations: the first healthy response
+must arrive within `within`, followed by a full `sustain` period of healthy observations.
 
 The observation interval is 100 ms. Requests time out after 250 ms, responses are
 limited to 4 KiB, and at most 4096 observations are retained. `within` and `sustain`
 are whole-millisecond durations from 300 ms to five seconds. Baseline must last
 at least 500 ms; every recovery must fit both budgets plus two polling intervals.
+Live observations use response completion timestamps. Responses that span a
+phase transition are discarded instead of being attributed to either phase.
 Missing fields, negative/fractional counts, missing observations, sparse windows,
 changed instance identities and renewed leaks fail the assertion.
 
@@ -5439,6 +5535,8 @@ must equal `queued`. Peaks, waiter counters, maximum wait and completion counts
 are cumulative for the same pool instance and must not reset. `completed` counts
 successful dependency operations only. The UUID must change when that observed
 instance is replaced. You may specify `as` for a declared consumer credential.
+Pool snapshots use response completion timestamps and discard responses spanning
+phase transitions, following the connection-monitoring rules above.
 
 Every fault must show at least `min_queued_requests` new waiters between its first
 and last observations, and a full-capacity peak. A quiet pool cannot pass as an
@@ -5458,6 +5556,9 @@ that many additional cancelled waiters compared with the initial baseline. This
 is useful when a scenario deliberately cancels queued callers; omit it for runs
 that do not arrange that cancellation. The interrupted campaign remains failed,
 with its post-drain result reported separately.
+The first fully drained response must arrive within `within`; healthy observations
+must then span the full `sustain` period. Waiting for that first response does not
+count toward the healthy period.
 
 Reports retain the budget, baseline, peaks, maximum wait, actual completion
 windows, first failed pool cycle and post-drain waiter accounting. These counts
@@ -5490,8 +5591,12 @@ even if they received the expected status before their body stalled.
 
 An optional phase-local `expect` replaces that request's status/content-type/JSON
 contract only in that phase. Omit it to retain the original success expectation.
+JSON assertions can reference captures available before that request, including
+captures from earlier stages or earlier requests in the same load stream.
 Deadline profiles cannot overwrite another profile or inline budget for the same
 route. Referenced profiles and effective budgets are retained in replay evidence.
+Profile expansion preserves exact numeric values in JSON expectations, including
+large integers and decimal or exponent literals.
 
 With request-deadline assertions enabled, the runner drains admitted load HTTP
 requests before transitioning phases. This prevents clearing a dependency fault

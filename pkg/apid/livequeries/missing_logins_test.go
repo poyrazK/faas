@@ -3,6 +3,7 @@ package livequeries_test
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"strings"
 	"testing"
 
@@ -14,18 +15,30 @@ import (
 // missingLogins is an in-memory MissingLogins: databases with a live key and
 // no login, and the logins it stored.
 type missingLogins struct {
-	refs   []livekeys.LoginRef
-	stored map[string]*livekeys.Login
+	refs     []livekeys.LoginRef
+	stored   map[string]*livekeys.Login
+	attempts map[string]int
+	sequence int
 }
 
-func (m *missingLogins) DatabasesWithoutLogin(context.Context, int) ([]livekeys.LoginRef, error) {
+func (m *missingLogins) DatabasesWithoutLogin(_ context.Context, limit int) ([]livekeys.LoginRef, error) {
 	var out []livekeys.LoginRef
 	for _, ref := range m.refs {
 		if m.stored[ref.DatabaseID] == nil {
 			out = append(out, ref)
 		}
 	}
-	return out, nil
+	sort.SliceStable(out, func(i, j int) bool { return m.attempts[out[i].DatabaseID] < m.attempts[out[j].DatabaseID] })
+	return out[:min(len(out), limit)], nil
+}
+
+func (m *missingLogins) RecordLoginAttempt(_ context.Context, _, id string) (bool, error) {
+	if m.attempts == nil {
+		m.attempts = map[string]int{}
+	}
+	m.sequence++
+	m.attempts[id] = m.sequence
+	return true, nil
 }
 
 func (m *missingLogins) IssueMissingLogin(ctx context.Context, _, databaseID string, issue func(context.Context) (*livekeys.Login, error)) (bool, error) {

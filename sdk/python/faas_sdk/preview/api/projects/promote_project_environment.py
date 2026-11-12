@@ -9,7 +9,7 @@ from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
 from ...models.project_environment_promotion_response import ProjectEnvironmentPromotionResponse
 from ...models.promote_project_environment_request import PromoteProjectEnvironmentRequest
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
@@ -18,9 +18,17 @@ def _get_kwargs(
     *,
     body: PromoteProjectEnvironmentRequest,
     idempotency_key: str,
+    environment_promotion_attempt_id: str | Unset = UNSET,
+    environment_promotion_request_hash: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     headers["Idempotency-Key"] = idempotency_key
+
+    if not isinstance(environment_promotion_attempt_id, Unset):
+        headers["Environment-Promotion-Attempt-ID"] = environment_promotion_attempt_id
+
+    if not isinstance(environment_promotion_request_hash, Unset):
+        headers["Environment-Promotion-Request-Hash"] = environment_promotion_request_hash
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -100,6 +108,8 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: PromoteProjectEnvironmentRequest,
     idempotency_key: str,
+    environment_promotion_attempt_id: str | Unset = UNSET,
+    environment_promotion_request_hash: str | Unset = UNSET,
 ) -> Response[Problem | ProjectEnvironmentPromotionResponse]:
     """Execute a guarded promotion between project environments.
 
@@ -125,6 +135,8 @@ def sync_detailed(
         slug (str):
         environment (str):
         idempotency_key (str):
+        environment_promotion_attempt_id (str | Unset):
+        environment_promotion_request_hash (str | Unset):
         body (PromoteProjectEnvironmentRequest): Request to execute one exact environment
             promotion.
 
@@ -141,6 +153,8 @@ def sync_detailed(
         environment=environment,
         body=body,
         idempotency_key=idempotency_key,
+        environment_promotion_attempt_id=environment_promotion_attempt_id,
+        environment_promotion_request_hash=environment_promotion_request_hash,
     )
 
     response = client.get_httpx_client().request(
@@ -157,6 +171,8 @@ def sync(
     client: AuthenticatedClient | Client,
     body: PromoteProjectEnvironmentRequest,
     idempotency_key: str,
+    environment_promotion_attempt_id: str | Unset = UNSET,
+    environment_promotion_request_hash: str | Unset = UNSET,
 ) -> Problem | ProjectEnvironmentPromotionResponse | None:
     """Execute a guarded promotion between project environments.
 
@@ -182,6 +198,8 @@ def sync(
         slug (str):
         environment (str):
         idempotency_key (str):
+        environment_promotion_attempt_id (str | Unset):
+        environment_promotion_request_hash (str | Unset):
         body (PromoteProjectEnvironmentRequest): Request to execute one exact environment
             promotion.
 
@@ -199,6 +217,8 @@ def sync(
         client=client,
         body=body,
         idempotency_key=idempotency_key,
+        environment_promotion_attempt_id=environment_promotion_attempt_id,
+        environment_promotion_request_hash=environment_promotion_request_hash,
     ).parsed
 
 
@@ -209,6 +229,8 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: PromoteProjectEnvironmentRequest,
     idempotency_key: str,
+    environment_promotion_attempt_id: str | Unset = UNSET,
+    environment_promotion_request_hash: str | Unset = UNSET,
 ) -> Response[Problem | ProjectEnvironmentPromotionResponse]:
     """Execute a guarded promotion between project environments.
 
@@ -234,6 +256,8 @@ async def asyncio_detailed(
         slug (str):
         environment (str):
         idempotency_key (str):
+        environment_promotion_attempt_id (str | Unset):
+        environment_promotion_request_hash (str | Unset):
         body (PromoteProjectEnvironmentRequest): Request to execute one exact environment
             promotion.
 
@@ -250,6 +274,8 @@ async def asyncio_detailed(
         environment=environment,
         body=body,
         idempotency_key=idempotency_key,
+        environment_promotion_attempt_id=environment_promotion_attempt_id,
+        environment_promotion_request_hash=environment_promotion_request_hash,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -264,6 +290,8 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: PromoteProjectEnvironmentRequest,
     idempotency_key: str,
+    environment_promotion_attempt_id: str | Unset = UNSET,
+    environment_promotion_request_hash: str | Unset = UNSET,
 ) -> Problem | ProjectEnvironmentPromotionResponse | None:
     """Execute a guarded promotion between project environments.
 
@@ -289,6 +317,8 @@ async def asyncio(
         slug (str):
         environment (str):
         idempotency_key (str):
+        environment_promotion_attempt_id (str | Unset):
+        environment_promotion_request_hash (str | Unset):
         body (PromoteProjectEnvironmentRequest): Request to execute one exact environment
             promotion.
 
@@ -307,5 +337,7 @@ async def asyncio(
             client=client,
             body=body,
             idempotency_key=idempotency_key,
+            environment_promotion_attempt_id=environment_promotion_attempt_id,
+            environment_promotion_request_hash=environment_promotion_request_hash,
         )
     ).parsed

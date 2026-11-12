@@ -34,6 +34,13 @@ func TestRestoreProblemRunsCreateTimeChecks(t *testing.T) {
 			Match: match, Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindIP, IP: &state.EdgeRuleIPAction{Deny: []string{"0.0.0.0/0"}}}}
 	}
 	challenge := state.EdgeRule{ID: "rule-challenge", AccountID: pro.ID, Kind: state.EdgeRuleKindChallenge, Enabled: true, MatchHost: "@app", MatchPath: "/**"}
+	// adr: 091 — amendment 2026-11-07, later: a credentialed wildcard under a
+	// public suffix, recorded before the guard, is not restored over a fix.
+	corsRule := func(origin string) state.EdgeRule {
+		return state.EdgeRule{ID: "rule-cors", AccountID: pro.ID, Kind: state.EdgeRuleKindCORSA, Enabled: true, MatchHost: "@app", MatchPath: "/**",
+			Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindCORSA, CORS: &state.EdgeRuleCORSAction{AllowOrigins: []string{origin}, AllowMethods: []string{"GET"}, AllowCredentials: true}}}
+	}
+	riskyCORS, fixedCORS := corsRule("https://*.vercel.app"), corsRule("https://app.example.com")
 	for _, tc := range []struct {
 		name       string
 		acct       state.Account
@@ -55,6 +62,9 @@ func TestRestoreProblemRunsCreateTimeChecks(t *testing.T) {
 			wantStatus: http.StatusUnprocessableEntity, wantDetail: "rule-challenge"},
 		{name: "an unreleased feature the rule already enforces", acct: pro, restored: challenge, current: []state.EdgeRule{challenge},
 			unreleased: map[string]bool{featureChallenge.flag: true}},
+		{name: "a credentialed public-suffix CORS wildcard over a fix", acct: pro, restored: riskyCORS, current: []state.EdgeRule{fixedCORS},
+			wantStatus: http.StatusBadRequest, wantDetail: "public suffix"},
+		{name: "the same CORS wildcard already live", acct: pro, restored: riskyCORS, current: []state.EdgeRule{riskyCORS}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := &Service{Host: attackModeHost{store: mem, audits: &[]string{}, unreleased: tc.unreleased}}

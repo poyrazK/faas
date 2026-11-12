@@ -531,3 +531,22 @@ func TestReadTarballFile_MalformedTarball(t *testing.T) {
 		t.Errorf("readTarballFile(bad) = %q, want \"\"", got)
 	}
 }
+
+// TestPyprojectRequiresReportsTheServedPython pins Hunt 32 H32-9: ">=3.12"
+// printed 3.12 while the app ran the build default, 3.13.
+func TestPyprojectRequiresReportsTheServedPython(t *testing.T) {
+	for constraint, want := range map[string]string{
+		">=3.12":       PythonBuildDefault,
+		">3.11":        PythonBuildDefault,
+		"~=3.12":       PythonBuildDefault,
+		">=3.12,<3.14": PythonBuildDefault,
+		">=3.14":       "",
+		"==3.12":       "3.12",
+		"3.12":         "3.12",
+		"<3.13":        "",
+	} {
+		if got := versionFromPyprojectRequires(`requires-python = "` + constraint + `"`); got != want {
+			t.Errorf("requires-python %q = %q, want %q", constraint, got, want)
+		}
+	}
+}

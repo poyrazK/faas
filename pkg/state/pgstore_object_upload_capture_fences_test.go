@@ -54,6 +54,7 @@ func TestPgObjectUploadCaptureMigrationRoundTripAndHeldDownRefusal(t *testing.T)
 	if _, err := tx.Exec(ctx, `DO $$ DECLARE declaration text; BEGIN SELECT pg_get_functiondef(to_regprocedure('fence_object_upload_capture_admission()')) INTO declaration; EXECUTE replace(declaration,'FROM accounts ','FROM resource_namespaces '); END $$`); err != nil {
 		t.Fatal(err)
 	}
+	reapplyObjectAccountNoKeyLocks(t, ctx, tx, "fence_object_upload_capture_admission")
 	if err := tx.QueryRow(ctx, shape).Scan(&after); err != nil || before != after {
 		t.Fatalf("migration round trip changed admission guard: %v", err)
 	}

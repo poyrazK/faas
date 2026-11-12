@@ -4553,3 +4553,25 @@ the acknowledgement and vmmd's start, as before.
 The refusal names the holder (pid, command, task, cgroup) and the retired owner
 or helper frame. Validation:
 `TestNativeJailDeviceRecycledNamespaceIdentityReleasesOnlyAnotherLiveLaunch`.
+
+### Framework-ready evidence only for runtime runners (2026-10-26)
+
+Activation evidence requires a restored framework-ready receipt only for
+non-Job candidates whose app has a runtime runner (`apps.runtime` set). Only a
+function runtime runner signals framework-ready, and production stamps none for
+an app without one, so a full-rootfs image candidate could never qualify. The
+graph member records `no_framework_ready_signal` at preparation; graphs
+prepared earlier keep the requirement. For a runner candidate the native
+restore reads the framework-ready state the runner kept in guest memory and
+records the receipt itself. Details and n2 evidence:
+ADR 20261023093000 amendment 1.
+
+### A served graph meets the unqualified-workload fence (2026-10-31)
+
+The runtime observation fences every Git-managed workload source as
+unqualified (`EnvironmentGitOpsUnqualifiedWorkloads`), from the preview that
+predates graph qualification, and nothing clears it. An enforced graph that
+qualified, activated and served could therefore never record its applied
+revision. Runtime verification now treats the fence as met when the reviewed
+graph served in the same pass; runtime freshness still applies, and report mode
+keeps the fence. Details and n2 evidence: ADR 20261023093000 acceptance record.

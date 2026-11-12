@@ -12,8 +12,10 @@ package object
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 
 	"filippo.io/age"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
@@ -72,6 +74,9 @@ type Service struct {
 	// health withdraws object storage from capabilities while a default
 	// backend's provider refuses this installation's credentials.
 	health providerHealth
+	// inventoryDrift counts quiet buckets whose verification listing changed
+	// (ADR-20261110151628 §2); RunObjectStorageAccounting sets it.
+	inventoryDrift atomic.Pointer[prometheus.CounterVec]
 }
 
 // wakeObjectInventory asks the inventory sweep to run now. Admission needs a

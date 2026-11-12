@@ -10,6 +10,9 @@ import (
 // revoke (ADR-20261016151947).
 type LiveLoginRequest struct {
 	ProviderResourceID string
+	// LegacyResourceID identifies an older credential scope on this same
+	// dataset. It never selects a connection or another branch.
+	LegacyResourceID string
 	// Publication is the publication the login decodes; issuing creates it
 	// FOR ALL TABLES when it is missing.
 	Publication string
@@ -49,8 +52,9 @@ func (s *Service) IssueLiveLogin(ctx context.Context, database Database, slot st
 	if err != nil || issuer == nil {
 		return LiveLogin{}, false, err
 	}
-	login, err := issuer.IssueLiveLogin(ctx, LiveLoginRequest{ProviderResourceID: database.ProviderResourceID,
-		Publication: schemalog.Publication, Slot: slot})
+	providerCtx, cancel := context.WithTimeout(ctx, s.providerTimeout)
+	defer cancel()
+	login, err := issuer.IssueLiveLogin(providerCtx, liveLoginRequest(database, slot))
 	if err != nil {
 		return LiveLogin{}, false, err
 	}
@@ -64,8 +68,17 @@ func (s *Service) RevokeLiveLogin(ctx context.Context, database Database, slot s
 	if err != nil || issuer == nil {
 		return err
 	}
-	return issuer.RevokeLiveLogin(ctx, LiveLoginRequest{ProviderResourceID: database.ProviderResourceID,
-		Publication: schemalog.Publication, Slot: slot})
+	providerCtx, cancel := context.WithTimeout(ctx, s.providerTimeout)
+	defer cancel()
+	return issuer.RevokeLiveLogin(providerCtx, liveLoginRequest(database, slot))
+}
+
+func liveLoginRequest(database Database, slot string) LiveLoginRequest {
+	r := LiveLoginRequest{ProviderResourceID: databaseDataResource(database), Publication: schemalog.Publication, Slot: slot}
+	if r.ProviderResourceID != database.ProviderResourceID {
+		r.LegacyResourceID = database.ProviderResourceID
+	}
+	return r
 }
 
 func (s *Service) liveLoginIssuer(database Database) (LiveLoginIssuer, error) {

@@ -20,6 +20,30 @@ func (q *Queries) LockRouteRemovalCoverage(ctx context.Context, db DBTX, appID p
 	return err
 }
 
+const recordRequestAnalyticsCoverage = `-- name: RecordRequestAnalyticsCoverage :exec
+SELECT record_request_analytics_coverage($1::text, $2::uuid, $3::boolean,
+ $4::bigint, $5::jsonb)
+`
+
+type RecordRequestAnalyticsCoverageParams struct {
+	NodeName                 string
+	BootID                   pgtype.UUID
+	Counting                 bool
+	UnattributedDroppedTotal int64
+	AppGaps                  []byte
+}
+
+func (q *Queries) RecordRequestAnalyticsCoverage(ctx context.Context, db DBTX, arg RecordRequestAnalyticsCoverageParams) error {
+	_, err := db.Exec(ctx, recordRequestAnalyticsCoverage,
+		arg.NodeName,
+		arg.BootID,
+		arg.Counting,
+		arg.UnattributedDroppedTotal,
+		arg.AppGaps,
+	)
+	return err
+}
+
 const recordTelemetryCoverage = `-- name: RecordTelemetryCoverage :exec
 SELECT record_telemetry_coverage($1::text, $2::uuid, $3::bigint,
  $4::boolean, $5::integer, $6::bigint,
@@ -56,6 +80,23 @@ func (q *Queries) RecordTelemetryCoverage(ctx context.Context, db DBTX, arg Reco
 		arg.AppGaps,
 	)
 	return err
+}
+
+const requestAnalyticsCompletenessBlockers = `-- name: RequestAnalyticsCompletenessBlockers :one
+SELECT request_analytics_completeness_blockers($1::uuid,$2::timestamptz, $3::timestamptz)::jsonb
+`
+
+type RequestAnalyticsCompletenessBlockersParams struct {
+	AppID       pgtype.UUID
+	WindowFrom  pgtype.Timestamptz
+	WindowUntil pgtype.Timestamptz
+}
+
+func (q *Queries) RequestAnalyticsCompletenessBlockers(ctx context.Context, db DBTX, arg RequestAnalyticsCompletenessBlockersParams) ([]byte, error) {
+	row := db.QueryRow(ctx, requestAnalyticsCompletenessBlockers, arg.AppID, arg.WindowFrom, arg.WindowUntil)
+	var column_1 []byte
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const routeRemovalCoverageBlockers = `-- name: RouteRemovalCoverageBlockers :one

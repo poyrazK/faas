@@ -61,7 +61,7 @@ func authenticationHint() string {
 // older than the server, or a feature not released to the account
 // (ADR-20261023115741).
 func missingRouteHint() string {
-	return "This gregale (" + wire.Version + ") may be newer or older than the server, or the feature is not enabled for your account. Check the CLI release with gregale version; curl -fsSL https://get.gregale.dev | sh installs the current one."
+	return "This gregale (" + wire.Version + ") may be newer or older than the server, or the feature is not enabled for your account. Check the CLI release with gregale version; gregale update installs the current one."
 }
 
 // Supply fallbacks without replacing server-specific remediation or codes.

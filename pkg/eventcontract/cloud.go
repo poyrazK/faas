@@ -153,8 +153,8 @@ func (e Envelope) Validate() error {
 	if e.SpecVersion != CloudEventsSpecVersion {
 		return fmt.Errorf("specversion must be %q", CloudEventsSpecVersion)
 	}
-	if e.ID == "" || len(e.ID) > EnvelopeStringMax {
-		return errors.New("id is required and must be at most 256 characters")
+	if e.ID == "" || len(e.ID) > EnvelopeStringMax || hasContextControl(e.ID) {
+		return errors.New("id is required, must be at most 256 characters and contain no control characters")
 	}
 	if e.Source == "" || len(e.Source) > EnvelopeStringMax {
 		return errors.New("source is required and must be at most 256 characters")
@@ -167,8 +167,8 @@ func (e Envelope) Validate() error {
 			return errors.New("source must be a valid URI-reference")
 		}
 	}
-	if e.Type == "" || len(e.Type) > EnvelopeStringMax {
-		return errors.New("type is required and must be at most 256 characters")
+	if e.Type == "" || len(e.Type) > EnvelopeStringMax || hasContextControl(e.Type) {
+		return errors.New("type is required, must be at most 256 characters and contain no control characters")
 	}
 	if len(e.SchemaVersion) > 64 {
 		return errors.New("schemaversion must be at most 64 characters")
@@ -202,6 +202,12 @@ func (e Envelope) Validate() error {
 		return errors.New("time is required")
 	}
 	return nil
+}
+
+// These attributes also travel in HTTP delivery headers. Preserve their
+// identity rather than accepting values the transport must strip or reject.
+func hasContextControl(value string) bool {
+	return strings.IndexFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0
 }
 
 func parseAccountUUID(value string) (uuid.UUID, error) {

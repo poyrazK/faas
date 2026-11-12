@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -137,12 +138,12 @@ func TestAdmitRequestBodySmallBodiesSkipSpoolBudget(t *testing.T) {
 }
 
 func TestHoldValidateBodyChargesHeapBudget(t *testing.T) {
-	h := &Handler{bodyMemoryBudget: newRequestBodyBudget(api.RequestBodyMemoryNodeBytes, 0)}
-	r := httptest.NewRequest(http.MethodPost, "http://example.test/", nil)
-	r.ContentLength = -1
+	h := &Handler{bodyMemoryBudget: newRequestBodyMemoryBudget()}
 	held := 0
-	for {
-		if _, ok := h.holdValidateBody(r, 25<<20); !ok {
+	for i := 0; ; i++ {
+		r := httptest.NewRequest(http.MethodPost, "http://example.test/", nil)
+		r.ContentLength = 25 << 20
+		if _, ok := h.holdValidateBody(r, App{ID: fmt.Sprintf("app-%d", i), AccountID: fmt.Sprintf("acct-%d", i)}, 25<<20); !ok {
 			break
 		}
 		held++

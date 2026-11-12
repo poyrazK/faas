@@ -118,16 +118,21 @@ type resourceAdoptionInstance struct {
 	HealthcheckPath string `json:"healthcheck_path,omitempty"`
 	// HealthcheckGRPC selects gRPC readiness (main's health.v1 checks); later
 	// readers, such as rehearsal suspend, branch on it.
-	HealthcheckGRPC          bool            `json:"healthcheck_grpc,omitempty"`
-	ImageHealthcheckRequired bool            `json:"image_healthcheck_required,omitempty"`
-	StartupDeadlineS         int             `json:"startup_deadline_s,omitempty"`
-	ExecutionMode            string          `json:"execution_mode,omitempty"`
-	Runtime                  string          `json:"runtime,omitempty"`
-	WorkloadNames            []string        `json:"workload_names,omitempty"`
-	LivenessProbe            json.RawMessage `json:"liveness_probe,omitempty"`
-	ReadinessProbe           json.RawMessage `json:"readiness_probe,omitempty"`
-	QuietPauseAfterMs        int64           `json:"quiet_pause_after_ms,omitempty"`
-	FrameworkReadyAt         *time.Time      `json:"framework_ready_at,omitempty"`
+	HealthcheckGRPC          bool `json:"healthcheck_grpc,omitempty"`
+	ImageHealthcheckRequired bool `json:"image_healthcheck_required,omitempty"`
+	StartupDeadlineS         int  `json:"startup_deadline_s,omitempty"`
+	// RequestConcurrency is the wake's per-instance request limit (0 = the
+	// plan's); without it an adopted guest falls back to the plan cap.
+	RequestConcurrency int             `json:"request_concurrency,omitempty"`
+	ExecutionMode      string          `json:"execution_mode,omitempty"`
+	Runtime            string          `json:"runtime,omitempty"`
+	WorkloadNames      []string        `json:"workload_names,omitempty"`
+	LivenessProbe      json.RawMessage `json:"liveness_probe,omitempty"`
+	ReadinessProbe     json.RawMessage `json:"readiness_probe,omitempty"`
+	QuietPauseAfterMs  int64           `json:"quiet_pause_after_ms,omitempty"`
+	IdleLadderEligible bool            `json:"idle_ladder_eligible,omitempty"`
+	IdleLadderGuarded  bool            `json:"idle_ladder_guarded_pause,omitempty"`
+	FrameworkReadyAt   *time.Time      `json:"framework_ready_at,omitempty"`
 	// WarmPaused is a resident warm-pool restore (Instance.Paused), claimed
 	// or not. WarmSpare is one not yet claimed: its pause must survive
 	// adoption, unlike a quiet pause, which is resumed.
@@ -208,11 +213,18 @@ type resourceAdoptionNetwork struct {
 	EgressAllowlist      []string `json:"egress_allowlist,omitempty"`
 	StaticEgressIP       string   `json:"static_egress_ip,omitempty"`
 	StaticEgressExcluded bool     `json:"static_egress_excluded,omitempty"`
-	StaticEgressBlocked  bool     `json:"static_egress_blocked,omitempty"`
+	// PrivateNetworkExcluded keeps an adopted branch instance off its app's
+	// private networks (ADR-20261031193635 section 6).
+	PrivateNetworkExcluded bool `json:"private_network_excluded,omitempty"`
+	StaticEgressBlocked    bool `json:"static_egress_blocked,omitempty"`
 	// RehearsalRunID is the run whose outbound containment the guest's
 	// network carries (ADR-20261017201005). Adoption refuses such a guest:
 	// the containment and the run's recorder are not rebuilt.
 	RehearsalRunID string `json:"rehearsal_run_id,omitempty"`
+	// EnvironmentBranchContained: the guest runs in a contained environment
+	// branch (ADR-20261031193635). Adoption refuses it: its branch database
+	// set and policy are not rebuilt.
+	EnvironmentBranchContained bool `json:"environment_branch_contained,omitempty"`
 	// EgressCircuits: the guest's netns carries ADR-570 egress-circuit sets.
 	// Adoption refuses such a guest: its circuit registration is not rebuilt.
 	EgressCircuits bool `json:"egress_circuits,omitempty"`
@@ -359,7 +371,8 @@ func (r resourceJournalRecord) validateAdoption() error {
 			return errors.New("invalid adoption instance string")
 		}
 	}
-	if len(in.WorkloadNames) > adoptionMaxWorkloads || in.Port < 0 || in.Port > 65535 || in.StartupDeadlineS < 0 || in.QuietPauseAfterMs < 0 {
+	if len(in.WorkloadNames) > adoptionMaxWorkloads || in.Port < 0 || in.Port > 65535 || in.StartupDeadlineS < 0 || in.QuietPauseAfterMs < 0 ||
+		in.RequestConcurrency < 0 || in.RequestConcurrency > api.AppRequestConcurrencyBound {
 		return errors.New("invalid adoption instance configuration")
 	}
 	for _, name := range in.WorkloadNames {
@@ -501,12 +514,15 @@ func (m *Manager) adoptionBlockFor(inst *Instance, now time.Time) resourceAdopti
 			HealthcheckGRPC:          inst.HealthcheckGRPC,
 			ImageHealthcheckRequired: inst.ImageHealthcheckRequired,
 			StartupDeadlineS:         inst.StartupDeadlineS,
+			RequestConcurrency:       inst.RequestConcurrency,
 			ExecutionMode:            inst.ExecutionMode,
 			Runtime:                  inst.Runtime,
 			WorkloadNames:            append([]string(nil), inst.WorkloadNames...),
 			LivenessProbe:            append(json.RawMessage(nil), inst.LivenessProbe...),
 			ReadinessProbe:           append(json.RawMessage(nil), inst.ReadinessProbe...),
 			QuietPauseAfterMs:        inst.QuietPauseAfter.Milliseconds(),
+			IdleLadderEligible:       inst.IdleLadderEligible,
+			IdleLadderGuarded:        inst.IdleLadderGuardedPause,
 			WarmPaused:               inst.Paused,
 			WarmSpare:                inst.warmSpare,
 			DevPatched:               inst.devPatched,
@@ -515,14 +531,16 @@ func (m *Manager) adoptionBlockFor(inst *Instance, now time.Time) resourceAdopti
 			ObservedClass:            inst.Characterization.ObservedClass,
 		},
 		Network: resourceAdoptionNetwork{
-			AllowlistHandleV4:      inst.AllowlistHandleV4,
-			AllowlistHandleV6:      inst.AllowlistHandleV6,
-			PrivateNetworkHandleV4: inst.PrivateNetworkHandleV4,
-			PrivateNetworkHandleV6: inst.PrivateNetworkHandleV6,
-			Private:                adoptionPrivateNetworkFor(inst.Net),
-			StaticEgressExcluded:   inst.StaticEgressExcluded,
-			RehearsalRunID:         inst.Net.RehearsalRunID,
-			EgressCircuits:         inst.Net.EgressCircuitEnabled,
+			AllowlistHandleV4:          inst.AllowlistHandleV4,
+			AllowlistHandleV6:          inst.AllowlistHandleV6,
+			PrivateNetworkHandleV4:     inst.PrivateNetworkHandleV4,
+			PrivateNetworkHandleV6:     inst.PrivateNetworkHandleV6,
+			Private:                    adoptionPrivateNetworkFor(inst.Net),
+			StaticEgressExcluded:       inst.StaticEgressExcluded,
+			PrivateNetworkExcluded:     inst.PrivateNetworkExcluded,
+			RehearsalRunID:             inst.Net.RehearsalRunID,
+			EnvironmentBranchContained: inst.Net.EnvironmentBranchContained,
+			EgressCircuits:             inst.Net.EgressCircuitEnabled,
 		},
 		Lifecycle: resourceAdoptionLifecycle{State: adoptionStateReady},
 	}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -127,5 +128,25 @@ func TestBucketUnknownSubcommandIsNamed(t *testing.T) {
 	}
 	if got := stderr.String(); !strings.Contains(got, "unknown bucket subcommand") || strings.Contains(got, "usage: gregale bucket inventory") {
 		t.Fatalf("unknown subcommand stderr:\n%s", got)
+	}
+}
+
+func TestBucketListExplainsRetries(t *testing.T) {
+	stdout, _ := captureBucketCLI(t, false)
+	client := &fakeBucketCatalog{list: api.ObjectBucketList{Enabled: true, Items: []api.ObjectBucket{
+		{ID: "c25a9f1d-f9a6-4b06-b60f-bbc8018bb2df", Name: "uploads", Scope: "default", Region: "us-east-1", State: "ready"},
+		{ID: "b5446ca5-a8d0-4896-91fe-91e0ca6520bd", Name: "assets", Scope: "default", Region: "us-east-1", State: "deleting", Retry: &api.ObjectBucketRetry{Reason: api.ObjectBucketRetryProtected, Detail: api.ObjectBucketRetryDetail(api.ObjectBucketRetryProtected), Attempts: 4, RetryAt: time.Now().Add(time.Hour)}},
+	}}}
+	if code := main.RunBucketList(context.Background(), client, "my-api"); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	out := stdout.String()
+	for _, want := range []string{"b5446ca5-a8d0-4896-91fe-91e0ca6520bd is deleting (attempt 4, next retry in ", "legal hold"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("list output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "c25a9f1d-f9a6-4b06-b60f-bbc8018bb2df is") {
+		t.Fatalf("ready bucket explained as retrying:\n%s", out)
 	}
 }

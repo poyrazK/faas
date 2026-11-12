@@ -68,9 +68,18 @@ func TestSenderFromEnv_FactoryContract(t *testing.T) {
 			wantType: "*mail.LogSender",
 		},
 		{
-			name:     "explicit-noop",
-			env:      map[string]string{"FAAS_MAIL_TRANSPORT": "noop"},
+			// A FAAS_DEV box keeps the silent sender tests rely on.
+			name:     "explicit-noop-on-dev",
+			env:      map[string]string{"FAAS_MAIL_TRANSPORT": "noop", "FAAS_DEV": "1"},
 			wantType: "mail.NoopSender",
+		},
+		{
+			// Production ran noop from bootstrap and every verification
+			// email vanished without a trace. On a non-dev box noop still
+			// boots, but resolves to the sender that logs and counts drops.
+			name:     "explicit-noop-on-prod-is-loud",
+			env:      map[string]string{"FAAS_MAIL_TRANSPORT": "noop"},
+			wantType: "*mail.DroppingSender",
 		},
 		{
 			name: "resend-with-key",

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"sync"
@@ -187,7 +188,11 @@ func (c *nativeQualificationRestoreChannels) serve(ctx context.Context, port uin
 				defer c.wg.Done()
 				defer func() { <-sem }()
 				defer func() { _ = conn.Close() }()
-				_ = c.handle(ctx, port, conn, handler)
+				// The guest's write already succeeded, so a refused stream is
+				// otherwise invisible. Errors name checks, never stream bytes.
+				if err := c.handle(ctx, port, conn, handler); err != nil {
+					slog.Default().Warn("native restore channel stream failed", "instance", c.owner.Lease.Instance, "port", port, "err", err)
+				}
 			}()
 		default:
 			_ = conn.Close()

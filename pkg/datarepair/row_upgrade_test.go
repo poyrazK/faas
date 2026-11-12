@@ -20,7 +20,7 @@ func installLegacyRows(t *testing.T, e *Engine) {
 	}
 	parts = append(parts, strings.ReplaceAll(captureContract, "__CURRENT_ROW_CONTRACT__", "true"))
 	begin := embeddedFunction(retentionContract, "begin_operation")[0]
-	begin = strings.Replace(begin, ",gregale_repair.type_fingerprint(e.relation,true),3);", ",gregale_repair.type_fingerprint(e.relation,true),NULL);", 1)
+	begin = strings.Replace(begin, ",gregale_repair.type_fingerprint(e.relation,true),4);", ",gregale_repair.type_fingerprint(e.relation,true),NULL);", 1)
 	parts = append(parts, begin)
 	for _, name := range []string{"create_plan", "apply_plan"} {
 		part := embeddedFunction(retentionContract, name)[0]

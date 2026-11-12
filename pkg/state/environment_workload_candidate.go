@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/gitlabsource"
+	"github.com/onebox-faas/faas/pkg/ociref"
 )
 
 var ErrEnvironmentWorkloadPreparationUnavailable = errors.New("environment workload preparation adapter is unavailable")
@@ -201,10 +202,13 @@ func (d Deployment) ScopedWorkloadRuntime() (*EnvironmentWorkloadRuntime, error)
 			return nil, fmt.Errorf("%w: frozen build artifact disagrees with candidate", ErrInvalidArgument)
 		}
 	} else if frozen.SourceArchive != nil {
+		// SourceArchive pins the reviewed source bytes. Imaging separately
+		// fills ImageDigest with the produced OCI manifest's canonical digest;
+		// it does not replace the archive's identity or grant image authority.
 		if err := validateEnvironmentSourceArtifact(*frozen.SourceArchive); err != nil || frozen.Source == nil ||
 			(frozen.Source.ReuseUnchangedBuild != (frozen.SourceArchive.ContextFormat == api.EnvironmentGitBuildContextFormat)) ||
 			(frozen.Source.Kind != "source" && frozen.Source.Kind != "dockerfile" && frozen.Source.Kind != "function") || frozen.Source.BuildArtifactID != "" || frozen.Source.BuildArtifactHash != "" || !validEnvironmentGitCandidateProvenance(d, frozen) ||
-			d.ImageDigest != "" ||
+			(d.ImageDigest != "" && ociref.ValidateDigest(d.ImageDigest) != nil) ||
 			d.SourcePath != frozen.SourceArchive.Path || d.SourceSHA256 != frozen.SourceArchive.SHA256 || d.SourceBytes != frozen.SourceArchive.Bytes ||
 			d.BuildID != frozen.SourceArchive.BuildID || d.LogPath != frozen.SourceArchive.LogPath || d.SourceRoot != frozen.Source.Directory ||
 			frozen.RevisionID != frozen.SourceArchive.RevisionID || d.CommitSHA != frozen.SourceArchive.CommitSHA || frozen.DefinitionDigest != frozen.SourceArchive.DefinitionDigest {
@@ -374,6 +378,21 @@ func frozenCandidateInputsMatch(stored []byte, expected EnvironmentWorkloadRunti
 	}
 	expectedJSON, err = canonicalGitOpsValue(expectedJSON)
 	return err == nil && bytes.Equal(priorJSON, expectedJSON)
+}
+
+// activatedCandidateInputsMatch compares an activated candidate's frozen
+// inputs with the reviewed intent. Activation makes the candidate a live
+// deployment of its own app, so the inherited baseline (the live deployments
+// observed at review, and their settings) can no longer be recomputed; the
+// deployment trigger checked it when the candidate was created. Every other
+// authority field must still match.
+func activatedCandidateInputsMatch(stored []byte, expected EnvironmentWorkloadRuntime) bool {
+	var prior EnvironmentWorkloadRuntime
+	if json.Unmarshal(stored, &prior) != nil {
+		return false
+	}
+	expected.SourceDeployments, expected.DeploymentInputs = prior.SourceDeployments, prior.DeploymentInputs
+	return frozenCandidateInputsMatch(stored, expected)
 }
 
 func workloadPreparationTypeSupported(appType AppType, runtime string) bool {

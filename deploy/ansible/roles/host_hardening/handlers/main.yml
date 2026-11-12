@@ -13,6 +13,12 @@
   ansible.builtin.command: augenrules --load
   changed_when: true
 
+# auditd's unit refuses manual stops (RefuseManualStop=yes) and has no
+# ExecReload; SIGHUP makes auditd re-read auditd.conf, log_group included.
+- name: reload auditd configuration  # noqa: command-instead-of-module (the systemd module cannot send a signal)
+  ansible.builtin.command: systemctl kill --signal=SIGHUP auditd
+  changed_when: true
+
 - name: reload systemd for Caddy hardening
   ansible.builtin.systemd_service:
     daemon_reload: true

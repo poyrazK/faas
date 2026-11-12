@@ -98,6 +98,11 @@ func (t *memFinancialComputeTxn) active(app string) ([]financial.ComputeLease, e
 		if l.AccountID != t.account || l.SettledAt != nil {
 			continue
 		}
+		// An organization-paid app's attempt joins its creator's account
+		// book only when that book funded it (ADR-20261107160000).
+		if app == "" && !l.AccountFunded && l.AppID != "" && t.m.computeOrgPaidLocked(t.m.apps[l.AppID]) {
+			continue
+		}
 		if isShared && t.scopeLeaseInScope(l, scope) || !isShared && (app == "" || l.WorkloadKey() == app) {
 			out = append(out, l)
 		}
@@ -146,7 +151,11 @@ func (m *MemStore) computeTransaction(ctx context.Context, account string, fn fu
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.accounts[account]; !ok {
-		return ErrNotFound
+		// A company organization is a billing subject of its own (#6029), as
+		// Postgres's financial transactions accept it.
+		if org, ok := m.orgs[account]; !ok || org.Personal {
+			return ErrNotFound
+		}
 	}
 	t := newMemComputeTxn(m, account)
 	err := fn(t)
@@ -375,6 +384,9 @@ func (m *MemStore) FinancialComputeAppManaged(ctx context.Context, account, app 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	scopes, _ := newMemComputeTxn(m, account).workloadScopes(app, "", "")
+	if scopes.OrgPaid {
+		return false, nil
+	}
 	for _, b := range m.financialComputeBooks {
 		environment := m.projectEnvironments[b.EnvironmentID]
 		if b.AccountID == account && (b.ScopeKey() == app || b.ScopeKey() == "" || scopes.Project != "" && (b.ProjectID == scopes.Project || b.EnvironmentID != "" && environment.ProjectID == scopes.Project)) {
@@ -392,6 +404,9 @@ func (m *MemStore) FinancialComputeFloorCovered(ctx context.Context, account, ap
 	return m.computeMonthCoveredLocked(account, app, at), nil
 }
 func (m *MemStore) computeMonthCoveredLocked(account, app string, at time.Time) bool {
+	if scopes, _ := newMemComputeTxn(m, account).workloadScopes(app, "", ""); scopes.OrgPaid {
+		return false
+	}
 	if _, ok := m.financialComputeBooks[computeBookKey(account, "", financial.ComputeMonth(at))]; ok {
 		return true
 	}

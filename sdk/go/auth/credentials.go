@@ -81,6 +81,9 @@ func NewClientCredentials(authURL, clientID, clientSecret string, opts ...Creden
 		return nil, errors.New("auth: invalid option")
 	}
 	noRedirects := *c.http
+	if noRedirects.Timeout <= 0 {
+		noRedirects.Timeout = fetchTimeout
+	}
 	noRedirects.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	c.http = &noRedirects
 	return c, nil

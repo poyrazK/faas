@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/canary"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -65,7 +66,15 @@ func (s *server) evaluateRollbackOn5xx(ctx context.Context, telemetry rollbackOn
 		// window's end still belongs to the window.
 		until = c.WindowEndsAt.Truncate(time.Minute).Add(time.Minute)
 	}
-	requests, serverErrors, _, _, _, _, _, err := telemetry.RequestTelemetryCircuitBreakerSummary(ctx, c.AppID, c.DeploymentID, c.CreatedAt.Truncate(time.Minute), until)
+	// Only closed minutes: gateways ship a 5xx at once but a 2xx with its
+	// minute's bucket, so the open minute read 6/6 errors for a release
+	// failing 3% of requests (prod 2026-11-09, ADR-625 amendment 2026-11-10).
+	until = canary.ClosedTelemetryUntil(until, now)
+	since := c.CreatedAt.Truncate(time.Minute)
+	if !since.Before(until) {
+		return nil
+	}
+	requests, serverErrors, _, _, _, _, _, err := telemetry.RequestTelemetryCircuitBreakerSummary(ctx, c.AppID, c.DeploymentID, since, until)
 	if err != nil {
 		return fmt.Errorf("read request telemetry: %w", err)
 	}
@@ -80,7 +89,30 @@ func (s *server) evaluateRollbackOn5xx(ctx context.Context, telemetry rollbackOn
 	if !rollbackOn5xxBreached(requests, serverErrors) {
 		return nil
 	}
+	if lost, err := s.releaseTelemetryLost(ctx, telemetry, since, until); err != nil || lost {
+		// A gateway may have dropped rows in the window: the 2xx it lost
+		// would read as a higher error rate. Judge again once coverage holds.
+		return err
+	}
 	return s.autoRollbackOn5xx(ctx, c, requests, serverErrors)
+}
+
+// releaseTelemetryLost reports whether a gateway may have lost request
+// telemetry over [from, until) (ADR-625 amendment 2026-11-10). A store
+// without coverage records (MemStore) reports complete coverage.
+func (s *server) releaseTelemetryLost(ctx context.Context, telemetry any, from, until time.Time) (bool, error) {
+	reader, ok := telemetry.(state.RequestTelemetryLossReader)
+	if !ok {
+		reader, ok = s.store.(state.RequestTelemetryLossReader)
+	}
+	if !ok {
+		return false, nil
+	}
+	lost, err := reader.RequestTelemetryLostBetween(ctx, from, until)
+	if err != nil {
+		return false, fmt.Errorf("read request telemetry coverage: %w", err)
+	}
+	return lost, nil
 }
 
 // autoRollbackOn5xx hands the release's predecessor to the same

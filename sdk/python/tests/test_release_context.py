@@ -1,8 +1,10 @@
 import asyncio
+import time
 
 import httpx
 
 from faas_sdk import (
+    GREGALE_DEADLINE_MS_HEADER,
     GREGALE_RELEASE_HEADER,
     GREGALE_REQUEST_DEADLINE_HEADER,
     GREGALE_REVISION_HEADER,
@@ -11,6 +13,7 @@ from faas_sdk import (
     GregaleReleaseTransport,
     current_gregale_release,
     current_gregale_request_deadline,
+    gregale_request_time_remaining_ms,
     with_gregale_release,
     with_gregale_request_context,
 )
@@ -178,3 +181,88 @@ def test_asgi_middleware_captures_request_release_for_async_calls():
     assert seen[0].headers[GREGALE_RELEASE_HEADER] == "release-182"
     assert GREGALE_REVISION_HEADER not in seen[0].headers
     assert current_gregale_release() is None
+
+
+# ADR-20261102082606 step 3: a managed service call carries the time the
+# inbound request has left, so the service proxy ends the call with it.
+def test_time_left_follows_managed_calls_only_and_only_shortens():
+    seen = {}
+
+    def record(request):
+        seen[request.url.host] = request.headers.get(GREGALE_DEADLINE_MS_HEADER)
+        return httpx.Response(204)
+
+    client = httpx.Client(transport=GregaleReleaseTransport(httpx.MockTransport(record)))
+    try:
+        with with_gregale_request_context({GREGALE_DEADLINE_MS_HEADER: "5000"}):
+            left = gregale_request_time_remaining_ms()
+            assert left is not None and 4000 < left <= 5000
+            client.get("http://billing.svc.gregale/charge")
+            client.get("https://example.com/x")
+            client.get("http://audit.svc.gregale/log", headers={GREGALE_DEADLINE_MS_HEADER: "1200"})
+            client.get("http://search.svc.gregale/q", headers={GREGALE_DEADLINE_MS_HEADER: "9000"})
+    finally:
+        client.close()
+    assert 4000 < int(seen["billing.svc.gregale"]) <= 5000
+    assert seen["example.com"] is None
+    assert seen["audit.svc.gregale"] == "1200"
+    assert int(seen["search.svc.gregale"]) <= 5000
+    assert gregale_request_time_remaining_ms() is None
+
+
+def test_no_time_left_sends_one_ms_and_invalid_values_are_ignored():
+    sent = []
+    client = httpx.Client(
+        transport=GregaleReleaseTransport(
+            httpx.MockTransport(
+                lambda request: sent.append(request.headers.get(GREGALE_DEADLINE_MS_HEADER)) or httpx.Response(204)
+            )
+        )
+    )
+    try:
+        with with_gregale_request_context({GREGALE_DEADLINE_MS_HEADER: "1"}):
+            time.sleep(0.01)
+            assert gregale_request_time_remaining_ms() == 0
+            client.get("http://billing.svc.gregale/charge")
+        assert sent == ["1"]
+        for value in ("0", "-5", "soon", "99999999999"):
+            sent.clear()
+            with with_gregale_request_context({GREGALE_DEADLINE_MS_HEADER: value}):
+                assert gregale_request_time_remaining_ms() is None, value
+                client.get("http://billing.svc.gregale/charge")
+            assert sent == [None], value
+    finally:
+        client.close()
+
+
+def test_asgi_middleware_captures_time_left_per_request():
+    seen = []
+
+    async def app(scope, receive, send):
+        await asyncio.sleep(0.01 if scope.get("slow") else 0)
+        async with httpx.AsyncClient(
+            transport=AsyncGregaleReleaseTransport(
+                httpx.MockTransport(
+                    lambda request: seen.append(int(request.headers[GREGALE_DEADLINE_MS_HEADER])) or httpx.Response(204)
+                )
+            )
+        ) as client:
+            await client.get("http://identity.svc.gregale/")
+
+    middleware = GregaleReleaseMiddleware(app)
+
+    async def run():
+        scopes = [
+            {
+                "type": "http",
+                "slow": value == "8000",
+                "headers": [(GREGALE_DEADLINE_MS_HEADER.lower().encode(), value.encode())],
+            }
+            for value in ("8000", "2000")
+        ]
+        await asyncio.gather(*(middleware(scope, None, None) for scope in scopes))
+        assert gregale_request_time_remaining_ms() is None
+
+    asyncio.run(run())
+    short, long = sorted(seen)
+    assert 1900 < short <= 2000 and 7900 < long <= 8000

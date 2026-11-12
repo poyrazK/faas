@@ -7,7 +7,16 @@ account's slow rules never delay yours. A webhook gets 30 seconds per
 delivery, retries included. Rules are kept but stop being evaluated while
 your plan no longer includes them (alerts need Hobby or above; custom metric,
 SLO and synthetic check alerts need the plans those features need); they
-resume when you upgrade.
+resume when you upgrade. The same holds for rules past your plan's rule
+limits after a downgrade: per app and per account, your oldest enabled rules
+keep running and the rest wait, so disable the ones you can do without to
+choose which run. On an organization's app, the organization's plan and
+limits decide, not those of the member who created the rule.
+
+Rules on an error rate, cold-start share or latency percentile fire only
+when the window holds at least 10 requests: one failed wake out of three
+requests is not a 33% error rate worth a page. With fewer, the rule is
+`unknown` for that read.
 
 ## Configure an alert
 
@@ -23,7 +32,9 @@ gregale alert delete --app APP_ID ALERT_ID
 
 Useful presets include availability, latency, error rate, out-of-memory, certificate expiry, quota, and spend. Use the preset as a starting point; narrow the threshold and notification window in the generated configuration when needed.
 
-For automations, the opt-in `automation_backlog` preset sends a webhook when
+The spend preset (`account_spend_eur`; the name predates USD billing, and the threshold is in your billing currency) compares this month's charges beyond your plan, the overage the billing page shows: compute, egress once you have elected egress overage, and object storage.
+
+For stored workflows, the opt-in `stored_workflow_backlog` preset sends a webhook when
 due work has waited at least five minutes. It covers overdue timers, event or
 callback timeouts, expired worker leases and concurrency-blocked runs. Future
 waits, retry backoff and live execution do not count. Its 30-minute default
@@ -31,12 +42,12 @@ cooldown limits repeat notifications; age is current state rather than a
 window average. The preset supports webhook notifications only.
 
 ```bash
-printf '%s\n' "$ALERT_SECRET" | gregale alert preset enable automation_backlog \
+printf '%s\n' "$ALERT_SECRET" | gregale alert preset enable stored_workflow_backlog \
   --app billing --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
 ```
 
 Use `workflow_due_age_seconds` for a custom threshold in seconds. Inspect
-[automation health](automation-authoring.md#inspect-automation-health) and run
+[stored workflow health](stored-workflow-authoring.md#inspect-stored-workflow-health) and run
 history to find waiting reasons. The preset does not enable itself for
 existing apps; add it to each app that needs it.
 
@@ -99,14 +110,16 @@ deployment action such as rollback; the API and the database both reject one.
 
 Each webhook delivery is a JSON body with `event` (`alert.fired`), the rule, metric, threshold and observed value. `X-Faas-Alert-Signature` is `sha256=` followed by the hex HMAC-SHA256 of `<X-Faas-Alert-Timestamp>.<X-Faas-Alert-Id>.<body>`, keyed with the rule's webhook secret. Verify it before processing, deduplicate by `X-Faas-Alert-Id`, and return a 2xx quickly. A 5xx, 408, 429 or network error is retried with backoff for up to 30 seconds; any other status is final. Every fire and its outcome is listed by `gregale alert deliveries`. A failing endpoint is not paused: each new fire is attempted again.
 
-Add `--notify-resolved` (`notify_resolved` in the API) to also receive a signed `alert.resolved` event, with the same headers, when the rule recovers. It is off by default because receivers written before it count every delivery as a fire; turn it on once yours checks `event`. Notification channels always receive resolves.
+A rule's cool-down (15 minutes by default) limits repeat notices for one incident: while the metric stays in breach, the rule fires again only after the cool-down. Once the rule recovers and its resolve goes out, the next breach is a new incident and fires at once, even inside the old cool-down, so every resolve follows a fire you received.
+
+Add `--notify-resolved` (`notify_resolved` in the API) to also receive a signed `alert.resolved` event, with the same headers, when the rule recovers. It is off by default because receivers written before it count every delivery as a fire; turn it on once yours checks `event`. Notification channels always receive resolves. A firing rule that stops being evaluated (you disable it, the plan or account no longer covers it, or its app is deleted) gets an `alert.resolved` with `reason` (`disabled`, `not_released` or `app_deleted`) and a null `observed`; a deleted rule sends none, since its webhook secret goes with it.
 
 For dashboards and SLOs, use the app metrics endpoint and correlate alert event ids with deployment ids. Never put credentials in an alert URL.
 
 ## Notification channels
 
 Channels deliver alerts to Slack, PagerDuty or email without a webhook
-receiver of your own (ADR-749). Add a channel once per account, then send a
+receiver of your own. Add a channel once per account, then send a
 test:
 
 ```bash
@@ -124,7 +137,13 @@ gregale alert channel list
 - Slack URLs must be `https://hooks.slack.com/services/…`; PagerDuty
   notifications go only to PagerDuty's Events API. Both destinations are
   sealed at rest and never shown again; `list` shows a short hint instead.
-- Email channels can only send to the account's own email address for now.
+- Email channels can only send to the account's own email address for now,
+  and only once that address is verified. They follow the account: after you
+  change your email address, alerts go to the new one.
+- A PagerDuty routing key cannot be replaced while a rule using the channel
+  is firing: its incident was opened with the current key and is closed with
+  it. Wait for the rule to recover, or disable it to close the incident,
+  then replace the key. Renaming the channel is always allowed.
 - `list` shows each channel's last successful delivery or last error, so a
   revoked Slack webhook shows up before an incident does.
 - An account can send 10 test messages a minute across its channels; more
@@ -142,6 +161,35 @@ Channels receive the fire and, when the rule recovers, a resolve: PagerDuty
 closes the incident the fire opened, and Slack and email get a "Resolved"
 message. Each channel is delivered to independently, so a broken Slack
 webhook never delays PagerDuty, the rule's webhook, or a rollback action.
+A notice a channel refuses with a 5xx or 429, or cannot be reached for, is
+retried for a few seconds. After that a fire is retried while the rule is
+still firing (30 seconds, doubling, at most five minutes apart) until its
+cool-down ends, when the next fire takes over, and a resolve is retried with backoff (a
+minute, doubling, at most an hour apart) for up to a day, so a PagerDuty
+incident is not left open by a short outage; a new fire of the rule replaces
+the pending resolve. Every failed channel notice is recorded in the audit log
+as `notification_channel.delivery_failed`, and a resolve given up after a
+day as `notification_channel.resolve_abandoned`.
+
+A resolve goes out whenever an incident ends, not only when the metric
+recovers on the next read: a recovery after a read Gregale could not make
+(the rule showed `degraded` or `unknown` in between), a firing rule you
+disable or delete (directly, or by deleting its SLO, synthetic check or app),
+and a firing rule your plan or account no longer covers. Those last ones say
+why in the message instead of an observed value, and are retried the same
+way.
+
+Rename a channel, or replace a leaked Slack URL or PagerDuty key, in place:
+its ID and the rules bound to it stay. The kind never changes, and an email
+channel can only be renamed.
+
+```bash
+printf '%s\n' "$NEW_SLACK_WEBHOOK_URL" | gregale alert channel update CHANNEL_ID --secret-stdin
+gregale alert channel update CHANNEL_ID --name ops-alerts
+```
+
+A new destination clears the channel's last error; the change is recorded in
+the audit log as `notification_channel.updated`.
 Presets take channels too: `gregale alert preset enable availability --app
 shop --channel OPS_SLACK_ID`.
 
@@ -208,7 +256,7 @@ To avoid alerts on tiny numbers, a baseline rule does not fire when:
 
 The webhook payload adds `baseline` (the usual value), `baseline_days`, and
 `ratio` (observed divided by baseline) to the usual fields. Baseline rules are a
-preview (ADR-744) and may not be enabled for your account.
+preview and may not be enabled for your account.
 
 ## Log alerts
 
@@ -222,8 +270,13 @@ printf '%s\n' "$ALERT_SECRET" | gregale alert create --app shop --name "error lo
 ```
 
 A line's level comes from a structured `level` or `severity` field when the
-line is JSON, otherwise from common prefixes such as `[ERROR]`, `level=error`
-or `[warn]` in the first 512 bytes. This is the same classification as
+line is JSON (Pino's numeric levels too; `fatal` and `critical` count as
+errors), otherwise from markers such as `[ERROR]`, `[FATAL]`, `level=error`
+or `[warn]` in the first 512 bytes, or from a line that starts the way a
+crash or a default logger does: `ERROR:` and `CRITICAL:` (Python's logging
+and uvicorn), `Traceback (most recent call last):`, `panic:` and
+`fatal error:` (Go), or `TypeError: …` and other `…Error: ` lines (Node's
+uncaught exceptions). This is the same classification as
 `gregale logs --level error`, so the command shows the lines an alert
 counted. A line that only mentions "error" in prose is not counted. Build
 logs are never counted. Log alerts support every alert action, including
@@ -271,6 +324,12 @@ search later does not change it. Counts include every occurrence of a
 deduplicated event. These rules are webhook-only and support windows up to
 `24h`. If the search cannot finish in time, the rule is `unknown` for that
 evaluation rather than firing or clearing.
+
+Runtime lines are counted as [log search](log-search.md#runtime-lines)
+indexes them: at most 120 warning and error lines per app per minute on each
+node, and 600 per account per minute. A burst past those budgets counts as
+the budget, not the burst, so set thresholds well below them; a minute that
+hit a budget has a `system` line saying so.
 
 ### Route monitor and canary hold alerts
 
@@ -333,7 +392,7 @@ for retention coverage and the distinction between backlog and formation rate.
 
 ## Custom metric alerts
 
-Where custom metric history is enabled (preview, ADR-745), you can alert on a
+Where custom metric history is enabled (preview), you can alert on a
 number you push yourself — orders waiting, failed payments, documents awaiting
 OCR. Name the metric with `custom_metric_name` (`--custom-metric` in the CLI):
 
@@ -349,4 +408,17 @@ OpenTelemetry cumulative sum) is compared on its per-second rate over the
 window. If nothing was pushed in the window, or the metric was deleted, the
 rule is `unknown` and does not fire: a stopped pusher never satisfies a "below"
 rule by silence. These rules are webhook-only and support windows up to `24h`.
+
+A rule on a labelled metric reads its aggregate (the sum of a counter's
+series, the maximum of a gauge's). To watch one series instead, give its exact
+labels with `custom_metric_labels` (`--metric-label key=value`, repeatable):
+
+```bash
+printf '%s\n' "$ALERT_SECRET" | gregale alert create --app shop --name "email queue backing up" \
+  --metric custom_metric --custom-metric queue_depth --metric-label queue=emails \
+  --comparison gt --threshold 500 --window-spec 15m \
+  --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+A series that stops being pushed leaves the rule `unknown`, as for a whole metric.
 See [custom metrics](scaling-policy.md#custom-metrics) for pushing values.

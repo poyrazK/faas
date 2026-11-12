@@ -131,7 +131,7 @@ func (m *MemStore) ReplayFailedWorkflowEventRecipient(_ context.Context, account
 		return ErrNotFound
 	}
 	found := false
-	for _, a := range m.automationRecordsLocked(owned.ID) {
+	for _, a := range m.storedWorkflowRecordsLocked(owned.ID) {
 		if a.Name == e.WorkflowName && a.PublishedVersion == e.PublishedVersion {
 			found = true
 		}

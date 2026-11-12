@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { FaaSClient, ManagedPostgresService, type ManagedPostgresCapabilities, type ManagedPostgresResize, type ManagedPostgresComputePolicyChange } from '../src/preview.js';
+import type { ManagedPostgresResize as PublicResize, ManagedPostgresComputePolicyChange as PublicPolicyChange } from '../src/index.js';
 
 test('PostgreSQL capabilities preserve reader support with a closed rollout gate', async (t) => {
   const capabilities: ManagedPostgresCapabilities = {
@@ -54,6 +55,9 @@ test('compute resize preserves the durable UUID across requests and reads progre
       assert.equal(req.method, 'GET');
       assert.equal(req.url, `/v1/postgres/databases/orders/resizes/${id}`);
       gets++;
+      progress.state = 'failed';
+      progress.last_error_code = 'invalid';
+      progress.completed_at = '2026-10-05T00:01:00Z';
     }
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify(progress));
@@ -70,6 +74,8 @@ test('compute resize preserves the durable UUID across requests and reads progre
     }), progress);
   }
   assert.deepEqual(await ManagedPostgresService.getManagedPostgresResize({ id: 'orders', resizeId: id }), progress);
+  const publicReceipt: PublicResize = progress;
+  assert.equal(publicReceipt.state, 'failed');
   assert.equal(posts, 2);
   assert.equal(gets, 1);
 });
@@ -95,6 +101,9 @@ test('compute policy preserves explicit false and the durable UUID across reques
       assert.equal(req.method, 'GET');
       assert.equal(req.url, `/v1/postgres/databases/orders/compute-policy-changes/${id}`);
       gets++;
+      progress.state = 'failed';
+      progress.last_error_code = 'unsupported';
+      progress.completed_at = '2026-10-05T00:01:00Z';
     }
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify(progress));
@@ -111,6 +120,8 @@ test('compute policy preserves explicit false and the durable UUID across reques
     }), progress);
   }
   assert.deepEqual(await ManagedPostgresService.getManagedPostgresComputePolicyChange({ id: 'orders', changeId: id }), progress);
+  const publicReceipt: PublicPolicyChange = progress;
+  assert.equal(publicReceipt.state, 'failed');
   assert.equal(posts, 2);
   assert.equal(gets, 1);
 });

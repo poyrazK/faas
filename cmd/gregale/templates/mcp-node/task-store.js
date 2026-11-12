@@ -1,8 +1,9 @@
+import { isMcpTaskToolName } from './task-compatibility.js';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { MCP_TASK_OWNER_SCHEMA, MCP_TASK_PRUNE_OWNERS, associateMcpTaskOwners, mcpTaskOwnerGroup } from './task-owners.js';
-import { createMcpTaskPayloadCipher } from './task-crypto.js';
+import { authenticateRetainedMcpTaskPayloads, createMcpTaskPayloadCipher } from './task-crypto.js';
 import { initializeMcpTaskAdmission, validateMcpTaskAdmissionHandlers } from './task-admission.js';
 import { MCP_TASK_SCHEMA_VERSION, checkMcpTaskSchema, assertMcpTaskSchemaTrust } from './task-schema.js';
 import defaults from './task-limits.json' with { type: 'json' };
@@ -46,6 +47,7 @@ const CREATE_SCHEMA = `
     result_encrypted bytea,
     error_encrypted bytea,
     input_state_encrypted bytea,
+    output_schema jsonb CHECK (output_schema IS NULL OR jsonb_typeof(output_schema) = 'object'),
     input_methods text[] NOT NULL DEFAULT '{}',
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -129,6 +131,7 @@ const CREATE_TASK_FAIRNESS_TRIGGER = `
 const CLAIMABLE_TASK_FILTER = `
   task.namespace = $1
   AND task.expires_at > clock_timestamp()
+  AND task.cancel_requested_at IS NULL
   AND (task.attempt_count < $2 OR (task.status = 'queued' AND task.resume_pending))
   AND ($5::jsonb IS NULL OR EXISTS (
     SELECT 1 FROM jsonb_to_recordset($5::jsonb) AS handler(name text, version text)
@@ -256,6 +259,7 @@ function rowTask(row, payloadKey, namespace, includeArguments = false) {
     lease_token: row.lease_token == null ? null : String(row.lease_token),
     cancel_requested_at: row.cancel_requested_at,
     input_methods: Array.isArray(row.input_methods) ? row.input_methods : [],
+    output_schema: row.output_schema ?? null,
   };
   if (includeArguments) task.arguments = decryptJSON(row.arguments_encrypted, payloadKey, taskAAD(namespace, taskID, 'arguments'));
   if (row.result_encrypted != null) task.result = decryptJSON(row.result_encrypted, payloadKey, taskAAD(namespace, taskID, 'result'));
@@ -407,20 +411,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
           if (!known.has(id)) throw new Error('MCP Task encryption keys are not registered; run tasks:migrate before startup');
           if (!known.get(id).equals(fingerprint)) throw new Error('MCP task ownership secret and encryption key IDs must remain stable');
         }
-        const required = await client.query(`
-          SELECT DISTINCT ON (key_id) key_id, task_id::text, field, payload
-            FROM (
-              SELECT task.task_id, encrypted.field, encrypted.payload,
-                     CASE WHEN get_byte(encrypted.payload, 0) = 1 THEN 'legacy'
-                          WHEN get_byte(encrypted.payload, 0) = 2 THEN convert_from(substring(encrypted.payload FROM 3 FOR get_byte(encrypted.payload, 1)), 'UTF8')
-                          ELSE '@invalid' END AS key_id
-                FROM ${TABLE} AS task
-                CROSS JOIN LATERAL (VALUES ('arguments', task.arguments_encrypted), ('result', task.result_encrypted), ('error', task.error_encrypted), ('input-state', task.input_state_encrypted)) AS encrypted(field, payload)
-               WHERE namespace = $1 AND expires_at > clock_timestamp() AND encrypted.payload IS NOT NULL
-            ) AS encrypted
-           ORDER BY key_id, task_id, field
-        `, [namespace]);
-        for (const row of required.rows) payloadKey.decrypt(row.payload, taskAAD(namespace, row.task_id, row.field));
+        await authenticateRetainedMcpTaskPayloads(client, namespace, payloadKey);
 
         for (const handler of admissionHandlers) {
           const configured = await client.query('SELECT enabled FROM gregale_mcp_task_admission WHERE namespace = $1 AND tool_name = $2 AND handler_version = $3', [namespace, handler.name, handler.version]);
@@ -430,6 +421,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
     },
     async migrate({ admissionHandlers = [] } = {}) {
       return withTransaction(pool, async (client, dedicated) => {
+        await client.query("SET LOCAL lock_timeout = '5s'");
         if (dedicated) await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [TABLE]);
         await client.query(`CREATE TABLE IF NOT EXISTS gregale_mcp_task_schema (
           singleton boolean PRIMARY KEY CHECK (singleton), version integer NOT NULL CHECK (version > 0),
@@ -479,23 +471,10 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
            GROUP BY namespace, owner_hash
           ON CONFLICT (namespace, owner_hash) DO NOTHING
         `, [namespace]);
+        await client.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS output_schema jsonb CHECK (output_schema IS NULL OR jsonb_typeof(output_schema) = 'object')`);
         await initializeMcpTaskAdmission(client, namespace, admissionHandlers, { schema: version < 1 });
-        // Check key usage across every encrypted field still within TTL, and
-        // authenticate a sample per key. Legacy data proves the initial owner key.
-        const required = await client.query(`
-          SELECT DISTINCT ON (key_id) key_id, task_id::text, field, payload
-            FROM (
-              SELECT task.task_id, encrypted.field, encrypted.payload,
-                     CASE WHEN get_byte(encrypted.payload, 0) = 1 THEN 'legacy'
-                          WHEN get_byte(encrypted.payload, 0) = 2 THEN convert_from(substring(encrypted.payload FROM 3 FOR get_byte(encrypted.payload, 1)), 'UTF8')
-                          ELSE '@invalid' END AS key_id
-                FROM ${TABLE} AS task
-                CROSS JOIN LATERAL (VALUES ('arguments', task.arguments_encrypted), ('result', task.result_encrypted), ('error', task.error_encrypted), ('input-state', task.input_state_encrypted)) AS encrypted(field, payload)
-               WHERE namespace = $1 AND expires_at > clock_timestamp() AND encrypted.payload IS NOT NULL
-            ) AS encrypted
-           ORDER BY key_id, task_id, field
-        `, [namespace]);
-        for (const row of required.rows) payloadKey.decrypt(row.payload, taskAAD(namespace, row.task_id, row.field));
+        // Verify every retained field before registering or retiring keys.
+        await authenticateRetainedMcpTaskPayloads(client, namespace, payloadKey);
 
         for (const [id, fingerprint] of payloadKey.fingerprints) {
           const registered = await client.query(`INSERT INTO gregale_mcp_task_crypto_keys (namespace, key_id, key_fingerprint)
@@ -526,7 +505,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
       await pool.query(`DELETE FROM ${WORKER_HANDLERS_TABLE} WHERE namespace=$1 AND worker_id=$2::uuid`, [namespace, workerID]);
     },
     async workerHeartbeat(workerID, handlers, deploymentID = '') {
-      if (!UUID_PATTERN.test(workerID) || !Array.isArray(handlers) || handlers.some(handler => !handler || typeof handler.name !== 'string' || !/^[a-z][a-z0-9_.-]{0,127}$/.test(handler.name) || typeof handler.version !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(handler.version))) throw new Error('Invalid MCP worker registration');
+      if (!UUID_PATTERN.test(workerID) || !Array.isArray(handlers) || handlers.some(handler => !handler || !isMcpTaskToolName(handler.name) || typeof handler.version !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(handler.version))) throw new Error('Invalid MCP worker registration');
       const registry = JSON.stringify(handlers);
       if (Buffer.byteLength(registry) > MAX_ARGUMENT_BYTES) throw new Error('MCP worker registry is too large');
       await pool.query(`INSERT INTO ${WORKER_TABLE} (namespace, worker_id, handlers, heartbeat_at, expires_at)
@@ -553,8 +532,8 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
       await pool.query(`DELETE FROM ${WORKER_TABLE} WHERE namespace = $1 AND worker_id = $2::uuid`, [namespace, workerID]);
     },
     queueMetrics: createMcpTaskQueueObserver({ pool, namespace, maxRunning, maxRunningPerOwner, maxAttempts }).queueMetrics,
-    async create({ toolName, handlerVersion, args, authInfo, authMode, inputMethods = [] }) {
-      if (typeof toolName !== 'string' || !/^[a-z][a-z0-9_.-]{0,127}$/.test(toolName)) throw new Error('Invalid MCP task tool name');
+    async create({ toolName, handlerVersion, args, authInfo, authMode, inputMethods = [], outputSchema }) {
+      if (!isMcpTaskToolName(toolName)) throw new Error('Invalid MCP task tool name');
       if (typeof handlerVersion !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(handlerVersion)) throw new Error('Invalid MCP task handler version');
       if (!Array.isArray(inputMethods) || inputMethods.some(method => !SUPPORTED_INPUT_METHODS.has(method))) throw new Error('Invalid MCP task input capabilities');
       const taskID = randomUUID();
@@ -579,12 +558,12 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
         return client.query(`
         INSERT INTO ${TABLE} (
           namespace, task_id, owner_hash, tool_name, handler_version,
-          arguments_encrypted, input_methods, status, expires_at
-        ) VALUES ($1, $2::uuid, $3, $4, $5, $6, $7::text[], 'queued', clock_timestamp() + ($8::double precision * interval '1 millisecond'))
+          arguments_encrypted, input_methods, status, expires_at, output_schema
+        ) VALUES ($1, $2::uuid, $3, $4, $5, $6, $7::text[], 'queued', clock_timestamp() + ($8::double precision * interval '1 millisecond'), $9::jsonb)
         RETURNING task_id::text AS task_id, tool_name, handler_version, status,
                   created_at, updated_at, expires_at, attempt_count,
                   lease_token, cancel_requested_at, input_methods
-        `, [namespace, taskID, owner, toolName, handlerVersion, encryptedArgs, inputMethods, ttlMs]);
+        `, [namespace, taskID, owner, toolName, handlerVersion, encryptedArgs, inputMethods, ttlMs, outputSchema === undefined ? null : JSON.stringify(outputSchema)]);
       }).catch(error => {
         if (error.code === '23514' && error.constraint === 'gregale_mcp_task_admission') {
           const denied = new Error('MCP Task handler version is not accepting new Tasks');
@@ -678,6 +657,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
     },
     async updateInputs({ taskID, authInfo, authMode, inputResponses }) {
       if (typeof taskID !== 'string' || !UUID_PATTERN.test(taskID)) return false;
+      taskID = taskID.toLowerCase();
       if (!inputResponses || typeof inputResponses !== 'object' || Array.isArray(inputResponses)) throw new Error('MCP task input responses must be an object');
       const responseEntries = Object.entries(inputResponses);
       if (responseEntries.length > 64 || responseEntries.some(([key]) => !key || key.length > 128)) throw new Error('Invalid MCP task input response keys');
@@ -742,8 +722,9 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
                error_encrypted = NULL,
                updated_at = clock_timestamp(), lease_token = NULL, lease_expires_at = NULL,
                next_attempt_at = NULL, resume_pending = false
-         WHERE namespace = $1 AND attempt_count >= $2
-           AND ((status = 'running' AND lease_expires_at <= clock_timestamp()) OR (status = 'queued' AND NOT resume_pending))
+         WHERE namespace = $1 AND (cancel_requested_at IS NOT NULL OR attempt_count >= $2)
+           AND ((status = 'running' AND lease_expires_at <= clock_timestamp())
+             OR (status = 'queued' AND (cancel_requested_at IS NOT NULL OR NOT resume_pending)))
       `, [namespace, maxAttempts]);
       const leaseToken = randomUUID();
       // Capacity checks and lease creation share a namespace transaction lock.
@@ -790,12 +771,13 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
                  updated_at = clock_timestamp()
             FROM candidate
            WHERE task.namespace = candidate.namespace AND task.task_id = candidate.task_id
+             AND task.cancel_requested_at IS NULL
           RETURNING task.namespace, task.task_id, task.owner_hash, task.tool_name, task.handler_version,
                     task.status, task.created_at, task.updated_at, task.expires_at,
                     task.attempt_count, task.lease_token::text AS lease_token,
                     task.cancel_requested_at, task.arguments_encrypted,
                     task.result_encrypted, task.error_encrypted,
-                    task.input_state_encrypted, task.input_methods
+                    task.input_state_encrypted, task.input_methods, task.output_schema
         ),
         advanced AS (
           UPDATE ${FAIRNESS_TABLE} AS fairness
@@ -810,7 +792,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
                claimed.attempt_count, claimed.lease_token,
                claimed.cancel_requested_at, claimed.arguments_encrypted,
                claimed.result_encrypted, claimed.error_encrypted,
-               claimed.input_state_encrypted, claimed.input_methods, false AS busy
+               claimed.input_state_encrypted, claimed.input_methods, claimed.output_schema, false AS busy
           FROM claimed
           JOIN advanced USING (namespace, owner_hash)
         UNION ALL
@@ -818,7 +800,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
                NULL::timestamptz, NULL::timestamptz, NULL::timestamptz,
                NULL::integer, NULL::text, NULL::timestamptz,
                NULL::bytea, NULL::bytea, NULL::bytea, NULL::bytea,
-               NULL::text[], true AS busy
+               NULL::text[], NULL::jsonb, true AS busy
          WHERE NOT EXISTS (SELECT 1 FROM claimed)
            AND EXISTS (
              SELECT 1 FROM ${FAIRNESS_TABLE} AS fairness
@@ -855,11 +837,12 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
     async heartbeat(taskID, leaseToken, leaseMs) {
       const result = await withTransaction(pool, async client => {
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${TABLE}:execution:${namespace}`]);
-        return client.query(`
+        return client.query(TASK_LEASE_INSTANT_SQL + `
         UPDATE ${TABLE}
-           SET lease_expires_at = clock_timestamp() + ($4::bigint * interval '1 millisecond')
+           SET lease_expires_at = instant.now + ($4::bigint * interval '1 millisecond')
+          FROM instant
          WHERE namespace = $1 AND task_id = $2::uuid AND lease_token = $3::uuid AND status = 'running'
-           AND lease_expires_at > clock_timestamp() AND expires_at > clock_timestamp()
+           AND lease_expires_at > instant.now AND expires_at > instant.now
          RETURNING cancel_requested_at
       `, [namespace, taskID, leaseToken, leaseMs]);
       });

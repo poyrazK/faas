@@ -1,0 +1,8 @@
+---
+# signd_service (ADR-20261109170000): the control plane's artifact signer.
+# Empty keeps signd off, and imaged on every compute node keeps signing with
+# its own sign.key. A split box sets "tcp://<control plane private
+# address>:8097"; compute imaged dials it once compute_only_service's
+# faas_imaged_signd_target names the same address. signd serves mutual TLS
+# only, so a tcp:// listener is the only kind it takes.
+faas_signd_listen: ""

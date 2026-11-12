@@ -8,10 +8,10 @@ import (
 	"io"
 	"net/http"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/dataapiworkload"
 	budget "github.com/onebox-faas/faas/pkg/state/dataapibudget"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
@@ -20,18 +20,18 @@ type Store interface {
 	Take(context.Context, string, string, string, int, int) (budget.Decision, error)
 }
 type Handler struct {
-	Store    Store
-	Verifier *workloadidentity.Verifier
+	Store     Store
+	Verifier  *workloadidentity.Verifier
+	Workloads dataapiworkload.Store
 }
 
 var digest = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	claims, err := h.Verifier.Verify(token, workloadidentity.DataAPIBudgetAudience, time.Now())
+	_, app, err := dataapiworkload.Live(r, h.Verifier, workloadidentity.DataAPIBudgetAudience, h.Workloads, time.Now())
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(401, api.CodeUnauthorized, "Workload identity required", "a Data API budget workload assertion is required"))
+		dataapiworkload.Refuse(w, err, "a Data API budget workload assertion from a live production instance is required")
 		return
 	}
 	var body struct {
@@ -50,7 +50,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		unavailable(w)
 		return
 	}
-	decision, err := h.Store.Take(r.Context(), claims.AccountID, claims.AppID, body.Key, body.Requests, body.Window)
+	decision, err := h.Store.Take(r.Context(), app.AccountID, app.ID, body.Key, body.Requests, body.Window)
 	if err != nil {
 		unavailable(w)
 		return

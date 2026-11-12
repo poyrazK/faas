@@ -333,3 +333,8 @@ func TestPgInvocationEnvironmentOwnerMigrationBackfillsPins(t *testing.T) {
 		}
 	}
 }
+
+func TestPgStageHTTPCronInvocation(t *testing.T) {
+	store, _, _ := pgWithPool(t)
+	testStageHTTPCronInvocation(t, store)
+}

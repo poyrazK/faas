@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/datarepair"
+	dbbounds "github.com/onebox-faas/faas/pkg/db"
 )
 
 func cmdDataRepairDoctor(args []string) int {
@@ -93,7 +93,7 @@ func dataRepairWriterDoctor(fs *flag.FlagSet, databaseEnv, scopeFile, table, rel
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(api.DataRepairDoctorTimeoutSeconds)*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, os.Getenv(databaseEnv))
+	pool, err := dbbounds.NewBoundedPool(ctx, os.Getenv(databaseEnv), 2)
 	if err != nil {
 		return printErr("Cannot configure application writer diagnostics", datarepair.ErrUnavailable)
 	}

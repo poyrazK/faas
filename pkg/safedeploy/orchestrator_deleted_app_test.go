@@ -56,3 +56,55 @@ func TestOrchestrator_StuckRolloutOfDeletedAppIsClosed(t *testing.T) {
 		t.Fatalf("second tick stats = %+v, recovery calls %d; want the closed row left alone", stats, recovery.calls)
 	}
 }
+
+// ADR-20261028110044 amendment 8: dapi-t1109-probe was deleted a minute into
+// its canary and meterd evaluated it against the missing app for 30 minutes
+// until the stuck threshold. A deleted app's rollout closes on the next tick.
+func TestOrchestrator_DeletedAppRolloutClosesBeforeStuckThreshold(t *testing.T) {
+	store := newStubStore()
+	started := time.Now().Add(-time.Minute)
+	dep := seedDeployment(store, t, func(d *state.Deployment) {
+		d.RolloutState = "rolling_out"
+		d.CanaryStep = 1
+		d.CanaryStepStartedAt = &started
+		d.RolloutStartedAt = &started
+	})
+	recovery := &rolloutRecoveryStub{}
+	o := NewOrchestrator(store, discardLog(), "meterd:safedeploy", "")
+	o.Targets = rolloutTargetStub{app: state.App{ID: dep.AppID, Slug: "dapi-t1109-probe", Status: state.AppDeleted}}
+	o.Recovery = recovery
+
+	stats, _, err := o.Once(context.Background())
+	if err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	if stats.StuckDetected != 0 || stats.AutoAborted != 1 || recovery.calls != 0 {
+		t.Fatalf("stats = %+v, recovery calls %d; want the rollout closed without a stuck detection", stats, recovery.calls)
+	}
+	if got := store.rollouts[dep.ID]; got.RolloutState != "aborted" || got.RolloutAbortedReason != "app deleted during rollout" {
+		t.Fatalf("rollout = state %q reason %q; want aborted for the deleted app", got.RolloutState, got.RolloutAbortedReason)
+	}
+}
+
+// A live app's young rollout is left to the progression worker.
+func TestOrchestrator_LiveAppRolloutIsNotClosedEarly(t *testing.T) {
+	store := newStubStore()
+	started := time.Now().Add(-time.Minute)
+	dep := seedDeployment(store, t, func(d *state.Deployment) {
+		d.RolloutState = "rolling_out"
+		d.CanaryStep = 1
+		d.CanaryStepStartedAt = &started
+		d.RolloutStartedAt = &started
+	})
+	o := NewOrchestrator(store, discardLog(), "meterd:safedeploy", "")
+	o.Targets = rolloutTargetStub{app: state.App{ID: dep.AppID, Slug: "api", Status: state.AppActive}}
+	o.Recovery = &rolloutRecoveryStub{}
+
+	stats, _, err := o.Once(context.Background())
+	if err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	if stats.AutoAborted != 0 {
+		t.Fatalf("stats = %+v; want the live app's rollout left running", stats)
+	}
+}

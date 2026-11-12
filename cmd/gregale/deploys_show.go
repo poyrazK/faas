@@ -412,9 +412,9 @@ func fetchDeploySummaryInputs(ctx context.Context, client *api.Client, id string
 // anchor on. The choice is status-driven and entirely client-side
 // from data already on hand (no new column, no new endpoint):
 //
-//   - "live"      → the StartedAt of the first history row. Every
-//     stage completed for a live deployment, so the first row's
-//     StartedAt is the pipeline's go-live moment.
+//   - "live"      → the latest EndedAt in the history: every stage
+//     completed for a live deployment, so the last one to end is the
+//     go-live moment (the first row's StartedAt only as a fallback).
 //   - "failed"    → the EndedAt of the failed row. The customer's
 //     anchor for "when did this break".
 //   - superseded  → depCreatedAt. The new deployment that
@@ -438,6 +438,18 @@ func fetchDeploySummaryInputs(ctx context.Context, client *api.Client, id string
 func deriveTerminalAt(ss state.StageState, status string, depCreatedAt time.Time) time.Time {
 	switch status {
 	case "live":
+		// The pipeline went live when its last stage ended. The first row's
+		// StartedAt is when the pipeline began, before any builder wait and
+		// build: "live since" read minutes early (Hunt 32 H32-10).
+		var liveAt time.Time
+		for _, item := range ss.History {
+			if item.EndedAt != nil && item.EndedAt.After(liveAt) {
+				liveAt = *item.EndedAt
+			}
+		}
+		if !liveAt.IsZero() {
+			return liveAt
+		}
 		if len(ss.History) > 0 && ss.History[0].StartedAt != nil {
 			return *ss.History[0].StartedAt
 		}

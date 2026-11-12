@@ -205,6 +205,14 @@ it. This binds old-route silence to production traffic and the exact captured
 contract that still exposes the old route. A quiet preview or removal candidate
 cannot establish that production customers have stopped calling the route.
 
+Old-route traffic counts under every label the gateway can record for it: the
+declared template, the `{id}` form it infers when no document declares the
+route, the raw path, and HEAD requests to a GET route. After you upload a
+contract without the old route, the gateway keeps labeling its requests with
+the removal baseline's template, so they never fold into `__route_other__`.
+Requests labeled with an operation the candidate keeps do not count against
+the removed route.
+
 The next candidate removes the old route while retaining its reviewed successor.
 Inspect the proposed removal in report-only mode:
 
@@ -344,7 +352,11 @@ the removal policy itself also covers `default` and `production`.
 Traffic increases waive only the operation removals covered by a valid server
 approval under an **enforced** removal policy. Both captures must project to the
 exact compared canonical snapshots. Report mode and local approval files grant
-no exception. Historical rollback contract gates remain strict. The read-only contract diff
+no exception. Historical rollback contract gates remain strict, with one
+boundary: a target captured before the app declared any contract (its snapshot
+has no paths) never promised the routes it lacks, so rollback and traffic moves
+to it are compared as "no contract" rather than as removing every current route.
+The read-only contract diff
 continues to show the raw changes, including approved operation removals.
 
 The comparison uses the serving contract, or the removal policy's retained

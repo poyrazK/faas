@@ -134,10 +134,8 @@ func TestPublicDeclaredContractPostgresMissingCreatedAndDeletedWithoutNotify(t *
 func TestPublicDeclaredContractPostgresScopedOverlayAndFallback(t *testing.T) {
 	f := newPublicRoutingPGFixture(t)
 	f.deployment(t, "production", "sha256:contract-prod")
+	f.environment(t, "staging")
 	stage := f.deployment(t, "staging", "sha256:contract-stage")
-	if _, err := f.store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: f.app.AccountID, ProjectID: f.project.ID, Slug: "staging"}); err != nil {
-		t.Fatal(err)
-	}
 	f.importedContract(t, "/imported")
 	if _, err := f.pool.Exec(t.Context(), `UPDATE apps SET only_declared_routes=true WHERE id=$1`, f.app.ID); err != nil {
 		t.Fatal(err)

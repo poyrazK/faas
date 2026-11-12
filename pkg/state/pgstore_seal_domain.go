@@ -533,8 +533,9 @@ func (s *PgStore) ResealRegistryCredential(ctx context.Context, c RegistrySealed
 }
 
 // Edge credential kinds (ADR 20261022111812): an app's basic-auth credential,
-// a log drain's authentication header, and an application standard's log
-// destination header.
+// a log drain's authentication header, an application standard's log
+// destination header, and a sealed edge-rule request header value
+// (EdgeSealedCredentialHeaderSecret, ADR-20261108110000).
 const (
 	EdgeSealedCredentialBasicAuth      = "app_basic_auth"
 	EdgeSealedCredentialLogDrain       = "log_drain"
@@ -574,6 +575,9 @@ func (s *PgStore) ListEdgeSealedCredentials(ctx context.Context, afterKind, afte
 			SELECT 'log_destination', l.id::text, l.auth_header_sealed, true
 			  FROM application_standard_log_destinations l
 			 WHERE octet_length(l.auth_header_sealed) > 0
+			UNION ALL
+			SELECT 'edge_rule_header', h.id::text, h.ciphertext, false
+			  FROM edge_rule_header_secrets h
 		) credential
 		 WHERE (kind, id) > ($1, $2)
 		 ORDER BY kind, id
@@ -614,6 +618,11 @@ func (s *PgStore) ResealEdgeCredential(ctx context.Context, c EdgeSealedCredenti
 	case EdgeSealedCredentialLogDrain:
 		query = `UPDATE app_log_drains SET auth_header_sealed = $3
 		          WHERE id = $1::uuid AND auth_header_sealed = $2`
+	case EdgeSealedCredentialHeaderSecret:
+		// The value is unchanged, so re-sealing keeps the row's id that
+		// rules and rule-set versions reference (ADR-20261108110000).
+		query = `UPDATE edge_rule_header_secrets SET ciphertext = $3
+		          WHERE id = $1::uuid AND ciphertext = $2`
 	default:
 		return false, fmt.Errorf("state: reseal edge credential: kind %q cannot be re-sealed in place", c.Kind)
 	}
@@ -799,12 +808,16 @@ func (s *PgStore) ResealStorageCredential(ctx context.Context, id string, old []
 }
 
 // Delivery value kinds (ADR 20261022111812): an app webhook's signing
-// secret, a commit source's database connection and a pending execution's
-// payload, which apid seals and schedd opens.
+// secret, a commit source's database connection, a pending execution's
+// payload and a trigger's config credentials, which apid seals and schedd
+// opens.
 const (
 	DeliverySealedAppWebhook       = "app_webhook"
 	DeliverySealedCommitConnection = "commit_connection"
 	DeliverySealedExecutionPayload = "execution_payload"
+	// DeliverySealedTriggerConfig is a whole trigger config (JSON) whose
+	// credentials are sealed leaves; TriggerKind names its kind.
+	DeliverySealedTriggerConfig = "trigger_config"
 )
 
 // DeliverySealedValue is one sealed delivery value, listed for the delivery
@@ -816,6 +829,9 @@ type DeliverySealedValue struct {
 	ID     string
 	Sealed []byte
 	KID    string
+	// TriggerKind is a trigger config's trigger kind (kafka, redis_streams,
+	// nats).
+	TriggerKind string
 }
 
 // ListDeliverySealedValues pages through one kind's sealed delivery values
@@ -842,6 +858,11 @@ func (s *PgStore) ListDeliverySealedValues(ctx context.Context, kind, afterID st
 		          WHERE e.status NOT IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')
 		            AND p.execution_id > $1::uuid
 		          ORDER BY p.execution_id LIMIT $2`
+	case DeliverySealedTriggerConfig:
+		// Only these kinds carry credentials (pkg/triggerconfig).
+		query = `SELECT id::text, config::text, kind FROM triggers
+		          WHERE kind IN ('kafka', 'redis_streams', 'nats') AND id > $1::uuid
+		          ORDER BY id LIMIT $2`
 	default:
 		return nil, fmt.Errorf("state: list delivery sealed values: unknown kind %q", kind)
 	}
@@ -853,7 +874,11 @@ func (s *PgStore) ListDeliverySealedValues(ctx context.Context, kind, afterID st
 	var out []DeliverySealedValue
 	for rows.Next() {
 		v := DeliverySealedValue{Kind: kind}
-		if err := rows.Scan(&v.ID, &v.Sealed, &v.KID); err != nil {
+		target := &v.KID
+		if kind == DeliverySealedTriggerConfig {
+			target = &v.TriggerKind
+		}
+		if err := rows.Scan(&v.ID, &v.Sealed, target); err != nil {
 			return nil, fmt.Errorf("state: scan delivery sealed value %s: %w", kind, err)
 		}
 		out = append(out, v)
@@ -890,6 +915,11 @@ func (s *PgStore) ResealDeliveryValue(ctx context.Context, v DeliverySealedValue
 		}
 		tag, err = s.pool.Exec(ctx, `UPDATE execution_payloads SET sealed_payload = $3, kid = $4
 		                             WHERE execution_id = $1::uuid AND sealed_payload = $2`, v.ID, v.Sealed, sealed, kid)
+	case DeliverySealedTriggerConfig:
+		// The comparison is on the stored jsonb, so a config apid updated
+		// between the read and the write wins.
+		tag, err = s.pool.Exec(ctx, `UPDATE triggers SET config = $3::jsonb
+		                             WHERE id = $1::uuid AND config = $2::jsonb`, v.ID, string(v.Sealed), string(sealed))
 	default:
 		return false, fmt.Errorf("state: reseal delivery value: unknown kind %q", v.Kind)
 	}

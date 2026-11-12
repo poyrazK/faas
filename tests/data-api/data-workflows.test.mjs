@@ -33,7 +33,7 @@ test('background jobs, immutable exports, behavior replays and scheduled hook dr
   const ownerURL=new URL(process.env.DATA_API_TEST_DATABASE_URL);ownerURL.pathname=`/${database}`
   owner=new pg.Client({connectionString:ownerURL.toString()});await owner.connect()
   for(const migration of ['0001_team_orders.sql','0004_team_order_imports.sql','0013_background_data_jobs.sql'])await owner.query(await readFile(new URL(`../../cmd/gregale/templates/data-api-teams/migrations/sql/${migration}`,import.meta.url),'utf8'))
-  for(const file of ['change-hooks.sql','change-hooks-status.sql'])await owner.query((await readFile(new URL(file,runtime),'utf8')).replaceAll('{{schema}}','api'))
+  for(const file of ['change-hooks.sql','change-hooks-status.sql'])await owner.query((await readFile(new URL(file,runtime),'utf8')).replaceAll('{{schema}}','api').replaceAll('{{backlog_max}}','100000'))
   await owner.query(`INSERT INTO api.team_members VALUES ('a','alice','owner'),('a','amy','admin'),('b','bob','owner');
     CREATE TABLE api.precision_values(id bigint, amount numeric, payload jsonb); ALTER TABLE api.precision_values ENABLE ROW LEVEL SECURITY;
     CREATE POLICY reads ON api.precision_values FOR SELECT USING (true);

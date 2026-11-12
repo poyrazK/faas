@@ -50,8 +50,7 @@ every line matters.
 show, is deleted once the run finished longer ago than your plan's window. The
 run, its tasks and their attempts stay, with their statuses and exit codes;
 their output reads as empty and truncated (`gregale job logs` prints only
-`...[truncated]`). Deleting your account deletes all of it
-([ADR-20261102183152](adr/20261102183152-job-log-retention.md)).
+`...[truncated]`). Deleting your account deletes all of it.
 
 ## Filtering
 
@@ -65,6 +64,12 @@ their output reads as empty and truncated (`gregale job logs` prints only
 | `--status 500`, `--route "GET /orders"` | HTTP events with that status or route |
 | `--request ID`, `--trace TRACE_ID` | One request, or every request of a trace |
 | `--explain` | A short summary of the latest failure and repeated errors |
+
+`--deployment ID` on a deployment that never served (failed, cancelled or
+still building) prints its build and deploy log, then its failure reason. With
+`--json` each entry is a `{"type":"log"}` record and the last record is a
+`{"type":"summary"}` with the deployment's `status`, `error` and `error_code`.
+`--explain` is a terminal summary and is refused with `--json`.
 
 `--level` reads the `level` or `severity` field of JSON log lines (the
 format Pino, Zap, Logrus and Cloud Logging use) and common text shapes such as
@@ -96,8 +101,7 @@ seconds, so its lines appear once a call wakes it. Without `--follow`, each
 running service prints its recent lines and a parked service is named with
 the command that reads its retained logs. `--since`, `--grep` and `--level`
 apply to every service; `--json` adds a `service` field to each line. To
-follow one request across services, use `--trace` on the app that received it
-([ADR-20261026190244](adr/20261026190244-project-logs.md)).
+follow one request across services, use `--trace` on the app that received it.
 
 ## Reading one archived day
 
@@ -159,8 +163,7 @@ gregale logs drain health my-api <drain-id>
 - `--follow` reconnects by itself after ten quiet minutes.
 - Each instance can write a limited amount of log output per UTC hour:
   Free 16 MiB, Hobby 64 MiB, Pro 256 MiB, Scale 1 GiB. Past it, Gregale
-  writes one line saying so and drops the rest of the hour's output
-  ([ADR-20261104085150](adr/20261104085150-log-volume-allowance.md)).
+  writes one line saying so and drops the rest of the hour's output.
 - A log drain delivers at most 1 MiB of lines a second (bursts to 4 MiB);
   lines past that are dropped and counted in `health`.
-- Logs have no separate charge.
+- Logs have no separate charge. Bytes a drain delivers count toward the app's monthly egress, like the app's own traffic ([plans](plans.md#what-each-limit-means)).

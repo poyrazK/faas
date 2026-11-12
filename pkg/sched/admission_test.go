@@ -92,19 +92,25 @@ func TestAdmitRefusesAtRAMCeiling(t *testing.T) {
 	}
 }
 
-func TestAdmitRefusesAtVCPUExhaustion(t *testing.T) {
+// The 160 vCPU slots are a budget that counts, never refuses
+// (ADR-20261109172421): past it an admission still runs on memory.
+func TestAdmitCountsPastVCPUSlots(t *testing.T) {
 	l := sched.NewLedger()
-	// Tiny RAM so RAM never binds; 160 vCPU slots is the limit.
+	// Tiny RAM so RAM never binds; 160 vCPU slots is the budget.
 	admitted := 0
 	for i := 0; ; i++ {
 		r := sched.Request{Instance: fmt.Sprintf("i%d", i), AppID: fmt.Sprintf("a%d", i), Plan: api.PlanFree, RAMMB: 128, VCPU: 2, MaxConcurrency: 1}
-		if err := l.Admit(r); err != nil {
+		if l.XCPUOverBudget(r) != nil {
+			admitPastCPUBudget(t, l, r, "past the 160 vCPU slots")
 			break
+		}
+		if err := l.Admit(r); err != nil {
+			t.Fatalf("admit %d: %v", i, err)
 		}
 		admitted++
 	}
 	if admitted != api.VCPUSlots/2 {
-		t.Errorf("admitted %d, want %d (160 slots / 2 vcpu)", admitted, api.VCPUSlots/2)
+		t.Errorf("admitted %d within the budget, want %d (160 slots / 2 vcpu)", admitted, api.VCPUSlots/2)
 	}
 }
 

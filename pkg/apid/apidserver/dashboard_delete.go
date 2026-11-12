@@ -61,6 +61,10 @@ func (s *server) dashboardDelete(w http.ResponseWriter, r *http.Request) {
 			"Invalid CSRF token", "please reload the page and try again"))
 		return
 	}
+	if !acct.MFAEnrolled() && !s.requireRecentSignIn(&capturedResponse{header: http.Header{}}, r, acct, "account_delete") {
+		redirectRecentSignIn(w, r)
+		return
+	}
 	if _, prob := s.scheduleDeletion(r.Context(), acct, "dashboard", r.FormValue(includeManagedPostgresParam) == "true"); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -181,7 +185,7 @@ func acctViewFrom(acct state.Account) *dashboard.AccountView {
 		Email:                      acct.Email,
 		Plan:                       string(acct.Plan),
 		EmailVerified:              acct.EmailVerified(),
-		EmailVerificationGraceEnds: acct.CreatedAt.Add(emailVerificationGrace).UTC().Format("2006-01-02"),
+		EmailVerificationGraceEnds: verificationDeadline(acct).UTC().Format("2006-01-02"),
 	}
 }
 
@@ -235,6 +239,12 @@ func (s *server) dashboardRaiseOverageCap(w http.ResponseWriter, r *http.Request
 			return
 		}
 		capCents = &n
+	}
+	// ADR-20261105120000: the same paid-plan bounds as the API; a
+	// complimentary account keeps its $0 cap (ADR-20261111140000).
+	if api.OverageCapProblem(acct.Plan, capCents) != nil || s.complimentaryRefusal(r.Context(), acct.ID) != nil {
+		http.Redirect(w, r, "/dashboard/billing?cap=invalid", http.StatusSeeOther)
+		return
 	}
 	if _, err := s.raiseOverageCapSvc(r.Context(), acct, capCents); err != nil {
 		http.Redirect(w, r, "/dashboard/billing?cap=error", http.StatusSeeOther)

@@ -64,3 +64,25 @@ configuration isolation, no-build preparation, revocation and retention fences.
 They do not establish valid native ext4 mounting, full VM lifecycle or leak
 acceptance. Exclusive physical x86_64 Linux KVM acceptance remains pending; no
 production qualification/enforcement is enabled by this change.
+
+## Amendment (2026-11-05): fresh source imaging preserves reviewed inputs
+
+A fresh source candidate keeps its reviewed archive hash, build ID, commit,
+directory and provider provenance after imaging. Its initially empty
+`image_digest` may then contain the canonical SHA-256 OCI manifest digest pinned
+by imaged. This is derived build metadata, not a replacement source descriptor
+or registry-image authority. Malformed digests and changes to reviewed source
+identity remain invalid; the producer, signature and qualification checks remain
+independent requirements.
+
+The PostgreSQL candidate guard permits that first digest pin and updates to
+derived `port` and `image_healthcheck_required` facts before publication. A
+missing profile may acquire the usual `v1`/`unknown` header. It still rejects
+digest replacement, other profile changes, source-envelope changes and writes
+to borrowed artifacts. The append-only imaging metadata migration preserves
+the existing activation and immutable deployment-input checks.
+
+Source app layers apply explicit reviewed runtime fields after OCI inference,
+deployment overrides and app lifecycle fields, as registry images and functions
+do. The default `PORT` environment value is seeded from that final contract;
+explicit image, deployment or app environment values retain precedence.

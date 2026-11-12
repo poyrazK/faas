@@ -18,6 +18,7 @@ func TestIssueRouteActionsPreserveEvidenceAndIntegrationPolicy(t *testing.T) {
 		"POST /v1/apps/{slug}/issues/{issue_id}/native-linear-tickets": authz.OrgActionManageAppSecurity,
 		"PUT /v1/apps/{slug}/issue-frequency-alert-policy":             authz.OrgActionManageAppSecurity,
 		"PUT /v1/apps/{slug}/issue-tracker-linear-connection":          authz.OrgActionManageAppSecurity,
+		"POST /dashboard/apps/{slug}/issues/tracker-notifications":     authz.OrgActionManageAppSecurity,
 		"DELETE /v1/apps/{slug}/issues/{issue_id}":                     authz.OrgActionDeployApp,
 	} {
 		if got := routeActions[pattern]; got != want {
@@ -53,6 +54,32 @@ func TestCompanyIssueRoutesFollowRoles(t *testing.T) {
 			})(w, r, actor)
 			if w.Code != tc.want {
 				t.Fatalf("status=%d body=%s; want %d", w.Code, w.Body, tc.want)
+			}
+		})
+	}
+}
+
+func TestDashboardIssueNotificationSettingsRequireAdmin(t *testing.T) {
+	const pattern = "POST /dashboard/apps/{slug}/issues/tracker-notifications"
+	for _, tc := range []struct {
+		role state.OrgRole
+		want int
+	}{
+		{state.OrgRoleDeveloper, http.StatusForbidden},
+		{state.OrgRoleAdmin, http.StatusNoContent},
+	} {
+		t.Run(string(tc.role), func(t *testing.T) {
+			store, owner, actor, org, app := fixture(t, tc.role)
+			r := request(actor, &state.APIKey{OrgID: org.ID}, pattern, "/dashboard/apps/team-api/issues/tracker-notifications", app.Slug, "")
+			subject, problem := Authorize(r, store, nil, actor, app)
+			if tc.want == http.StatusForbidden {
+				if problem == nil || problem.Status != tc.want {
+					t.Fatalf("authorization = %v, want forbidden", problem)
+				}
+				return
+			}
+			if problem != nil || subject.ID != owner.ID {
+				t.Fatalf("authorization = %v, subject = %q", problem, subject.ID)
 			}
 		})
 	}

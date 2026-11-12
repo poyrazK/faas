@@ -9,6 +9,18 @@ reached githubd for weeks and nothing alerted. This page is the contract; the
 `FaasGithubApp*` alerts ([runbook](../runbooks/FaasGithubAppWebhook.md)) catch
 drift from it.
 
+## Deployment connections and sign-in
+
+The same GitHub App installation may be authorized independently by multiple
+Gregale accounts for deployments. Each must complete Connect GitHub and pass
+the personal-owner or organization-admin checks. Repository access and project
+ownership remain scoped to the Gregale account. GitHub sign-in identities
+remain associated with exactly one Gregale account; deployment connections do
+not move those identities. Uninstalling or suspending the App on GitHub revokes
+every Gregale connection derived from that installation. See
+[ADR-20261106203000](../adr/20261106203000-shared-github-deployment-connections.md)
+for migration and rollout requirements.
+
 ## Webhook
 
 | Setting | Value |
@@ -102,3 +114,29 @@ githubd also uses the private key to read the App's delivery log for the
    or `pull_request` delivery and confirm `202`.
 2. Within five minutes `githubd_github_hook_latest_delivery_failed` reads 0.
 3. `gregalectl github status --status dead` shows nothing new.
+
+
+### Account connections and missed deliveries
+
+Customers manage deployment connections in Settings → Integrations. “Verify
+access” shows the installation owner type, repository selection, current
+permission grants, repository count, and verification time. Apps can select a
+personal or organization installation independently. “Disconnect” there removes
+only the signed-in Gregale account's access; uninstalling the App on GitHub
+still revokes every Gregale connection to that installation.
+
+The monitor automatically repairs recent transport failures through GitHub's
+[App webhook redelivery endpoint](https://docs.github.com/en/rest/apps/webhooks#redeliver-a-delivery-for-an-app-webhook).
+It scans at most 500 attempts from the past hour, waits two minutes, and caps
+redelivery at three attempts per GUID with backoff and ten requests per poll.
+Already accepted inbox events retain their normal worker retry and dead-letter
+policy. A 401/403/404 delivery needs configuration or permission repair; it is
+not automatically replayed. A provider rate-limit response pauses all repair
+requests using durable state. The existing delivery gauges and worker logs
+remain the operator diagnostic surface.
+
+GitHub check names now include a stable account suffix. Update repository
+branch-protection required checks to the intended account's new name after the
+first deployment. Do not use another Gregale account's check as the required
+status. Apply the expansion and batched backfill first; activate sharing only
+in a full release after every githubd worker runs the account-aware code.

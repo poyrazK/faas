@@ -77,5 +77,12 @@ export type RequestAnalyticsResponse = {
    * Why requests in this window may be missing from the totals. Empty or absent when the window is complete.
    */
   telemetry_gaps?: Array<RequestAnalyticsTelemetryGap>;
+  /**
+   * Whether the detail only sampled raw rows carry is in this response: group CPU and sampled latency,
+   * `deployment_costs`, and per-route deployment splits. `omitted` when reading it failed or ran past its
+   * time budget; request counts, error rates and percentiles never depend on it.
+   *
+   */
+  sampled_measures?: 'included' | 'omitted';
 };
 

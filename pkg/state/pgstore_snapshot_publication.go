@@ -45,6 +45,19 @@ func (s *PgStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapsh
 	if _, err := q.LockSnapshotPublicationDeployment(ctx, tx, sqlc.LockSnapshotPublicationDeploymentParams{AppID: params.AppID, DeploymentID: params.DeploymentID}); err != nil {
 		return Snapshot{}, snapshotPublicationOwnerError(err)
 	}
+	if _, guarded := ctx.Value(deploymentActivationAttemptKey{}).(deploymentActivationAttempt); guarded {
+		row, err := q.LockSnapshotPrimeAttempt(ctx, tx, params.DeploymentID)
+		if err != nil {
+			return Snapshot{}, snapshotPublicationOwnerError(err)
+		}
+		dep := Deployment{ID: row.DeploymentID, AppID: row.AppID, Status: DeploymentStatus(row.Status), RootfsKey: row.RootfsKey, RootfsPath: row.RootfsPath, StageState: row.StageState}
+		if err := checkDeploymentActivationAttemptTx(ctx, tx, dep); err != nil {
+			return Snapshot{}, err
+		}
+	}
+	if err := checkActivationSnapshotSource(ctx, sourceStartedAt); err != nil {
+		return Snapshot{}, err
+	}
 	if _, err := q.LockRuntimeSecretConfigurationPins(ctx, tx, params.DeploymentID); err != nil {
 		return Snapshot{}, snapshotPublicationOwnerError(err)
 	}

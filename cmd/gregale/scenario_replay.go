@@ -260,6 +260,9 @@ func cmdTestReplay(args []string) int {
 	if err != nil {
 		return printErr("Invalid replay configuration", err)
 	}
+	if err := validateTestReportInputs(testScenarioInputPaths(prepared.Scenario, dir), *report, *junit, *html); err != nil {
+		return printErr("Invalid replay paths", err)
+	}
 	effective := map[string]testScenario{prepared.Name: prepared.Scenario}
 	if _, err := collectTestValidation(effective, dir, prepared.Name); err != nil {
 		return printErr("Invalid replay source", err)

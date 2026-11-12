@@ -210,7 +210,7 @@ func (s *MemoryStore) ActivateCutover(_ context.Context, a CutoverActivation) (A
 		return ActivatedCutover{}, activationBlocked(ActivationVerificationStale)
 	}
 	target, ok := s.databases[c.Target.ID]
-	if !ok || target.State != StateReady || target.ProviderResourceID != c.Target.ProviderResourceID {
+	if !ok || target.State != StateReady || target.ProviderResourceID != c.Target.ProviderResourceID || !target.RestoreSlotUntil.IsZero() {
 		return ActivatedCutover{}, activationBlocked(ActivationDatabasesChanged)
 	}
 	var out ActivatedCutover

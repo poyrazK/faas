@@ -7,6 +7,8 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.config_change_receipt import ConfigChangeReceipt
 
@@ -25,6 +27,8 @@ class EnvBatchResponse:
     deleted_keys: list[str]
     config_change: ConfigChangeReceipt
     """The config revision an env or secret write recorded and the guard watching it."""
+    environment_id: UUID | Unset = UNSET
+    """Immutable environment identity when the original named batch was pinned."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,6 +44,10 @@ class EnvBatchResponse:
 
         config_change = self.config_change.to_dict()
 
+        environment_id: str | Unset = UNSET
+        if not isinstance(self.environment_id, Unset):
+            environment_id = str(self.environment_id)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -52,6 +60,8 @@ class EnvBatchResponse:
                 "config_change": config_change,
             }
         )
+        if environment_id is not UNSET:
+            field_dict["environment_id"] = environment_id
 
         return field_dict
 
@@ -72,6 +82,13 @@ class EnvBatchResponse:
 
         config_change = ConfigChangeReceipt.from_dict(d.pop("config_change"))
 
+        _environment_id = d.pop("environment_id", UNSET)
+        environment_id: UUID | Unset
+        if isinstance(_environment_id, Unset):
+            environment_id = UNSET
+        else:
+            environment_id = UUID(_environment_id)
+
         env_batch_response = cls(
             request_id=request_id,
             app_id=app_id,
@@ -79,6 +96,7 @@ class EnvBatchResponse:
             updated_keys=updated_keys,
             deleted_keys=deleted_keys,
             config_change=config_change,
+            environment_id=environment_id,
         )
 
         env_batch_response.additional_properties = d

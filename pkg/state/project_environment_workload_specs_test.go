@@ -73,7 +73,8 @@ func testEnvironmentWorkloadSettings(t *testing.T, store workloadSpecTestStore) 
 		AccountID: account.ID, ProjectID: project.ID, Slug: "spec-app-" + uuid.NewString()[:8],
 		Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 4, Status: state.AppActive,
 		WorkloadClass: state.WorkloadClassHTTP, StartCommand: "serve original",
-		Manifest:        state.AppManifest{Env: map[string]string{"MODE": "original"}},
+		Manifest: state.AppManifest{Env: map[string]string{"MODE": "original"},
+			ProjectSourceSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 		RetryPolicyJSON: json.RawMessage(`{"max_attempts":2,"backoff_multiplier":1e0}`),
 	})
 	if err != nil {
@@ -210,8 +211,13 @@ func testEnvironmentWorkloadSettings(t *testing.T, store workloadSpecTestStore) 
 	if _, err := store.UpdateProjectEnvironmentProtection(ctx, account.ID, project.ID, "staging", false); err != nil {
 		t.Fatal(err)
 	}
+	for _, id := range []string{legacy.ID, dep.ID} {
+		if err := store.UpdateDeploymentStatus(ctx, id, state.DeployCancelled, "stopped before environment deletion"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := store.DeleteProjectEnvironment(ctx, account.ID, project.ID, "staging"); err != nil {
-		t.Fatal(err)
+		t.Fatalf("delete finished staging environment: %v", err)
 	}
 	if _, err := store.ProjectEnvironmentWorkloadSpecByID(ctx, account.ID, project.ID, first.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("deleted stage history = %v", err)

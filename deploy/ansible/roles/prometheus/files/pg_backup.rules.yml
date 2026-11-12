@@ -32,6 +32,27 @@ groups:
             Runbook: docs/runbooks/PostgresBackup.md
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PostgresBackup.md"
 
+      # PgBackupStale measures the push, and the push succeeds when it has
+      # nothing new to copy: on 2026-11-07 the nightly pg_basebackup failed
+      # (WAL recycled under `-X fetch`) while the push verified the previous
+      # night's backup, and nothing fired. A failed backup unit stays in the
+      # `failed` state until the next run succeeds.
+      - alert: PgBaseBackupFailed
+        expr: node_systemd_unit_state{name="faas-pg-basebackup.service",state="failed"} == 1
+        for: 5m
+        labels:
+          severity: warn
+          family: pg_backup
+        annotations:
+          summary: "The last nightly Postgres basebackup failed"
+          description: |
+            `faas-pg-basebackup.service` is in the failed state, so the newest
+            recovery point is older than the latest scheduled backup. Read
+            `journalctl -u faas-pg-basebackup.service` on the control-plane
+            host, fix the cause, then run `systemctl start
+            faas-pg-basebackup.service` and `faas-pg-basebackup-push.service`.
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PostgresBackup.md"
+
       # ADR-1344 §8: the control plane's host-local state (CA, apid HMAC
       # keys, secrets) pushed off-host by faas-cp-state-backup. The success
       # gauge exists only after a first verified push; the unit-failure rule

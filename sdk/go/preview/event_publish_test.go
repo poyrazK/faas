@@ -9,8 +9,8 @@ import (
 	"reflect"
 	"testing"
 
-	faas "github.com/poyrazK/faas/sdk/go"
-	"github.com/poyrazK/faas/sdk/go/preview"
+	faas "github.com/gregale-dev/gregale-go"
+	"github.com/gregale-dev/gregale-go/preview"
 )
 
 // Account-level event publication is a preview operation: it lives on

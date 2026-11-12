@@ -980,12 +980,12 @@ func TestDefaultFlushLocked_RecorderCapturesWireQuantity(t *testing.T) {
 	windowStart := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 
 	// Canonical Hobby 24h: 264 MB resident * 86400 s = 22_809_600 mb-s.
-	// Wire quantity = 22_809_600 * 1000 / 3_686_400 = 6187.
+	// Wire quantity = 22_809_600 * 5000 / 3_686_400 = 30937 (ADR-20261107192333).
 	// BillableRAMMB is a runtime helper (not a constant expression),
 	// so this stays a `var` rather than `const` — same shape as
 	// cmd/e2e/billing_invoice_shadow_test.go's shadowPerHour var.
 	canonicalMbSeconds := int64(api.BillableRAMMB(256)) * 60 * 60 * 24
-	const wantQty int64 = 6187
+	const wantQty int64 = 30937
 
 	// The SDK POST will fail (zero-value *paddle.SDK); recover to
 	// keep the rest of the test assertions alive. The recorder row
@@ -1027,11 +1027,11 @@ func TestDefaultFlushLocked_RecorderTable(t *testing.T) {
 		mbSeconds int64
 		wantQty   int64
 	}{
-		{"free_one_hour", 128, 136 * 3_600, 132},
-		{"hobby_one_hour", 256, 264 * 3_600, 264},
-		{"pro_one_hour", 512, 520 * 3_600, 507},
-		{"scale_one_hour", 1024, 1032 * 3_600, 1007},
-		{"hobby_24h_canonical", 256, 264 * 86400, 6187},
+		{"free_one_hour", 128, 136 * 3_600, 664},
+		{"hobby_one_hour", 256, 264 * 3_600, 1289},
+		{"pro_one_hour", 512, 520 * 3_600, 2539},
+		{"scale_one_hour", 1024, 1032 * 3_600, 5039},
+		{"hobby_24h_canonical", 256, 264 * 86400, 30937},
 	}
 	for _, tc := range cases {
 		tc := tc

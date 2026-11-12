@@ -1,4 +1,4 @@
-// Package objectstorageactivity records source writers before provider IO.
+// Package objectstorageactivity records source writers before provider mutations.
 package objectstorageactivity
 
 import (

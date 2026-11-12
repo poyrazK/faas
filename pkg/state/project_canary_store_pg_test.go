@@ -11,6 +11,10 @@ func TestProjectCanaryStorePG(t *testing.T) {
 	testProjectCanaryStore(t, func(t *testing.T) Store { return NewPgStore(pgtest.OpenMigrated(t)) })
 }
 
+func TestProjectRollbackIgnoresCanaryRetentionPG(t *testing.T) {
+	testProjectRollbackIgnoresCanaryRetention(t, NewPgStore(pgtest.OpenMigrated(t)))
+}
+
 func TestProjectCanaryWorkersAndPinnedRetryPG(t *testing.T) {
 	testProjectCanaryWorkersAndPinnedRetry(t, NewPgStore(pgtest.OpenMigrated(t)))
 }

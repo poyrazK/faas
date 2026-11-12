@@ -1,5 +1,9 @@
 # Functions and runtimes
 
+Everything a handler receives and can use (request, `ctx`, responses,
+platform headers, limits, secrets, databases) is on one page:
+[handler API](handler-api.md).
+
 Functions are request handlers packaged with a supported runtime. Explicit
 runtime and handler flags make the contract unambiguous:
 
@@ -16,25 +20,33 @@ source root and served by the Go runner. Start from the `function-rust`
 template. A handler returns one response or streams it: server-sent
 events, generated text and large downloads reach the client as they are
 produced ([Node](runtimes/node24.md#streaming),
-[Python](runtimes/python313.md#streaming), [Go](runtimes/go124.md#streaming);
-ADR-999). Gateway streaming is on for Hobby, Pro and Scale; Free buffers the
+[Python](runtimes/python313.md#streaming), [Go](runtimes/go124.md#streaming)). Gateway streaming is on for Hobby, Pro and Scale; Free buffers the
 response. Every `Set-Cookie` header is sent. Node and Python handlers, and Go and `binary` handlers that
 speak the [persistent protocol](runtimes/go124.md#persistent-handlers), stay
 loaded between requests. Node and Python handlers are also captured warm in
 the init snapshot; a Go or `binary` handler is restarted after a snapshot restore. For ordinary framework APIs, omit `--function`
 and let source detection select the app profile.
 
-A function request must start its response within 3 seconds by default.
-For slower work, raise the function's request timeout:
+A function request must start its response within 30 seconds by default.
+Set a shorter timeout when callers need a fast failure, or a longer one for
+slower work:
 `gregale app APP --request-timeout SECONDS`, up to 30 s on Free, 1 min on
-Hobby, 5 min on Pro and 15 min on Scale (ADR-1150). The whole invocation,
+Hobby, 5 min on Pro and 15 min on Scale. The whole invocation,
 a streamed response included, may run for the longer of that timeout and
 30 s. The runner passes the time left to the handler in the
 `X-Faas-Deadline-Ms` request header. In an event handler, `event.headers` has
 lowercase names and ignores case on lookup (`event.headers["x-faas-deadline-ms"]`);
 repeated request headers arrive joined into one value. Async, queue and cron invocations
 of the function may run just as long: the longer of its request timeout
-and 30 s (ADR-1180).
+and 30 s.
+
+A Node or Python function that loads the Gregale SDK runs each call inside
+the SDK's request context, with no wrapper of its own. Service calls made
+through `createGregaleFetch` (Node) or the SDK's HTTPX transports (Python)
+then carry the time still left, the release and the signed chain deadline,
+so a downstream service stops when this request runs out. A Go function gets
+the same by serving `faas.GregaleReleaseMiddleware(handler)` and calling
+services through an `http.Client` that uses `faas.NewGregaleReleaseTransport`.
 
 An idle function parks after 30 seconds by default on every plan; set
 `gregale app APP --idle SECONDS` to keep it warm longer (see
@@ -48,6 +60,12 @@ the request ends, or deliver it through a durable queue. At the
 idle timeout a function may be [frozen](cold-wake.md#frozen-instances)
 instead of parked. Set `lifecycle.pause` in `gregale.yaml` to `when_idle` to
 keep it running between requests, or to `never` to turn off both.
+
+`gregale deploy` ends with one line showing what the platform applies to the
+function, defaults included, for example
+`Runs with 256 MB · 30 s timeout · pauses between requests · parks after 30 s idle`.
+The same values are in `effective_limits` on the app's API response
+(`request_budget_ms`, `idle_timeout_s`, `pause`).
 
 Use `gregale invoke APP` for a smoke request and `gregale invocation get ID`
 for an async result. Runtime-specific limits are in [plans](plans.md).
@@ -98,6 +116,63 @@ the rest are not attempted and the summary says which functions are live; run
 the deploy again once it is fixed. Inside a monorepo workspace, a function's
 build includes the workspace, so functions can share packages.
 
+### Config in code
+
+A Node or Python handler can declare its own settings, so a new function is
+one file. `gregale deploy` reads the config without running your code:
+
+```js
+// functions/digest/handler.js
+export const config = { cron: "0 8 * * *", ramMb: 512 };
+
+export default {
+  async fetch(request) {
+    return Response.json({ sent: true });
+  },
+};
+```
+
+```python
+# functions/thumbs/handler.py
+config = {"queue": "thumbs", "request_timeout_s": 60}
+
+def handler(event, ctx):
+    return {"status": 200, "body": {"ok": True}}
+```
+
+`gregale add function NAME --trigger http|cron|queue|bucket|webhook`
+writes such a directory for you, with a handler, a test beside it and, for
+Node, a `package.json`; `--lang python` picks Python. Nothing is created
+remotely until you deploy:
+
+```bash
+gregale add function digest --trigger cron --schedule "0 8 * * *"
+node --test functions/digest/handler.test.js
+gregale deploy
+```
+
+With the SDK installed you can use the typed helpers instead:
+`export const config = defineConfig({...})` from `@gregale/sdk-node`, or
+`@function(cron="0 8 * * *")` from `faas_sdk` on `handler`.
+
+- **Keys** are the `functions:` entry fields above, in snake_case or
+  camelCase, plus two shorthands: `cron` (a schedule or list, called on
+  path `/`) and `queue` (a queue name or list, pushed to the function).
+  `name`, `root` and `handler` come from where the file is.
+- **Literals only**: strings, numbers, booleans, null, lists and objects.
+  A variable or `process.env.X` is an error naming the file and line; put
+  values that change between deploys in `env` or secrets.
+- **Discovery**: with no `functions:` key in `gregale.yaml` (or no
+  `gregale.yaml`), every `functions/<name>/` directory whose `handler.js`,
+  `handler.mjs` or `handler.py` declares a config deploys as function
+  `<name>`. Directories without a config are left alone.
+- **gregale.yaml wins**: for a function listed in `functions:`, each field
+  the entry sets is kept and the code fills only the rest. Any cron trigger
+  for the function in `triggers:` replaces the code's `cron`.
+- `gregale deploy --plan` and every deploy list the settings that came from
+  code. Pushes to a connected repository read config in code too where your
+  account can [deploy functions from GitHub](#deploy-a-functions-project-from-github).
+
 ### Functions sharing one source tree
 
 Node and Python functions can live side by side in one tree and share code
@@ -145,7 +220,9 @@ After each function deploys, Gregale applies its manifest settings:
 - **`queue_bindings`**: queues whose messages are pushed to the function,
   with the same fields as an app's `queue_bindings:` (`name`, `queue_name`,
   `max_concurrency`, `enabled`, `retry_policy`). A function consumes by
-  push, so `mode` defaults to `push` and `workload_class` to `http`. The
+  push, so `mode` defaults to `push` and `workload_class` to `http`, as it
+  does for a single function app's top-level `queue_bindings:` and for
+  `gregale queue bindings create` on a function app. The
   function's bindings match the list by name: one you remove is deleted,
   and `queue_bindings: []` removes them all. Without the key, bindings
   made by hand are left alone.
@@ -228,15 +305,147 @@ named. Add a custom domain to the entry app and deploy again to route it too.
 
 Pass `--no-triggers` to deploy code without changing crons, bucket events or
 webhooks. A function removed from the list keeps its app; the deploy names
-it, and `gregale app list --yes <slug>` deletes it.
+it, and `gregale app delete <slug> --yes` deletes it.
 
 A manifest with `functions:` holds only `functions`, cron `triggers` and
 `schema_version`. Other sections apply to a single app, so configure them per
-function after deploying. `functions:` is applied by `gregale deploy`:
-repository deploys connected through GitHub ignore it for a function app and
-refuse it for any other app. The design is recorded in
-[ADR-985](adr/985-multi-function-projects.md); per-function settings and
-routes in [ADR-1342](adr/1342-function-settings-and-concurrent-workers.md).
+function after deploying. `functions:` is applied by `gregale deploy`, and by
+pushes to a connected repository where your account can
+[deploy functions from GitHub](#deploy-a-functions-project-from-github);
+otherwise a repository deploy ignores it for a function app and refuses it for
+any other app.
+
+### Deploy a functions project from GitHub
+
+A functions project can deploy from its GitHub repository instead of a
+checkout. This is rolling out: `gregale feature list` shows whether your
+account has **Functions projects from repository pushes**
+(`repository-functions`). Without it, use `gregale deploy` from a checkout.
+
+Connect the repository through the Gregale GitHub App, then deploy it once as a
+project:
+
+```bash
+gregale deploy --repo octo/shop --ref main --project
+```
+
+The project's production branch is `main` unless you pass
+`--production-branch`. Gregale reads `gregale.yaml` and any `functions/<name>/` handlers at that
+commit, shows the plan, and creates one function app per function with the
+same `<project>-<name>` slugs `gregale deploy` uses. Function apps a checkout
+deploy already created are adopted, not duplicated, and an adopted app does
+not count against your app limit a second time. Only an app with the
+project's owner is adopted: a company project never takes over a personal
+app, or the other way round, and the deploy stops with a conflict on that slug.
+
+After that, every push to the production branch:
+
+- deploys each function whose root changed, and every function when the
+  root `gregale.yaml` changed;
+- creates an app for a function new to the repository;
+- applies each function's settings as `gregale deploy` does: RAM, request and
+  idle timeouts, minimum instances, concurrency, non-secret `env` (and
+  `prune_env`), cron, queue bindings, event triggers and the entry function's
+  routes, including config in code;
+- keeps the app of a function the repository no longer declares. Its GitHub
+  check says it was kept and names `gregale app delete <slug> --yes`.
+
+A push to a branch mapped to another environment (staging, for example) sets
+each function's `env` in that environment only, and `prune_env` removes only
+that environment's variables. RAM, timeouts and concurrency belong to the
+function in every environment, so only a production push changes them.
+A push's env changes are one config revision attributed to the pusher
+(`github:<login>`): `gregale env history` lists it and config rollback can undo
+it, and every setting a push changes appears in the audit log and your
+organization's activity. In a protected environment a push does not change
+env; it fails for that function and asks for a reviewed `gregale deploy`.
+
+A push runs unattended, so it leaves three steps for a person: creating an
+inbound webhook endpoint (its URL is shown once), changing bucket
+notifications (they need MFA), and reading `secrets_from_env` (the values come
+from your shell, and Gregale never reads secrets from the repository).
+Existing webhooks, bucket notifications and secrets stay as they are. The
+push's deploy activity lists each step left, and running `gregale deploy` from
+a checkout completes them; `gregale org activity` and the dashboard's
+activity feed show it.
+
+## Snapshot hooks
+
+A parked function wakes from a snapshot of its workers, so anything they set
+up at boot is copied into every instance restored from it. A Node or Python
+function can declare three hooks in its handler file to manage that state:
+
+- `init` runs in each worker after the module loads and before the worker is
+  ready, on cold boot and before the snapshot is taken. The snapshot waits for
+  it, so async setup (a warmed cache, a fetched config) is never captured half
+  done.
+- `beforeSnapshot` (Python `before_snapshot`) runs in every worker before a
+  new snapshot is captured. Close connections and flush buffers here.
+- `afterRestore` (Python `after_restore`) runs in every worker after a restore
+  and when a [frozen instance](cold-wake.md#frozen-instances) resumes, before
+  the instance serves traffic. Reopen connections and refresh values that must
+  be unique per instance here.
+
+```js
+// handler.js
+let db;
+export default {
+  async init() { db = await connect(process.env.DATABASE_URL); },
+  async beforeSnapshot() { await db.end(); },
+  async afterRestore() { db = await connect(process.env.DATABASE_URL); },
+  async fetch(request) { return Response.json(await db.query("select 1")); },
+};
+```
+
+```python
+# handler.py
+db = None
+
+async def init(ctx):
+    global db
+    db = await connect(os.environ["DATABASE_URL"])
+
+async def before_snapshot(ctx):
+    await db.close()
+
+async def after_restore(ctx):
+    global db
+    db = await connect(os.environ["DATABASE_URL"])
+
+async def handler(event, ctx):
+    return {"body": str(await db.fetchval("select 1"))}
+```
+
+In Node, hooks are methods on the default export or named exports beside
+`handler`; each receives `{signal}`, an `AbortSignal` that fires if the call
+is cancelled. In Python
+they are module functions, sync or async, with an optional `ctx` argument.
+
+`gregale deploy` finds the hooks in the handler file without running it (for a
+[functions project](#several-functions-in-one-project), `gregale deploy --plan`
+lists them under "Snapshot hooks in code:") and points the app's `before_checkpoint` and `after_restore` lifecycle at the function
+runner, which calls the hook in every worker. A push to a [GitHub-connected
+functions project](#deploy-a-functions-project-from-github) does the same. A
+hook removed from the code is removed from the app on the next deploy. An
+app that already has its own `before_checkpoint` or `after_restore` path
+cannot also declare that hook in code; the deploy names the conflict.
+Lifecycle settings are app-wide, so only a production deploy changes them.
+
+The hooks have the [lifecycle hook contract](cold-wake.md#refresh-application-state-after-restore):
+`beforeSnapshot` and `afterRestore` have 500 ms each. In a functions project,
+an entry (or its config in code) can give them up to 2 seconds with
+`before_snapshot_timeout_ms` and `after_restore_timeout_ms`
+(`beforeSnapshotTimeoutMs` and `afterRestoreTimeoutMs` in Node,
+`before_snapshot_timeout_ms` in Python's `@function`). Unlike other entry
+keys, an omitted timeout means the 500 ms default, and setting one for a hook
+the handler does not declare is refused. A failing `afterRestore`
+rejects the restored instance and Gregale cold-boots a fresh one. A failing
+`beforeSnapshot` on the first capture fails the deployment with
+`before_checkpoint_failed`, and declaring it turns off warm-tier snapshot
+captures for the function. A throwing `init` fails the deployment with
+`function_init_failed` and its error ([errors](errors.md)); an `init` that
+does not finish within the startup deadline fails it with
+`app_startup_timeout`.
 
 ## Concurrent requests per worker
 
@@ -273,10 +482,9 @@ The value can be up to your plan's per-instance concurrency (`gregale app
   five seconds causes its worker to restart, failing its other in-flight
   requests too.
 - Go SDK functions keep one request per process. A `binary` function's
-  handler can serve several by advertising them in its ready line, as the
-  shared worker protocol in ADR-1342 describes.
+  handler can serve several by advertising them in its ready line (see the
+  [`binary` runtime](runtimes/binary.md)).
 
-See [ADR-1342](adr/1342-function-settings-and-concurrent-workers.md).
 
 ### Database requests and cancellation
 

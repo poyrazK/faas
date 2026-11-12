@@ -54,8 +54,7 @@ func (s *server) tryMFADisabledAlert(w http.ResponseWriter, r *http.Request, acc
 		s.writeMFADisabledAlertError(w, r, acct, time.Time{}, err, false)
 		return true
 	}
-	s.audit.Emit(r.Context(), "account.mfa_disabled", &acct.ID, map[string]any{"method": method})
-	writeJSON(w, http.StatusOK, api.MFADisableResponse{})
+	s.finishMFADisable(w, r, acct, method)
 	return true
 }
 

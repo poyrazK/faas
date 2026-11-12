@@ -33,7 +33,8 @@ class ManagedPostgresComputePolicyChange:
     connection_interruption_expected: bool
     created_at: datetime.datetime
     last_error_code: str | Unset = UNSET
-    """Safe policy-change diagnostic; an uncertain outcome keeps the accepted intent pending for recovery."""
+    """Safe policy-change diagnostic. A confirmed rejection retains the source policy; uncertain outcomes remain
+    pending."""
     completed_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

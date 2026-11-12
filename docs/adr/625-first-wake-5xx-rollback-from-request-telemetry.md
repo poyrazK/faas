@@ -95,3 +95,47 @@ telemetry directly, so there is no second counter to drift.
 The guard's target is the deployment a plain rollback returns to, never the
 newest superseded row by creation, which can be an aborted canary or a build
 that never served (ADR-1445 amendment 1).
+
+## Amendment (2026-11-10): closed minutes, lost telemetry and reverted releases
+
+A live test in production (2026-11-09) rolled back a release that failed 10%
+of one route, about 3% of its traffic, at 6 requests / 6 errors. Gateways
+collapse request telemetry into per-minute buckets
+(ADR-20261101085552): a server error ships at once as an exact row, a
+successful request only when its minute closes. The guard read the open
+minute and saw the errors without the successes. The canary circuit breaker
+and the post-release watch read the same way. A batch a gateway could not
+deliver (534 requests at 19:20:16) also went unnoticed by all three.
+
+**Decision.**
+
+- The first-wake guard, the post-release watch and the canary circuit breaker
+  read request telemetry only up to the last closed minute behind
+  `api.RouteHealthIngestionLag`, as route health already does
+  (`canary.ClosedTelemetryUntil`). The first-wake guard does not judge a
+  release before its first closed minute.
+- Before acting on a breach, the first-wake guard and the post-release watch
+  check request telemetry coverage over the windows they read
+  (`state.RequestTelemetryLossReader`, the rule route evidence uses). A window
+  a gateway may have lost rows from is judged again later. The canary circuit
+  breaker holds the stage on such a window.
+- A release an automatic guard reverted (`last_auto_rollback_reason` set) is
+  never an implicit rollback target, like a canary aborted before it
+  completed: not for a plain `rollback`, the summary's suggested target, the
+  first-wake guard or the post-release watch. `rollback --to` can still name
+  it; a person decides, and the spent guard is not re-armed.
+
+**Consequences.**
+
+- A revert takes up to about 1.5 minutes longer: the minute holding the first
+  errors must close and pass the ingestion allowance.
+- A canary stage shorter than that allowance holds until a closed minute
+  covers it.
+- A telemetry outage delays a revert instead of causing one. Coverage that
+  does not return before the first-wake window and its grace end leaves the
+  release unjudged, as an ingest stop already did; a gateway restart inside
+  the window counts as such a gap.
+
+**Validation.** `TestRollbackOn5xxSweepReadsOnlyClosedMinutes` pins the
+closed-minute bound; the plain-rollback queries exclude reverted releases in
+both stores.

@@ -110,7 +110,7 @@ func TestBrowserForgotPasswordConfirmsWithoutEnumeration(t *testing.T) {
 	h, email, _ := browserFormServer(t)
 	for _, address := range []string{email, "nobody@example.com"} {
 		rec := browserPost(h, "/login/forgot", url.Values{"email": {address}}, browserAccept)
-		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "If that address belongs to a verified account") {
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "If that address has a Gregale account") {
 			t.Fatalf("%s: status %d body %s", address, rec.Code, rec.Body.String())
 		}
 	}

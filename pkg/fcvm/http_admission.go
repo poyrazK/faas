@@ -38,12 +38,17 @@ func (m *Manager) AcquireHTTPForward(ctx context.Context, instance string) (cont
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	inst := m.live[instance]
+	if inst == nil {
+		// The restored-graph smoke reaches a restored qualification target
+		// the way a source candidate's does (ADR 20261023093000).
+		inst = m.restoredQualificationTargetLocked(instance)
+	}
 	// An unclaimed warm spare is still paused. Paused alone stays set on a
 	// claimed warm-pool restore, which serves.
 	if inst == nil || inst.warmSpare || inst.ExecutionOnly || inst.AppTaskOnly || inst.IsJob || inst.Lease.IsBuilder {
 		return nil, nil, ErrHTTPForwardNotLive
 	}
-	cap := inst.Plan.ConcurrencyPerVMBound()
+	cap := httpAdmissionLimit(inst)
 	if m.httpAdmissionDisabled {
 		// FAAS_HTTP_ADMISSION=off: no cap and no plan requirement, but each
 		// exchange still holds a permit so park and retirement cancel it.
@@ -124,7 +129,7 @@ func (m *Manager) HTTPAdmissionStatus(instance string) (HTTPAdmissionStatus, boo
 		return HTTPAdmissionStatus{}, false
 	}
 	ensureHTTPForwardGeneration(inst)
-	cap := inst.Plan.ConcurrencyPerVMBound()
+	cap := httpAdmissionLimit(inst)
 	state := HTTPAdmissionStatus{Enabled: cap > 0 && !m.httpAdmissionDisabled && !inst.ExecutionOnly && !inst.AppTaskOnly && !inst.IsJob && !inst.Lease.IsBuilder,
 		Limit: cap, Generation: inst.httpForwardGeneration, Plan: inst.Plan, Retiring: inst.warmSpare}
 	if g := m.httpForwards[instance]; g != nil && g.lease == inst.Lease {
@@ -211,4 +216,15 @@ func (m *Manager) forgetHTTPForwards(g *httpForwardGeneration) {
 	if m.httpForwards[g.lease.Instance] == g && g.retired && len(g.active) == 0 {
 		delete(m.httpForwards, g.lease.Instance)
 	}
+}
+
+// httpAdmissionLimit is how many requests vmmd lets through to inst at once:
+// the limit schedd sent with the wake, at most api.AppRequestConcurrencyBound,
+// or the plan's concurrency_per_vm without one (ADR-20261101215228). Zero for
+// an unknown plan without a sent limit, which fails closed.
+func httpAdmissionLimit(inst *Instance) int {
+	if inst.RequestConcurrency > 0 {
+		return min(inst.RequestConcurrency, api.AppRequestConcurrencyBound)
+	}
+	return inst.Plan.ConcurrencyPerVMBound()
 }

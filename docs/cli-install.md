@@ -52,8 +52,9 @@ with your platform, the script falls back to the GitHub API
 ([ADR-20261025092617](adr/20261025092617-cli-install-channel-pointer.md)).
 If that fallback is rate limited too, pass `--version`.
 
-Upgrading is re-running the script; it replaces the binary in place. A
-running `gregale logs -f` keeps its open inode and is unaffected.
+Upgrading is re-running the script, or `gregale update`. Either replaces
+the binary in place, and a running `gregale logs -f` keeps its open inode
+and is unaffected. See [Updating](#updating).
 
 Uninstall is removing the one file:
 
@@ -138,6 +139,31 @@ may have been skipped, or the matching platform version may not yet be public:
 ```bash
 npm install -g --include=optional gregale@rc
 ```
+
+## Updating
+
+```bash
+gregale update            # install the newest release
+gregale update --check    # only report whether one exists
+gregale update --version v0.1.18   # install an exact tag, older ones too
+```
+
+`gregale update` reads the same `CLI-STABLE` and `CLI-LATEST` pointers as
+the curl installer. A stable install follows `CLI-STABLE`; a prerelease
+install follows whichever pointer is newer, so an `rc` install moves to the
+next `rc` until a newer stable release exists. Without `--version` it never
+moves to an older release.
+
+The archive is verified against the release's `CLI-SHA256SUMS`, and the new
+binary must run and report the expected version before it is renamed over
+the old one; any failure leaves the installed CLI unchanged. When the
+binary's directory is not writable (for example `/usr/local/bin`), re-run
+with `sudo` or reinstall into a directory you own.
+
+An npm install is not replaced in place, since npm records which version it
+installed; `gregale update` prints the `npm install -g gregale@<version>`
+command instead. A development build (`gregale version` prints `dev`)
+updates only with an explicit `--version`.
 
 ## In CI
 

@@ -62,7 +62,7 @@ func TestDataAPIUploadAndHookSQLExposeOptionalMigrations(t *testing.T) {
 	if code := main.Run([]string{"data-api", "hooks", "sql", "--upgrade"}); code != 0 {
 		t.Fatalf("hooks SQL exit %d", code)
 	}
-	if !strings.Contains(output.String(), "gregale_change_status") || strings.Contains(output.String(), "CREATE TABLE") {
+	if !strings.Contains(output.String(), "gregale_change_status") || strings.Contains(output.String(), "CREATE TABLE api.gregale_change_events") {
 		t.Fatalf("hook upgrade must preserve the existing outbox: %s", output.String())
 	}
 }

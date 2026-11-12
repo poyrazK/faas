@@ -51,7 +51,7 @@ func TestQuota_FreshAppAtCapBlocksButExistingAppDoesNot(t *testing.T) {
 // it is what would fail if the plan gate were ever quietly reinstated.
 func TestQuotaValidatesVCPUAndRolloutParity(t *testing.T) {
 	limits := api.MustLimitsFor(api.PlanHobby)
-	badVCPU := limits.VCPU + 1
+	badVCPU := api.SizeVCPUs(limits.RAMMB) + 1
 	traffic := 25
 	canary := &api.CanaryPresetSpec{Preset: "balanced"}
 	got := Quota(api.PlanHobby, Baseline{}, Pending{

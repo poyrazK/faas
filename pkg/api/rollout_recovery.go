@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"net/http"
 	"net/url"
 )
 
@@ -34,6 +35,6 @@ func (c *Client) RecoverExactRollout(ctx context.Context, slug, deploymentID, pr
 func (c *Client) RecoverReviewedServiceRollout(ctx context.Context, slug, deploymentID, predecessorID, reason string, review AppReleaseReview) (RolloutTransitionResponse, error) {
 	var out RolloutTransitionResponse
 	body := RecoverRolloutRequest{Action: "abort", Reason: reason, DeploymentID: deploymentID, ExpectedPredecessorDeploymentID: predecessorID, ExpectedReview: &review}
-	err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(slug)+"/rollouts/recover", body, &out)
+	err := c.doWithClientAndHeadersAndIdempotencyKey(ctx, c.http, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/rollouts/recover", body, &out, "", serviceAbortAttemptHeaders(ctx))
 	return out, err
 }

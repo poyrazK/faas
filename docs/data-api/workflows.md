@@ -156,6 +156,10 @@ Review and commit a new baseline only after reviewing the diff and replay scope.
 
 ## Hooks while the API is parked
 
+The built-in `gregale data-api hooks enable NAME --drain-every 5m` cron remains
+available. The optional Job adapter below uses a backend key and exposes a
+separate owner observation route; both retain the same outbox leases.
+
 Install the optional outbox observation helper for an existing installation:
 
 ```sh

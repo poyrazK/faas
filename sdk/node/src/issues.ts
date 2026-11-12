@@ -13,6 +13,7 @@ export interface IssueContext {
   request_id?: string;
   invocation_id?: string;
   route?: string;
+  http_status?: number;
   source_kind?: 'exception' | 'worker';
   /** Stable application error code; affects failure-site-v1 grouping only. */
   error_code?: string;
@@ -151,6 +152,7 @@ export function createIssueReporter(options: IssueReporterOptions) {
       trace_id: correlationID(context.trace_id, 32), span_id: correlationID(context.span_id, 16),
       request_id: context.request_id === undefined ? undefined : bounded(context.request_id,256),
       invocation_id: invocationID(context.invocation_id), route: context.route === undefined ? undefined : bounded(context.route,256), source_kind: context.source_kind,
+      http_status: Number.isInteger(context.http_status) && context.http_status! >= 400 && context.http_status! <= 599 ? context.http_status : undefined,
       error_code: context.error_code === undefined ? undefined : bounded(context.error_code,256),
       fingerprint_override: context.fingerprint_override === undefined ? undefined : bounded(context.fingerprint_override,256),
       tags: context.tags===undefined?undefined:Object.fromEntries(Object.entries(context.tags)
@@ -201,9 +203,10 @@ export function createIssueReporter(options: IssueReporterOptions) {
     // Bound grouping evidence without looking at optional context, so adding
     // breadcrumbs, tags or correlation IDs cannot change the fingerprint.
     const optional = {breadcrumbs:event.breadcrumbs, breadcrumbs_dropped:event.breadcrumbs_dropped, tags:event.tags,
-      request_id:event.request_id, trace_id:event.trace_id, span_id:event.span_id, invocation_id:event.invocation_id, route:event.route};
+      request_id:event.request_id, trace_id:event.trace_id, span_id:event.span_id, invocation_id:event.invocation_id, route:event.route, http_status:event.http_status};
     event.breadcrumbs = undefined; event.breadcrumbs_dropped = undefined; event.tags = undefined;
     event.request_id = undefined; event.trace_id = undefined; event.span_id = undefined; event.invocation_id = undefined; event.route = undefined;
+    event.http_status = undefined;
     const oversized = (limit = 65536) => Buffer.byteLength(JSON.stringify(event),'utf8') > limit;
     while (event.causes?.length && oversized(61440)) { event.causes.pop(); event.causes_incomplete = true; }
     if (oversized(61440)) event.stack_trace = undefined;

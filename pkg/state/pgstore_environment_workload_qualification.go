@@ -48,6 +48,17 @@ func (s *PgStore) QueueEnvironmentGitOpsQualification(ctx context.Context, lease
 	if row.Phase != "prepared" {
 		return nil, ErrConflict
 	}
+	// An activated graph has finished qualifying and its candidates serve.
+	// The request guard admits work only for held snapshotting candidates, so
+	// queueing again was refused on every pass after activation; there is
+	// nothing left to queue or notify.
+	evidence, err := environmentWorkloadActivationEvidenceTx(ctx, tx, row)
+	if err != nil {
+		return nil, err
+	}
+	if evidence.Activated {
+		return []EnvironmentWorkloadQualificationRequest{}, nil
+	}
 	if _, err := q.SetEnvironmentGitOpsLeaseContext(ctx, tx, lease.LeaseToken); err != nil {
 		return nil, mapErr(err)
 	}

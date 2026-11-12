@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/routelifecycle"
 	"github.com/onebox-faas/faas/pkg/state"
+	"golang.org/x/sync/singleflight"
 )
 
 func watchDeclaredRouteInvalidations(ctx context.Context, pool *pgxpool.Pool, matcher *declaredRoutesMatcher, log *slog.Logger) {
@@ -117,9 +118,12 @@ type compiledDeclaredRoute struct {
 }
 
 type declaredRoutePolicy struct {
-	lifecycle        map[string]routelifecycle.Metadata
-	routes           []compiledDeclaredRoute
-	expires          time.Time
+	lifecycle map[string]routelifecycle.Metadata
+	routes    []compiledDeclaredRoute
+	expires   time.Time
+	// verified is when the store last answered for this entry. An expired
+	// entry serves at most staleLimit past verified plus ttl.
+	verified         time.Time
 	missing          bool
 	revision         string
 	documentRevision string
@@ -135,11 +139,18 @@ type declaredRouteLoad struct {
 // reuses it on the request hot path. Explicit App.DeclaredRoutes take
 // precedence and need no database read. Entries are invalidated by the
 // app_openapi_doc_changed watcher and also expire after a short TTL as a
-// safety net if a notification is lost.
+// safety net if a notification is lost. An expired entry keeps serving while
+// one background read renews it; only an app's first load, or an entry
+// unverified for longer than staleLimit, reads on the request path, and
+// concurrent requests share that read (ADR-20261028110044 amendment 6).
 type declaredRoutesMatcher struct {
 	store declaredRouteDocStore
 	ttl   time.Duration
 	now   func() time.Time
+	// loadTimeout bounds every document read; retry is how soon a failed
+	// renewal reads again; staleLimit is how long past its TTL an entry the
+	// store could not renew keeps serving.
+	loadTimeout, retry, staleLimit time.Duration
 
 	mu                sync.RWMutex
 	entries           map[declaredRouteCacheKey]declaredRoutePolicy
@@ -148,6 +159,13 @@ type declaredRoutesMatcher struct {
 	generations       map[string]uint64
 	// imported holds snapshot-pinned documents by content digest.
 	imported map[string]declaredRoutePolicy
+	// baselines holds each app's route removal baseline contract, used only
+	// to label requests its current contract no longer declares.
+	baselines  map[declaredRouteCacheKey]declaredRoutePolicy
+	refreshing map[string]bool
+	loads      singleflight.Group
+	// refreshes tracks background reads so tests can wait for them.
+	refreshes sync.WaitGroup
 }
 
 func newDeclaredRoutesMatcher(store declaredRouteDocStore) *declaredRoutesMatcher {
@@ -155,10 +173,15 @@ func newDeclaredRoutesMatcher(store declaredRouteDocStore) *declaredRoutesMatche
 		store:             store,
 		ttl:               5 * time.Minute,
 		now:               time.Now,
+		loadTimeout:       2 * time.Second,
+		retry:             10 * time.Second,
+		staleLimit:        30 * time.Minute,
 		entries:           make(map[declaredRouteCacheKey]declaredRoutePolicy),
 		pending:           make(map[*declaredRouteLoad]struct{}),
 		deploymentEntries: make(map[deploymentLifecycleKey]declaredRoutePolicy),
 		generations:       make(map[string]uint64),
+		baselines:         make(map[declaredRouteCacheKey]declaredRoutePolicy),
+		refreshing:        make(map[string]bool),
 	}
 }
 
@@ -177,15 +200,22 @@ func (m *declaredRoutesMatcher) MatchDeclaredRoute(ctx context.Context, app gate
 // ResolveObservedRoute reuses the declaration cache for metrics and discovery.
 // A missing document is normal for zero-config apps, so the caller can fall
 // back to conservative identifier inference without altering route policy.
+//
+// A route the current contract does not declare keeps the template of the
+// app's route removal baseline, so a removed route's remaining traffic keeps
+// its own protected label until removal is approved (ADR-20261028110044
+// amendment 6). The baseline only labels: it never admits a request.
 func (m *declaredRoutesMatcher) ResolveObservedRoute(ctx context.Context, app gateway.App, requestPath, requestMethod string) (string, bool, error) {
 	policy, err := m.loadPolicy(ctx, app)
 	if err != nil {
 		return "", false, err
 	}
-	if policy.missing {
-		return "", false, nil
+	if !policy.missing {
+		if template, matched := matchingDeclaredTemplate(policy.routes, requestPath, requestMethod); matched {
+			return template, true, nil
+		}
 	}
-	template, matched := matchingDeclaredTemplate(policy.routes, requestPath, requestMethod)
+	template, matched := matchingDeclaredTemplate(m.removalBaseline(ctx, app), requestPath, requestMethod)
 	return template, matched, nil
 }
 
@@ -203,41 +233,139 @@ func (m *declaredRoutesMatcher) loadPolicy(ctx context.Context, app gateway.App)
 		return declaredRoutePolicy{}, fmt.Errorf("declared route document store is not configured")
 	}
 
-	now := m.now()
-	key := declaredRouteCacheKey{app.ID, app.AccountID}
-	m.mu.Lock()
-	entry, ok := m.entries[key]
-	if ok && now.Before(entry.expires) {
-		m.mu.Unlock()
-		return entry, nil
-	}
-	load := &declaredRouteLoad{key: key}
-	m.pending[load] = struct{}{}
-	m.mu.Unlock()
-	defer m.finishDeclaredRouteLoad(load)
-
 	readDoc := m.store.GetAppOpenAPIDoc
 	if contracts, ok := m.store.(state.RouteContractDocStore); ok {
 		// A PR preview is held to its production app's document.
 		readDoc = contracts.GetRouteContractOpenAPIDoc
 	}
-	doc, _, err := readDoc(ctx, app.ID, app.AccountID)
-	if errors.Is(err, state.ErrNotFound) {
-		policy := declaredRoutePolicy{expires: now.Add(m.ttl), missing: true}
-		if err := sealDeclaredRoutePolicy(&policy); err != nil {
-			return declaredRoutePolicy{}, err
+	appID, accountID := app.ID, app.AccountID
+	read := func(ctx context.Context) (declaredRoutePolicy, error) {
+		doc, _, err := readDoc(ctx, appID, accountID)
+		if errors.Is(err, state.ErrNotFound) {
+			policy := declaredRoutePolicy{missing: true}
+			return policy, sealDeclaredRoutePolicy(&policy)
 		}
-		return m.publishDeclaredRoutePolicy(load, policy)
+		if err != nil {
+			return declaredRoutePolicy{}, fmt.Errorf("load OpenAPI document for app %s: %w", appID, err)
+		}
+		return compileOpenAPIDocument(doc)
+	}
+	return m.cachedPolicy(ctx, m.entries, "doc", declaredRouteCacheKey{appID, accountID}, read)
+}
+
+// cachedPolicy serves key from cache. A fresh entry is returned as is; an
+// expired one keeps serving, while the store last verified it within ttl plus
+// staleLimit, as one background read renews it. Otherwise the request reads,
+// sharing one bounded read with every concurrent request for the key.
+func (m *declaredRoutesMatcher) cachedPolicy(ctx context.Context, cache map[declaredRouteCacheKey]declaredRoutePolicy, kind string, key declaredRouteCacheKey, read func(context.Context) (declaredRoutePolicy, error)) (declaredRoutePolicy, error) {
+	now := m.now()
+	m.mu.RLock()
+	entry, ok := cache[key]
+	m.mu.RUnlock()
+	if ok && now.Before(entry.verified.Add(m.ttl+m.staleLimit)) {
+		if !now.Before(entry.expires) {
+			m.refresh(ctx, cache, kind, key, read)
+		}
+		return entry, nil
+	}
+	result := m.loads.DoChan(kind+":"+key.appID+":"+key.accountID, func() (any, error) {
+		return m.fetch(ctx, cache, key, read)
+	})
+	select {
+	case <-ctx.Done():
+		return declaredRoutePolicy{}, ctx.Err()
+	case res := <-result:
+		if res.Err != nil {
+			return declaredRoutePolicy{}, res.Err
+		}
+		return res.Val.(declaredRoutePolicy), nil
+	}
+}
+
+// refresh starts one background read for key unless one is running. The
+// read keeps ctx's values but not its cancellation.
+func (m *declaredRoutesMatcher) refresh(ctx context.Context, cache map[declaredRouteCacheKey]declaredRoutePolicy, kind string, key declaredRouteCacheKey, read func(context.Context) (declaredRoutePolicy, error)) {
+	flight := kind + ":" + key.appID + ":" + key.accountID
+	m.mu.Lock()
+	if m.refreshing[flight] {
+		m.mu.Unlock()
+		return
+	}
+	m.refreshing[flight] = true
+	m.mu.Unlock()
+	ctx = context.WithoutCancel(ctx)
+	m.refreshes.Add(1)
+	go func() {
+		defer m.refreshes.Done()
+		defer func() {
+			m.mu.Lock()
+			delete(m.refreshing, flight)
+			m.mu.Unlock()
+		}()
+		<-m.loads.DoChan(flight, func() (any, error) { return m.fetch(ctx, cache, key, read) })
+	}()
+}
+
+// fetch reads key once under loadTimeout and publishes the result. A failed
+// read keeps the previous entry and retries after m.retry; an invalidation
+// during the read discards it.
+func (m *declaredRoutesMatcher) fetch(ctx context.Context, cache map[declaredRouteCacheKey]declaredRoutePolicy, key declaredRouteCacheKey, read func(context.Context) (declaredRoutePolicy, error)) (any, error) {
+	load := &declaredRouteLoad{key: key}
+	m.mu.Lock()
+	m.pending[load] = struct{}{}
+	m.mu.Unlock()
+	defer m.finishDeclaredRouteLoad(load)
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), m.loadTimeout)
+	defer cancel()
+	policy, err := read(readCtx)
+	now := m.now()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if load.invalidated {
+		return declaredRoutePolicy{}, fmt.Errorf("declared route contract changed during snapshot load")
 	}
 	if err != nil {
-		return declaredRoutePolicy{}, fmt.Errorf("load OpenAPI document for app %s: %w", app.ID, err)
-	}
-	policy, err := compileOpenAPIDocument(doc)
-	if err != nil {
+		if previous, ok := cache[key]; ok {
+			previous.expires = now.Add(m.retry)
+			cache[key] = previous
+		}
 		return declaredRoutePolicy{}, err
 	}
-	policy.expires = now.Add(m.ttl)
-	return m.publishDeclaredRoutePolicy(load, policy)
+	policy.expires, policy.verified = now.Add(m.ttl), now
+	cache[key] = policy
+	return policy, nil
+}
+
+// removalBaseline returns the compiled contract of the app's route removal
+// baseline. It never reads on the request path: a missing or expired entry
+// starts one background read and the request labels without it meanwhile.
+func (m *declaredRoutesMatcher) removalBaseline(ctx context.Context, app gateway.App) []compiledDeclaredRoute {
+	store, ok := m.store.(state.RouteRemovalBaselineDocStore)
+	if m == nil || !ok || app.ID == "" {
+		return nil
+	}
+	appID, accountID := app.ID, app.AccountID
+	key := declaredRouteCacheKey{appID, accountID}
+	now := m.now()
+	m.mu.RLock()
+	entry, found := m.baselines[key]
+	m.mu.RUnlock()
+	if !found || !now.Before(entry.expires) {
+		m.refresh(ctx, m.baselines, "baseline", key, func(ctx context.Context) (declaredRoutePolicy, error) {
+			doc, err := store.RouteRemovalBaselineOpenAPIDoc(ctx, appID, accountID)
+			if errors.Is(err, state.ErrNotFound) {
+				return declaredRoutePolicy{missing: true}, nil
+			}
+			if err != nil {
+				return declaredRoutePolicy{}, err
+			}
+			return compileOpenAPIDocument(doc)
+		})
+	}
+	if !found || entry.missing || !now.Before(entry.verified.Add(m.ttl+m.staleLimit)) {
+		return nil
+	}
+	return entry.routes
 }
 
 func (m *declaredRoutesMatcher) Invalidate(appID string) {
@@ -254,6 +382,11 @@ func (m *declaredRoutesMatcher) Invalidate(appID string) {
 	for key := range m.deploymentEntries {
 		if key.appID == appID {
 			delete(m.deploymentEntries, key)
+		}
+	}
+	for key := range m.baselines {
+		if key.appID == appID {
+			delete(m.baselines, key)
 		}
 	}
 	for load := range m.pending {

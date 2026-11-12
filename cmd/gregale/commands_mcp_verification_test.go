@@ -134,7 +134,7 @@ func newMCPVerificationFixture(t *testing.T, badInitialize bool, latency time.Du
 		case "/v1/capabilities":
 			_ = json.NewEncoder(w).Encode(api.CapabilitiesResponse{ConditionalParking: true})
 		case "/v1/apps/web":
-			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app", Slug: "web", URL: f.endpoint.URL, StreamingEnabled: true, PublicAuth: api.PublicAuthStatus{Mode: api.AppPublicAuthModeOpen}})
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app", Slug: "web", URL: f.endpoint.URL, StreamingEnabled: true, PublicAuth: api.PublicAuthStatus{Mode: api.AppPublicAuthModeOpen}, Manifest: api.AppManifest{Env: map[string]string{"MCP_TASKS_ROLE": "web", "MCP_TASK_NAMESPACE": mcpNativeTestNamespace}}})
 		case "/v1/apps/web/deployments":
 			_ = json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{candidate, stable}})
 		case "/v1/deployments/candidate":
@@ -189,6 +189,16 @@ func newMCPVerificationFixture(t *testing.T, badInitialize bool, latency time.Du
 			_ = json.NewEncoder(w).Encode(api.CustomMetricListResponse{Metrics: []api.CustomMetricResponse{{Name: "mcp_tasks_observer_heartbeat", Value: 1, Stale: false, ObservedAt: time.Now()}}})
 		case "/v1/apps/previous/deployments/latest":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "old", AppID: "previous", Status: main.StatusLive})
+		case "/v1/apps/previous", "/v1/apps/previous-two":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "previous", WorkloadClass: "worker", Manifest: api.AppManifest{StopGracePeriod: 45 * time.Second}})
+		case "/v1/apps/previous/instances", "/v1/apps/previous-two/instances":
+			deployment := "old"
+			if strings.Contains(r.URL.Path, "previous-two") {
+				deployment = "old-two"
+			}
+			_ = json.NewEncoder(w).Encode([]api.InstanceResponse{{ID: "old-instance", DeploymentID: deployment, State: "running"}})
+		case "/v1/apps/previous/logs", "/v1/apps/previous-two/logs":
+			fmt.Fprint(w, "event: log\ndata: {\"instance\":\"old-instance\",\"line\":\"{\\\"event\\\":\\\"mcp_task_worker_started\\\",\\\"workerID\\\":\\\"12345678-1234-1234-1234-123456789abc\\\",\\\"claimFence\\\":true,\\\"shutdownTimeoutMs\\\":10000}\"}\n\n")
 		case "/v1/deployments/candidate/traffic":
 			f.promotions.Add(1)
 			f.promoted.Store(true)

@@ -55,6 +55,10 @@ export type CreateAlertRuleRequest = {
    */
   custom_metric_name?: string;
   /**
+   * custom_metric rules only: watch the one labelled series with exactly these labels instead of the aggregate (counters summed, gauges max across series). Keys match ^[a-z_][a-z0-9_]{0,62}$.
+   */
+  custom_metric_labels?: Record<string, string>;
+  /**
    * Required when metric is log_search_matches; omit otherwise. URL query string of log search filters (source, level, status, route, deployment_id, request_id, trace_id, q); the rule counts matching log events in its window. Webhook action only, windows up to 24h.
    */
   log_query?: string;

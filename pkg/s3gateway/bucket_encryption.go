@@ -39,7 +39,10 @@ func (h *Handler) bucketEncryption(w http.ResponseWriter, r *http.Request, req r
 		h.unsupported(w, r, req.requestID)
 		return
 	}
-	svc := objectstorage.BucketEncryptionService{Store: st, Provider: native, BeforeRequest: objectstorage.VersioningRequestRecorder(h.requestMetrics, req.bucket.ID)}
+	svc := objectstorage.BucketEncryptionService{Store: st, Provider: native, BeforeRequest: h.configurationRequestRecorder(req.bucket)}
+	if r.Method == http.MethodDelete {
+		svc.BeforeRequest = objectstorage.VersioningRequestRecorder(h.requestMetrics, req.bucket.ID)
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method == http.MethodGet {
 		h.getBucketEncryption(w, r, req, svc)
@@ -104,8 +107,14 @@ func (h *Handler) changeBucketEncryption(w http.ResponseWriter, r *http.Request,
 			return
 		}
 	}
+	// A new encryption intent need not read native settings before acceptance.
+	// Admit it before journaling; clearing the policy remains cleanup.
+	if r.Method == http.MethodPut && !h.admit(w, r, req, "__settings__", 0, false) {
+		return
+	}
 	j, err := svc.Request(r.Context(), req.bucket, snapshot)
 	if err == nil && j.State != "ready" {
+		svc.BeforeRequest = objectstorage.VersioningRequestRecorder(h.requestMetrics, req.bucket.ID)
 		j, err = svc.Reconcile(r.Context(), req.bucket)
 		if errors.Is(err, state.ErrConflict) {
 			j, err = st.GetObjectBucketEncryption(r.Context(), req.bucket.AccountID, req.bucket.AppID, req.bucket.ID)
@@ -127,6 +136,9 @@ func (h *Handler) changeBucketEncryption(w http.ResponseWriter, r *http.Request,
 }
 
 func (h *Handler) bucketEncryptionError(w http.ResponseWriter, r *http.Request, req requestContext, err error) {
+	if h.configurationAdmissionError(w, r, req, err) {
+		return
+	}
 	if h.writeAWSChunkedError(w, r, req.requestID, err) {
 		return
 	}

@@ -20,7 +20,7 @@ func TestPostgresStoreScheduledDelete(t *testing.T) {
 	at := start.Add(time.Minute)
 
 	claimed, err := store.ClaimScheduledDelete(ctx, accountID, database.ID, "schedule", at, at.Add(time.Minute), purgeAfter)
-	if err != nil || claimed.State != StateDeleting || !claimed.PurgeAfter.Equal(purgeAfter) || !claimed.RetryAt.Equal(purgeAfter) {
+	if err != nil || claimed.State != StateDeleting || !claimed.PurgeAfter.Equal(purgeAfter) || !claimed.RetryAt.Equal(purgeAfter) || claimed.LastErrorCode != deletionHoldPendingCode {
 		t.Fatalf("ClaimScheduledDelete = %+v, %v", claimed, err)
 	}
 	if _, err := store.ClaimUndelete(ctx, accountID, database.ID, "undo", at, at.Add(time.Minute)); !errors.Is(err, ErrConflict) {

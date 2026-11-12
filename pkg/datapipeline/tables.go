@@ -28,6 +28,7 @@ func relationNames(relations []relation) []string {
 	return names
 }
 func tablePlan(p Pipeline, before, after []relation) SchemaChange {
+	after = recordedSourceMetadata(p, preserveMissingMetadata(after, before))
 	plan := schemaPlan(p, before, after) // Reuse exact definition/generation identity.
 	if p.SchemaChange != nil && p.SchemaChange.SelectionID != "" {
 		plan.SelectionID = p.SchemaChange.SelectionID

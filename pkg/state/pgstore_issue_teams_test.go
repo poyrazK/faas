@@ -191,6 +191,9 @@ func TestPg_IssueTeamRevokedOrganizationMembersAndSplitRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := s.AddOrgMember(ctx, org.ID, account.ID, state.OrgRoleOwner, nil); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.AddOrgMember(ctx, org.ID, member.ID, state.OrgRoleAdmin, nil); err != nil {
 		t.Fatal(err)
 	}

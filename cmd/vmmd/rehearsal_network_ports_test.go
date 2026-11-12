@@ -12,4 +12,7 @@ func TestRehearsalNetworkDNSPortAgreement(t *testing.T) {
 	if gateway.RehearsalServiceDiscoveryDNSPort != netns.RehearsalServiceDiscoveryDNSPort {
 		t.Fatal("gateway listener and runtime DNS redirection disagree")
 	}
+	if gateway.SandboxRegistriesDNSPort != netns.SandboxRegistriesDNSPort {
+		t.Fatal("gateway sandbox registries listener and runtime DNS redirection disagree")
+	}
 }

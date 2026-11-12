@@ -360,6 +360,10 @@ func TestProductControlOwnerSessionGuards(t *testing.T) {
 	}
 	call("POST", base+"/review", form.Encode()+"&tenant="+tenant.ID, value, 400)
 	call("POST", base+"/review", form.Encode()+"&reason="+strings.Repeat("x", api.ProductControlOwnerFormMaxBytes), value, 400)
+	// A pending envelope models a live MFA requirement (ADR-20261106210000).
+	if _, err := store.SetMFARequired(ctx, account.ID, true); err != nil {
+		t.Fatal(err)
+	}
 	pendingID := uuid.NewString()
 	if _, err := store.CreateSession(ctx, pendingID, account.ID, "192.0.2.10", "owner-console-test"); err != nil {
 		t.Fatal(err)

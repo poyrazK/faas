@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
@@ -39,8 +40,16 @@ func (s *server) getCustomMetricSeries(w http.ResponseWriter, r *http.Request, a
 			"range must be one of: "+strings.Join(customMetricSeriesRanges(), ", ")))
 		return
 	}
+	// labels selects one series by the key the list endpoint returns
+	// (ADR-20261108160000 slice C).
+	labels := r.URL.Query().Get("labels")
+	if len(labels) > 1024 || !utf8.ValidString(labels) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "invalid labels",
+			"labels must be a series key as listed for the metric, at most 1024 bytes"))
+		return
+	}
 	kind := s.customMetricKind(r.Context(), app.ID, name)
-	writeJSON(w, http.StatusOK, s.customMetricSeries(r.Context(), app.ID, name, kind, rng, time.Now().UTC()))
+	writeJSON(w, http.StatusOK, s.customMetricSeries(r.Context(), app.ID, name, labels, kind, rng, time.Now().UTC()))
 }
 
 // customMetricKind looks up a stored metric's kind, defaulting to gauge for
@@ -61,18 +70,23 @@ func (s *server) customMetricKind(ctx context.Context, appID, name string) strin
 // customMetricSeries reads one metric's history. Counters are returned as a
 // per-second rate. Prometheus failures become a degraded Source with no
 // points; the dashboard shares it.
-func (s *server) customMetricSeries(ctx context.Context, appID, name, kind, rng string, now time.Time) api.CustomMetricSeriesResponse {
+func (s *server) customMetricSeries(ctx context.Context, appID, name, labels, kind, rng string, now time.Time) api.CustomMetricSeriesResponse {
 	step := api.CustomMetricSeriesSteps[rng]
-	out := api.CustomMetricSeriesResponse{AppID: appID, Name: name, Kind: kind, Range: rng, Step: step, Points: []api.CustomMetricSeriesPoint{}}
+	out := api.CustomMetricSeriesResponse{AppID: appID, Name: name, Labels: labels, Kind: kind, Range: rng, Step: step, Points: []api.CustomMetricSeriesPoint{}}
 	if s.promqlClient == nil {
 		out.Source, out.Points = appmetrics.SourceDegradedPrefix+"prometheus not configured", nil
 		return out
 	}
 	window := time.Duration(customMetricRangeHours(rng)) * time.Hour
 	// Several apid replicas export the same series; max collapses them.
-	query := fmt.Sprintf(`max(gregale_app_custom_metric{app=%q,name=%q})`, appID, name)
+	// With labels (ADR-20261108160000 slice C) the history is one series'.
+	metric, selector := "gregale_app_custom_metric", fmt.Sprintf(`app=%q,name=%q`, appID, name)
+	if labels != "" {
+		metric, selector = "gregale_app_custom_metric_series", selector+fmt.Sprintf(`,labels=%q`, labels)
+	}
+	query := fmt.Sprintf(`max(%s{%s})`, metric, selector)
 	if kind == state.CustomMetricKindCounter {
-		query = fmt.Sprintf(`max(rate(gregale_app_custom_metric{app=%q,name=%q}[%s]))`, appID, name, api.CustomMetricCounterRateWindow)
+		query = fmt.Sprintf(`max(rate(%s{%s}[%s]))`, metric, selector, api.CustomMetricCounterRateWindow)
 	}
 	series, err := s.promqlClient.QueryRange(ctx, query,
 		fmt.Sprint(now.Add(-window).Unix()), fmt.Sprint(now.Unix()), step)

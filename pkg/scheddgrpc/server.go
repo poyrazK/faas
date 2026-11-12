@@ -338,8 +338,11 @@ type Server struct {
 	stats  StatsReader
 	// agentRuns serves RunAgent (ADR-20261027090010 §6); nil answers Unimplemented.
 	agentRuns AgentRunRunner
-	ops       *wire.OpsMetrics
-	log       *slog.Logger
+	// sandboxRuns serves RunSandbox (ADR-20261027090013 §4); nil answers
+	// Unimplemented.
+	sandboxRuns SandboxRunner
+	ops         *wire.OpsMetrics
+	log         *slog.Logger
 	// owner is the durable Phase 2 / Gate A shard key this schedd
 	// serves. Empty for the legacy single-box posture. Set via
 	// (*Server).WithOwner at wiring time (cmd/schedd resolves it
@@ -1506,6 +1509,7 @@ func nodeTelemetryFromProto(in []*scheddpb.InstanceTelemetry) []sched.NodeTeleme
 			EgressNewDestinationsLimitPerMin: row.GetEgressNewDestinationsLimitPerMin(),
 			EgressFloodDropsLimitPerMin:      row.GetEgressFloodDropsLimitPerMin(),
 			QuietPaused:                      row.GetQuietPaused(),
+			IdleLadderLevel:                  row.GetIdleLadderLevel(),
 			Frozen:                           row.GetFrozen(),
 		}
 		if value := row.GetEgressNewDestinationsPerMin(); value != nil {
@@ -1649,7 +1653,9 @@ func (s *Server) ListInstanceStats(ctx context.Context, _ *scheddpb.ListInstance
 				}
 				r.CPU = instancestats.Unknown
 				r.DiskValid = false
-				rows = append(rows, instanceStatsRowProto(r))
+				row := instanceStatsRowProto(r)
+				row.Departed = true
+				rows = append(rows, row)
 			}
 		}
 		if h := s.ops.CPUStatsCollectDuration(); h != nil {

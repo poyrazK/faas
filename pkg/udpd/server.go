@@ -11,6 +11,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/ingressroute"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -173,7 +174,7 @@ func (s *Server) Serve(parent context.Context) error {
 					}
 					s.Metrics.endPeer(start, outcome)
 				}()
-				admitCtx, admitCancel := context.WithTimeout(peerCtx, api.UDPAdmissionTimeout)
+				admitCtx, admitCancel := context.WithTimeout(ingressroute.WithPeer(peerCtx, address.Addr()), api.UDPAdmissionTimeout)
 				target, err := s.ResolveTarget(admitCtx, s.Route)
 				if err == nil {
 					err = admitCtx.Err()

@@ -27,11 +27,17 @@ func TestAdminListRevocationIsolationAndRestart(t *testing.T) {
 	reply := f.exchange(aliceCode, testVerifier, f.resource, f.clientID)
 	decodeResponse(t, reply, &alice)
 	_ = reply.Body.Close()
+	if reply.StatusCode != http.StatusOK || alice.AccessToken == "" || alice.RefreshToken == "" {
+		t.Fatal("alice token exchange did not return credentials")
+	}
 	bobCode := f.authorizeAccount("fp_test_bob_remote_key", false)
 	var bob tokenResponse
 	reply = f.exchange(bobCode, testVerifier, f.resource, f.clientID)
 	decodeResponse(t, reply, &bob)
 	_ = reply.Body.Close()
+	if reply.StatusCode != http.StatusOK || bob.AccessToken == "" || bob.RefreshToken == "" {
+		t.Fatal("bob token exchange did not return credentials")
+	}
 	service, err := NewHTTPService(f.opts)
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +57,7 @@ func TestAdminListRevocationIsolationAndRestart(t *testing.T) {
 		t.Fatal("connection pagination failed")
 	}
 	all := adminRequest(t, service.AdminHandler(), http.MethodGet, "/connections")
-	if json.Unmarshal(all.Body.Bytes(), &page) != nil {
+	if all.Code != http.StatusOK || json.Unmarshal(all.Body.Bytes(), &page) != nil {
 		t.Fatal("invalid metadata")
 	}
 	id := ""
@@ -63,10 +69,20 @@ func TestAdminListRevocationIsolationAndRestart(t *testing.T) {
 	if id == "" {
 		t.Fatal("alice grant missing")
 	}
-	for _, secret := range []string{alice.AccessToken, alice.RefreshToken, bob.AccessToken, "fp_test_alice_remote_key", "access_hash", "refresh_hash", "Key"} {
+	secrets := []string{alice.AccessToken, alice.RefreshToken, bob.AccessToken, bob.RefreshToken, "fp_test_alice_remote_key", "fp_test_bob_remote_key"}
+	// Keep the raw-value check too: decoding duplicate JSON fields can hide
+	// an earlier value, even though the current projection emits unique keys.
+	for _, secret := range secrets {
 		if strings.Contains(all.Body.String(), secret) {
 			t.Fatal("admin metadata leaked credential data")
 		}
+	}
+	var metadata any
+	if json.Unmarshal(all.Body.Bytes(), &metadata) != nil {
+		t.Fatal("invalid metadata")
+	}
+	if adminMetadataLeaksCredentials(metadata, secrets) {
+		t.Fatal("admin metadata leaked credential data")
 	}
 	aliceClient, aliceCtx := f.connect(alice, "2026-07-28")
 	bobClient, bobCtx := f.connect(bob, "2026-07-28")
@@ -121,6 +137,75 @@ func TestAdminListRevocationIsolationAndRestart(t *testing.T) {
 	defer public.Body.Close()
 	if public.StatusCode != 404 {
 		t.Fatal("operator controls exposed on public mux")
+	}
+}
+
+// Grant/client IDs are public base64url strings and can contain "Key".
+// Check decoded field names and credential values, including escaped JSON,
+// instead of rejecting that substring inside an otherwise valid identifier.
+func adminMetadataLeaksCredentials(value any, secrets []string) bool {
+	switch node := value.(type) {
+	case map[string]any:
+		for key, child := range node {
+			name := strings.ToLower(key)
+			if strings.Contains(name, "key") || strings.Contains(name, "access_hash") || strings.Contains(name, "refresh_hash") || name == "access_token" || name == "refresh_token" {
+				return true
+			}
+			if adminMetadataLeaksCredentials(key, secrets) || adminMetadataLeaksCredentials(child, secrets) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range node {
+			if adminMetadataLeaksCredentials(child, secrets) {
+				return true
+			}
+		}
+	case string:
+		for _, secret := range secrets {
+			if secret != "" && strings.Contains(node, secret) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestAdminMetadataCredentialGuard(t *testing.T) {
+	publicIDs, err := json.Marshal(map[string]any{"items": []ConnectionSummary{{
+		GrantID: "gmcp_grant_Key" + strings.Repeat("A", 40), ClientID: "gmcp_client_Key" + strings.Repeat("A", 40), AccountID: "alice",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, body string
+		leaks      bool
+	}{
+		{"public IDs containing Key", string(publicIDs), false},
+		{"native key field", `{"items":[{"Key":"redacted"}]}`, true},
+		{"escaped key field", `{"items":[{"\u004bey":"redacted"}]}`, true},
+		{"nested private key field", `{"items":[{"debug":{"privateKey":"redacted"}}]}`, true},
+		{"nested access hash", `{"items":[{"debug":{"access_hash":"redacted"}}]}`, true},
+		{"prefixed access hash", `{"items":[{"previous_access_hash":"redacted"}]}`, true},
+		{"refresh hash", `{"items":[{"refresh_hash":"redacted"}]}`, true},
+		{"API key field", `{"items":[{"api_key":"redacted"}]}`, true},
+		{"empty access token field", `{"items":[{"access_token":""}]}`, true},
+		{"refresh token field", `{"items":[{"refresh_token":"redacted"}]}`, true},
+		{"credential in a value", `{"items":[{"note":"prefix fixture-access-token suffix"}]}`, true},
+		{"escaped credential value", `{"items":[{"note":"fixture\u002daccess-token"}]}`, true},
+		{"credential in a field name", `{"fixture-access-token":"redacted"}`, true},
+		{"nested refresh credential", `{"items":[{"debug":["fixture-refresh-token"]}]}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var metadata any
+			if err := json.Unmarshal([]byte(tc.body), &metadata); err != nil {
+				t.Fatal(err)
+			}
+			if got := adminMetadataLeaksCredentials(metadata, []string{"fixture-access-token", "fixture-refresh-token"}); got != tc.leaks {
+				t.Fatalf("credential leak detected = %v, want %v", got, tc.leaks)
+			}
+		})
 	}
 }
 

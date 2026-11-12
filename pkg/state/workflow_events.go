@@ -50,7 +50,7 @@ func eventWorkflowRun(recipient PublishedEventRecipient, payload []byte, plan ap
 		if provider == "" {
 			provider = InboundWebhookProviderStripe
 		}
-		if recipient.Source != webhookAutomationSource(provider, recipient.WebhookEndpointID) || recipient.ID != webhookAutomationRecipientID(recipient.WebhookEndpointID, definition.Name) {
+		if recipient.Source != webhookWorkflowSource(provider, recipient.WebhookEndpointID) || recipient.ID != webhookWorkflowRecipientID(recipient.WebhookEndpointID, definition.Name) {
 			return nil, ErrWorkflowEventDefinitionInvalid
 		}
 	} else {
@@ -105,11 +105,11 @@ func (m *MemStore) tenantWorkflowEventRecipientsLocked(accountID, appID, tenantI
 	if !exists || !account.Active() || !account.Plan.WorkflowsAllowed() {
 		return nil
 	}
-	deployment := m.automationDeploymentLocked(appID)
+	deployment := m.storedWorkflowDeploymentLocked(appID)
 	if deployment.ID == "" {
 		return nil
 	}
-	effective, err := m.mergeRuntimeAutomationDefinitionsLocked(appID, deployment.Workflows)
+	effective, err := m.mergeRuntimeStoredWorkflowDefinitionsLocked(appID, deployment.Workflows)
 	if err != nil {
 		return nil
 	}
@@ -247,7 +247,7 @@ func (m *MemStore) admitEventWorkflowLocked(work *PublishedEventWork, recipient 
 		}
 		return "", false, fmt.Errorf("%w: %w", ErrWorkflowEventDefinitionInvalid, err)
 	}
-	if m.automationFailureBlocksAdmissionLocked(app.ID, run.WorkflowName, time.Now().UTC()) {
+	if m.storedWorkflowFailureBlocksAdmissionLocked(app.ID, run.WorkflowName, time.Now().UTC()) {
 		return "", false, ErrWorkflowEventTargetUnavailable
 	}
 	run.AppID = app.ID

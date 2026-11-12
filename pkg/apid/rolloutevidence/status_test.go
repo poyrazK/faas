@@ -57,10 +57,9 @@ func TestStatusVerdicts(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &fakeStore{
-				live:    []state.Deployment{stable},
-				routes:  map[string]map[string]routeStats{testStable: tc.routes},
-				summary: sqlc.RequestTelemetryAnalyticsSummaryRow{P95Ms: 50},
-				rows:    []sqlc.ListRequestTelemetryByAppRow{row("/checkout", 500, 10), row("/checkout", 200, 10), row("/checkout", 503, 10)},
+				live:   []state.Deployment{stable},
+				routes: map[string]map[string]routeStats{testStable: tc.routes},
+				rows:   []sqlc.ListRequestTelemetryByAppRow{row("/checkout", 500, 10), row("/checkout", 200, 10), row("/checkout", 503, 10)},
 			}
 			if tc.deployments != nil {
 				store.deployments = tc.deployments(t)
@@ -184,6 +183,51 @@ func TestHumanWindow(t *testing.T) {
 	for d, want := range map[time.Duration]string{time.Hour: "1h", 30 * time.Minute: "30m", 48 * time.Hour: "2d", 90 * time.Second: "1m30s"} {
 		if got := FormatWindow(d); got != want {
 			t.Fatalf("FormatWindow(%s) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+// adr: 127 — status reads health in the regression view, its p95 is the
+// request-weighted warm p95 of the serving deployments, and its recent
+// failures come from those deployments only.
+func TestStatusHealthIsTheServingReleases(t *testing.T) {
+	stable := state.Deployment{ID: testStable, AppID: testApp, TrafficPercent: 100, RolloutState: "complete"}
+	store := &fakeStore{
+		live:   []state.Deployment{stable},
+		routes: map[string]map[string]routeStats{testStable: {"/fast": {900, 0, 10}, "/slow": {100, 3, 400}}},
+		rows:   []sqlc.ListRequestTelemetryByAppRow{row("/slow", 503, 400)},
+	}
+	out, err := reader(store, nil, nil).Status(context.Background(), state.App{ID: testApp}, time.Hour, 7*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range store.errorArgs {
+		if !arg.Column5 {
+			t.Fatalf("errors read outside the regression view: %+v", arg)
+		}
+	}
+	// 900 requests at 10 ms and 100 at 400 ms: the 950th is a 400 ms one.
+	if out.Health.P95MS != 400 || out.Health.Requests != 1000 {
+		t.Fatalf("health = %+v, want p95 400 over 1000 requests", out.Health)
+	}
+	if len(out.RecentFailures) != 1 || len(store.listed) != 1 || store.listed[0].DeploymentID != testStable {
+		t.Fatalf("failures=%+v listed=%+v, want the serving deployment scanned", out.RecentFailures, store.listed)
+	}
+}
+
+func TestWeightedP95(t *testing.T) {
+	type w = sqlc.RequestTelemetryLatencyWeightsByRouteRow
+	for _, tc := range []struct {
+		rows []w
+		want int
+	}{
+		{nil, 0},
+		{[]w{{LatencyMs: 7, Requests: 1}}, 7},
+		{[]w{{LatencyMs: 50, Requests: 5}, {LatencyMs: 10, Requests: 95}}, 10},
+		{[]w{{LatencyMs: 50, Requests: 6}, {LatencyMs: 10, Requests: 94}}, 50},
+	} {
+		if got := weightedP95(tc.rows); got != tc.want {
+			t.Fatalf("weightedP95(%+v) = %d, want %d", tc.rows, got, tc.want)
 		}
 	}
 }

@@ -85,7 +85,7 @@ func TestRequireAuthnAdapter_SuccessCarriesIDs(t *testing.T) {
 		acct: state.Account{ID: "acct-1"},
 		key:  state.APIKey{ID: "key-1"},
 	}
-	adapter := newRequireAuthnAdapter(stubOnlyAuthnField(stub))
+	adapter := newRequireAuthnAdapter(stubOnlyAuthnField(stub), nil)
 
 	gwAcct, gwKey, err := adapter.AuthenticateKey(context.Background(), api.HashAPIKey("fp_live_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
 	if err != nil {
@@ -107,7 +107,7 @@ func TestRequireAuthnAdapter_SuccessCarriesIDs(t *testing.T) {
 // expired" audit classification.
 func TestRequireAuthnAdapter_TranslatesExpired(t *testing.T) {
 	stub := &stubAuthn{err: state.ErrAPIKeyExpired}
-	adapter := newRequireAuthnAdapter(stubOnlyAuthnField(stub))
+	adapter := newRequireAuthnAdapter(stubOnlyAuthnField(stub), nil)
 
 	_, _, err := adapter.AuthenticateKey(context.Background(), api.HashAPIKey("fp_live_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
 	if !errors.Is(err, gateway.ErrAPIKeyExpired) {
@@ -119,7 +119,7 @@ func TestRequireAuthnAdapter_TranslatesExpired(t *testing.T) {
 // as the expired test, for the revoked sentinel.
 func TestRequireAuthnAdapter_TranslatesRevoked(t *testing.T) {
 	stub := &stubAuthn{err: state.ErrAPIKeyRevoked}
-	adapter := newRequireAuthnAdapter(stubOnlyAuthnField(stub))
+	adapter := newRequireAuthnAdapter(stubOnlyAuthnField(stub), nil)
 
 	_, _, err := adapter.AuthenticateKey(context.Background(), api.HashAPIKey("fp_live_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
 	if !errors.Is(err, gateway.ErrAPIKeyRevoked) {
@@ -136,7 +136,7 @@ func TestRequireAuthnAdapter_TranslatesRevoked(t *testing.T) {
 // state.ErrAPIKeyExpired would silently mis-classify.
 func TestRequireAuthnAdapter_UnknownKeyPassesThrough(t *testing.T) {
 	stub := &stubAuthn{err: errors.New("no api_keys row matches this hash")}
-	adapter := newRequireAuthnAdapter(stubOnlyAuthnField(stub))
+	adapter := newRequireAuthnAdapter(stubOnlyAuthnField(stub), nil)
 
 	_, _, err := adapter.AuthenticateKey(context.Background(), api.HashAPIKey("fp_live_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
 	if errors.Is(err, gateway.ErrAPIKeyExpired) {
@@ -158,7 +158,7 @@ func TestRequireAuthnAdapter_UnknownKeyPassesThrough(t *testing.T) {
 // returned a half-built adapter would crash on every
 // gated-app request).
 func TestRequireAuthnAdapter_NilMiddlewareReturnsNil(t *testing.T) {
-	if got := newRequireAuthnAdapter(nil); got != nil {
-		t.Errorf("newRequireAuthnAdapter(nil) = %v, want nil", got)
+	if got := newRequireAuthnAdapter(nil, nil); got != nil {
+		t.Errorf("newRequireAuthnAdapter(nil, nil) = %v, want nil", got)
 	}
 }

@@ -3,6 +3,7 @@ package vmmdgrpc
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -186,6 +187,12 @@ func (s *Server) RetireEnvironmentQualification(ctx context.Context, req *vmmdpb
 
 // Do not send journal errors or cleanup capabilities through diagnostic text.
 func qualificationStatus(err error) error {
+	// The caller learns only the class. A deadline, conflict or native
+	// failure must still be diagnosable on the host that hit it, because the
+	// deadline class also covers a missing guest receipt (ADR 20261023093000).
+	if !errors.Is(err, state.ErrInvalidArgument) {
+		slog.Default().Warn("vmmd: native qualification operation failed", "err", err)
+	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return status.Error(codes.DeadlineExceeded, "qualification deadline elapsed")

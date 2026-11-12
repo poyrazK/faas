@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	dbbounds "github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/firecracker"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/neon"
@@ -51,7 +52,7 @@ func nativeVerifierPool(ctx context.Context, getenv func(string) string) (*pgxpo
 	if dsn == "" {
 		return nil, func() {}, nil
 	}
-	pool, err := pgxpool.New(ctx, dsn)
+	pool, err := dbbounds.NewBoundedPool(ctx, dsn, 4)
 	if err != nil {
 		return nil, nil, err
 	}

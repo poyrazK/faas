@@ -26,7 +26,7 @@ type nativeQualificationRestoreLoadSession struct {
 // The incoming first-producer context and live original daemon are required.
 // The returned record proves only load/resume/hook acknowledgements. Scoped
 // channels, fresh readiness, graph smoke and activation remain separate gates.
-func (v *JailerVMM) loadNativeQualificationRestore(ctx context.Context, lease Lease, runningFCVersion string) (record nativeQualificationRestoreLoadRecord, result error) {
+func (v *JailerVMM) loadNativeQualificationRestore(ctx context.Context, lease Lease, runningFCVersion string, receipt qualificationRestoreReceiptControl) (record nativeQualificationRestoreLoadRecord, result error) {
 	if err := validateNativeQualificationRunningFCVersion(runningFCVersion); err != nil {
 		return record, err
 	}
@@ -128,7 +128,7 @@ func (v *JailerVMM) loadNativeQualificationRestore(ctx context.Context, lease Le
 	if record, err = s.advance(ctx, record, nativeRestoreHookStarted); err != nil {
 		return record, err
 	}
-	if err := r.restoreResume.Resume(ctx, v, owner); err != nil {
+	if err := r.restoreResume.Resume(ctx, v, owner, receipt); err != nil {
 		return record, err
 	}
 	record, err = s.advance(ctx, record, nativeRestoreHookCompleted)

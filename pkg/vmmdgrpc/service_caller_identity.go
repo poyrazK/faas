@@ -35,5 +35,5 @@ func (s *Server) ResolveServiceCaller(_ context.Context, req *vmmdpb.ResolveServ
 		return &vmmdpb.ResolveServiceCallerResponse{}, nil
 	}
 	return &vmmdpb.ResolveServiceCallerResponse{Matched: matched, InstanceId: identity.InstanceID,
-		AccountId: identity.AccountID, AppId: identity.AppID, DeploymentId: identity.DeploymentID, AppTask: identity.AppTask, JobTask: identity.JobTask}, nil
+		AccountId: identity.AccountID, AppId: identity.AppID, DeploymentId: identity.DeploymentID, AppTask: identity.AppTask, JobTask: identity.JobTask, NetworkGeneration: identity.NetworkGeneration}, nil
 }

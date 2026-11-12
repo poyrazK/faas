@@ -47,6 +47,14 @@ const (
 func ValidatePattern(pattern string) error        { return eventfilter.ValidatePattern(pattern) }
 func ValidateFilter(filter json.RawMessage) error { return eventfilter.ValidateFilter(filter) }
 
+// ValidateSubscriptionFilter is ValidateFilter plus the size and depth caps a
+// subscription filter must meet before it is persisted
+// (api.EventSubscriptionFilterMaxBytes, api.EventSubscriptionFilterMaxDepth).
+// A cap failure is an *eventfilter.BoundError.
+func ValidateSubscriptionFilter(filter json.RawMessage) error {
+	return eventfilter.ValidateBoundedFilter(filter, api.EventSubscriptionFilterMaxBytes, api.EventSubscriptionFilterMaxDepth)
+}
+
 // Match reports whether e satisfies the subscription. A malformed
 // subscription or filter returns an error; an account or envelope mismatch is
 // a normal non-match and does not reveal whether the other tenant has data.

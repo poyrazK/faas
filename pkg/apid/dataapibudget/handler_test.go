@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/dataapiworkload/workloadtest"
 	budget "github.com/onebox-faas/faas/pkg/state/dataapibudget"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
@@ -37,7 +38,8 @@ func TestBudgetRequiresDedicatedAudienceAndDerivesOwnerFromAssertion(t *testing.
 		t.Fatal(err)
 	}
 	store := &recorder{}
-	h := Handler{Store: store, Verifier: verifier}
+	live := workloadtest.Production("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333")
+	h := Handler{Store: store, Verifier: verifier, Workloads: live}
 	body := `{"version":1,"key":"` + strings.Repeat("a", 64) + `","requests":7,"window_seconds":60}`
 	for _, tc := range []struct {
 		audience, body string
@@ -57,5 +59,26 @@ func TestBudgetRequiresDedicatedAudienceAndDerivesOwnerFromAssertion(t *testing.
 	}
 	if store.calls != 1 || store.account != "11111111-1111-4111-8111-111111111111" || store.app != "22222222-2222-4222-8222-222222222222" {
 		t.Fatalf("bad authorization: %+v", store)
+	}
+	// ADR-20261112120000: stages and dead instances must not spend production credit.
+	for _, tc := range []struct {
+		scope, state string
+		status       int
+	}{
+		{"staging", live.Instance.State, 403},
+		{"production", "", 401},
+	} {
+		live.Deployment.Scope, live.Instance.State = tc.scope, tc.state
+		token, mintErr := signer.Mint(time.Now(), live.Account.ID, live.App.ID, live.Instance.ID, workloadidentity.DataAPIBudgetAudience)
+		if mintErr != nil {
+			t.Fatal(mintErr)
+		}
+		req := httptest.NewRequest("POST", "/budget", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+		if res.Code != tc.status || store.calls != 1 {
+			t.Fatalf("scope=%s status=%d calls=%d", tc.scope, res.Code, store.calls)
+		}
 	}
 }

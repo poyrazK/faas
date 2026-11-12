@@ -119,15 +119,16 @@ func TestUnacknowledgedCompletionsAreForgottenOldestFirst(t *testing.T) {
 }
 
 func TestOpenExchangesStayBounded(t *testing.T) {
+	const limit = 128
 	release := make(chan struct{})
-	h := Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := WrapLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/hold" {
 			<-release
 		}
 		w.WriteHeader(http.StatusOK)
-	}))
-	done := make(chan struct{}, api.TrafficBridgeCompletionMaxEntries)
-	for range api.TrafficBridgeCompletionMaxEntries {
+	}), limit)
+	done := make(chan struct{}, limit)
+	for range limit {
 		req := httptest.NewRequest(http.MethodGet, "/hold", nil)
 		req.Header.Set(ExchangeHeader, uuid.NewString())
 		go func() { h.ServeHTTP(httptest.NewRecorder(), req); done <- struct{}{} }()
@@ -150,7 +151,7 @@ func TestOpenExchangesStayBounded(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	close(release)
-	for range api.TrafficBridgeCompletionMaxEntries {
+	for range limit {
 		<-done
 	}
 	if rr := serveExchange(h, uuid.NewString(), false); rr.Code != http.StatusOK {
@@ -166,5 +167,9 @@ func TestOpenExchangeLimitCoversEveryPlansRequestBound(t *testing.T) {
 		if bound := plan.ConcurrencyPerVMBound(); bound > api.TrafficBridgeCompletionMaxEntries {
 			t.Errorf("plan %s admits %d requests per instance, above the bridge's %d open exchanges", plan, bound, api.TrafficBridgeCompletionMaxEntries)
 		}
+	}
+	// adr: 20261101215228 — runtime config may raise the limit to this bound.
+	if api.AppRequestConcurrencyBound > api.TrafficBridgeCompletionMaxEntries {
+		t.Errorf("vmmd admits up to %d requests per instance, above the bridge's %d open exchanges", api.AppRequestConcurrencyBound, api.TrafficBridgeCompletionMaxEntries)
 	}
 }

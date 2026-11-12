@@ -47,6 +47,30 @@ func TestPlanComputeCaps(t *testing.T) {
 		{name: "a held suspension is not rewritten", ceiling: 25 * hour, ledger: 25 * hour,
 			scopes:   []computeCapScope{{used: 25 * hour, quota: 25 * hour}},
 			wantUsed: 25 * hour, wantRemaining: 0, wantTargets: []int64{25 * hour}, wantApply: []bool{false}},
+		{name: "preview databases get what is left of 80% of the ceiling", ceiling: 25 * hour, ledger: 0,
+			scopes:   []computeCapScope{{used: 10 * hour}, {used: 5 * hour, preview: true}},
+			wantUsed: 15 * hour, wantRemaining: 10 * hour, wantTargets: []int64{20 * hour, 10 * hour}, wantApply: []bool{true, true}},
+		{name: "at 80% preview databases are held and production keeps the last fifth", ceiling: 25 * hour, ledger: 0,
+			scopes:   []computeCapScope{{used: 15 * hour, quota: 20 * hour}, {used: 5 * hour, quota: 10 * hour, preview: true}},
+			wantUsed: 20 * hour, wantRemaining: 5 * hour, wantTargets: []int64{20 * hour, 5 * hour}, wantApply: []bool{false, true}},
+		{name: "a raised ceiling lifts the preview hold", ceiling: 50 * hour, ledger: 0,
+			scopes:   []computeCapScope{{used: 15 * hour, quota: 20 * hour}, {used: 5 * hour, quota: 5 * hour, preview: true}},
+			wantUsed: 20 * hour, wantRemaining: 30 * hour, wantTargets: []int64{45 * hour, 25 * hour}, wantApply: []bool{true, true}},
+		// ADR-20261025094915 amendment 2026-11-05: a provider that reports
+		// use counts it as the ledger plus each scope's use since the
+		// ledger's coverage; the quotas stay on the provider's counters.
+		{name: "reported use adds to the ledger", ceiling: 5 * hour, ledger: 2 * hour,
+			scopes:   []computeCapScope{{used: hour, quota: 5 * hour, reported: true, unreported: 1800}},
+			wantUsed: 2*hour + 1800, wantRemaining: 3*hour - 1800, wantTargets: []int64{4*hour - 1800}, wantApply: []bool{true}},
+		{name: "a stale counter does not hide reported use", ceiling: 5 * hour, ledger: 4 * hour,
+			scopes:   []computeCapScope{{used: 600, quota: 5 * hour, reported: true, unreported: hour}},
+			wantUsed: 5 * hour, wantRemaining: 0, wantTargets: []int64{600}, wantApply: []bool{true}},
+		{name: "every scope's reported use counts", ceiling: 25 * hour, ledger: hour,
+			scopes:   []computeCapScope{{used: hour, reported: true, unreported: 600}, {used: 0, reported: true, unreported: 1200}},
+			wantUsed: hour + 1800, wantRemaining: 24*hour - 1800, wantTargets: []int64{25*hour - 1800, 24*hour - 1800}, wantApply: []bool{true, true}},
+		{name: "one unreported scope keeps the counters", ceiling: 25 * hour, ledger: hour,
+			scopes:   []computeCapScope{{used: 3 * hour, reported: true, unreported: 600}, {used: hour}},
+			wantUsed: 4 * hour, wantRemaining: 21 * hour, wantTargets: []int64{24 * hour, 22 * hour}, wantApply: []bool{true, true}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -86,6 +110,24 @@ type capTestProvider struct {
 	observed map[string]ComputeCapObservation
 	setErr   map[string]error
 	set      map[string]int64
+	holds    map[string]bool
+}
+
+func (p *capTestProvider) ComputeHeld(_ context.Context, id string) (bool, error) {
+	return p.holds[id], nil
+}
+
+func (p *capTestProvider) HoldForDeletion(_ context.Context, id string) error {
+	if p.holds == nil {
+		p.holds = map[string]bool{}
+	}
+	p.holds[id] = true
+	return nil
+}
+
+func (p *capTestProvider) ReleaseDeletionHold(_ context.Context, id string) error {
+	delete(p.holds, id)
+	return nil
 }
 
 func (p *capTestProvider) ObserveComputeCap(_ context.Context, id string) (ComputeCapObservation, error) {
@@ -107,8 +149,22 @@ func (p *capTestProvider) SetComputeCap(_ context.Context, id string, quota int6
 // capTestStore serves only the two reads the enforcer makes.
 type capTestStore struct {
 	UsageStore
-	databases []Database
-	ledger    map[string]int64
+	databases  []Database
+	ledger     map[string]int64
+	holdClaims *MemoryStore
+}
+
+func (s *capTestStore) ClaimComputeHold(ctx context.Context, database Database, token string, now, until time.Time) (Database, error) {
+	if s.holdClaims == nil {
+		s.holdClaims = NewMemoryStore()
+		for _, row := range s.databases {
+			s.holdClaims.databases[row.ID] = cloneDatabase(row)
+		}
+	}
+	return s.holdClaims.ClaimComputeHold(ctx, database, token, now, until)
+}
+func (s *capTestStore) ReleaseComputeHold(ctx context.Context, id, token string, now time.Time) error {
+	return s.holdClaims.ReleaseComputeHold(ctx, id, token, now)
 }
 
 func (s *capTestStore) ListUsageDatabases(_ context.Context, after UsageDatabaseCursor, limit int) ([]Database, error) {
@@ -334,5 +390,104 @@ func TestCapEnforcerPoolsAnOrganizationAcrossNamespaces(t *testing.T) {
 	// One ceiling lookup and one pool for the organization, not one per namespace.
 	if len(asked) != 1 || asked[0] != "org" || summary.Accounts != 1 || summary.ScopesShadowed != 2 {
 		t.Fatalf("ceilings asked for %v, summary %+v; want one org pool", asked, summary)
+	}
+}
+
+// adr: 20261102123523 — an account's PR preview databases are held once its
+// compute reaches 80% of its ceiling.
+func TestCapEnforcerHoldsPreviewDatabasesAtEightyPercent(t *testing.T) {
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	month := monthStart(now)
+	run := func(t *testing.T, limits CapLimits) *capTestProvider {
+		t.Helper()
+		provider := &capTestProvider{fakeProvider: &fakeProvider{capabilities: testCapabilities()}, set: map[string]int64{},
+			observed: map[string]ComputeCapObservation{
+				"proj-live": {Scope: "live", PeriodStart: month, UsedUnitSeconds: 14000},
+				"proj-pr":   {Scope: "pr", PeriodStart: month, UsedUnitSeconds: 1000},
+			}}
+		registry := testRegistry(t, provider, func(config *Config) {
+			config.Usage = UsageConfig{Enabled: true, CollectionIntervalSeconds: 300, WindowSeconds: 3600,
+				StaleAfterSeconds: 10800, MaxMonthlyCostMillicents: 1 << 40,
+				MaxMonthlyComputeUnitSeconds: 1 << 40, MaxMonthlyStorageByteSeconds: 1 << 50, MaxMonthlyEgressBytes: 1 << 40}
+		})
+		backend, err := registry.Default("us-east-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		live := Database{ID: "db-live", AccountID: "acct", BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, ProviderResourceID: "proj-live", State: StateReady}
+		preview := live
+		preview.ID, preview.ProviderResourceID = "db-pr", "proj-pr"
+		preview.Preview = PreviewOwner{SourceDatabaseID: live.ID, EnvironmentID: "project-1", PRNumber: 7}
+		store := &capTestStore{databases: []Database{live, preview}, ledger: map[string]int64{"acct": 15000}}
+		enforcer, err := NewCapEnforcer(registry, store, CapEnforcerOptions{
+			Mode: CapEnforcementOn, Now: func() time.Time { return now }, Qualification: testCapQualification(backend),
+			Ceiling: func(context.Context, string) (CapLimits, error) { return limits, nil },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := enforcer.Enforce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return provider
+	}
+	// 15000 of 18000 is past 80% (14400): the preview database is held,
+	// with its quota at its use, and production may run to the ceiling.
+	if p := run(t, CapLimits{Allowance: 18000, Ceiling: 18000}); p.set["proj-pr"] != 1000 || p.set["proj-live"] != 17000 || !p.holds["proj-pr"] || p.holds["proj-live"] {
+		t.Fatalf("at 80%%: quotas %v, holds %v; want the preview held at 1000 and production at 17000", p.set, p.holds)
+	}
+	// Overage doubles the ceiling, and with it the previews' 80%.
+	if p := run(t, CapLimits{Allowance: 18000, Ceiling: 36000, Overage: true}); p.set["proj-pr"] != 1000+28800-15000 || p.set["proj-live"] != 14000+36000-15000 || len(p.holds) != 0 {
+		t.Fatalf("with overage: quotas %v, holds %v", p.set, p.holds)
+	}
+}
+
+// adr: 20261102123523 — a PR preview copy shares its source's project and
+// quota, so the sweep holds it with the deletion hold at 80% of the ceiling.
+func TestCapEnforcerHoldsPreviewCopiesAtEightyPercent(t *testing.T) {
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	month := monthStart(now)
+	provider := &capTestProvider{fakeProvider: &fakeProvider{capabilities: testCapabilities()}, set: map[string]int64{},
+		observed: map[string]ComputeCapObservation{
+			"proj-live":         {Scope: "live", PeriodStart: month, UsedUnitSeconds: 15000},
+			"proj-live/br-copy": {Scope: "live", PeriodStart: month, UsedUnitSeconds: 15000},
+		}}
+	registry := testRegistry(t, provider, func(config *Config) {
+		config.Usage = UsageConfig{Enabled: true, CollectionIntervalSeconds: 300, WindowSeconds: 3600,
+			StaleAfterSeconds: 10800, MaxMonthlyCostMillicents: 1 << 40,
+			MaxMonthlyComputeUnitSeconds: 1 << 40, MaxMonthlyStorageByteSeconds: 1 << 50, MaxMonthlyEgressBytes: 1 << 40}
+	})
+	backend, err := registry.Default("us-east-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := Database{ID: "db-live", AccountID: "acct", BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, ProviderResourceID: "proj-live", State: StateReady}
+	copied := live
+	copied.ID, copied.ProviderResourceID, copied.RestoreSourceDatabaseID, copied.RestoreSourceResourceID = "db-copy", "proj-live/br-copy", live.ID, "proj-live"
+	copied.Preview = PreviewOwner{SourceDatabaseID: live.ID, EnvironmentID: "project-1", PRNumber: 7}
+	limits := CapLimits{Allowance: 18000, Ceiling: 18000}
+	enforcer, err := NewCapEnforcer(registry, &capTestStore{databases: []Database{live, copied}, ledger: map[string]int64{"acct": 15000}}, CapEnforcerOptions{
+		Mode: CapEnforcementOn, Now: func() time.Time { return now }, Qualification: testCapQualification(backend),
+		Ceiling: func(context.Context, string) (CapLimits, error) { return limits, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 15000 of 18000 is past 80%: the copy is held, and the project it
+	// shares with production keeps production's quota.
+	if _, err := enforcer.Enforce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !provider.holds["proj-live/br-copy"] || provider.holds["proj-live"] || provider.set["proj-live"] != 18000 {
+		t.Fatalf("holds %v, quotas %v; want the copy held and production's project at the ceiling", provider.holds, provider.set)
+	}
+	// A hold in place is not written again.
+	if summary, err := enforcer.Enforce(context.Background()); err != nil || summary.HoldsApplied != 0 || summary.HeldDatabases != 1 {
+		t.Fatalf("second sweep: %v, summary %+v", err, summary)
+	}
+	// Overage raises the ceiling past the previews' 80%: the hold lifts.
+	limits = CapLimits{Allowance: 18000, Ceiling: 36000, Overage: true}
+	if summary, err := enforcer.Enforce(context.Background()); err != nil || provider.holds["proj-live/br-copy"] || summary.HoldsReleased != 1 {
+		t.Fatalf("after overage: %v, holds %v, summary %+v", err, provider.holds, summary)
 	}
 }

@@ -67,9 +67,10 @@ func TestFailureMessagesNameTheBound(t *testing.T) {
 	}
 }
 
-// ADR-20261020085706 amendment 12: a release waiting for approval before its
-// release command is in flight by design. The stall bound leaves it alone;
-// once its approval timeout passes, it is stuck like any other.
+// ADR-20261020085706 amendments 12-13: a release waiting for approval before
+// its release command is in flight by design and is never listed (imaged
+// closes it at the policy's timeout), so waiting releases cannot fill the
+// batch and hide stuck deployments.
 func TestSweepLeavesReleasesWaitingForApproval(t *testing.T) {
 	ctx := context.Background()
 	s := state.NewMemStore()
@@ -95,23 +96,36 @@ func TestSweepLeavesReleasesWaitingForApproval(t *testing.T) {
 	}, now.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	held, err := s.CreateDeployment(ctx, state.Deployment{
-		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:held",
-		Status: state.DeploySnapshotting, ReleaseCommand: []string{"bin/migrate"},
+	// More releases wait than one sweep's batch holds (amendment 13): they
+	// must not hide a stuck deployment created after them.
+	var held []state.Deployment
+	for range api.DeploymentWatchdogBatch + 1 {
+		d, err := s.CreateDeployment(ctx, state.Deployment{
+			AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:held",
+			Status: state.DeploySnapshotting, ReleaseCommand: []string{"bin/migrate"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, d)
+	}
+	stuck, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:stuck", Status: state.DeployImaging,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	clock := now.Add(time.Duration(api.DeploymentStallTimeoutSeconds)*time.Second + time.Minute)
+	clock := now.Add(time.Duration(api.DeploymentStallTimeoutSeconds)*time.Second + time.Hour)
 	w := &deploywatchdog.Watchdog{Store: s, Now: func() time.Time { return clock }}
-	if n, err := w.Sweep(ctx); err != nil || n != 0 {
-		t.Fatalf("sweep failed %d deployments (err=%v); want the release waiting for approval left alone", n, err)
-	}
-	if got, err := s.DeploymentByID(ctx, held.ID); err != nil || got.Status != state.DeploySnapshotting {
-		t.Fatalf("held deployment = %q (err=%v), want snapshotting", got.Status, err)
-	}
-	clock = now.Add(25 * time.Hour)
 	if n, err := w.Sweep(ctx); err != nil || n != 1 {
-		t.Fatalf("sweep past the approval timeout failed %d deployments (err=%v), want 1", n, err)
+		t.Fatalf("sweep failed %d deployments (err=%v); want only the stuck one", n, err)
+	}
+	if got, err := s.DeploymentByID(ctx, stuck.ID); err != nil || got.Status != state.DeployFailed {
+		t.Fatalf("stuck deployment = %q (err=%v), want failed", got.Status, err)
+	}
+	for _, d := range held {
+		if got, err := s.DeploymentByID(ctx, d.ID); err != nil || got.Status != state.DeploySnapshotting {
+			t.Fatalf("held deployment = %q (err=%v), want snapshotting", got.Status, err)
+		}
 	}
 }

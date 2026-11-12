@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/onebox-faas/faas/pkg/agentapprovalnotify"
 	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/mail"
 )
@@ -46,9 +48,9 @@ func newAlertChannelCounter(reg prometheus.Registerer) func(kind, outcome string
 func newAlertRuleSkipCounter(reg prometheus.Registerer) func(reason string, n int) {
 	c := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "meterd_alert_rules_skipped_total",
-		Help: "Enabled alert rules a tick did not evaluate, by reason: deferred (the account spent its tick budget; they run first next tick) or not_released (the account's plan or capability flags no longer cover them). ADR-20261028101615.",
+		Help: "Enabled alert rules a tick did not evaluate, by reason: deferred (the account spent its tick budget; they run first next tick), not_released (the account's plan or capability flags no longer cover them) or over_plan_limit (past the plan's per-app or per-account rule cap, kept from a bigger plan). ADR-20261028101615, ADR-20261104142830.",
 	}, []string{"reason"})
-	for _, reason := range []string{"deferred", "not_released"} {
+	for _, reason := range []string{"deferred", "not_released", "over_plan_limit"} {
 		c.WithLabelValues(reason).Add(0)
 	}
 	if reg != nil {
@@ -59,4 +61,30 @@ func newAlertRuleSkipCounter(reg prometheus.Registerer) func(reason string, n in
 			c.WithLabelValues(reason).Add(float64(n))
 		}
 	}
+}
+
+// startAgentApprovalNotifications emails the people who may decide agents'
+// approval requests (ADR-20261107140000 §2, §5). Without a mail transport
+// the rows wait; they are skipped once their requests expire.
+func startAgentApprovalNotifications(ctx context.Context, store any, m mail.Sender, channels agentapprovalnotify.ChannelSender, reg prometheus.Registerer, log *slog.Logger) {
+	notifyStore, ok := store.(agentapprovalnotify.Store)
+	if !ok || m == nil {
+		log.Info("meterd: agent approval notifications off", "store", ok, "mail", m != nil)
+		return
+	}
+	c := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "meterd_agent_approval_notifications_total",
+		Help: "Agent approval notifications by outcome: sent, deferred (the recipient was emailed about the key in the last 10 minutes), skipped (the request was decided, expired or has no recipient) or failed. ADR-20261107140000.",
+	}, []string{"outcome"})
+	for _, o := range []string{agentapprovalnotify.OutcomeSent, agentapprovalnotify.OutcomeDeferred, agentapprovalnotify.OutcomeSkipped, agentapprovalnotify.OutcomeFailed} {
+		c.WithLabelValues(o).Add(0)
+	}
+	if reg != nil {
+		reg.MustRegister(c)
+	}
+	n := &agentapprovalnotify.Notifier{
+		Store: notifyStore, Mail: meterdChannelMailer{m}, Channels: channels, Log: log,
+		Outcome: func(outcome string) { c.WithLabelValues(outcome).Inc() },
+	}
+	go n.Run(ctx)
 }

@@ -1,10 +1,13 @@
 package templates
 
 import (
+	"encoding/json"
 	"io/fs"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/sharedruntime"
 )
 
 // platformInternals are component names a customer never runs or sees.
@@ -43,5 +46,44 @@ func TestHelloTemplatesSpeakToCustomers(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+// The hello starters' READMEs match the platform's defaults: the Node
+// starter named Node.js 22 while engines.node ">=22" runs on Node.js 24
+// (#6629), and "Try it" opened a URL that answers 401 on paid plans and
+// read edge health as proof the handler ran (#6628, #6630).
+func TestHelloTemplatesMatchRuntimeAndAccessDefaults(t *testing.T) {
+	readme, err := fs.ReadFile(FS, "hello-node/README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := fs.ReadFile(FS, "hello-node/package.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Engines struct {
+			Node string `json:"node"`
+		} `json:"engines"`
+	}
+	if err := json.Unmarshal(pkg, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	runtime := sharedruntime.NodeRuntimeForSpec(manifest.Engines.Node)
+	major := strings.TrimPrefix(runtime, "node")
+	if runtime == "" || !strings.Contains(string(readme), "runs the app on Node.js "+major) {
+		t.Errorf("README must name Node.js %s, the runtime engines.node %q selects:\n%s", major, manifest.Engines.Node, readme)
+	}
+	for _, name := range []string{"hello-node", "hello-python", "hello-go"} {
+		readme, err := fs.ReadFile(FS, name+"/README.md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"gregale invoke <slug> --method GET --path /", "Authorization: Bearer <key>", "401 unauthorized", `"source":"edge"`, "--path /healthz"} {
+			if !strings.Contains(string(readme), want) {
+				t.Errorf("%s README lacks %q", name, want)
+			}
+		}
 	}
 }

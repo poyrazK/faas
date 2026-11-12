@@ -191,6 +191,34 @@ func TestSimulateValidateRuleParameters(t *testing.T) {
 			t.Fatalf("trace result echoed the query string %q", query)
 		}
 	}
+	// An undecodable escape is a query mismatch, as the gateway answers it
+	// (422), and only a rule with a query schema checks the query.
+	for _, tc := range []struct {
+		name    string
+		params  *api.EdgeRuleValidateParameters
+		outcome string
+	}{
+		{name: "query schema", params: &withQuery, outcome: "validation_failed"},
+		{name: "no query schema", params: params, outcome: "validated"},
+	} {
+		in := input("/users/7", "t1")
+		in.Query = "limit=%zz"
+		result, err := edgeruletrace.Simulate(in, []api.EdgeRuleResponse{rule(tc.params)})
+		if err != nil || result.Simulation.Steps[0].Outcome != tc.outcome {
+			t.Fatalf("%s: undecodable query simulation = %#v, err=%v; want %s", tc.name, result.Simulation, err, tc.outcome)
+		}
+	}
+	// Array headers split on commas, as the gateway reads them.
+	withList := *params
+	withList.Headers = json.RawMessage(`{"type":"object","properties":{"x-tenant":{"type":"string"},"x-ids":{"type":"array","items":{"type":"integer"},"maxItems":2}},"required":["x-tenant"]}`)
+	for ids, outcome := range map[string]string{"1, 2": "validated", "1,2,3": "validation_failed", "1,x": "validation_failed"} {
+		in := input("/users/7", "t1")
+		in.Headers.Set("X-Ids", ids)
+		result, err := edgeruletrace.Simulate(in, []api.EdgeRuleResponse{rule(&withList)})
+		if err != nil || result.Simulation.Steps[0].Outcome != outcome {
+			t.Fatalf("x-ids %q simulation = %#v, err=%v; want %s", ids, result.Simulation, err, outcome)
+		}
+	}
 }
 
 func TestSimulateValidateRuleModes(t *testing.T) {

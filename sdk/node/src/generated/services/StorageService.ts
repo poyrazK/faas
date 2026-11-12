@@ -557,7 +557,7 @@ export class StorageService {
   }
   /**
    * List compute bindings for a bucket
-   * Requires storage:manage or admin. Secret values are never returned; only the sealed app-secret names are listed.
+   * Requires storage:read, storage:manage or admin. Secret values are never returned; only the sealed app-secret names are listed.
    * @returns ObjectStorageComputeBindingList Active compute bindings; Cache-Control no-store
    * @returns Problem Binding listing denied or its bucket is unavailable
    * @throws ApiError
