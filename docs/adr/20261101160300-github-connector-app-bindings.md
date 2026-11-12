@@ -273,3 +273,24 @@ their descriptions, and recording a reason on completion; `pkg/apid/oidcrepo`
 and the apid lookup test use the single-repository seam; CLI tests cover the
 `--wait-for` check (names, paths, branch filters, negation, tags, the
 generated workflow) and the status events with a reason.
+
+## Amendment — 2026-11-12: recover from unrelated personal installations
+
+GitHub discovery can return personal installations the authorizing user does
+not own. With no explicit installation selector, if every candidate is refused
+only for personal ownership, githubd returns `github_app_not_installed` and apid
+starts a fresh state-protected installation round-trip. It never connects those
+candidates or mints their installation tokens. Explicitly selected installations
+still require their owner; organization permission and admin refusals remain
+actionable failures.
+
+The dashboard displays stable callback error codes with allowlisted copy. Its
+**Install on GitHub** recovery action posts `intent=install` through the existing
+authenticated Connect GitHub route, with fresh CSRF proof. apid retains the
+validated dashboard destination and organization scope in the installation
+round-trip. A direct link to GitHub cannot provide that state binding.
+
+githubd emits `auth.install.connect_refused` diagnostics with the Gregale
+account, installation ID, GitHub owner, owner type and stable reason. OAuth
+codes, state and tokens are never included. This identifies each rejected
+candidate even when discovery subsequently continues with installation.
