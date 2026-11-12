@@ -1309,3 +1309,37 @@ to differ; on gregale-internal-test-1 (KVM, Firecracker 1.17.0) it failed
 before this fix with the production error and passes with it, leakcheck
 clean. `TestAnchorAdoptedJailAcceptsTheSuccessorMountNamespace` checks the
 boot and identity guards.
+
+### A guest whose cache source was evicted was refused and kept running (2026-11-12)
+
+On fsn-2, the rc.339 vmmd that started at 06:56 refused one guest with
+`adopt_failed`: "bind source /var/lib/faas/cache/86/88ec…: open …: no such
+file or directory". The guest (an `e2e-probe` instance, running since 02:07 the
+day before) was bound from a base drive file that the cache evicted while the
+guest ran. A refused guest stays in ADR-472 quarantine, so its Firecracker
+kept running with nothing able to reach or tear it down. It held its memory,
+and the rollout's clean-adoption check failed on it until it was stopped by
+PID at 07:01.
+
+Adoption already handled a source path the cache had re-staged (the path names
+another file): it takes the recorded inode from the guest's own view, where it
+is still bound, under the same (path, inode) key, and teardown tolerates the
+failed mode restore through that read-only handle. An evicted source is the
+same case with the path gone, so adoption now takes that route for "no such
+file" too. The guest-side open still requires the recorded device and inode,
+so nothing outside the proof is adopted.
+
+Still open: a guest refused for any other reason keeps running unowned in the
+same way. Each such reason needs its own fix or a verified kill at refusal.
+
+Validation: `TestMetalAdoptionRestartKeepsAGuestWhoseSourceWasEvicted` boots
+the guest from a private copy of the base drive, crashes the vmmd and deletes
+the copy before the successor starts. On gregale-internal-test-1 (KVM,
+Firecracker 1.7.0) it failed before this fix with the production refusal
+(`adopt_failed`, "open …/base.ext4: no such file or directory"; the successor
+could not destroy the guest either). With the fix it passes beside
+`TestMetalAdoptionRestartKeepsTheGuest`: adopted with the same PID, destroyed
+through the ordinary teardown, record retired, leakcheck clean.
+`TestAdoptGuestBindsTakesAnEvictedSourceFromTheGuest` and
+`TestAdoptGuestBindsRefusesAnEvictedSourceTheGuestNoLongerBinds` cover the
+unit cases.

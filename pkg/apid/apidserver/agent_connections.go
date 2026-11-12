@@ -17,6 +17,14 @@ import (
 // agentConnectionDeps wires the connected-agents handlers
 // (ADR-20261030133644) to apid's key revocation and audit.
 func (s *server) agentConnectionDeps() agentconnections.Deps {
+	d := s.agentConnectionBaseDeps()
+	if s.agentUndo != nil {
+		d.Undo = s.agentUndo
+	}
+	return d
+}
+
+func (s *server) agentConnectionBaseDeps() agentconnections.Deps {
 	return agentconnections.Deps{
 		Store:    s.store,
 		Log:      s.log,
