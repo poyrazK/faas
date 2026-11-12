@@ -26242,6 +26242,14 @@ paths:
       description: |
         Snapshots only HTTP scheduling intent for the owned app. Command crons,
         execution progress and server-held original rows are excluded.
+        `environment` reads one non-production environment's manifest crons
+        and its own revision and latest deployment.
+      parameters:
+        - name: environment
+          in: query
+          required: false
+          schema: { type: string }
+          description: A project environment of the app; omitted or `production` is production.
       responses:
         '200':
           description: The captured HTTP scheduling set.
@@ -96561,6 +96569,7 @@ components:
         crons:
           type: array
           items: { $ref: '#/components/schemas/DeploymentCronConfig' }
+        environment: { type: string, description: "The non-production environment read; omitted for production." }
     DeploymentCronStagingRequest:
       type: object
       description: Immutable HTTP cron intent. Prepare retains active schedules until the submitted production release owns all traffic; cancel fences an unsubmitted intent. Stage and restore support legacy recovery.
@@ -96579,6 +96588,7 @@ components:
         desired:
           type: array
           items: { $ref: '#/components/schemas/DeploymentCronConfig' }
+        environment: { type: string, description: "Stages the manifest's HTTP crons into this non-production environment of the app's project; it activates when the environment's deployment owns all of its traffic and replaces only its manifest crons. Only prepare, cancel and track_upload take one." }
     DeploymentStagingSnapshot:
       type: object
       description: An atomic snapshot for journaling selected deployment policies before staging.
@@ -106981,6 +106991,7 @@ components:
         skip_if_running: { type: boolean, description: "When true, consume a scheduled occurrence while a prior HTTP invocation or app command task is active." }
         created_at: { type: string, format: date-time }
         last_fired_at: { type: [string, "null"], format: date-time }
+        environment: { type: string, description: "Project environment the cron runs in; omitted for production.", example: "staging" }
         schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
 
@@ -107102,6 +107113,7 @@ components:
         skip_if_running: { type: [boolean, "null"], description: "Skip a scheduled fire when an earlier cron invocation is still running." }
         retry_max: { type: integer, minimum: 0, maximum: 5, description: "Additional command attempts after failure or timeout; command crons only." }
         retry_backoff_seconds: { type: integer, minimum: 1, maximum: 3600, description: "Base retry delay in seconds; doubles per retry and is capped at 24 hours. Command crons only." }
+        environment: { type: string, description: "Project environment the cron runs in; omitted or production is the app's production environment. Immutable once created.", example: "staging" }
         schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
 

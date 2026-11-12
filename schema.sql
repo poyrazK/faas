@@ -14929,6 +14929,37 @@ END $$;
 
 
 --
+-- Name: guard_cron_environment_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_cron_environment_scope() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE environment uuid;
+BEGIN
+  IF TG_OP='UPDATE' THEN
+    IF NEW.environment_id IS DISTINCT FROM OLD.environment_id OR NEW.deployment_scope IS DISTINCT FROM OLD.deployment_scope
+      OR (OLD.deployment_scope<>'' AND NEW.app_id IS DISTINCT FROM OLD.app_id) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='cron_scope_identity',
+        MESSAGE='cron environment identity is immutable';
+    END IF;
+  ELSIF NEW.deployment_scope<>'' THEN
+    SELECT e.id INTO environment FROM apps a JOIN project_environments e ON e.project_id=a.project_id
+      AND e.account_id=a.account_id AND e.slug=NEW.deployment_scope
+      WHERE a.id=NEW.app_id AND a.status<>'deleted'
+      FOR SHARE OF a,e;
+    IF NOT FOUND OR (NEW.environment_id IS NOT NULL AND NEW.environment_id IS DISTINCT FROM environment) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='cron_environment_membership',
+        MESSAGE='an environment cron requires a project environment of its app';
+    END IF;
+    NEW.environment_id=environment;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_customer_operation_webhook_routing(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -35648,6 +35679,8 @@ CREATE TABLE public.crons (
     schedule_revision bigint DEFAULT 1 NOT NULL,
     schedule_anchor_at timestamp with time zone,
     labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    deployment_scope text DEFAULT ''::text NOT NULL,
+    environment_id uuid,
     CONSTRAINT crons_command_output_check CHECK (((command_max_output_bytes >= 1024) AND (command_max_output_bytes <= 16777216))),
     CONSTRAINT crons_command_shape_check CHECK ((((cardinality(command) = 0) AND (NOT command_shell)) OR (((cardinality(command) >= 1) AND (cardinality(command) <= 64)) AND (array_position(command, NULL::text) IS NULL) AND ((octet_length(command[1]) >= 1) AND (octet_length(command[1]) <= 4096)) AND ((octet_length(array_to_string(command, ''::text)) >= 1) AND (octet_length(array_to_string(command, ''::text)) <= 16384)) AND ((NOT command_shell) OR (cardinality(command) = 1))))),
     CONSTRAINT crons_command_timeout_check CHECK (((command_timeout_seconds >= 1) AND (command_timeout_seconds <= 3600))),
@@ -38715,6 +38748,42 @@ CREATE TABLE public.environment_build_artifact_pins (
     candidate_id uuid,
     artifact_id uuid NOT NULL,
     CONSTRAINT environment_build_artifact_pins_check CHECK (((source_id IS NULL) <> (candidate_id IS NULL)))
+);
+
+
+--
+-- Name: environment_deployment_cron_activations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_deployment_cron_activations (
+    app_id uuid NOT NULL,
+    deployment_scope text NOT NULL,
+    upload_id text,
+    session_id text NOT NULL,
+    intent jsonb NOT NULL,
+    fingerprint text NOT NULL,
+    revision bigint NOT NULL,
+    status text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT environment_deployment_cron_activations_deployment_scope_check CHECK (((deployment_scope ~ '^[a-z][a-z0-9-]{0,62}$'::text) AND (deployment_scope <> ALL (ARRAY['default'::text, 'production'::text])))),
+    CONSTRAINT environment_deployment_cron_activations_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT environment_deployment_cron_activations_intent_check CHECK ((jsonb_typeof(intent) = 'object'::text)),
+    CONSTRAINT environment_deployment_cron_activations_revision_check CHECK ((revision > 0)),
+    CONSTRAINT environment_deployment_cron_activations_session_id_check CHECK ((session_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT environment_deployment_cron_activations_status_check CHECK ((status = ANY (ARRAY['prepared'::text, 'activated'::text, 'conflict'::text, 'discarded'::text, 'canceled'::text])))
+);
+
+
+--
+-- Name: environment_deployment_cron_states; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_deployment_cron_states (
+    app_id uuid NOT NULL,
+    deployment_scope text NOT NULL,
+    revision bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT environment_deployment_cron_states_deployment_scope_check CHECK (((deployment_scope ~ '^[a-z][a-z0-9-]{0,62}$'::text) AND (deployment_scope <> ALL (ARRAY['default'::text, 'production'::text])))),
+    CONSTRAINT environment_deployment_cron_states_revision_check CHECK ((revision >= 0))
 );
 
 
@@ -62868,11 +62937,11 @@ ALTER TABLE ONLY public.cron_fire_now_requests
 
 
 --
--- Name: crons crons_app_schedule_path_command_unique; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: crons cron_scope_shape; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.crons
-    ADD CONSTRAINT crons_app_schedule_path_command_unique UNIQUE (app_id, schedule, path, command);
+ALTER TABLE public.crons
+    ADD CONSTRAINT cron_scope_shape CHECK ((((deployment_scope = ''::text) AND (environment_id IS NULL)) OR ((deployment_scope ~ '^[a-z][a-z0-9-]{0,62}$'::text) AND (environment_id IS NOT NULL)))) NOT VALID;
 
 
 --
@@ -64177,6 +64246,22 @@ ALTER TABLE ONLY public.environment_build_artifact_pins
 
 ALTER TABLE ONLY public.environment_build_artifact_pins
     ADD CONSTRAINT environment_build_artifact_pins_source_id_artifact_id_key UNIQUE (source_id, artifact_id);
+
+
+--
+-- Name: environment_deployment_cron_activations environment_deployment_cron_activations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_deployment_cron_activations
+    ADD CONSTRAINT environment_deployment_cron_activations_pkey PRIMARY KEY (app_id, deployment_scope);
+
+
+--
+-- Name: environment_deployment_cron_states environment_deployment_cron_states_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_deployment_cron_states
+    ADD CONSTRAINT environment_deployment_cron_states_pkey PRIMARY KEY (app_id, deployment_scope);
 
 
 --
@@ -75849,6 +75934,20 @@ CREATE INDEX crons_app_idx ON public.crons USING btree (app_id) WHERE enabled;
 
 
 --
+-- Name: crons_app_scope_schedule_path_command_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX crons_app_scope_schedule_path_command_unique ON public.crons USING btree (app_id, deployment_scope, schedule, path, command);
+
+
+--
+-- Name: crons_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX crons_environment_idx ON public.crons USING btree (environment_id) WHERE (environment_id IS NOT NULL);
+
+
+--
 -- Name: crons_org_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -77071,6 +77170,13 @@ CREATE INDEX environment_branch_capture_objects_created_idx ON public.environmen
 --
 
 CREATE INDEX environment_branch_captures_requested_idx ON public.environment_branch_captures USING btree (requested_at) WHERE (state = 'requested'::text);
+
+
+--
+-- Name: environment_deployment_cron_activations_prepared_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_deployment_cron_activations_prepared_idx ON public.environment_deployment_cron_activations USING btree (updated_at, app_id) WHERE (status = 'prepared'::text);
 
 
 --
@@ -88218,6 +88324,13 @@ CREATE TRIGGER github_webhook_secrets_notify_trg AFTER INSERT OR UPDATE ON publi
 
 
 --
+-- Name: crons guard_cron_environment_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_cron_environment_scope BEFORE INSERT OR UPDATE OF deployment_scope, environment_id, app_id ON public.crons FOR EACH ROW EXECUTE FUNCTION public.guard_cron_environment_scope();
+
+
+--
 -- Name: environment_workload_qualification_requests guard_environment_binding_context; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -97218,6 +97331,30 @@ ALTER TABLE ONLY public.environment_build_artifact_pins
 
 ALTER TABLE ONLY public.environment_build_artifact_pins
     ADD CONSTRAINT environment_build_artifact_pins_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_deployment_cron_activations environment_deployment_cron_activations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_deployment_cron_activations
+    ADD CONSTRAINT environment_deployment_cron_activations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_deployment_cron_activations environment_deployment_cron_activations_upload_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_deployment_cron_activations
+    ADD CONSTRAINT environment_deployment_cron_activations_upload_id_fkey FOREIGN KEY (upload_id) REFERENCES public.upload_sessions(id) ON DELETE SET NULL;
+
+
+--
+-- Name: environment_deployment_cron_states environment_deployment_cron_states_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_deployment_cron_states
+    ADD CONSTRAINT environment_deployment_cron_states_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
