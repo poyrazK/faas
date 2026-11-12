@@ -120609,6 +120609,10 @@ components:
         oldest_pending_at: { type: [string, "null"], format: date-time, description: "Oldest pending row's created_at; null when the queue is empty." }
         oldest_pending_age_seconds: { type: [integer, "null"], description: "Convenience field — seconds since oldest_pending_at; null when the queue is empty." }
         generated_at: { type: string, format: date-time }
+        backlog_by_source:
+          type: object
+          additionalProperties: { type: integer, format: int64 }
+          description: "Every pending or in-delivery invocation of the app per source (async_invoke, inbound_webhook, queue, ...), so async work waiting for the scheduler is visible beside the queue's depth. Omitted when nothing waits."
 
     QueuePeekMessage:
       description: "One pending row. No lease was acquired and `attempts` was not incremented."
