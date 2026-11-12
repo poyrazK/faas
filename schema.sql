@@ -38649,6 +38649,64 @@ CREATE TABLE public.environment_binding_release_receipts (
 
 
 --
+-- Name: environment_branch_capture_objects; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_branch_capture_objects (
+    storage_key text NOT NULL,
+    deployment_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT environment_branch_capture_objects_key CHECK (((octet_length(storage_key) <= 512) AND (storage_key ~~ 'snap/%/v2/mem'::text)))
+);
+
+
+--
+-- Name: TABLE environment_branch_capture_objects; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.environment_branch_capture_objects IS 'ADR-20261031193635 objects written by credential-free capture attempts; imaged deletes those no ready capture references.';
+
+
+--
+-- Name: environment_branch_captures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_branch_captures (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    deployment_id uuid NOT NULL,
+    state text DEFAULT 'requested'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    instance_id uuid,
+    failure text DEFAULT ''::text NOT NULL,
+    fc_version text DEFAULT ''::text NOT NULL,
+    storage_key text DEFAULT ''::text NOT NULL,
+    base_image_version text DEFAULT ''::text NOT NULL,
+    cpu_template text DEFAULT ''::text NOT NULL,
+    cpu_model text DEFAULT ''::text NOT NULL,
+    mem_bytes bigint DEFAULT 0 NOT NULL,
+    disk_bytes bigint DEFAULT 0 NOT NULL,
+    stored_bytes bigint DEFAULT 0 NOT NULL,
+    requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    ready_at timestamp with time zone,
+    CONSTRAINT environment_branch_captures_attempts CHECK ((attempts >= 0)),
+    CONSTRAINT environment_branch_captures_bytes CHECK (((mem_bytes >= 0) AND (disk_bytes >= 0) AND (stored_bytes >= 0))),
+    CONSTRAINT environment_branch_captures_failure CHECK ((octet_length(failure) <= 512)),
+    CONSTRAINT environment_branch_captures_lease CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT environment_branch_captures_ready CHECK (((state = 'ready'::text) = ((storage_key <> ''::text) AND (fc_version <> ''::text) AND (ready_at IS NOT NULL)))),
+    CONSTRAINT environment_branch_captures_state CHECK ((state = ANY (ARRAY['requested'::text, 'ready'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: TABLE environment_branch_captures; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.environment_branch_captures IS 'ADR-20261031193635 credential-free captures of parent deployments; only environment branches restore them, production never does.';
+
+
+--
 -- Name: environment_build_artifact_pins; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -48421,6 +48479,49 @@ CREATE TABLE public.object_bucket_object_lock (
 
 
 --
+-- Name: object_bucket_overlay_tombstones; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_overlay_tombstones (
+    bucket_id uuid NOT NULL,
+    key text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_bucket_overlay_tombstones_key CHECK (((octet_length(key) >= 1) AND (octet_length(key) <= 1024)))
+);
+
+
+--
+-- Name: TABLE object_bucket_overlay_tombstones; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.object_bucket_overlay_tombstones IS 'ADR-20261031193635 keys an environment branch deleted, hiding its source bucket''s objects.';
+
+
+--
+-- Name: object_bucket_overlays; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_overlays (
+    bucket_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    source_bucket_id uuid NOT NULL,
+    source_app_id uuid NOT NULL,
+    consistency text DEFAULT 'live_parent'::text NOT NULL,
+    as_of timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_bucket_overlays_consistency CHECK ((consistency = ANY (ARRAY['live_parent'::text, 'as_of'::text]))),
+    CONSTRAINT object_bucket_overlays_not_self CHECK ((source_bucket_id <> bucket_id))
+);
+
+
+--
+-- Name: TABLE object_bucket_overlays; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.object_bucket_overlays IS 'ADR-20261031193635 environment branch buckets that read through to their source bucket for keys they never wrote.';
+
+
+--
 -- Name: object_bucket_versioning; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -52710,6 +52811,118 @@ CREATE TABLE public.project_environment_approvals (
     CONSTRAINT project_environment_approvals_project_slug_shape CHECK ((project_slug ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT project_environment_approvals_token_kind_check CHECK ((token_kind = ANY (ARRAY['plan'::text, 'promotion'::text])))
 );
+
+
+--
+-- Name: project_environment_branch_buckets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_branch_buckets (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    environment_slug text NOT NULL,
+    app_id uuid NOT NULL,
+    source_bucket_id uuid NOT NULL,
+    copy_bucket_id uuid,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE project_environment_branch_buckets; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.project_environment_branch_buckets IS 'ADR-20261031193635 overlay buckets owned by an environment branch; purged and deleted after the branch is gone.';
+
+
+--
+-- Name: project_environment_branch_databases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_branch_databases (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    environment_slug text NOT NULL,
+    source_database_id uuid NOT NULL,
+    copy_name text NOT NULL,
+    copy_database_id uuid,
+    point_in_time timestamp with time zone NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE project_environment_branch_databases; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.project_environment_branch_databases IS 'ADR-20261031193635 managed PostgreSQL copies owned by an environment branch; deleted with their bindings after the branch is gone.';
+
+
+--
+-- Name: project_environment_branch_deployments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_branch_deployments (
+    deployment_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    source_deployment_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_branch_deployments_not_self CHECK ((source_deployment_id <> deployment_id))
+);
+
+
+--
+-- Name: TABLE project_environment_branch_deployments; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.project_environment_branch_deployments IS 'ADR-20261031193635 deployments an environment branch created from its parent''s artifacts; they activate on first request.';
+
+
+--
+-- Name: project_environment_branches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_branches (
+    environment_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    parent_environment_id uuid NOT NULL,
+    branch_point timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    egress_mode text DEFAULT 'live'::text NOT NULL,
+    depth smallint NOT NULL,
+    data_state text DEFAULT 'ready'::text NOT NULL,
+    data_error text DEFAULT ''::text NOT NULL,
+    data_attempts integer DEFAULT 0 NOT NULL,
+    data_next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    data_lease_token uuid,
+    data_lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    private_networks text DEFAULT 'off'::text NOT NULL,
+    CONSTRAINT project_environment_branches_data_attempts CHECK ((data_attempts >= 0)),
+    CONSTRAINT project_environment_branches_data_state CHECK ((data_state = ANY (ARRAY['pending'::text, 'ready'::text, 'failed'::text]))),
+    CONSTRAINT project_environment_branches_depth CHECK (((depth >= 1) AND (depth <= 8))),
+    CONSTRAINT project_environment_branches_egress_mode CHECK ((egress_mode = ANY (ARRAY['live'::text, 'contained'::text, 'simulated'::text]))),
+    CONSTRAINT project_environment_branches_expiry CHECK ((expires_at > created_at)),
+    CONSTRAINT project_environment_branches_not_self CHECK ((parent_environment_id <> environment_id)),
+    CONSTRAINT project_environment_branches_private_networks_chk CHECK (((private_networks = ANY (ARRAY['off'::text, 'join'::text])) AND ((private_networks = 'off'::text) OR (egress_mode = 'live'::text))))
+);
+
+
+--
+-- Name: TABLE project_environment_branches; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.project_environment_branches IS 'ADR-20261031193635 environment branches: a lazy copy of a parent project environment as of branch_point, deleted at expires_at.';
 
 
 --
@@ -63913,6 +64126,30 @@ ALTER TABLE ONLY public.environment_binding_retirement_receipts
 
 
 --
+-- Name: environment_branch_capture_objects environment_branch_capture_objects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_branch_capture_objects
+    ADD CONSTRAINT environment_branch_capture_objects_pkey PRIMARY KEY (storage_key);
+
+
+--
+-- Name: environment_branch_captures environment_branch_captures_one_per_deployment; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_branch_captures
+    ADD CONSTRAINT environment_branch_captures_one_per_deployment UNIQUE (deployment_id);
+
+
+--
+-- Name: environment_branch_captures environment_branch_captures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_branch_captures
+    ADD CONSTRAINT environment_branch_captures_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: environment_build_artifact_pins environment_build_artifact_pins_candidate_id_artifact_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -68153,6 +68390,22 @@ ALTER TABLE ONLY public.object_bucket_object_lock
 
 
 --
+-- Name: object_bucket_overlay_tombstones object_bucket_overlay_tombstones_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_overlay_tombstones
+    ADD CONSTRAINT object_bucket_overlay_tombstones_pkey PRIMARY KEY (bucket_id, key);
+
+
+--
+-- Name: object_bucket_overlays object_bucket_overlays_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_overlays
+    ADD CONSTRAINT object_bucket_overlays_pkey PRIMARY KEY (bucket_id);
+
+
+--
 -- Name: object_bucket_versioning object_bucket_versioning_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69998,6 +70251,70 @@ ALTER TABLE ONLY public.project_environment_approvals
 
 ALTER TABLE ONLY public.project_environment_approvals
     ADD CONSTRAINT project_environment_approvals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: project_environment_branch_buckets project_environment_branch_buckets_one_copy; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_buckets
+    ADD CONSTRAINT project_environment_branch_buckets_one_copy UNIQUE (environment_id, app_id, source_bucket_id);
+
+
+--
+-- Name: project_environment_branch_buckets project_environment_branch_buckets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_buckets
+    ADD CONSTRAINT project_environment_branch_buckets_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: project_environment_branch_databases project_environment_branch_databases_copy_name; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_databases
+    ADD CONSTRAINT project_environment_branch_databases_copy_name UNIQUE (account_id, copy_name);
+
+
+--
+-- Name: project_environment_branch_databases project_environment_branch_databases_one_copy; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_databases
+    ADD CONSTRAINT project_environment_branch_databases_one_copy UNIQUE (environment_id, source_database_id);
+
+
+--
+-- Name: project_environment_branch_databases project_environment_branch_databases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_databases
+    ADD CONSTRAINT project_environment_branch_databases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: project_environment_branch_deployments project_environment_branch_deployments_one_per_app; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_deployments
+    ADD CONSTRAINT project_environment_branch_deployments_one_per_app UNIQUE (environment_id, app_id);
+
+
+--
+-- Name: project_environment_branch_deployments project_environment_branch_deployments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_deployments
+    ADD CONSTRAINT project_environment_branch_deployments_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: project_environment_branches project_environment_branches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branches
+    ADD CONSTRAINT project_environment_branches_pkey PRIMARY KEY (environment_id);
 
 
 --
@@ -76721,6 +77038,20 @@ CREATE INDEX email_verification_tokens_account_idx ON public.email_verification_
 
 
 --
+-- Name: environment_branch_capture_objects_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_branch_capture_objects_created_idx ON public.environment_branch_capture_objects USING btree (created_at);
+
+
+--
+-- Name: environment_branch_captures_requested_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_branch_captures_requested_idx ON public.environment_branch_captures USING btree (requested_at) WHERE (state = 'requested'::text);
+
+
+--
 -- Name: environment_git_source_polls_due_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -81765,6 +82096,48 @@ CREATE INDEX project_environment_approvals_id_lookup_idx ON public.project_envir
 --
 
 CREATE INDEX project_environment_approvals_lookup_idx ON public.project_environment_approvals USING btree (account_id, project_slug, environment_slug, plan_token_hash, expires_at);
+
+
+--
+-- Name: project_environment_branch_buckets_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_branch_buckets_environment_idx ON public.project_environment_branch_buckets USING btree (environment_id);
+
+
+--
+-- Name: project_environment_branch_databases_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_branch_databases_environment_idx ON public.project_environment_branch_databases USING btree (environment_id);
+
+
+--
+-- Name: project_environment_branches_data_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_branches_data_due_idx ON public.project_environment_branches USING btree (data_next_attempt_at) WHERE (data_state = 'pending'::text);
+
+
+--
+-- Name: project_environment_branches_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_branches_expiry_idx ON public.project_environment_branches USING btree (expires_at);
+
+
+--
+-- Name: project_environment_branches_parent_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_branches_parent_idx ON public.project_environment_branches USING btree (parent_environment_id);
+
+
+--
+-- Name: project_environment_branches_project_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_branches_project_idx ON public.project_environment_branches USING btree (account_id, project_id);
 
 
 --
@@ -96787,6 +97160,14 @@ ALTER TABLE ONLY public.environment_binding_retirement_receipts
 
 
 --
+-- Name: environment_branch_captures environment_branch_captures_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_branch_captures
+    ADD CONSTRAINT environment_branch_captures_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: environment_build_artifact_pins environment_build_artifact_pins_artifact_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -101419,6 +101800,30 @@ ALTER TABLE ONLY public.object_bucket_object_lock
 
 
 --
+-- Name: object_bucket_overlay_tombstones object_bucket_overlay_tombstones_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_overlay_tombstones
+    ADD CONSTRAINT object_bucket_overlay_tombstones_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_bucket_overlays(bucket_id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_bucket_overlays object_bucket_overlays_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_overlays
+    ADD CONSTRAINT object_bucket_overlays_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_bucket_overlays object_bucket_overlays_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_overlays
+    ADD CONSTRAINT object_bucket_overlays_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
 -- Name: object_bucket_versioning object_bucket_versioning_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -103656,6 +104061,78 @@ ALTER TABLE ONLY public.project_binding_verification_runs
 
 ALTER TABLE ONLY public.project_environment_approvals
     ADD CONSTRAINT project_environment_approvals_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_branch_buckets project_environment_branch_buckets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_buckets
+    ADD CONSTRAINT project_environment_branch_buckets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_branch_databases project_environment_branch_databases_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_databases
+    ADD CONSTRAINT project_environment_branch_databases_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_branch_deployments project_environment_branch_deployments_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_deployments
+    ADD CONSTRAINT project_environment_branch_deployments_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_branch_deployments project_environment_branch_deployments_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_deployments
+    ADD CONSTRAINT project_environment_branch_deployments_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_branch_deployments project_environment_branch_deployments_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_deployments
+    ADD CONSTRAINT project_environment_branch_deployments_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environment_branches(environment_id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_branches project_environment_branches_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branches
+    ADD CONSTRAINT project_environment_branches_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_branches project_environment_branches_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branches
+    ADD CONSTRAINT project_environment_branches_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_branches project_environment_branches_parent_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branches
+    ADD CONSTRAINT project_environment_branches_parent_environment_id_fkey FOREIGN KEY (parent_environment_id) REFERENCES public.project_environments(id);
+
+
+--
+-- Name: project_environment_branches project_environment_branches_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branches
+    ADD CONSTRAINT project_environment_branches_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
 
 
 --

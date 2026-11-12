@@ -6540,6 +6540,13 @@ var cliCommands = []cliCommand{
 					{Name: "share-resources", Short: "explicitly share managed database and object-storage data", Bool: true},
 				}},
 				{Name: "delete", Short: "Delete a non-production environment", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "yes", Bool: true, Req: true, Short: "confirm environment deletion"}}},
+				{Name: "branch", Short: "Branch an environment; workloads start on first request", Notes: []string{"Deleted at its TTL or with `environment delete`."}, Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{
+					{Name: "from", Value: "ENV", Short: "parent environment (default production)"},
+					{Name: "ttl", Value: "DURATION", Short: "time to live, 1h to 720h (default 168h)"},
+					{Name: "list", Bool: true, Short: "list the parent's branches"},
+					{Name: "egress", Value: "MODE", Short: "live (default), contained or simulated"},
+					{Name: "private-networks", Value: "MODE", Short: "off (default) or join"},
+				}},
 				{Name: "protect", Short: "Protect an environment"},
 				{Name: "unprotect", Short: "Remove environment protection"},
 				{Name: "inspect", Short: "Inspect the active graph and environment deployments"},

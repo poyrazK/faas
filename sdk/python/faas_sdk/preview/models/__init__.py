@@ -75,6 +75,7 @@ from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsRes
 from .advance_canary_request import AdvanceCanaryRequest
 from .advance_stored_workflow_live_suite_request import AdvanceStoredWorkflowLiveSuiteRequest
 from .after_restore_hook import AfterRestoreHook
+from .after_restore_hook_identity import AfterRestoreHookIdentity
 from .agent_activity_entry import AgentActivityEntry
 from .agent_activity_entry_method import AgentActivityEntryMethod
 from .agent_activity_response import AgentActivityResponse
@@ -982,6 +983,11 @@ from .create_project_binding_verification_run_request_review_digests import (
     CreateProjectBindingVerificationRunRequestReviewDigests,
 )
 from .create_project_environment_approval_request import CreateProjectEnvironmentApprovalRequest
+from .create_project_environment_branch_request import CreateProjectEnvironmentBranchRequest
+from .create_project_environment_branch_request_egress import CreateProjectEnvironmentBranchRequestEgress
+from .create_project_environment_branch_request_private_networks import (
+    CreateProjectEnvironmentBranchRequestPrivateNetworks,
+)
 from .create_project_environment_qualification_request import CreateProjectEnvironmentQualificationRequest
 from .create_project_environment_qualification_request_secret_revision_hashes import (
     CreateProjectEnvironmentQualificationRequestSecretRevisionHashes,
@@ -4564,6 +4570,14 @@ from .project_environment_binding_change_response_change import ProjectEnvironme
 from .project_environment_binding_change_response_kind import ProjectEnvironmentBindingChangeResponseKind
 from .project_environment_binding_response import ProjectEnvironmentBindingResponse
 from .project_environment_binding_response_kind import ProjectEnvironmentBindingResponseKind
+from .project_environment_branch_list_response import ProjectEnvironmentBranchListResponse
+from .project_environment_branch_response import ProjectEnvironmentBranchResponse
+from .project_environment_branch_response_data import ProjectEnvironmentBranchResponseData
+from .project_environment_branch_response_private_networks import ProjectEnvironmentBranchResponsePrivateNetworks
+from .project_environment_branch_summary import ProjectEnvironmentBranchSummary
+from .project_environment_branch_summary_data import ProjectEnvironmentBranchSummaryData
+from .project_environment_branch_summary_private_networks import ProjectEnvironmentBranchSummaryPrivateNetworks
+from .project_environment_branch_workload import ProjectEnvironmentBranchWorkload
 from .project_environment_clone_operation_response import ProjectEnvironmentCloneOperationResponse
 from .project_environment_clone_operation_response_status import ProjectEnvironmentCloneOperationResponseStatus
 from .project_environment_clone_resource_response import ProjectEnvironmentCloneResourceResponse
@@ -5630,6 +5644,8 @@ from .security_activity_response import SecurityActivityResponse
 from .security_quarantine_recovery_request import SecurityQuarantineRecoveryRequest
 from .security_quarantine_recovery_response import SecurityQuarantineRecoveryResponse
 from .security_quarantine_recovery_response_status import SecurityQuarantineRecoveryResponseStatus
+from .seed_dev_session_from_environment_branch_request import SeedDevSessionFromEnvironmentBranchRequest
+from .seed_dev_session_from_environment_branch_response import SeedDevSessionFromEnvironmentBranchResponse
 from .selected_trace_app import SelectedTraceApp
 from .selected_trace_invocation import SelectedTraceInvocation
 from .selected_trace_lookup_response import SelectedTraceLookupResponse
@@ -6472,6 +6488,7 @@ __all__ = (
     "AdvanceCanaryRequest",
     "AdvanceStoredWorkflowLiveSuiteRequest",
     "AfterRestoreHook",
+    "AfterRestoreHookIdentity",
     "AgentActivityEntry",
     "AgentActivityEntryMethod",
     "AgentActivityResponse",
@@ -7356,6 +7373,9 @@ __all__ = (
     "CreateProjectBindingVerificationRunRequest",
     "CreateProjectBindingVerificationRunRequestReviewDigests",
     "CreateProjectEnvironmentApprovalRequest",
+    "CreateProjectEnvironmentBranchRequest",
+    "CreateProjectEnvironmentBranchRequestEgress",
+    "CreateProjectEnvironmentBranchRequestPrivateNetworks",
     "CreateProjectEnvironmentQualificationRequest",
     "CreateProjectEnvironmentQualificationRequestSecretRevisionHashes",
     "CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes",
@@ -10689,6 +10709,14 @@ __all__ = (
     "ProjectEnvironmentBindingChangeResponseKind",
     "ProjectEnvironmentBindingResponse",
     "ProjectEnvironmentBindingResponseKind",
+    "ProjectEnvironmentBranchListResponse",
+    "ProjectEnvironmentBranchResponse",
+    "ProjectEnvironmentBranchResponseData",
+    "ProjectEnvironmentBranchResponsePrivateNetworks",
+    "ProjectEnvironmentBranchSummary",
+    "ProjectEnvironmentBranchSummaryData",
+    "ProjectEnvironmentBranchSummaryPrivateNetworks",
+    "ProjectEnvironmentBranchWorkload",
     "ProjectEnvironmentCloneOperationResponse",
     "ProjectEnvironmentCloneOperationResponseStatus",
     "ProjectEnvironmentCloneResourceResponse",
@@ -11709,6 +11737,8 @@ __all__ = (
     "SecurityQuarantineRecoveryRequest",
     "SecurityQuarantineRecoveryResponse",
     "SecurityQuarantineRecoveryResponseStatus",
+    "SeedDevSessionFromEnvironmentBranchRequest",
+    "SeedDevSessionFromEnvironmentBranchResponse",
     "SelectedTraceApp",
     "SelectedTraceInvocation",
     "SelectedTraceLookupResponse",

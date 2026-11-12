@@ -34,6 +34,7 @@ from .activity_actor_response_type import ActivityActorResponseType
 from .activity_resource_response import ActivityResourceResponse
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
+from .after_restore_hook_identity import AfterRestoreHookIdentity
 from .agent_activity_entry import AgentActivityEntry
 from .agent_activity_entry_method import AgentActivityEntryMethod
 from .agent_activity_response import AgentActivityResponse
@@ -2723,6 +2724,7 @@ __all__ = (
     "ActivityResourceResponse",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
+    "AfterRestoreHookIdentity",
     "AgentActivityEntry",
     "AgentActivityEntryMethod",
     "AgentActivityResponse",

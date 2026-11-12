@@ -1838,6 +1838,27 @@ func (r *server) ConfigureProductEmail(getenv func(string) string) error {
 
 func (s *server) RehearsalNetworkEnabled() *bool { return &s.rehearsalNetworkEnabled }
 
+// EnvironmentBranchContainmentEnabled is the contained/simulated branch
+// operator gate (ADR-20261031193635 slices 6a and 6b).
+func (s *server) EnvironmentBranchContainmentEnabled() *bool {
+	return &s.environmentBranchContainmentEnabled
+}
+
+// EnvironmentBranchContainedObjectsEnabled is the bridge object relay gate
+// (ADR-20261031193635 slice 6c).
+func (s *server) EnvironmentBranchContainedObjectsEnabled() *bool {
+	return &s.environmentBranchContainedObjectsEnabled
+}
+
+// EnableEnvironmentBranchesForTest turns environment_branches_enabled on.
+func (s *server) EnableEnvironmentBranchesForTest(t *testing.T) {
+	t.Helper()
+	s.runtimeConfig = newRuntimeConfigManager(nil)
+	if err := s.runtimeConfig.apply(runtimeConfigEnvironmentBranches, json.RawMessage("true")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (s *server) RehearsalSimulationEnabled() *bool { return &s.rehearsalSimulationEnabled }
 func (s *server) RehearsalCommandsEnabled() *bool   { return &s.rehearsalCommandsEnabled }
 

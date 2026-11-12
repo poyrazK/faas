@@ -518,6 +518,7 @@ export type { CreatePrivateNetworkRequest } from './models/CreatePrivateNetworkR
 export type { CreateProfileCaptureRequest } from './models/CreateProfileCaptureRequest.js';
 export type { CreateProjectBindingVerificationRunRequest } from './models/CreateProjectBindingVerificationRunRequest.js';
 export type { CreateProjectEnvironmentApprovalRequest } from './models/CreateProjectEnvironmentApprovalRequest.js';
+export type { CreateProjectEnvironmentBranchRequest } from './models/CreateProjectEnvironmentBranchRequest.js';
 export type { CreateProjectEnvironmentQualificationRequest } from './models/CreateProjectEnvironmentQualificationRequest.js';
 export type { CreateProjectEnvironmentRequest } from './models/CreateProjectEnvironmentRequest.js';
 export type { CreateProjectMigrationRequest } from './models/CreateProjectMigrationRequest.js';
@@ -2396,6 +2397,10 @@ export type { ProjectEnvironmentApprovalResponse } from './models/ProjectEnviron
 export type { ProjectEnvironmentApprovalStatusResponse } from './models/ProjectEnvironmentApprovalStatusResponse.js';
 export type { ProjectEnvironmentBindingChangeResponse } from './models/ProjectEnvironmentBindingChangeResponse.js';
 export type { ProjectEnvironmentBindingResponse } from './models/ProjectEnvironmentBindingResponse.js';
+export type { ProjectEnvironmentBranchListResponse } from './models/ProjectEnvironmentBranchListResponse.js';
+export type { ProjectEnvironmentBranchResponse } from './models/ProjectEnvironmentBranchResponse.js';
+export type { ProjectEnvironmentBranchSummary } from './models/ProjectEnvironmentBranchSummary.js';
+export type { ProjectEnvironmentBranchWorkload } from './models/ProjectEnvironmentBranchWorkload.js';
 export type { ProjectEnvironmentCloneOperationResponse } from './models/ProjectEnvironmentCloneOperationResponse.js';
 export type { ProjectEnvironmentCloneResourceResponse } from './models/ProjectEnvironmentCloneResourceResponse.js';
 export type { ProjectEnvironmentCloneResponse } from './models/ProjectEnvironmentCloneResponse.js';
@@ -2954,6 +2959,8 @@ export type { SecurityActivityEvent } from './models/SecurityActivityEvent.js';
 export type { SecurityActivityResponse } from './models/SecurityActivityResponse.js';
 export type { SecurityQuarantineRecoveryRequest } from './models/SecurityQuarantineRecoveryRequest.js';
 export type { SecurityQuarantineRecoveryResponse } from './models/SecurityQuarantineRecoveryResponse.js';
+export type { SeedDevSessionFromEnvironmentBranchRequest } from './models/SeedDevSessionFromEnvironmentBranchRequest.js';
+export type { SeedDevSessionFromEnvironmentBranchResponse } from './models/SeedDevSessionFromEnvironmentBranchResponse.js';
 export type { SelectedTraceApp } from './models/SelectedTraceApp.js';
 export type { SelectedTraceInvocation } from './models/SelectedTraceInvocation.js';
 export type { SelectedTraceLookupResponse } from './models/SelectedTraceLookupResponse.js';

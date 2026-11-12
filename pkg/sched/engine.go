@@ -432,9 +432,12 @@ type BrokerLagReader interface {
 // one app's instances is serialised by a per-app lock so a Wake and a reaper
 // Park for the same app never race the ledger or the state machine.
 type Engine struct {
-	validatorArtifactCheck func(context.Context, string, string) error
-	store                  state.Store
-	ledger                 *NodeLedger
+	// environmentBranchEgress caches deployments outside any contained
+	// environment branch (ADR-20261031193635).
+	environmentBranchEgress environmentBranchEgressCache
+	validatorArtifactCheck  func(context.Context, string, string) error
+	store                   state.Store
+	ledger                  *NodeLedger
 	// functionDestinationReleases keeps a failing function source's retries
 	// from releasing its retired destination's reservation more than once.
 	functionDestinationReleases releasedDestinations
@@ -3600,6 +3603,18 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		coldReason = ColdReasonInstanceMode
 		backoffActive = false
 	}
+	// ADR-20261031193635 slice 5b: an opted-in branch with no snapshot of
+	// its own restores from its lineage parent's credential-free capture and
+	// reloads its identity through after_restore. The capture is no
+	// snapshots row, so the row-bound steps below skip it.
+	branchCapture := false
+	if !haveSnap && usesSnapshots && !secretPolicyBlocksSnapshots {
+		if captured, ok := e.environmentBranchCaptureSnapshot(ctx, app, dep, snapshotReads.guestRAMMB(e, dep.ID, app.RAMMB)); ok {
+			snap, haveSnap, chosenTier, coldReason, branchCapture = captured, true, wakeTierInit, "", true
+			e.log.Info("wake: restoring the lineage parent's credential-free capture",
+				"app_id", logsanitize.Field(appID), "deployment_id", dep.ID, "capture_id", captured.ID, "parent_deployment_id", captured.DeploymentID)
+		}
+	}
 	if !haveSnap && usesSnapshots && !secretPolicyBlocksSnapshots {
 		// Only a deployment that has had a snapshot can be said to have
 		// missed one. This avoids starting the exponential backoff on a
@@ -3624,6 +3639,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			"reason", coldReason, "snapshot_id", choice.rejected.ID,
 			"snapshot_tier", choice.rejected.Tier, "snapshot_fc_version", choice.rejected.FCVersion,
 			"fc_version", e.fcVer, "snapshot_created_at", choice.rejected.CreatedAt)
+		e.requestEnvironmentBranchCapture(ctx, app, dep)
 	}
 	if e.ops != nil {
 		if c := e.ops.WakeColdReason(coldReason); c != nil && !haveSnap {
@@ -3662,7 +3678,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		warmHint, _ = e.warmAffinity.LastWarmNode(appID)
 	}
 	var snapshotNodes []string
-	if haveSnap {
+	if haveSnap && !branchCapture {
 		if choice.locality.snapshotID == snap.ID {
 			warmHint, snapshotNodes, snapshotLocalityKnown = e.placementHintsFrom(ctx, choice.locality, warmHint)
 		} else {
@@ -3722,7 +3738,11 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	prefetch := e.startBootPrefetch(ctx, app, dep)
 	// ADR-1741: the admission insert binds the snapshot-recovery lineage in
 	// its own transaction; a store that cannot is bound separately below.
-	recovery := &state.SnapshotRecoveryAdmission{SnapshotID: snap.ID}
+	recoverySnapshotID := snap.ID
+	if branchCapture {
+		recoverySnapshotID = ""
+	}
+	recovery := &state.SnapshotRecoveryAdmission{SnapshotID: recoverySnapshotID}
 	admitStarted := time.Now()
 	restore := haveSnap && snap.StorageKey != ""
 	if restore {
@@ -3804,7 +3824,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	noteWakePlacement(ctx, placement.NodeID)
 	admitted := time.Now()
 	if !recovery.Bound() {
-		if err := e.bindSnapshotRecovery(ctx, ins, snap.ID); err != nil {
+		if err := e.bindSnapshotRecovery(ctx, ins, recoverySnapshotID); err != nil {
 			_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
 			release()
 			return WakeResult{}, err
@@ -4023,7 +4043,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	addRuntimeSidecarSecretVersions(&runtimeInputs, sidecarSecretCandidates)
 	runtimeInputs.SecretRefs = sealedEnv.References
 	var snapshotInputs *state.RuntimeConfigInputs
-	if receipt := choice.receipt; haveSnap && receipt.snapshotID == snap.ID {
+	if branchCapture {
+		// The capture's receipt would describe placeholders; the guest
+		// acknowledges the branch's own inputs instead.
+	} else if receipt := choice.receipt; haveSnap && receipt.snapshotID == snap.ID {
 		if receipt.exists {
 			captured := receipt.inputs
 			snapshotInputs = &captured
@@ -4177,6 +4200,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		snapKey:          snap.StorageKey,
 		snapCaptureToken: snap.ApplicationStandardCaptureToken,
 		snapMemBytes:     snap.MemBytes,
+		branchCapture:    branchCapture,
 		// nodeID is the chosen compute_node from Phase 2. Phase 3
 		// threads it through every vmmd RPC so the router dials
 		// the right per-target client.
@@ -4222,6 +4246,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		coldReason:         coldReason,
 		atCapacity:         atCapacity,
 	}
+	bootInput.spec.IdentityReload = branchCapture
 	// issue #517 / PR-C / ADR-064 — emit wake.queue_accepted at
 	// the boundary between Phase 2 (admit + ledger) and Phase 3
 	// (unlocked vmmd RPC). The customer-facing timeline endpoint
@@ -4539,7 +4564,16 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// park re-snapshots. Best-effort — failure here doesn't block the
 	// RUNNING transition (the stale snapshot also gets the next-park
 	// treatment from snapshotAndPark).
-	if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT && out.RestoreFallbackReason == fcvm.RestoreFallbackNodeLocal {
+	if bootInput.branchCapture && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT {
+		// The branch cold-booted under its own identity. Unless the node
+		// was at fault, the app did not reload its identity: stop restoring
+		// from the capture, so later wakes pay for one boot, not two.
+		if out.RestoreFallbackReason != fcvm.RestoreFallbackNodeLocal {
+			e.retireEnvironmentBranchCapture(ctx, bootInput.snapID, "restore fell back to cold boot: "+out.RestoreFallbackReason)
+		}
+		e.log.Info("wake: credential-free capture restore fell back to cold boot", "app", logsanitize.Field(bootInput.appID), "instance", bootInput.insID,
+			"capture_id", bootInput.snapID, "reason", out.RestoreFallbackReason, "wake_id", logsanitize.Field(bootInput.wakeID))
+	} else if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT && out.RestoreFallbackReason == fcvm.RestoreFallbackNodeLocal {
 		// The restore failed for this node's reasons (a full disk, an image or
 		// identity it could not read, jail setup): the snapshot is still good
 		// for every other node, so it stays live (bug hunt 2026-10-28 B12).
@@ -4572,7 +4606,8 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// left a race between the watchdog check and the state update. The CAS makes
 	// a stolen state a failure without adding a read to the successful path.
 	confirmedInputs := bootInput.runtimeInputs
-	if bootInput.haveSnap && out.Method != vmmdpb.WakeMethod_WAKE_COLD_BOOT {
+	// An identity-reload restore runs the branch's acknowledged inputs.
+	if bootInput.haveSnap && !bootInput.branchCapture && out.Method != vmmdpb.WakeMethod_WAKE_COLD_BOOT {
 		confirmedInputs = bootInput.snapshotInputs
 	}
 	bookkeeping := e.publicationBookkeeping(bootInput.insID, bootInput.appID, bootInput.wakeID, bootInput.initState, state.StateRunning, "state_transition")
@@ -4900,6 +4935,10 @@ type bootInput struct {
 	configFence      state.RuntimeAppConfigFence
 	runtimeInputs    *state.RuntimeConfigInputs
 	snapshotInputs   *state.RuntimeConfigInputs
+	// branchCapture (ADR-20261031193635) restores the lineage parent's
+	// credential-free capture with an identity reload; snapID is the
+	// capture's ID, not a snapshots row.
+	branchCapture bool
 	// wakeID is the per-wake-attempt correlation handle (gaps analysis
 	// 2026-07-23). UUIDv7 minted at Phase 2 under the lock, persisted
 	// on the instances row in CreateInstance, and carried across the
@@ -6959,6 +6998,29 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 		})
 	} else if memberErr != nil && !errors.Is(memberErr, state.ErrNotFound) {
 		return memberErr
+	}
+	// ADR-20261031193635: a deployment an environment branch created from its
+	// parent's artifact activates without a boot. Its first request cold boots
+	// and the branch then captures its own snapshots. Workers keep the normal
+	// prime because they run continuously; jobs are artifact-only below.
+	if mode := executionModeForApp(app); upgradeTarget == nil && (mode == api.ExecutionModeRequest || mode == api.ExecutionModeService) {
+		lazy, err := e.environmentBranchDeployment(ctx, dep.ID)
+		if err != nil {
+			return err
+		}
+		if lazy {
+			// The branch's database copies must exist first: the workload reads
+			// its binding URLs at boot. The branch data reconciler primes the
+			// deployment again once they do.
+			ready, err := e.environmentBranchDataReady(ctx, dep.ID)
+			if err != nil || !ready {
+				return err
+			}
+			if err := e.verifyPrimeLayer(ctx, appID, primeLayer); err != nil {
+				return err
+			}
+			return e.emitDeploymentReady(ctx, deploymentID, mode, "", state.EnvironmentBranchActivationReason)
+		}
 	}
 	if executionModeForApp(app) == api.ExecutionModeJob {
 		if err := e.verifyPrimeLayer(ctx, appID, primeLayer); err != nil {

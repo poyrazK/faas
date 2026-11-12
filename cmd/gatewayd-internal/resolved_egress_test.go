@@ -40,6 +40,14 @@ func TestAllowResolvedEgressRequest(t *testing.T) {
 		cli.req.GetAddresses()[1] != "2001:db8::1" {
 		t.Fatalf("request = %+v", cli.req)
 	}
+	// A database answer carries its name and port, which a contained branch
+	// instance matches against its own databases (ADR-20261031193635).
+	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", "ep-branch.eu.neon.tech", resolvedEgressOwner{instance: "instance", generation: "generation"}, addrs, time.Minute, 5432); err != nil {
+		t.Fatal(err)
+	}
+	if cli.req.GetName() != "ep-branch.eu.neon.tech" || cli.req.GetDatabasePort() != 5432 {
+		t.Fatalf("database request = %+v", cli.req)
+	}
 	cli.err = status.Error(codes.Unimplemented, "old vmmd")
 	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", "example.com", resolvedEgressOwner{instance: "instance", generation: "generation"}, addrs, time.Minute, 0); err != nil {
 		t.Fatalf("an older vmmd must not be an error: %v", err)
