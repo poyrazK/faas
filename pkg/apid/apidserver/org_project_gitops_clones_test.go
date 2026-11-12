@@ -53,7 +53,7 @@ func TestOrgProjectGitOpsAndClones(t *testing.T) {
 		}
 	}
 	for _, env := range []string{"staging", "secure"} {
-		if _, err := store.(state.EnvironmentGitOpsStore).CreateEnvironmentGitSource(ctx, creator.ID, project.ID, env, state.EnvironmentGitSourceSpec{
+		if _, err := store.CreateEnvironmentGitSource(ctx, creator.ID, project.ID, env, state.EnvironmentGitSourceSpec{
 			Provider: "github", Repository: "company/shop", RepositoryID: 7, InstallationID: 42, Ref: "refs/heads/main",
 			ManifestPath: "gregale.env.yaml", Mode: "report", ApprovalPolicy: "manual"}); err != nil {
 			t.Fatalf("seed %s source: %v", env, err)
