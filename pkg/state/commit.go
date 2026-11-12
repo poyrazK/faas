@@ -66,6 +66,7 @@ type CommitRelaySource struct {
 	CommitSource
 	SealedConnection   []byte
 	CredentialRevision int64
+	Changes            CommitChangesConfig
 }
 
 type CommitBlockedEvent struct {
@@ -164,7 +165,8 @@ func (s *PgStore) ListCommitRelaySources(ctx context.Context, after string, limi
 	if limit < 1 || limit > 64 {
 		return nil, ErrInvalidArgument
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id::text,account_id::text,app_id::text,name,enabled,COALESCE(operation_policy,''),contract_version,allow_tenant_selection,destination,sealed_connection,credential_revision
+	rows, err := s.pool.Query(ctx, `SELECT id::text,account_id::text,app_id::text,name,enabled,COALESCE(operation_policy,''),contract_version,allow_tenant_selection,destination,sealed_connection,credential_revision,
+ COALESCE(queue_name,''),changes_feeds,COALESCE(managed_database_id::text,''),poll_interval_ms,last_checked_at
  FROM commit_sources WHERE enabled AND sealed_connection IS NOT NULL
  AND ($1::text='' OR id>NULLIF($1,'')::uuid) ORDER BY id LIMIT $2`, after, limit)
 	if err != nil {
@@ -174,8 +176,13 @@ func (s *PgStore) ListCommitRelaySources(ctx context.Context, after string, limi
 	var sources []CommitRelaySource
 	for rows.Next() {
 		var src CommitRelaySource
-		if err := rows.Scan(&src.ID, &src.AccountID, &src.AppID, &src.Name, &src.Enabled, &src.OperationPolicy, &src.ContractVersion, &src.AllowTenantSelection, &src.Destination, &src.SealedConnection, &src.CredentialRevision); err != nil {
+		var feeds []byte
+		if err := rows.Scan(&src.ID, &src.AccountID, &src.AppID, &src.Name, &src.Enabled, &src.OperationPolicy, &src.ContractVersion, &src.AllowTenantSelection, &src.Destination, &src.SealedConnection, &src.CredentialRevision,
+			&src.Changes.QueueName, &feeds, &src.Changes.ManagedDatabaseID, &src.Changes.PollIntervalMS, &src.LastCheckedAt); err != nil {
 			return nil, err
+		}
+		if len(feeds) > 0 {
+			src.Changes.Feeds = json.RawMessage(feeds)
 		}
 		sources = append(sources, src)
 	}
@@ -319,8 +326,9 @@ func (s *PgStore) AcceptCommitEvent(ctx context.Context, account, source, event,
 	var app string
 	var enabled bool
 	var tenantRequired bool
-	err = tx.QueryRow(ctx, `SELECT c.app_id::text,c.enabled,a.platform_tenant_required FROM commit_sources c JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id
- WHERE c.account_id=$1::uuid AND c.id=$2::uuid FOR UPDATE OF c FOR SHARE OF a`, account, source).Scan(&app, &enabled, &tenantRequired)
+	var changes bool
+	err = tx.QueryRow(ctx, `SELECT c.app_id::text,c.enabled,a.platform_tenant_required,c.queue_name IS NOT NULL FROM commit_sources c JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id
+ WHERE c.account_id=$1::uuid AND c.id=$2::uuid FOR UPDATE OF c FOR SHARE OF a`, account, source).Scan(&app, &enabled, &tenantRequired, &changes)
 	if err != nil {
 		return CommitReceipt{}, mapErr(err)
 	}
@@ -338,7 +346,9 @@ func (s *PgStore) AcceptCommitEvent(ctx context.Context, account, source, event,
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return CommitReceipt{}, err
 	}
-	if !enabled || tenantRequired || app != inv.AppID || account != inv.AccountID || maxPending < 1 {
+	// A changes source accepts only captured row changes, through
+	// AcceptCommitChange; its existing receipts stay recoverable above.
+	if changes || !enabled || tenantRequired || app != inv.AppID || account != inv.AccountID || maxPending < 1 {
 		return CommitReceipt{}, ErrInvalidArgument
 	}
 	var pending int
