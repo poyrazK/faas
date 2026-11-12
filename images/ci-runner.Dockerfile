@@ -1,6 +1,6 @@
 # Internal Jobs CI protocol image. Build only; no publication/dispatch matrix.
 # Repository commands run inside Firecracker after the guest marker/proof checks.
-FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.26.10@sha256:670bb5aa5349ae03b8516764718486f4f16399134bdc9acd0c46a23f043ab05c AS build
+FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.26.11@sha256:957952ae74dc010608717144399a59a2c6e82ea03d63be1c7ff6577c5a135f93 AS build
 ARG TARGETARCH=amd64
 WORKDIR /src
 COPY go.mod go.sum ./

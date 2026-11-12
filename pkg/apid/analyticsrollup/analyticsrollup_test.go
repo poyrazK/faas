@@ -1,14 +1,14 @@
 package analyticsrollup_test
 
 import (
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/analyticsrollup"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestByDimensionTakesSampledMeasuresFromMatchingRawGroups(t *testing.T) {
@@ -110,5 +110,12 @@ func TestAlignWindowUsesWholeHoursPastTheMinuteHorizon(t *testing.T) {
 		if !gotFrom.Equal(tc.wantFrom) || !gotUntil.Equal(tc.wantUntil) {
 			t.Errorf("%s: got [%s, %s), want [%s, %s)", tc.name, gotFrom, gotUntil, tc.wantFrom, tc.wantUntil)
 		}
+	}
+}
+
+func TestByDimensionNeverJoinsFoldedSampleCohorts(t *testing.T) {
+	got := analyticsrollup.ByDimension([]analyticsrollup.Group{{Dimension: "__other__", Requests: 10}}, []sqlc.RequestTelemetryAnalyticsByDimensionRow{{Dimension: "__other__", Requests: 5, GuestCpuAvgMs: pgtype.Int4{Int32: 1, Valid: true}}})
+	if len(got) != 1 || got[0].Requests != 10 || got[0].GuestCpuAvgMs.Valid {
+		t.Fatalf("folded cohort inherited sampled evidence: %+v", got)
 	}
 }

@@ -33,9 +33,9 @@ const (
 // included in the workflow groups below. TestEveryToolHasAToolset keeps this complete.
 var toolsetOf = map[string]string{
 	"gregale_wait_for_approval":              ToolsetCore,
-	"gregale_agent_activity":                 ToolsetOperate,
-	"gregale_plan_undo":                      ToolsetOperate,
-	"gregale_apply_undo":                     ToolsetOperate,
+	"gregale_agent_activity":                 ToolsetCore,
+	"gregale_plan_undo":                      ToolsetCore,
+	"gregale_apply_undo":                     ToolsetCore,
 	"gregale_get_saved_plan":                 ToolsetOperate,
 	"gregale_check_plan":                     ToolsetOperate,
 	"gregale_list_actions":                   ToolsetOperate,
