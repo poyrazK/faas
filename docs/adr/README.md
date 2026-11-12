@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261112194947: AI gateway semantic response cache](20261112194947-ai-gateway-semantic-cache.md) — accepted; Pro and Scale AI integrations with a response cache can answer a call whose last user turn embeds within a cosine threshold (default 0.95) of a cached call's, matching everything else exactly; per-process index pointing at response-cache entries, embedding through the customer's OpenAI or Gemini integration under the `semantic_cache` caller, fail-open
 - [ADR-20261112100408: Let local framework servers own source reload](20261112100408-local-framework-hmr-ownership.md) — accepted; preserve HMR processes and WebSockets on source edits, restart for validated launch inputs, and forward local bind flags through recognised dev scripts
 
 - [ADR-20261112110000: The SDKs are published to public repositories in the gregale-dev org](20261112110000-sdk-public-repositories.md) — accepted; this repository stays the source of truth and `scripts/sdk_mirror.py` publishes `sdk/go`, `sdk/node` and `sdk/python` to `gregale-dev/gregale-go`, `gregale-js` and `gregale-python` on every merge; Go module path `github.com/gregale-dev/gregale-go`; dark-launched and preview packages (Auth, Swift, Kotlin, Data, sandboxes) join at launch

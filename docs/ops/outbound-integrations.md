@@ -644,6 +644,16 @@ call:
   model's `cached_requests` and adds the cost the provider call would have had,
   priced from the cached response, to `cache_saved_millicents`.
   `outbound_ai_response_cache_saved_millicents_total` counts it.
+- **Semantic cache** (ADR 20261112194947, Pro and Scale): an AI policy's
+  `semantic_cache` answers a cache miss from an entry whose last user turn
+  embeds within the threshold of the call's and whose rest of the call
+  matches exactly. The embedding runs in process through the named OpenAI or
+  Gemini integration under the caller `semantic_cache` (1 s, fail-open).
+  Each outboundd process indexes at most 2,000 entries per integration, 256
+  integrations and 64 MiB. `outbound_ai_semantic_cache_total{result}`
+  counts `hit`, `miss`, `skipped` (not a candidate) and `error` (the
+  embedding failed). outboundd ignores the settings when the plan no longer
+  includes them or the response cache is off.
 - **Prompt-cache savings:** every call also adds
   `prompt_cache_saved_millicents`: its cost with cached reads and cache
   writes priced as plain input, minus its cost. It is negative when cache
