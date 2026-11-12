@@ -1,8 +1,6 @@
 package managedpostgres
 
 import (
-	"math"
-
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -17,22 +15,35 @@ type HoldInputs struct {
 	// ComputeUsed and ComputeCeiling are the subject's month-to-date compute
 	// and the ceiling its running databases stop at (zero: none).
 	ComputeUsed, ComputeCeiling int64
-	// DatabaseEgress, AppEgress and EgressCeiling are the subject's egress
-	// this month and its plan's shared allowance (zero: none).
-	DatabaseEgress, AppEgress, EgressCeiling int64
+	// DatabaseEgress is each database's egress this month, by database ID.
+	// EgressAllowance is each database's own monthly egress allowance (zero:
+	// none), as Neon's is per project (ADR-20261110160000 amendment
+	// 2026-11-11).
+	DatabaseEgress  map[string]int64
+	EgressAllowance int64
 	// EgressOverageBilled is set while the subject's egress overage election
-	// lifts the allowance and database egress is billed live: the hold is
-	// then at twice the allowance (EgressHoldCeiling).
+	// lifts the allowance and database egress is billed live: a database is
+	// then held at twice its allowance (EgressHoldCeiling).
 	EgressOverageBilled bool
 }
 
-// egressHoldCeiling is the shared egress the subject's databases are held at.
+// egressHoldCeiling is the egress one database is held at.
 func (in HoldInputs) egressHoldCeiling() int64 {
-	return EgressHoldCeiling(in.EgressCeiling, in.EgressOverageBilled)
+	return EgressHoldCeiling(in.EgressAllowance, in.EgressOverageBilled)
+}
+
+// MostDatabaseEgress is the most egress any one database sent this month.
+func (in HoldInputs) MostDatabaseEgress() int64 {
+	var most int64
+	for _, egress := range in.DatabaseEgress {
+		most = max(most, egress)
+	}
+	return most
 }
 
 // SubjectHold is the reason every database of the subject is held, or "":
-// inactive, then the compute ceiling, then egress, as the sweep orders them.
+// inactive, then the compute ceiling, as the sweep orders them. Egress holds
+// one database at a time.
 func SubjectHold(in HoldInputs) string {
 	if in.Mode != CapEnforcementOn {
 		return ""
@@ -42,8 +53,6 @@ func SubjectHold(in HoldInputs) string {
 		return api.ManagedPostgresHoldInactive
 	case in.ComputeCeiling > 0 && in.ComputeUsed >= in.ComputeCeiling:
 		return api.ManagedPostgresHoldComputeCeiling
-	case egressAllowanceReached(in.DatabaseEgress, in.AppEgress, in.egressHoldCeiling()):
-		return api.ManagedPostgresHoldEgress
 	default:
 		return ""
 	}
@@ -51,7 +60,8 @@ func SubjectHold(in HoldInputs) string {
 
 // DatabaseHold is the reason one database is held, or "": its subject's, then
 // past its plan (planExcess, as PlanExcess reports it), then a PR preview
-// database once the subject used 80% of its compute ceiling.
+// database once the subject used 80% of its compute ceiling, then its own
+// egress past its allowance.
 func DatabaseHold(database Database, planExcess bool, in HoldInputs) string {
 	if in.Mode != CapEnforcementOn || !capHoldable(database) {
 		return ""
@@ -64,40 +74,36 @@ func DatabaseHold(database Database, planExcess bool, in HoldInputs) string {
 		return api.ManagedPostgresHoldPlanExcess
 	case !database.Preview.IsZero() && in.ComputeCeiling > 0 && in.ComputeUsed >= previewComputeCeiling(in.ComputeCeiling):
 		return api.ManagedPostgresHoldPreview
+	case egressAllowanceReached(in.DatabaseEgress[database.ID], in.egressHoldCeiling()):
+		return api.ManagedPostgresHoldEgress
 	default:
 		return ""
 	}
 }
 
-// EgressState is the usage view's egress_state: held only while caps are
-// enforced, overage past the allowance while database egress is billed,
-// warning at 80% of the hold, "" without an allowance.
+// EgressState is the usage view's egress_state for the database that sent
+// the most: held only while caps are enforced, overage past the allowance
+// while database egress is billed, warning at 80% of the hold, "" without an
+// allowance.
 func EgressState(in HoldInputs) string {
-	if in.EgressCeiling <= 0 {
+	if in.EgressAllowance <= 0 {
 		return ""
 	}
-	hold := in.egressHoldCeiling()
+	hold, most := in.egressHoldCeiling(), in.MostDatabaseEgress()
 	switch {
-	case in.Mode == CapEnforcementOn && egressAllowanceReached(in.DatabaseEgress, in.AppEgress, hold):
+	case in.Mode == CapEnforcementOn && egressAllowanceReached(most, hold):
 		return api.ManagedPostgresEgressHeld
-	case in.EgressOverageBilled && egressAllowanceReached(in.DatabaseEgress, in.AppEgress, in.EgressCeiling):
+	case in.EgressOverageBilled && egressAllowanceReached(most, in.EgressAllowance):
 		return api.ManagedPostgresEgressOverage
-	case egressAllowanceReached(in.DatabaseEgress, in.AppEgress, hold-hold/5):
+	case egressAllowanceReached(most, hold-hold/5):
 		return api.ManagedPostgresEgressWarning
 	default:
 		return api.ManagedPostgresEgressHealthy
 	}
 }
 
-// egressAllowanceReached reports whether databases and apps together sent the
-// allowance; a ceiling of zero or less is no allowance.
-func egressAllowanceReached(databaseEgress, appEgress, ceiling int64) bool {
-	if ceiling <= 0 {
-		return false
-	}
-	databaseEgress, appEgress = max(databaseEgress, 0), max(appEgress, 0)
-	if databaseEgress > math.MaxInt64-appEgress {
-		return true
-	}
-	return databaseEgress+appEgress >= ceiling
+// egressAllowanceReached reports whether a database sent the allowance; a
+// ceiling of zero or less is no allowance.
+func egressAllowanceReached(egress, ceiling int64) bool {
+	return ceiling > 0 && egress >= ceiling
 }

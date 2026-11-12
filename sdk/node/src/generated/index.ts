@@ -61,6 +61,8 @@ export type { AgentApprovalPendingInfo } from './models/AgentApprovalPendingInfo
 export type { AgentApprovalResponse } from './models/AgentApprovalResponse.js';
 export type { AgentApprovalsResponse } from './models/AgentApprovalsResponse.js';
 export type { AgentApprovalWebhookPayload } from './models/AgentApprovalWebhookPayload.js';
+export type { AgentBudgetRequest } from './models/AgentBudgetRequest.js';
+export type { AgentBudgetResponse } from './models/AgentBudgetResponse.js';
 export type { AgentClientRequest } from './models/AgentClientRequest.js';
 export type { AgentConnectionResponse } from './models/AgentConnectionResponse.js';
 export type { AgentConnectionsResponse } from './models/AgentConnectionsResponse.js';
@@ -516,6 +518,7 @@ export type { CreatePrivateNetworkRequest } from './models/CreatePrivateNetworkR
 export type { CreateProfileCaptureRequest } from './models/CreateProfileCaptureRequest.js';
 export type { CreateProjectBindingVerificationRunRequest } from './models/CreateProjectBindingVerificationRunRequest.js';
 export type { CreateProjectEnvironmentApprovalRequest } from './models/CreateProjectEnvironmentApprovalRequest.js';
+export type { CreateProjectEnvironmentBranchRequest } from './models/CreateProjectEnvironmentBranchRequest.js';
 export type { CreateProjectEnvironmentQualificationRequest } from './models/CreateProjectEnvironmentQualificationRequest.js';
 export type { CreateProjectEnvironmentRequest } from './models/CreateProjectEnvironmentRequest.js';
 export type { CreateProjectMigrationRequest } from './models/CreateProjectMigrationRequest.js';
@@ -1593,6 +1596,7 @@ export type { ObjectStorageComputeBinding } from './models/ObjectStorageComputeB
 export type { ObjectStorageComputeBindingList } from './models/ObjectStorageComputeBindingList.js';
 export type { ObjectStorageComputeBindingSecretKeys } from './models/ObjectStorageComputeBindingSecretKeys.js';
 export type { ObjectStorageComputeTrigger } from './models/ObjectStorageComputeTrigger.js';
+export type { ObjectStorageOverCeilingDeletion } from './models/ObjectStorageOverCeilingDeletion.js';
 export type { ObjectStoragePolicy } from './models/ObjectStoragePolicy.js';
 export type { ObjectStoragePricing } from './models/ObjectStoragePricing.js';
 export type { ObjectStorageReleaseRequirements } from './models/ObjectStorageReleaseRequirements.js';
@@ -2393,6 +2397,10 @@ export type { ProjectEnvironmentApprovalResponse } from './models/ProjectEnviron
 export type { ProjectEnvironmentApprovalStatusResponse } from './models/ProjectEnvironmentApprovalStatusResponse.js';
 export type { ProjectEnvironmentBindingChangeResponse } from './models/ProjectEnvironmentBindingChangeResponse.js';
 export type { ProjectEnvironmentBindingResponse } from './models/ProjectEnvironmentBindingResponse.js';
+export type { ProjectEnvironmentBranchListResponse } from './models/ProjectEnvironmentBranchListResponse.js';
+export type { ProjectEnvironmentBranchResponse } from './models/ProjectEnvironmentBranchResponse.js';
+export type { ProjectEnvironmentBranchSummary } from './models/ProjectEnvironmentBranchSummary.js';
+export type { ProjectEnvironmentBranchWorkload } from './models/ProjectEnvironmentBranchWorkload.js';
 export type { ProjectEnvironmentCloneOperationResponse } from './models/ProjectEnvironmentCloneOperationResponse.js';
 export type { ProjectEnvironmentCloneResourceResponse } from './models/ProjectEnvironmentCloneResourceResponse.js';
 export type { ProjectEnvironmentCloneResponse } from './models/ProjectEnvironmentCloneResponse.js';
@@ -2951,6 +2959,8 @@ export type { SecurityActivityEvent } from './models/SecurityActivityEvent.js';
 export type { SecurityActivityResponse } from './models/SecurityActivityResponse.js';
 export type { SecurityQuarantineRecoveryRequest } from './models/SecurityQuarantineRecoveryRequest.js';
 export type { SecurityQuarantineRecoveryResponse } from './models/SecurityQuarantineRecoveryResponse.js';
+export type { SeedDevSessionFromEnvironmentBranchRequest } from './models/SeedDevSessionFromEnvironmentBranchRequest.js';
+export type { SeedDevSessionFromEnvironmentBranchResponse } from './models/SeedDevSessionFromEnvironmentBranchResponse.js';
 export type { SelectedTraceApp } from './models/SelectedTraceApp.js';
 export type { SelectedTraceInvocation } from './models/SelectedTraceInvocation.js';
 export type { SelectedTraceLookupResponse } from './models/SelectedTraceLookupResponse.js';

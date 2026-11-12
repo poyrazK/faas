@@ -14,7 +14,7 @@ import (
 )
 
 type workflowRunCreateKey struct {
-	appID, workflowName, key string
+	appID, workflowName, key, tenantID string
 }
 
 type workflowRunCreateKeyEntry struct {
@@ -72,13 +72,13 @@ func (m *MemStore) CreateWorkflowRunAdmitted(_ context.Context, r *WorkflowRun, 
 	return active + 1, nil
 }
 
-func (m *MemStore) GetWorkflowRunByIdempotencyKey(_ context.Context, appID, workflowName, key string, requestFingerprint []byte) (*WorkflowRun, error) {
+func (m *MemStore) GetWorkflowRunByIdempotencyKey(_ context.Context, appID, workflowName, key string, requestFingerprint []byte, tenantIDs ...string) (*WorkflowRun, error) {
 	if err := validateWorkflowRunCreateIdempotency(key, requestFingerprint); err != nil {
 		return nil, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	entry, ok := m.workflowRunCreateKeys[workflowRunCreateKey{appID: appID, workflowName: workflowName, key: key}]
+	entry, ok := m.workflowRunCreateKeys[workflowRunCreateKey{appID: appID, workflowName: workflowName, key: key, tenantID: workflowIdempotencyTenant(tenantIDs)}]
 	if !ok {
 		return nil, ErrWorkflowRunNotFound
 	}
@@ -106,7 +106,7 @@ func (m *MemStore) CreateWorkflowRunAdmittedWithIdempotencyKey(_ context.Context
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	indexKey := workflowRunCreateKey{appID: r.AppID, workflowName: r.WorkflowName, key: key}
+	indexKey := workflowRunCreateKey{appID: r.AppID, workflowName: r.WorkflowName, key: key, tenantID: r.PlatformTenantID}
 	if entry, ok := m.workflowRunCreateKeys[indexKey]; ok {
 		if !bytes.Equal(entry.requestFingerprint, requestFingerprint) {
 			return 0, false, ErrWorkflowRunIdempotencyConflict
@@ -863,6 +863,10 @@ func (m *MemStore) StartWorkflowStep(ctx context.Context, runID, stepName string
 		return nil, ErrWorkflowGuardNotReady
 	}
 	_, linkedOperation := m.operationForWorkflowLocked(runID)
+	dispatchLease, hasDispatchLease := m.workflowRunLeases[runID]
+	if attempt <= step.Attempt || (hasDispatchLease && !dispatchLease.After(time.Now())) {
+		return nil, ErrWorkflowOutboundAttemptExpired
+	}
 	if (linkedOperation || run.ResumeCount > 0 || workflowOutboundSpec(run.DefinitionSnapshot, stepName) != nil || step.ForEachParent != nil) && (run.Status != WorkflowRunStatusRunning || !m.workflowRunLeases[runID].After(time.Now()) || step.Status != WorkflowStepStatusPending || step.Attempt != attempt-1) {
 		return nil, ErrWorkflowOutboundAttemptExpired
 	}
@@ -949,7 +953,7 @@ func (m *MemStore) markWorkflowStepStatus(ctx context.Context, runID, stepName, 
 		return ErrWorkflowStepNotFound
 	}
 	_, linkedOperation := m.operationForWorkflowLocked(runID)
-	if run := m.workflowRuns[runID]; attemptStatus != nil && (linkedOperation || run.ResumeCount > 0 || workflowOutboundSpec(run.DefinitionSnapshot, stepName) != nil || step.ForEachParent != nil) && (run.Status != WorkflowRunStatusRunning || step.Status != WorkflowStepStatusRunning || step.Attempt != attempt || ((linkedOperation || run.ResumeCount > 0 || step.ForEachParent != nil) && !m.workflowRunLeases[runID].After(time.Now()))) {
+	if attemptStatus != nil && !m.workflowStepAttemptCurrentLocked(runID, step, attempt) {
 		return ErrWorkflowOutboundAttemptExpired
 	}
 	if status == WorkflowStepStatusSucceeded && attemptStatus != nil && linkedOperation {
@@ -1043,7 +1047,7 @@ func (m *MemStore) scheduleWorkflowStepRetry(ctx context.Context, runID, stepNam
 	if !ok {
 		return ErrWorkflowRunNotFound
 	}
-	if step, ok := m.workflowSteps[runID][stepName]; ok && recordAttempt && (run.ResumeCount > 0 || workflowOutboundSpec(run.DefinitionSnapshot, stepName) != nil || step.ForEachParent != nil) && (run.Status != WorkflowRunStatusRunning || step.Status != WorkflowStepStatusRunning || step.Attempt != attempt || ((run.ResumeCount > 0 || step.ForEachParent != nil) && !m.workflowRunLeases[runID].After(time.Now()))) {
+	if step, ok := m.workflowSteps[runID][stepName]; ok && recordAttempt && !m.workflowStepAttemptCurrentLocked(runID, step, attempt) {
 		return ErrWorkflowOutboundAttemptExpired
 	}
 	if !WorkflowRunGenerationMatches(ctx, runID, run.ResumeCount) {
@@ -1316,7 +1320,7 @@ func (m *MemStore) completeWorkflowCallback(_ context.Context, tenantID, runID, 
 	if runID == "" || stepName == "" || eventName == "" || eventID == "" || timeout <= 0 {
 		return false, ErrWorkflowInvalidRecord
 	}
-	if err := validateWorkflowJSON(payload, false); err != nil {
+	if err := ValidateWorkflowEventPayload(payload); err != nil {
 		return false, err
 	}
 	if len(payload) == 0 {
@@ -1398,7 +1402,7 @@ func (m *MemStore) insertWorkflowEvent(_ context.Context, tenantID string, e *Wo
 	if e.RunID == "" || e.EventName == "" {
 		return fmt.Errorf("%w: event run_id and event_name are required", ErrWorkflowInvalidRecord)
 	}
-	if err := validateWorkflowJSON(e.Payload, false); err != nil {
+	if err := ValidateWorkflowEventPayload(e.Payload); err != nil {
 		return err
 	}
 	m.mu.Lock()

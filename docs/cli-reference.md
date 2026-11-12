@@ -30,6 +30,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`whoami`](#whoami) | Show the authenticated account |
 | [`completion`](#completion) | Generate shell completion scripts or install them interactively |
 | [`version`](#version) | Print the CLI version |
+| [`update`](#update) | Update the CLI to the newest release |
 | [`man`](#man) | Print the CLI manual page, or one command&#39;s page |
 | [`release`](#release) | Inspect releases and control rollouts: canary, traffic, approvals |
 | [`preview`](#preview) | Manage pull-request preview environments |
@@ -931,12 +932,13 @@ Remove the linked project from this checkout
 
 Authenticate this machine
 
-`gregale login [--token <TOKEN>] [--token-stdin]`
+`gregale login [--token <TOKEN>] [--token-stdin] [--insecure-storage]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--token <TOKEN>` | use a pre-minted token (CI) |  |
 | `--token-stdin` | read a pre-minted token from stdin (CI) |  |
+| `--insecure-storage` | save the key to a plaintext file instead of the OS keychain (WSL, containers, SSH) |  |
 
 Examples:
 
@@ -1016,6 +1018,32 @@ Print the powershell completion snippet
 Print the CLI version
 
 `gregale version`
+
+
+## update
+
+Update the CLI to the newest release
+
+`gregale update [--check] [--version <TAG>]`
+
+Stable installs follow the newest stable release; prerelease installs follow the newest release.
+
+The download is verified against the release&#39;s CLI-SHA256SUMS and must run before it replaces this binary.
+
+An npm install prints the npm command instead of replacing files npm owns.
+
+| Flag | Meaning | |
+|---|---|---|
+| `--check` | report whether a newer release exists without installing it |  |
+| `--version <TAG>` | install this exact release tag, including an older one |  |
+
+Examples:
+
+```sh
+gregale update
+gregale update --check
+gregale update --version v0.1.18
+```
 
 
 ## man
@@ -6861,7 +6889,7 @@ Show the org&#39;s agent policy
 
 Allow or deny agents and cap their capabilities
 
-`gregale org agent policy set --org <SLUG> --agents <allow|deny> [--capabilities <LIST>] [--approvals <LIST>] [--approval-channels <NAMES>]`
+`gregale org agent policy set --org <SLUG> --agents <allow|deny> [--capabilities <LIST>] [--approvals <LIST>] [--approval-channels <NAMES>] [--max-budget <USD>] [--clear-max-budget]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6870,6 +6898,8 @@ Allow or deny agents and cap their capabilities
 | `--capabilities <LIST>` | comma-separated capabilities agents may get: deploy:write, secrets:request, storage:manage, postgres:manage; empty for read-only |  |
 | `--approvals <LIST>` | kinds of action every agent must have a person approve: delete, production, credentials, billing, all or none |  |
 | `--approval-channels <NAMES>` | comma-separated names of your notification channels that also get the org&#39;s agents&#39; approval requests; empty for none |  |
+| `--max-budget <USD>` | ceiling on every agent&#39;s monthly budget for always-on capacity, in US dollars |  |
+| `--clear-max-budget` | remove the ceiling on agents&#39; budgets |  |
 
 Examples:
 

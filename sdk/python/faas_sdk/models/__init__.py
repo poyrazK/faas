@@ -34,6 +34,7 @@ from .activity_actor_response_type import ActivityActorResponseType
 from .activity_resource_response import ActivityResourceResponse
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
+from .after_restore_hook_identity import AfterRestoreHookIdentity
 from .agent_activity_entry import AgentActivityEntry
 from .agent_activity_entry_method import AgentActivityEntryMethod
 from .agent_activity_response import AgentActivityResponse
@@ -49,6 +50,9 @@ from .agent_approval_webhook_payload import AgentApprovalWebhookPayload
 from .agent_approval_webhook_payload_category import AgentApprovalWebhookPayloadCategory
 from .agent_approval_webhook_payload_status import AgentApprovalWebhookPayloadStatus
 from .agent_approvals_response import AgentApprovalsResponse
+from .agent_budget_request import AgentBudgetRequest
+from .agent_budget_response import AgentBudgetResponse
+from .agent_budget_response_source import AgentBudgetResponseSource
 from .agent_client_request import AgentClientRequest
 from .agent_connection_response import AgentConnectionResponse
 from .agent_connection_response_approvals_item import AgentConnectionResponseApprovalsItem
@@ -1185,6 +1189,7 @@ from .object_signed_request import ObjectSignedRequest
 from .object_signed_request_headers import ObjectSignedRequestHeaders
 from .object_signed_request_method import ObjectSignedRequestMethod
 from .object_storage_charge import ObjectStorageCharge
+from .object_storage_over_ceiling_deletion import ObjectStorageOverCeilingDeletion
 from .object_storage_policy import ObjectStoragePolicy
 from .object_storage_policy_accounting_mode import ObjectStoragePolicyAccountingMode
 from .object_storage_pricing import ObjectStoragePricing
@@ -2723,6 +2728,7 @@ __all__ = (
     "ActivityResourceResponse",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
+    "AfterRestoreHookIdentity",
     "AgentActivityEntry",
     "AgentActivityEntryMethod",
     "AgentActivityResponse",
@@ -2738,6 +2744,9 @@ __all__ = (
     "AgentApprovalWebhookPayload",
     "AgentApprovalWebhookPayloadCategory",
     "AgentApprovalWebhookPayloadStatus",
+    "AgentBudgetRequest",
+    "AgentBudgetResponse",
+    "AgentBudgetResponseSource",
     "AgentClientRequest",
     "AgentConnectionResponse",
     "AgentConnectionResponseApprovalsItem",
@@ -3850,6 +3859,7 @@ __all__ = (
     "ObjectSignedRequestHeaders",
     "ObjectSignedRequestMethod",
     "ObjectStorageCharge",
+    "ObjectStorageOverCeilingDeletion",
     "ObjectStoragePolicy",
     "ObjectStoragePolicyAccountingMode",
     "ObjectStoragePricing",

@@ -1838,6 +1838,27 @@ func (r *server) ConfigureProductEmail(getenv func(string) string) error {
 
 func (s *server) RehearsalNetworkEnabled() *bool { return &s.rehearsalNetworkEnabled }
 
+// EnvironmentBranchContainmentEnabled is the contained/simulated branch
+// operator gate (ADR-20261031193635 slices 6a and 6b).
+func (s *server) EnvironmentBranchContainmentEnabled() *bool {
+	return &s.environmentBranchContainmentEnabled
+}
+
+// EnvironmentBranchContainedObjectsEnabled is the bridge object relay gate
+// (ADR-20261031193635 slice 6c).
+func (s *server) EnvironmentBranchContainedObjectsEnabled() *bool {
+	return &s.environmentBranchContainedObjectsEnabled
+}
+
+// EnableEnvironmentBranchesForTest turns environment_branches_enabled on.
+func (s *server) EnableEnvironmentBranchesForTest(t *testing.T) {
+	t.Helper()
+	s.runtimeConfig = newRuntimeConfigManager(nil)
+	if err := s.runtimeConfig.apply(runtimeConfigEnvironmentBranches, json.RawMessage("true")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (s *server) RehearsalSimulationEnabled() *bool { return &s.rehearsalSimulationEnabled }
 func (s *server) RehearsalCommandsEnabled() *bool   { return &s.rehearsalCommandsEnabled }
 
@@ -2410,3 +2431,44 @@ func NewUsageSummaryEgressProvider(mode billing.MeterDeliveryMode) billing.Provi
 
 // PlanWorkloadPublicAuthMode exposes the plan's public URL auth (H32-30).
 var PlanWorkloadPublicAuthMode = planWorkloadPublicAuthMode
+
+var KeyApprovalCategories = keyApprovalCategories
+
+// ProjectEnvironmentPlanURLs applies the two-service project fixture, adds a
+// staging environment and scans it (Hunt 33 H33-33). It returns the staging
+// environment ID, the apps' IDs by workload name and the staging plan.
+func ProjectEnvironmentPlanURLs(t *testing.T) (string, map[string]string, api.PlanResponse) {
+	t.Helper()
+	s, store, acct, key := projectSecretsTestServer(t, api.ScopesAdminOnly)
+	if rec := projectSecretsRequest(t, s, key, "/v1/projects", "", nil); rec.Code != 200 {
+		t.Fatalf("initial apply: %d %s", rec.Code, rec.Body)
+	}
+	project, err := store.MemStore.ProjectBySlug(t.Context(), acct.ID, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := store.MemStore.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apps, err := store.MemStore.AppsForProject(t.Context(), acct.ID, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]string{}
+	for _, app := range apps {
+		ids[app.WorkloadName] = app.ID
+	}
+	rec := projectSecretsRequest(t, s, key, "/v1/projects/scan", "", map[string]string{"environment": "staging"})
+	if rec.Code != 200 {
+		t.Fatalf("staging scan: %d %s", rec.Code, rec.Body)
+	}
+	var plan api.PlanResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	return env.ID, ids, plan
+}
+
+// ProjectEnvironmentWorkloadURL exposes the environment URL builder.
+var ProjectEnvironmentWorkloadURL = projectEnvironmentWorkloadURL

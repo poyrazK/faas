@@ -30,6 +30,9 @@ const WorkflowCodeProtocol = "gregale.workflow.code/v1"
 // WorkflowResponseMaxBytes bounds one call's answer, the platform's limit.
 const WorkflowResponseMaxBytes = 960 * 1024
 
+// Mirrors the engine's WorkflowCodeErrorMaxBytes.
+const workflowErrorMaxBytes = 4 * 1024
+
 const workflowRequestMaxBytes = 8 << 20
 
 var workflowOpName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:#/-]{0,127}$`)
@@ -92,9 +95,10 @@ type WorkflowResult struct {
 
 // WorkflowInvocationResponse is the handler's answer.
 type WorkflowInvocationResponse struct {
-	Protocol string               `json:"protocol"`
-	Ops      []WorkflowReportedOp `json:"ops"`
-	Result   WorkflowResult       `json:"result"`
+	Protocol    string               `json:"protocol"`
+	Ops         []WorkflowReportedOp `json:"ops"`
+	Result      WorkflowResult       `json:"result"`
+	ReplayedOps *int                 `json:"replayed_ops,omitempty"`
 }
 
 // WorkflowFunc is a workflow body. input is the run's JSON input.
@@ -429,7 +433,8 @@ func RunWorkflowInvocation(ctx context.Context, definitions []WorkflowDefinition
 	result := runWorkflowBody(ctx, wf, *definition)
 	ops := append([]WorkflowReportedOp(nil), wf.ops...)
 	sort.Slice(ops, func(i, j int) bool { return ops[i].Seq < ops[j].Seq })
-	return fitWorkflowResponse(&WorkflowInvocationResponse{Protocol: WorkflowCodeProtocol, Ops: ops, Result: result}), nil
+	replayed := min(wf.seq, len(request.Journal))
+	return fitWorkflowResponse(&WorkflowInvocationResponse{Protocol: WorkflowCodeProtocol, Ops: ops, Result: result, ReplayedOps: &replayed}), nil
 }
 
 func runWorkflowBody(ctx context.Context, wf *Workflow, definition WorkflowDefinition) (result WorkflowResult) {
@@ -465,23 +470,63 @@ func runWorkflowBody(ctx context.Context, wf *Workflow, definition WorkflowDefin
 // fitWorkflowResponse fails, without retry, any step result (and the
 // workflow output) that would push the answer past WorkflowResponseMaxBytes.
 func fitWorkflowResponse(response *WorkflowInvocationResponse) *WorkflowInvocationResponse {
+	response.Result.Error = truncateWorkflowError(response.Result.Error, workflowErrorMaxBytes)
 	budget := WorkflowResponseMaxBytes - 1024
+	if response.Result.Status == "failed" {
+		budget -= workflowJSONSize(response.Result)
+	}
 	envelope, _ := json.Marshal(WorkflowInvocationResponse{Protocol: response.Protocol, Ops: []WorkflowReportedOp{}, Result: WorkflowResult{Status: "running"}})
 	used := len(envelope)
+	remaining := 0
+	for _, op := range response.Ops {
+		remaining += minimalWorkflowOpSize(op)
+	}
 	for i, op := range response.Ops {
+		remaining -= minimalWorkflowOpSize(op)
+		available := budget - remaining
+		op.Error = truncateWorkflowError(op.Error, workflowErrorMaxBytes)
 		size := workflowJSONSize(op) + 1
-		if op.Kind == "step" && op.Status == "succeeded" && used+size > budget {
+		if op.Kind == "step" && op.Status == "succeeded" && used+size > available {
 			op.Output, op.Status, op.NonRetryable = nil, "failed", true
 			op.Error = fmt.Sprintf("step result does not fit in one call's %d byte answer; store large data elsewhere and return its key", WorkflowResponseMaxBytes)
 			response.Ops[i] = op
 			size = workflowJSONSize(op) + 1
 		}
+		if used+size > available && op.Error != "" {
+			op.Error = truncateWorkflowError(op.Error, max(0, len(op.Error)-(used+size-available)))
+			size = workflowJSONSize(op) + 1
+		}
+		response.Ops[i] = op
 		used += size
 	}
 	if response.Result.Status == "succeeded" && used+workflowJSONSize(response.Result) > budget {
 		response.Result = WorkflowResult{Status: "failed", Error: fmt.Sprintf("workflow output does not fit in one call's %d byte answer", WorkflowResponseMaxBytes)}
 	}
+	if workflowJSONSize(response) > WorkflowResponseMaxBytes {
+		response.Ops = []WorkflowReportedOp{}
+		response.Result = WorkflowResult{Status: "failed", Error: "workflow response metadata exceeds the response limit"}
+	}
 	return response
+}
+
+// Reserve the metadata of every later operation before spending bytes on an
+// output or error. One large result must not evict other executed operations.
+func minimalWorkflowOpSize(op WorkflowReportedOp) int {
+	if op.Kind == "step" {
+		op.Output, op.Error = nil, ""
+		if op.Status == "succeeded" {
+			op.Status, op.NonRetryable = "failed", true
+		}
+	}
+	return workflowJSONSize(op) + 1
+}
+
+func truncateWorkflowError(message string, maxBytes int) string {
+	message = strings.ToValidUTF8(message, "\uFFFD")
+	if len(message) <= maxBytes {
+		return message
+	}
+	return strings.ToValidUTF8(message[:maxBytes], "")
 }
 
 func workflowJSONSize(value any) int {

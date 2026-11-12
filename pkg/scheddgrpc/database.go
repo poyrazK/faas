@@ -92,6 +92,7 @@ func databaseRuntime(vm dbsched.VM) *scheddpb.DatabaseRuntime {
 		AlwaysOn: vm.AlwaysOn, RestoreWindowSeconds: vm.RestoreWindowSeconds, RestoreSourceId: vm.RestoreSource,
 		ResizePending: vm.ResizePending, Replicated: vm.Replicated, StandbyNodeId: vm.StandbyNode, StandbySynced: vm.StandbySynced,
 		MajorHistoryComplete: true, Held: vm.Held, ComputeQuotaUnitSeconds: vm.ComputeQuotaUnitSeconds,
+		ReplicaVmmdTarget: vm.ReplicaTarget,
 	}
 	for _, span := range vm.MajorHistory {
 		rt.MajorHistory = append(rt.MajorHistory, &scheddpb.DatabaseMajorSpan{PostgresMajor: int32(span.Major), Until: timestamppb.New(span.Until)}) //nolint:gosec // persisted majors are 14-18

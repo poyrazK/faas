@@ -504,6 +504,10 @@ func (s *PgStore) ExecutionQueueStats(ctx context.Context, at time.Time) (Execut
 }
 
 func (s *PgStore) ListExecutionQueueAccounts(ctx context.Context, at time.Time, limit int) ([]ExecutionQueueAccount, error) {
+	return s.ListExecutionQueueAccountsAfter(ctx, at, "", limit)
+}
+
+func (s *PgStore) ListExecutionQueueAccountsAfter(ctx context.Context, at time.Time, afterAccountID string, limit int) ([]ExecutionQueueAccount, error) {
 	if at.IsZero() {
 		return nil, fmt.Errorf("%w: queue observation time is required", ErrExecutionInvalid)
 	}
@@ -513,8 +517,12 @@ func (s *PgStore) ListExecutionQueueAccounts(ctx context.Context, at time.Time, 
 	if limit > 1000 {
 		limit = 1000
 	}
+	var after pgtype.UUID
+	if afterAccountID != "" {
+		after = mustPgUUID(afterAccountID)
+	}
 	rows, err := sqlc.New().ExecutionQueueAccounts(ctx, s.pool, sqlc.ExecutionQueueAccountsParams{
-		At: executionTime(at), PageLimit: int32(limit),
+		At: executionTime(at), PageLimit: int32(limit), AfterAccountID: after,
 	})
 	if err != nil {
 		return nil, mapErr(err)

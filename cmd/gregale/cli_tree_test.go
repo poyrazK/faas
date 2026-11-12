@@ -34,11 +34,14 @@ var cliTreeVerbs = []string{
 	"open", "fail", "move",
 	// `bucket sign` mints a signed URL (ADR-20261106114500).
 	"sign",
+	// branch: a lazy copy of a project environment (ADR-20261031193635 and the
+	// ADR-20261026145832 glossary); a --branch flag still names a Git branch.
+	"branch",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).
 var cliTreeReadNouns = []string{
-	"instances", "requests", "tools", "prompts", "resources", "plan", "invoices", "spend-cap",
+	"instances", "requests", "tools", "prompts", "resources", "plan", "invoices", "spend-cap", "budget",
 	"streaming-cap", "wake-timeline", "trace", "runtime", "chaos", "items", "history", "health",
 	"policy", "actions", "activity", "alerts", "artifacts", "attempts", "backlog", "bundle",
 	"capabilities", "captures", "catalog", "channels", "codeowners", "completeness", "connections",

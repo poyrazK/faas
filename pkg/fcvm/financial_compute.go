@@ -183,29 +183,57 @@ func (m *Manager) watchFinancialCompute(ctx context.Context, local *localCompute
 	local.mu.Unlock()
 	timer := time.NewTimer(time.Until(deadline))
 	defer timer.Stop()
+	type renewalResult struct{ renewed, stop, skipped bool }
+	results := make(chan renewalResult, 1)
+	var pending bool
+	var cancelRenew context.CancelFunc
+	defer func() {
+		if pending {
+			cancelRenew()
+			<-results // every helper/RPC has a bounded context; join its owner
+		}
+	}()
 	renew := true
 	for {
 		select {
 		case <-local.done:
 			return
 		case <-tick.C:
-			if !renew {
-				continue
-			}
-			refill, err := m.financialEgressLow(local)
-			if err != nil {
-				renew = false
+			if !renew || pending {
 				continue
 			}
 			now := time.Now()
-			if now.Before(retryAt) || !refill && now.Before(nextRenew) {
+			if now.Before(retryAt) {
 				continue
 			}
-			renewed, stop := m.renewFinancialComputeCredit(ctx, local, refill)
-			if stop {
+			// Supervise expiry independently of RPCs and network helper waits.
+			// Renewal cannot borrow time beyond the original local authority.
+			renewCtx, cancel := context.WithDeadline(ctx, deadline)
+			cancelRenew, pending = cancel, true
+			due := !now.Before(nextRenew)
+			go func() {
+				defer cancel()
+				refill, err := m.financialEgressLow(local)
+				if err != nil {
+					results <- renewalResult{stop: true}
+					return
+				}
+				if !refill && !due {
+					results <- renewalResult{skipped: true}
+					return
+				}
+				renewed, stop := m.renewFinancialComputeCredit(renewCtx, local, refill)
+				results <- renewalResult{renewed: renewed, stop: stop}
+			}()
+		case result := <-results:
+			pending = false
+			if result.skipped {
+				continue
+			}
+			if result.stop {
 				renew = false
 			}
-			if !renewed {
+			if !result.renewed {
 				// A transient failure keeps the last deadline; retry
 				// before it, without polling the database every tick.
 				retryAt = time.Now().Add(api.FinancialComputeAuthorityTimeout)
@@ -223,6 +251,9 @@ func (m *Manager) watchFinancialCompute(ctx context.Context, local *localCompute
 			}
 			timer.Reset(time.Until(deadline))
 		case <-timer.C:
+			if pending {
+				cancelRenew()
+			}
 			// No scheduler, gateway, meterd or database round trip is needed
 			// to revoke an in-flight boot or start local physical retirement.
 			if local.cancelBoot != nil {
@@ -293,7 +324,7 @@ func (m *Manager) renewFinancialComputeCredit(ctx context.Context, local *localC
 			local.egressBroken = true
 			return false, true
 		}
-		if !m.syncFinancialEgress(ctx, local, l, r.EgressRefill && l.EgressSequence > old.EgressSequence) {
+		if !m.syncFinancialEgress(callCtx, local, l, r.EgressRefill && l.EgressSequence > old.EgressSequence) {
 			return false, true
 		}
 	}
