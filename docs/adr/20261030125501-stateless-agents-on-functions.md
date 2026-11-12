@@ -216,6 +216,12 @@ Each step is one PR behind the `agents` capability.
      - The publish is idempotent and the link is marked after it, so a run's end lands once.
      - A thread that can no longer receive it gets nothing: revoked since the call, its endpoint deleted, or its account without `agents`. The run itself still finishes; revoking a thread does not cancel its runs.
    - **Next.** The template sends the app's workload token with platform tool invocations, and its scripted model learns to call `gregale_run`.
+
+   **Step 5, part four (2026-11-12): `agent-infinity-rust` runs agents.**
+   - **The template's toolset calls carry the app's workload token.** `GregaleHttp` is the RAP client's HTTP client: it posts each invocation with the `gregale:agents` token it already uses for callback URLs. Off Gregale it has no token and posts without one, so `gregale_sleep` still works from a callback URL alone.
+   - **The scripted model runs agents:** `run AGENT PROMPT` calls `gregale_run` when the toolset offers it, and the answer names the tool.
+   - **Journey.** `TestStatelessAgent`'s Infinity run asks for a run of an agent the account does not have. The answer is Gregale's `Agent not found` refusal as the call's tool result, which only an invocation carrying the app's credential gets; without one the invoke endpoint answers 401 and the runtime writes a different error result. A run that starts and ends waits for agent runs in production.
+   - **Next.** `gregale_github_subscribe`.
 6. Preview on the dogfood account, then the seller beta with harness runs (ADR-20261027090010 milestone B).
 
 ## Open questions
