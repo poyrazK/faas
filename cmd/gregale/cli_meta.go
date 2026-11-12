@@ -6885,6 +6885,21 @@ var cliCommands = []cliCommand{
 		Short:   "Print the CLI version",
 	},
 	{
+		Name:     "update",
+		DocSlug:  "update",
+		Short:    "Update the CLI to the newest release",
+		Examples: []string{"gregale update", "gregale update --check", "gregale update --version v0.1.18"},
+		HelpNotes: []string{
+			"Stable installs follow the newest stable release; prerelease installs follow the newest release.",
+			"The download is verified against the release's CLI-SHA256SUMS and must run before it replaces this binary.",
+			"An npm install prints the npm command instead of replacing files npm owns.",
+		},
+		Flags: []cliFlag{
+			{Name: "check", Bool: true, Short: "report whether a newer release exists without installing it"},
+			{Name: "version", Value: "TAG", Short: "install this exact release tag, including an older one"},
+		},
+	},
+	{
 		Name:     "config",
 		DocSlug:  "config",
 		Short:    "Show or change non-secret local CLI settings",

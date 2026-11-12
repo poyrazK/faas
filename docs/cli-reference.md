@@ -30,6 +30,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`whoami`](#whoami) | Show the authenticated account |
 | [`completion`](#completion) | Generate shell completion scripts or install them interactively |
 | [`version`](#version) | Print the CLI version |
+| [`update`](#update) | Update the CLI to the newest release |
 | [`man`](#man) | Print the CLI manual page, or one command&#39;s page |
 | [`release`](#release) | Inspect releases and control rollouts: canary, traffic, approvals |
 | [`preview`](#preview) | Manage pull-request preview environments |
@@ -1017,6 +1018,32 @@ Print the powershell completion snippet
 Print the CLI version
 
 `gregale version`
+
+
+## update
+
+Update the CLI to the newest release
+
+`gregale update [--check] [--version <TAG>]`
+
+Stable installs follow the newest stable release; prerelease installs follow the newest release.
+
+The download is verified against the release&#39;s CLI-SHA256SUMS and must run before it replaces this binary.
+
+An npm install prints the npm command instead of replacing files npm owns.
+
+| Flag | Meaning | |
+|---|---|---|
+| `--check` | report whether a newer release exists without installing it |  |
+| `--version <TAG>` | install this exact release tag, including an older one |  |
+
+Examples:
+
+```sh
+gregale update
+gregale update --check
+gregale update --version v0.1.18
+```
 
 
 ## man
