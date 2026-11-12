@@ -8203,9 +8203,10 @@ type AppStaticEgressIPResponse struct {
 // /v1/apps/{slug}/static-egress-ip. IP is the canonical
 // customer-supplied IPv4 (dotted-quad string). The handler
 // validates the family=4 + non-RFC1918 + non-link-local +
-// non-multicast before the column write. Set=false means
-// "clear" — the same wire body covers the DELETE /keep-IP
-// promotion path without a third endpoint.
+// non-multicast before the column write. Set=false with no IP
+// means "clear" — the same wire body covers the DELETE /keep-IP
+// promotion path without a third endpoint. Set=false with an IP
+// is refused as ambiguous.
 type SetAppStaticEgressIPRequest struct {
 	IP  string `json:"ip"`
 	Set bool   `json:"set"`

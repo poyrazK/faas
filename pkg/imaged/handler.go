@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/abusescan"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -104,7 +105,12 @@ type Handler struct {
 	// layerDigests remembers the digest of each layer this process just
 	// published, so the deploy scan does not hash the same bytes again.
 	layerDigests *publishedLayerDigests
-	log          *slog.Logger
+	// layerReuse is the app layer reuse index (ADR-20261112170911); nil
+	// turns reuse off.
+	layerReuse       *layerReuseIndex
+	layerReuseMetric *prometheus.CounterVec
+	guestInitDigests fileDigests
+	log              *slog.Logger
 	// profilingOnDemand stamps dormant guest collectors into manifests for
 	// plans that include profiling (ADR-1155, FAAS_PROFILING_ON_DEMAND).
 	profilingOnDemand bool
@@ -807,14 +813,19 @@ func (h *Handler) WithOpsMetrics(ops *wire.OpsMetrics) *Handler {
 	if h.postCaptureMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
 		h.ops.Registry().Unregister(h.postCaptureMetrics)
 	}
+	if h.layerReuseMetric != nil && h.ops != nil && h.ops.Registry() != nil {
+		h.ops.Registry().Unregister(h.layerReuseMetric)
+	}
 	h.ops = ops
 	h.handoffMetrics = nil
 	h.preparationMetrics = nil
 	h.postCaptureMetrics = nil
+	h.layerReuseMetric = nil
 	if ops != nil && ops.Registry() != nil {
 		h.handoffMetrics = newBuildImageHandoffMetrics(ops.Registry())
 		h.preparationMetrics = newImagePreparationProgressMetrics(ops.Registry())
 		h.postCaptureMetrics = newPostCaptureMetrics(ops.Registry())
+		h.layerReuseMetric = newLayerReuseMetric(ops.Registry())
 	}
 	return h
 }

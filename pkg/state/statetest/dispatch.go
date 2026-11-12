@@ -199,6 +199,7 @@ var memDispatched = map[string]bool{
 	"RouteInsightCandidateApps":                               true,
 	"RouteInsightsDetectedSince":                              true,
 	"RouteMonitorIncidentsSince":                              true,
+	"AIBudgetAlertsSince":                                     true,
 	"RouteHealthHoldsSince":                                   true,
 	"UpsertRouteInsight":                                      true,
 	"RouteAwakeRouteMinutes":                                  true,
@@ -819,6 +820,15 @@ func (s *Mem) RouteInsightsDetectedSince(p0 context.Context, p1 string, p2 time.
 		return o.RouteInsightsDetectedSince(p0, p1, p2, p3)
 	}
 	return s.MemStore.RouteInsightsDetectedSince(p0, p1, p2, p3)
+}
+
+func (s *Mem) AIBudgetAlertsSince(p0 context.Context, p1, p2 string, p3 time.Time, p4 int) ([]state.AIBudgetAlert, int64, error) {
+	if o, ok := s.over.(interface {
+		AIBudgetAlertsSince(context.Context, string, string, time.Time, int) ([]state.AIBudgetAlert, int64, error)
+	}); ok {
+		return o.AIBudgetAlertsSince(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.AIBudgetAlertsSince(p0, p1, p2, p3, p4)
 }
 
 func (s *Mem) RouteMonitorIncidentsSince(p0 context.Context, p1 string, p2 time.Time, p3 int) ([]state.RouteMonitorIncidentAlert, int64, error) {

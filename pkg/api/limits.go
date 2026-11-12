@@ -833,6 +833,18 @@ const ImagedImagePrepWorkers = 2
 // whose scan never ran.
 const ImagedPublishedLayerDigests = 256
 
+// ImagedLayerReuseMaxRecords bounds the records in imaged's node-local app
+// layer reuse index, per kind (layer keys, artifact digests); the oldest go
+// first (ADR-20261112170911). A record is a few hundred bytes.
+const ImagedLayerReuseMaxRecords = 4096
+
+// ImagedLayerReuseRecordMaxBytes bounds one reuse index record imaged reads.
+const ImagedLayerReuseRecordMaxBytes = 4096
+
+// ImagedLayerReuseSBOMMaxBytes bounds the SBOM imaged copies for a reused app
+// layer; syft's CycloneDX JSON for a large image is a few MB.
+const ImagedLayerReuseSBOMMaxBytes = 64 << 20
+
 // Source-build OCI verification bounds the intermediate image, including its
 // builder base. Final app layers still obey the creating account's plan limit.
 const (
@@ -2767,6 +2779,12 @@ const (
 	OutboundAICallMaxSeconds       = 1800
 	OutboundAIStreamIdleSeconds    = 600
 	OutboundAILeaseRenewMinSeconds = 15
+	// OutboundAIPublicHeaderTimeoutSeconds caps the wait for response
+	// headers of a call through the AI gateway's public host, which runs
+	// behind Cloudflare's 100-second wait for an origin's response, so the
+	// caller gets the gateway's 504 instead of Cloudflare's 524 (ADR
+	// 20261027132936 amendment 1). Longer answers stream.
+	OutboundAIPublicHeaderTimeoutSeconds = 90
 	// OutboundAIAccessTokenLookupsMax bounds the database lookups of
 	// uncached access tokens that run at once (ADR 20261027132936).
 	OutboundAIAccessTokenLookupsMax = 8
@@ -4561,6 +4579,11 @@ type Limits struct {
 	// OutboundRetryBudgetPerMinuteMax bounds aggregate extra attempts for a
 	// single integration; it is a policy ceiling, not included usage.
 	OutboundRetryBudgetPerMinuteMax int
+	// OutboundAIAccountRatePerSecondMax bounds an account's AI gateway calls
+	// per second across all its integrations, with a burst of twice the
+	// rate, so many integrations cannot multiply one account's load on the
+	// gateway's shared state (ADR 20261027132936 amendment 2).
+	OutboundAIAccountRatePerSecondMax int
 	// DeploysPerHour is the account-wide number of deployment admissions in a
 	// fixed one-hour window. It applies across every app and source path.
 	DeploysPerHour int
@@ -6231,7 +6254,7 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               1,
 		EnvironmentBranches:       1,
 		OutboundRequestsPerDayMax: 100_000,
-		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60,
+		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60, OutboundAIAccountRatePerSecondMax: 20,
 		DeveloperLeaseMaxHours: 24, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        10,
@@ -6652,7 +6675,7 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               2,
 		EnvironmentBranches:       2,
 		OutboundRequestsPerDayMax: 1_000_000,
-		OutboundRatePerSecondMax:  20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120,
+		OutboundRatePerSecondMax:  20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120, OutboundAIAccountRatePerSecondMax: 40,
 		DeveloperLeaseMaxHours: 72, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        50,
@@ -7100,7 +7123,7 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               5,
 		EnvironmentBranches:       5,
 		OutboundRequestsPerDayMax: 10_000_000,
-		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600,
+		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600, OutboundAIAccountRatePerSecondMax: 200,
 		DeveloperLeaseMaxHours: 168, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        250,
@@ -7513,7 +7536,7 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               20,
 		EnvironmentBranches:       20,
 		OutboundRequestsPerDayMax: MaxOutboundRequestsPerDay,
-		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000,
+		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000, OutboundAIAccountRatePerSecondMax: 1000,
 		DeveloperLeaseMaxHours: 336, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        1000,
@@ -8279,6 +8302,12 @@ const (
 	EnvironmentBranchMinTTL     = time.Hour
 	EnvironmentBranchMaxTTL     = 30 * 24 * time.Hour
 	EnvironmentBranchMaxDepth   = 2
+	// EnvironmentBranchWithDatabasesMaxLifetime caps how long after its
+	// creation a branch with managed PostgreSQL copies may live, so an
+	// extend keeps its copies in the plan's PostgreSQL branch allowance
+	// (ADR-20261106103654 amendment 1). Without copies a branch may live
+	// EnvironmentBranchMaxTTL after its creation.
+	EnvironmentBranchWithDatabasesMaxLifetime = ManagedPostgresAllowanceBranchTTLMax
 	// EnvironmentBranchSweepBatch bounds one expiry sweep.
 	EnvironmentBranchSweepBatch = 50
 
