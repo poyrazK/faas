@@ -2,9 +2,11 @@ package receivers
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -54,6 +56,11 @@ type RequestAnalyticsRollupRow struct {
 	ConsumerID string
 }
 
+type rollupWindowKey struct {
+	app    uuid.UUID
+	minute int64
+}
+
 type rollupGapKey struct {
 	app    uuid.UUID
 	minute int64
@@ -70,7 +77,10 @@ type RequestAnalyticsRollups struct {
 	log   *slog.Logger
 	agg   *requestanalytics.Aggregator
 
-	mu sync.Mutex
+	flushMu sync.Mutex
+	markers map[uuid.UUID]rollupWindowKey
+	marked  map[rollupWindowKey]bool
+	mu      sync.Mutex
 	// seen and seenRing hold the most recent event IDs, oldest first from
 	// seenNext, so a replayed row is counted once.
 	seen     map[uuid.UUID]struct{}
@@ -101,7 +111,8 @@ func NewRequestAnalyticsRollups(store state.RequestAnalyticsRollupStore, reg pro
 		log = slog.New(slog.DiscardHandler)
 	}
 	a := &RequestAnalyticsRollups{
-		store:     store,
+		store:   store,
+		markers: map[uuid.UUID]rollupWindowKey{}, marked: map[rollupWindowKey]bool{},
 		log:       log,
 		agg:       requestanalytics.NewAggregator(0),
 		seen:      map[uuid.UUID]struct{}{},
@@ -128,8 +139,13 @@ func NewRequestAnalyticsRollups(store state.RequestAnalyticsRollupStore, reg pro
 // Add folds one row into the pending rollups. It reports whether the row
 // was counted.
 func (a *RequestAnalyticsRollups) Add(row RequestAnalyticsRollupRow) bool {
+	counted, _ := a.add(context.Background(), row)
+	return counted
+}
+
+func (a *RequestAnalyticsRollups) add(ctx context.Context, row RequestAnalyticsRollupRow) (bool, error) {
 	if a == nil || row.Count < 1 || row.Status < 100 || row.Status > 599 {
-		return false
+		return false, nil
 	}
 	minute := requestanalytics.Minute(row.ReceivedAt)
 	a.mu.Lock()
@@ -137,8 +153,17 @@ func (a *RequestAnalyticsRollups) Add(row RequestAnalyticsRollupRow) bool {
 	if row.EventID != uuid.Nil {
 		if _, dup := a.seen[row.EventID]; dup {
 			a.requests.WithLabelValues("replayed").Add(float64(row.Count))
-			return false
+			return false, nil
 		}
+	}
+	window := rollupWindowKey{app: row.AppID, minute: minute}
+	if _, durable := a.store.(state.RequestAnalyticsWindowStore); durable && !a.marked[window] {
+		id := uuid.New()
+		if err := a.recordWindow(ctx, id, row.AppID, minute, "pending"); err != nil {
+			return false, err
+		}
+		a.marked[window] = true
+		a.markers[id] = window
 	}
 	switch a.agg.Add(requestanalytics.Row{
 		AccountID: row.AccountID, AppID: row.AppID, DeploymentID: row.DeploymentID, ReceivedAt: row.ReceivedAt,
@@ -149,14 +174,15 @@ func (a *RequestAnalyticsRollups) Add(row RequestAnalyticsRollupRow) bool {
 	case requestanalytics.Dropped:
 		a.requests.WithLabelValues("dropped").Add(float64(row.Count))
 		a.gapLocked(row.AppID, minute)
-		return false
+		id := uuid.NewSHA1(row.AppID, []byte("lost:"+strconv.FormatInt(minute, 10)))
+		return false, a.recordWindow(ctx, id, row.AppID, minute, "lost")
 	case requestanalytics.Invalid:
-		return false
+		return false, nil
 	}
 	a.rememberLocked(row.EventID)
 	a.uncoveredLocked(row.AppID, minute)
 	a.requests.WithLabelValues("added").Add(float64(row.Count))
-	return true
+	return true, nil
 }
 
 // uncoveredLocked notes minute as the app's earliest pending one unless its
@@ -207,9 +233,31 @@ func (a *RequestAnalyticsRollups) flush(ctx context.Context, all bool) error {
 	if a == nil || a.store == nil {
 		return nil
 	}
+	a.flushMu.Lock()
+	defer a.flushMu.Unlock()
 	ready := a.now().Add(-time.Minute - api.RequestAnalyticsRollupMinuteGrace).Unix()
-	rows := a.agg.Take(ready, all)
 	a.mu.Lock()
+	rows := a.agg.Take(ready, all)
+	markers := map[uuid.UUID]rollupWindowKey{}
+	for id, w := range a.markers {
+		if all || w.minute <= ready {
+			markers[id] = w
+			delete(a.markers, id)
+			delete(a.marked, w)
+		}
+	}
+	completed := false
+	defer func() {
+		if !completed {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			for id, w := range markers {
+				a.markers[id] = w
+				a.marked[w] = true
+			}
+		}
+	}()
+
 	// An app's coverage starts at its earliest pending minute, so it is
 	// recorded with the flush that writes that minute.
 	uncovered := map[uuid.UUID]int64{}
@@ -221,7 +269,14 @@ func (a *RequestAnalyticsRollups) flush(ctx context.Context, all bool) error {
 	}
 	a.mu.Unlock()
 	if len(rows) == 0 && len(uncovered) == 0 {
-		return a.flushGaps(ctx)
+		if err := a.flushGaps(ctx); err != nil {
+			return err
+		}
+		if err := a.completeWindows(ctx, markers); err != nil {
+			return err
+		}
+		completed = true
+		return nil
 	}
 	coverage := make([]state.RequestAnalyticsCoverage, 0, len(uncovered))
 	for app, minute := range uncovered {
@@ -246,7 +301,14 @@ func (a *RequestAnalyticsRollups) flush(ctx context.Context, all bool) error {
 		delete(a.uncovered, app)
 	}
 	a.mu.Unlock()
-	return a.flushGaps(ctx)
+	if err := a.flushGaps(ctx); err != nil {
+		return err
+	}
+	if err := a.completeWindows(ctx, markers); err != nil {
+		return err
+	}
+	completed = true
+	return nil
 }
 
 // write adds rows, and the coverage with the first batch that lands. When
@@ -451,21 +513,47 @@ func (a *RequestAnalyticsRollups) touchMarker() {
 func (a *RequestAnalyticsRollups) applyRequestTelemetry(r *requestTelemetryReceiver) { r.rollups = a }
 
 // addRollup counts one received row into the analytics rollups.
-func (r *requestTelemetryReceiver) addRollup(req *apidpb.IncrementRequestTelemetryRequest, accountID, appID, deploymentID uuid.UUID, eventID string, count int, consumerID pgtype.UUID) {
+func (r *requestTelemetryReceiver) addRollup(ctx context.Context, req *apidpb.IncrementRequestTelemetryRequest, accountID, appID, deploymentID uuid.UUID, eventID string, count int, consumerID pgtype.UUID) error {
 	if r.rollups == nil {
-		return
+		return nil
 	}
 	eventUUID, _ := uuid.Parse(eventID)
 	consumer := ""
 	if consumerID.Valid {
 		consumer = uuid.UUID(consumerID.Bytes).String()
 	}
-	method := req.GetMethod()
-	r.rollups.Add(RequestAnalyticsRollupRow{
+	method := api.NormalizeRequestAnalyticsMethod(req.GetMethod())
+	_, err := r.rollups.add(ctx, RequestAnalyticsRollupRow{
 		EventID: eventUUID, AccountID: accountID, AppID: appID, DeploymentID: deploymentID,
 		ReceivedAt: msToTime(req.GetReceivedAtUnixMs()), Route: req.GetRouteTemplate(), Method: method,
 		Status: int(req.GetHttpStatus()), LatencyMS: int(req.GetLatencyMs()), Count: count,
 		ColdBoot: req.GetColdBoot(), Country: req.GetCountry(), ReferrerHost: req.GetReferrerHost(),
 		UAFamily: req.GetUaFamily(), ConsumerID: consumer,
 	})
+	return err
+}
+
+// A separate completion transaction is conservative: a crash after counts
+// commit leaves the marker pending until replay or retention, never complete.
+func (a *RequestAnalyticsRollups) completeWindows(ctx context.Context, markers map[uuid.UUID]rollupWindowKey) error {
+	if len(markers) == 0 {
+		return nil
+	}
+	coverage := make([]state.RequestAnalyticsCoverage, 0, len(markers))
+	for id, w := range markers {
+		coverage = append(coverage, state.RequestAnalyticsCoverage{AppID: w.app, PendingID: id})
+	}
+	return a.store.AddRequestAnalyticsRollups(ctx, nil, coverage)
+}
+func (a *RequestAnalyticsRollups) recordWindow(ctx context.Context, id, app uuid.UUID, minute int64, kind string) error {
+	store, ok := a.store.(state.RequestAnalyticsWindowStore)
+	if !ok {
+		return fmt.Errorf("rollup window persistence unavailable")
+	}
+	bounded, cancel := context.WithTimeout(ctx, api.RequestAnalyticsSampledMeasuresTimeout)
+	defer cancel()
+	if err := store.RecordRequestAnalyticsWindow(bounded, id, app, time.Unix(minute, 0).UTC(), kind); err != nil {
+		return fmt.Errorf("record analytics %s window: %w", kind, err)
+	}
+	return nil
 }
