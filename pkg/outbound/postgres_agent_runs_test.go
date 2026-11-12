@@ -33,7 +33,10 @@ func agentRunsPool(t *testing.T) *pgxpool.Pool {
 		CREATE TABLE app_webhooks (id uuid PRIMARY KEY, account_id uuid NOT NULL, scope text NOT NULL DEFAULT 'app',
 			enabled boolean NOT NULL DEFAULT true, event_filter text[] NOT NULL DEFAULT '{}');
 		CREATE TABLE app_webhook_deliveries (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), webhook_id uuid NOT NULL, app_id uuid,
-			account_id uuid NOT NULL, event text NOT NULL, payload jsonb NOT NULL, source_event_id uuid);`); err != nil {
+			account_id uuid NOT NULL, event text NOT NULL, payload jsonb NOT NULL, source_event_id uuid);
+		-- ADR-20261027090013: claiming a run counts the account's live
+		-- sandbox sessions beside its runs.
+		CREATE TABLE sandbox_sessions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account_id uuid NOT NULL, state text NOT NULL);`); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"20261029093503390_agent_runs.sql", "20261029093510563_agent_run_execution.sql",

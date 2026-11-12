@@ -16204,6 +16204,16 @@ LIMIT sqlc.arg(page_size)::integer;
 UPDATE managed_postgres_databases SET expires_at=sqlc.arg(expires_at)::timestamptz
 WHERE id=sqlc.arg(id)::uuid RETURNING *;
 
+-- name: MoveManagedPostgresBranchExpiry :one
+-- ADR-20261031193635 branch lifecycle: an environment branch's extend moves
+-- its database copy's end. Only an undeleted restore that already ends, and
+-- whose end is still the one the caller read, moves; the caller keeps the
+-- new end within the copy's allowance.
+UPDATE managed_postgres_databases SET expires_at=sqlc.arg(expires_at)::timestamptz, updated_at=clock_timestamp()
+WHERE id=sqlc.arg(id)::uuid AND deleted_at IS NULL AND state NOT IN ('deleting','deleted')
+  AND restore_source_database_id IS NOT NULL AND expires_at=sqlc.arg(current_expires_at)::timestamptz
+RETURNING *;
+
 -- name: ListManagedPostgresExpiredDatabasePage :many
 -- ADR-20261106103654: copies whose TTL has ended, soonest first, after a
 -- stable (expires_at, id) cursor. A copy already being purged (deleting with

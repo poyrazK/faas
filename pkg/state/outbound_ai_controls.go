@@ -123,6 +123,15 @@ type OutboundAIRequestCallerStore interface {
 	OutboundAIRequestCaller(ctx context.Context, accountID, integrationID, logID string) (string, error)
 }
 
+// OutboundAIRequestCallersStore names who made each of several logged calls
+// of the account's integrations, by log ID, so apid can withhold the
+// evaluation samples of an app the reader may no longer see (ADR
+// 20261027132936 amendment 1). A log ID outside the account or past
+// retention is absent from the result.
+type OutboundAIRequestCallersStore interface {
+	OutboundAIRequestCallers(ctx context.Context, accountID string, logIDs []string) (map[string]string, error)
+}
+
 // OutboundAIControlStore owns the ADR-991 customer settings (guardrails and
 // key pools) and reads what outboundd records (alerts and the request log).
 type OutboundAIControlStore interface {
