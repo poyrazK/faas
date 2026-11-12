@@ -49,6 +49,37 @@ otherwise (`--source=worktree` includes uncommitted changes). Before upload:
   to `.gregaleignore` to keep them out, and set their values with
   `gregale env push` or `gregale env set`.
 
+### Inspect the payload before uploading
+
+```bash
+gregale deploy --dry-run --explain-files
+gregale deploy --dry-run --explain-files --worktree --json
+gregale deploy --dry-run --explain-files --path services/api --source=head
+```
+
+This local inspection needs no login and makes no API calls. It uses the deploy
+packers and reports included paths, byte sizes, excluded paths and the ignore
+file and line responsible for a match. Sizes come from the finished archive,
+including generated Go build files and secret-scan replacements. Credential-like
+filenames are marked; file contents, secret values and ignore-rule text are not
+printed. `--secrets-file PATH` excludes that file without importing its values
+as remote configuration.
+
+The default source selection is the same as deploy. HEAD reports describe Git's
+normalized archive, so uncommitted, untracked and export-ignored files are absent.
+An excluded directory represents its pruned subtree. For a declared workspace
+member, the report includes the repository context and the selected source root.
+For a functions project, select one function with `--path`; use `--project` to
+inspect a project root archive. Image, tarball, remote repository and template
+inputs are not supported by file inspection.
+
+JSON includes `source_mode`, `commit` for HEAD, `file_count`, `included_bytes`,
+`compressed_bytes` and `files`. Each file records its logical `path`, included
+`archive_path`, `included`, `bytes`, `reason` and any `rule_file`/`rule_line`.
+Account upload limits, remote configuration and runtime readiness are unchecked;
+`account_limit_checked` is false. Ordinary `--dry-run` without `--explain-files`
+continues to compare authenticated remote state.
+
 ### Limits
 
 | Limit | Free | Hobby | Pro | Scale |

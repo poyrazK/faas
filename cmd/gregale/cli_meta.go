@@ -3188,6 +3188,7 @@ var cliCommands = []cliCommand{
 			{Name: "preview", Group: "Preview and checks", Common: true, Short: "preview local app defaults; no login needed"},
 			{Name: "plan", Group: "Preview and checks", Short: "alias of --preview"},
 			{Name: "dry-run", Group: "Preview and checks", Common: true, Short: "check against remote state without deploying"},
+			{Name: "explain-files", Group: "Preview and checks", Bool: true, Short: "with --dry-run, inspect local payload files and exclusion rules without login or remote calls"},
 			{Name: "yes", Group: "Confirmation and waiting", Common: true, Short: "skip the apply confirmation prompt"},
 			{Name: "strict", Group: "Preview and checks", Short: "fail on schema/quota/env breaks (default with --dry-run, --diff, or --server-diff)"},
 			{Name: "lenient", Group: "Preview and checks", Short: "allow diff breaks; requires --dry-run, --diff, or --server-diff; excludes --strict"},
@@ -4742,7 +4743,8 @@ var cliCommands = []cliCommand{
 			{Name: "resume-automation", Short: "Enable the crons a full clone copied paused into a stage", Notes: []string{"Only crons the source ran are enabled; ones the source had disabled, or changed since, stay as they are."}, Positionals: []string{"<stage>"}, Examples: []string{"gregale env resume-automation staging --project shop"}, Flags: []cliFlag{
 				{Name: "project", Value: "SLUG", Short: "project slug (defaults to linked project)"},
 			}},
-			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Examples: []string{"gregale env pull --app my-api", "gregale env pull --app my-api --env staging"}, Flags: []cliFlag{
+			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Examples: []string{"gregale env pull --app my-api", "gregale env pull --app my-api --env staging", "gregale env pull --app my-api --dry-run --json"}, Flags: []cliFlag{
+				{Name: "dry-run", Short: "preview missing key skeletons and preserved local keys without writing files", Bool: true},
 				{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"},
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "o", ShortName: "o", Short: "output file (default .env)", Value: "PATH"},
@@ -5201,7 +5203,7 @@ var cliCommands = []cliCommand{
 			{Name: "service", Short: "with --project, only these services", Value: "NAME,..."},
 			{Name: "limit", Short: "HTTP request page size (1..200)", Value: "N"},
 			{Name: "all", Short: "read every retained HTTP request page"},
-			{Name: "explain", Short: "summarize the last failure and common error patterns"},
+			{Name: "explain", Short: "summarize failures and error patterns; --json requires an unfiltered --deployment snapshot", Bool: true},
 			{Name: "archive", Short: "read durable logs for one instance and UTC day"},
 			{Name: "instance", Short: "instance id for --archive (1..128 ASCII letters, numbers, dots, underscores, or hyphens)", Value: "ID"},
 			{Name: "date", Short: "UTC day for --archive: today, yesterday, or YYYY-MM-DD", Value: "DAY"},
