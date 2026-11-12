@@ -47,6 +47,11 @@ var routes = map[string]beginFunc{
 	"PUT /v1/apps/{slug}/env/{key}":               beginEnv,
 	"DELETE /v1/apps/{slug}/env/{key}":            beginEnv,
 	"POST /v1/apps/{slug}/env/batch":              beginEnv,
+	"POST /v1/apps":                               beginCreate,
+	"POST /v1/apps/{slug}/buckets":                beginCreate,
+	"POST /v1/crons":                              beginCreate,
+	"POST /v1/domains":                            beginCreate,
+	"POST /v1/postgres/databases":                 beginCreate,
 	"POST /v1/apps/{slug}/deployments":            beginDeploy,
 	"POST /v1/apps/{slug}/deployments/source-ref": beginDeploy,
 	"POST /v1/apps/{slug}/deployments/dev-source": beginDeploy,
@@ -117,6 +122,7 @@ func (p *Pending) Finish(ctx context.Context, status int, body []byte, activityI
 		}
 		rec.NotUndoableReason = truncate(reason, 512)
 	}
+	rec.Summary = truncate(p.summary, 512) // finish may name what was made
 	return p.e.Store.RecordAgentUndo(ctx, rec)
 }
 

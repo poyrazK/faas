@@ -403,6 +403,85 @@ func TestHandlers_AgentUndoRollback(t *testing.T) {
 	}
 }
 
+// Undoing what an agent created deletes it through its own delete route: the
+// app is parked (restorable), the cron is gone; a thing already deleted
+// counts as undone.
+func TestHandlers_AgentUndoCreated(t *testing.T) {
+	srv, store := apidserver.NewCliAuthTestServer(t)
+	ctx := t.Context()
+	acct, err := store.CreateAccount(ctx, "undo-create@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "cron-host", Type: state.AppTypeApp, Status: state.AppActive, RAMMB: 512, MaxConcurrency: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mint := func(label string, scopes ...string) (string, state.APIKey) {
+		t.Helper()
+		plaintext, hash, err := api.GenerateAPIKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		key, err := store.CreateAPIKey(ctx, acct.ID, hash, label, scopes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return plaintext, key
+	}
+	agent, agentKey := mint("create-agent", api.ScopeAgent, api.ScopeAppsRead, api.ScopeDeployWrite)
+	if err := store.SetAPIKeyApprovalCategories(ctx, agentKey.ID, []string{}); err != nil {
+		t.Fatal(err)
+	}
+	owner, _ := mint("create-admin", api.ScopeAdmin)
+	call := func(key, method, path, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+key)
+		if body != "" {
+			r.Header.Set("Content-Type", "application/json")
+		}
+		srv.ServeHTTP(rec, r)
+		return rec
+	}
+	created := call(agent, http.MethodPost, "/v1/apps", `{"slug":"agent-made"}`)
+	if created.Code < 200 || created.Code > 299 {
+		t.Fatalf("agent creates an app = %d %s", created.Code, created.Body)
+	}
+	cron := call(agent, http.MethodPost, "/v1/crons", `{"app_id":"`+host.ID+`","schedule":"0 3 * * *","path":"/jobs/sync"}`)
+	if cron.Code < 200 || cron.Code > 299 {
+		t.Fatalf("agent creates a cron = %d %s", cron.Code, cron.Body)
+	}
+	var cronOut struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(cron.Body.Bytes(), &cronOut)
+
+	undoPath := "/v1/agent-connections/" + agentKey.ID + "/undo"
+	var plan api.AgentUndoPlan
+	if rec := call(owner, http.MethodPost, undoPath+"/plan", `{}`); rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &plan) != nil {
+		t.Fatalf("plan = %d %s", rec.Code, rec.Body)
+	}
+	if len(plan.Items) != 2 || plan.Undoable != 2 || plan.Items[0].Kind != api.AgentUndoKindCreate ||
+		!strings.Contains(plan.Items[1].Summary, "app agent-made") {
+		t.Fatalf("plan = %+v; want the cron and the app, both undoable", plan.Items)
+	}
+	body, _ := json.Marshal(api.AgentUndoRequest{PlanDigest: plan.PlanDigest})
+	var res api.AgentUndoResult
+	if rec := call(owner, http.MethodPost, undoPath, string(body)); rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &res) != nil {
+		t.Fatalf("apply = %d %s", rec.Code, rec.Body)
+	}
+	if res.Undone != 2 || res.Failed != 0 {
+		t.Fatalf("apply = %+v", res.Items)
+	}
+	if _, err := store.AppBySlug(ctx, "agent-made"); err == nil {
+		t.Fatal("the agent's app is still active after undo")
+	}
+	if rec := call(owner, http.MethodGet, "/v1/crons/"+cronOut.ID, ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("the agent's cron after undo = %d; want 404", rec.Code)
+	}
+}
+
 func newUUID(t *testing.T) string {
 	t.Helper()
 	return uuid.NewString()

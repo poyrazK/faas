@@ -31,6 +31,11 @@ func (s *server) agentUndoHandlers() map[string]accountHandler {
 		"GET /v1/apps/{slug}/deployments":                 s.listAppDeployments,
 		"POST /v1/apps/{slug}/deployments/{id}/cancel":    s.handleCancelDeployment,
 		"POST /v1/apps/{slug}/rollback":                   s.rollbackApp,
+		"DELETE /v1/apps/{slug}":                          s.deleteApp,
+		"DELETE /v1/apps/{slug}/buckets/{bucket}":         s.object.DeleteBucket,
+		"DELETE /v1/crons/{id}":                           s.deleteCron,
+		"DELETE /v1/domains/{domain}":                     s.deleteDomain,
+		"DELETE /v1/postgres/databases/{id}":              s.deleteManagedPostgresDatabase,
 		"POST /v1/apps/{slug}/config/rollback":            s.rollbackConfig,
 	}
 }
