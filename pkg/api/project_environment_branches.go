@@ -147,6 +147,9 @@ type ProjectEnvironmentBranchWorkload struct {
 	DeploymentID     string `json:"deployment_id"`
 	SourceDeployment string `json:"source_deployment_id"`
 	Status           string `json:"status"`
+	// URL is the workload's address in the branch; its first request
+	// starts it.
+	URL string `json:"url,omitempty"`
 }
 
 // ProjectEnvironmentBranchListResponse lists a project's branches.

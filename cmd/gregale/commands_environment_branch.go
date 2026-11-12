@@ -98,6 +98,9 @@ func renderProjectEnvironmentBranch(environment api.ProjectEnvironmentResponse) 
 		}
 		for _, w := range b.Workloads {
 			_, _ = fmt.Fprintf(osStdout, "  %s: deployment %s from %s (starts on first request)\n", w.Workload, w.DeploymentID, w.SourceDeployment)
+			if w.URL != "" {
+				_, _ = fmt.Fprintf(osStdout, "    %s\n", w.URL)
+			}
 		}
 	}
 	return 0
