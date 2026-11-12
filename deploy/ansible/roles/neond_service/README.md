@@ -37,10 +37,14 @@ dedicated service user). A project without a key, or whose key Neon
 refuses, falls back to the admin key (`neond_requests_total{tier="admin_fallback"}`).
 Deleting a project revokes its keys (`neond_project_keys_total`).
 
-The role creates the sealing identity, `/etc/faas/secrets/neond-seal.age`,
-once with `neond keygen` from the active release, and never replaces it. On
-the first converge after enabling, a release without neond skips it and the
-next converge finishes. Losing the identity leaves projects on the admin key.
+Keys are sealed to the `neon` seal domain (ADR 20261022111812), which only
+neond reads. Before setting `faas_neond_org_id`, create the domain with
+`gregalectl seal-domain init --domain neon`, set
+`faas_seal_domain_neon_identity_src` (and `faas_seal_domains_managed`) and
+converge: the seal_domains role stages `/etc/faas/secrets/domains/neon.age`,
+hands it to neond and proves the domain probe. This role refuses project
+keys without it. Losing the identity leaves projects on the admin key until
+their keys are re-minted.
 
 To roll back, set `faas_neond_broker: false` (apid calls Neon with its own key
 again), then `faas_neond_enabled: false`.

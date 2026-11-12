@@ -162,7 +162,7 @@ func newKeyedServer(t *testing.T) (*Server, *keyedNeon, *memKeys, *age.X25519Ide
 		t.Fatal(err)
 	}
 	store := &memKeys{rows: map[int64]keyRow{}}
-	if err := server.UseProjectKeys(ProjectKeys{Org: "org-1", Identity: identity, Store: store}); err != nil {
+	if err := server.UseProjectKeys(ProjectKeys{Org: "org-1", Identities: []*age.X25519Identity{identity}, Store: store}); err != nil {
 		t.Fatal(err)
 	}
 	return server, neon, store, identity, reg
@@ -266,11 +266,13 @@ func TestUnstoredKeyIsRevoked(t *testing.T) {
 
 func TestUseProjectKeysValidates(t *testing.T) {
 	server, _, store, identity, _ := newKeyedServer(t)
+	ids := []*age.X25519Identity{identity}
 	for _, keys := range []ProjectKeys{
-		{Identity: identity, Store: store},
-		{Org: "org/../x", Identity: identity, Store: store},
+		{Identities: ids, Store: store},
+		{Org: "org/../x", Identities: ids, Store: store},
 		{Org: "org-1", Store: store},
-		{Org: "org-1", Identity: identity},
+		{Org: "org-1", Identities: []*age.X25519Identity{nil}, Store: store},
+		{Org: "org-1", Identities: ids},
 	} {
 		if err := server.UseProjectKeys(keys); err == nil {
 			t.Errorf("UseProjectKeys(%+v) = nil", keys)

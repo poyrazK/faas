@@ -55,9 +55,11 @@ type KeyStore interface {
 type ProjectKeys struct {
 	// Org is the Neon organization the admin key's service user administers.
 	Org string
-	// Identity seals and opens the stored keys; it never leaves neond.
-	Identity *age.X25519Identity
-	Store    KeyStore
+	// Identities are the neon seal domain's (sealdomain.Neon): the current
+	// identity first, which new keys are sealed to, then its previous twin
+	// during a rotation. Only neond holds them.
+	Identities []*age.X25519Identity
+	Store      KeyStore
 }
 
 type projectKeys struct {
@@ -68,7 +70,7 @@ type projectKeys struct {
 
 // UseProjectKeys turns on project keys. Call it before serving.
 func (s *Server) UseProjectKeys(keys ProjectKeys) error {
-	if keys.Org == "" || keys.Identity == nil || keys.Store == nil || !validID.MatchString(keys.Org) {
+	if keys.Org == "" || len(keys.Identities) == 0 || keys.Identities[0] == nil || keys.Store == nil || !validID.MatchString(keys.Org) {
 		return errors.New("neond: invalid project key configuration")
 	}
 	s.keys = &projectKeys{ProjectKeys: keys, cache: map[string]string{}}
@@ -87,7 +89,7 @@ func (k *projectKeys) projectKey(ctx context.Context, project string) (string, b
 	if err != nil || !ok {
 		return "", false, err
 	}
-	namespace, plain, err := secretbox.OpenBytes(k.Identity, stored.Sealed)
+	namespace, plain, err := secretbox.OpenBytesMulti(k.Identities, stored.Sealed)
 	if err != nil || namespace != sealNamespace || len(plain) == 0 {
 		return "", false, fmt.Errorf("neond: open project key %d: sealed to another identity or not a project key", stored.KeyID)
 	}
@@ -125,7 +127,7 @@ func (s *Server) mintProjectKey(ctx context.Context, project string) error {
 	if len(payload) > MaxResponseBytes || json.Unmarshal(payload, &minted) != nil || minted.ID <= 0 || minted.Key == "" {
 		return fmt.Errorf("neond: mint key for %s: unreadable Neon reply", project)
 	}
-	sealed, err := secretbox.SealBytes(s.keys.Identity.Recipient(), sealNamespace, []byte(minted.Key), maxKeyBytes)
+	sealed, err := secretbox.SealBytes(s.keys.Identities[0].Recipient(), sealNamespace, []byte(minted.Key), maxKeyBytes)
 	if err == nil {
 		err = s.keys.Store.InsertProjectKey(ctx, project, minted.ID, sealed)
 	}
@@ -133,7 +135,8 @@ func (s *Server) mintProjectKey(ctx context.Context, project string) error {
 		// The key exists at Neon but not in the table: revoke it rather
 		// than leave a live key nobody holds.
 		if revokeErr := s.revokeKey(ctx, minted.ID); revokeErr != nil {
-			return fmt.Errorf("neond: store key %d for %s: %w (revoking it also failed: %v)", minted.ID, project, err, revokeErr)
+			return errors.Join(fmt.Errorf("neond: store key %d for %s: %w", minted.ID, project, err),
+				fmt.Errorf("neond: revoke unstored key %d: %w", minted.ID, revokeErr))
 		}
 		return fmt.Errorf("neond: store key %d for %s: %w", minted.ID, project, err)
 	}

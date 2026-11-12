@@ -168,10 +168,13 @@ neond, for each request:
       what was issued. `faas_runtime` has no access; `faas_neond` may
       select, insert and update. Queries live in `pkg/neond/neondpg`.
     - Keys are sealed with `secretbox.SealBytes` (namespace
-      `neon-project-key`) to neond's own age identity,
-      `/etc/faas/secrets/neond-seal.age`, created once by `neond keygen`
-      and handed in through `LoadCredential`. It is not a seal domain: neond
-      is the only writer and reader.
+      `neon-project-key`) to a new seal domain, `neon` (ADR
+      20261022111812), whose only reader is neond on the control plane. The
+      seal_domains role stages `/etc/faas/secrets/domains/neon.age`, hands
+      it to neond through `LoadCredential`
+      (`FAAS_SEAL_DOMAIN_NEON_IDENTITY_PATH`) and proves the domain probe;
+      neond loads it with `sealdomain.LoadReaderIdentities`, so a rotation's
+      previous identity keeps old keys readable.
     - Minting runs after a successful `POST /projects`, detached from apid's
       deadline, before the reply. A key minted but not stored is revoked at
       once. A failed mint leaves the project on the admin key.
