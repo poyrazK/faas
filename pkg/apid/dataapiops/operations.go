@@ -61,7 +61,7 @@ func Probe(ctx context.Context, client *http.Client, address, current string) Re
 	if err != nil {
 		return out
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != 200 && response.StatusCode != 503 {
 		return out
 	}

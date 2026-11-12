@@ -1,7 +1,7 @@
 -- +goose Up
 -- migration-compat: expand
 SET LOCAL lock_timeout = '5s';
-CREATE TABLE data_api_shared_budgets (
+CREATE TABLE IF NOT EXISTS data_api_shared_budgets (
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
  budget_key text NOT NULL CHECK (budget_key ~ '^[a-f0-9]{64}$'),
  window_start timestamptz NOT NULL,
