@@ -159,7 +159,11 @@ without an `outboundd` restart. Requests already admitted retain their original
 deadline, and reducing `max_in_flight` does not terminate calls already running.
 The credential remains unavailable until uploaded and the gateway fails closed
 if it is missing or revoked. A maximum of 25 enabled customer integrations is
-allowed per account.
+allowed per account. AI calls of one account across all its customer
+integrations are also limited per `outboundd` process to
+`OutboundAIAccountRatePerSecondMax` (Free 20, Hobby 40, Pro 200, Scale 1000
+per second, burst twice that); excess calls get `429
+outbound_ai_account_rate_limited` (ADR 20261027132936 amendment 2).
 
 The account plan bounds each integration's request policy:
 
@@ -1527,7 +1531,9 @@ replays or the gateway's own checks.
   outbound_ai_response_flagged` after moderation. A flag sends
   `X-Gregale-AI-Response-Moderation: flagged=<categories>`.
 - A failed moderation check under `--moderation-on-error block` answers `503
-  outbound_ai_moderation_unavailable`. A response the gateway cannot read or
+  outbound_ai_moderation_unavailable`. Without `--moderation-on-error`, a
+  `block` check blocks on failure and a `flag` check allows (ADR 20261027132936
+  amendment 2). A response the gateway cannot read or
   that is over 4 MiB answers `502 outbound_ai_response_unchecked`.
 - Gemini's `streamGenerateContent` without `alt=sse` is a JSON array, so it
   is checked whole and arrives at the end.

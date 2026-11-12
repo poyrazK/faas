@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
@@ -129,13 +130,23 @@ func (e *userUsageExport) start() {
 func (e *userUsageExport) write(row state.OutboundAIUserUsageRow) error {
 	e.start()
 	if e.csv != nil {
-		return e.csv.Write([]string{row.UsageDate, row.EndUser, strconv.FormatInt(row.Requests, 10),
+		return e.csv.Write([]string{row.UsageDate, csvText(row.EndUser), strconv.FormatInt(row.Requests, 10),
 			strconv.FormatInt(row.ErrorRequests, 10), strconv.FormatInt(row.InputTokens, 10), strconv.FormatInt(row.OutputTokens, 10),
 			strconv.FormatInt(row.InputTokens+row.OutputTokens, 10), strconv.FormatInt(row.CostMillicents, 10)})
 	}
 	return e.json.Encode(api.OutboundAIUserUsageExportRow{UsageDate: row.UsageDate, OutboundAIUserUsageItem: api.OutboundAIUserUsageItem{
 		EndUser: row.EndUser, Requests: row.Requests, ErrorRequests: row.ErrorRequests, InputTokens: row.InputTokens,
 		OutputTokens: row.OutputTokens, Tokens: row.InputTokens + row.OutputTokens, CostMillicents: row.CostMillicents}})
+}
+
+// csvText keeps a caller-chosen value from reading as a spreadsheet formula
+// in a CSV export: a value starting with =, +, - or @ gets a leading
+// apostrophe (ADR 20261027132936 amendment 2). NDJSON rows keep the value.
+func csvText(value string) string {
+	if value != "" && strings.ContainsRune("=+-@", rune(value[0])) {
+		return "'" + value
+	}
+	return value
 }
 
 func (e *userUsageExport) finish() {

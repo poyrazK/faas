@@ -112,6 +112,10 @@ restart.
   and Vertex take `--region`; Vertex takes its service-account key with
   `--key-file`.
 - `--no-env` leaves the app's settings alone.
+- The gateway serves **production** deployments only. `--scope` other than
+  `default` is refused: previews and other environments call the provider
+  directly with their own key (`gregale env set --env pr-preview
+  OPENAI_API_KEY=...`), outside the gateway's caps and reports.
 
 To do the same through the API:
 
@@ -334,7 +338,8 @@ Latency and the trace timeline come from the request log, so turn it on with
 | `400 outbound_ai_feedback_invalid`, `403 outbound_ai_feedback_not_authorized` | Feedback was malformed, or did not come from an app. |
 | `400 outbound_ai_translation_unsupported` | A route cannot translate this request for its target. |
 | `400 outbound_ai_content_flagged` | The moderation check found a blocked category. `X-Gregale-AI-Moderation` names it. |
-| `503 outbound_ai_moderation_unavailable` | The moderation check failed and its policy blocks on failure. |
+| `503 outbound_ai_moderation_unavailable` | The moderation check failed and its policy blocks on failure. A `block` check blocks on failure unless `on_error` is `allow`; a `flag` check lets the call through. |
+| `429 outbound_ai_account_rate_limited` | The account's AI calls per second across all its integrations reached the plan limit (see Plans). Retry after a second. |
 | `401 outbound_access_token_invalid` | The access token is missing, unknown, revoked or expired. |
 | `403 outbound_ai_endpoint_unmetered` | The gateway cannot meter this call against your caps. `gregale ai policy <id> --allow-unmetered on` lets such calls through, outside the caps. |
 | `400 outbound_ai_batch_unreadable` | The gateway could not read the batch's requests to size them against your caps. |
@@ -344,6 +349,12 @@ Latency and the trace timeline come from the request log, so turn it on with
 
 A model with no price in the integration's list or the built-in catalog
 costs nothing in usage reports; under a cost cap it is refused (above).
+Built-in prices follow the provider's tiers: a call whose prompt (cache reads
+and writes included) is above a model's long-context threshold, such as 200k
+tokens for Claude on Vertex and Gemini, is priced entirely at the long-context
+rates, and Anthropic one-hour cache writes at the one-hour write price.
+An OpenAI-format call routed to Claude without `max_tokens` is sent with the
+model's maximum output; Gemini and Bedrock get no limit.
 Request bodies a content policy must inspect are limited to 4 MiB. Usage,
 alerts, the request log and captures each have their own retention; see the
 [operator guide](ops/outbound-integrations.md) for the full reference.
@@ -352,14 +363,20 @@ alerts, the request log and captures each have their own retention; see the
 
 The AI gateway is included on **Hobby**, **Pro** and **Scale**. Your plan's
 outbound request policy (rate, burst and concurrency per integration) applies
-to AI calls too. Provider charges are billed by your provider to your own key;
+to AI calls too, and each account may make at most 40 (Hobby), 200 (Pro) or
+1,000 (Scale) AI calls per second across all its integrations, with bursts
+of twice that. Provider charges are billed by your provider to your own key;
 Gregale's cost figures are estimates from your price list or the built-in
 catalog, used for budgets and reports.
 
 ## Preview notes
 
 - Calls for one integration share its admission state, so very high call rates
-  are better spread across integrations.
+  are better spread across integrations, up to the account's AI rate.
+- Budget alerts are delivered to the app's webhooks only, not by email or
+  notification channels yet.
+- CSV exports prefix end-user IDs and tags that start with `=`, `+`, `-` or
+  `@` with `'`, so spreadsheets do not run them as formulas.
 - Captured content is redacted and kept for 3 days; turn capture on only for
   traffic you may store. Reading it needs an API key with `secrets:read`;
   replays and evaluations leave out answer texts for other keys and say so

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/outbound/aiprices"
 )
 
 // errTranslationUnsupported marks an OpenAI request the translation layer
@@ -240,6 +241,7 @@ func translateChatRequest(integration Integration, request openAIChatRequest, mo
 		return routeTranslation{}, err
 	}
 	includeUsage := request.StreamOptions != nil && request.StreamOptions.IncludeUsage
+	request = withTranslatedOutputLimit(provider, model, request)
 	switch provider {
 	case api.OutboundAIProviderAnthropic:
 		fields, err := openAIToAnthropic(request, model, format)
@@ -373,6 +375,42 @@ func openAIStopSequences(raw json.RawMessage) []string {
 		return many
 	}
 	return nil
+}
+
+// withTranslatedOutputLimit gives a request without an output limit the
+// target model's largest answer when its provider requires a limit: Claude,
+// on Anthropic or Vertex. Gemini and Bedrock Converse take no limit as the
+// model's own (ADR 20261027132936 amendment 2).
+func withTranslatedOutputLimit(provider, model string, request openAIChatRequest) openAIChatRequest {
+	if _, requested := openAIRequestedOutput(request); requested {
+		return request
+	}
+	catalogModel := model
+	if provider == api.OutboundAIProviderVertex {
+		publisher, name := vertexPublisherModel(model)
+		if publisher != "anthropic" {
+			return request
+		}
+		catalogModel = name
+	} else if provider != api.OutboundAIProviderAnthropic {
+		return request
+	}
+	if entry, ok := aiprices.Default().Lookup(provider, catalogModel); ok && entry.Price.MaxOutputTokens != nil {
+		limit := *entry.Price.MaxOutputTokens
+		request.MaxTokens = &limit
+	}
+	return request
+}
+
+// openAIRequestedOutput is the output limit the caller set, if any.
+func openAIRequestedOutput(request openAIChatRequest) (int64, bool) {
+	if request.MaxCompletionTokens != nil && *request.MaxCompletionTokens > 0 {
+		return *request.MaxCompletionTokens, true
+	}
+	if request.MaxTokens != nil && *request.MaxTokens > 0 {
+		return *request.MaxTokens, true
+	}
+	return 0, false
 }
 
 func openAIOutputCeiling(request openAIChatRequest) int64 {
@@ -654,7 +692,10 @@ func openAIToGemini(request openAIChatRequest, format openAIResponseFormat) ([]b
 			return nil, errTranslationUnsupported
 		}
 	}
-	generation := map[string]any{"maxOutputTokens": openAIOutputCeiling(request)}
+	generation := map[string]any{}
+	if limit, ok := openAIRequestedOutput(request); ok {
+		generation["maxOutputTokens"] = limit
+	}
 	if request.Temperature != nil {
 		generation["temperature"] = *request.Temperature
 	}

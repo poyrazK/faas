@@ -89,6 +89,13 @@ func cmdAddAI(args []string) int {
 	if !ok {
 		return printErr("Unknown --provider", errors.New(addAIUsage))
 	}
+	if !*noEnv && !addAIProductionScope(*scope) {
+		// ADR 20261027132936 amendment 2: the gateway serves production
+		// deployments only, so these settings would fail in any other scope.
+		return printErr("The AI gateway serves production deployments only",
+			fmt.Errorf("scope %q is not production; previews and other environments call the provider with their own key "+
+				"(set it with gregale env set --env %s), or pass --no-env", *scope, *scope))
+	}
 	plan := addAIPlan{app: *app, provider: *provider, integrationID: *integrationID, name: *name, scope: *scope, setEnv: !*noEnv}
 	if plan.name == "" {
 		plan.name = *provider
@@ -278,4 +285,11 @@ func addAIEnv(provider, integrationID string) map[string]string {
 		env["ANTHROPIC_BASE_URL"], env["ANTHROPIC_API_KEY"] = base, addAIPlaceholderKey
 	}
 	return env
+}
+
+// addAIProductionScope reports whether the SDK settings' scope is one the
+// gateway serves: the default scope or production (ADR 20261027132936
+// amendment 2).
+func addAIProductionScope(scope string) bool {
+	return scope == "" || scope == "default" || scope == "production"
 }

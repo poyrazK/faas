@@ -37,6 +37,47 @@ type AIPrice struct {
 	InputAudio       int64
 	CachedInputAudio int64
 	OutputAudio      int64
+	// CacheWrite1h prices a 1-hour cache write; resolution falls back to
+	// CacheWrite. Above LongContextThreshold prompt tokens, a positive
+	// threshold, the long prices price the whole call (ADR 20261027132936
+	// amendment 2); resolution fills absent ones from the standard prices.
+	CacheWrite1h         int64
+	LongContextThreshold int64
+	Long                 *AIPrice
+}
+
+// resolveLongContextPrices fills the 1-hour cache write and long-context
+// prices of a resolved catalog price.
+func resolveLongContextPrices(price *AIPrice, entry aiprices.Price) {
+	price.CacheWrite1h = price.CacheWrite
+	if entry.CacheWrite1h != nil {
+		price.CacheWrite1h = *entry.CacheWrite1h
+	}
+	if entry.LongContextThreshold == nil || *entry.LongContextThreshold <= 0 || entry.InputLong == nil {
+		return
+	}
+	long := *price
+	long.Long, long.LongContextThreshold = nil, 0
+	long.Input = *entry.InputLong
+	if entry.CachedInputLong != nil {
+		long.CachedInput = *entry.CachedInputLong
+	}
+	// A cache write without its own long price costs what it costs below
+	// the threshold, or the long input price when it is priced as input.
+	if price.CacheWrite == price.Input {
+		long.CacheWrite = long.Input
+	}
+	if entry.CacheWriteLong != nil {
+		long.CacheWrite = *entry.CacheWriteLong
+	}
+	if entry.OutputLong != nil {
+		long.Output = *entry.OutputLong
+	}
+	long.CacheWrite1h = max(price.CacheWrite1h, long.CacheWrite)
+	if entry.CacheWrite1hLong != nil {
+		long.CacheWrite1h = *entry.CacheWrite1hLong
+	}
+	price.LongContextThreshold, price.Long = *entry.LongContextThreshold, &long
 }
 
 // resolveAudioPrices fills the audio token prices of a resolved price.
@@ -103,6 +144,7 @@ func ResolveAIPrices(entries []api.OutboundAIPriceEntry) []AIPrice {
 			entry.MillicentsPerImage, entry.MillicentsPerAudioMinute, entry.MillicentsPerMillionCharacters, entry.MillicentsPerVideoSecond)
 		resolveToolPrices(&price, entry.MillicentsPerWebSearch, entry.MillicentsPerFileSearch, entry.MillicentsPerCodeSessionGB)
 		resolveAudioPrices(&price, entry.InputAudioMillicentsPerMTok, entry.CachedInputAudioMillicentsPerMTok, entry.OutputAudioMillicentsPerMTok)
+		price.CacheWrite1h = price.CacheWrite
 		prices = append(prices, price)
 	}
 	return prices
@@ -143,6 +185,7 @@ func aiPriceFor(integration Integration, model string) (AIPrice, bool) {
 		entry.Price.AudioMinute, entry.Price.Characters, entry.Price.VideoSecond)
 	resolveToolPrices(&price, entry.Price.WebSearch, entry.Price.FileSearch, entry.Price.CodeSessionGB)
 	resolveAudioPrices(&price, entry.Price.InputAudio, entry.Price.CachedInputAudio, entry.Price.OutputAudio)
+	resolveLongContextPrices(&price, entry.Price)
 	return price, true
 }
 
@@ -176,6 +219,12 @@ func priceCostMillicents(price AIPrice, usage AIUsage) int64 {
 	if !usage.Known {
 		return 0
 	}
+	if price.Long != nil && price.LongContextThreshold > 0 && usage.InputTokens > price.LongContextThreshold {
+		// ADR 20261027132936 amendment 2: a prompt above the threshold
+		// prices the whole call at the long-context rates.
+		price = *price.Long
+	}
+	writes1h := min(max(usage.CacheWrite1hTokens, 0), usage.CacheWriteTokens)
 	uncachedAudio := max(usage.InputAudioTokens-usage.CachedInputAudioTokens, 0)
 	uncached := max(usage.InputTokens-usage.CachedInputTokens-usage.CacheWriteTokens-usage.InputImageTokens-uncachedAudio, 0)
 	cachedText := max(usage.CachedInputTokens-usage.CachedInputAudioTokens, 0)
@@ -188,7 +237,8 @@ func priceCostMillicents(price AIPrice, usage AIUsage) int64 {
 		{uncached, price.Input, 60}, {cachedText, price.CachedInput, 60},
 		{uncachedAudio, price.InputAudio, 60}, {usage.CachedInputAudioTokens, price.CachedInputAudio, 60},
 		{usage.OutputAudioTokens, price.OutputAudio, 60},
-		{usage.CacheWriteTokens, price.CacheWrite, 60}, {usage.InputImageTokens, price.InputImage, 60},
+		{usage.CacheWriteTokens - writes1h, price.CacheWrite, 60}, {writes1h, price.CacheWrite1h, 60},
+		{usage.InputImageTokens, price.InputImage, 60},
 		{textOutput, price.Output, 60}, {usage.OutputImageTokens, price.OutputImage, 60},
 		{usage.Characters, price.Characters, 60}, {usage.AudioSeconds, price.AudioMinute, 1_000_000},
 		{usage.VideoSeconds, price.VideoSecond, 60_000_000},

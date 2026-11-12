@@ -47,6 +47,8 @@ var hopByHopHeaders = map[string]struct{}{
 // Handler is an explicit request-aware outbound gateway. A request to
 // /i/{integrationID}/path is sent only to that integration's configured origin.
 type Handler struct {
+	// aiAccountRates bounds each account's AI calls per second.
+	aiAccountRates aiAccountRates
 	// Log, when set, records failures the caller only sees as a generic 503.
 	Log                       *slog.Logger
 	SimulationHandler         http.Handler
@@ -359,6 +361,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !allowedRoute || (integration.ProviderAuthMode == ProviderAuthManaged && hasMethodOverride(r)) {
 		writeProblem(w, http.StatusForbidden, "outbound_route_not_allowed", "Outbound method or path is not allowed", "")
+		return
+	}
+	// ADR 20261027132936 amendment 2: one account's AI calls per second
+	// across all its integrations, counted only once the caller is
+	// authorized so nobody else can spend an account's allowance. The
+	// gateway's own checks and probes are not the account's traffic.
+	if integration.AIProvider != "" && integration.OwnerKind == IntegrationOwnerCustomer && !isInternal && !isQualification &&
+		!h.aiAccountRates.allow(integration.AccountID, integration.AccountPlan, time.Now()) {
+		h.Metrics.ObserveRejection(metricIntegrationID, "outbound_ai_account_rate_limited")
+		writeProblem(w, http.StatusTooManyRequests, "outbound_ai_account_rate_limited",
+			"The account's AI calls per second are at the plan limit", "1")
 		return
 	}
 	aiEndUser, aiAffinity, ok := aiCallerKeys(r, integration)

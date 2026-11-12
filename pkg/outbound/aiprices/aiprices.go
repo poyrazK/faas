@@ -31,20 +31,29 @@ var catalogJSON []byte
 // "<model>@<resolution>" row prices one resolution apart. WebSearch,
 // FileSearch and CodeSessionGB price built-in tool uses (ADR-1433).
 // InputAudio, CachedInputAudio and OutputAudio price audio tokens per
-// million (ADR 20261019072722).
+// million (ADR 20261019072722). LongContextThreshold is the prompt size in
+// tokens above which the *Long prices price the whole call, and
+// CacheWrite1h prices a 1-hour cache write (ADR 20261027132936
+// amendment 2); each is nil when the provider has no such price.
 type Price struct {
 	Input, CachedInput, CacheWrite, Output                               int64
 	InputImage, OutputImage, Image, AudioMinute, Characters, VideoSecond *int64
 	WebSearch, FileSearch, CodeSessionGB                                 *int64
 	InputAudio, CachedInputAudio, OutputAudio                            *int64
+	LongContextThreshold                                                 *int64
+	InputLong, CachedInputLong, CacheWriteLong, OutputLong               *int64
+	CacheWrite1h, CacheWrite1hLong                                       *int64
+	// MaxOutputTokens is the model's largest answer, nil when unknown.
+	MaxOutputTokens *int64
 }
 
 // catalogFields is the column order of a catalog row.
 const catalogFields = "input,cached_input,cache_write,output,input_image,output_image,image,audio_minute,characters,video_second," +
-	"web_search,file_search,code_session_gb,input_audio,cached_input_audio,output_audio"
+	"web_search,file_search,code_session_gb,input_audio,cached_input_audio,output_audio," +
+	"long_context_threshold,input_long,cached_input_long,cache_write_long,output_long,cache_write_1h,cache_write_1h_long,max_output_tokens"
 
 // catalogWidth is the number of columns in a catalog row.
-const catalogWidth = 16
+const catalogWidth = 24
 
 // Entry is one catalog model and its price.
 type Entry struct {
@@ -96,7 +105,9 @@ func Parse(data []byte) (*Catalog, error) {
 			prices[model] = Price{Input: *row[0], CachedInput: *row[1], CacheWrite: *row[2], Output: *row[3],
 				InputImage: row[4], OutputImage: row[5], Image: row[6], AudioMinute: row[7], Characters: row[8],
 				VideoSecond: row[9], WebSearch: row[10], FileSearch: row[11], CodeSessionGB: row[12],
-				InputAudio: row[13], CachedInputAudio: row[14], OutputAudio: row[15]}
+				InputAudio: row[13], CachedInputAudio: row[14], OutputAudio: row[15],
+				LongContextThreshold: row[16], InputLong: row[17], CachedInputLong: row[18], CacheWriteLong: row[19],
+				OutputLong: row[20], CacheWrite1h: row[21], CacheWrite1hLong: row[22], MaxOutputTokens: row[23]}
 		}
 		catalog.providers[provider] = prices
 	}
@@ -116,6 +127,8 @@ func validRow(row [catalogWidth]*int64) bool {
 			maximum = api.MaxOutboundAIPriceMillicentsPerVideoSecond
 		case 10, 11, 12:
 			maximum = api.MaxOutboundAIPriceMillicentsPerToolUse
+		case 16, 23:
+			maximum = api.MaxOutboundAILongContextThresholdTokens
 		}
 		if (value == nil && index < 4) || (value != nil && (*value < 0 || *value > maximum)) {
 			return false

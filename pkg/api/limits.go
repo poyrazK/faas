@@ -2235,7 +2235,11 @@ const (
 	OutboundAIContainerMemoryGBMax               = 64
 	OutboundAIToolUsesPerCallMax                 = 1_000
 	MaxOutboundAIPriceMillicentsPerToolUse int64 = 10_000_000
-	OutboundAIPriceEntriesMax                    = 64
+	// MaxOutboundAILongContextThresholdTokens bounds a catalog model's
+	// long-context threshold, the prompt size above which its long-context
+	// prices apply (ADR 20261027132936 amendment 2).
+	MaxOutboundAILongContextThresholdTokens int64 = 10_000_000
+	OutboundAIPriceEntriesMax                     = 64
 	// AI fallback routes (ADR-990).
 	OutboundAIRouteTargetsMax     = 5
 	MaxOutboundAIRoutesPerAccount = 25
@@ -3901,6 +3905,11 @@ type Limits struct {
 	// OutboundRetryBudgetPerMinuteMax bounds aggregate extra attempts for a
 	// single integration; it is a policy ceiling, not included usage.
 	OutboundRetryBudgetPerMinuteMax int
+	// OutboundAIAccountRatePerSecondMax bounds an account's AI gateway calls
+	// per second across all its integrations, with a burst of twice the
+	// rate, so many integrations cannot multiply one account's load on the
+	// gateway's shared state (ADR 20261027132936 amendment 2).
+	OutboundAIAccountRatePerSecondMax int
 	// DeploysPerHour is the account-wide number of deployment admissions in a
 	// fixed one-hour window. It applies across every app and source path.
 	DeploysPerHour int
@@ -5543,7 +5552,7 @@ var planLimits = map[Plan]Limits{
 		DeployedApps:              1,
 		PreviewApps:               1,
 		OutboundRequestsPerDayMax: 100_000,
-		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60,
+		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60, OutboundAIAccountRatePerSecondMax: 20,
 		DeveloperLeaseMaxHours: 24, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        10,
@@ -5969,7 +5978,7 @@ var planLimits = map[Plan]Limits{
 		DeployedApps:              5,
 		PreviewApps:               2,
 		OutboundRequestsPerDayMax: 1_000_000,
-		OutboundRatePerSecondMax:  20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120,
+		OutboundRatePerSecondMax:  20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120, OutboundAIAccountRatePerSecondMax: 40,
 		DeveloperLeaseMaxHours: 72, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        50,
@@ -6416,7 +6425,7 @@ var planLimits = map[Plan]Limits{
 		DeployedApps:              25,
 		PreviewApps:               5,
 		OutboundRequestsPerDayMax: 10_000_000,
-		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600,
+		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600, OutboundAIAccountRatePerSecondMax: 200,
 		DeveloperLeaseMaxHours: 168, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        250,
@@ -6828,7 +6837,7 @@ var planLimits = map[Plan]Limits{
 		DeployedApps:              100,
 		PreviewApps:               20,
 		OutboundRequestsPerDayMax: MaxOutboundRequestsPerDay,
-		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000,
+		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000, OutboundAIAccountRatePerSecondMax: 1000,
 		DeveloperLeaseMaxHours: 336, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        1000,

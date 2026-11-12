@@ -63,7 +63,12 @@ func (m OutboundAIModeration) normalized(keep bool) OutboundAIModeration {
 		m.Action = OutboundAIModerationOff
 	}
 	if m.OnError == "" {
+		// ADR 20261027132936 amendment 2: a check that blocks fails closed
+		// unless the policy says otherwise; one that flags lets calls by.
 		m.OnError = OutboundAIModerationOnErrorAllow
+		if m.Action == OutboundAIModerationBlock {
+			m.OnError = OutboundAIModerationOnErrorBlock
+		}
 	}
 	if m.Action == OutboundAIModerationOff && !keep {
 		return OutboundAIModeration{Action: OutboundAIModerationOff, Categories: []string{}, OnError: m.OnError}
