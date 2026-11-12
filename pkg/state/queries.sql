@@ -16215,6 +16215,14 @@ UPDATE managed_postgres_plan_excess_notices SET recorded_at=sqlc.arg(now)::times
 WHERE database_id=ANY(sqlc.arg(database_ids)::uuid[]) AND delete_at IS NULL
     AND (mail_intent_id IS NOT NULL OR recorded_at<=sqlc.arg(stale_before)::timestamptz);
 
+-- name: ManagedPostgresLiveResourcesInProject :many
+-- ADR-20261112160000: neond refuses deleting a Neon project or branch that a
+-- live managed PostgreSQL database runs on. A provider resource is the
+-- project ID, or "<project>/<branch>" for a database on a branch.
+SELECT provider_resource_id::text AS provider_resource_id FROM managed_postgres_databases
+WHERE (provider_resource_id=sqlc.arg(project)::text OR provider_resource_id LIKE sqlc.arg(project)::text || '/%')
+    AND state NOT IN ('deleting','deleted') AND deleted_at IS NULL;
+
 -- name: ListManagedPostgresPlanExcessRemindersDue :many
 -- ADR-20261110184700 amendment 2026-11-12: notices whose mailed deletion date
 -- is between now and remind_until and whose reminder no intent has claimed,

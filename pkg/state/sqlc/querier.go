@@ -4897,6 +4897,10 @@ type Querier interface {
 	// count; the spend breaker sums the month through the usage primary key, one
 	// index range per database, so the ledger's growth never forces a full scan.
 	ManagedPostgresFleetTotals(ctx context.Context, db DBTX, arg ManagedPostgresFleetTotalsParams) (ManagedPostgresFleetTotalsRow, error)
+	// ADR-20261112160000: neond refuses deleting a Neon project or branch that a
+	// live managed PostgreSQL database runs on. A provider resource is the
+	// project ID, or "<project>/<branch>" for a database on a branch.
+	ManagedPostgresLiveResourcesInProject(ctx context.Context, db DBTX, project string) ([]string, error)
 	ManagedPostgresMostSevereCapEvent(ctx context.Context, db DBTX, arg ManagedPostgresMostSevereCapEventParams) (ManagedPostgresMostSevereCapEventRow, error)
 	ManagedPostgresOverageDelivered(ctx context.Context, db DBTX, arg ManagedPostgresOverageDeliveredParams) (ManagedPostgresOverageDeliveredRow, error)
 	// ADR-20261025094915: managed PostgreSQL compute overage and cap subjects.
