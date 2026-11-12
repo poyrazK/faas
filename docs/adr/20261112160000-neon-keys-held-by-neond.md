@@ -126,6 +126,25 @@ neond, for each request:
   `faas_neond` (read on `managed_postgres_databases`), and the broker
   transport in the Neon backend behind `FAAS_MANAGED_POSTGRES_NEON_BROKER`
   (socket path). With it unset, apid calls Neon directly as today.
+  - Built as slice 1a (code, off until configured). As built:
+    - The allow-list is `pkg/neond.Routes`: 24 method and path shapes. The
+      Neon backend's tests record every request they send and fail when
+      one does not match, so a new Neon call needs its route first.
+    - Destructive calls are project, branch, endpoint, snapshot and role
+      deletes. A role delete is allowed only for the legacy per-identity
+      API roles (`gregale_` and 40 hex digits); the owner role never.
+    - The hourly limit is fleet-wide per neond
+      (`FAAS_NEOND_DESTRUCTIVE_PER_HOUR`, default 300). The per-subject
+      limit and the "only on projects a database row names" rule for
+      password resets and quota writes move to slice 2, when neond maps
+      projects to subjects for their keys.
+    - neond reads the admin key from `FAAS_NEOND_ADMIN_KEY_FILE` (a
+      systemd credential) and admits only the OS users named in
+      `FAAS_NEOND_CALLERS`, by `SO_PEERCRED`. Off Linux it admits none.
+    - apid reads `FAAS_MANAGED_POSTGRES_NEON_BROKER` from its process
+      environment; set, the Neon backend needs no key.
+  - Slice 1b (deploy): the `faas-neond` user, unit, credential drop-in,
+    the `faas_neond` database role and the release binary list.
 - **Slice 2, project keys:** `neon_project_keys` (expand migration), the
   service user's key as neond's admin credential, mint on create, revoke on
   delete, the backfill sweep, rotation.
