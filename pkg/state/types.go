@@ -3807,6 +3807,10 @@ const (
 	// health guard holds or aborted (ADR-20261028110044).
 	AlertMetricRouteMonitorIncidents AlertMetric = "route_monitor_incidents"
 	AlertMetricRouteHealthHolds      AlertMetric = "route_health_holds"
+	// AlertMetricAIBudgetAlerts counts the AI budget threshold crossings of
+	// the app's bound integrations within the window (ADR 20261027132936
+	// amendment 2).
+	AlertMetricAIBudgetAlerts AlertMetric = "ai_budget_alerts"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.

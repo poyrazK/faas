@@ -59,7 +59,7 @@ func (s *Service) CreateEvaluation(w http.ResponseWriter, r *http.Request, acct 
 		problem(w, http.StatusServiceUnavailable, "outbound_ai_unavailable", "The AI evaluation could not be recorded")
 	default:
 		w.Header().Set("Cache-Control", "no-store")
-		httpkit.WriteJSON(w, http.StatusAccepted, evaluationResponse(created))
+		httpkit.WriteJSON(w, http.StatusAccepted, evaluationResponse(created, s.contentReadable(r)))
 	}
 }
 
@@ -80,7 +80,7 @@ func (s *Service) ListEvaluations(w http.ResponseWriter, r *http.Request, acct s
 	}
 	out := api.OutboundAIEvaluationList{Items: make([]api.OutboundAIEvaluation, 0, len(evaluations))}
 	for _, evaluation := range evaluations {
-		out.Items = append(out.Items, evaluationResponse(evaluation))
+		out.Items = append(out.Items, evaluationResponse(evaluation, s.contentReadable(r)))
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpkit.WriteJSON(w, http.StatusOK, out)
@@ -98,6 +98,11 @@ func (s *Service) GetEvaluation(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	evaluation, err := store.GetOutboundAIEvaluation(r.Context(), acct.ID, evaluationID)
+	if err == nil {
+		// ADR 20261027132936 amendment 1: samples of apps the reader may
+		// no longer see are withheld, as in the request log.
+		evaluation.Items, err = s.visibleEvaluationItems(r, acct, evaluation.Items)
+	}
 	switch {
 	case errors.Is(err, state.ErrNotFound):
 		httpkit.NotFound(w, "AI evaluation not found")
@@ -105,11 +110,13 @@ func (s *Service) GetEvaluation(w http.ResponseWriter, r *http.Request, acct sta
 		problem(w, http.StatusServiceUnavailable, "outbound_ai_unavailable", "The AI evaluation is unavailable")
 	default:
 		w.Header().Set("Cache-Control", "no-store")
-		httpkit.WriteJSON(w, http.StatusOK, evaluationResponse(evaluation))
+		httpkit.WriteJSON(w, http.StatusOK, evaluationResponse(evaluation, s.contentReadable(r)))
 	}
 }
 
-func evaluationResponse(e state.OutboundAIEvaluation) api.OutboundAIEvaluation {
+// evaluationResponse renders an evaluation; without content it withholds the
+// samples' answer texts (ADR 20261027132936 amendment 1).
+func evaluationResponse(e state.OutboundAIEvaluation, content bool) api.OutboundAIEvaluation {
 	out := api.OutboundAIEvaluation{
 		ID: e.ID, RouteID: e.RouteID, Target: e.Position, JudgeIntegrationID: e.JudgeIntegrationID, JudgeModel: e.JudgeModel,
 		SampleSize: e.SampleSize, MaxLossRate: e.MaxLossRate, State: e.State, Verdict: optionalString(e.Verdict),
@@ -118,12 +125,16 @@ func evaluationResponse(e state.OutboundAIEvaluation) api.OutboundAIEvaluation {
 		Baseline:      api.OutboundAIEvaluationTargetStats{CostMillicents: e.BaselineCostMillicents, MeanTTFBMS: meanMS(e.BaselineTTFBMSTotal, e.BaselineTTFBCalls)},
 		Candidate:     api.OutboundAIEvaluationTargetStats{CostMillicents: e.CandidateCostMillicents, MeanTTFBMS: meanMS(e.CandidateTTFBMSTotal, e.CandidateTTFBCalls)},
 		CanaryStarted: e.CanaryStarted, CreatedAt: e.CreatedAt, StartedAt: e.StartedAt, FinishedAt: e.FinishedAt,
+		ContentWithheld: !content && len(e.Items) > 0,
 	}
 	if e.Canary != nil {
 		canary := *e.Canary
 		out.Canary = &canary
 	}
 	for _, item := range e.Items {
+		if !content {
+			item.BaselineOutputText, item.CandidateOutputText = "", ""
+		}
 		out.Items = append(out.Items, api.OutboundAIEvaluationItem{
 			LogID: item.LogID, Verdict: item.Verdict, CandidateStatus: copyInt(item.CandidateStatus),
 			CandidateCostMillicents: item.CandidateCostMillicents, CandidateTTFBMS: copyInt64(item.CandidateTTFBMS),
