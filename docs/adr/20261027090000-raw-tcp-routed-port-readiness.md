@@ -24,3 +24,4 @@
 - Source-built raw TCP services deploy and wake. `TestTCPIngressMetal` exercises the path.
 - Deployments built before this change have no `health_from_config` key. If such a deployment declared `hosting.health: /healthz` and routes to a declared TCP listener, it gets TCP readiness until it is redeployed.
 - The new profile key is `omitempty`; older readers ignore it.
+- Liveness: such an instance gets no plan-default HTTP liveness probe either (ADR-079 amendment 1, 2026-11-12); before that, the HTTP probe failed against the raw TCP server and destroyed it about 15 s after boot.

@@ -205,6 +205,8 @@ var adoptionInstanceInventory = map[string]string{
 	"warmSpare":                       "rebuilt",
 	"DataRepairOnly":                  "refused", // a data repair runs as an execution, which adoption kills
 	"HealthcheckGRPC":                 "rebuilt",
+	"HealthcheckGRPCService":          "rebuilt",
+	"RoutedPortRawTCP":                "rebuilt",
 	"functionDestination":             "bootonly", // function VM resources: native qualification builds only
 	"functionExecutions":              "bootonly",
 	"functionMigration":               "bootonly",

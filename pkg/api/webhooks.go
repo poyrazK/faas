@@ -605,7 +605,7 @@ type AppWebhookDeliveryResponse struct {
 	Status           string `json:"status"`
 	LastError        string `json:"last_error,omitempty"`
 	LastResponseCode int    `json:"last_response_code,omitempty"`
-	NextAttemptAt    string `json:"next_attempt_at"`
+	NextAttemptAt    string `json:"next_attempt_at,omitempty"`
 	DeliveredAt      string `json:"delivered_at,omitempty"`
 	CreatedAt        string `json:"created_at"`
 	UpdatedAt        string `json:"updated_at"`
@@ -647,7 +647,7 @@ func AppWebhookDeliveryResponseFromRow(r AppWebhookDeliveryRow) AppWebhookDelive
 		Status:           r.Status,
 		LastError:        r.LastError,
 		LastResponseCode: r.LastResponseCode,
-		NextAttemptAt:    FormatAlertTime(r.NextAttemptAt),
+		NextAttemptAt:    formatWebhookNextAttempt(r.NextAttemptAt),
 		CreatedAt:        FormatAlertTime(r.CreatedAt),
 		UpdatedAt:        FormatAlertTime(r.UpdatedAt),
 	}
@@ -655,6 +655,16 @@ func AppWebhookDeliveryResponseFromRow(r AppWebhookDeliveryRow) AppWebhookDelive
 		resp.DeliveredAt = FormatAlertTime(*r.DeliveredAt)
 	}
 	return resp
+}
+
+// formatWebhookNextAttempt omits a delivery's next attempt when none is
+// scheduled. The store keeps the Unix epoch for a dead delivery, which the
+// JSON rendered as "1970-01-01T00:00:00Z" (Hunt 34 H34-9).
+func formatWebhookNextAttempt(t time.Time) string {
+	if t.Unix() <= 0 {
+		return ""
+	}
+	return FormatAlertTime(t)
 }
 
 // RotateAppWebhookSecretResponse is the body of POST

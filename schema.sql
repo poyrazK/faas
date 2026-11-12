@@ -48455,6 +48455,24 @@ CREATE TABLE public.native_issue_ticket_receipts (
 
 
 --
+-- Name: neon_project_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.neon_project_keys (
+    key_id bigint NOT NULL,
+    project_id text NOT NULL,
+    sealed_key bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    revoked_at timestamp with time zone,
+    CONSTRAINT neon_project_keys_check CHECK (((revoked_at IS NULL) OR (isfinite(revoked_at) AND (revoked_at >= created_at)))),
+    CONSTRAINT neon_project_keys_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT neon_project_keys_key_id_check CHECK ((key_id > 0)),
+    CONSTRAINT neon_project_keys_project_id_check CHECK ((project_id ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$'::text)),
+    CONSTRAINT neon_project_keys_sealed_key_check CHECK (((octet_length(sealed_key) >= 1) AND (octet_length(sealed_key) <= 8192)))
+);
+
+
+--
 -- Name: node_join_jobs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -68976,6 +68994,14 @@ ALTER TABLE ONLY public.native_issue_ticket_receipts
 
 
 --
+-- Name: neon_project_keys neon_project_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.neon_project_keys
+    ADD CONSTRAINT neon_project_keys_pkey PRIMARY KEY (key_id);
+
+
+--
 -- Name: node_join_jobs node_join_jobs_node_name_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -81436,6 +81462,13 @@ CREATE INDEX native_issue_ticket_pending_idx ON public.native_issue_ticket_recei
 --
 
 CREATE INDEX native_issue_ticket_receipts_issue_idx ON public.native_issue_ticket_receipts USING btree (issue_id);
+
+
+--
+-- Name: neon_project_keys_live; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX neon_project_keys_live ON public.neon_project_keys USING btree (project_id) WHERE (revoked_at IS NULL);
 
 
 --
