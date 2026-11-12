@@ -36,9 +36,12 @@ Queue sends and application inbox messages accept the same `work` field. Use
 `gregale queue send` or `gregale send` with `--work-policy`, `--work-key`, and
 optional `--work-fairness-key` to coordinate those messages with other work in
 the same lane. Unnamed messages use the keyed invocation dispatcher and are
-delivered individually. Named messages require an enabled push queue consumer;
-the queue poller shares lane and fairness reservations with the dispatcher
-while preserving the consumer's batch and retry behavior.
+delivered individually. Named messages require an enabled push queue consumer
+or pull binding. The push poller shares lane and fairness reservations with
+the dispatcher while preserving the consumer's batch and retry behavior. A
+pull lease returns at most one message per lane, the lane's oldest: while a
+message is leased, or waiting to retry after a nack, later messages with the
+same key stay queued, and other keys and unkeyed messages are leased as usual.
 
 `POST /v1/apps/{slug}/delayed-tasks` also accepts `work` with the same
 `policy`, `key`, and optional `fairness_key` fields. Its scheduled time remains

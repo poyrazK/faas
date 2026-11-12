@@ -1,171 +1,124 @@
 # ADR-20261112193306: Ordered message groups for worker queues
 
-- Status: proposed (owner decisions 2026-11-12), to be built dark
-- Amends: ADR-231 (queue push), ADR-972 (parallel push dispatch),
-  ADR-20261022105723 (pull leases), ADR-20261112140000 (Postgres change workers)
-- Related: ADR-911 (batch publication)
+- Status: accepted (owner decisions 2026-11-12); slice 1 built dark
+- Amends: ADR-374 (application keyed work policy), ADR-20261022105723 (pull
+  leases), ADR-20261112140000 (Postgres change workers)
+- Related: ADR-795 (keyed event delivery ordering), ADR-972 (parallel push)
 
 ## Context
 
-Gregale queues deliver at least once with no order. Pull leases pick pending
-messages by `due_at, created_at, id` (`QueueLeaseCandidates`), up to the
-binding's `max_concurrency`, from any number of workers; push lanes (ADR-972)
-claim the same rows in parallel. A retry moves a message's `due_at`, so a later
-message can run first.
+Many worker jobs are per entity: "charge, then ship, then refund order 42", or
+a Postgres change worker that must see a row's insert before its delete.
 
-Many worker jobs are per entity: "charge, then ship, then refund order 42",
-or a Postgres change worker that must see a row's insert before its delete.
-Today the customer must serialize in their own code, usually with a lock or a
-version check, and still cannot stop a retry from overtaking.
+Gregale already has the ordering primitive. A work policy (ADR-374) with
+`max_running_per_key: 1` and `pending_updates: all` turns an app, policy and
+key into a **lane**: one running row at a time, in admission order
+(`work_sequence`), and an older pending retry blocks later rows of its lane
+until it succeeds, expires or fails terminally. ADR-795 adds transactional
+admission order for events. Queue sends accept `work`, and push queue
+consumers claim through the lane (`ClaimQueueTriggerInvocation`).
 
-Postgres change workers make this worse in a second place: when the Commit
-relay cannot hand an outbox event over (queue full, missing binding), it moves
-that event's `next_attempt_at` forward and goes on to the next one, so a row's
-later change is enqueued before its earlier one.
+The gaps, found while designing this:
+
+1. **Pull leases ignore lanes.** `QueueLeaseCandidates` excludes every
+   work-policy row and `enqueueAppMessage` refuses a keyed send to a queue
+   without a push consumer. Worker apps consume by pull, so they cannot use
+   ordering at all.
+2. **Ordering needs a declared policy.** The owner wants a key per message
+   and no queue configuration.
+3. **Postgres change workers are unordered twice:** changes carry no key, and
+   the Commit relay moves a failed hand-over to a later `next_attempt_at` and
+   goes on, so a row's later change can be enqueued first.
+
+An earlier draft of this ADR proposed a separate `group_key` column and gate.
+That would have duplicated lanes; this version builds on them.
 
 ## Decision (owner choices 2026-11-12)
 
-1. **Per message key.** A send may carry `group_key` (1–128 bytes of UTF-8, no
-   control characters; the byte limit lives in `pkg/api/limits.go` as
-   `QueueGroupKeyMaxBytes`). Messages with the same key on the same queue are
-   delivered one at a time, in send order. Messages without a key keep today's
-   behaviour and run fully in parallel beside grouped ones. No queue setting.
-2. **Both pull and push.** Lease and push claim apply the same rule.
-3. **A failing message blocks its group.** While a grouped message is pending
-   (including a retry with a future `due_at` or a nack delay), leased or being
-   pushed, no later message of its group is delivered. The group continues
-   when that message succeeds or leaves the queue: dead-lettered after its
-   attempts, expired at the plan's maximum wait, or cancelled. A poison message
-   therefore stalls only its own group, and only until its attempts are spent.
-4. **Postgres change workers group by row.** Each change carries
-   `group_key = <feed>:<canonical JSON of the primary key>`, so one row's
-   changes reach the worker in commit order and different rows stay parallel.
+1. **Per message key, no queue setting.**
+2. **Pull and push.** Push already follows lanes; pull leases now do too.
+3. **A failing message blocks its key** until it succeeds or leaves the queue
+   (dead letter, expiry, cancellation): the ADR-374 lane rule, unchanged.
+4. **Postgres change workers key by row**: `<feed>:<primary key JSON>`.
 
 ## Design
 
-### Storage and order
+### Slice 1: pull leases follow lanes (built)
 
-- `invocations` gains `group_key text NULL` and `group_seq bigint NULL`
-  (expand-only migration, `lock_timeout` first; both NULL for every existing
-  row). A CHECK keeps them NULL together and limits the key length.
-- Order is `group_seq`, from one sequence. Two concurrent senders to the same
-  group could commit out of sequence order, letting a later number become
-  visible first. The enqueue path takes
-  `pg_advisory_xact_lock(hashtextextended('qgroup:'||app||queue||key, 0))`
-  before taking the number, so within a group, number order is commit order.
-  Batch sends lock each distinct key once, in sorted order (no deadlocks), and
-  number a batch's messages in array order.
-- Partial index for the gate:
-  `(app_id, queue_name, group_key, group_seq) WHERE group_key IS NOT NULL AND
-  state IN (<non-terminal states>)`.
+- `QueueLeaseCandidates` returns work-policy rows of the binding when they
+  are their lane's head (no older pending and no running row of the same
+  app, policy and key; the existing `invocations_work_lane_active_idx` serves
+  the check), with the lane and fairness fields. Unkeyed rows are unchanged.
+- `LeaseQueueMessages` leases a keyed candidate in a savepoint after
+  `lockKeyedClaimTx` and `lockFairnessClaimTx`, the checks the push claim
+  uses, taking the lane before the row as keyed enqueue and push do. A
+  candidate that is no longer the head, whose fairness group is full or that
+  just expired is skipped. One lease may return heads of many lanes, at most
+  one per lane.
+- The lease's ack, nack, extend and expiry transitions already move the row
+  between `dispatching` and `pending`/terminal, which is all the lane rule
+  reads: a nacked head stays the head; an acked or dead-lettered head
+  releases its lane.
+- `enqueueAppMessage` accepts a keyed send to a named queue with an enabled
+  pull binding, as it did for push.
+- MemStore applies the same rule (`keyedClaimAllowedLocked`).
 
-### The gate (one predicate, two claimers)
+### Slice 2: a key per message without a policy
 
-A grouped candidate is deliverable only when it is its group's **head**:
+`group_key` on a send (and on each `send-batch` message) is shorthand for
+`work: {policy: "ordered", key: <group_key>}` against a built-in policy every
+app has, `ordered` (`max_running_per_key: 1`, `pending_updates: all`, no
+debounce or expiry, no fairness cap). The name is reserved: declaring a policy
+called `ordered` is refused. The store provisions its row on first use, so no
+manifest or migration of existing apps is needed. `gregale queue send
+--group-key`, SDK and OpenAPI follow. Key rules are the work-key rules
+(bounded JSON scalar; a string key is sent as given).
 
-```sql
-AND (w.group_key IS NULL OR NOT EXISTS (
-  SELECT 1 FROM invocations e
-  WHERE e.app_id = w.app_id AND e.queue_name = w.queue_name
-    AND e.group_key = w.group_key AND e.group_seq < w.group_seq
-    AND e.state IN (<non-terminal states>)))
-```
+### Slice 3: Postgres change workers
 
-The predicate ignores `due_at`: a retrying head that is not due yet still
-blocks its group. It is added to `QueueLeaseCandidates` and to
-`ClaimQueueTriggerInvocation`, and checked again under the row lock in
-`leaseQueueCandidateTx`, so two lessees cannot both win the head. A lease
-takes at most one message per group; `max_messages` is filled from other
-groups and ungrouped messages. Visibility timeout and lease expiry return the
-head to pending, and it stays the head.
-
-Starvation: candidates are read `max_messages × 4` at a time in due order. A
-queue whose due prefix is all blocked group members could then return
-nothing. The candidate query therefore reads ungrouped messages and group
-heads from two index ranges (UNION ALL, as the binding/legacy split already
-does) instead of filtering blocked members after the read.
-
-### Leaving the queue unblocks the group
-
-Dead-lettering, plan wait expiry, cancellation and ack all end the
-message's non-terminal state, which is all the gate looks at; no extra
-bookkeeping. **DLQ replay** puts the replayed message at its group's tail
-(a new `group_seq`): it is an explicit operator action and must not jump
-ahead of work that already ran.
-
-### Push
-
-ADR-972 lanes claim one record each through `ClaimQueueTriggerInvocation`,
-which gains the gate, so at most one lane holds a group at a time and the
-others take other groups. A push failure retries under the invocation retry
-policy and blocks its group as in decision 3. External broker triggers
-(Kafka, SQS, NATS, AMQP) are unchanged: they keep their own partition order.
-
-### Scaling and health
-
-- Scaling counts what can run: `queue_depth` for a binding becomes ungrouped
-  pending messages plus the number of groups with a deliverable head, so a
-  backlog of one blocked group does not start workers that would sit idle.
-- `gregale worker status` and the queue health API add
-  `blocked_groups` and the oldest blocked group's age; metric
-  `queue_blocked_groups` (gauge, per binding). An alert on
-  `queue_oldest_age_seconds` already fires for a stuck head.
-
-### Postgres change workers
-
-- Capture writes `group_key` into the customer outbox (`gregale_outbox`
-  gains a nullable `group_key text`, added by the install's idempotent
+- Capture writes `group_key = <feed>:<canonical primary key JSON>` into a new
+  nullable `gregale_outbox.group_key` column (the install's idempotent
   upgrade; generic Commit sources leave it NULL).
-- The relay keeps per-group order before enqueue: its candidate query skips
-  an event while an earlier unaccepted event of the same `group_key` exists
-  (pending, leased, retrying or blocked), using the same head rule on
-  `created_at, event_id`. A row's changes are serialized by the row lock, so
-  `created_at` order is commit order. A permanently blocked change
-  (`blocked_code`) blocks only its row until it is replayed or skipped with
+- The relay keeps per-key order before enqueue: its candidate query skips an
+  event while an older unaccepted event with the same `group_key` exists
+  (pending, leased, retrying or blocked), ordered by `created_at, event_id`.
+  One row's changes are serialized by the row lock, so that order is commit
+  order. A permanently blocked change holds only its row, until
   `gregale commit replay`.
-- `AcceptCommitChange` passes the key through to the invocation.
+- `AcceptCommitChange` enqueues each change under the built-in `ordered`
+  policy with that key.
 
-### API, SDK, CLI, manifest
+### Slice 4: health and scaling
 
-- `group_key` on `POST …/queues/send` and on each `send-batch` message;
-  leased and pushed messages expose it. OpenAPI and SDK types gain it.
-- `gregale queue send --group-key KEY`.
-- No manifest field: ordering is chosen per message.
-- Limits: key bytes in `pkg/api/limits.go`; no new per-plan quota. A group
-  counts against the existing pending-message caps like any message.
+`queue_depth` scaling counts lane heads plus unkeyed messages instead of all
+pending rows, so one blocked key does not start idle workers. Worker status
+and queue health add blocked lanes and the oldest blocked lane's age; metric
+`queue_blocked_lanes` per binding.
 
 ## Consequences
 
-- Ordered work no longer needs customer locks, and Postgres change workers
-  deliver per-row commit order end to end.
-- Throughput of one group is one message at a time; the docs say so and
-  recommend a key per entity, not per tenant or per queue.
-- Each grouped enqueue takes an advisory lock and each grouped lease runs an
-  index probe; ungrouped traffic takes neither.
-- A poison message stalls its group until its attempts are spent. That is the
-  chosen trade (decision 3); `max_attempts` and the binding's retry policy
-  bound it, and blocked-group health makes it visible.
+- Ordered work needs no customer locks, and the same lane serializes a key
+  across push, pull, events, delayed tasks and broker triggers.
+- One key runs one message at a time; the docs recommend a key per entity.
+- Keyed leases take a lane lock and an index probe per candidate; unkeyed
+  traffic is unchanged.
+- A poison message stalls its key until its attempts are spent, bounded by
+  the binding's retry policy (owner choice 3).
+- Until slice 4, a long blocked lane lengthens the candidate scan, since the
+  head filter runs while the due-ordered index is walked.
 
 ## Rollout
 
-Dark behind a `queue_message_groups` platform flag: apid refuses `group_key`
-for accounts without it (`queue_groups_unavailable`). Order of slices:
-
-1. Migration, enqueue numbering and the gate for pull leases, with
-   property tests: never two in-flight messages of a group; within a group,
-   deliveries follow `group_seq`; ungrouped throughput unchanged.
-2. Push claim gate and blocked-group scaling/health.
-3. Postgres changes: outbox `group_key`, relay head rule, key pass-through.
-4. API/SDK/CLI surface and docs.
+Slice 1 changes only who may lease rows that already carry a policy, which a
+keyed send to a pull queue could not create before; it needs no flag. Slices
+2–4 ship dark behind a `queue_message_groups` platform flag.
 
 ## Alternatives considered
 
-- **Per-queue FIFO mode** (every message keyed, set on the binding): stricter
-  but needs config and a migration per queue; rejected for per-message keys.
-- **Skip ahead on failure**: never stalls, but order breaks exactly when it
-  matters; rejected.
-- **Pull only**: smaller, but push consumers are the handler-shaped default;
-  owner chose both.
-- **Sticky routing of a group to one worker** (Kafka-style partitions):
-  needs consumer membership and rebalancing; the head gate gives the same
-  guarantee on a shared table without either.
+- **A separate `group_key` column and gate** (this ADR's first draft):
+  duplicates lanes, and the two orders would not compose.
+- **Per-queue FIFO mode**: config and a migration per queue; rejected for
+  per-message keys.
+- **Skip ahead on failure**: order breaks exactly when it matters.
+- **Sticky routing of a key to one worker**: needs membership and
+  rebalancing; the lane gives the same guarantee on a shared table.

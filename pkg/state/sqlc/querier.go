@@ -6075,7 +6075,7 @@ type Querier interface {
 	// 2026-10-24). The due bound uses statement_timestamp(): it is stable, so it
 	// bounds the index range, where volatile clock_timestamp() left only a filter
 	// and the planner walked the global due index instead.
-	QueueLeaseCandidates(ctx context.Context, db DBTX, arg QueueLeaseCandidatesParams) ([]pgtype.UUID, error)
+	QueueLeaseCandidates(ctx context.Context, db DBTX, arg QueueLeaseCandidatesParams) ([]QueueLeaseCandidatesRow, error)
 	QueueLeaseClaimInvocation(ctx context.Context, db DBTX, arg QueueLeaseClaimInvocationParams) (Invocation, error)
 	QueueLeaseClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	// A message whose leases kept expiring has no attempts left to lease.

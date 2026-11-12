@@ -23,15 +23,25 @@ WHERE i.app_id=sqlc.arg(app_id)::uuid AND i.source='queue' AND i.environment_id 
 -- 2026-10-24). The due bound uses statement_timestamp(): it is stable, so it
 -- bounds the index range, where volatile clock_timestamp() left only a filter
 -- and the planner walked the global due index instead.
-SELECT c.id FROM (
-    (SELECT w.id, w.due_at, w.created_at FROM production_invocation_work w
+SELECT c.id, c.work_policy_name, c.work_key_digest, c.work_fairness_digest, c.work_fairness_limit FROM (
+    (SELECT w.id, w.due_at, w.created_at, w.work_policy_name, w.work_key_digest, w.work_fairness_digest, w.work_fairness_limit FROM production_invocation_work w
      WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='pending'
          AND w.due_at<=statement_timestamp() AND (w.deadline_at IS NULL OR w.deadline_at>clock_timestamp())
-         AND w.work_policy_name IS NULL AND NOT w.quota_reserved
+         AND NOT w.quota_reserved
+         -- A work-policy row is a candidate only as its lane's head
+         -- (ADR-20261112193306): no older pending or any running row in the
+         -- same app, policy and key. A retrying head that is not due yet
+         -- still blocks later rows. The claim rechecks under the lane lock.
+         AND (w.work_policy_name IS NULL OR NOT EXISTS (
+             SELECT 1 FROM invocations o
+             WHERE o.app_id=w.app_id AND o.work_policy_name=w.work_policy_name
+                 AND o.work_key_digest=w.work_key_digest AND o.id<>w.id
+                 AND o.state IN ('pending','dispatching')
+                 AND (o.work_sequence<w.work_sequence OR o.state='dispatching')))
          AND w.queue_binding_id=sqlc.arg(binding_id)::uuid
      ORDER BY w.due_at, w.created_at, w.id LIMIT sqlc.arg(candidate_limit)::integer)
     UNION ALL
-    (SELECT w.id, w.due_at, w.created_at FROM production_invocation_work w
+    (SELECT w.id, w.due_at, w.created_at, w.work_policy_name, w.work_key_digest, w.work_fairness_digest, w.work_fairness_limit FROM production_invocation_work w
      WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='pending'
          AND w.due_at<=statement_timestamp() AND (w.deadline_at IS NULL OR w.deadline_at>clock_timestamp())
          AND w.work_policy_name IS NULL AND NOT w.quota_reserved
@@ -47,7 +57,7 @@ UPDATE invocations i SET state='dispatching', received_at=COALESCE(i.received_at
     attempts=i.attempts+1, instance_id=sqlc.narg(instance_id)::text
 FROM lease_clock
 WHERE i.id=sqlc.arg(id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid AND i.source='queue'
-    AND i.state='pending' AND NOT i.quota_reserved AND i.environment_id IS NULL AND i.work_policy_name IS NULL
+    AND i.state='pending' AND NOT i.quota_reserved AND i.environment_id IS NULL
     AND i.due_at<=lease_clock.at AND (i.deadline_at IS NULL OR i.deadline_at>lease_clock.at)
 RETURNING i.*;
 

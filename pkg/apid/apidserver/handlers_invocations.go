@@ -483,11 +483,13 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 		return state.Invocation{}, "", problem
 	}
 	if work != nil && selection.Name != "" {
-		// A named keyed row is owned by the queue trigger poller. Require an
-		// enabled push consumer so it cannot be accepted into an arbitrary name
-		// that the generic invocation drain deliberately excludes.
-		if !selection.CanPush {
-			return state.Invocation{}, "", api.ErrValidation("named keyed queue requires an enabled push consumer")
+		// A named keyed row is owned by the queue trigger poller or, on a
+		// pull binding, by pull leases (ADR-20261112193306). Require one of
+		// them so it cannot be accepted into an arbitrary name that the
+		// generic invocation drain deliberately excludes.
+		pull := selection.Binding != nil && selection.Binding.Mode == "pull" && selection.Binding.Enabled && selection.Binding.RetiredAt == nil
+		if !selection.CanPush && !pull {
+			return state.Invocation{}, "", api.ErrValidation("named keyed queue requires an enabled push consumer or pull binding")
 		}
 	}
 	traceHeaders, err := pkgtrace.MergeHeaders(ctx, nil)

@@ -226,15 +226,25 @@ func (q *Queries) QueueLeaseActiveCount(ctx context.Context, db DBTX, arg QueueL
 }
 
 const queueLeaseCandidates = `-- name: QueueLeaseCandidates :many
-SELECT c.id FROM (
-    (SELECT w.id, w.due_at, w.created_at FROM production_invocation_work w
+SELECT c.id, c.work_policy_name, c.work_key_digest, c.work_fairness_digest, c.work_fairness_limit FROM (
+    (SELECT w.id, w.due_at, w.created_at, w.work_policy_name, w.work_key_digest, w.work_fairness_digest, w.work_fairness_limit FROM production_invocation_work w
      WHERE w.app_id=$1::uuid AND w.source='queue' AND w.state='pending'
          AND w.due_at<=statement_timestamp() AND (w.deadline_at IS NULL OR w.deadline_at>clock_timestamp())
-         AND w.work_policy_name IS NULL AND NOT w.quota_reserved
+         AND NOT w.quota_reserved
+         -- A work-policy row is a candidate only as its lane's head
+         -- (ADR-20261112193306): no older pending or any running row in the
+         -- same app, policy and key. A retrying head that is not due yet
+         -- still blocks later rows. The claim rechecks under the lane lock.
+         AND (w.work_policy_name IS NULL OR NOT EXISTS (
+             SELECT 1 FROM invocations o
+             WHERE o.app_id=w.app_id AND o.work_policy_name=w.work_policy_name
+                 AND o.work_key_digest=w.work_key_digest AND o.id<>w.id
+                 AND o.state IN ('pending','dispatching')
+                 AND (o.work_sequence<w.work_sequence OR o.state='dispatching')))
          AND w.queue_binding_id=$2::uuid
      ORDER BY w.due_at, w.created_at, w.id LIMIT $3::integer)
     UNION ALL
-    (SELECT w.id, w.due_at, w.created_at FROM production_invocation_work w
+    (SELECT w.id, w.due_at, w.created_at, w.work_policy_name, w.work_key_digest, w.work_fairness_digest, w.work_fairness_limit FROM production_invocation_work w
      WHERE w.app_id=$1::uuid AND w.source='queue' AND w.state='pending'
          AND w.due_at<=statement_timestamp() AND (w.deadline_at IS NULL OR w.deadline_at>clock_timestamp())
          AND w.work_policy_name IS NULL AND NOT w.quota_reserved
@@ -251,6 +261,14 @@ type QueueLeaseCandidatesParams struct {
 	QueueName      string
 }
 
+type QueueLeaseCandidatesRow struct {
+	ID                 pgtype.UUID
+	WorkPolicyName     pgtype.Text
+	WorkKeyDigest      []byte
+	WorkFairnessDigest []byte
+	WorkFairnessLimit  pgtype.Int4
+}
+
 // The binding's own messages and legacy messages under its name, each read in
 // due order from its own index (invocations_queue_lease_binding_idx and
 // _name_idx), so a lease reads about candidate_limit rows whatever the
@@ -258,7 +276,7 @@ type QueueLeaseCandidatesParams struct {
 // 2026-10-24). The due bound uses statement_timestamp(): it is stable, so it
 // bounds the index range, where volatile clock_timestamp() left only a filter
 // and the planner walked the global due index instead.
-func (q *Queries) QueueLeaseCandidates(ctx context.Context, db DBTX, arg QueueLeaseCandidatesParams) ([]pgtype.UUID, error) {
+func (q *Queries) QueueLeaseCandidates(ctx context.Context, db DBTX, arg QueueLeaseCandidatesParams) ([]QueueLeaseCandidatesRow, error) {
 	rows, err := db.Query(ctx, queueLeaseCandidates,
 		arg.AppID,
 		arg.BindingID,
@@ -269,13 +287,19 @@ func (q *Queries) QueueLeaseCandidates(ctx context.Context, db DBTX, arg QueueLe
 		return nil, err
 	}
 	defer rows.Close()
-	items := []pgtype.UUID{}
+	items := []QueueLeaseCandidatesRow{}
 	for rows.Next() {
-		var id pgtype.UUID
-		if err := rows.Scan(&id); err != nil {
+		var i QueueLeaseCandidatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkPolicyName,
+			&i.WorkKeyDigest,
+			&i.WorkFairnessDigest,
+			&i.WorkFairnessLimit,
+		); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -290,7 +314,7 @@ UPDATE invocations i SET state='dispatching', received_at=COALESCE(i.received_at
     attempts=i.attempts+1, instance_id=$2::text
 FROM lease_clock
 WHERE i.id=$3::uuid AND i.app_id=$4::uuid AND i.source='queue'
-    AND i.state='pending' AND NOT i.quota_reserved AND i.environment_id IS NULL AND i.work_policy_name IS NULL
+    AND i.state='pending' AND NOT i.quota_reserved AND i.environment_id IS NULL
     AND i.due_at<=lease_clock.at AND (i.deadline_at IS NULL OR i.deadline_at>lease_clock.at)
 RETURNING i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at, i.async_quota_subject_id, i.edge_jwt_issuer, i.edge_jwt_subject
 `

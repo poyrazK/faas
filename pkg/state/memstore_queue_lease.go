@@ -28,7 +28,7 @@ func (m *MemStore) pullBindingLocked(accountID, appID, queueName string) (QueueB
 
 // queueLeaseRowLocked reports whether inv is production work for the binding.
 func (m *MemStore) queueLeaseRowLocked(inv Invocation, appID string, binding QueueBinding) bool {
-	if inv.AppID != appID || inv.Source != InvocationQueue || inv.EnvironmentID != "" || inv.WorkPolicyName != "" || inv.QuotaReserved {
+	if inv.AppID != appID || inv.Source != InvocationQueue || inv.EnvironmentID != "" || inv.QuotaReserved {
 		return false
 	}
 	if _, owned := m.invocationEnvironmentQueueAdmissions[inv.ID]; owned {
@@ -82,6 +82,14 @@ func (m *MemStore) LeaseQueueMessages(ctx context.Context, req QueueLeaseRequest
 	for _, inv := range ready {
 		if len(leases) >= messages {
 			break
+		}
+		// A work-policy row leases only as its lane's head (ADR-20261112193306);
+		// read it fresh, since an earlier lease in this call may hold its lane.
+		if inv.WorkPolicyName != "" {
+			inv = m.invocations[inv.ID]
+			if m.keyedClaimAllowedLocked(inv, now) != nil || m.fairnessClaimAllowedLocked(inv, now) != nil {
+				continue
+			}
 		}
 		if environmentQueueDeliveryAttemptsExhausted(inv, limits) {
 			inv = exhaustQueueLease(inv, now)
