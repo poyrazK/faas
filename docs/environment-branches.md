@@ -32,7 +32,9 @@ pr-42
 - `--ttl` is how long the branch lives: from 1 hour to 30 days, 7 days by
   default. Gregale deletes it at its expiry.
 - Each workload's line shows the URL it answers on in the branch. Its first
-  request starts it from the parent's build.
+  request starts it from the parent's build. The URL is derived from the
+  project and the branch's name, so it stays the same when the branch is
+  reset or deleted and made again under the same name.
 
 List an environment's branches with
 `gregale environment branch shop --list --from production`, and delete one
@@ -63,8 +65,11 @@ gregale environment branch shop pr-42 --reset         # make it again from its p
   same slug, egress, private-network mode and lifetime. Its workloads come
   from the parent's current builds and its data is copied again as of now.
   Everything done in the branch (deploys, configuration changes, data
-  written) is discarded, and **its workloads get new URLs**: the output
-  lists them. A branch with branches of its own cannot be reset.
+  written) is discarded. **Its workloads keep their URLs**, so links in
+  pull requests and test configuration still work. The API also returns
+  each workload's `environment_url`, the address of this incarnation of the
+  branch, which a reset changes. A branch with branches of its own cannot
+  be reset.
 
 ## What a branch copies
 

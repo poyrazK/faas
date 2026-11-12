@@ -1427,7 +1427,7 @@ gregale app my-api --ports tcp:7000,udp:5353,cache=tcp:6379:internal
 ```
 
 A raw TCP listener (`gregale app listener create`) and a UDP listener
-(`gregale app my-api udp add`) need a declared port with the same name and
+(`gregale app listener create my-api --protocol udp`) need a declared port with the same name and
 guest port.
 
 Each declared dependency also receives `GREGALE_SERVICE_<NAME>_HOST`, the bare

@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/referrals"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -4924,6 +4925,11 @@ type Invocation struct {
 	// them as X-Faas-Edge-Jwt-*. Customer headers never fill them.
 	EdgeJWTIssuer  string `json:"-"`
 	EdgeJWTSubject string `json:"-"`
+	// SentByAppID and OnCompleteAppID record a send() (ADR-20261112160000):
+	// the calling app, and the app that receives the completion. They are
+	// written to invocation_sends with the row and not read back on it.
+	SentByAppID     string `json:"-"`
+	OnCompleteAppID string `json:"-"`
 	// WorkPolicyName and WorkKeyDigest identify an app-scoped scheduling lane.
 	// The raw application key is never persisted in this ledger.
 	WorkPolicyName     string     `json:"work_policy_name,omitempty"`
@@ -8319,8 +8325,10 @@ func PersonalOrgSlug(accountID string) string {
 // is derived deterministically from the account id (PersonalOrgSlug),
 // name defaults to "Personal", status defaults to OrgStatusActive.
 type CreateAccountWithPersonalOrgParams struct {
-	Email string
-	Plan  api.Plan
+	// Referral is accepted only by the shared self-service signup path.
+	Referral *referrals.Attribution
+	Email    string
+	Plan     api.Plan
 	// RequireEmailVerification leaves email_verified_at NULL. The zero value
 	// preserves the historical trusted-creation behavior used by OAuth,
 	// operator, migration, and test call sites.

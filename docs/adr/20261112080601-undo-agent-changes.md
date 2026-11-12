@@ -78,8 +78,7 @@ Settings and capacity in detail (slice 1):
 - **Env vars:** the inverse is a guarded configuration rollback to the
   revision before the agent's change. The check compares the variables of
   the newest revision with those the agent left. Env vars of a named
-  environment are not undoable yet (the guarded rollback names the
-  environment, whose id the capture cannot read yet).
+  environment are undone the same way (amendment 2026-11-12).
 - **Secrets:** not undoable. Gregale keeps no copy of a replaced secret; the
   plan says to set it again.
 
@@ -97,9 +96,9 @@ agent's request started (its answer). Undo then looks at the app as it is:
   target is never cancelled.
 
 An app that served nothing before the agent's first deploy has nothing to
-return to; that deploy is not undoable (park or delete the app). Promotes,
-canary advances and traffic changes name only a deployment and are not
-undoable yet.
+return to; that deploy is not undoable (park or delete the app). Promotes
+and traffic changes put back the earlier split; canary advances are not
+undoable (amendment 2026-11-12).
 
 Undo goes through apid's own handlers, as the person who undoes (§4), so
 ownership is unchanged: apid writes intent tables, schedd still owns
@@ -166,6 +165,27 @@ Slices, each dark until its captures are complete for the kind:
 5. Agent-requested undo through approval (migration
    `20261112080601752_agent_approval_undo_category`, contract: the category
    CHECK gains `undo`), MCP tools, journey.
+
+### Amendment 2026-11-12: traffic and named environments
+
+- **Promotes and traffic changes** (`PATCH /v1/deployments/{id}/traffic`,
+  `POST /v1/deployments/{id}/promote` and its application-ack twin) record
+  the live split of the deployment's app before and after the change. Undo
+  puts the earlier split back exactly through the traffic route, largest
+  share first, and verifies it; with two live deployments one call does it.
+  It is changed since when the live split is no longer the one the agent
+  left (force puts the earlier split back anyway). Undoing a deploy and a
+  traffic change of one app share one resource, so they go newest first.
+- **Canary advances** stay not undoable: a canary only steps forward and no
+  route steps it back; the plan points at aborting the rollout.
+- **Env vars of a named environment** are undone like the app's own: the
+  capture reads the environment's id and the guarded config rollback names
+  it (`expected_environment_id`).
+- What the capture cannot read through the routes undo dispatches to (a
+  deployment's app, an environment's id) comes from a small lookup apid
+  wires with the same account checks as those routes.
+- Deleted buckets remain not undoable (owner's decision 2026-11-12: no
+  soft-delete window this round).
 
 ## Consequences
 
