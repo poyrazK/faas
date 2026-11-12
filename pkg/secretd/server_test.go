@@ -35,6 +35,35 @@ type fakeStore struct {
 	edgeHeaders map[[2]string][]byte // {app, secret} -> sealed value
 	registries  map[[2]string]fakeRegistryCredential
 	preparing   map[[2]string]bool // {app, node name}
+	jobCreds    map[[2]string]fakeRegistryCredential
+	jobLeases   map[string]fakeJobLease
+	jobOpens    []string
+}
+
+type fakeJobLease struct {
+	owner string
+	until time.Time
+}
+
+func (f *fakeStore) JobRegistryCredential(_ context.Context, jobID, registry string) (string, []byte, error) {
+	c, ok := f.jobCreds[[2]string{jobID, registry}]
+	if !ok {
+		return "", nil, secretd.ErrUnknownRegistryCredential
+	}
+	return c.username, c.sealed, nil
+}
+
+func (f *fakeStore) JobMaterializationLease(_ context.Context, jobID string) (string, time.Time, error) {
+	l, ok := f.jobLeases[jobID]
+	if !ok {
+		return "", time.Time{}, secretd.ErrUnknownJob
+	}
+	return l.owner, l.until, nil
+}
+
+func (f *fakeStore) RecordJobOpen(_ context.Context, nodeID, jobID, via string) error {
+	f.jobOpens = append(f.jobOpens, nodeID+"/"+jobID+"/"+via)
+	return nil
 }
 
 func (f *fakeStore) PreparesImage(_ context.Context, appID, nodeName string, _ time.Time) (bool, error) {

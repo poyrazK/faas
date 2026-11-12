@@ -80,7 +80,18 @@ type Store interface {
 	// PreparesImage reports whether nodeName holds an unfinished image
 	// preparation of a deployment of appID updated since since.
 	PreparesImage(ctx context.Context, appID, nodeName string, since time.Time) (bool, error)
+	// JobRegistryCredential returns the username and sealed password of
+	// jobID's credential for registry, or ErrUnknownRegistryCredential.
+	JobRegistryCredential(ctx context.Context, jobID, registry string) (username string, sealed []byte, err error)
+	// JobMaterializationLease returns the job's image materialization lease
+	// owner ("<node name>/<claim>") and expiry, or ErrUnknownJob.
+	JobMaterializationLease(ctx context.Context, jobID string) (owner string, until time.Time, err error)
+	// RecordJobOpen records an open of a job's credential.
+	RecordJobOpen(ctx context.Context, nodeID, jobID, via string) error
 }
+
+// ErrUnknownJob is returned by Store.JobMaterializationLease.
+var ErrUnknownJob = errors.New("secretd: no such job")
 
 // ErrUnknownEdgeHeaderSecret is returned by Store.EdgeHeaderSecret.
 var ErrUnknownEdgeHeaderSecret = errors.New("secretd: the app has no referenced edge rule header value of that id")

@@ -12,7 +12,8 @@ CREATE TABLE secret_grants (
 CREATE TABLE secret_open_audit (
     id        bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     node_id   uuid        NOT NULL,
-    app_id    uuid        NOT NULL,
+    app_id    uuid,
+    job_id    uuid,
     via       text        NOT NULL,
     entries   integer     NOT NULL,
     opened_at timestamptz NOT NULL DEFAULT now()
@@ -94,4 +95,20 @@ CREATE TABLE deployment_image_preparations (
 CREATE TABLE deployments (
     id     uuid NOT NULL PRIMARY KEY,
     app_id uuid NOT NULL
+);
+
+-- Projections of job_registry_credentials and jobs: a job's registry
+-- credential and the node holding its materialization lease
+-- (ADR-20261110210000 slice 3j-2b).
+CREATE TABLE job_registry_credentials (
+    job_id             uuid  NOT NULL,
+    registry           text  NOT NULL,
+    username           text  NOT NULL,
+    password_encrypted bytea NOT NULL
+);
+
+CREATE TABLE jobs (
+    id                                uuid NOT NULL PRIMARY KEY,
+    image_materialization_lease_owner text,
+    image_materialization_lease_until timestamptz
 );

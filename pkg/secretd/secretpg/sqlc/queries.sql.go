@@ -84,6 +84,22 @@ func (q *Queries) EdgeHeaderSecretSealed(ctx context.Context, db DBTX, arg EdgeH
 	return ciphertext, err
 }
 
+const insertJobSecretOpenAudit = `-- name: InsertJobSecretOpenAudit :exec
+INSERT INTO secret_open_audit (node_id, job_id, via, entries)
+VALUES ($1::uuid, $2::uuid, $3::text, 1)
+`
+
+type InsertJobSecretOpenAuditParams struct {
+	NodeID pgtype.UUID
+	JobID  pgtype.UUID
+	Via    string
+}
+
+func (q *Queries) InsertJobSecretOpenAudit(ctx context.Context, db DBTX, arg InsertJobSecretOpenAuditParams) error {
+	_, err := db.Exec(ctx, insertJobSecretOpenAudit, arg.NodeID, arg.JobID, arg.Via)
+	return err
+}
+
 const insertSecretOpenAudit = `-- name: InsertSecretOpenAudit :exec
 INSERT INTO secret_open_audit (node_id, app_id, via, entries)
 VALUES ($1::uuid, $2::uuid, $3::text, $4::integer)
@@ -104,6 +120,47 @@ func (q *Queries) InsertSecretOpenAudit(ctx context.Context, db DBTX, arg Insert
 		arg.Entries,
 	)
 	return err
+}
+
+const jobMaterializationLease = `-- name: JobMaterializationLease :one
+SELECT coalesce(image_materialization_lease_owner, '')::text AS owner,
+       coalesce(image_materialization_lease_until, '-infinity'::timestamptz)::timestamptz AS until
+  FROM jobs WHERE id = $1::uuid
+`
+
+type JobMaterializationLeaseRow struct {
+	Owner string
+	Until pgtype.Timestamptz
+}
+
+func (q *Queries) JobMaterializationLease(ctx context.Context, db DBTX, id pgtype.UUID) (JobMaterializationLeaseRow, error) {
+	row := db.QueryRow(ctx, jobMaterializationLease, id)
+	var i JobMaterializationLeaseRow
+	err := row.Scan(&i.Owner, &i.Until)
+	return i, err
+}
+
+const jobRegistryCredentialSealed = `-- name: JobRegistryCredentialSealed :one
+SELECT username, password_encrypted FROM job_registry_credentials
+ WHERE job_id = $1::uuid AND registry = $2::text
+`
+
+type JobRegistryCredentialSealedParams struct {
+	JobID    pgtype.UUID
+	Registry string
+}
+
+type JobRegistryCredentialSealedRow struct {
+	Username          string
+	PasswordEncrypted []byte
+}
+
+// The job's own credential for one registry host (slice 3j-2b).
+func (q *Queries) JobRegistryCredentialSealed(ctx context.Context, db DBTX, arg JobRegistryCredentialSealedParams) (JobRegistryCredentialSealedRow, error) {
+	row := db.QueryRow(ctx, jobRegistryCredentialSealed, arg.JobID, arg.Registry)
+	var i JobRegistryCredentialSealedRow
+	err := row.Scan(&i.Username, &i.PasswordEncrypted)
+	return i, err
 }
 
 const logDrainHeaderSealed = `-- name: LogDrainHeaderSealed :one

@@ -187,8 +187,8 @@ plane: watch its network and `faas_secretd_opens_total{rpc="RegistryFetch"}`.
    rising means a node pulled for an app it neither owns, holds a grant for,
    nor prepares an image of: find the path in imaged's journal before
    turning on more nodes. Then the rest of compute.
-3. **Builder VMs** come with slice 3j-3. Job images still open their
-   credentials on the node (3j-2b).
+3. **Builder VMs** come with slice 3j-3. Job images pull through secretd
+   with the same switch (3j-2b).
 
 ## Rotation
 

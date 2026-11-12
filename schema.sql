@@ -58560,11 +58560,13 @@ CREATE TABLE public.secret_grants (
 CREATE TABLE public.secret_open_audit (
     id bigint NOT NULL,
     node_id uuid NOT NULL,
-    app_id uuid NOT NULL,
+    app_id uuid,
     via text NOT NULL,
     entries integer NOT NULL,
     opened_at timestamp with time zone DEFAULT now() NOT NULL,
+    job_id uuid,
     CONSTRAINT secret_open_audit_entries_check CHECK ((entries >= 0)),
+    CONSTRAINT secret_open_audit_subject_check CHECK (((app_id IS NULL) <> (job_id IS NULL))),
     CONSTRAINT secret_open_audit_via_check CHECK ((via = ANY (ARRAY['owner'::text, 'grant'::text])))
 );
 
@@ -84017,6 +84019,13 @@ CREATE INDEX secret_grants_expires_idx ON public.secret_grants USING btree (expi
 --
 
 CREATE INDEX secret_open_audit_app_idx ON public.secret_open_audit USING btree (app_id, opened_at);
+
+
+--
+-- Name: secret_open_audit_job_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX secret_open_audit_job_idx ON public.secret_open_audit USING btree (job_id, opened_at) WHERE (job_id IS NOT NULL);
 
 
 --

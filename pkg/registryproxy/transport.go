@@ -30,9 +30,16 @@ func (p *Proxy) For(appID string) http.RoundTripper {
 	return &transport{client: p.Client, appID: appID}
 }
 
+// ForJob returns the transport that pulls jobID's private image with the
+// job's registry credential (slice 3j-2b).
+func (p *Proxy) ForJob(jobID string) http.RoundTripper {
+	return &transport{client: p.Client, jobID: jobID}
+}
+
 type transport struct {
 	client secretdpb.SecretdClient
 	appID  string
+	jobID  string
 }
 
 // RoundTrip implements http.RoundTripper.
@@ -43,7 +50,7 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.Method != http.MethodGet && req.Method != http.MethodHead {
 		return nil, fmt.Errorf("registryproxy: %s is not a pull", req.Method)
 	}
-	in := &secretdpb.RegistryFetchRequest{AppId: t.appID, Method: req.Method, Url: req.URL.String()}
+	in := &secretdpb.RegistryFetchRequest{AppId: t.appID, JobId: t.jobID, Method: req.Method, Url: req.URL.String()}
 	for _, name := range forwardHeaders {
 		for _, v := range req.Header.Values(name) {
 			in.Headers = append(in.Headers, &secretdpb.RegistryHeader{Name: name, Value: v})

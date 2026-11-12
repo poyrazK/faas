@@ -148,6 +148,16 @@ func (ownedBy) EdgeHeaderSecret(context.Context, string, string) ([]byte, error)
 	return nil, secretd.ErrUnknownEdgeHeaderSecret
 }
 
+func (ownedBy) JobRegistryCredential(context.Context, string, string) (string, []byte, error) {
+	return "", nil, secretd.ErrUnknownRegistryCredential
+}
+
+func (ownedBy) JobMaterializationLease(context.Context, string) (string, time.Time, error) {
+	return "", time.Time{}, secretd.ErrUnknownJob
+}
+
+func (ownedBy) RecordJobOpen(context.Context, string, string, string) error { return nil }
+
 func (ownedBy) PreparesImage(context.Context, string, string, time.Time) (bool, error) {
 	return false, nil
 }

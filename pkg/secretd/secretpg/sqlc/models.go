@@ -60,6 +60,19 @@ type EdgeRuleHeaderSecret struct {
 	Ciphertext []byte
 }
 
+type Job struct {
+	ID                             pgtype.UUID
+	ImageMaterializationLeaseOwner pgtype.Text
+	ImageMaterializationLeaseUntil pgtype.Timestamptz
+}
+
+type JobRegistryCredential struct {
+	JobID             pgtype.UUID
+	Registry          string
+	Username          string
+	PasswordEncrypted []byte
+}
+
 type SecretGrant struct {
 	AppID           pgtype.UUID
 	NodeID          pgtype.UUID
@@ -72,6 +85,7 @@ type SecretOpenAudit struct {
 	ID       int64
 	NodeID   pgtype.UUID
 	AppID    pgtype.UUID
+	JobID    pgtype.UUID
 	Via      string
 	Entries  int32
 	OpenedAt pgtype.Timestamptz

@@ -15613,6 +15613,7 @@ type SecretOpenAudit struct {
 	Via      string
 	Entries  int32
 	OpenedAt pgtype.Timestamptz
+	JobID    pgtype.UUID
 }
 
 type ServiceCallerKey struct {

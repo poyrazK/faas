@@ -65,6 +65,20 @@ SELECT EXISTS (
        AND p.updated_at > sqlc.arg(since)::timestamptz
 ) AS preparing;
 
+-- name: JobRegistryCredentialSealed :one
+-- The job's own credential for one registry host (slice 3j-2b).
+SELECT username, password_encrypted FROM job_registry_credentials
+ WHERE job_id = sqlc.arg(job_id)::uuid AND registry = sqlc.arg(registry)::text;
+
+-- name: JobMaterializationLease :one
+SELECT coalesce(image_materialization_lease_owner, '')::text AS owner,
+       coalesce(image_materialization_lease_until, '-infinity'::timestamptz)::timestamptz AS until
+  FROM jobs WHERE id = sqlc.arg(id)::uuid;
+
+-- name: InsertJobSecretOpenAudit :exec
+INSERT INTO secret_open_audit (node_id, job_id, via, entries)
+VALUES (sqlc.arg(node_id)::uuid, sqlc.arg(job_id)::uuid, sqlc.arg(via)::text, 1);
+
 -- name: TriggerConfig :one
 -- A trigger of the named app only (ADR-20261110210000 slice 3g).
 SELECT kind, config FROM triggers

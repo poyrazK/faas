@@ -262,8 +262,46 @@ func TestReferenceLookupsOnPostgres(t *testing.T) {
 		account.ID, appA.ID, referenced); err != nil {
 		t.Fatal(err)
 	}
+	// Jobs (slice 3j-2b): a job's lease and its own registry credential.
+	jobID := uuid.NewString()
+	if _, err := conn.Exec(ctx, `INSERT INTO jobs (id, account_id, kind, name, image_ref, ram_mb, task_timeout_s,
+		max_parallelism, retry_max, command, image_materialization_lease_owner, image_materialization_lease_until)
+		VALUES ($1, $2, 'batch', 'nightly', 'ghcr.io/team/job:v1', 256, 60, 1, 0, '{run}', 'compute-7/claim',
+		now() + interval '5 minutes')`, jobID, account.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := conn.Exec(ctx, `RESET session_replication_role`); err != nil {
 		t.Fatal(err)
+	}
+	if err := st.UpsertJobRegistryCredential(ctx, account.ID, jobID, "ghcr.io", "job-robot", []byte("job-sealed")); err != nil {
+		t.Fatal(err)
+	}
+	if user, sealed, err := store.JobRegistryCredential(ctx, jobID, "ghcr.io"); err != nil || user != "job-robot" || string(sealed) != "job-sealed" {
+		t.Fatalf("job registry credential = %q %q %v", user, sealed, err)
+	}
+	if _, _, err := store.JobRegistryCredential(ctx, jobID, "registry.example.com"); !errors.Is(err, secretd.ErrUnknownRegistryCredential) {
+		t.Fatalf("job credential for another registry = %v", err)
+	}
+	if owner, until, err := store.JobMaterializationLease(ctx, jobID); err != nil || owner != "compute-7/claim" || !until.After(time.Now()) {
+		t.Fatalf("job lease = %q %v %v", owner, until, err)
+	}
+	if _, _, err := store.JobMaterializationLease(ctx, uuid.NewString()); !errors.Is(err, secretd.ErrUnknownJob) {
+		t.Fatalf("unknown job lease = %v", err)
+	}
+	node, err := st.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordJobOpen(ctx, node.ID, jobID, "grant"); err != nil {
+		t.Fatalf("record job open: %v", err)
+	}
+	var jobAudits int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM secret_open_audit WHERE job_id = $1 AND app_id IS NULL`, jobID).Scan(&jobAudits); err != nil || jobAudits != 1 {
+		t.Fatalf("job audit rows = %d, %v", jobAudits, err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO secret_open_audit (node_id, app_id, job_id, via, entries) VALUES ($1, $2, $3, 'grant', 1)`,
+		node.ID, appA.ID, jobID); err == nil {
+		t.Fatal("an audit row naming both an app and a job was accepted")
 	}
 	if sealed, err := store.EdgeHeaderSecret(ctx, appA.ID, referenced); err != nil || len(sealed) != 1 || sealed[0] != 2 {
 		t.Fatalf("referenced edge header value = %x, %v", sealed, err)

@@ -255,6 +255,54 @@ func (s *Store) PreparesImage(ctx context.Context, appID, nodeName string, since
 	return ok, nil
 }
 
+// JobRegistryCredential implements secretd.Store.
+func (s *Store) JobRegistryCredential(ctx context.Context, jobID, registry string) (string, []byte, error) {
+	job, err := pgUUID(jobID)
+	if err != nil || registry == "" {
+		return "", nil, secretd.ErrUnknownRegistryCredential
+	}
+	row, err := s.q.JobRegistryCredentialSealed(ctx, s.db, sqlc.JobRegistryCredentialSealedParams{JobID: job, Registry: registry})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil, secretd.ErrUnknownRegistryCredential
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("secretpg: job registry credential: %w", err)
+	}
+	return row.Username, row.PasswordEncrypted, nil
+}
+
+// JobMaterializationLease implements secretd.Store.
+func (s *Store) JobMaterializationLease(ctx context.Context, jobID string) (string, time.Time, error) {
+	job, err := pgUUID(jobID)
+	if err != nil {
+		return "", time.Time{}, secretd.ErrUnknownJob
+	}
+	row, err := s.q.JobMaterializationLease(ctx, s.db, job)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", time.Time{}, secretd.ErrUnknownJob
+	}
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("secretpg: job lease: %w", err)
+	}
+	return row.Owner, row.Until.Time, nil
+}
+
+// RecordJobOpen implements secretd.Store.
+func (s *Store) RecordJobOpen(ctx context.Context, nodeID, jobID, via string) error {
+	job, err := pgUUID(jobID)
+	if err != nil {
+		return err
+	}
+	node, err := pgUUID(nodeID)
+	if err != nil {
+		return err
+	}
+	if err := s.q.InsertJobSecretOpenAudit(ctx, s.db, sqlc.InsertJobSecretOpenAuditParams{NodeID: node, JobID: job, Via: via}); err != nil {
+		return fmt.Errorf("secretpg: record job open: %w", err)
+	}
+	return nil
+}
+
 // TriggerConfig implements secretd.Store: a trigger of appID only.
 func (s *Store) TriggerConfig(ctx context.Context, appID, triggerID string) (string, []byte, error) {
 	app, err := pgUUID(appID)

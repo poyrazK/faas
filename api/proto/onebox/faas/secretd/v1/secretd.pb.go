@@ -85,7 +85,10 @@ type RegistryFetchRequest struct {
 	Url string `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
 	// headers are request headers; secretd forwards only Accept, Range,
 	// If-None-Match and If-Modified-Since.
-	Headers       []*RegistryHeader `protobuf:"bytes,4,rep,name=headers,proto3" json:"headers,omitempty"`
+	Headers []*RegistryHeader `protobuf:"bytes,4,rep,name=headers,proto3" json:"headers,omitempty"`
+	// job_id, in place of app_id, pulls with a job's registry credential for
+	// the node holding the job's materialization lease (slice 3j-2b).
+	JobId         string `protobuf:"bytes,5,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -146,6 +149,13 @@ func (x *RegistryFetchRequest) GetHeaders() []*RegistryHeader {
 		return x.Headers
 	}
 	return nil
+}
+
+func (x *RegistryFetchRequest) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
 }
 
 type RegistryFetchHead struct {
@@ -1061,12 +1071,13 @@ const file_onebox_faas_secretd_v1_secretd_proto_rawDesc = "" +
 	"$onebox/faas/secretd/v1/secretd.proto\x12\x16onebox.faas.secretd.v1\":\n" +
 	"\x0eRegistryHeader\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value\"\x99\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\"\xb0\x01\n" +
 	"\x14RegistryFetchRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12\x16\n" +
 	"\x06method\x18\x02 \x01(\tR\x06method\x12\x10\n" +
 	"\x03url\x18\x03 \x01(\tR\x03url\x12@\n" +
-	"\aheaders\x18\x04 \x03(\v2&.onebox.faas.secretd.v1.RegistryHeaderR\aheaders\"m\n" +
+	"\aheaders\x18\x04 \x03(\v2&.onebox.faas.secretd.v1.RegistryHeaderR\aheaders\x12\x15\n" +
+	"\x06job_id\x18\x05 \x01(\tR\x05jobId\"m\n" +
 	"\x11RegistryFetchHead\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\x05R\x06status\x12@\n" +
 	"\aheaders\x18\x02 \x03(\v2&.onebox.faas.secretd.v1.RegistryHeaderR\aheaders\"\x82\x01\n" +

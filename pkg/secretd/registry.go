@@ -273,9 +273,10 @@ func drain(resp *http.Response) {
 // slice 3j).
 func (s *Server) RegistryFetch(req *secretdpb.RegistryFetchRequest, stream grpc.ServerStreamingServer[secretdpb.RegistryFetchResponse]) error {
 	ctx := stream.Context()
-	appID, method := req.GetAppId(), req.GetMethod()
-	if appID == "" || (method != http.MethodGet && method != http.MethodHead) {
-		return rpcErr(codes.InvalidArgument, "secretd needs an app id and a GET or HEAD")
+	subject := registrySubject{appID: req.GetAppId(), jobID: req.GetJobId()}
+	method := req.GetMethod()
+	if (subject.appID == "") == (subject.jobID == "") || (method != http.MethodGet && method != http.MethodHead) {
+		return rpcErr(codes.InvalidArgument, "secretd needs an app id or a job id, and a GET or HEAD")
 	}
 	target, err := parseRegistryTarget(req.GetUrl())
 	if err != nil {
@@ -284,16 +285,24 @@ func (s *Server) RegistryFetch(req *secretdpb.RegistryFetchRequest, stream grpc.
 	if len(s.buildIdentities) == 0 {
 		return rpcErr(codes.FailedPrecondition, "secretd holds no build identity")
 	}
-	name, nodeID, via, err := s.authorizeRegistryFetch(ctx, appID)
-	if err != nil {
-		return err
+	var name, nodeID, via, username string
+	var sealed []byte
+	if subject.jobID != "" {
+		if name, nodeID, via, err = s.authorizeJobRegistryFetch(ctx, subject.jobID); err != nil {
+			return err
+		}
+		username, sealed, err = s.store.JobRegistryCredential(ctx, subject.jobID, target.url.Host)
+	} else {
+		if name, nodeID, via, err = s.authorizeRegistryFetch(ctx, subject.appID); err != nil {
+			return err
+		}
+		username, sealed, err = s.store.RegistryCredential(ctx, subject.appID, target.url.Host)
 	}
-	username, sealed, err := s.store.RegistryCredential(ctx, appID, target.url.Host)
 	if errors.Is(err, ErrUnknownRegistryCredential) {
-		return rpcErr(codes.NotFound, "secretd found no credential of the app for that registry")
+		return rpcErr(codes.NotFound, "secretd found no credential for that registry")
 	}
 	if err != nil {
-		s.log.Error("secretd: registry credential lookup", "app_id", logsanitize.Field(appID), "err", err)
+		s.log.Error("secretd: registry credential lookup", "subject", logsanitize.Field(subject.key()), "err", err)
 		return rpcErr(codes.Unavailable, "secretd could not look up the registry credential")
 	}
 	namespace, password, err := secretbox.OpenBytesMulti(s.buildIdentities, sealed)
@@ -302,7 +311,7 @@ func (s *Server) RegistryFetch(req *secretdpb.RegistryFetchRequest, stream grpc.
 	}
 	if err != nil {
 		clear(password)
-		s.log.Warn("secretd: registry password does not open", "app_id", logsanitize.Field(appID),
+		s.log.Warn("secretd: registry password does not open", "subject", logsanitize.Field(subject.key()),
 			"registry", logsanitize.Field(target.url.Host), "err", err)
 		s.metrics.refuse(rpcRegistryFetch, ReasonEnvelope)
 		return rpcErr(codes.FailedPrecondition, "secretd could not open the registry credential")
@@ -310,19 +319,23 @@ func (s *Server) RegistryFetch(req *secretdpb.RegistryFetchRequest, stream grpc.
 	auth, err := s.registry.creds.RegistryCredential(ctx, target.url.Host, &oci.BasicAuth{Username: username, Password: string(password)})
 	clear(password)
 	if err != nil {
-		s.log.Warn("secretd: registry credential exchange", "app_id", logsanitize.Field(appID),
+		s.log.Warn("secretd: registry credential exchange", "subject", logsanitize.Field(subject.key()),
 			"registry", logsanitize.Field(target.url.Host), "err", err)
 		return rpcErr(codes.Unavailable, "secretd could not exchange the registry credential")
 	}
 	// A pull reads one manifest and many blobs; the manifest read is the
 	// open the audit records.
 	if target.manifest {
-		if err := s.store.RecordOpen(ctx, nodeID, appID, via, 1); err != nil {
-			s.log.Error("secretd: record open", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+		record := func() error { return s.store.RecordOpen(ctx, nodeID, subject.appID, via, 1) }
+		if subject.jobID != "" {
+			record = func() error { return s.store.RecordJobOpen(ctx, nodeID, subject.jobID, via) }
+		}
+		if err := record(); err != nil {
+			s.log.Error("secretd: record open", "node", logsanitize.Field(name), "subject", logsanitize.Field(subject.key()), "err", err)
 			return rpcErr(codes.Unavailable, "secretd could not record the open")
 		}
 	}
-	resp, err := s.registry.fetch(ctx, appID, method, target, req.GetHeaders(), auth)
+	resp, err := s.registry.fetch(ctx, subject.key(), method, target, req.GetHeaders(), auth)
 	if err != nil {
 		// A url.Error names the URL, which after a redirect is a
 		// presigned storage URL: log the cause alone.
@@ -330,13 +343,54 @@ func (s *Server) RegistryFetch(req *secretdpb.RegistryFetchRequest, stream grpc.
 		if errors.As(err, &uerr) {
 			err = uerr.Err
 		}
-		s.log.Warn("secretd: registry fetch", "app_id", logsanitize.Field(appID),
+		s.log.Warn("secretd: registry fetch", "subject", logsanitize.Field(subject.key()),
 			"registry", logsanitize.Field(target.url.Host), "err", logsanitize.Field(err.Error()))
 		return rpcErr(codes.Unavailable, "secretd could not reach the registry")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	s.metrics.open(rpcRegistryFetch, via)
 	return streamRegistryResponse(stream, resp)
+}
+
+// registrySubject is whose credential a fetch uses: an app's, or a job's
+// (jobs belong to an account, not an app).
+type registrySubject struct{ appID, jobID string }
+
+// key names the subject in caches, budgets and logs.
+func (r registrySubject) key() string {
+	if r.jobID != "" {
+		return "job:" + r.jobID
+	}
+	return r.appID
+}
+
+// authorizeJobRegistryFetch admits the node that holds the job's live image
+// materialization lease (jobs.image_materialization_lease_owner is
+// "<node name>/<claim>"), within its distinct-subject budget (slice 3j-2b).
+func (s *Server) authorizeJobRegistryFetch(ctx context.Context, jobID string) (name, nodeID, via string, err error) {
+	name, nodeID, err = s.caller(ctx, rpcRegistryFetch)
+	if err != nil {
+		return "", "", "", err
+	}
+	owner, until, err := s.store.JobMaterializationLease(ctx, jobID)
+	if errors.Is(err, ErrUnknownJob) {
+		return "", "", "", rpcErr(codes.NotFound, "secretd found no such job")
+	}
+	if err != nil {
+		s.log.Error("secretd: job lease lookup", "job_id", logsanitize.Field(jobID), "err", err)
+		return "", "", "", rpcErr(codes.Unavailable, "secretd could not look up the job")
+	}
+	if !strings.HasPrefix(owner, name+"/") || !s.now().Before(until) {
+		s.log.Warn("secretd: refused job registry fetch", "node", logsanitize.Field(name), "job_id", logsanitize.Field(jobID))
+		s.metrics.refuse(rpcRegistryFetch, ReasonNotAuthorized)
+		return "", "", "", rpcErr(codes.PermissionDenied, "secretd refused: the caller does not hold the job's materialization lease")
+	}
+	if !s.budget.allow(nodeID, "job:"+jobID, s.now()) {
+		s.log.Error("secretd: node over its distinct-app budget", "node", logsanitize.Field(name), "job_id", logsanitize.Field(jobID))
+		s.metrics.refuse(rpcRegistryFetch, ReasonBudgetExhausted)
+		return "", "", "", rpcErr(codes.ResourceExhausted, "secretd refused: the caller opened too many distinct apps this hour")
+	}
+	return name, nodeID, "grant", nil
 }
 
 // imagePreparationWindow bounds how old a preparation may be and still let

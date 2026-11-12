@@ -19317,6 +19317,7 @@
       "app_id",
       "entries",
       "id",
+      "job_id",
       "node_id",
       "opened_at",
       "via"
