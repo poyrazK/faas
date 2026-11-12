@@ -10095,6 +10095,14 @@ type NativeIssueTicketReceipt struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type NeonProjectKey struct {
+	KeyID     int64
+	ProjectID string
+	SealedKey []byte
+	CreatedAt pgtype.Timestamptz
+	RevokedAt pgtype.Timestamptz
+}
+
 type NodeJoinJob struct {
 	ID             pgtype.UUID
 	NodeName       string
