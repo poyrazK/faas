@@ -701,6 +701,7 @@ from .checked_project_release_response_bindings_checks import CheckedProjectRele
 from .claim_api_consumer_usage_statement_request import ClaimAPIConsumerUsageStatementRequest
 from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
+from .close_support_ticket_request import CloseSupportTicketRequest
 from .commit_blocked_event_response import CommitBlockedEventResponse
 from .commit_blocked_events_response import CommitBlockedEventsResponse
 from .commit_event_publication import CommitEventPublication
@@ -1020,6 +1021,9 @@ from .create_slo_request_latency_threshold_ms import CreateSLORequestLatencyThre
 from .create_slo_request_sli import CreateSLORequestSli
 from .create_slo_request_window_days import CreateSLORequestWindowDays
 from .create_statement_invoice_request import CreateStatementInvoiceRequest
+from .create_support_ticket_request import CreateSupportTicketRequest
+from .create_support_ticket_request_category import CreateSupportTicketRequestCategory
+from .create_support_ticket_request_priority import CreateSupportTicketRequestPriority
 from .create_synthetic_check_request import CreateSyntheticCheckRequest
 from .create_synthetic_check_request_interval_seconds import CreateSyntheticCheckRequestIntervalSeconds
 from .create_synthetic_check_request_method import CreateSyntheticCheckRequestMethod
@@ -4085,6 +4089,7 @@ from .org_response_plan import OrgResponsePlan
 from .org_response_status import OrgResponseStatus
 from .org_with_role import OrgWithRole
 from .org_with_role_role import OrgWithRoleRole
+from .organization_support_list_status import OrganizationSupportListStatus
 from .outbound_ai_access_token import OutboundAIAccessToken
 from .outbound_ai_access_token_list import OutboundAIAccessTokenList
 from .outbound_ai_budget_alert import OutboundAIBudgetAlert
@@ -4199,6 +4204,7 @@ from .patch_org_request import PatchOrgRequest
 from .patch_org_request_plan import PatchOrgRequestPlan
 from .payment_method_summary import PaymentMethodSummary
 from .periodic_profile_policy import PeriodicProfilePolicy
+from .personal_support_list_status import PersonalSupportListStatus
 from .plan_affected_app import PlanAffectedApp
 from .plan_affected_app_action import PlanAffectedAppAction
 from .plan_async_route import PlanAsyncRoute
@@ -5095,6 +5101,7 @@ from .release_timeline_event_kind import ReleaseTimelineEventKind
 from .release_timeline_phase import ReleaseTimelinePhase
 from .remove_environment_git_ops_override_request import RemoveEnvironmentGitOpsOverrideRequest
 from .rename_app_request import RenameAppRequest
+from .reopen_support_ticket_request import ReopenSupportTicketRequest
 from .reorder_deployment_body import ReorderDeploymentBody
 from .reorder_deployment_response_200 import ReorderDeploymentResponse200
 from .replace_project_environment_queue_bindings_request import ReplaceProjectEnvironmentQueueBindingsRequest
@@ -5928,6 +5935,18 @@ from .summarize_platform_tenant_self_workflow_attention_sort import SummarizePla
 from .summarize_platform_tenant_self_workflow_outcomes_group_by import (
     SummarizePlatformTenantSelfWorkflowOutcomesGroupBy,
 )
+from .support_context import SupportContext
+from .support_message import SupportMessage
+from .support_message_author import SupportMessageAuthor
+from .support_message_page import SupportMessagePage
+from .support_message_request import SupportMessageRequest
+from .support_satisfaction import SupportSatisfaction
+from .support_satisfaction_request import SupportSatisfactionRequest
+from .support_satisfaction_submission import SupportSatisfactionSubmission
+from .support_submission import SupportSubmission
+from .support_ticket import SupportTicket
+from .support_ticket_page import SupportTicketPage
+from .support_ticket_status import SupportTicketStatus
 from .suppress_workflow_recovery_automatic_action_request import SuppressWorkflowRecoveryAutomaticActionRequest
 from .sweep_stuck_builds_response import SweepStuckBuildsResponse
 from .synthetic_check_response import SyntheticCheckResponse
@@ -7109,6 +7128,7 @@ __all__ = (
     "ClaimAPIConsumerUsageStatementRequest",
     "ClearObsoleteDeploymentsBody",
     "ClearObsoleteReport",
+    "CloseSupportTicketRequest",
     "CommitBlockedEventResponse",
     "CommitBlockedEventsResponse",
     "CommitEventPublication",
@@ -7411,6 +7431,9 @@ __all__ = (
     "CreateSLORequestSli",
     "CreateSLORequestWindowDays",
     "CreateStatementInvoiceRequest",
+    "CreateSupportTicketRequest",
+    "CreateSupportTicketRequestCategory",
+    "CreateSupportTicketRequestPriority",
     "CreateSyntheticCheckRequest",
     "CreateSyntheticCheckRequestIntervalSeconds",
     "CreateSyntheticCheckRequestMethod",
@@ -10231,6 +10254,7 @@ __all__ = (
     "OrgAgentPolicyRequestAllowedScopesItem",
     "OrgAgentPolicyRequestApprovalCategoriesItem",
     "OrgAgentPolicyResponse",
+    "OrganizationSupportListStatus",
     "OrgAppListResponse",
     "OrgAppSummary",
     "OrgAppSummaryType",
@@ -10367,6 +10391,7 @@ __all__ = (
     "PatchOrgRequestPlan",
     "PaymentMethodSummary",
     "PeriodicProfilePolicy",
+    "PersonalSupportListStatus",
     "PlanAffectedApp",
     "PlanAffectedAppAction",
     "PlanAsyncRoute",
@@ -11205,6 +11230,7 @@ __all__ = (
     "ReleaseTimelinePhase",
     "RemoveEnvironmentGitOpsOverrideRequest",
     "RenameAppRequest",
+    "ReopenSupportTicketRequest",
     "ReorderDeploymentBody",
     "ReorderDeploymentResponse200",
     "ReplaceProjectEnvironmentQueueBindingsRequest",
@@ -12012,6 +12038,18 @@ __all__ = (
     "SummarizePlatformTenantSelfWorkflowAttentionReason",
     "SummarizePlatformTenantSelfWorkflowAttentionSort",
     "SummarizePlatformTenantSelfWorkflowOutcomesGroupBy",
+    "SupportContext",
+    "SupportMessage",
+    "SupportMessageAuthor",
+    "SupportMessagePage",
+    "SupportMessageRequest",
+    "SupportSatisfaction",
+    "SupportSatisfactionRequest",
+    "SupportSatisfactionSubmission",
+    "SupportSubmission",
+    "SupportTicket",
+    "SupportTicketPage",
+    "SupportTicketStatus",
     "SuppressWorkflowRecoveryAutomaticActionRequest",
     "SweepStuckBuildsResponse",
     "SyntheticCheckResponse",
