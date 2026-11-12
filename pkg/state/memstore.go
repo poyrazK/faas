@@ -646,6 +646,11 @@ type MemStore struct {
 	deploymentPolicyStates       map[string]deploymentPolicyState
 	deploymentCronStates         map[string]deploymentPolicyState
 	deploymentCronActivations    map[string]cronActivation
+	// environmentCronRevisions and environmentCronActivations hold a
+	// non-production environment's manifest cron staging, keyed by
+	// environmentCronKey (ADR-20261104120000).
+	environmentCronRevisions   map[string]int64
+	environmentCronActivations map[string]cronActivation
 	// eventSubscriptionIntents is keyed by deployment id (ADR-20261101030512).
 	eventSubscriptionIntents map[string]memEventSubscriptionIntent
 	deploymentCronOutcomes   map[string]cronOutcome
@@ -4476,6 +4481,12 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	m.deleteEnvironmentSecretRefsLocked("", environmentID)
 	m.deleteEnvironmentWorkloadIntentsLocked("", environmentID)
 	m.deleteEnvironmentBudgetConfigsLocked(environmentID)
+	// The environment's crons go with it (ADR-20261104120000).
+	for cronID, cron := range m.crons {
+		if app, ok := m.apps[cron.AppID]; ok && app.ProjectID == projectID && cron.DeploymentScope == slug {
+			delete(m.crons, cronID)
+		}
+	}
 	m.deleteProjectEnvironmentBranchLocked(environmentID)
 	delete(m.projectEnvironments, environmentID)
 	for sourceID, memory := range m.environmentGitOps {
@@ -13954,7 +13965,7 @@ func (m *MemStore) CreateCronWithOptions(_ context.Context, appID, schedule, pat
 	if err := validateCronCreateRetryOptions(opts); err != nil {
 		return Cron{}, err
 	}
-	c := Cron{ID: newCronID(), AppID: appID, Schedule: schedule, Path: path,
+	c := Cron{ID: newCronID(), AppID: appID, DeploymentScope: opts.DeploymentScope, Schedule: schedule, Path: path,
 		Command: append([]string(nil), opts.Command...), CommandShell: opts.CommandShell,
 		CommandTimeoutSeconds: opts.CommandTimeoutSeconds, CommandMaxOutputBytes: opts.CommandMaxOutputBytes,
 		RetryMax: opts.RetryMax, RetryBackoffSeconds: opts.RetryBackoffSeconds,
@@ -14003,7 +14014,7 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 	// Match PgStore: an identical retry returns the durable row before quota
 	// checks, so reapplying at the exact cap remains idempotent.
 	for _, c := range m.crons {
-		if c.AppID == appID && c.Schedule == schedule && c.Path == path && sameCronCommand(c.Command, opts.Command) &&
+		if c.AppID == appID && c.DeploymentScope == opts.DeploymentScope && c.Schedule == schedule && c.Path == path && sameCronCommand(c.Command, opts.Command) &&
 			c.Enabled == enabled && c.Timezone == opts.Timezone && c.SkipIfRunning == opts.SkipIfRunning &&
 			c.CommandShell == opts.CommandShell && c.CommandTimeoutSeconds == opts.CommandTimeoutSeconds &&
 			c.CommandMaxOutputBytes == opts.CommandMaxOutputBytes && c.RetryMax == opts.RetryMax &&
@@ -14038,12 +14049,13 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 			Observed: accountCount,
 		}
 	}
-	if m.cronIdentityTakenLocked("", appID, schedule, path, opts.Command) {
+	if m.cronIdentityTakenLocked("", appID, opts.DeploymentScope, schedule, path, opts.Command) {
 		return Cron{}, ErrConflict
 	}
 	c := Cron{
 		ID:                    newCronID(),
 		AppID:                 appID,
+		DeploymentScope:       opts.DeploymentScope,
 		Schedule:              schedule,
 		Path:                  path,
 		Command:               append([]string(nil), opts.Command...),
@@ -14067,11 +14079,11 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 	return c, nil
 }
 
-// cronIdentityTakenLocked mirrors crons_app_schedule_path_command_unique:
+// cronIdentityTakenLocked mirrors crons_app_scope_schedule_path_command_unique:
 // another cron of appID already has this schedule, path and command.
-func (m *MemStore) cronIdentityTakenLocked(id, appID, schedule, path string, command []string) bool {
+func (m *MemStore) cronIdentityTakenLocked(id, appID, scope, schedule, path string, command []string) bool {
 	for otherID, other := range m.crons {
-		if otherID != id && other.AppID == appID && other.Schedule == schedule && other.Path == path && sameCronCommand(other.Command, command) {
+		if otherID != id && other.AppID == appID && other.DeploymentScope == scope && other.Schedule == schedule && other.Path == path && sameCronCommand(other.Command, command) {
 			return true
 		}
 	}
@@ -14111,7 +14123,7 @@ func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule,
 	if path != nil {
 		c.Path = *path
 	}
-	if (schedule != nil || path != nil) && m.cronIdentityTakenLocked(c.ID, c.AppID, c.Schedule, c.Path, c.Command) {
+	if (schedule != nil || path != nil) && m.cronIdentityTakenLocked(c.ID, c.AppID, c.DeploymentScope, c.Schedule, c.Path, c.Command) {
 		return Cron{}, ErrConflict
 	}
 	if enabled != nil {
@@ -14748,6 +14760,24 @@ func (m *MemStore) SuspendCronsForApp(_ context.Context, appID, reason string) (
 	updated := 0
 	for id, cron := range m.crons {
 		if cron.AppID != appID || !cron.Enabled || cron.SuspendedReason != "" {
+			continue
+		}
+		cron.SuspendedReason = reason
+		m.crons[id] = cron
+		updated++
+	}
+	return updated, nil
+}
+
+func (m *MemStore) SuspendCronsForAppScope(_ context.Context, appID, scope, reason string) (int, error) {
+	if reason != CronSuspendedNoLiveDeployment {
+		return 0, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	updated := 0
+	for id, cron := range m.crons {
+		if cron.AppID != appID || cron.DeploymentScope != scope || !cron.Enabled || cron.SuspendedReason != "" {
 			continue
 		}
 		cron.SuspendedReason = reason

@@ -5172,10 +5172,13 @@ func (l *Loop) dispatchScheduledHTTPCron(ctx context.Context, c state.Cron, due 
 		return
 	}
 	cronID := c.ID
+	// An environment cron's request runs in its environment; the store
+	// stamps and checks the environment from the cron row (ADR-20261104120000).
 	inv := state.Invocation{
 		AppID: c.AppID, AccountID: account.ID, Source: state.InvocationCron,
 		Method: "POST", Path: c.Path, CronID: &cronID, Headers: headers,
 		DueAt: scheduledFor, ScheduledAt: &scheduledFor, CreatedAt: now,
+		DeploymentScope: c.DeploymentScope,
 	}
 	// Without failure rules a scheduled time is delivered once, as for a
 	// plain cron (ADR-20261026201726 amendment 2026-11-02); the queue's plan
@@ -5412,7 +5415,7 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, d
 	if errors.Is(err, state.ErrAppTaskDeploymentUnavailable) {
 		l.cronMetrics.decision("no_live_deployment")
 		if suspender, ok := store.(state.CronSuspensionStore); ok {
-			count, suspendErr := suspender.SuspendCronsForApp(ctx, c.AppID, state.CronSuspendedNoLiveDeployment)
+			count, suspendErr := state.SuspendCronEnvironment(ctx, suspender, c)
 			if suspendErr != nil {
 				l.log.Warn("cron command: suspend after missing live deployment", "cron_id", c.ID, "err", suspendErr)
 			} else if count > 0 {
@@ -5441,7 +5444,7 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, d
 
 func (l *Loop) suspendCommandCronWithoutDeployment(ctx context.Context, c state.Cron) {
 	if suspender, ok := l.engine.Store().(state.CronSuspensionStore); ok {
-		count, err := suspender.SuspendCronsForApp(ctx, c.AppID, state.CronSuspendedNoLiveDeployment)
+		count, err := state.SuspendCronEnvironment(ctx, suspender, c)
 		if err != nil {
 			l.log.Warn("cron command: suspend after missing live deployment", "cron_id", c.ID, "err", err)
 		} else if count > 0 {
@@ -5537,7 +5540,7 @@ func (l *Loop) suspendIfNoLiveDeployment(ctx context.Context, store state.Store,
 		return false
 	}
 	if suspender, ok := store.(state.CronSuspensionStore); ok {
-		count, suspendErr := suspender.SuspendCronsForApp(ctx, c.AppID, state.CronSuspendedNoLiveDeployment)
+		count, suspendErr := state.SuspendCronEnvironment(ctx, suspender, c)
 		if suspendErr != nil {
 			l.log.Warn("cron: suspend after missing live deployment", "cron_id", c.ID, "app_id", c.AppID, "err", suspendErr)
 		} else if count > 0 {
@@ -5640,6 +5643,8 @@ func (l *Loop) dispatchCron(ctx context.Context, c state.Cron, now time.Time, tr
 		Headers:      cronHeaders,
 		DueAt:        dueAt,
 		FailureRules: workpolicy.Clone(c.FailureRules),
+		// The store resolves an environment cron's environment from its row.
+		DeploymentScope: c.DeploymentScope,
 	}
 	if c.FailureRules == nil {
 		inv.RetryPolicyJSON = cronSingleAttemptRetryPolicy
