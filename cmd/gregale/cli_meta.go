@@ -4738,6 +4738,9 @@ var cliCommands = []cliCommand{
 				{Name: "wait", Short: "wait for the same durable clone operation to finish"},
 				{Name: "timeout", Value: "SECONDS", Short: "maximum local wait time"},
 			}},
+			{Name: "resume-automation", Short: "Enable the crons a full clone copied paused into a stage", Notes: []string{"Only crons the source ran are enabled; ones the source had disabled, or changed since, stay as they are."}, Positionals: []string{"<stage>"}, Examples: []string{"gregale env resume-automation staging --project shop"}, Flags: []cliFlag{
+				{Name: "project", Value: "SLUG", Short: "project slug (defaults to linked project)"},
+			}},
 			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Examples: []string{"gregale env pull --app my-api", "gregale env pull --app my-api --env staging"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"},
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
@@ -5079,8 +5082,9 @@ var cliCommands = []cliCommand{
 		Name:     "login",
 		DocSlug:  "auth",
 		Short:    "Authenticate this machine",
-		Examples: []string{"gregale login", "printf '%s' \"$GREGALE_TOKEN\" | gregale login --token-stdin"},
+		Examples: []string{"gregale login", "gregale login --device", "printf '%s' \"$GREGALE_TOKEN\" | gregale login --token-stdin"},
 		Flags: []cliFlag{
+			{Name: "device", Short: "sign in with a code typed in a browser on another computer (SSH, headless)"},
 			{Name: "token", Short: "use a pre-minted token (CI)", Value: "TOKEN"},
 			{Name: "token-stdin", Short: "read a pre-minted token from stdin (CI)"},
 			{Name: "insecure-storage", Short: "save the key to a plaintext file instead of the OS keychain (WSL, containers, SSH)", Bool: true},
@@ -5827,7 +5831,9 @@ var cliCommands = []cliCommand{
 			{Name: "onboard", Short: "Create and verify a local typed application with two-user isolation", Flags: []cliFlag{
 				{Name: "template", Value: "NAME", Short: "data-api-starter or data-api-teams", ClosedSet: []string{"data-api-starter", "data-api-teams"}},
 				{Name: "path", Value: "DIR", Short: "new starter project directory", Req: true},
-				{Name: "bundle", Value: "MANIFEST", Short: "approved local data-api-bundle.json", Req: true},
+				{Name: "bundle", Value: "MANIFEST", Short: "approved local data-api-bundle.json"},
+				{Name: "sdk-version", Value: "VERSION", Short: "exact public @gregale/data version, instead of a bundle"},
+				{Name: "start", Short: "start the verified API and browser example"},
 			}, Examples: []string{"gregale data-api onboard --path notes --bundle /path/to/data-api-bundle.json"}},
 			{Name: "install", Short: "Install or restore a verified Data API SDK bundle", Flags: []cliFlag{
 				{Name: "bundle", Value: "MANIFEST", Short: "approved local data-api-bundle.json"},
@@ -5844,7 +5850,12 @@ var cliCommands = []cliCommand{
 				{Name: "port", Value: "PORT", Short: "loopback gateway port (default 8080; 0 selects a free port)"},
 				{Name: "check", Short: "run configured client checks"},
 				{Name: "check-types", Short: "compare committed types without rewriting them (requires --once)"},
+				{Name: "browser", Short: "serve the starter browser with local test identities"},
+				{Name: "behavior-baseline", Value: "FILE", Short: "owner-only policy and RPC behavior baseline (requires --once)"},
+				{Name: "behavior-output", Value: "FILE", Short: "save behavior digests after authorization checks (requires --once)"},
+				{Name: "behavior-replays", Value: "FILE", Short: "required authorization scenarios for changed behavior objects"},
 				{Name: "validators", Short: "generate runtime table and RPC argument validators alongside types"},
+				{Name: "numeric-mode", Value: "MODE", Short: "TypeScript numbers: number or lossless decimal strings", ClosedSet: []string{"number", "lossless"}},
 				{Name: "once", Short: "verify and exit, removing disposable containers"},
 				{Name: "watch", Short: "watch migrations and refresh API/types (default true; use --watch=false to disable)"},
 				{Name: "baseline", Value: "FILE", Short: "read-only saved contract (default: last successful local contract)"},
@@ -5890,6 +5901,7 @@ var cliCommands = []cliCommand{
 				{Name: "no-allow-without-rls", Short: "require row-level security on every relation again"},
 				{Name: "public-read-cache", Value: "DURATION|off", Short: "cache canonical public reads and RPC calls at the edge (max 1h)"},
 				{Name: "usage-reporting", Value: "on|off", Short: "report usage to the platform (on for new Data APIs)", ClosedSet: []string{"on", "off"}},
+				{Name: "shared-budget", Value: "POLICY", Short: "shared requests=N,window=DURATION[,claim=JWT_CLAIM], or off"},
 				{Name: "monthly-caps", Value: "requests=N[,anonymous=N]|off", Short: "monthly owner caps; reached caps answer 429 until the next UTC month"},
 				{Name: "aggregates", Value: "on|off", Short: "aggregate queries; on also enables the SQL deadline", ClosedSet: []string{"on", "off"}},
 				{Name: "pool", Value: "N|default", Short: "engine connections per instance, 1 to 8 (default 2)"},
@@ -5906,6 +5918,7 @@ var cliCommands = []cliCommand{
 				{Name: "sql", Short: "Print the storage_objects migration", Notes: []string{"Includes the table, RLS, guard trigger and example policies.", "--upgrade prints the object_key column for a table created before it."}, Flags: []cliFlag{
 					{Name: "schema", Value: "SCHEMA", Short: "the Data API's first exposed schema (default api)"},
 					{Name: "upgrade", Short: "print the upgrade for a storage_objects table without object_key"},
+					{Name: "sessions", Short: "include durable uploads, receipts and conditional replacement"},
 				}, Examples: []string{"gregale data-api storage export > migrations/0005_storage.sql", "gregale data-api storage export --upgrade > migrations/0009_storage_object_keys.sql"}},
 				{Name: "enable", Short: "Bind a bucket read-write and turn storage on", Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "bucket", Value: "BUCKET", Req: true, Short: "bucket to store files in (created and bound when needed)"},
@@ -5926,7 +5939,7 @@ var cliCommands = []cliCommand{
 				{Name: "sql", Short: "Print the change hooks migration", Notes: []string{"Creates the change event table, its trigger and the enable and disable helpers.",
 					"Changes stop recording while 100,000 wait to publish. --upgrade prints only that bound for hooks installed before it."}, Flags: []cliFlag{
 					{Name: "schema", Value: "SCHEMA", Short: "the Data API's first exposed schema (default api)"},
-					{Name: "upgrade", Short: "print only the backlog bound upgrade for an existing installation"},
+					{Name: "upgrade", Short: "print the backlog bound and observation upgrade for an existing installation"},
 				}, Examples: []string{"gregale data-api hooks export > migrations/0006_change_hooks.sql", "gregale data-api hooks export --upgrade > migrations/0009_change_hooks_bound.sql"}},
 				{Name: "enable", Short: "Publish recorded changes as events from the Data API app's source", Positionals: []string{"<name>"},
 					Notes: []string{"--drain-every adds a platform cron that wakes a parked API so changes other writers recorded publish; it counts against the plan's cron limits and each run is app time.",
@@ -5975,6 +5988,7 @@ var cliCommands = []cliCommand{
 				{Name: "snapshot", Short: "export a JSON baseline for data-api diff"},
 				{Name: "validators", Short: "include typed runtime table and RPC argument validators"},
 				{Name: "language", Value: "LANGUAGE", Short: "client language (default typescript)", ClosedSet: []string{"typescript", "python", "go"}},
+				{Name: "numeric-mode", Value: "MODE", Short: "TypeScript JSON numbers: number or lossless decimal strings", ClosedSet: []string{"number", "lossless"}},
 				{Name: "package", Value: "NAME", Short: "Go package name (default gregaledata)"},
 				{Name: "snapshot-file", Value: "FILE", Short: "render Python or Go from a saved snapshot without contacting the API"},
 				{Name: "timeout", Value: "DURATION", Short: "task wait deadline (default 2m)"},
@@ -6025,9 +6039,12 @@ var cliCommands = []cliCommand{
 				{Name: "refresh-token-env", Value: "ENV", Short: "optional private refresh token environment variable"},
 			}, Examples: []string{"gregale --json data-api status notes-data"}},
 			{Name: "sync", Short: "Run migrations, refresh the API, export types and check the client", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "init", Short: "generate a coordinated workflow without executing it"},
+				{Name: "role", Value: "LOGIN", Short: "serving binding login for --init"},
+				{Name: "runtime-directory", Value: "DIR", Short: "owner tooling directory for --init"},
 				{Name: "check", Short: "check coordinated setup without pausing, migrating or restarting"},
 				{Name: "resume-only", Short: "reverify an owned paused refresh without rerunning migrations"},
-				{Name: "config", Value: "FILE", Req: true, Short: "JSON workflow with output, migrate and check argument arrays"},
+				{Name: "config", Value: "FILE", Short: "JSON workflow with output, migrate and check argument arrays"},
 				{Name: "timeout", Value: "DURATION", Short: "entire workflow deadline (default 20m, maximum 1h)"},
 			}, Examples: []string{"gregale data-api sync notes-data --config data-api.json"}},
 		},
@@ -6542,12 +6559,19 @@ var cliCommands = []cliCommand{
 					{Name: "share-resources", Short: "explicitly share managed database and object-storage data", Bool: true},
 				}},
 				{Name: "delete", Short: "Delete a non-production environment", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "yes", Bool: true, Req: true, Short: "confirm environment deletion"}}},
-				{Name: "branch", Short: "Branch an environment; workloads start on first request", Notes: []string{"Deleted at its TTL or with `environment delete`."}, Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{
+				{Name: "branch", Short: "Branch an environment; workloads start on first request", Notes: []string{
+					"Deleted at its TTL or with `environment delete`.",
+					"`--status`, `--extend` and `--reset` act on an existing branch named by the second slug.",
+					"A branch lives at most 30 days after its creation, 7 with database copies; `--reset` starts a new lifetime and gives its workloads new URLs.",
+				}, Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{
 					{Name: "from", Value: "ENV", Short: "parent environment (default production)"},
 					{Name: "ttl", Value: "DURATION", Short: "time to live, 1h to 720h (default 168h)"},
 					{Name: "list", Bool: true, Short: "list the parent's branches"},
 					{Name: "egress", Value: "MODE", Short: "live (default), contained or simulated"},
 					{Name: "private-networks", Value: "MODE", Short: "off (default) or join"},
+					{Name: "status", Bool: true, Short: "show the branch's expiry, data, copies and workloads"},
+					{Name: "extend", Value: "DURATION", Short: "move the branch's expiry to this long from now"},
+					{Name: "reset", Bool: true, Short: "make the branch again from its parent"},
 				}},
 				{Name: "protect", Short: "Protect an environment"},
 				{Name: "unprotect", Short: "Remove environment protection"},
@@ -6885,6 +6909,23 @@ var cliCommands = []cliCommand{
 		Name:    "version",
 		DocSlug: "version",
 		Short:   "Print the CLI version",
+	},
+	{
+		Name:    "functions",
+		DocSlug: "functions",
+		Short:   "Generate typed clients for calls between a project's functions",
+		Subcommands: []cliSub{
+			{Name: "types", Short: "Write each function's typed client from its project's schemas",
+				Examples: []string{"gregale function types", "gregale function types --check"},
+				Notes: []string{
+					"Node functions get gregale-functions.d.ts and Python functions get gregale_functions.py in their root, typed for the functions they may call.",
+					"gregale deploy refreshes files that already exist when a schema changed; --check fails without writing, for CI.",
+				},
+				Flags: []cliFlag{
+					{Name: "path", Value: "DIR", Short: "functions project directory (default: the current one)"},
+					{Name: "check", Bool: true, Short: "write nothing; exit 1 when a generated file is missing or out of date"},
+				}},
+		},
 	},
 	{
 		Name:     "update",

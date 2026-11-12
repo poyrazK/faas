@@ -3766,6 +3766,20 @@ groups:
           description: "More than a tenth of settled AI calls cost zero for 1h because their model has no price, so usage reports undercount and cost caps refuse those models. Refresh the built-in price catalog, or check whether one account calls an unlisted model."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
 
+      # ADR 20261027132936 amendment 1: the flag alone serves no app; apps
+      # reach the gateway only through the app relay (ADR-989).
+      - alert: FaasAIGatewayEnabledWithoutAppRelay
+        expr: (max(outbound_ai_gateway_enabled) == 1) and on() (max(outbound_ai_app_relay_ready) == 0)
+        for: 10m
+        labels:
+          severity: warn
+          component: outboundd
+          family: ai_gateway
+        annotations:
+          summary: "The AI gateway is on but apps cannot reach it"
+          description: "The ai_gateway platform flag is on while no outboundd serves the app relay, so deployed apps get no GREGALE_OUTBOUND_URL path to the gateway. Set faas_outboundd_relay_listen and the vmmd relay switches after the workload-identity key is installed, or turn the flag off."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
       # A rollout should converge to one daemon release. This catches a
       # partial deploy where systemd is healthy and readiness is green, but
       # different hosts (or different daemons on one host) are serving
@@ -7448,6 +7462,19 @@ groups:
         annotations:
           summary: "Event routing sweeps are slow"
           description: "The p95 event routing sweep has taken longer than 30 seconds for fifteen minutes. Events still route, but late. Check the routing claim and recovery queries, database latency and the events backlog."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+      - alert: FaasInvocationDispatchSaturated
+        expr: |
+          avg_over_time((schedd_invocation_dispatch_slots_used / (schedd_invocation_dispatch_slots > 0))[15m:1m]) >= 0.9
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: event_routing
+          public_status: internal
+        annotations:
+          summary: "A schedd's invocation dispatch pool is full"
+          description: "{{ $labels.instance }}'s drain dispatch pool has been at least 90% full for fifteen minutes, so every tenant's async invocations, event deliveries and inbound webhooks on that node wait for a slot. Check the database before raising hot_path.invocation_dispatch_concurrency."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
       - alert: FaasEventDeliveryCapacityBacklog
         expr: max(schedd_event_delivery_capacity_waiting) > 10000

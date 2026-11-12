@@ -88,7 +88,9 @@ type InstanceStatRow struct {
 // a counter + latency histogram in the ADR-015 shape.
 type OpsMetrics struct {
 	eventDelivery *eventDeliveryMetrics
-	registry      *prometheus.Registry
+	// invocationDispatch is schedd's drain dispatch pool occupancy.
+	invocationDispatch *invocationDispatchMetrics
+	registry           *prometheus.Registry
 	// metricPrefix is the exact prefix used by this registry's metric
 	// names. It can differ from the OTel service name for compatibility
 	// aliases such as gatewayd-internal → gatewayd.
@@ -2168,6 +2170,7 @@ func (m *OpsMetrics) HubDropped(channel string) {
 func NewOpsMetrics(prefix string) *OpsMetrics {
 	reg := prometheus.NewRegistry()
 	eventDelivery := newEventDeliveryMetrics(prefix)
+	invocationDispatch := newInvocationDispatchMetrics(prefix)
 	workerRecovery := newWorkerRecoveryMetrics(prefix)
 	queue := newQueueMetrics(prefix)
 	delayedTasks := newDelayedTaskMetrics(prefix)
@@ -4068,6 +4071,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// calls that would silently drift apart.
 	commonCollectors := []prometheus.Collector{
 		eventDelivery.deferrals, eventDelivery.waiting, eventDelivery.oldest, eventDelivery.outcomes,
+		invocationDispatch.used, invocationDispatch.size,
 		workerRecovery.apps, workerRecovery.replicas, workerRecovery.observedAt,
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
@@ -5595,6 +5599,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	throttleSecondsTotal.WithLabelValues(topAppOtherAccountLabel, topAppOtherLabel)
 	return &OpsMetrics{
 		eventDelivery:                              eventDelivery,
+		invocationDispatch:                         invocationDispatch,
 		registry:                                   reg,
 		metricPrefix:                               prefix,
 		ops:                                        ops,

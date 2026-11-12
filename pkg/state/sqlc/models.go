@@ -488,6 +488,24 @@ type AgentRunUsage struct {
 	RecordedAt          pgtype.Timestamptz
 }
 
+type AgentUndoRecord struct {
+	ID                pgtype.UUID
+	ActivityID        pgtype.UUID
+	KeyID             pgtype.UUID
+	AccountID         pgtype.UUID
+	OrgID             pgtype.UUID
+	Method            string
+	Path              string
+	Kind              string
+	Summary           string
+	Inverse           []byte
+	Guard             []byte
+	NotUndoableReason pgtype.Text
+	CreatedAt         pgtype.Timestamptz
+	UndoneAt          pgtype.Timestamptz
+	UndoneBy          pgtype.UUID
+}
+
 // ADR-20261027090010 immutable agent versions: harness descriptor, prompt template, size and timeout.
 type AgentVersion struct {
 	AgentID               pgtype.UUID
@@ -3340,6 +3358,7 @@ type Cron struct {
 	Labels                []byte
 	DeploymentScope       string
 	EnvironmentID         pgtype.UUID
+	ClonePaused           bool
 }
 
 type CronFireNowRequest struct {
@@ -3807,6 +3826,14 @@ type DataApiRuntimeConnectionObservation struct {
 	RefreshConnections   int32
 	ObservedAt           pgtype.Timestamptz
 	ExpiresAt            pgtype.Timestamptz
+}
+
+type DataApiSharedBudget struct {
+	AppID       pgtype.UUID
+	BudgetKey   string
+	WindowStart pgtype.Timestamptz
+	WindowEnd   pgtype.Timestamptz
+	Requests    int64
 }
 
 // ADR-20261019102108 Data API usage per app and UTC hour, from runtime deltas; owner telemetry, not billing.
@@ -8880,11 +8907,12 @@ type ManagedPostgresOveragePending struct {
 
 // Notices for managed PostgreSQL databases suspended past their plan; written only by apid (ADR-20261102125208).
 type ManagedPostgresPlanExcessNotice struct {
-	DatabaseID   pgtype.UUID
-	Reason       string
-	RecordedAt   pgtype.Timestamptz
-	MailIntentID pgtype.UUID
-	DeleteAt     pgtype.Timestamptz
+	DatabaseID           pgtype.UUID
+	Reason               string
+	RecordedAt           pgtype.Timestamptz
+	MailIntentID         pgtype.UUID
+	DeleteAt             pgtype.Timestamptz
+	ReminderMailIntentID pgtype.UUID
 }
 
 type ManagedPostgresResize struct {
@@ -15550,22 +15578,24 @@ type ScheduleOccurrence struct {
 }
 
 type ScheduledRelease struct {
-	ID                pgtype.UUID
-	AccountID         pgtype.UUID
-	AppID             pgtype.UUID
-	DeploymentID      pgtype.UUID
-	ReleaseAt         pgtype.Timestamptz
-	Canary            []byte
-	NotifyChannelIds  []pgtype.UUID
-	OverrideFreeze    string
-	OverrideFreezeIds []pgtype.UUID
-	State             string
-	OutcomeCode       string
-	OutcomeDetail     string
-	ScheduledBy       string
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
-	StartedAt         pgtype.Timestamptz
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	DeploymentID         pgtype.UUID
+	ReleaseAt            pgtype.Timestamptz
+	Canary               []byte
+	NotifyChannelIds     []pgtype.UUID
+	OverrideFreeze       string
+	OverrideFreezeIds    []pgtype.UUID
+	State                string
+	OutcomeCode          string
+	OutcomeDetail        string
+	ScheduledBy          string
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	StartedAt            pgtype.Timestamptz
+	ScheduledByAccountID pgtype.UUID
+	ScheduledByKeyID     pgtype.UUID
 }
 
 // One non-secret secretbox probe per seal domain, sealed to the domain recipient alone (ADR 20261022111812).
@@ -15960,6 +15990,24 @@ type SupportMessage struct {
 	Body      string
 	Redacted  bool
 	CreatedAt pgtype.Timestamptz
+}
+
+type SupportNotification struct {
+	ID              pgtype.UUID
+	Sequence        int64
+	EventID         pgtype.UUID
+	TicketID        pgtype.UUID
+	RecipientID     pgtype.UUID
+	Audience        string
+	Kind            string
+	CreatedAt       pgtype.Timestamptz
+	ReadAt          pgtype.Timestamptz
+	EmailState      string
+	Attempts        int32
+	LeaseID         pgtype.UUID
+	LeaseUntil      pgtype.Timestamptz
+	AvailableAt     pgtype.Timestamptz
+	DestinationHash []byte
 }
 
 type SupportOutbox struct {

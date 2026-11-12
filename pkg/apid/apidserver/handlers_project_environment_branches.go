@@ -71,17 +71,42 @@ func (s *server) createProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, problem)
 		return
 	}
+	// An agent's budget pays for the branch's warm instances; the charge
+	// stands only once the branch exists (#7140).
+	commitBudget, answered := s.chargeEnvironmentClone(w, r, acct, project, parent, true)
+	if answered {
+		return
+	}
+	response, problem := s.branchProjectEnvironment(r.Context(), store, acct, project, environmentBranchSpec{
+		parent: parent, slug: req.Slug, ttl: ttl, egress: egress, privateNetworks: req.PrivateNetworks,
+	})
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	commitBudget()
+	writeJSON(w, http.StatusCreated, response)
+}
+
+// environmentBranchSpec is what a branch is made from: by a create, or by a
+// reset that makes the branch again with its settings.
+type environmentBranchSpec struct {
+	parent, slug, egress, privateNetworks string
+	ttl                                   time.Duration
+}
+
+// branchProjectEnvironment creates a branch and publishes its workloads. A
+// branch whose workloads cannot be published is deleted again.
+func (s *server) branchProjectEnvironment(ctx context.Context, store state.ProjectEnvironmentBranchStore, acct state.Account, project state.Project, spec environmentBranchSpec) (api.ProjectEnvironmentResponse, *api.Problem) {
 	limits := api.MustLimitsFor(acct.Plan)
-	ctx := r.Context()
 	env, branch, _, err := store.CreateProjectEnvironmentBranch(ctx, state.ProjectEnvironmentBranchCreate{
-		AccountID: acct.ID, ProjectID: project.ID, ParentSlug: parent, Slug: req.Slug,
-		ExpiresAt: time.Now().UTC().Add(ttl), EgressMode: egress, PrivateNetworks: req.PrivateNetworks,
+		AccountID: acct.ID, ProjectID: project.ID, ParentSlug: spec.parent, Slug: spec.slug,
+		ExpiresAt: time.Now().UTC().Add(spec.ttl), EgressMode: spec.egress, PrivateNetworks: spec.privateNetworks,
 		MaxDepth: api.EnvironmentBranchMaxDepth, MaxBranches: limits.EnvironmentBranches,
 		ContainedObjects: s.environmentBranchContainedObjectsEnabled,
 	}, limits)
 	if err != nil {
-		api.WriteProblem(w, s.environmentBranchCreateProblem(ctx, acct, project, parent, req.Slug, limits, err))
-		return
+		return api.ProjectEnvironmentResponse{}, s.environmentBranchCreateProblem(ctx, acct, project, spec.parent, spec.slug, limits, err)
 	}
 	workloads, err := s.publishEnvironmentBranchWorkloads(ctx, store, acct, project, branch)
 	if err != nil {
@@ -91,8 +116,7 @@ func (s *server) createProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 		if cleanupErr := store.DeleteProjectEnvironmentBranch(context.WithoutCancel(ctx), acct.ID, project.ID, branch.Slug); cleanupErr != nil && s.log != nil {
 			s.log.Error("environment branch compensation failed; the expiry sweep will retire it", "project_id", project.ID, "environment", branch.Slug, "err", cleanupErr)
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not publish the branch's workloads; the branch was not created"))
-		return
+		return api.ProjectEnvironmentResponse{}, api.ErrCapacity("could not publish the branch's workloads; the branch was not created")
 	}
 	s.audit.Emit(ctx, "project.environment.branched", &acct.ID, map[string]any{
 		"project_id": project.ID, "project_slug": project.Slug, "environment_id": env.ID, "environment_slug": env.Slug,
@@ -101,7 +125,7 @@ func (s *server) createProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 	response := projectEnvironmentResponse(env)
 	response.Branch = environmentBranchResponse(branch)
 	response.Branch.Workloads = workloads
-	writeJSON(w, http.StatusCreated, response)
+	return response, nil
 }
 
 // environmentBranchParentProblem refuses a company-project member who may

@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Verify deployed documentation by content, including the unknown-route 404."""
+"""Verify deployed documentation by content, including the unknown-route 404.
+
+The site titles pages from its own table of contents and serves a Markdown
+copy of each one (``<link rel="alternate" type="text/markdown">``) with its
+own title in place of the source's level-one heading. A route passes when that
+copy carries the opening paragraph of the route's source, so the check proves
+the page is the right document without depending on the site's titles.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +18,7 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import urljoin
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,12 +29,57 @@ def normalize(value: str) -> str:
     return " ".join(value.split()).strip().casefold()
 
 
-def source_heading(path: Path) -> str:
-    for line in path.read_text().splitlines():
-        match = re.match(r"^#\s+(.+?)\s*$", line)
-        if match:
-            return normalize(re.sub(r"[`*_]", "", match.group(1)))
-    raise ValueError(f"{path}: source has no level-one heading")
+MARKDOWN_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+
+# Enough of the opening paragraph to identify a document; the site rewrites
+# link targets in its copy, so links are reduced to their text on both sides.
+IDENTITY_CHARS = 160
+
+
+def markdown_text(value: str) -> str:
+    return normalize(MARKDOWN_LINK.sub(r"\1", value))
+
+
+def source_identity(path: Path) -> str:
+    """The source's first paragraph after its level-one heading."""
+    lines = path.read_text().splitlines()
+    start = next((i for i, line in enumerate(lines) if line.startswith("# ")), None)
+    if start is None:
+        raise ValueError(f"{path}: source has no level-one heading")
+    paragraph: list[str] = []
+    in_comment = False
+    for line in lines[start + 1 :]:
+        text = line.strip()
+        if in_comment:
+            in_comment = "-->" not in text
+            continue
+        if text.startswith("<!--"):
+            in_comment = "-->" not in text
+            continue
+        if not text or text.startswith("#"):
+            if paragraph:
+                break
+            continue
+        paragraph.append(text)
+    if not paragraph:
+        raise ValueError(f"{path}: source has no paragraph after its heading")
+    return markdown_text(" ".join(paragraph))[:IDENTITY_CHARS]
+
+
+class MarkdownAlternate(html.parser.HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.href: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        if (
+            tag.lower() == "link"
+            and self.href is None
+            and values.get("rel") == "alternate"
+            and values.get("type") == "text/markdown"
+        ):
+            self.href = values.get("href")
 
 
 class FirstH1(html.parser.HTMLParser):
@@ -87,17 +140,13 @@ def check(base_url: str, selected: set[str] | None = None) -> list[str]:
         # is in the catalog.
         if route.get("external") or route.get("unpublished") or (selected is not None and route["path"] not in selected):
             continue
-        expected = source_heading(ROOT / route["source"])
+        name = route["path"] or "/"
         url = f"{base_url.rstrip('/')}/{route['path']}".rstrip("/") or base_url
         status, body = get(url)
-        parser = FirstH1()
-        parser.feed(body)
         if status != 200:
-            failures.append(f"{route['path'] or '/'}: HTTP {status}, expected 200")
-        elif parser.heading != expected:
-            failures.append(
-                f"{route['path'] or '/'}: first h1 is {parser.heading!r}, expected {expected!r}"
-            )
+            failures.append(f"{name}: HTTP {status}, expected 200")
+        else:
+            failures.extend(check_document(name, url, body, ROOT / route["source"]))
         if status == 200:
             page = PageText()
             page.feed(body)
@@ -110,6 +159,27 @@ def check(base_url: str, selected: set[str] | None = None) -> list[str]:
     if missing_status != 404:
         failures.append(f"unknown docs route: HTTP {missing_status}, expected 404")
     return failures
+
+
+def check_document(name: str, url: str, body: str, source: Path) -> list[str]:
+    """Check that the page at url serves source's document."""
+    alternate = MarkdownAlternate()
+    alternate.feed(body)
+    if alternate.href is None:
+        # Only the docs home is a landing page rather than a document.
+        heading = FirstH1()
+        heading.feed(body)
+        if name != "/":
+            return [f"{name}: page links no Markdown copy (rel=alternate type=text/markdown)"]
+        return [] if heading.heading else ["/: docs home has no h1"]
+    copy_url = urljoin(url, alternate.href)
+    copy_status, copy = get(copy_url)
+    if copy_status != 200:
+        return [f"{name}: Markdown copy {alternate.href}: HTTP {copy_status}, expected 200"]
+    identity = source_identity(source)
+    if identity not in markdown_text(copy):
+        return [f"{name}: serves {alternate.href}, which lacks the opening of {source.relative_to(ROOT)}: {identity[:60]!r}"]
+    return []
 
 
 def main() -> int:

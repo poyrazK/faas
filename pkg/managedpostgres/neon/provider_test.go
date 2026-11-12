@@ -83,7 +83,7 @@ func TestProbeDSNPrefersDirectEndpoint(t *testing.T) {
 
 func testProvider(t *testing.T, handler http.Handler) *Provider {
 	t.Helper()
-	server := httptest.NewTLSServer(handler)
+	server := httptest.NewTLSServer(recordRequests(handler))
 	t.Cleanup(server.Close)
 	baseURL, err := url.Parse(server.URL + "/api/v2")
 	if err != nil {

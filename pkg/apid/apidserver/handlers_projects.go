@@ -403,11 +403,16 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, s.fullProjectEnvironmentCloneProblem(r, acct, project))
 		return
 	}
+	commitBudget, answered := s.chargeEnvironmentClone(w, r, acct, project, req.FromEnvironment, false)
+	if answered {
+		return
+	}
 	environment, clone, err := s.persistProjectEnvironment(r, acct, project, req)
 	if err != nil {
 		writeCreateProjectEnvironmentError(w, project.Slug, req, acct, err)
 		return
 	}
+	commitBudget()
 	s.audit.Emit(r.Context(), "project.environment.created", &acct.ID, map[string]any{
 		"project_id": project.ID, "project_slug": project.Slug,
 		"environment_id": environment.ID, "environment_slug": environment.Slug,

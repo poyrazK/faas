@@ -15,7 +15,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	faas "github.com/gregale-dev/gregale-go"
 )
 
 // OperationReceiptSchema is customer-owned DDL. Install explicitly as the

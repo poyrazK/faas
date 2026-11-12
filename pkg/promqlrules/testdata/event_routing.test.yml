@@ -236,3 +236,29 @@ tests:
         summary: "The events kill switch is refusing publishes"
         description: "The events capability's kill switch has been off for at least an hour while producers kept publishing: every publish answers 503 events_paused and routing is held. Turn it back on once the incident is over."
         runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+- name: a schedd's dispatch pool held full
+  interval: 1m
+  input_series:
+  - series: 'schedd_invocation_dispatch_slots_used{job="schedd",instance="compute-1"}'
+    values: '8x40'
+  - series: 'schedd_invocation_dispatch_slots{job="schedd",instance="compute-1"}'
+    values: '8x40'
+  - series: 'schedd_invocation_dispatch_slots_used{job="schedd",instance="compute-2"}'
+    values: '4x40'
+  - series: 'schedd_invocation_dispatch_slots{job="schedd",instance="compute-2"}'
+    values: '8x40'
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: FaasInvocationDispatchSaturated
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: event_routing
+        public_status: internal
+        job: schedd
+        instance: compute-1
+      exp_annotations:
+        summary: "A schedd's invocation dispatch pool is full"
+        description: "compute-1's drain dispatch pool has been at least 90% full for fifteen minutes, so every tenant's async invocations, event deliveries and inbound webhooks on that node wait for a slot. Check the database before raising hot_path.invocation_dispatch_concurrency."
+        runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"

@@ -29,5 +29,9 @@ export type QueueStateResponse = {
    */
   oldest_pending_age_seconds?: number | null;
   generated_at: string;
+  /**
+   * Every pending or in-delivery invocation of the app per source (async_invoke, inbound_webhook, queue, ...), so async work waiting for the scheduler is visible beside the queue's depth. Omitted when nothing waits.
+   */
+  backlog_by_source?: Record<string, number>;
 };
 

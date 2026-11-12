@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -127,6 +128,68 @@ func TestClientSupportCustomerRoutes(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestClientSupportNotificationsAndReadBoundaries(t *testing.T) {
+	const through int64 = 9007199254740993
+	for _, organization := range []bool{false, true} {
+		for _, read := range []bool{false, true} {
+			t.Run(fmt.Sprintf("org=%v/read=%v", organization, read), func(t *testing.T) {
+				base := "/v1/support"
+				if organization {
+					base = "/v1/orgs/org%2Fteam/support"
+				}
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Header.Get("Authorization") != "Bearer token" {
+						t.Error("missing authentication")
+					}
+					w.Header().Set("Content-Type", "application/json")
+					if read {
+						if r.Method != "POST" || r.URL.EscapedPath() != base+"/tickets/ticket%2Fone/read" {
+							t.Errorf("wrong read route: %s %s", r.Method, r.URL.EscapedPath())
+						}
+						var body api.SupportReadRequest
+						if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ThroughSequence != through {
+							t.Errorf("read boundary rounded: %+v %v", body, err)
+						}
+						w.WriteHeader(202)
+						_, _ = w.Write([]byte(`{"ticket_id":"ticket/one","unread_count":1,"unread_total":2}`))
+					} else {
+						if r.Method != "GET" || r.URL.EscapedPath() != base+"/notifications" || r.URL.Query().Get("before") != "9007199254740993" || r.URL.Query().Get("unread") != "true" {
+							t.Errorf("wrong feed request: %s %s", r.Method, r.URL.String())
+						}
+						_, _ = w.Write([]byte(`{"items":[],"unread_count":2,"next_cursor":9007199254740993}`))
+					}
+				}))
+				defer srv.Close()
+				client := api.NewClient(srv.URL, "token")
+				if read {
+					var out api.SupportReadResult
+					var err error
+					if organization {
+						out, err = client.MarkOrgSupportTicketRead(t.Context(), "org/team", "ticket/one", api.SupportReadRequest{ThroughSequence: through})
+					} else {
+						out, err = client.MarkSupportTicketRead(t.Context(), "ticket/one", api.SupportReadRequest{ThroughSequence: through})
+					}
+					if err != nil || out.UnreadCount != 1 || out.UnreadTotal != 2 {
+						t.Fatalf("read result: %+v %v", out, err)
+					}
+				} else {
+					var out api.SupportNotificationPage
+					var err error
+					options := api.SupportNotificationListOptions{Before: through, Unread: true}
+					if organization {
+						out, err = client.ListOrgSupportNotifications(t.Context(), "org/team", options)
+					} else {
+						out, err = client.ListSupportNotifications(t.Context(), options)
+					}
+					if err != nil || out.NextCursor != through || out.UnreadCount != 2 {
+						t.Fatalf("feed result: %+v %v", out, err)
+					}
+				}
+			})
+		}
 	}
 }
 

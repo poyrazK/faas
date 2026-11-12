@@ -233,9 +233,23 @@ func (c *Client) CompletionCache() *CompletionCache {
 func NewClientWithDeployTimeout(baseURL, token string, deployTimeout time.Duration) *Client {
 	c := NewClient(baseURL, token)
 	if deployTimeout > 0 {
-		c.deployHTTP = &http.Client{Timeout: deployTimeout, Transport: newClientTransport()}
+		c.deployHTTP = &http.Client{Timeout: deployTimeout, Transport: newClientTransportWithHeaderTimeout(deployTimeout)}
 	}
 	return c
+}
+
+// newClientTransportWithHeaderTimeout is newClientTransport waiting up to d
+// for response headers. The upload client used the 30s header wait of JSON
+// requests, so a synchronous upload the server took longer to accept failed
+// with "timeout awaiting response headers" whatever deploy timeout the
+// caller chose (seen on a cold `gregale dev` first sync, 2026-11-11).
+func newClientTransportWithHeaderTimeout(d time.Duration) http.RoundTripper {
+	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+		clone := transport.Clone()
+		clone.ResponseHeaderTimeout = d
+		return agentReasonTransport{next: clone}
+	}
+	return agentReasonTransport{next: http.DefaultTransport}
 }
 
 // HTTPClient returns the underlying JSON HTTP client. Exposed so SDK
@@ -4935,6 +4949,14 @@ func (c *Client) ListAuditLogAllPage(ctx context.Context, before, accountID, sin
 func (c *Client) MintCliAuthCode(ctx context.Context) (CliAuthCodeResponse, error) {
 	var out CliAuthCodeResponse
 	return out, c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Device: true}, &out)
+}
+
+// MintCliAuthLoopbackCode mints a one-click login code whose approval is
+// sent to 127.0.0.1:port (ADR-20261111170000). The response's Loopback is
+// false when the server kept the typed-code flow.
+func (c *Client) MintCliAuthLoopbackCode(ctx context.Context, port int) (CliAuthCodeResponse, error) {
+	var out CliAuthCodeResponse
+	return out, c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Device: true, LoopbackPort: port}, &out)
 }
 
 // ExchangeCliAuthLogin polls for a minted code's approval: with its device

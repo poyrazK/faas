@@ -5042,12 +5042,20 @@ RETURNING app_id, deployment_id, route,
 -- rollback included. Resolving here, rather than 24 hours later through
 -- ResolveStaleRegressionObservations, keeps the banner, status and the
 -- resolved webhook current. $2 is the pass start (with clock slack).
+-- Only what the pass could judge resolves: an observation of a deployment
+-- the pass no longer compares (superseded or rolled back), or of a route the
+-- current deployment served in this pass's window. A route that merely went
+-- quiet stays open (the stale sweep closes it after the lookback): on prod an
+-- unfixed 15x slowdown resolved five minutes after it was found, once its
+-- traffic aged out of the window.
 UPDATE debug_regression_observations
 SET state = 'resolved',
     resolved_at = COALESCE(resolved_at, now())
 WHERE app_id = $1
   AND last_detected_at < $2
   AND state <> 'resolved'
+  AND (deployment_id <> sqlc.arg('current_deployment_id')::uuid
+       OR route = ANY(sqlc.arg('measured_routes')::text[]))
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
@@ -7748,6 +7756,41 @@ VALUES(sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(app_id):
 INSERT INTO project_environment_edge_policies(account_id, project_id, app_id, environment_slug, rules)
 VALUES(sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(environment)::text, sqlc.arg(rules)::jsonb);
 
+-- name: ReadProjectEnvironmentCloneCrons :many
+-- The configuration of an app's crons in one environment, without the
+-- scheduler's own columns (ADR-20261104120000 amendment 2026-11-12). A cron a
+-- clone paused counts as enabled: resuming it would.
+SELECT schedule, path, command, command_shell, command_timeout_seconds, command_max_output_bytes,
+       retry_max, retry_backoff_seconds, (enabled OR clone_paused)::boolean AS enabled, enabled AS stored_enabled,
+       timezone, skip_if_running, schedule_policy, failure_rules, labels
+FROM crons
+WHERE app_id = sqlc.arg(app_id)::uuid AND deployment_scope = sqlc.arg(scope)::text
+ORDER BY schedule, path, command;
+
+-- name: CountProjectEnvironmentCloneUncapturedCrons :one
+-- Crons of the source environment on project apps the clone does not copy.
+SELECT count(*)::bigint FROM crons c JOIN apps a ON a.id = c.app_id
+WHERE a.project_id = sqlc.arg(project_id)::uuid AND a.status <> 'deleted'
+  AND c.deployment_scope = sqlc.arg(scope)::text AND NOT (c.app_id = ANY(sqlc.arg(app_ids)::uuid[]));
+
+-- name: InsertProjectEnvironmentCloneCron :exec
+-- A copied cron starts disabled; clone_paused marks one the source ran.
+INSERT INTO crons(app_id, schedule, path, command, command_shell, command_timeout_seconds, command_max_output_bytes,
+    retry_max, retry_backoff_seconds, enabled, clone_paused, timezone, skip_if_running, schedule_policy, failure_rules,
+    labels, deployment_scope)
+VALUES(sqlc.arg(app_id)::uuid, sqlc.arg(schedule)::text, sqlc.arg(path)::text, sqlc.arg(command)::text[],
+    sqlc.arg(command_shell)::boolean, sqlc.arg(command_timeout_seconds)::integer, sqlc.arg(command_max_output_bytes)::integer,
+    sqlc.arg(retry_max)::integer, sqlc.arg(retry_backoff_seconds)::integer, false, sqlc.arg(clone_paused)::boolean,
+    sqlc.arg(timezone)::text, sqlc.arg(skip_if_running)::boolean, sqlc.narg(schedule_policy)::jsonb,
+    sqlc.narg(failure_rules)::jsonb, sqlc.arg(labels)::jsonb, sqlc.arg(scope)::text);
+
+-- name: ResumeEnvironmentClonePausedCrons :many
+-- Enables the crons a clone paused in one environment; the enable clears
+-- clone_paused and anchors the schedule.
+UPDATE crons SET enabled = true
+WHERE environment_id = sqlc.arg(environment_id)::uuid AND clone_paused AND NOT enabled
+RETURNING id, app_id;
+
 -- name: ReadProjectEnvironmentCloneObjectMutationAuthority :one
 SELECT coalesce(attempt_count = 0 AND lease_token IS NULL, false)::boolean AS legacy_allowed,
        coalesce(lease_token = nullif(sqlc.arg(worker_token)::text, '')::uuid
@@ -8727,6 +8770,16 @@ SELECT count(*) FROM production_invocation_work WHERE app_id=$1 AND source=$2 AN
 -- above.
 SELECT coalesce(sum(pending), 0)::bigint FROM invocation_backlog_counters
 WHERE app_id=sqlc.arg(app_id)::uuid AND source=sqlc.arg(source)::text;
+
+-- name: ListInvocationBacklogPendingBySource :many
+-- The app's pending and dispatching rows per source from the backlog
+-- counters (ADR-20261022105723), so `queue status` shows async invocations,
+-- inbound webhooks and event deliveries waiting beside queue messages.
+SELECT source, coalesce(sum(pending), 0)::bigint AS pending
+FROM invocation_backlog_counters
+WHERE app_id=sqlc.arg(app_id)::uuid
+GROUP BY source
+ORDER BY source;
 
 -- name: SumAccountQueueBacklogBytes :one
 SELECT coalesce(sum(bytes), 0)::bigint FROM invocation_backlog_counters
@@ -16151,6 +16204,16 @@ LIMIT sqlc.arg(page_size)::integer;
 UPDATE managed_postgres_databases SET expires_at=sqlc.arg(expires_at)::timestamptz
 WHERE id=sqlc.arg(id)::uuid RETURNING *;
 
+-- name: MoveManagedPostgresBranchExpiry :one
+-- ADR-20261031193635 branch lifecycle: an environment branch's extend moves
+-- its database copy's end. Only an undeleted restore that already ends, and
+-- whose end is still the one the caller read, moves; the caller keeps the
+-- new end within the copy's allowance.
+UPDATE managed_postgres_databases SET expires_at=sqlc.arg(expires_at)::timestamptz, updated_at=clock_timestamp()
+WHERE id=sqlc.arg(id)::uuid AND deleted_at IS NULL AND state NOT IN ('deleting','deleted')
+  AND restore_source_database_id IS NOT NULL AND expires_at=sqlc.arg(current_expires_at)::timestamptz
+RETURNING *;
+
 -- name: ListManagedPostgresExpiredDatabasePage :many
 -- ADR-20261106103654: copies whose TTL has ended, soonest first, after a
 -- stable (expires_at, id) cursor. A copy already being purged (deleting with
@@ -16206,6 +16269,25 @@ WHERE database_id=ANY(sqlc.arg(database_ids)::uuid[]);
 UPDATE managed_postgres_plan_excess_notices SET recorded_at=sqlc.arg(now)::timestamptz,mail_intent_id=NULL
 WHERE database_id=ANY(sqlc.arg(database_ids)::uuid[]) AND delete_at IS NULL
     AND (mail_intent_id IS NOT NULL OR recorded_at<=sqlc.arg(stale_before)::timestamptz);
+
+-- name: ManagedPostgresLiveResourcesInProject :many
+-- ADR-20261112160000: neond refuses deleting a Neon project or branch that a
+-- live managed PostgreSQL database runs on. A provider resource is the
+-- project ID, or "<project>/<branch>" for a database on a branch.
+SELECT provider_resource_id::text AS provider_resource_id FROM managed_postgres_databases
+WHERE (provider_resource_id=sqlc.arg(project)::text OR provider_resource_id LIKE sqlc.arg(project)::text || '/%')
+    AND state NOT IN ('deleting','deleted') AND deleted_at IS NULL;
+
+-- name: ListManagedPostgresPlanExcessRemindersDue :many
+-- ADR-20261110184700 amendment 2026-11-12: notices whose mailed deletion date
+-- is between now and remind_until and whose reminder no intent has claimed,
+-- for databases not being deleted.
+SELECT n.database_id,n.reason,n.delete_at,d.account_id,d.name,d.service_class
+FROM managed_postgres_plan_excess_notices n JOIN managed_postgres_databases d ON d.id=n.database_id
+WHERE n.delete_at IS NOT NULL AND n.mail_intent_id IS NOT NULL AND n.reminder_mail_intent_id IS NULL
+    AND n.delete_at>sqlc.arg(now)::timestamptz AND n.delete_at<=sqlc.arg(remind_until)::timestamptz
+    AND d.state NOT IN ('deleting','deleted')
+ORDER BY n.delete_at,n.database_id LIMIT sqlc.arg(batch_size);
 
 -- name: ListUnmailedManagedPostgresPlanExcessNotices :many
 -- The notices still to mail: recorded after since, not yet linked to an

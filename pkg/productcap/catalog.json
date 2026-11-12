@@ -1243,6 +1243,8 @@
       "docs_url": "/docs/customer-support",
       "acceptance_test": "pkg/apid/apidserver/customer_support_test.go::TestCustomerSupportAuthenticatedRoutes",
       "routes": [
+        "/dashboard/orgs/{}/support",
+        "/dashboard/support",
         "/v1/orgs/{}/support",
         "/v1/support"
       ]
@@ -2221,7 +2223,10 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_project_environment_branches_test.go::TestEnvironmentBranchPublishesParentBuilds",
       "parent": "environments",
       "routes": [
-        "/v1/projects/{}/environments/{}/branches"
+        "/v1/projects/{}/environments/{}/branches",
+        "/v1/projects/{}/environments/{}/branch",
+        "/v1/projects/{}/environments/{}/branch/extend",
+        "/v1/projects/{}/environments/{}/branch/reset"
       ],
       "cli": [
         "projects environments branch"

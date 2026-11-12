@@ -1,10 +1,5 @@
 [
   {
-    "step": "TestDocsPages",
-    "bug": "40 of 77 pages in docs/customer-pages.json answer 404 on gregale.dev",
-    "since": "2026-10-26"
-  },
-  {
     "step": "TestPublicSurface/security_txt",
     "bug": "security.txt Canonical URL ends in 404; its Encryption URL serves an HTML page, not a PGP key",
     "since": "2026-10-26"

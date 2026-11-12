@@ -139,7 +139,7 @@ func TestDataAPIConfigureRefusesCapsWithoutAnHTTPSAPI(t *testing.T) {
 	if code := cmdDataAPIConfigure([]string{"shop-data", "--usage-reporting", "off", "--monthly-caps", "off", "--no-restart"}); code != 0 {
 		t.Fatal("turning reporting and caps off must work on any API")
 	}
-	if got := strings.Join(server.calls(), "|"); got != "DELETE /v1/apps/shop-data/secrets/DATA_API_MONTHLY_CAPS|DELETE /v1/apps/shop-data/secrets/DATA_API_USAGE_URL" {
+	if got := strings.Join(server.calls(), "|"); got != "GET /v1/apps/shop-data/secrets|DELETE /v1/apps/shop-data/secrets/DATA_API_MONTHLY_CAPS|DELETE /v1/apps/shop-data/secrets/DATA_API_USAGE_URL" {
 		t.Fatalf("calls = %s", got)
 	}
 }

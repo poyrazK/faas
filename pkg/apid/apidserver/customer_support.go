@@ -18,7 +18,8 @@ func (s *server) configureCustomerSupport(ctx context.Context, pool *pgxpool.Poo
 	if e != nil {
 		return e
 	}
-	s.customerSupport = &support.Service{Pool: pool, Webhook: hook, Operator: s.supportBootstrapManager}
+	s.customerSupport = &support.Service{Pool: pool, Webhook: hook, Operator: s.supportBootstrapManager,
+		Notify: s.sendSupportNotification, BootstrapEmails: s.supportNotificationBootstrapEmails, EmailAllowed: s.supportNotificationEmailAllowed}
 	if pool != nil {
 		go s.customerSupport.Run(ctx)
 	}
@@ -44,7 +45,11 @@ func (s *server) customerSupportHandler(endpoint string, staff bool) accountHand
 }
 func (s *server) registerCustomerSupportRoutes(mux *http.ServeMux) {
 	customer := func(endpoint string) http.HandlerFunc {
-		return s.authLimited(s.requireScope(api.ScopeAdmin)(s.customerSupportHandler(endpoint, false)))
+		h := s.customerSupportHandler(endpoint, false)
+		if endpoint == "read" {
+			h = s.requireSameOrigin(h)
+		}
+		return s.authLimited(s.requireScope(api.ScopeAdmin)(h))
 	}
 	mux.HandleFunc("GET /v1/support/tickets", customer("list"))
 	mux.HandleFunc("POST /v1/support/tickets", customer("create"))
@@ -64,7 +69,9 @@ func (s *server) registerCustomerSupportRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/orgs/{org}/support/tickets/{ticket}/reopen", customer("reopen"))
 	mux.HandleFunc("GET /v1/orgs/{org}/support/tickets/{ticket}/satisfaction", customer("satisfaction"))
 	mux.HandleFunc("POST /v1/orgs/{org}/support/tickets/{ticket}/satisfaction", customer("satisfaction"))
+	s.registerSupportNotificationRoutes(mux, customer)
 	s.registerSupportStaffRoutes(mux)
+	s.registerSupportPortalRoutes(mux)
 }
 func (s *server) registerSupportStaffRoutes(mux *http.ServeMux) {
 	for _, route := range []struct{ method, path, endpoint string }{

@@ -4345,7 +4345,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			AdmitRuntime:              financialBudgetServiceAdmission(pgStore),
 			APIMonetization:           deps.apiMonetization,
 			APIMonetizationFor:        handler.APIMonetizationEnabledFor,
-			AdmitManagedAsync:         gateway.NewRehearsalAsyncAdmitter(pgStore),
+			AdmitManagedAsync:         gateway.ChainServiceProxyAsyncAdmitters(gateway.NewRehearsalAsyncAdmitter(pgStore), gateway.NewFunctionSendAdmitter(pgStore)),
 			Provider:                  serviceEndpointProvider,
 			Resolve:                   newServiceProxyResolver(pgStore),
 			Authorize:                 newBudgetedServiceProxyAuthorizer(pgStore),

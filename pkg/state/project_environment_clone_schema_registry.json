@@ -141,6 +141,27 @@
     "kind": "account_identity"
   },
   {
+    "table": "agent_undo_records",
+    "columns": [
+      "account_id",
+      "activity_id",
+      "created_at",
+      "guard",
+      "id",
+      "inverse",
+      "key_id",
+      "kind",
+      "method",
+      "not_undoable_reason",
+      "org_id",
+      "path",
+      "summary",
+      "undone_at",
+      "undone_by"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "alert_test_sends",
     "columns": [
       "id",
@@ -4200,6 +4221,7 @@
     "table": "crons",
     "columns": [
       "app_id",
+      "clone_paused",
       "command",
       "command_max_output_bytes",
       "command_shell",
@@ -4225,9 +4247,18 @@
       "timezone"
     ],
     "kind": "configuration",
-    "capabilities": [],
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "deployment_scope",
+          "source_scope": true
+        }
+      ]
     }
   },
   {
@@ -4786,6 +4817,17 @@
       "app_id",
       "config",
       "reported_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "data_api_shared_budgets",
+    "columns": [
+      "app_id",
+      "budget_key",
+      "requests",
+      "window_end",
+      "window_start"
     ],
     "kind": "operational"
   },
@@ -10828,7 +10870,8 @@
       "delete_at",
       "mail_intent_id",
       "reason",
-      "recorded_at"
+      "recorded_at",
+      "reminder_mail_intent_id"
     ],
     "kind": "operational"
   },
@@ -20590,6 +20633,8 @@
       "override_freeze_ids",
       "release_at",
       "scheduled_by",
+      "scheduled_by_account_id",
+      "scheduled_by_key_id",
       "started_at",
       "state",
       "updated_at"
@@ -21059,6 +21104,27 @@
       "body",
       "redacted",
       "created_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_notifications",
+    "columns": [
+      "id",
+      "sequence",
+      "event_id",
+      "ticket_id",
+      "recipient_id",
+      "audience",
+      "kind",
+      "created_at",
+      "read_at",
+      "email_state",
+      "attempts",
+      "lease_id",
+      "lease_until",
+      "available_at",
+      "destination_hash"
     ],
     "kind": "operational"
   },

@@ -518,6 +518,22 @@ or `production` (refused for branches).
   - `EnvironmentBranchDefaultTTL` 7 days, `EnvironmentBranchMinTTL` 1 hour,
     `EnvironmentBranchMaxTTL` 30 days;
   - copies use the PostgreSQL branch allowance (`ManagedPostgresBranchesMax`), see Accounting.
+- **Lifecycle** (amended 2026-11-12, owner decisions). A branch has its own view and
+  lifecycle under `/v1/projects/{slug}/environments/{branch}/branch`:
+  - `GET` reports the branch, the database copies it owns and each workload with its URL;
+  - `POST .../extend` moves the expiry to now plus a TTL. A branch lives at most
+    `EnvironmentBranchMaxTTL` (30 days) after its creation; a branch with database copies at
+    most `EnvironmentBranchWithDatabasesMaxLifetime` (7 days), so its copies stay in the
+    PostgreSQL branch allowance. The copies' expiry moves first
+    (`managedpostgres.Service.MoveBranchExpiry`, compare-and-set on the old expiry), then the
+    branch's. A branch whose data is pending is refused: its copies' TTL is fixed from the
+    expiry when they are made, and a retry must adopt the same copy;
+  - `POST .../reset` deletes the branch and creates it again from its parent with its slug,
+    egress, private-network mode and lifetime. The workloads get new URLs: a workload's host
+    is derived from its environment ID, and reusing an ID after a delete would let about 20
+    tables keyed by environment ID without a cascading foreign key (workload heads, queue
+    bindings, runtime proofs, …) carry the old branch's state into the new one. Stable
+    names would need slug-based hosts, which this does not add.
 - **Organizations** (amended 2026-11-12, owner decision). Company projects branch through
   the reviewed project-access table (`pkg/apid/projectaccess/routes.go`):
   - listing branches needs the read action; creating one needs the configure action

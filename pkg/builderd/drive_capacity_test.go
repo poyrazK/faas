@@ -43,3 +43,34 @@ func TestCheckBuildDriveCapacityReclaimsDependencyCacheFirst(t *testing.T) {
 		t.Fatalf("full disk = %v, want ErrBuildDiskFull", err)
 	}
 }
+
+// adr: 20261030122204 — a BuildKit seed yields its bytes before a build drive
+// is refused.
+func TestCheckBuildDriveCapacityDropsBuildKitSeedsFirst(t *testing.T) {
+	root := t.TempDir()
+	driveDir := filepath.Join(root, "drive")
+	if err := os.MkdirAll(driveDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	s := &buildkitSeedStore{dir: buildkitSeedDir(driveDir)}
+	if err := os.MkdirAll(s.dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, s.seedPath("k"), "seed")
+	writeFile(t, s.readyPath("k"), "ready")
+	previous := driveFilesystemAvailable
+	t.Cleanup(func() { driveFilesystemAvailable = previous })
+	// The filesystem has room only once the seed is gone.
+	driveFilesystemAvailable = func(string) (uint64, error) {
+		if _, err := os.Stat(s.seedPath("k")); err == nil {
+			return BuildDriveMinFreeBytes - 1, nil
+		}
+		return BuildDriveMinFreeBytes, nil
+	}
+	if err := checkBuildDriveCapacity(filepath.Join(driveDir, "build.ext4")); err != nil {
+		t.Fatalf("capacity after dropping the seed: %v", err)
+	}
+	if _, ok := s.ready("k"); ok {
+		t.Fatal("the seed survived a build that needed its space")
+	}
+}

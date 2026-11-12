@@ -171,6 +171,31 @@ func (m *MemStore) OutboundAIRequestCaller(_ context.Context, accountID, integra
 	return "", ErrNotFound
 }
 
+var _ OutboundAIRequestCallersStore = (*MemStore)(nil)
+
+// OutboundAIRequestCallers mirrors the PgStore read of several logged calls'
+// callers.
+func (m *MemStore) OutboundAIRequestCallers(_ context.Context, accountID string, logIDs []string) (map[string]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	wanted := make(map[string]bool, len(logIDs))
+	for _, logID := range logIDs {
+		wanted[logID] = true
+	}
+	callers := make(map[string]string, len(logIDs))
+	for integrationID, entries := range m.outboundAIRequestLog {
+		if !m.memOutboundIntegrationOwned(accountID, integrationID) {
+			continue
+		}
+		for _, entry := range entries {
+			if wanted[entry.ID] {
+				callers[entry.ID] = entry.Caller
+			}
+		}
+	}
+	return callers, nil
+}
+
 var _ OutboundAIContentStore = (*MemStore)(nil)
 
 // GetOutboundAIRequestContent mirrors the PgStore read of a captured call

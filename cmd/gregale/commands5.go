@@ -288,10 +288,10 @@ func cmdStatus(args []string) int {
 // flow as `gregale secrets set`; `--restart` opts into an immediate
 // park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
-	if len(args) == 0 || args[0] == "clone-status" && !fullEnvironmentCloneCLI() {
+	if len(args) == 0 || (args[0] == "clone-status" || args[0] == "resume-automation") && !fullEnvironmentCloneCLI() {
 		usage := "usage: gregale env <create|pull|push|diff|history|rollback>"
 		if fullEnvironmentCloneCLI() {
-			usage = "usage: gregale env <create|clone-status|pull|push|diff|history|rollback>"
+			usage = "usage: gregale env <create|clone-status|resume-automation|pull|push|diff|history|rollback>"
 		}
 		PrintUsage(os.Stderr, usage, "env")
 		return 1
@@ -305,6 +305,8 @@ func cmdEnv(args []string) int {
 		return envCreate(args[1:])
 	case "clone-status":
 		return envCloneStatus(args[1:])
+	case "resume-automation":
+		return envResumeAutomation(args[1:])
 	case "pull":
 		return envPull(args[1:])
 	case "push":

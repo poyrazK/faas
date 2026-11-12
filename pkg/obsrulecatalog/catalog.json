@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "3a84335aa10315550f0ebef71b22491e212d17540b924b9f767b144d9a7385da",
+      "revision": "b85e814640fce4d638937e8294d9563351d194e17c0332de72c62dd420cf700d",
       "files": [
         "faas.rules.yml"
       ],
@@ -3247,6 +3247,19 @@
           }
         },
         {
+          "id": "6dc3f81d4c9996de527defd96138159c632248353436fe373c1af9a84eaebeb6",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasAIGatewayEnabledWithoutAppRelay",
+          "definition": {
+            "expression_hash": "42b6a19255f4aa6d726f906e0cd52ee70e13da5b92e2adbb9daabb04707d3ff9",
+            "labels_hash": "33b573f07422e2f698ffae7093f1803839593a1b73b5853a656e861a4d64e711",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c6da852dd9d2715e818896b5d78dca8173772bfb0dfc43dde6b56edc990c591a"
+          }
+        },
+        {
           "id": "6ee6a4224989b1312cc052f32541c05887790d6178c821ea37e009afce233204",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo_monthly_alerts",
@@ -4960,6 +4973,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "4a21e703f8a40b3b5f4f613bcd36e3f3c3b2e509adb2e7fcf70065f94adfcf47"
+          }
+        },
+        {
+          "id": "af4cb6e9d1720f6179822f67ae35a08e6f72a9984b36ed3aa054caec93f4c18e",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_event_routing",
+          "rule_name": "FaasInvocationDispatchSaturated",
+          "definition": {
+            "expression_hash": "0fb4f9b9eb9fa4bb24b26d5b8dfa01770c658a139de9290b30564b5e4130f4b2",
+            "labels_hash": "8d92fa3abf8327e6a2e6bd0951e37822c2cd542e636c1d3452dd0935be8344e7",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "d22e08bea83bd3f80edabae377f656e36a1c04a6b098e24fa453b52b75b93de7"
           }
         },
         {
@@ -7124,7 +7150,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "a4d55af374acb4ecf8f24c66f7cf37e37a20fce795736cf94bfe81f42b744cb8",
+      "revision": "1a2252283a4ef4f8ae339809de1299d3f6c91d5a3eda6b17b87171021ce3a420",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -10475,6 +10501,19 @@
           }
         },
         {
+          "id": "6dc3f81d4c9996de527defd96138159c632248353436fe373c1af9a84eaebeb6",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasAIGatewayEnabledWithoutAppRelay",
+          "definition": {
+            "expression_hash": "42b6a19255f4aa6d726f906e0cd52ee70e13da5b92e2adbb9daabb04707d3ff9",
+            "labels_hash": "33b573f07422e2f698ffae7093f1803839593a1b73b5853a656e861a4d64e711",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c6da852dd9d2715e818896b5d78dca8173772bfb0dfc43dde6b56edc990c591a"
+          }
+        },
+        {
           "id": "6ee6a4224989b1312cc052f32541c05887790d6178c821ea37e009afce233204",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo_monthly_alerts",
@@ -12305,6 +12344,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "4a21e703f8a40b3b5f4f613bcd36e3f3c3b2e509adb2e7fcf70065f94adfcf47"
+          }
+        },
+        {
+          "id": "af4cb6e9d1720f6179822f67ae35a08e6f72a9984b36ed3aa054caec93f4c18e",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_event_routing",
+          "rule_name": "FaasInvocationDispatchSaturated",
+          "definition": {
+            "expression_hash": "0fb4f9b9eb9fa4bb24b26d5b8dfa01770c658a139de9290b30564b5e4130f4b2",
+            "labels_hash": "8d92fa3abf8327e6a2e6bd0951e37822c2cd542e636c1d3452dd0935be8344e7",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "d22e08bea83bd3f80edabae377f656e36a1c04a6b098e24fa453b52b75b93de7"
           }
         },
         {
