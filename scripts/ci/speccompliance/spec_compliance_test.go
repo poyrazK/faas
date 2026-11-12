@@ -123,6 +123,9 @@ var previewFields = map[string]map[string]bool{
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	// ADR-20261112134100: private staff inbox metadata; public customer counterparts remain documented.
+	"GET /v1/admin/support/notifications":                                         true,
+	"POST /v1/admin/support/tickets/{ticket}/read":                                true,
 	"DELETE /v1/apps/{slug}/operation-approval-forms/{id}":                        true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
 	"DELETE /v1/apps/{slug}/operation-concurrency/{id}":                           true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
 	"GET /v1/apps/{slug}/operation-approval-forms":                                true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
@@ -1437,6 +1440,7 @@ func testRoutesParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg/apid/apidserver", "org_queue_routes.go"),
 		filepath.Join(root, "pkg/apid/apidserver", "handlers_issues.go"),
 		filepath.Join(root, "pkg/apid/apidserver", "customer_support.go"),
+		filepath.Join(root, "pkg/apid/apidserver", "support_notifications.go"),
 		filepath.Join(root, "cmd/gatewayd-internal", "run.go"),
 	}
 	var codeRoutes []string
