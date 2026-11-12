@@ -1,7 +1,8 @@
 # ADR 20261112110000 · The SDKs are published to public repositories in the gregale-dev org
 
 - **Status:** accepted
-- **Date:** 2026-11-12
+- **Date:** 2026-11-12; amended 2026-11-12 (decision 7: a GitHub App, not
+  deploy keys, which the gregale-dev org has turned off)
 - **Amends:** issue #266's plan to split the Go SDK into its own repository
   (the "PR 12" note that `sdk/go/go.mod` carried). This repository stays the
   source of truth; the public repositories are published copies.
@@ -63,10 +64,17 @@ A feature that changes the API and its SDK methods lands as one change.
    a page the docs site publishes (`docs/customer-pages.json`) goes to
    gregale.dev; any other link into this repository goes to it on GitHub.
    `sdk_mirror.py check` fails on a link that resolves nowhere.
-7. **Each public repository gets its own deploy key.** The workflow reads
-   `SDK_MIRROR_DEPLOY_KEY_GO`, `_JS` and `_PYTHON`; a missing secret skips that
-   push. Pull requests build and check the trees (Go build and vet, `npm pack`,
-   a Python wheel) without pushing.
+7. **The workflow pushes with a GitHub App.** The gregale-dev "SDK mirror"
+   App is installed on the public SDK repositories only, with Contents
+   read/write. Each matrix job mints an installation token scoped to its one
+   repository (`actions/create-github-app-token`) and passes it to git as an
+   HTTP header from the environment, so it never appears in a URL or command
+   line. The workflow reads the variable `SDK_MIRROR_APP_CLIENT_ID` and the
+   secret `SDK_MIRROR_APP_PRIVATE_KEY`; until the variable is set it skips the
+   push. Pull requests build and check the trees (Go build and vet,
+   `npm pack`, a Python wheel) without pushing. Deploy keys were the first
+   choice; the org has them turned off, and a token that expires within an
+   hour leaves no long-lived write key per repository.
 
 ## Consequences
 
