@@ -1975,6 +1975,7 @@ var cliCommands = []cliCommand{
 			{Name: "only-declared-routes", Group: "Request handling", Short: "reject undeclared paths before waking the app (OpenAPI or explicit route list); the edge-answered health path stays reachable"},
 			{Name: "no-only-declared-routes", Group: "Request handling", Short: "disable the declared-route pre-wake gate"},
 			{Name: "head-wakes", Group: "Wake behavior", Short: "wake a parked app for HEAD /", Bool: true, ClosedSet: []string{"true", "false"}},
+			{Name: "ports", Group: "Request handling", Short: "declare TCP/UDP listeners (unnamed ones are named tcp-PORT / udp-PORT); none clears", Value: "[NAME=]tcp|udp:PORT[:internal],..."},
 			{Name: "crawler-policy", Group: "Wake behavior", Short: "monitor/crawler wake policy", Value: "wake|cached|block", ClosedSet: []string{"wake", "cached", "block"}},
 			{Name: "pre-auth", Group: "Access and security", Short: "per-source pre-auth limit mode; enforce first prints the 24h readiness check", Value: "off|observe|enforce", ClosedSet: []string{"off", "observe", "enforce"}},
 			{Name: "pre-auth-rps", Group: "Access and security", Short: "pre-auth requests per second per source", Value: "N"},

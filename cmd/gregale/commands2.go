@@ -316,6 +316,7 @@ func cmdApp(args []string) int {
 	onlyDeclaredRoutes := fs.Bool("only-declared-routes", false, "reject paths not declared by the OpenAPI document (or explicit route list) before wake")
 	noOnlyDeclaredRoutes := fs.Bool("no-only-declared-routes", false, "disable the declared-route pre-wake gate")
 	headWakes := fs.Bool("head-wakes", false, "wake a parked app for HEAD / instead of using the cached edge answer")
+	portsFlag := fs.String("ports", "", "TCP/UDP listeners: comma-separated [NAME=]tcp|udp:PORT[:internal], or none to clear")
 	crawlerPolicy := fs.String("crawler-policy", "", "known monitor/crawler policy: wake|cached|block")
 	preAuthMode := fs.String("pre-auth", "", "pre-auth source limit mode: off|observe|enforce")
 	preAuthRPS := fs.Int("pre-auth-rps", 0, "pre-auth requests per second per source")
@@ -642,6 +643,13 @@ func cmdApp(args []string) int {
 	if explicit["head-wakes"] {
 		v := *headWakes
 		req.HeadWakes = &v
+	}
+	if explicit["ports"] {
+		ports, err := parseAppPortsFlag(*portsFlag)
+		if err != nil {
+			return printErr("Invalid --ports", err)
+		}
+		req.Ports = &ports
 	}
 	if explicit["crawler-policy"] {
 		v := *crawlerPolicy
