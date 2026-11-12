@@ -263,6 +263,12 @@ name one with `--installation-id` (`gregale github status` lists them).
 an organization's installation by an admin of the organization. Each
 installation belongs to one Gregale account.
 
+If GitHub shows only other people's personal installations, Connect GitHub
+continues with installing Gregale on your own account. Connection failures in
+Settings → Integrations explain the reason and next step. **Install on GitHub**
+starts a fresh installation request when you need to choose another account;
+the return to Gregale remains verified.
+
 **Deploy from GitHub Actions instead.** `gregale github setup my-api --repo
 acme/my-api` binds the app, writes a deploy workflow, and hands production
 deploys to the workflow (`production_trigger: actions`), so a push deploys
