@@ -147,9 +147,11 @@ func (h *devDebugTunnel) attach(w http.ResponseWriter, r *http.Request, acct sta
 		keyID = key.ID
 		auditData["key_id"] = key.ID
 	}
-	endAudit := h.audits.open(devDebugAuditKey{accountID: acct.ID, appID: app.ID, keyID: keyID}, auditData,
-		func(kind string, data map[string]any) {
-			h.emitAudit(context.WithoutCancel(r.Context()), kind, acct.ID, data)
+	// The session's events outlive this request (detached fires after the
+	// grace), so they carry a context that is not cancelled with it.
+	endAudit := h.audits.open(context.WithoutCancel(r.Context()), devDebugAuditKey{accountID: acct.ID, appID: app.ID, keyID: keyID}, auditData,
+		func(ctx context.Context, kind string, data map[string]any) {
+			h.emitAudit(ctx, kind, acct.ID, data)
 		})
 	defer endAudit()
 	h.log.Info("developer debugger attached", "account_id", acct.ID, "app_id", app.ID, "instance_id", target.InstanceID)
@@ -179,7 +181,8 @@ type devDebugAuditSession struct {
 	open, tunnels int
 	started       time.Time
 	attached      map[string]any
-	emit          func(kind string, data map[string]any)
+	ctx           context.Context
+	emit          func(ctx context.Context, kind string, data map[string]any)
 	detach        func() bool // stops the pending detached event
 }
 
@@ -206,7 +209,7 @@ func (a *devDebugAudits) clock() (func() time.Time, func(time.Duration, func()) 
 }
 
 // open records one tunnel and returns the function its close calls.
-func (a *devDebugAudits) open(key devDebugAuditKey, data map[string]any, emit func(kind string, data map[string]any)) func() {
+func (a *devDebugAudits) open(ctx context.Context, key devDebugAuditKey, data map[string]any, emit func(ctx context.Context, kind string, data map[string]any)) func() {
 	now, after := a.clock()
 	a.mu.Lock()
 	if a.sessions == nil {
@@ -215,7 +218,7 @@ func (a *devDebugAudits) open(key devDebugAuditKey, data map[string]any, emit fu
 	s := a.sessions[key]
 	fresh := s == nil
 	if fresh {
-		s = &devDebugAuditSession{started: now(), attached: data, emit: emit}
+		s = &devDebugAuditSession{started: now(), attached: data, ctx: ctx, emit: emit}
 		a.sessions[key] = s
 	} else if s.detach != nil {
 		s.detach()
@@ -225,7 +228,7 @@ func (a *devDebugAudits) open(key devDebugAuditKey, data map[string]any, emit fu
 	s.tunnels++
 	a.mu.Unlock()
 	if fresh {
-		emit("dev.debugger.attached", data)
+		emit(ctx, "dev.debugger.attached", data)
 	}
 	var once sync.Once
 	return func() {
@@ -256,7 +259,7 @@ func (a *devDebugAudits) finish(key devDebugAuditKey, s *devDebugAuditSession) {
 	detached["duration_ms"] = now().Add(-devDebugAuditGrace).Sub(s.started).Milliseconds()
 	detached["tunnels"] = s.tunnels
 	a.mu.Unlock()
-	s.emit("dev.debugger.detached", detached)
+	s.emit(s.ctx, "dev.debugger.detached", detached)
 }
 
 // newDevDebugTunnel returns nil when the gateway lacks the API-key

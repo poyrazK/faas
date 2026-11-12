@@ -271,7 +271,7 @@ func TestDevDebugAuditsCoalesceTunnelsIntoSessions(t *testing.T) {
 	}
 	var events []string
 	var lastDetach map[string]any
-	emit := func(kind string, data map[string]any) {
+	emit := func(_ context.Context, kind string, data map[string]any) {
 		events = append(events, kind)
 		if kind == "dev.debugger.detached" {
 			lastDetach = data
@@ -279,7 +279,7 @@ func TestDevDebugAuditsCoalesceTunnelsIntoSessions(t *testing.T) {
 	}
 	key := devDebugAuditKey{accountID: "acct", appID: "app", keyID: "key"}
 	for i := 0; i < 20; i++ { // a discovery poll every second
-		closeTunnel := audits.open(key, map[string]any{"app_id": "app"}, emit)
+		closeTunnel := audits.open(context.Background(), key, map[string]any{"app_id": "app"}, emit)
 		now = now.Add(500 * time.Millisecond)
 		closeTunnel()
 		now = now.Add(500 * time.Millisecond)
@@ -296,7 +296,7 @@ func TestDevDebugAuditsCoalesceTunnelsIntoSessions(t *testing.T) {
 		t.Fatalf("duration_ms = %v, want 19500 (first open to last close)", got)
 	}
 	// A different key is its own session.
-	audits.open(devDebugAuditKey{accountID: "acct", appID: "app", keyID: "other"}, map[string]any{}, emit)()
+	audits.open(context.Background(), devDebugAuditKey{accountID: "acct", appID: "app", keyID: "other"}, map[string]any{}, emit)()
 	if len(events) != 3 || events[2] != "dev.debugger.attached" {
 		t.Fatalf("another key's tunnel: events = %v, want a new attached", events)
 	}
