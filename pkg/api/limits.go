@@ -1267,6 +1267,16 @@ const (
 	ProfileCPUSaturationGrace              = 5 * time.Second
 	ProfileCaptureCPUSaturationMinInterval = 15 * time.Minute
 	ProfileCaptureCPUSaturationDuration    = 10 * time.Second
+	// Sustained CPU abuse (ADR-20261112120603). schedd's stats poller counts
+	// an instance pinned while its host CPU use is at least
+	// CPUAbuseSaturationPercent of its sustained cgroup quota; a dip shorter
+	// than CPUAbuseGrace does not end the episode. An episode lasting
+	// CPUAbuseSustainedAfter is a CPU abuse signal: a Free instance is
+	// recycled (enforce mode) and the recycle counts toward the ADR-361
+	// account abuse hold; a paid instance is only flagged.
+	CPUAbuseSaturationPercent = 90
+	CPUAbuseSustainedAfter    = 15 * time.Minute
+	CPUAbuseGrace             = 30 * time.Second
 	// ProfileCaptureMaxKinds bounds the kinds one capture collects: every kind.
 	ProfileCaptureMaxKinds = 5
 	// Go contention sampling while a capture asks for block or mutex

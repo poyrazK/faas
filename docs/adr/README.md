@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261112120603: Sustained CPU abuse detection](20261112120603-sustained-cpu-abuse.md) — accepted; an instance at 90% of its CPU quota for 15 minutes is recycled on Free (enforce mode) and counts toward the ADR-361 account abuse hold (`cpu_sustained`), flagged on paid plans; ships behind `cpu_abuse_mode` defaulting to shadow
 - [ADR-20261111150000: Typed function-to-function clients](20261111150000-typed-function-to-function-clients.md) — accepted; functions declare `input`/`output` JSON Schema, the CLI generates typed Node/Python clients; siblings in a functions project get automatic private bindings (`<slug>.internal`, `GREGALE_FUNCTIONS`); `call()` and async `send()` over the binding; other apps only via `calls:`
 - [ADR-20261111145512: Exact numbers with bounded edge validation arithmetic](20261111145512-edge-validation-exact-number-bounds.md) — accepted; preserve JSON numeric precision while bounding numeric token length, exponent expansion and aggregate arithmetic work
 - [ADR-20261111183000: Automatically select supported developer watch mode](20261111183000-automatic-developer-watch-selection.md) — accepted; flags and manifest settings override detection, server eligibility can fall back for automatic choices, and workspace children preserve explicit opt-outs
