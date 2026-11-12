@@ -12,3 +12,9 @@ faas_imaged_signd_tls_issuer_host: "{{ groups['control_plane'] | default([]) | f
 # or grant only) and leave webhook delivery to the control plane's schedd.
 # Execution dispatch and the commit relay refuse to run with it.
 faas_schedd_secretd_delivery: false
+
+# ADR-20261110210000 slice 3j-2, per compute node after faas_secretd_target
+# and the control plane's SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE: true makes
+# imaged pull apps' private images through secretd instead of opening their
+# registry passwords here.
+faas_imaged_secretd_registry_pulls: false

@@ -35,6 +35,18 @@ type CrashCapture struct {
 	SealedKey []byte
 }
 
+type Deployment struct {
+	ID    pgtype.UUID
+	AppID pgtype.UUID
+}
+
+type DeploymentImagePreparation struct {
+	DeploymentID pgtype.UUID
+	NodeName     string
+	Phase        string
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type EdgeRule struct {
 	ID     pgtype.UUID
 	AppID  pgtype.UUID

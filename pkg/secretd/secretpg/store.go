@@ -241,6 +241,20 @@ func (s *Store) RegistryCredential(ctx context.Context, appID, registry string) 
 	return row.Username, row.PasswordEncrypted, nil
 }
 
+// PreparesImage implements secretd.Store.
+func (s *Store) PreparesImage(ctx context.Context, appID, nodeName string, since time.Time) (bool, error) {
+	app, perr := pgUUID(appID)
+	if perr != nil || nodeName == "" {
+		return false, nil //nolint:nilerr // a malformed app id prepares nothing
+	}
+	ok, err := s.q.NodePreparesAppImage(ctx, s.db, sqlc.NodePreparesAppImageParams{AppID: app, NodeName: nodeName,
+		Since: pgtype.Timestamptz{Time: since, Valid: true}})
+	if err != nil {
+		return false, fmt.Errorf("secretpg: image preparation: %w", err)
+	}
+	return ok, nil
+}
+
 // TriggerConfig implements secretd.Store: a trigger of appID only.
 func (s *Store) TriggerConfig(ctx context.Context, appID, triggerID string) (string, []byte, error) {
 	app, err := pgUUID(appID)

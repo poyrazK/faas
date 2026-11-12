@@ -179,8 +179,16 @@ plane: watch its network and `faas_secretd_opens_total{rpc="RegistryFetch"}`.
    `SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE=true` and run CD for the control plane;
    `journalctl -u faas-secretd` reports `build_identities` 1 (2 during a
    rotation).
-2. **Compute switches** come with slices 3j-2 (imaged) and 3j-3 (builder
-   VMs). Until then nothing calls `RegistryFetch`.
+2. **imaged, one node first:** set `faas_imaged_secretd_registry_pulls: true`
+   on one compute node (needs `faas_secretd_target`) and converge it. Deploy an
+   app with a private image there and check
+   `faas_secretd_opens_total{rpc="RegistryFetch"}` rises and the deploy
+   succeeds. `faas_secretd_refusals_total{rpc="RegistryFetch",reason="not_authorized"}`
+   rising means a node pulled for an app it neither owns, holds a grant for,
+   nor prepares an image of: find the path in imaged's journal before
+   turning on more nodes. Then the rest of compute.
+3. **Builder VMs** come with slice 3j-3. Job images still open their
+   credentials on the node (3j-2b).
 
 ## Rotation
 

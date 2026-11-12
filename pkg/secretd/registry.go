@@ -85,6 +85,9 @@ type registryFetcher struct {
 	hc    *http.Client
 	now   func() time.Time
 	slots chan struct{}
+	// creds resolves stored credentials (ECR IAM keys to tokens) and
+	// caches the exchanged tokens.
+	creds *oci.RegistryClient
 
 	mu     sync.Mutex
 	tokens map[registryTokenKey]registryToken
@@ -111,6 +114,7 @@ func newRegistryFetcher(hc *http.Client, now func() time.Time) *registryFetcher 
 		return nil
 	}
 	return &registryFetcher{hc: &client, now: now, slots: make(chan struct{}, MaxConcurrentRegistryFetches),
+		creds:  oci.NewRegistryClient(oci.WithHTTPClient(&client)),
 		tokens: map[registryTokenKey]registryToken{}}
 }
 
@@ -280,7 +284,7 @@ func (s *Server) RegistryFetch(req *secretdpb.RegistryFetchRequest, stream grpc.
 	if len(s.buildIdentities) == 0 {
 		return rpcErr(codes.FailedPrecondition, "secretd holds no build identity")
 	}
-	name, nodeID, via, err := s.authorizeByReference(ctx, rpcRegistryFetch, appID)
+	name, nodeID, via, err := s.authorizeRegistryFetch(ctx, appID)
 	if err != nil {
 		return err
 	}
@@ -303,8 +307,13 @@ func (s *Server) RegistryFetch(req *secretdpb.RegistryFetchRequest, stream grpc.
 		s.metrics.refuse(rpcRegistryFetch, ReasonEnvelope)
 		return rpcErr(codes.FailedPrecondition, "secretd could not open the registry credential")
 	}
-	auth := &oci.BasicAuth{Username: username, Password: string(password)}
+	auth, err := s.registry.creds.RegistryCredential(ctx, target.url.Host, &oci.BasicAuth{Username: username, Password: string(password)})
 	clear(password)
+	if err != nil {
+		s.log.Warn("secretd: registry credential exchange", "app_id", logsanitize.Field(appID),
+			"registry", logsanitize.Field(target.url.Host), "err", err)
+		return rpcErr(codes.Unavailable, "secretd could not exchange the registry credential")
+	}
 	// A pull reads one manifest and many blobs; the manifest read is the
 	// open the audit records.
 	if target.manifest {
@@ -328,6 +337,48 @@ func (s *Server) RegistryFetch(req *secretdpb.RegistryFetchRequest, stream grpc.
 	defer func() { _ = resp.Body.Close() }()
 	s.metrics.open(rpcRegistryFetch, via)
 	return streamRegistryResponse(stream, resp)
+}
+
+// imagePreparationWindow bounds how old a preparation may be and still let
+// its node pull: a preparation that stopped updating is not a pull.
+const imagePreparationWindow = 6 * time.Hour
+
+// authorizeRegistryFetch admits the app's owner, a granted peer, or the node
+// that holds an unfinished image preparation of one of the app's
+// deployments: the scheduler names the node that prepares a deployment's
+// image, which is not always the owner. The password never leaves secretd
+// either way; the node gets the image it was asked to prepare.
+func (s *Server) authorizeRegistryFetch(ctx context.Context, appID string) (name, nodeID, via string, err error) {
+	name, nodeID, err = s.caller(ctx, rpcRegistryFetch)
+	if err != nil {
+		return "", "", "", err
+	}
+	target, err := s.store.AppTarget(ctx, appID)
+	if err != nil {
+		return "", "", "", rpcErr(codes.NotFound, "secretd found no such app")
+	}
+	via, err = s.authorize(ctx, appID, nodeID, target)
+	if err != nil {
+		preparing, perr := s.store.PreparesImage(ctx, appID, name, s.now().Add(-imagePreparationWindow))
+		if perr != nil {
+			s.log.Error("secretd: image preparation lookup", "app_id", logsanitize.Field(appID), "err", perr)
+			return "", "", "", rpcErr(codes.Unavailable, "secretd could not look up the image preparation")
+		}
+		if !preparing {
+			s.log.Warn("secretd: refused registry fetch", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+			s.metrics.refuse(rpcRegistryFetch, ReasonNotAuthorized)
+			return "", "", "", rpcErr(codes.PermissionDenied, "secretd refused: the caller neither owns the app, holds a grant, nor prepares its image")
+		}
+		// secret_open_audit.via is owner or grant: a preparation is
+		// recorded as a grant the scheduler gave.
+		via = "grant"
+	}
+	if !s.budget.allow(nodeID, appID, s.now()) {
+		s.log.Error("secretd: node over its distinct-app budget", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID))
+		s.metrics.refuse(rpcRegistryFetch, ReasonBudgetExhausted)
+		return "", "", "", rpcErr(codes.ResourceExhausted, "secretd refused: the caller opened too many distinct apps this hour")
+	}
+	return name, nodeID, via, nil
 }
 
 func streamRegistryResponse(stream grpc.ServerStreamingServer[secretdpb.RegistryFetchResponse], resp *http.Response) error {

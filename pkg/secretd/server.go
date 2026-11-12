@@ -77,6 +77,9 @@ type Store interface {
 	// appID's credential for registry (the request URL's host), or
 	// ErrUnknownRegistryCredential.
 	RegistryCredential(ctx context.Context, appID, registry string) (username string, sealed []byte, err error)
+	// PreparesImage reports whether nodeName holds an unfinished image
+	// preparation of a deployment of appID updated since since.
+	PreparesImage(ctx context.Context, appID, nodeName string, since time.Time) (bool, error)
 }
 
 // ErrUnknownEdgeHeaderSecret is returned by Store.EdgeHeaderSecret.

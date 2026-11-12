@@ -34,6 +34,11 @@ type fakeStore struct {
 	triggers    map[[2]string]fakeTrigger
 	edgeHeaders map[[2]string][]byte // {app, secret} -> sealed value
 	registries  map[[2]string]fakeRegistryCredential
+	preparing   map[[2]string]bool // {app, node name}
+}
+
+func (f *fakeStore) PreparesImage(_ context.Context, appID, nodeName string, _ time.Time) (bool, error) {
+	return f.preparing[[2]string{appID, nodeName}], nil
 }
 
 type fakeRegistryCredential struct {

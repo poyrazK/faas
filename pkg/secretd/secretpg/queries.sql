@@ -53,6 +53,18 @@ SELECT s.ciphertext FROM edge_rule_header_secrets s
 SELECT username, password_encrypted FROM app_registry_credentials
  WHERE app_id = sqlc.arg(app_id)::uuid AND registry = sqlc.arg(registry)::text;
 
+-- name: NodePreparesAppImage :one
+-- An unfinished image preparation of one of the app's deployments held by
+-- the node (ADR-20261110210000 slice 3j-2).
+SELECT EXISTS (
+    SELECT 1 FROM deployment_image_preparations p
+      JOIN deployments d ON d.id = p.deployment_id
+     WHERE d.app_id = sqlc.arg(app_id)::uuid
+       AND p.node_name = sqlc.arg(node_name)::text
+       AND p.phase <> 'handed_off'
+       AND p.updated_at > sqlc.arg(since)::timestamptz
+) AS preparing;
+
 -- name: TriggerConfig :one
 -- A trigger of the named app only (ADR-20261110210000 slice 3g).
 SELECT kind, config FROM triggers

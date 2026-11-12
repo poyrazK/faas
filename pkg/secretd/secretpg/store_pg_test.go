@@ -195,6 +195,33 @@ func TestReferenceLookupsOnPostgres(t *testing.T) {
 		}
 	}
 
+	// Image preparations (slice 3j-2): an unfinished preparation of one of
+	// the app's deployments, held by the named node, within the window.
+	prepDep, err := st.CreateDeployment(ctx, state.Deployment{AppID: appA.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:secretd-prep", Status: state.DeployPending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.BeginImagePreparation(ctx, prepDep.ID, "compute-7"); err != nil {
+		t.Fatal(err)
+	}
+	since := time.Now().Add(-time.Hour)
+	if ok, err := store.PreparesImage(ctx, appA.ID, "compute-7", since); err != nil || !ok {
+		t.Fatalf("preparing node = %v, %v", ok, err)
+	}
+	for name, args := range map[string][2]string{
+		"another node": {appA.ID, "compute-8"},
+		"another app":  {appB.ID, "compute-7"},
+		"bad app id":   {"not-a-uuid", "compute-7"},
+	} {
+		if ok, err := store.PreparesImage(ctx, args[0], args[1], since); err != nil || ok {
+			t.Errorf("%s = %v, %v", name, ok, err)
+		}
+	}
+	if ok, err := store.PreparesImage(ctx, appA.ID, "compute-7", time.Now().Add(time.Hour)); err != nil || ok {
+		t.Errorf("stale preparation = %v, %v", ok, err)
+	}
+
 	// Crash captures: a live sealed capture's app and key. The fixture row
 	// skips foreign keys and the status-transition trigger.
 	captureID := uuid.NewString()

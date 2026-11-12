@@ -78,3 +78,20 @@ CREATE TABLE app_registry_credentials (
     username           text  NOT NULL,
     password_encrypted bytea NOT NULL
 );
+
+-- Projection of deployment_image_preparations: the node a deployment's image
+-- preparation runs on, which may pull the app's private images
+-- (ADR-20261110210000 slice 3j-2).
+CREATE TABLE deployment_image_preparations (
+    deployment_id uuid        NOT NULL PRIMARY KEY,
+    node_name     text        NOT NULL,
+    phase         text        NOT NULL,
+    updated_at    timestamptz NOT NULL
+);
+
+-- Projection of deployments: which app a deployment belongs to
+-- (ADR-20261110210000 slice 3j-2).
+CREATE TABLE deployments (
+    id     uuid NOT NULL PRIMARY KEY,
+    app_id uuid NOT NULL
+);

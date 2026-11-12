@@ -148,6 +148,10 @@ func (ownedBy) EdgeHeaderSecret(context.Context, string, string) ([]byte, error)
 	return nil, secretd.ErrUnknownEdgeHeaderSecret
 }
 
+func (ownedBy) PreparesImage(context.Context, string, string, time.Time) (bool, error) {
+	return false, nil
+}
+
 func (ownedBy) RegistryCredential(context.Context, string, string) (string, []byte, error) {
 	return "", nil, secretd.ErrUnknownRegistryCredential
 }

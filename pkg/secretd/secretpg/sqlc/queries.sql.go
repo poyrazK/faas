@@ -124,6 +124,32 @@ func (q *Queries) LogDrainHeaderSealed(ctx context.Context, db DBTX, arg LogDrai
 	return auth_header_sealed, err
 }
 
+const nodePreparesAppImage = `-- name: NodePreparesAppImage :one
+SELECT EXISTS (
+    SELECT 1 FROM deployment_image_preparations p
+      JOIN deployments d ON d.id = p.deployment_id
+     WHERE d.app_id = $1::uuid
+       AND p.node_name = $2::text
+       AND p.phase <> 'handed_off'
+       AND p.updated_at > $3::timestamptz
+) AS preparing
+`
+
+type NodePreparesAppImageParams struct {
+	AppID    pgtype.UUID
+	NodeName string
+	Since    pgtype.Timestamptz
+}
+
+// An unfinished image preparation of one of the app's deployments held by
+// the node (ADR-20261110210000 slice 3j-2).
+func (q *Queries) NodePreparesAppImage(ctx context.Context, db DBTX, arg NodePreparesAppImageParams) (bool, error) {
+	row := db.QueryRow(ctx, nodePreparesAppImage, arg.AppID, arg.NodeName, arg.Since)
+	var preparing bool
+	err := row.Scan(&preparing)
+	return preparing, err
+}
+
 const registryCredentialSealed = `-- name: RegistryCredentialSealed :one
 SELECT username, password_encrypted FROM app_registry_credentials
  WHERE app_id = $1::uuid AND registry = $2::text
