@@ -2489,3 +2489,5 @@ func ProjectEnvironmentPlanURLs(t *testing.T) (string, map[string]string, api.Pl
 
 // ProjectEnvironmentWorkloadURL exposes the environment URL builder.
 var ProjectEnvironmentWorkloadURL = projectEnvironmentWorkloadURL
+
+var FinancialBudgetProblem = financialBudgetProblem
