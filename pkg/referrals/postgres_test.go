@@ -22,7 +22,7 @@ CREATE TABLE invoices(id uuid PRIMARY KEY,account_id uuid NOT NULL,status text N
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := migrations.FS.ReadFile("20261112112445974_sales_referrals.sql")
+	raw, err := migrations.FS.ReadFile("20261112123843558_sales_referrals.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ CREATE TABLE invoices(id uuid PRIMARY KEY,account_id uuid NOT NULL,status text N
 	if _, err = pool.Exec(ctx, up); err != nil {
 		t.Fatal(err)
 	}
-	raw, err = migrations.FS.ReadFile("20261112112447964_short_referral_codes.sql")
+	raw, err = migrations.FS.ReadFile("20261112123845122_short_referral_codes.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ CREATE TABLE invoices(id uuid PRIMARY KEY,account_id uuid NOT NULL,status text N
 	if _, err = pool.Exec(ctx, up); err != nil {
 		t.Fatal(err)
 	}
-	raw, err = migrations.FS.ReadFile("20261112112449985_validate_referral_codes.sql")
+	raw, err = migrations.FS.ReadFile("20261112123846687_validate_referral_codes.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

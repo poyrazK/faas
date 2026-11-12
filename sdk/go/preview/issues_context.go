@@ -5,7 +5,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	faas "github.com/gregale-dev/gregale-go"
 )
 
 func boundedIssueContext(in IssueContext, occurredAt time.Time) ([]faas.IssueBreadcrumb, int, map[string]string) {

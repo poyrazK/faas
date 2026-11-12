@@ -1,5 +1,20 @@
-# faas_sdk
-A client library for accessing one-box FaaS REST API
+# Gregale Python SDK
+
+The Python client and runtime helpers for [Gregale](https://gregale.dev):
+the Gregale API, workflows, realtime, operations and feature flags. The
+distribution is `gregale-sdk`; import it as `faas_sdk`.
+
+## Install
+
+`gregale-sdk` is not on PyPI yet. Install a pinned commit of this repository:
+
+```sh
+pip install 'gregale-sdk @ git+https://github.com/gregale-dev/gregale-python@<commit>'
+```
+
+Do not run `pip install faas_sdk` or `pip install faas-sdk`: that PyPI name
+belongs to an unrelated company's package. See
+[Install the SDKs](../../docs/sdks.md#python) for extras.
 
 ## Default and preview packages
 

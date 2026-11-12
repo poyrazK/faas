@@ -146,7 +146,7 @@ rewrite attribution, grant operator rights or issue payments.
 
 ## Lead pipeline and follow-up tasks
 
-Apply `20261112112455065_sales_pipeline.sql` before the matching apid release.
+Apply `20261112123848047_sales_pipeline.sql` before the matching apid release.
 The existing `FAAS_SALES_ENABLED` flag covers the lead pipeline and task inbox.
 No `faas-web` change is needed for these additions; the independently deployed
 `faas-sales` frontend presents them. Existing sales membership, verified email and MFA rules apply.
@@ -243,7 +243,7 @@ and that comparison/collection CSVs preserve the selected period and scope.
 
 ## Website contact/demo intake
 
-Apply `20261112112456780_sales_intake.sql` after the CRM migration, then deploy
+Apply `20261112123849707_sales_intake.sql` after the CRM migration, then deploy
 apid and the website. The website `/contact` route, footer **Contact sales**
 link and pricing **Request a demo** action are enabled by the build-time flag
 `VITE_FEATURE_SALES_INTAKE=1`. Both `/v1/*` and the website must share the
@@ -288,7 +288,7 @@ agent. Disable the intake flag to stop capture while retaining staff access.
 
 ## Activity history and leads needing attention
 
-Apply `20261112112458301_sales_activity.sql` before the new apid release. The
+Apply `20261112123851190_sales_activity.sql` before the new apid release. The
 existing `FAAS_SALES_ENABLED` flag covers activity history and attention alerts;
 there is no website build or new public endpoint for this release.
 
@@ -329,7 +329,7 @@ establish referral attribution, account access, rewards or commission.
 
 ## Lead qualification and closing reasons
 
-Apply `20261112112459811_sales_qualification.sql` before deploying the new apid.
+Apply `20261112123852625_sales_qualification.sql` before deploying the new apid.
 The embedded sales portal ships in the same binary; no `faas-web` release or new
 flag is required. Existing sales access, email verification, session MFA and
 origin checks apply. Drain the old apid writer when rolling out mandatory closing
@@ -375,7 +375,7 @@ staff data and backup controls, outside application clones.
 
 ## Sales message templates
 
-Apply `20261112112501306_sales_templates.sql` before apid. The existing sales
+Apply `20261112123854040_sales_templates.sql` before apid. The existing sales
 flag and staff/session restrictions cover these routes. Templates start empty.
 In **Message templates**, managers create introductions, demo invitations,
 follow-ups and stalled-deal messages. A template has a suggested stage, optional
