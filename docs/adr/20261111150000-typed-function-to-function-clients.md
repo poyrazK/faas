@@ -40,7 +40,7 @@ Owner decisions on 2026-11-11 (all were the recommended options).
    - Node: a `gregale-functions.d.ts` declaring each function's input and
      output types and a typed `functions` client;
    - Python: a `gregale_functions.py` with `TypedDict`s and a typed client.
-   `gregale functions types` writes them; `gregale deploy` and
+   `gregale function types` writes them; `gregale deploy` and
    `gregale dev --local` regenerate them when a schema changed. A function
    without a schema gets `unknown` / `Any` types and still gets a client.
    The callee checks its input against its own schema before the handler
@@ -108,10 +108,28 @@ Owner decisions on 2026-11-11 (all were the recommended options).
 2. Runtime clients: `functions` in `@gregale/sdk-node` and `faas_sdk`
    (call over the binding, `FunctionCallError`), and the callee-side input
    check in the Node and Python adapters (`function_input_invalid`).
-3. Generated types: `gregale functions types`, regeneration in `deploy` and
+3. Generated types: `gregale function types`, regeneration in `deploy` and
    `dev --local`; `dev --local` serves siblings through the same client.
+   As built: the command is singular, as the CLI tree's nouns are
+   (ADR-20261026145832; `functions` is its alias). Each Node or Python
+   function gets one file in its root covering the names it may call;
+   `--check` fails without writing, for CI. `gregale deploy` refreshes only
+   files that already exist, before any build (a Python function imports
+   its `gregale_functions.py`), so a deploy never adds files the author did
+   not ask for. Regeneration in `dev --local` is still to come.
 4. `send()`: the service proxy's async admission for function targets
    (`X-Gregale-Invoke: async`), reusing the async route enqueue path.
+   As built: an admitter after private-service authorization enqueues any
+   target that accepts request invocations (plan gate, payload cap and
+   retries as an async route) and answers 202 with the invocation id. The
+   send lands in the caller's environment: the scope comes from the caller's
+   deployment (node-local identity), so a staging caller enqueues against the
+   callee's staging release. The SDK transport carries the caller's release
+   on every managed call, so a release pin is dropped rather than refused;
+   the enqueue pins the callee version active in that environment. An
+   explicit revision override, an upgrade or a rehearsal caller is refused.
+   The stored request keeps `X-Gregale-Function-Call`, so the callee's input
+   check runs when the invocation does.
 5. Docs (functions.md "Call another function", handler-api.md), a journey,
    and a metal or native test of a call and a send between two parked
    functions.
@@ -121,7 +139,7 @@ Owner decisions on 2026-11-11 (all were the recommended options).
 - Calling a sibling is one typed line, private by default, and its deadline
   and release propagate without the author knowing they exist.
 - A schema change shows up as a type error in the caller at
-  `gregale functions types`, and as a 422 at the boundary if an old caller
+  `gregale function types`, and as a 422 at the boundary if an old caller
   is still deployed.
 - Every function in a project now has a `declared` binding policy and
   explicit targets instead of the `account` default, which narrows what it

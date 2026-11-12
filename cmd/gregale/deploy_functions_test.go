@@ -896,3 +896,44 @@ func TestFunctionInputSchemaUpdate(t *testing.T) {
 		}
 	}
 }
+
+// ADR-20261111150000 §1: `gregale function types` writes each function's
+// typed client, --check fails once a schema changes, and a deploy refreshes a
+// file the author already generated.
+func TestFunctionTypesWriteCheckAndDeployRefresh(t *testing.T) {
+	manifest := "functions:\n  - name: web\n    root: w\n    runtime: node24\n  - name: users\n    root: u\n    runtime: node24\n    input:\n      type: object\n      required: [email]\n      properties:\n        email: {type: string}\n"
+	dir := writeFunctionProject(t, manifest, "w", "u")
+	var out bytes.Buffer
+	if code := cmdFunctionTypes([]string{"--path", dir}, &out); code != 0 {
+		t.Fatalf("types exit %d\n%s", code, out.String())
+	}
+	webTypes := filepath.Join(dir, "w", gregalemanifest.NodeFunctionTypesFile)
+	got, err := os.ReadFile(webTypes)
+	if err != nil || !strings.Contains(string(got), "export type UsersInput = {\n  email: string;\n};") {
+		t.Fatalf("web types = %s, %v", got, err)
+	}
+	out.Reset()
+	if code := cmdFunctionTypes([]string{"--path", dir, "--check"}, &out); code != 0 {
+		t.Fatalf("fresh --check exit %d\n%s", code, out.String())
+	}
+	changed := strings.Replace(manifest, "email: {type: string}", "email: {type: string}\n        age: {type: integer}", 1)
+	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(changed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if code := cmdFunctionTypes([]string{"--path", dir, "--check"}, &out); code == 0 || !strings.Contains(out.String(), "out of date") {
+		t.Fatalf("stale --check exit %d\n%s", code, out.String())
+	}
+	m, _, _ := functionSetManifest(dir)
+	client := newFakeFunctionSetClient()
+	for _, slug := range []string{"shop-web", "shop-users"} {
+		client.apps[slug] = api.AppResponse{ID: testFunctionAppID, Slug: slug, Type: "function"}
+	}
+	d := functionSetDeploy{cwd: dir, projectDir: dir, projectSlug: "shop", manifest: m, out: &out, deployOne: func([]string) int { return 0 }}
+	if code := d.run(context.Background(), client); code != 0 {
+		t.Fatalf("deploy exit %d\n%s", code, out.String())
+	}
+	if got, _ := os.ReadFile(webTypes); !strings.Contains(string(got), "age?: number;") {
+		t.Fatalf("deploy did not refresh the existing types:\n%s", got)
+	}
+}

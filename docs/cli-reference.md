@@ -40,6 +40,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`registry`](#registry) | Manage registry credentials, signing keys and published images |
 | [`app`](#app) | Inspect, change, scale and operate apps |
 | [`invocation`](#invocation) | List, inspect, wait on and watch invocations |
+| [`function`](#function) | Generate typed clients for calls between a project&#39;s functions |
 | [`env`](#env) | Set, list and sync an app&#39;s sealed variables |
 | [`domain`](#domain) | Manage custom domains |
 | [`edge`](#edge) | Manage edge rules, rule lists, caching and CORS |
@@ -3068,6 +3069,35 @@ Wait for one invocation to finish (exit 124 on timeout, 130 on Ctrl-C)
 |---|---|---|
 | `--timeout <D>` | stop waiting without canceling the invocation (0 waits indefinitely) |  |
 | `--interval <D>` | time between status checks (default 1s) |  |
+
+
+## function
+
+Generate typed clients for calls between a project&#39;s functions
+
+`gregale function [<subcommand>]`
+
+### function types
+
+Write each Node and Python function&#39;s typed client from the schemas in gregale.yaml
+
+`gregale function types [--path <DIR>] [--check]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--path <DIR>` | functions project directory (default: the current one) |  |
+| `--check` | write nothing; exit 1 when a generated file is missing or out of date |  |
+
+Examples:
+
+```sh
+gregale function types
+gregale function types --check
+```
+
+Node functions get gregale-functions.d.ts and Python functions get gregale_functions.py in their root, typed for the functions they may call.
+
+gregale deploy refreshes files that already exist when a schema changed; --check fails without writing, for CI.
 
 
 ## env
