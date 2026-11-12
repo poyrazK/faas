@@ -143,8 +143,15 @@ func (s *server) admitFullProjectEnvironmentClone(w http.ResponseWriter, r *http
 		CheckObjectCapacity:     s.cloneObjectCapacityCheck(acct),
 		CronLimits:              &cronLimits})
 	if err != nil {
+		var cronQuota *state.CronQuotaError
+		if errors.As(err, &cronQuota) {
+			// The clone copies the source's crons paused; copies count against
+			// the plan's cron limits (ADR-20261104120000 amendment 2026-11-12).
+			api.WriteProblem(w, api.ErrPlanCronQuota(owner.Plan, string(cronQuota.Scope), cronQuota.Limit, cronQuota.Observed))
+			return
+		}
 		operator, _ := s.adminAllows(acct)
-		api.WriteProblem(w, fullProjectEnvironmentCloneAdmissionProblem(project.Slug, req.FromEnvironment, operator, err, owner.Plan))
+		api.WriteProblem(w, fullProjectEnvironmentCloneAdmissionProblem(project.Slug, req.FromEnvironment, operator, err))
 		return
 	}
 	s.audit.Emit(r.Context(), "project.environment.clone_admitted", &acct.ID, map[string]any{
@@ -162,15 +169,10 @@ func (s *server) admitFullProjectEnvironmentClone(w http.ResponseWriter, r *http
 // fullProjectEnvironmentCloneAdmissionProblem maps a refused capture. Inventory
 // blockers are tables the source itself uses, so they are named; a schema
 // coverage gap is the platform's and is named to operators only.
-func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, operator bool, err error, plan api.Plan) *api.Problem {
+func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, operator bool, err error) *api.Problem {
 	var inventory *state.ProjectEnvironmentCloneInventoryError
 	var coverage *state.ProjectEnvironmentCloneSchemaCoverageError
-	var cronQuota *state.CronQuotaError
 	switch {
-	case errors.As(err, &cronQuota):
-		// The clone copies the source's crons paused; copies count against
-		// the plan's cron limits (ADR-20261104120000 amendment 2026-11-12).
-		return api.ErrPlanCronQuota(plan, string(cronQuota.Scope), cronQuota.Limit, cronQuota.Observed)
 	case errors.As(err, &inventory):
 		problem := api.NewProblem(http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "Full environment clone unavailable",
 			"the source uses resources a full clone cannot copy into an isolated stage yet")
