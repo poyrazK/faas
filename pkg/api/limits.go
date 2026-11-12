@@ -888,6 +888,15 @@ const ManagedPostgresOverageCloseWindow = 7 * 24 * time.Hour
 // allowance ($0.10, neon.com/pricing on 2026-11-02, ADR-20261102072425).
 const ManagedPostgresNeonMillicentsPerEgressGB = 10_000
 
+// ManagedPostgresDatabaseEgressAllowanceBytes is each managed PostgreSQL
+// database's monthly egress allowance on every plan that includes one:
+// 500 GB (10^9 bytes, Neon's unit). Neon includes 500 GB of public network
+// transfer per project per month on its paid plans, and every database is
+// its own project (neon.com/pricing, 2026-11-11; ADR-20261110160000
+// amendment 2026-11-11). Database egress no longer counts toward the plan's
+// app egress allowance.
+const ManagedPostgresDatabaseEgressAllowanceBytes int64 = 500 * 1_000_000_000
+
 // ManagedPostgresEgressOverageMillicentsPerGB prices database egress past the
 // plan's shared egress allowance for a subject that elected egress overage:
 // Neon's price plus the markup, $0.105 per GB (ADR-20261110160000 slice 3).

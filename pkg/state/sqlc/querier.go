@@ -4877,6 +4877,10 @@ type Querier interface {
 	ManagedPostgresCutoverUnreleasedSourceFences(ctx context.Context, db DBTX, cutoverID string) (int64, error)
 	ManagedPostgresDrainPlanHasUnplannedInstances(ctx context.Context, db DBTX, arg ManagedPostgresDrainPlanHasUnplannedInstancesParams) (bool, error)
 	ManagedPostgresDueBindings(ctx context.Context, db DBTX, arg ManagedPostgresDueBindingsParams) ([]ManagedPostgresBinding, error)
+	// ADR-20261110160000 amendment 2026-11-11: each database's egress this month,
+	// under the same waivers as ManagedPostgresUsageForSubject. Neon's transfer
+	// allowance is per project, and every database is its own project.
+	ManagedPostgresEgressByDatabase(ctx context.Context, db DBTX, arg ManagedPostgresEgressByDatabaseParams) ([]ManagedPostgresEgressByDatabaseRow, error)
 	// ADR-20261028103115: the fleet database cap counts what reservation limits
 	// count; the spend breaker sums the month through the usage primary key, one
 	// index range per database, so the ledger's growth never forces a full scan.

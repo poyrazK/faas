@@ -64,23 +64,28 @@ func TestManagedPostgresCapBodyV1(t *testing.T) {
 	}
 }
 
-// ADR-20261110160000: the egress hold email names the shared allowance, what
-// apps and databases sent, and how to resume sooner.
+// ADR-20261110160000 amendment 2026-11-11: the egress hold email names each
+// database's own allowance, what the held database sent, that apps and other
+// databases are unaffected, and how to resume sooner.
 func TestManagedPostgresCapBodyV1EgressHeld(t *testing.T) {
 	reached := time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)
-	n := mail.ManagedPostgresCapNotice{Threshold: mail.ManagedPostgresCapEgressHeld, UsedSeconds: 500 << 30, Allowance: 500 << 30, Ceiling: 500 << 30, ReachedAt: reached}
+	const gb = 1_000_000_000
+	n := mail.ManagedPostgresCapNotice{Threshold: mail.ManagedPostgresCapEgressHeld, UsedSeconds: 500 * gb, Allowance: 500 * gb, Ceiling: 500 * gb, ReachedAt: reached}
 	subject, body, ok := mail.ManagedPostgresCapBodyV1("one@example.net", n)
 	if !ok || !strings.Contains(subject, "paused until next month") {
 		t.Fatalf("subject %q, ok %v", subject, ok)
 	}
-	for _, want := range []string{"500.0 GiB monthly egress allowance", "sent 500.0 GiB by 2026-11-20 08:00 UTC", "resume on 2026-12-01", "gregale billing egress-overage on"} {
+	for _, want := range []string{"own 500.0 GB monthly egress allowance", "sent 500.0 GB by 2026-11-20 08:00 UTC", "apps and other databases are not affected", "resumes on 2026-12-01", "gregale billing egress-overage on"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body lacks %q:\n%s", want, body)
 		}
 	}
-	n.Overage, n.Ceiling, n.UsedSeconds = true, 1000<<30, 1000<<30
+	if strings.Contains(body, "share") {
+		t.Errorf("body still describes a shared allowance:\n%s", body)
+	}
+	n.Overage, n.Ceiling, n.UsedSeconds = true, 1000*gb, 1000*gb
 	_, body, ok = mail.ManagedPostgresCapBodyV1("one@example.net", n)
-	if !ok || !strings.Contains(body, "1000.0 GiB, twice the 500.0 GiB monthly egress allowance") || strings.Contains(body, "egress-overage on") {
+	if !ok || !strings.Contains(body, "a database is paused at 1000.0 GB") || strings.Contains(body, "egress-overage on") {
 		t.Fatalf("overage body:\n%s", body)
 	}
 }
