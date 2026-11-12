@@ -54,38 +54,44 @@ The CLI's own output teaches the agent at the moment a feature is relevant,
 CI keeps that output true, and an eval on foreign repositories measures it.
 Nothing is written into the user's repository unless they ask.
 
-### 1. The scan says which features apply to this repo
+### 1. The plan says which features apply to this repo
 
-`gregale deploy --dry-run`, `gregale project init` and `gregale doctor` gain a
-`features` section (human output) and a `features` array (`--json`). Each
-entry:
+Project plans (`gregale deploy --project --dry-run`, `gregale deploy check`,
+`gregale scan`) carry `feature_hints` (`--json`, the API and MCP) and print a
+"For this repo" section. Each hint:
 
 ```json
-{"id": "compose-healthcheck", "evidence": "docker-compose.yml:41",
- "applied": "liveness uses the Compose healthcheck, not /healthz",
- "change": "edit healthcheck: in docker-compose.yml",
- "docs": "https://gregale.dev/docs/health-checks"}
+{"id": "public-needs-api-key", "workloads": ["result", "vote"],
+ "applied": "result, vote will have public URLs that answer 401 without a Gregale API key.",
+ "change": "To open a URL to everyone after the deploy, run the command for each app. `gregale deploy --project` does not take --no-require-authn.",
+ "commands": ["gregale app update result --no-require-authn", "gregale app update vote --no-require-authn"]}
 ```
 
-`applied` says what Gregale will do, and `change` names the exact command,
-flag, `gregale.yaml` key or Compose key that alters it. Rules live in one
-registry (`pkg/featurehints`), fed by `reposcan` and `frameworkprofile`
-results, never by running customer code. First rules, taken from the
-retail-store run:
+`applied` says what Gregale will do, `change` how to alter it, and `commands`
+the exact commands with real slugs (`<placeholders>` where a value is
+needed). IDs are stable. `pkg/featurehints` computes hints from the plan
+alone, never by running customer code; apid fills `PlanResponse.feature_hints`
+and the CLI fills it when an older server sent none. Slice 1 rules, taken from
+the retail-store and voting-app runs:
 
-- Compose `healthcheck:` or Dockerfile `HEALTHCHECK` found → used for liveness.
-- Spring Boot with actuator → `/actuator/health` (inference added with the rule).
-- Health path defaulted, not declared or inferred → warn that `/healthz` will
-  be probed, naming `hosting.health` and `--healthcheck-path`.
-- Services with no published port → private; `logs --project`, `dev bridge`.
-- Images Gregale offers managed (`postgres`) → `gregale.yaml` `create`; images
-  it does not (`redis`, `rabbitmq`) → run as a project service, said plainly.
-- `.env*` files in the upload set → `.gregaleignore`.
-- More than one deployable service → `deploy --only`, `--rollout`.
+| ID | When |
+|---|---|
+| `health-from-healthcheck` | A Compose `healthcheck:` runs a command: it replaces the default `/healthz` probe |
+| `health-default-path` | A built HTTP service declares none: paid plans probe `/healthz` |
+| `public-needs-api-key` | A public URL uses bearer auth: per-app `app update --no-require-authn` |
+| `private-services` | Internal services: `logs --project --service`, `dev bridge --dependencies` |
+| `managed-postgres` | A Compose Postgres becomes managed: the bound variables, and that the Compose host does not exist |
+| `datastore-not-run` | A datastore Gregale does not run (Redis, …): `env set` per unbound key |
+| `unset-env` | Keys with no value (JSON only; the plan text already lists them) |
+| `dev-setup` | A `dev` build target or a dev command (nodemon, `--inspect`, …) |
+| `project-releases` | More than one service: `--only`, `--release-policy immediate`, `logs --project --follow` |
 
-`TestEveryHintNamesARealSurface` fails when a rule's `change` names a command
-or flag missing from `cli_meta.go`, or a key missing from the `gregale.yaml`
-or Compose schema.
+Later rules: Spring actuator inference, `.env*` files in the upload set,
+single-app plans and `gregale doctor`.
+
+`TestEveryHintCommandIsARealCommand` resolves every command a hint can print
+against the CLI manifest (after the command-tree rewrite) and fails on an
+unknown command or flag.
 
 ### 2. Every failure names its fix
 
@@ -155,7 +161,7 @@ change against it.
 ### Order
 
 0. Eval agents, foreign-repo tasks and graders; record the baseline.
-1. Feature hints in the scan, with the retail-store rules.
+1. Feature hints in project plans (done: `pkg/featurehints`).
 2. Failure `fix` fields and parked-status display.
 3. Parity gate with the frozen exemption list.
 4. `gregale guide` and agent-marker hints.
