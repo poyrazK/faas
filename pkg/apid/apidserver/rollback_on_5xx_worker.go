@@ -89,12 +89,51 @@ func (s *server) evaluateRollbackOn5xx(ctx context.Context, telemetry rollbackOn
 	if !rollbackOn5xxBreached(requests, serverErrors) {
 		return nil
 	}
+	known, err := s.firstWakeKnownServerErrors(ctx, telemetry, c, since, until)
+	if err != nil {
+		return err
+	}
+	if serverErrors -= known; !rollbackOn5xxBreached(requests, serverErrors) {
+		return nil
+	}
 	if lost, err := s.releaseTelemetryLost(ctx, telemetry, since, until); err != nil || lost {
 		// A gateway may have dropped rows in the window: the 2xx it lost
 		// would read as a higher error rate. Judge again once coverage holds.
 		return err
 	}
 	return s.autoRollbackOn5xx(ctx, c, requests, serverErrors)
+}
+
+// knownServerErrorTelemetry is the optional reader for 5xx a predecessor
+// already returned on the same method, route and status; Postgres request
+// telemetry implements it.
+type knownServerErrorTelemetry interface {
+	RequestTelemetryKnownServerErrors(ctx context.Context, appID, releaseID string, releaseSince, releaseUntil time.Time, baselineID string, baselineSince, baselineUntil time.Time) (int64, error)
+}
+
+// firstWakeKnownServerErrors counts the release's 5xx the release it replaced
+// also returned, on the same method, route and status, from
+// RollbackOn5xxKnownErrorLookback before the release until now. Hunt 34
+// H34-17: five requests to a route that answers 500 in every release rolled
+// a healthy release back.
+func (s *server) firstWakeKnownServerErrors(ctx context.Context, telemetry rollbackOn5xxTelemetry, c state.RollbackOn5xxCandidate, since, until time.Time) (int64, error) {
+	reader, ok := telemetry.(knownServerErrorTelemetry)
+	if !ok {
+		return 0, nil
+	}
+	target, err := s.rollbackOn5xxTarget(ctx, c)
+	if errors.Is(err, state.ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	known, err := reader.RequestTelemetryKnownServerErrors(ctx, c.AppID, c.DeploymentID, since, until,
+		target.ID, c.CreatedAt.Add(-api.RollbackOn5xxKnownErrorLookback), until)
+	if err != nil {
+		return 0, fmt.Errorf("read known server errors: %w", err)
+	}
+	return known, nil
 }
 
 // releaseTelemetryLost reports whether a gateway may have lost request
