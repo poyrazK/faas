@@ -28,6 +28,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -78,7 +79,7 @@ type cliAuthHandlers struct {
 // (cliAuthChain, server.go).
 func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request) {
 	_, deviceCodes := h.srv.store.(state.CliAuthDeviceCodeStore)
-	code, hash, device, err := mintBrowserAuthCode(r, deviceCodes)
+	code, hash, device, loopbackPort, err := mintBrowserAuthCode(r, deviceCodes)
 	if errors.Is(err, errBrowserAuthInput) {
 		api.WriteProblem(w, api.NewProblem(400, api.CodeValidation, "Invalid authorization", "purpose must be empty, mcp-read, or mcp-write"))
 		return
@@ -96,11 +97,15 @@ func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request
 		return
 	}
 	url := strings.TrimRight(h.urlBase, "/") + cliAuthPath + "?code=" + code
+	if loopbackPort != 0 {
+		url += "&port=" + strconv.Itoa(loopbackPort)
+	}
 	writeJSON(w, http.StatusOK, api.CliAuthCodeResponse{
 		Code:       code,
 		URL:        url,
 		ExpiresAt:  expiresAt.UTC().Format(time.RFC3339),
 		DeviceCode: deviceCode,
+		Loopback:   loopbackPort != 0,
 	})
 }
 
@@ -378,12 +383,18 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 	})
 
 	title := "Authorize CLI session"
-	// A CLI code is typed from the terminal, never carried from the link
-	// into the form, so a link someone sent cannot authorize their
-	// terminal. MCP codes arrive through the bridge's own OAuth redirect.
+	// A typed-flow CLI code is typed from the terminal, never carried from
+	// the link into the form, so a link someone sent cannot authorize their
+	// terminal. A one-click (loopback) code rides in the form because its
+	// approval sends the new device code to this browser's own machine, not
+	// to the terminal that minted it (ADR-20261111170000). MCP codes arrive
+	// through the bridge's own OAuth redirect.
 	shownCode := ""
+	loopbackPort := cliAuthLoopbackPort(r.URL.Query().Get("port"), raw)
 	if isMCPAuthCode(raw) {
 		title = "Authorize MCP connection"
+		shownCode = raw
+	} else if loopbackPort != 0 {
 		shownCode = raw
 	}
 	orgs := h.mcpOrgChoices(r, acct.ID, raw)
@@ -396,6 +407,7 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 			"CSRFToken":       token,
 			"AccountEmail":    acct.Email,
 			"MCP":             isMCPAuthCode(raw),
+			"LoopbackPort":    loopbackPort,
 			"MCPCapabilities": mcpCapabilities(raw),
 			"MCPOrgs":         orgs,
 			"MCPProjects":     h.mcpProjectChoices(r, acct.ID, raw, orgs),
@@ -467,6 +479,10 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	}
 
 	if !h.bindMCPOrg(w, r, acct.ID, rawCode, hash) || !h.bindMCPProjects(w, r, acct.ID, rawCode, hash) {
+		return
+	}
+	if port := cliAuthLoopbackPort(r.PostForm.Get("port"), rawCode); port != 0 {
+		h.approveLoopbackCode(w, r, acct.ID, rawCode, hash, port)
 		return
 	}
 	// Atomically claim the code for this account. ClaimCliAuthCode
