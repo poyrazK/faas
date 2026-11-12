@@ -6534,6 +6534,10 @@ type Querier interface {
 	// A single statement reads the pointer and its complete membership together.
 	ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadProjectReleaseSetParams) ([]byte, error)
 	ReadProjectReleaseWorkerCapture(ctx context.Context, db DBTX, arg ReadProjectReleaseWorkerCaptureParams) ([][]byte, error)
+	// A pinned caller with declared bindings is graph-routed once its project
+	// environment has published a release set; until then a stage deployed with
+	// "deploy --env" routes in its own environment lane (ADR-20261027120000,
+	// Hunt 34 H34-33). Promotion candidates stay graph-routed regardless.
 	ReadProjectServiceGraph(ctx context.Context, db DBTX, arg ReadProjectServiceGraphParams) ([]byte, error)
 	ReadProjectSubmission(ctx context.Context, db DBTX, arg ReadProjectSubmissionParams) (ReadProjectSubmissionRow, error)
 	ReadProjectWorkerJobSample(ctx context.Context, db DBTX, arg ReadProjectWorkerJobSampleParams) (ReadProjectWorkerJobSampleRow, error)
