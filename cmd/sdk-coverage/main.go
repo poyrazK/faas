@@ -605,6 +605,26 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	// Customer support uses typed personal and organization methods.
+	"GET /v1/support/tickets":                                   "ListSupportTickets",
+	"POST /v1/support/tickets":                                  "CreateSupportTicket",
+	"GET /v1/support/tickets/{ticket}":                          "GetSupportTicket",
+	"GET /v1/support/tickets/{ticket}/messages":                 "ListSupportMessages",
+	"POST /v1/support/tickets/{ticket}/messages":                "ReplySupportTicket",
+	"POST /v1/support/tickets/{ticket}/close":                   "CloseSupportTicket",
+	"POST /v1/support/tickets/{ticket}/reopen":                  "ReopenSupportTicket",
+	"GET /v1/support/tickets/{ticket}/satisfaction":             "GetSupportSatisfaction",
+	"POST /v1/support/tickets/{ticket}/satisfaction":            "SetSupportSatisfaction",
+	"GET /v1/orgs/{org}/support/tickets":                        "ListOrgSupportTickets",
+	"POST /v1/orgs/{org}/support/tickets":                       "CreateOrgSupportTicket",
+	"GET /v1/orgs/{org}/support/tickets/{ticket}":               "GetOrgSupportTicket",
+	"GET /v1/orgs/{org}/support/tickets/{ticket}/messages":      "ListOrgSupportMessages",
+	"POST /v1/orgs/{org}/support/tickets/{ticket}/messages":     "ReplyOrgSupportTicket",
+	"POST /v1/orgs/{org}/support/tickets/{ticket}/close":        "CloseOrgSupportTicket",
+	"POST /v1/orgs/{org}/support/tickets/{ticket}/reopen":       "ReopenOrgSupportTicket",
+	"GET /v1/orgs/{org}/support/tickets/{ticket}/satisfaction":  "GetOrgSupportSatisfaction",
+	"POST /v1/orgs/{org}/support/tickets/{ticket}/satisfaction": "SetOrgSupportSatisfaction",
+
 	"POST /v1/orgs/{organization}/projects":                             "ApplyOrgProjectPlan",
 	"DELETE /v1/orgs/{organization}/projects/{slug}/exclusions/{slug2}": "DeleteOrgProjectDeploymentScopeExclusion",
 

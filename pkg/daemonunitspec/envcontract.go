@@ -1099,6 +1099,8 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_STREAM_BRIDGE_PERSISTENT", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_STREAM_BRIDGE_VERSION", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "rollback lever, see docs/ops/h2c-rollback.md"},
 	{Name: "FAAS_STRIPE_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
+	{Name: "FAAS_SUPPORT_WEBHOOK_SECRET", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "optional support webhook signing secret of at least 32 bytes delivered by /etc/faas/sealed.env; configure together with FAAS_SUPPORT_WEBHOOK_URL; unset keeps delivery disabled"},
+	{Name: "FAAS_SUPPORT_WEBHOOK_URL", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "optional HTTPS support webhook destination; configure together with FAAS_SUPPORT_WEBHOOK_SECRET; unset keeps delivery disabled"},
 	{Name: "FAAS_SYFT_BIN", Owners: []string{"imaged"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TAIL_PIPE_PATH", Owners: []string{"guest"}, Source: EnvSourceGuest},
 	{Name: "FAAS_TAIL_WAIT_SEC", Owners: []string{"guest"}, Source: EnvSourceGuest},

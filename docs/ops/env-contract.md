@@ -1019,6 +1019,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STREAM_BRIDGE_PERSISTENT` | shared | `default` |  |  | `` |  |
 | `FAAS_STREAM_BRIDGE_VERSION` | shared | `default` |  |  | `` | rollback lever, see docs/ops/h2c-rollback.md |
 | `FAAS_STRIPE_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_SUPPORT_WEBHOOK_SECRET` | apid | `secrets-env` |  |  | `` | optional support webhook signing secret of at least 32 bytes delivered by /etc/faas/sealed.env; configure together with FAAS_SUPPORT_WEBHOOK_URL; unset keeps delivery disabled |
+| `FAAS_SUPPORT_WEBHOOK_URL` | apid | `default` |  |  | `` | optional HTTPS support webhook destination; configure together with FAAS_SUPPORT_WEBHOOK_SECRET; unset keeps delivery disabled |
 | `FAAS_SYFT_BIN` | imaged | `default` |  |  | `` |  |
 | `FAAS_TAIL_PIPE_PATH` | guest | `guest` |  |  | `` |  |
 | `FAAS_TAIL_WAIT_SEC` | guest | `guest` |  |  | `` |  |
