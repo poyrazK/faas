@@ -155,14 +155,16 @@ export function createRuntimeCatalog({ normalizeDefinition = definition => defin
     add('tools', name, { definition, handler }, true);
   }
 
-  function registerResource(name, uriOrTemplate, definition, handler) {
+  function registerResource(name, uriOrTemplate, definition, handler, authorize) {
+    if (authorize !== undefined && typeof authorize !== 'function') throw new TypeError('Resource authorizer must be a function');
     const policyKey = validateResource(name, uriOrTemplate, definition, handler);
-    add('resources', name, { uriOrTemplate, policyKey, definition, handler });
+    add('resources', name, { uriOrTemplate, policyKey, definition, handler, authorize });
   }
 
-  function replaceResource(name, uriOrTemplate, definition, handler) {
+  function replaceResource(name, uriOrTemplate, definition, handler, authorize) {
+    if (authorize !== undefined && typeof authorize !== 'function') throw new TypeError('Resource authorizer must be a function');
     const policyKey = validateResource(name, uriOrTemplate, definition, handler);
-    add('resources', name, { uriOrTemplate, policyKey, definition, handler }, true);
+    add('resources', name, { uriOrTemplate, policyKey, definition, handler, authorize }, true);
   }
 
   function registerPrompt(name, definition, handler) {

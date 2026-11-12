@@ -1,0 +1,167 @@
+
+> gregale-mcp-server@1.0.0 test
+> node --test test/*.test.js
+
+✔ protected resource metadata and bearer challenge identify the canonical endpoint (4.65388ms)
+✔ protected resource metadata advertises endpoint and catalog scopes once (2.313026ms)
+✔ valid scoped, signed token authorizes a request (17.212835ms)
+✔ only verified claims populate the SDK request context (6.39897ms)
+✔ bearer scheme is case insensitive (5.77081ms)
+✔ wrong audience (4.270903ms)
+✔ wrong issuer (2.71881ms)
+✔ wrong signature (4.188263ms)
+✔ expired (4.149853ms)
+✔ missing scope (2.08809ms)
+✔ missing subject (2.356269ms)
+✔ empty subject (2.228997ms)
+✔ malformed token fails without reflecting the value (0.749633ms)
+✔ auth mode and scopes must be explicit (0.83669ms)
+✔ 2026-07-28: caller-specific discovery and independent execution policy (435.862668ms)
+✔ 2025-11-25: caller-specific discovery and independent execution policy (352.795263ms)
+✔ empty policy produces an empty catalog and rejects all execution (56.9713ms)
+✔ legacy batched requests cannot bypass disabled tool registration (19.033451ms)
+✔ catalog pin accepts a matching contract and blocks later drift (21.738475ms)
+✔ catalog pin rejects invalid digests (1.806608ms)
+✔ runtime tool catalog supports register, replace, remove and visible fingerprints (3.753604ms)
+✔ runtime catalog contract fingerprint ignores registration order (0.672422ms)
+✔ runtime resource catalog validates patterns and publishes resource entries (1.398122ms)
+✔ HTTP origin policy, tool errors, redacted logs and stream cancellation (4986.280659ms)
+✔ protocol wire outcomes, bounded labels and safe correlation (192.280455ms)
+✔ disconnect is counted once, without inventing a successful result (35.083743ms)
+✔ telemetry sink failure does not fail a protocol response (27.259932ms)
+✔ typed transport timeout and invalid correlation (0.602093ms)
+✔ failed SDK send preserves RPC error and records delivery failure (0.65647ms)
+✔ heartbeat is independent of requests and stops cleanly (1.347318ms)
+✔ task resources acknowledge authorized URIs and publish changed task content (109.67989ms)
+✔ authenticated taskIds subscriptions close at token expiry and release watchers (2246.175091ms)
+✔ authenticated resourceSubscriptions subscriptions close at token expiry and release watchers (2996.499563ms)
+✔ task resource subscriptions do not acknowledge unknown task URIs (11.66114ms)
+✔ payload key rotation reads legacy and previous versions and authenticates field and key ID (9.008382ms)
+✔ key configuration fails closed without exposing secrets and supports a legacy preparation phase (1.384598ms)
+✔ reads retained Go/Python native v2 without changing the explicit Node ring format (4.962383ms)
+✔ task scaling is optional and requires both credentials on a dedicated worker (3.14336ms)
+✔ worker publisher pushes bounded task backlog, age, and handler compatibility without identifiers (3.429727ms)
+✔ only the observer role publishes the dedicated observer heartbeat (1.281408ms)
+✔ observer health failures withhold queue gauges and the heartbeat (0.362396ms)
+✔ publisher reports API failures without stopping its caller (20.813253ms)
+✔ only a successful observer reporting cycle publishes the observer heartbeat (1.452961ms)
+{"event":"mcp_task_drain","state":"draining","activeTasks":0,"deadline":"2026-11-11T16:25:16.003Z"}
+{"event":"mcp_task_drain","state":"completed","unfinishedTasks":0,"deadline":"2026-11-11T16:25:16.003Z"}
+✔ zero-valued Task settings use the same defaults as omitted settings (5.532766ms)
+✔ zero-default handling preserves invalid retry settings and explicit drain overrides (0.684729ms)
+✔ a dedicated worker requires and uses the shared logical namespace override (0.543638ms)
+✔ the explicit namespace overrides the per-app ID for the web process too (0.259233ms)
+✔ the dedicated worker refuses a configuration with Tasks disabled (0.500095ms)
+✔ runtime startup selects the process role and closes the runtime and pool once (0.444418ms)
+✔ runtime keeps an idle pool error from crashing the process (0.715407ms)
+✔ dedicated workers enable the optional metrics publisher with the scoped app credentials (0.527535ms)
+✔ scaling metric credentials are rejected on the web role (0.40971ms)
+✔ web process startup exposes task APIs without claiming work (0.750468ms)
+✔ an external observer needs no payload key and never initializes schema or workers (0.80543ms)
+﹣ canonical and retained Go owner aliases share execution capacity across authentication and group merges (1.993953ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ migration and runtime startup accept retained native v2 Tasks and preserve authenticated payloads (0.13394ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ owner cleanup keeps every alias until the final retained Task expires (0.07797ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ claims roll back unreadable payloads without consuming attempts (0.076137ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ worker writes require a live lease and unexpired Task (1.437643ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ completion rechecks lease expiry after waiting for a row lock (0.144162ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ Node preserves canonical identity and access to retained Go owner hashes (0.117679ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL persists encrypted task inputs, results, and failures with caller/app isolation and expiry cleanup (0.069413ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL observer metrics require a role without table writes or schema creation privileges (0.181618ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL SKIP LOCKED lets concurrent workers claim each queued task once (0.193068ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL rotates claims across owners and preserves FIFO within each owner (0.073915ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL concurrent claims skip a locked owner and serve another owner (0.049498ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL retries a briefly locked owner cursor instead of idling a worker (0.039324ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL initialization backfills fairness cursors for existing queued tasks (0.03631ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL recovers an expired lease and rejects writes from the former worker (0.089229ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL runtime recovers a task after its worker process crashes (0.133332ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL persists task input and resumes the same handler after a worker restart (0.079612ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL task notifications reach web subscriptions from a separate worker runtime (0.073424ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL task notifications are isolated by app namespace (0.220096ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL migrates an existing task table to support input-required state (0.08908ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL cancellation prevents queued execution and wins against a running completion (0.085485ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL fails a task after its retry limit is exhausted (0.08413ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL settles queued retries when the attempt budget is reduced (0.086979ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL preserves live attempts and input/drain resumptions after lowering the budget (0.072709ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL resumes input on the final attempt without granting another retry (0.107184ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL atomically budgets queue admission across replicas and owners (0.16128ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL leaves unsupported handler versions queued for compatible workers (0.079967ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ running limits are atomic across replicas and recover from completion and lease expiry (0.069223ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ owner saturation leaves capacity for other owners and cancellation releases it (0.101154ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ heartbeat renewal waits for the capacity lock and rechecks lease expiration (0.089411ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ PostgreSQL persists retry delays, releases capacity and bounds retries by attempts and TTL (0.073862ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ runtime retries only explicit transient errors with bounded jitter and sanitized errors (0.092482ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ payload rotation preserves ownership, input state and mixed-key results, and guards key removal (0.110029ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ worker inventory expires, respects namespace boundaries and distinguishes absent workers from unsupported handlers (0.18074ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ candidate compatibility includes delayed retries, paused input and both lease states (0.111557ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ draining registrations are separate from available handler coverage (0.079111ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ Task doctor and compatibility command return safe deployment reports (0.076137ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ admission disable fences old producers, survives restart and requires draining before retirement (0.075186ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ disable waits for admitted transactions and rejects inserts waiting behind it (0.106268ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ first admission migration seeds retained versions without reopening disabled entries (0.061467ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ namespace activation preserves other queues and fences transactions with older snapshots (0.07034ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ admission status and administration fail closed when the enforcement trigger is disabled (0.154259ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ runtime startup is read-only and rejects missing or future schema versions (0.115891ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ database role profiles support runtime, observer and operator without DDL or policy access for runtime (0.211363ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ concurrent migrations serialize and record the baseline once (0.134184ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ migration and startup reject a schema writable by PUBLIC and invalid role profiles (0.072028ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ read-only startup waits for an active migration before checking compatibility (0.067243ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ release gate starts verified replacements before draining old workers (0.195635ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ release gate fails closed for missing admitted handlers, false readiness and failed drain (0.077858ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ release gate serializes namespace rollouts and releases its lock on failure (0.152609ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ release CLI executes bounded adapters without migration credentials (0.126972ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ release checkpoint resumes after drain failure without treating replacements as old workers (0.082027ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ native replacement recheck rejects stale, draining and unsupported registrations (0.214416ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ restore gate serializes with releases, checks retained and admitted handlers, and sanitizes hook failure (0.078104ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+﹣ quarantine fences new claims across heartbeats while preserving active leases and healthy capacity (0.064845ms) # set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests
+✔ durable task handles are stored before return and resolve to tool results (217.780134ms)
+✔ a web-only process can enqueue work for a separate task worker (1.329046ms)
+✔ task cancellation is cooperative and task IDs are scoped to the authenticated caller (32.24636ms)
+✔ task status subscriptions only acknowledge tasks visible to the caller and tool policy (2.504226ms)
+✔ input-required tasks can be cancelled and task updates keep caller isolation (21.801252ms)
+✔ task failures do not expose exception text in persisted results (21.333642ms)
+✔ PostgreSQL store encrypts task arguments and scopes records to the app and caller (7.015799ms)
+✔ queue metrics count only unexpired queued and running rows in the task namespace (0.917587ms)
+✔ worker capability heartbeats publish exact handler versions and remove on shutdown (0.532727ms)
+✔ MCP Tasks are advertised and the modern wire methods round-trip through the starter SDK (6585.995462ms)
+✔ retry policy rejects invalid attempt and delay bounds (2.414482ms)
+✔ runtime passes explicit retry classification and bounded jitter to the store (22.407427ms)
+✔ drain finishes active handlers and concurrent stop calls share completion (12.091078ms)
+✔ drain deadline aborts handlers and suppresses late terminal writes (1024.65401ms)
+✔ active handlers keep renewing their lease while draining (5012.274852ms)
+✔ configured policy denies missing tools and requires every scope (2.214445ms)
+✔ execution guard independently rejects missing or insufficient verified context (0.959606ms)
+✔ omitted policy retains endpoint-only compatibility (0.153607ms)
+✔ null policy (0.159615ms)
+✔ array policy (0.201718ms)
+✔ null scopes (0.193701ms)
+✔ string scopes (0.107067ms)
+✔ empty name (0.075865ms)
+✔ control name (0.103542ms)
+✔ empty scope (0.286858ms)
+✔ space in scope (0.23764ms)
+✔ quote in scope (0.170278ms)
+✔ backslash in scope (0.195925ms)
+✔ nonascii scope (0.22299ms)
+✔ public mode cannot grant scoped tools (0.383626ms)
+✔ resource policy matches exact URIs and URI templates without widening the allowlist (2.952468ms)
+✔ resource callback guard rechecks verified context and omitted policies preserve endpoint-only access (0.765956ms)
+✔ prompt policy is a closed name allowlist and guards rendering (0.459358ms)
+✔ resource_scopes rejects invalid configuration (0.381159ms)
+✔ resource_scopes rejects invalid configuration (0.520068ms)
+✔ resource_scopes rejects invalid configuration (0.478416ms)
+✔ prompt_scopes rejects invalid configuration (0.078066ms)
+✔ prompt_scopes rejects invalid configuration (0.046471ms)
+✔ open servers cannot require scoped resources or prompts (0.175992ms)
+ℹ tests 148
+ℹ suites 0
+ℹ pass 93
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 55
+ℹ todo 0
+ℹ duration_ms 16853.97043
+npm notice
+npm notice New major version of npm available! 11.9.0 -> 12.2.2
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.2
+npm notice To update run: npm install -g npm@12.2.2
+npm notice

@@ -430,7 +430,11 @@ func TestMCPDiscoveryReportsRejectedTools(t *testing.T) {
 	defer s.Close()
 	for _, command := range []string{"tools", "doctor"} {
 		output.Reset()
-		if code := main.CmdMCP([]string{command, "--url", s.URL + "/mcp"}); code != 0 {
+		wantCode := 0
+		if command == "doctor" {
+			wantCode = 1
+		}
+		if code := main.CmdMCP([]string{command, "--url", s.URL + "/mcp"}); code != wantCode {
 			t.Fatalf("%s exit=%d: %s", command, code, output.String())
 		}
 		if !strings.Contains(output.String(), `"rejected_tools"`) || !strings.Contains(output.String(), `"good"`) || !strings.Contains(output.String(), `"reason"`) {

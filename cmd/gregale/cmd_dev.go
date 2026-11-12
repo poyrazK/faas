@@ -552,7 +552,11 @@ func cmdDev(args []string) int {
 	if err != nil {
 		return printErr("No deployable source found in "+filepath.Base(sourceDir), err)
 	}
-	if code := checkDevSource(sourceDir, config); code != 0 {
+	configuration, err := loadDevConfiguration(sourceDir, envFilePath, serviceOverrideFilePath, *withPostgres, buckets)
+	if err != nil {
+		return printErr("Invalid developer configuration", err)
+	}
+	if code := checkDevSource(sourceDir, config, configuration.evaluate(nil)); code != 0 {
 		return code
 	}
 	if err := checkDevGoCommand(sourceDir, config, *goCommand); err != nil {
@@ -662,8 +666,14 @@ func cmdDev(args []string) int {
 	return runDevWatchLoop(ctx, sourceDir, lastSynced, config, *once, devLoopOps{
 		deploy: func(deployCtx context.Context, config devSourceConfig, queued func(string)) int {
 			diagnosticReported.Store(false)
+			validated, configurationCode := checkDevConfiguration(deployCtx, client, session, sourceDir, envFilePath, serviceOverrideFilePath)
+			if configurationCode != 0 {
+				diagnosticReported.Store(true)
+				return configurationCode
+			}
 			if envFilePath != "" {
-				report, syncErr := envSyncState.sync(deployCtx, client, session.App.Slug, envFilePath)
+				file := validated.files[0]
+				report, syncErr := envSyncState.syncPairs(deployCtx, client, session.App.Slug, envFilePath, file.pairs, file.fingerprint, "developer config")
 				if syncErr != nil {
 					_ = printErr("Could not sync developer config", syncErr)
 					diagnosticReported.Store(true)
@@ -675,7 +685,8 @@ func cmdDev(args []string) int {
 				}
 			}
 			if serviceOverrideFilePath != "" {
-				report, syncErr := serviceOverrideSyncState.syncServiceOverrides(deployCtx, client, session.App.Slug, serviceOverrideFilePath)
+				file := validated.files[1]
+				report, syncErr := serviceOverrideSyncState.syncPairs(deployCtx, client, session.App.Slug, serviceOverrideFilePath, file.pairs, file.fingerprint, "developer service overrides")
 				if syncErr != nil {
 					_ = printErr("Could not sync developer service overrides", syncErr)
 					diagnosticReported.Store(true)

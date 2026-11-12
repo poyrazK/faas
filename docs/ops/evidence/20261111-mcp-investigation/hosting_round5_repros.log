@@ -1,0 +1,14 @@
+=== RUN   TestInvestigationSSEAcceptsResultWithinDiagnosticBudget
+=== RUN   TestInvestigationSSEAcceptsResultWithinDiagnosticBudget/json
+=== RUN   TestInvestigationSSEAcceptsResultWithinDiagnosticBudget/sse
+    zz_investigation_round5_test.go:45: valid sse result below the diagnostic budget was rejected: read MCP SSE: bufio.Scanner: token too long
+--- FAIL: TestInvestigationSSEAcceptsResultWithinDiagnosticBudget (0.04s)
+    --- PASS: TestInvestigationSSEAcceptsResultWithinDiagnosticBudget/json (0.03s)
+    --- FAIL: TestInvestigationSSEAcceptsResultWithinDiagnosticBudget/sse (0.01s)
+=== RUN   TestInvestigationDoctorFailsRejectedToolDefinitions
+    zz_investigation_round5_test.go:87: doctor OK=true; accepted tools=0; rejected tools=[{Name:broken_header_tool Reason:invalid or duplicate x-mcp-header annotation}]; checks=[{Name:modern_catalog_discovery Status:passed Detail:} {Name:untrusted_origin Status:passed Detail:}]
+    zz_investigation_round5_test.go:89: Doctor reports healthy after rejecting the endpoint's only tool definition
+--- FAIL: TestInvestigationDoctorFailsRejectedToolDefinitions (0.00s)
+FAIL
+FAIL	github.com/onebox-faas/faas/pkg/mcphosting	0.083s
+FAIL

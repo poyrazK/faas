@@ -1,0 +1,8 @@
+test_boolean_property_schema_is_callable_over_modern_http (__main__.PythonRoundThreeInvestigation.test_boolean_property_schema_is_callable_over_modern_http) ... 127.0.0.1 - - [11/Nov/2026 17:33:41] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.03407499934837688}
+ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.505s
+
+OK

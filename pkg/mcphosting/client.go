@@ -285,7 +285,7 @@ func consumeMessage(data []byte, id int, x *Exchange, start time.Time) (bool, er
 
 func consumeSSE(r io.Reader, id int, x *Exchange, start time.Time) error {
 	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 4096), 1<<20)
+	scanner.Buffer(make([]byte, 4096), maxResponseBytes+1)
 	var data []string
 	total := 0
 	for scanner.Scan() {
