@@ -108,6 +108,9 @@ type fakeVMM struct {
 	// per-key rows correctly.
 	lastColdBootSpec AppSpec
 	lastRestoreSpec  AppSpec
+	// branchAck echoes a requested environment branch containment, as a
+	// current vmmd does (ADR-20261031193635).
+	branchAck bool
 
 	// ADR-051 PR-D: characterization report. The default zero
 	// value is "no observation" — the engine leaves apps.workload_class
@@ -167,7 +170,9 @@ func (f *fakeVMM) CreateColdBoot(ctx context.Context, _, instance string, app Ap
 	f.lastColdBootSpec = app
 	f.lastColdBootCtx = ctx
 	f.coldBoots++
-	return f.outcome(instance, vmmdpb.WakeMethod_WAKE_COLD_BOOT, vmmdpb.WakeMethod_WAKE_COLD_BOOT), nil
+	out := f.outcome(instance, vmmdpb.WakeMethod_WAKE_COLD_BOOT, vmmdpb.WakeMethod_WAKE_COLD_BOOT)
+	out.EnvironmentBranchContained = f.branchAck && app.EnvironmentBranchContained
+	return out, nil
 }
 
 func (f *fakeVMM) CreateFromSnapshot(ctx context.Context, _, instance string, app AppSpec, ref SnapshotRef) (*WakeOutcome, error) {

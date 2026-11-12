@@ -14,5 +14,9 @@ export type AfterRestoreHook = {
    * Callback timeout in milliseconds; 0 uses the 500 ms default.
    */
   timeout_ms?: number;
+  /**
+   * reload lets an environment branch wake from the parent deployment's credential-free capture instead of a cold boot; the callback then re-reads config and reconnects under the branch's identity. Omit to cold-boot branches.
+   */
+  identity?: 'reload';
 };
 

@@ -44,6 +44,7 @@ const (
 	adoptionRefusedPrivateNetwork  = "private_network"
 	adoptionRefusedPrepared        = "prepared_network"
 	adoptionRefusedRehearsal       = "rehearsal"
+	adoptionRefusedBranchContained = "environment_branch_contained"
 	adoptionRefusedEgressCircuit   = "egress_circuit"
 	adoptionRefusedProductionFork  = "production_fork"
 	adoptionRefusedFunction        = "function_resources"
@@ -194,6 +195,8 @@ func adoptionScope(chrootRoot func(string) string, adoptAdmitted bool, r resourc
 		return adoptionRefusedStaticEgress, "static egress SNAT is not rebuilt yet"
 	case a.Network.RehearsalRunID != "":
 		return adoptionRefusedRehearsal, "rehearsal containment and recorder are not rebuilt"
+	case a.Network.EnvironmentBranchContained:
+		return adoptionRefusedBranchContained, "environment branch containment is not rebuilt"
 	case a.Network.EgressCircuits:
 		return adoptionRefusedEgressCircuit, "egress circuit registration is not rebuilt"
 	case r.Lease.Quarantine:
@@ -440,6 +443,7 @@ func (m *Manager) adoptedInstance(l Lease, a *resourceAdoption) *Instance {
 		PrivateNetworkHandleV4: a.Network.PrivateNetworkHandleV4,
 		PrivateNetworkHandleV6: a.Network.PrivateNetworkHandleV6,
 		StaticEgressExcluded:   a.Network.StaticEgressExcluded,
+		PrivateNetworkExcluded: a.Network.PrivateNetworkExcluded,
 		adoptionVCPUs:          a.Firecracker.VCPUs,
 		adoptionMemSizeMiB:     a.Firecracker.MemoryMiB,
 		devPatched:             in.DevPatched,

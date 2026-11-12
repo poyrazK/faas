@@ -24916,7 +24916,7 @@ components:
         hold:
           type: string
           enum: [compute_ceiling, egress, inactive, plan_excess, preview]
-          description: "Set while the platform stops this database's compute and refuses its connections although its state is ready: compute_ceiling once the account used its monthly compute ceiling; egress once its apps and databases sent the plan's monthly egress allowance; inactive while the account is suspended; plan_excess (see plan_excess); preview for a PR preview database once the account used 80% of its compute. Its data is kept. Omitted while nothing holds it; the platform applies a change within a few minutes."
+          description: "Set while the platform stops this database's compute and refuses its connections although its state is ready: compute_ceiling once the account used its monthly compute ceiling; egress once this database sent its own monthly egress allowance (500 GB); inactive while the account is suspended; plan_excess (see plan_excess); preview for a PR preview database once the account used 80% of its compute. Its data is kept. Omitted while nothing holds it; the platform applies a change within a few minutes."
         restore_range:
           $ref: '#/components/schemas/ManagedPostgresRestoreRange'
     ManagedPostgresRestoreRange:
@@ -24993,21 +24993,22 @@ components:
           type: string
           format: date-time
         egress_allowance_bytes:
-          description: The plan's monthly egress allowance, shared by the account's apps and databases. Absent on a plan without one.
+          description: Each database's own monthly egress allowance, 500 GB (10^9 bytes) as Neon includes per project. Database egress does not count toward the plan's app egress allowance. Absent on a plan without databases.
           type: integer
           format: int64
           minimum: 0
         app_egress_bytes:
-          description: What the account's apps sent this month toward the shared egress allowance; egress_bytes is the databases' part.
+          deprecated: true
+          description: Deprecated and always omitted. Apps no longer share the databases' egress allowance.
           type: integer
           format: int64
           minimum: 0
         egress_state:
-          description: "healthy; warning at 80% of the shared egress allowance; overage past it while the account's egress overage election bills database egress (at Neon's price plus 5%, up to twice the allowance); held once apps and databases together reach the allowance (twice it with overage billed) and the platform enforces caps, until the month ends or the plan grows."
+          description: "The state of the database that sent the most egress this month: healthy; warning at 80% of its hold; overage past its allowance while the account's egress overage election bills database egress (at Neon's price plus 5%, up to twice the allowance); held once it reaches its allowance (twice it with overage billed) and the platform enforces caps, until the month ends. Only that database is held."
           type: string
           enum: [healthy, warning, overage, held]
         hold:
-          description: Set while every database of the account is held, with the same reason each database reports.
+          description: Set while every database of the account is held, with the same reason each database reports. Egress holds one database at a time, so it is reported on that database, not here.
           type: string
           enum: [compute_ceiling, egress, inactive]
     CreateManagedPostgresDatabaseRequest:
@@ -25232,6 +25233,15 @@ components:
           type: string
           format: date-time
           description: UTC month boundary at which shadow/live handling starts. Periods before it are never charged.
+        over_ceiling: {$ref: '#/components/schemas/ObjectStorageOverCeilingDeletion'}
+    ObjectStorageOverCeilingDeletion:
+      description: Present while the account stores more than its object-storage ceiling. Unless the account gets back under the ceiling first, Gregale deletes the excess on deletion_scheduled_at.
+      type: object
+      required: [over_ceiling_since, deletion_scheduled_at, excess_bytes]
+      properties:
+        over_ceiling_since: {type: string, format: date-time}
+        deletion_scheduled_at: {type: string, format: date-time}
+        excess_bytes: {type: integer, format: int64, minimum: 1, description: Bytes stored above the ceiling at the last check.}
     ObjectSignedRequest:
       description: Temporary bearer capability. Bucket object GET/HEAD/PUT URLs use the branded S3 gateway; a PUT URL dispatches at most one write. Multipart part URLs retain their separate contract. Do not log or persist URLs.
       type: object
@@ -28464,6 +28474,10 @@ components:
           maximum: 2000
           default: 500
           description: "Callback timeout in milliseconds; 0 uses the 500 ms default."
+        identity:
+          type: string
+          enum: [reload]
+          description: "reload lets an environment branch wake from the parent deployment's credential-free capture instead of a cold boot; the callback then re-reads config and reconnects under the branch's identity. Omit to cold-boot branches."
     BeforeCheckpointHook:
       description: "Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables warm snapshots; snapshot reuse skips the callback."
       type: object

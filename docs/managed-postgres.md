@@ -46,11 +46,13 @@ overage on ([Compute overage](#compute-overage)):
 - the pool doubles, and storage past the plan's pool, averaged over the
   month, costs $0.50 per GiB-month.
 
-Data your databases send counts toward your plan's monthly egress allowance
-together with your apps' egress (Free 10 GiB, Hobby 100 GiB, Pro 500 GiB,
-Scale 2,000 GiB; see [plans](plans.md)). Once the two together reach it, your
-databases stop and refuse connections until the month ends or the plan grows.
-Egress overage does not extend this for databases yet.
+Each database has its own monthly egress allowance of 500 GB (10^9 bytes), as
+Neon includes per project. It is separate from your apps' egress allowance
+(see [plans](plans.md)). A database that reaches it stops and refuses
+connections until the month ends; your other databases and your apps keep
+running. With egress overage on (`gregale billing egress-overage on`), a
+database's egress past its 500 GB is billed at $0.105 per GB, and it stops
+only at twice its allowance.
 
 All current plans use provider-managed compute suspension. Always-on database
 compute is not included in the bundled plans, and requests that disable

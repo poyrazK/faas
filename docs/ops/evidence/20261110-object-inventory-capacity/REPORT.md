@@ -121,6 +121,82 @@ buckets are.
 - **Noise.** Other sessions were rebuilding the shared Go cache during these
   runs. Identical small-only runs varied between 82% and 96% busy.
 
+## After step 4 (2026-11-11)
+
+Steps 3 and 4 of ADR-20261110151628 record when each bucket last changed and,
+with `object_inventory_quiet` on under gateway-safety accounting, leave a
+quiet bucket to a daily verification. Same harness, new scenario
+(`quiet-200ms`): 22,000 one-page buckets at 200 ms per page.
+
+- 20,000 quiet buckets, listed 2 h ago, nothing written since;
+- 1,000 active buckets, listed 10 minutes ago and written since;
+- 1,000 quiet buckets listed 23.5 h ago, due for verification.
+
+| | Result |
+|---|---|
+| Due at the start | 2,000 of 22,000 |
+| Sweep 1 | 40.4 s: all 1,000 active, then 471–473 verifications |
+| Sweep 2 | 14.4–14.6 s: the other 527–529 verifications, nothing left due |
+| Quiet buckets listed | 0 |
+| Due query (100 rows) | 92–98 ms with quiet on, 23 ms with it off |
+| Backlog query | 230–234 ms |
+
+- **Only active buckets and verifications are listed.** The sweep's rate is
+  unchanged (about 1,470 one-page buckets per 40 s sweep, 37 a second). With
+  the switch on, the work per 900 s is the active buckets plus 1/92 of the
+  quiet ones (one verification each 23 h). The rate covers, for example,
+  about 10,000 active and 2,000,000 quiet buckets, against 32,000 buckets in
+  all with every bucket on the 5-minute cadence.
+- **Active buckets first.** The due query orders a quiet bucket by how close
+  it is to 24 h, as it orders an active bucket's last attempt by how close it
+  is to 900 s. The first run of this scenario sorted by attempt time alone,
+  so the 1,000 verifications (attempted 23.5 h before) went ahead of the
+  active buckets (attempted 10 minutes before). That is fixed: the active
+  buckets now finish in the first sweep.
+- **The next limit is the due query.** It reads every ready bucket and,
+  with quiet on, cannot use an index for its filter or order: 96 ms for
+  22,000 buckets, linear in the bucket count. The sweep runs it each time its
+  queue refills. Near a few hundred thousand buckets it takes about a second
+  per refill. A due-time column with a partial index should come before then
+  (done: see below).
+
+## After ADR-20261111152144 (2026-11-11)
+
+[ADR-20261111152144](../../../adr/20261111152144-object-inventory-due-schedule.md)
+reads the due query's candidates from an indexed per-bucket schedule. New
+harness scenario (`due-query`): the due query alone, 100 rows, at 22,000 and
+200,000 buckets in `quiet-200ms`'s mix (1 in 22 active, 1 in 22 due for
+verification, the rest quiet; every bucket has an activity row, as after
+the step 3 fill). Median of 7 runs, measured once right after the seed,
+when every schedule row has one dead index entry from the seed, and once
+after `VACUUM ANALYZE`.
+
+| Buckets | Quiet on | Quiet off | Quiet on, vacuumed | Quiet off, vacuumed |
+|---|---|---|---|---|
+| 22,000 (before: full scan) | 96 ms | 23 ms | | |
+| 22,000 | 10.7 ms | 5.7 ms | 7.8 ms | 4.0 ms |
+| 200,000 | 8.7 ms | 5.6 ms | 6.4 ms | 4.0 ms |
+
+- **The cost no longer grows with buckets.** At 200,000 buckets a refill
+  reads about 300 schedule rows from three index ranges plus their key
+  lookups ([plan](due-query-plan-200000.txt), 4.2 ms executing with quiet
+  on). The full scan was linear: about 0.9 s at 200,000 by extrapolation.
+- **No table is read whole.** The harness fails if a plan has a sequential
+  scan of the bucket, usage, activity or schedule table. The candidate list
+  was first joined with `IN`; at 22,000 buckets the planner hashed it
+  against all of `object_buckets`, at 200,000 it did not. The query now
+  looks candidates up by key from an array, which leaves no such choice.
+- **Equivalence.** `TestObjectInventoryScheduleMatchesFullScanPG` compares
+  the indexed query with the full-scan query in one transaction over
+  randomized buckets (never listed, leased, held, listing, all-versions,
+  quiet and active on both sides of each boundary), both modes, limits
+  1/3/7/100 and random skip lists, and checks every schedule row against
+  its sources: identical in all 192 comparisons.
+- Machine load varied between runs (shared host): one earlier unvacuumed
+  run at 200,000 measured 24 ms / 13 ms. Every run stayed index-driven.
+- `ObjectInventoryBacklog` still reads every bucket. It runs once a minute
+  for gauges, not on the sweep's path.
+
 ## Limits of this measurement
 
 - The provider latency is injected, not measured against OVH. The ranking of

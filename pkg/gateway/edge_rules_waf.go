@@ -191,7 +191,7 @@ func (h *Handler) applyEdgeRuleWAFRule(w http.ResponseWriter, r *http.Request, a
 		outcome := res.Outcome
 		if outcome == WAFInlineDetected {
 			if rule.Mode == api.EdgeWAFModeBlock {
-				api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Request blocked",
+				api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeWAFBlocked, "Request blocked",
 					"blocked by edge rule "+rule.ID+" (kind=waf)"))
 				if !res.CookiesOnly && !res.Oversized {
 					h.penalizeEdgeRuleRejection(r, app, rule.ID)

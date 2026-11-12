@@ -32,6 +32,7 @@ var ungatedCommands = map[string]string{
 	"deployments":  "core deploy",
 	"invoke":       "calls an app",
 	"login":        "sign-in",
+	"update":       "updates the local CLI binary",
 	"logout":       "sign-in",
 	"signup":       "sign-in",
 	"whoami":       "sign-in",
