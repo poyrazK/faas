@@ -461,8 +461,14 @@ type AppSpec struct {
 	// containment, and a mismatch refuses the wake. An older vmmd ignores it
 	// and returns no acknowledgement, which the scheduler treats as refusal.
 	EnvironmentBranchContained bool `protobuf:"varint,44,opt,name=environment_branch_contained,json=environmentBranchContained,proto3" json:"environment_branch_contained,omitempty"`
-	unknownFields              protoimpl.UnknownFields
-	sizeCache                  protoimpl.SizeCache
+	// routed_port_raw_tcp (ADR-079 amendment 1, ADR-20261027090000) marks a
+	// primary app whose startup probe is TCP accept on a port it declares as a
+	// public raw TCP listener. Such a server cannot answer the plan-default
+	// HTTP liveness probe, so vmmd runs no default probe for it; an explicit
+	// liveness_probe_json still applies. An older vmmd ignores the field.
+	RoutedPortRawTcp bool `protobuf:"varint,45,opt,name=routed_port_raw_tcp,json=routedPortRawTcp,proto3" json:"routed_port_raw_tcp,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *AppSpec) Reset() {
@@ -799,6 +805,13 @@ func (x *AppSpec) GetIdentityReload() bool {
 func (x *AppSpec) GetEnvironmentBranchContained() bool {
 	if x != nil {
 		return x.EnvironmentBranchContained
+	}
+	return false
+}
+
+func (x *AppSpec) GetRoutedPortRawTcp() bool {
+	if x != nil {
+		return x.RoutedPortRawTcp
 	}
 	return false
 }
@@ -21598,7 +21611,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xa0\x10\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xcf\x10\n" +
 	"\aAppSpec\x12(\n" +
 	"\x10rehearsal_run_id\x18! \x01(\tR\x0erehearsalRunId\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
@@ -21651,7 +21664,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"cpu_weight\x18) \x01(\x05R\tcpuWeight\x12!\n" +
 	"\fcpu_uncapped\x18* \x01(\bR\vcpuUncapped\x12'\n" +
 	"\x0fidentity_reload\x18+ \x01(\bR\x0eidentityReload\x12@\n" +
-	"\x1cenvironment_branch_contained\x18, \x01(\bR\x1aenvironmentBranchContained\"\x92\b\n" +
+	"\x1cenvironment_branch_contained\x18, \x01(\bR\x1aenvironmentBranchContained\x12-\n" +
+	"\x13routed_port_raw_tcp\x18- \x01(\bR\x10routedPortRawTcp\"\x92\b\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +

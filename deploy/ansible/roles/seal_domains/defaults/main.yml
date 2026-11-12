@@ -192,6 +192,13 @@ faas_seal_domain_edge_tls_identity_src: ""
 faas_seal_domain_edge_tls_previous_identity_src: ""
 faas_seal_domain_edge_tls_recipient_src: ""
 
+# Operator-local files from `gregalectl seal-domain init --domain neon`
+# (ADR-20261112160000 §3). Control-plane hosts stage the identity: neond
+# seals and opens the per-project Neon API keys with it. No recipient (neond
+# is the only writer) and no fleet copy (the domain is new).
+faas_seal_domain_neon_identity_src: ""
+faas_seal_domain_neon_previous_identity_src: ""
+
 # Operator-local files from `gregalectl seal-domain init --domain alerting`.
 # Control-plane hosts stage both: meterd opens alert rule webhook secrets,
 # notification channel destinations and MCP readiness provider keys with the
