@@ -1,8 +1,10 @@
+-- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
+
 -- ADR-20261112080601: what reverses each agent write. apid writes a record
 -- next to the agent's activity row and marks it undone when a person (or an
 -- approved agent) undoes it. Expand-only: release N-1 apid writes no records.
-SET LOCAL lock_timeout = '5s';
 
 CREATE TABLE IF NOT EXISTS agent_undo_records (
     id                  uuid PRIMARY KEY,
