@@ -41,9 +41,16 @@ type ScheduledRelease struct {
 	OutcomeCode       string
 	OutcomeDetail     string
 	ScheduledBy       string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
-	StartedAt         *time.Time
+	// ScheduledByAccountID and ScheduledByKeyID name who scheduled the
+	// release: the acting account and, for an API key, the key. The worker
+	// checks at release_at that they may still deploy the app (and lift the
+	// freezes the schedule overrides). Empty on schedules recorded before
+	// the check existed, which start without it.
+	ScheduledByAccountID string
+	ScheduledByKeyID     string
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	StartedAt            *time.Time
 	// Revision is the release's deployment revision, read with the schedule.
 	Revision int
 }
