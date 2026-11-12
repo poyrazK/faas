@@ -151,7 +151,7 @@ func (x *session) authorize(org string, staff bool) error {
 	}
 	if x.actor.KeyOrgID != "" {
 		if x.scope.OrgID != "" {
-			if x.actor.KeyOrgID != x.scope.OrgID {
+			if uid(x.actor.KeyOrgID) != uid(x.scope.OrgID) {
 				return forbidden()
 			}
 		} else {
@@ -201,7 +201,7 @@ func (x *session) receipt(key, op, resource string, input any) (any, error) {
 		return nil, e
 	}
 	h := sha256.Sum256(raw(input))
-	if id(r.ActorID) != x.actor.ID || r.Operation != op || r.ResourceID != uid(resource) || !bytes.Equal(r.RequestHash, h[:]) {
+	if r.ActorID != uid(x.actor.ID) || r.Operation != op || r.ResourceID != uid(resource) || !bytes.Equal(r.RequestHash, h[:]) {
 		return nil, conflict("idempotency key was used for a different request")
 	}
 	var v any

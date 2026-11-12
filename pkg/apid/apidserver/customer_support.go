@@ -65,6 +65,7 @@ func (s *server) registerCustomerSupportRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/orgs/{org}/support/tickets/{ticket}/satisfaction", customer("satisfaction"))
 	mux.HandleFunc("POST /v1/orgs/{org}/support/tickets/{ticket}/satisfaction", customer("satisfaction"))
 	s.registerSupportStaffRoutes(mux)
+	s.registerSupportPortalRoutes(mux)
 }
 func (s *server) registerSupportStaffRoutes(mux *http.ServeMux) {
 	for _, route := range []struct{ method, path, endpoint string }{
