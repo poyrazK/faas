@@ -62,7 +62,11 @@ func dataAPIHooksSQL(schema string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.NewReplacer("{{schema}}", schema, "{{backlog_max}}", strconv.Itoa(api.DataAPIChangeHooksBacklogMax)).Replace(string(content)), nil
+	status, err := templates.FS.ReadFile("data-api/change-hooks-status.sql")
+	if err != nil {
+		return "", err
+	}
+	return strings.NewReplacer("{{schema}}", schema, "{{backlog_max}}", strconv.Itoa(api.DataAPIChangeHooksBacklogMax)).Replace(string(content) + "\n" + string(status)), nil
 }
 
 const dataAPIHooksUpgradeHeader = `-- Data API change hooks upgrade (ADR-20261022121642 amendments 2 and 3).
@@ -91,7 +95,7 @@ func dataAPIHooksUpgradeSQL(schema string) (string, error) {
 	if from < 0 || to < from {
 		return "", errors.New("the change hooks template has no upgrade section")
 	}
-	return fmt.Sprintf(dataAPIHooksUpgradeHeader, api.DataAPIChangeHooksBacklogMax, schema) + full[from:to+len(end)], nil
+	return fmt.Sprintf(dataAPIHooksUpgradeHeader, api.DataAPIChangeHooksBacklogMax, schema) + full[from:to+len(end)] + "\n" + full[strings.Index(full, "-- Optional outbox observation;"):], nil
 }
 
 func cmdDataAPIHooksSQL(args []string) int {

@@ -278,3 +278,15 @@ precheck run away.
   and a secret reused across two different prefixes produces two
   different hashes. The (app_id, prefix) index then narrows the
   hash compare to ~one row.
+
+## Amendment 2026-11-12 (Hunt 34 H34-36, H34-37)
+
+- `read` covers the safe methods `GET`, `HEAD` and `OPTIONS`, not `GET`
+  alone. `HEAD` is `GET` without a body and edge rules already treat it so;
+  refusing it broke link checkers and `curl -I` with a read key.
+- In `required` mode a CORS preflight (`OPTIONS` with `Origin` and
+  `Access-Control-Request-Method`) and no `Authorization` header passes
+  without a consumer. Browsers never attach credentials to a preflight, so
+  the gate refused every cross-origin call before the app's CORS rule could
+  answer. The preflight stamps no consumer and the request that follows is
+  checked as before.

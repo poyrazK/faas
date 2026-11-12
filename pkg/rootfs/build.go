@@ -883,7 +883,7 @@ func applyTarballWithCap(dst string, r io.Reader, capBytes int64, prefix string)
 		// Keep every staging filesystem operation inside the positive
 		// archive-name validation branch. resolveEntryPath then adds
 		// containment and ancestor-symlink protection.
-		if !strings.Contains(archiveName, "..") {
+		if !hasParentComponent(archiveName) {
 			hdr.Name = archiveName
 			// resolveEntryPath rejects absolute names and clamps ancestor
 			// symlinks inside the staging root before applyEntry can create
