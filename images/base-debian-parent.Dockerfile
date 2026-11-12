@@ -4,4 +4,4 @@
 # python313. imaged composes those children by matching OCI diff IDs.
 #
 # Node22 is intentionally Alpine and does not use this parent.
-FROM mirror.gcr.io/library/debian:13-slim@sha256:1e1a22175fbf1b32157ddaf0219e1db4e5401fab2b94ed285add64d18587cd2d
+FROM mirror.gcr.io/library/debian:13-slim@sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392
