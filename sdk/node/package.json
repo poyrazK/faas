@@ -6,11 +6,11 @@
   "homepage": "https://gregale.dev/docs/cli",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/poyrazK/faas.git",
-    "directory": "sdk/node"
+    "url": "git+https://github.com/gregale-dev/gregale-js.git",
+    "directory": "packages/sdk-node"
   },
   "bugs": {
-    "url": "https://github.com/poyrazK/faas/issues"
+    "url": "https://github.com/gregale-dev/gregale-js/issues"
   },
   "type": "module",
   "main": "./dist/index.js",

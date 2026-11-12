@@ -21,7 +21,9 @@ func scheduledReleaseFromRow(r sqlc.ScheduledRelease, revision int32) ScheduledR
 		DeploymentID: pgUUIDString(r.DeploymentID), ReleaseAt: r.ReleaseAt.Time.UTC(),
 		NotifyChannelIDs: pgUUIDStrings(r.NotifyChannelIds), OverrideFreeze: r.OverrideFreeze,
 		OverrideFreezeIDs: pgUUIDStrings(r.OverrideFreezeIds), State: r.State, OutcomeCode: r.OutcomeCode,
-		OutcomeDetail: r.OutcomeDetail, ScheduledBy: r.ScheduledBy, CreatedAt: r.CreatedAt.Time.UTC(),
+		OutcomeDetail: r.OutcomeDetail, ScheduledBy: r.ScheduledBy,
+		ScheduledByAccountID: pgUUIDString(r.ScheduledByAccountID), ScheduledByKeyID: pgUUIDString(r.ScheduledByKeyID),
+		CreatedAt: r.CreatedAt.Time.UTC(),
 		UpdatedAt: r.UpdatedAt.Time.UTC(), Revision: int(revision),
 	}
 	if len(r.Canary) > 0 {
@@ -59,7 +61,9 @@ func (s *PgStore) ScheduleRelease(ctx context.Context, sr ScheduledRelease, repl
 		ID: mustPgUUID(sr.ID), AccountID: mustPgUUID(sr.AccountID), AppID: mustPgUUID(sr.AppID),
 		DeploymentID: mustPgUUID(sr.DeploymentID), ReleaseAt: pgTimestamptzUTC(sr.ReleaseAt), Canary: canary,
 		NotifyChannelIds: pgUUIDList(sr.NotifyChannelIDs), OverrideFreeze: sr.OverrideFreeze,
-		OverrideFreezeIds: pgUUIDList(sr.OverrideFreezeIDs), ScheduledBy: sr.ScheduledBy, Now: pgTimestamptzUTC(now),
+		OverrideFreezeIds: pgUUIDList(sr.OverrideFreezeIDs), ScheduledBy: sr.ScheduledBy,
+		ScheduledByAccountID: dbSwitchNullUUID(sr.ScheduledByAccountID), ScheduledByKeyID: dbSwitchNullUUID(sr.ScheduledByKeyID),
+		Now: pgTimestamptzUTC(now),
 	})
 	if err != nil {
 		return ScheduledRelease{}, nil, fmt.Errorf("state: insert scheduled release: %w", err)

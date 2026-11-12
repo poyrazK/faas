@@ -121,6 +121,19 @@ Serving 3 function(s) on this machine (ctrl-c to stop):
   http://localhost:8787 routes like the entry address (entry: web)
 ```
 
+Python functions use `.venv` before `venv` in their function directory, then
+the same directories in the workspace root. Without a project interpreter,
+they resolve `python3` through the function's effective `PATH`, including
+selected env-file and function `env:` overrides. A selected virtualenv also
+supplies `PATH` and `VIRTUAL_ENV` to subprocesses; `PYTHONHOME` is cleared.
+Install dependencies into that environment before starting; shell activation
+is unnecessary. A broken project interpreter reports how to repair it.
+
+Selected env-file PATH changes reload workers with the newly resolved Python.
+An invalid runtime selection keeps existing workers serving until the file is
+repaired. Virtualenv directories themselves are excluded from source watching;
+save a source file or restart the CLI after changing installed dependencies.
+
 - Each function has its own address, `http://<name>.localhost:8787`, as it
   has its own host on Gregale. With an `entry: true` function,
   `http://localhost:8787` routes by the functions' `routes:`, and a project
