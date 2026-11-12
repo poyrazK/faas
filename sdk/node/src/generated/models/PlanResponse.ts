@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { FeatureHint } from './FeatureHint.js';
 import type { PlanAffectedApp } from './PlanAffectedApp.js';
 import type { PlanAsyncRoute } from './PlanAsyncRoute.js';
 import type { PlanCron } from './PlanCron.js';
@@ -38,6 +39,10 @@ export type PlanResponse = {
    */
   async_routes?: Array<PlanAsyncRoute>;
   warnings?: Array<string>;
+  /**
+   * Gregale behaviors and features that apply to the scanned source, with the commands that change them (ADR-20261112223000).
+   */
+  feature_hints?: Array<FeatureHint>;
   /**
    * Structured skipped/merged detector decisions available to explain-mode clients.
    */

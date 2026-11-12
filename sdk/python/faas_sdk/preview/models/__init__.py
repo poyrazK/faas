@@ -2085,6 +2085,7 @@ from .failure_rules_version import FailureRulesVersion
 from .feature_flag import FeatureFlag
 from .feature_flag_type import FeatureFlagType
 from .feature_flag_version import FeatureFlagVersion
+from .feature_hint import FeatureHint
 from .field_error import FieldError
 from .filter_criteria import FilterCriteria
 from .filter_criteria_clause import FilterCriteriaClause
@@ -8468,6 +8469,7 @@ __all__ = (
     "FeatureFlag",
     "FeatureFlagType",
     "FeatureFlagVersion",
+    "FeatureHint",
     "FieldError",
     "FilterCriteria",
     "FilterCriteriaClause",

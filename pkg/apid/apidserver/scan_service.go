@@ -58,6 +58,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/serviceadditions"
 	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
+	"github.com/onebox-faas/faas/pkg/featurehints"
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -190,6 +191,7 @@ type scanPlanResponse struct {
 	// on /scan responses because the scan handler doesn't need it.
 	CronNames         []string                   `json:"-"`
 	Warnings          []string                   `json:"warnings,omitempty"`
+	FeatureHints      []api.FeatureHint          `json:"feature_hints,omitempty"`
 	DetectionWarnings []api.PlanDetectionWarning `json:"detection_warnings,omitempty"`
 	ObservedApps      int                        `json:"observed_apps"`
 	ObservedCrons     int                        `json:"observed_crons"`
@@ -2200,13 +2202,17 @@ func (s *server) scanService(
 		Crons:                 crons,
 		AsyncRoutes:           asyncRoutePlan,
 		Warnings:              warnings,
-		DetectionWarnings:     toPlanDetectionWarnings(result.DetectionWarnings),
-		ObservedApps:          projectedApps,
-		ObservedCrons:         projectedCrons,
-		LimitApps:             limits.DeployedApps,
-		LimitCrons:            limits.CronLimitPerAccount,
-		CanApply:              canApply,
-		NotAllowed:            notAllowed,
+		// What applies to this source and how to change it, so an agent
+		// reading the plan need not search the CLI (ADR-20261112223000 §1).
+		FeatureHints: featurehints.For(featurehints.Input{ProjectSlug: req.ProjectSlug, Environment: req.Environment,
+			Workloads: respWorkloads, Managed: respManaged}),
+		DetectionWarnings: toPlanDetectionWarnings(result.DetectionWarnings),
+		ObservedApps:      projectedApps,
+		ObservedCrons:     projectedCrons,
+		LimitApps:         limits.DeployedApps,
+		LimitCrons:        limits.CronLimitPerAccount,
+		CanApply:          canApply,
+		NotAllowed:        notAllowed,
 		// ADR-124 can_apply rescue signal. PreExclude + Rescued
 		// are the operator-facing knobs the dashboard renders in
 		// the gate card; CanApplyReasons is the human-readable

@@ -1065,6 +1065,7 @@ export type { FailureRule } from './FailureRule.js';
 export type { FailureRules } from './FailureRules.js';
 export type { FeatureFlag } from './FeatureFlag.js';
 export type { FeatureFlagVersion } from './FeatureFlagVersion.js';
+export type { FeatureHint } from './FeatureHint.js';
 export type { FieldError } from './FieldError.js';
 export type { FilterCriteria } from './FilterCriteria.js';
 export type { FilterCriteriaClause } from './FilterCriteriaClause.js';
