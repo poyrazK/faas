@@ -65,7 +65,7 @@ func (s *server) supportPortalToken(w http.ResponseWriter, account string) (stri
 
 func (s *server) supportPortalSubmit(w http.ResponseWriter, r *http.Request, acct state.Account, endpoint string, staff bool) {
 	handler := s.customerSupportHandler(endpoint, staff)
-	if staff {
+	if staff && endpoint != "read" {
 		handler = s.requireStepUpStrict(5 * time.Minute)(handler)
 	}
 	s.requireSameOrigin(s.requireSessionPrincipal(handler))(w, r, acct)

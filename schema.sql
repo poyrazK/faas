@@ -59114,6 +59114,52 @@ ALTER TABLE public.support_messages ALTER COLUMN sequence ADD GENERATED ALWAYS A
 
 
 --
+-- Name: support_notifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_notifications (
+    id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    event_id uuid NOT NULL,
+    ticket_id uuid NOT NULL,
+    recipient_id uuid NOT NULL,
+    audience text NOT NULL,
+    kind text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    read_at timestamp with time zone,
+    email_state text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    lease_id uuid,
+    lease_until timestamp with time zone,
+    available_at timestamp with time zone NOT NULL,
+    destination_hash bytea,
+    CONSTRAINT support_notifications_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT support_notifications_audience_check CHECK ((audience = ANY (ARRAY['customer'::text, 'staff'::text]))),
+    CONSTRAINT support_notifications_available_at_check CHECK (isfinite(available_at)),
+    CONSTRAINT support_notifications_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT support_notifications_destination_hash_check CHECK (((destination_hash IS NULL) OR (octet_length(destination_hash) = 32))),
+    CONSTRAINT support_notifications_email_state_check CHECK ((email_state = ANY (ARRAY['queued'::text, 'inflight'::text, 'accepted'::text, 'failed'::text, 'skipped'::text]))),
+    CONSTRAINT support_notifications_kind_check CHECK ((kind = ANY (ARRAY['staff_reply'::text, 'customer_reply'::text, 'ticket_created'::text, 'assigned'::text]))),
+    CONSTRAINT support_notifications_lease_until_check CHECK (((lease_until IS NULL) OR isfinite(lease_until))),
+    CONSTRAINT support_notifications_read_at_check CHECK (((read_at IS NULL) OR isfinite(read_at)))
+);
+
+
+--
+-- Name: support_notifications_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.support_notifications ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.support_notifications_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: support_outbox; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -73520,6 +73566,30 @@ ALTER TABLE ONLY public.support_messages
 
 
 --
+-- Name: support_notifications support_notifications_event_id_recipient_id_audience_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_notifications
+    ADD CONSTRAINT support_notifications_event_id_recipient_id_audience_key UNIQUE (event_id, recipient_id, audience);
+
+
+--
+-- Name: support_notifications support_notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_notifications
+    ADD CONSTRAINT support_notifications_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_notifications support_notifications_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_notifications
+    ADD CONSTRAINT support_notifications_sequence_key UNIQUE (sequence);
+
+
+--
 -- Name: support_outbox support_outbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -84379,6 +84449,34 @@ CREATE INDEX support_messages_search_idx ON public.support_messages USING gin (t
 --
 
 CREATE INDEX support_messages_ticket_idx ON public.support_messages USING btree (ticket_id, sequence);
+
+
+--
+-- Name: support_notifications_age_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_notifications_age_idx ON public.support_notifications USING btree (created_at, id);
+
+
+--
+-- Name: support_notifications_ready_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_notifications_ready_idx ON public.support_notifications USING btree (available_at, id) WHERE (email_state = ANY (ARRAY['queued'::text, 'inflight'::text]));
+
+
+--
+-- Name: support_notifications_recipient_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_notifications_recipient_idx ON public.support_notifications USING btree (recipient_id, audience, ticket_id, sequence);
+
+
+--
+-- Name: support_notifications_unread_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_notifications_unread_idx ON public.support_notifications USING btree (recipient_id, audience, sequence) WHERE (read_at IS NULL);
 
 
 --
@@ -108381,6 +108479,30 @@ ALTER TABLE ONLY public.support_messages
 
 ALTER TABLE ONLY public.support_messages
     ADD CONSTRAINT support_messages_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_notifications support_notifications_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_notifications
+    ADD CONSTRAINT support_notifications_event_id_fkey FOREIGN KEY (event_id) REFERENCES public.support_events(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_notifications support_notifications_recipient_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_notifications
+    ADD CONSTRAINT support_notifications_recipient_id_fkey FOREIGN KEY (recipient_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_notifications support_notifications_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_notifications
+    ADD CONSTRAINT support_notifications_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
 
 
 --

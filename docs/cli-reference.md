@@ -933,10 +933,11 @@ Remove the linked project from this checkout
 
 Authenticate this machine
 
-`gregale login [--token <TOKEN>] [--token-stdin] [--insecure-storage]`
+`gregale login [--device] [--token <TOKEN>] [--token-stdin] [--insecure-storage]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--device` | sign in with a code typed in a browser on another computer (SSH, headless) |  |
 | `--token <TOKEN>` | use a pre-minted token (CI) |  |
 | `--token-stdin` | read a pre-minted token from stdin (CI) |  |
 | `--insecure-storage` | save the key to a plaintext file instead of the OS keychain (WSL, containers, SSH) |  |
@@ -945,6 +946,7 @@ Examples:
 
 ```sh
 gregale login
+gregale login --device
 printf '%s' "$GREGALE_TOKEN" | gregale login --token-stdin
 ```
 

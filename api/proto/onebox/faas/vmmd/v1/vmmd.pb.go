@@ -3715,8 +3715,14 @@ type BuildSpec struct {
 	// domain and gives the builder a Docker config, so a Dockerfile can build
 	// FROM a private base image. Empty for every other build.
 	RegistryCredentials []*BuildRegistryCredential `protobuf:"bytes,3,rep,name=registry_credentials,json=registryCredentials,proto3" json:"registry_credentials,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Host path of the build's BuildKit seed copy, attached writable as the
+	// builder's drive2 (ADR-20261030122204). builderd reflink-copies the
+	// node's seed next to drive1 for each build. vmmd accepts only an absolute
+	// .ext4 path in drive1's directory. Empty: two drives, as before. An older
+	// vmmd ignores it and the guest keeps BuildKit on drive1.
+	BuildkitSeedDrive string `protobuf:"bytes,4,opt,name=buildkit_seed_drive,json=buildkitSeedDrive,proto3" json:"buildkit_seed_drive,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *BuildSpec) Reset() {
@@ -3768,6 +3774,13 @@ func (x *BuildSpec) GetRegistryCredentials() []*BuildRegistryCredential {
 		return x.RegistryCredentials
 	}
 	return nil
+}
+
+func (x *BuildSpec) GetBuildkitSeedDrive() string {
+	if x != nil {
+		return x.BuildkitSeedDrive
+	}
+	return ""
 }
 
 // BuildRegistryCredential is one app_registry_credentials row: the registry
@@ -21928,13 +21941,14 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x15finished_at_unix_nano\x18\x04 \x01(\x03R\x12finishedAtUnixNano\x12\x1f\n" +
 	"\vlease_token\x18\x05 \x01(\tR\n" +
 	"leaseToken\x120\n" +
-	"\x14output_manifest_json\x18\x06 \x01(\tR\x12outputManifestJson\"\xac\x01\n" +
+	"\x14output_manifest_json\x18\x06 \x01(\tR\x12outputManifestJson\"\xdc\x01\n" +
 	"\tBuildSpec\x12\x1d\n" +
 	"\n" +
 	"export_dir\x18\x01 \x01(\tR\texportDir\x12\x1f\n" +
 	"\vtimeout_sec\x18\x02 \x01(\x05R\n" +
 	"timeoutSec\x12_\n" +
-	"\x14registry_credentials\x18\x03 \x03(\v2,.onebox.faas.vmmd.v1.BuildRegistryCredentialR\x13registryCredentials\"z\n" +
+	"\x14registry_credentials\x18\x03 \x03(\v2,.onebox.faas.vmmd.v1.BuildRegistryCredentialR\x13registryCredentials\x12.\n" +
+	"\x13buildkit_seed_drive\x18\x04 \x01(\tR\x11buildkitSeedDrive\"z\n" +
 	"\x17BuildRegistryCredential\x12\x1a\n" +
 	"\bregistry\x18\x01 \x01(\tR\bregistry\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\x12'\n" +

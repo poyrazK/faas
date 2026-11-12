@@ -27,6 +27,8 @@ type drainSlots struct {
 	rows    map[string]struct{}
 	lanes   map[string]struct{}
 	changed chan struct{}
+	// observe reports the pool's occupancy after each change; nil drops it.
+	observe func(used, size int)
 }
 
 func newDrainSlots(size int) *drainSlots {
@@ -38,7 +40,13 @@ func newDrainSlots(size int) *drainSlots {
 // inlineSlots returns the drain's pool, sized from dispatchConcurrency on
 // first use.
 func (d *Drain) inlineSlots() *drainSlots {
-	d.slotsOnce.Do(func() { d.slots = newDrainSlots(d.dispatchConcurrency) })
+	d.slotsOnce.Do(func() {
+		d.slots = newDrainSlots(d.dispatchConcurrency)
+		if d.ops != nil {
+			d.slots.observe = d.ops.SetInvocationDispatchSlots
+			d.slots.observe(0, d.slots.size)
+		}
+	})
 	return d.slots
 }
 
@@ -62,6 +70,7 @@ func (s *drainSlots) acquire(ctx context.Context, appID, rowID string, extra boo
 			s.used++
 			s.apps[appID]++
 			s.rows[rowID] = struct{}{}
+			s.report()
 			s.mu.Unlock()
 			return true
 		}
@@ -99,9 +108,17 @@ func (s *drainSlots) release(appID, rowID string) {
 		delete(s.apps, appID)
 	}
 	delete(s.rows, rowID)
+	s.report()
 	close(s.changed)
 	s.changed = make(chan struct{})
 	s.mu.Unlock()
+}
+
+// report hands the occupancy to observe; the caller holds s.mu.
+func (s *drainSlots) report() {
+	if s.observe != nil {
+		s.observe(s.used, s.size)
+	}
 }
 
 // lane reserves appID's FIFO queue lane; false while another tick's lane

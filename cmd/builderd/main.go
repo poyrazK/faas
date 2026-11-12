@@ -234,10 +234,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("builderd: %w", err)
 	}
+	// ADR-20261030122204: a per-node BuildKit seed Railpack builds start
+	// from, off by default.
+	buildkitSeed, err := builderdpkg.ParseBuildKitSeed(os.Getenv(builderdpkg.BuildKitSeedEnv))
+	if err != nil {
+		return fmt.Errorf("builderd: %w", err)
+	}
 	if d, ok := driver.(*builderdpkg.VMMDriver); ok {
 		d.WithBuilderBaseDigest(builderBaseDigestPath)
 		d.WithDockerHubMirrors(mirrors)
 		d.WithSharedPlatformBlobs(sharePlatformBlobs)
+		d.WithBuildKitSeed(buildkitSeed)
 		// The node artifact cache shares the build drive filesystem and keeps
 		// less free than one build needs (#5709, ADR-20261027173012).
 		if sourceStorage != nil {
@@ -322,6 +329,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		LayerCompression:    layerCompression,
 		BuildKitSnapshotter: buildkitSnapshotter,
 		DeferCacheExport:    deferCacheExport,
+		BuildKitSeed:        buildkitSeed,
 		// ADR-038: BuilderNodeID is stamped onto every
 		// build_provenance row builderd writes. Defaulted to
 		// "default-local" in LoadConfig; multi-node deployments
@@ -434,6 +442,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	workerMetrics := newBuildWorkerMetrics(ops.Registry(), pollInterval, reapThreshold)
 	go workerLoopWithMetrics(runCtx, b, pollInterval, log, workerMetrics)
+	go b.RunBuildKitSeedLoop(runCtx)
 
 	reaperMetrics := builderdpkg.NewReaperMetrics(ops.Registry(), reapInterval, reapThreshold)
 	go builderdpkg.ReaperLoopWithMetrics(runCtx, store, driver, reapInterval, reapThreshold, log, reaperMetrics)

@@ -4001,6 +4001,10 @@ type Querier interface {
 	// deployment is in one of these states, whatever the file's age.
 	ListInFlightDeploymentSpoolPaths(ctx context.Context, db DBTX) ([]ListInFlightDeploymentSpoolPathsRow, error)
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)
+	// The app's pending and dispatching rows per source from the backlog
+	// counters (ADR-20261022105723), so `queue status` shows async invocations,
+	// inbound webhooks and event deliveries waiting beside queue messages.
+	ListInvocationBacklogPendingBySource(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInvocationBacklogPendingBySourceRow, error)
 	ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInvoiceSnapshotsParams) ([]ListInvoiceSnapshotsRow, error)
 	ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]Deployment, error)
 	// ADR-733 encryption at rest. imaged owns plaintext_state, sealed_key and
@@ -4902,6 +4906,10 @@ type Querier interface {
 	// count; the spend breaker sums the month through the usage primary key, one
 	// index range per database, so the ledger's growth never forces a full scan.
 	ManagedPostgresFleetTotals(ctx context.Context, db DBTX, arg ManagedPostgresFleetTotalsParams) (ManagedPostgresFleetTotalsRow, error)
+	// ADR-20261112160000: neond refuses deleting a Neon project or branch that a
+	// live managed PostgreSQL database runs on. A provider resource is the
+	// project ID, or "<project>/<branch>" for a database on a branch.
+	ManagedPostgresLiveResourcesInProject(ctx context.Context, db DBTX, project string) ([]string, error)
 	ManagedPostgresMostSevereCapEvent(ctx context.Context, db DBTX, arg ManagedPostgresMostSevereCapEventParams) (ManagedPostgresMostSevereCapEventRow, error)
 	ManagedPostgresOverageDelivered(ctx context.Context, db DBTX, arg ManagedPostgresOverageDeliveredParams) (ManagedPostgresOverageDeliveredRow, error)
 	// ADR-20261025094915: managed PostgreSQL compute overage and cap subjects.

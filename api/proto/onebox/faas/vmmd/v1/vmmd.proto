@@ -1568,6 +1568,12 @@ message BuildSpec {
   // domain and gives the builder a Docker config, so a Dockerfile can build
   // FROM a private base image. Empty for every other build.
   repeated BuildRegistryCredential registry_credentials = 3;
+  // Host path of the build's BuildKit seed copy, attached writable as the
+  // builder's drive2 (ADR-20261030122204). builderd reflink-copies the
+  // node's seed next to drive1 for each build. vmmd accepts only an absolute
+  // .ext4 path in drive1's directory. Empty: two drives, as before. An older
+  // vmmd ignores it and the guest keeps BuildKit on drive1.
+  string buildkit_seed_drive = 4;
 }
 
 // BuildRegistryCredential is one app_registry_credentials row: the registry

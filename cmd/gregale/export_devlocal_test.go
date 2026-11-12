@@ -7,7 +7,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/guest/runners/local"
 )
@@ -101,6 +103,46 @@ func DevLocalServerForTest(t *testing.T, projectDir string) (http.Handler, strin
 		}
 	})
 	return srv, srv.token, nil
+}
+
+// DevLocalListeningServerForTest is DevLocalServerForTest on a real loopback
+// listener, as cmdDevLocal runs it, so functions can call their siblings.
+// It returns the server's base URL.
+func DevLocalListeningServerForTest(t *testing.T, projectDir string) (string, error) {
+	t.Helper()
+	fns, err := planLocalFunctions(projectDir)
+	if err != nil {
+		return "", err
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", err
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	cache := t.TempDir()
+	for _, fn := range fns {
+		fn.devPort = port
+		if err := fn.prepare(context.Background(), cache, os.Environ()); err != nil {
+			_ = ln.Close()
+			return "", err
+		}
+	}
+	srv, err := newDevLocalServer(fns, projectDir)
+	if err != nil {
+		_ = ln.Close()
+		return "", err
+	}
+	srv.out = io.Discard
+	srv.port = port
+	httpSrv := &http.Server{Handler: srv, ReadHeaderTimeout: 10 * time.Second}
+	go func() { _ = httpSrv.Serve(ln) }()
+	t.Cleanup(func() {
+		_ = httpSrv.Close()
+		for _, fn := range fns {
+			local.Reload(fn.process())
+		}
+	})
+	return "http://127.0.0.1:" + strconv.Itoa(port), nil
 }
 
 // FunctionLimitsLine exposes functionLimitsLine.
