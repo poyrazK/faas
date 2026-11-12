@@ -65,7 +65,10 @@ AGENT_MARKERS = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "GEMINI_CLI", "CODEX_SA
 # denied in headless mode.
 CLAUDE_ALLOWED_TOOLS = ["Bash(gregale *)", "Bash(curl *)", "Read", "Edit", "Write", "Glob", "Grep", "mcp__gregale"]
 # A foreign-repository task runs as a person's agent would: any shell command.
-CLAUDE_ANY_SHELL = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "mcp__gregale"]
+# It may also read the web: a person's agent can read gregale.dev docs.
+CLAUDE_ANY_SHELL = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch", "mcp__gregale"]
+# Agents whose session the eval can resume for a task's follow_up reply.
+FOLLOW_UP_AGENTS = ("claude",)
 
 
 class EvalError(Exception):
@@ -158,10 +161,17 @@ def mcp_args(toolset: str, writes: bool) -> list[str]:
     return args + ["--allow-writes"] if writes else args
 
 
-def claude_command(prompt: str, run_dir: Path, gregale: str, toolset: str, budget: float, model: str | None, writes: bool, any_shell: bool = False) -> list[str]:
+def claude_command(prompt: str, run_dir: Path, gregale: str, toolset: str, budget: float, model: str | None, writes: bool, any_shell: bool = False,
+                   resume: str | None = None) -> list[str]:
+    """A headless Claude run. A repo task keeps its session so a follow_up
+    reply can resume it; `resume` continues that session."""
     allowed = CLAUDE_ANY_SHELL if any_shell else CLAUDE_ALLOWED_TOOLS
-    command = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose", "--no-session-persistence",
+    command = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose",
                "--max-budget-usd", f"{budget:.2f}", "--permission-mode", "dontAsk", "--allowedTools", *allowed, "--strict-mcp-config"]
+    if not any_shell:
+        command.insert(5, "--no-session-persistence")
+    if resume:
+        command += ["--resume", resume]
     if toolset != "none":
         config = {"mcpServers": {"gregale": {"command": gregale, "args": mcp_args(toolset, writes)}}}
         path = run_dir / "mcp.json"
@@ -243,7 +253,22 @@ def _events(lines):
 
 def _metrics(cost) -> dict:
     return {"completed": False, "turns": 0, "cost_usd": cost, "input_tokens": 0, "output_tokens": 0,
-            "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": {}, "commands": [], "answer": "", "error": ""}
+            "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": {}, "commands": [], "answer": "", "error": "", "session_id": ""}
+
+
+def merge_metrics(first: dict, second: dict) -> dict:
+    """One record for a run and its follow-up: sums, concatenations, the last answer."""
+    merged = dict(second)
+    for key in ("turns", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"):
+        merged[key] = (first.get(key) or 0) + (second.get(key) or 0)
+    if isinstance(first.get("cost_usd"), (int, float)) or isinstance(second.get("cost_usd"), (int, float)):
+        merged["cost_usd"] = (first.get("cost_usd") or 0) + (second.get("cost_usd") or 0)
+    merged["tool_calls"] = dict(first.get("tool_calls") or {})
+    for name, count in (second.get("tool_calls") or {}).items():
+        merged["tool_calls"][name] = merged["tool_calls"].get(name, 0) + count
+    merged["commands"] = list(first.get("commands") or []) + list(second.get("commands") or [])
+    merged["first_answer"] = first.get("answer", "")
+    return merged
 
 
 def _count(metrics: dict, name: str) -> None:
@@ -255,6 +280,8 @@ def parse_claude(lines) -> dict:
     metrics = _metrics(cost=0.0)
     for event in _events(lines):
         kind = event.get("type")
+        if event.get("session_id") and not metrics["session_id"]:
+            metrics["session_id"] = event["session_id"]
         if kind == "assistant":
             for block in (event.get("message") or {}).get("content") or []:
                 if block.get("type") == "tool_use":
@@ -645,6 +672,18 @@ def cleanup(gregale: Gregale, created: dict, slug: str | None) -> list[str]:
     return left
 
 
+def invoke(command: list[str], project: Path, env: dict, timeout: float, record: dict) -> list[str]:
+    """Run one agent invocation; returns its stdout lines and notes a timeout in record."""
+    try:
+        done = subprocess.run(command, cwd=project, env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout)
+        record["timed_out"] = False
+        record["agent_stderr"] = _text(done.stderr)[-500:]
+        return _text(done.stdout).splitlines()
+    except subprocess.TimeoutExpired as expired:
+        record["timed_out"] = True
+        return _text(expired.stdout).splitlines()
+
+
 def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> dict:
     slug = None if task.get("repo") else app_slug(task["id"])
     run_dir = Path(tempfile.mkdtemp(prefix=f"agent-eval-{task['id']}-"))
@@ -682,17 +721,25 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
             env["GEMINI_CLI_HOME"] = str(run_dir / "gemini-home")
             record["isolation"] = "fresh-config"
         started = time.monotonic()
-        try:
-            done = subprocess.run(command, cwd=project, env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=task["timeout_s"])
-            lines, record["timed_out"] = _text(done.stdout).splitlines(), False
-            record["agent_stderr"] = _text(done.stderr)[-500:]
-        except subprocess.TimeoutExpired as expired:
-            lines, record["timed_out"] = _text(expired.stdout).splitlines(), True
-        record["duration_s"] = round(time.monotonic() - started, 1)
+        lines = invoke(command, project, env, task["timeout_s"], record)
         (run_dir / f"{agent}.jsonl").write_text("\n".join(lines))
         metrics = PARSERS[agent](lines)
-        record.update(metrics)
         created = gregale.touched_since(before, record["started_at"])
+        if task.get("follow_up") and not created.get("apps") and metrics["completed"] and not record["timed_out"]:
+            # The agent stopped to ask; answer once, as the person would.
+            if agent in FOLLOW_UP_AGENTS and metrics.get("session_id"):
+                remaining = max(int(task["timeout_s"] - (time.monotonic() - started)), 60)
+                again = claude_command(task["follow_up"], run_dir, gregale.binary, toolset, task["budget_usd"], getattr(options, "claude_model", None),
+                                       options.mcp_writes, any_shell=True, resume=metrics["session_id"])
+                more = invoke(again, project, env, remaining, record)
+                (run_dir / f"{agent}-follow-up.jsonl").write_text("\n".join(more))
+                metrics = merge_metrics(metrics, PARSERS[agent](more))
+                record["follow_ups"] = 1
+                created = gregale.touched_since(before, record["started_at"])
+            else:
+                record["follow_ups"] = "unsupported"
+        record["duration_s"] = round(time.monotonic() - started, 1)
+        record.update(metrics)
         record["created"] = created
         record["checks"] = run_checks(task, slug, project, metrics["answer"], gregale, created=created, since=record["started_at"])
         record["success"] = all(check["ok"] for check in record["checks"])

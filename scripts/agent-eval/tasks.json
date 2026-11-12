@@ -77,6 +77,7 @@
       {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b"},
       {"id": "secrets-through-cli", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(\\benv\\s+(set|push)\\b|\\bsecrets\\b|--release-secrets-file)"}
     ],
+    "follow_up": "Yes, go ahead with what you recommend.",
     "budget_usd": 15.0,
     "timeout_s": 3600
   },
@@ -98,6 +99,7 @@
       {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b"},
       {"id": "managed-postgres", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(add\\s+postgres|postgres\\s+(create|attach))\\b"}
     ],
+    "follow_up": "Yes, go ahead with what you recommend.",
     "budget_usd": 10.0,
     "timeout_s": 3600
   }

@@ -326,6 +326,27 @@ class NewAgentTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "k"}):
             self.assertEqual(ev.agent_ready("gemini"), "")
 
+    def test_claude_repo_runs_keep_their_session_and_can_resume(self):
+        with tempfile.TemporaryDirectory() as d:
+            starter = ev.claude_command("x", Path(d), "/bin/gregale", "none", 1.0, None, True)
+            repo = ev.claude_command("x", Path(d), "/bin/gregale", "none", 1.0, None, True, any_shell=True, resume="sid-1")
+        self.assertIn("--no-session-persistence", starter)
+        self.assertNotIn("--no-session-persistence", repo)
+        self.assertEqual(repo[repo.index("--resume") + 1], "sid-1")
+        self.assertIn("WebFetch", repo)
+        self.assertEqual(ev.parse_claude(CLAUDE_SUCCESS[:1] + [json.dumps({"type": "result", "subtype": "success", "session_id": "sid-9"})])["session_id"], "sid-9")
+
+    def test_follow_up_metrics_merge(self):
+        first = {"turns": 3, "cost_usd": 0.5, "input_tokens": 10, "output_tokens": 1, "cache_read_tokens": 100, "cache_write_tokens": 0,
+                 "tool_calls": {"Bash": 2}, "commands": ["gregale deploy --dry-run"], "answer": "Shall I go ahead?", "completed": True}
+        second = {"turns": 5, "cost_usd": 1.0, "input_tokens": 20, "output_tokens": 2, "cache_read_tokens": 300, "cache_write_tokens": 5,
+                  "tool_calls": {"Bash": 3, "Read": 1}, "commands": ["gregale deploy --project"], "answer": "Live.", "completed": True}
+        merged = ev.merge_metrics(first, second)
+        self.assertEqual((merged["turns"], merged["cost_usd"], merged["cache_read_tokens"]), (8, 1.5, 400))
+        self.assertEqual(merged["tool_calls"], {"Bash": 5, "Read": 1})
+        self.assertEqual(merged["commands"], ["gregale deploy --dry-run", "gregale deploy --project"])
+        self.assertEqual((merged["answer"], merged["first_answer"]), ("Live.", "Shall I go ahead?"))
+
     def test_stale_cursor_login_is_not_ready(self):
         stale = mock.Mock(returncode=0, stdout="✓ Login successful!\nLogged in (unable to fetch user details)\n", stderr="")
         with mock.patch.dict(os.environ, {"CURSOR_API_KEY": ""}), mock.patch.object(ev.subprocess, "run", return_value=stale):
