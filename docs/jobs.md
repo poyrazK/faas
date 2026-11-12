@@ -308,7 +308,7 @@ customer cancellation.
 1 MiB) to retrieve a larger tail when the response is truncated. Pass
 `--follow` (`-f`) to stream a task's output while it runs: the stream waits
 while the task is queued, follows each retry attempt in turn, and ends when
-the task finishes (ADR-1163).
+the task finishes.
 
 ## Log retention
 

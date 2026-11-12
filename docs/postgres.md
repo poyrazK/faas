@@ -117,8 +117,7 @@ databases:
 - All of one deployment's database entries use the same scope.
 
 Add `create` to have the deploy create the database when none with that name
-exists, so a new project needs no `gregale postgres create` first
-([ADR-20261106105015](adr/20261106105015-declarative-resources-connect-and-lifecycle-helpers.md)):
+exists, so a new project needs no `gregale postgres create` first:
 
 ```yaml
 databases:

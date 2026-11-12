@@ -513,7 +513,6 @@ idempotency keys, lasts as long as that invocation is kept.
 A failed queue or delayed-task message is one entry in `gregale dlq list <app>`: its
 invocation. When a push binding delivered it, the binding's receipt failure
 stays in `gregale trigger dlq list`, and replaying the entry re-arms that receipt.
-See [ADR-20261022203653](adr/20261022203653-one-dead-letter-entry-per-queue-message.md).
 
 ## Queue limits
 
@@ -557,8 +556,7 @@ queue depth and queue backlog limits a send is. Replaying one message into a ful
 queue fails with the same `403 plan_queue_depth` or `403 plan_queue_backlog_bytes`
 problem, and the message stays in the dead-letter queue. A replay-all skips such
 messages and replays the rest; when it could replay nothing else, it answers with
-the limit problem. See
-[ADR-20261101093812](adr/20261101093812-queue-replay-meets-queue-limits.md).
+the limit problem.
 
 ## Application inbox
 
@@ -711,8 +709,7 @@ Both payloads include `app_id`, `deployment_id`, and `rollout_state`, plus
 `completed_at` or `aborted_at` respectively. When the safe-release circuit
 breaker, a person, or the worker lease expiry decided the outcome, the payload
 also carries `decision`: the rule and the request, 5xx, probe, latency, OOM and
-restart counts for both revisions behind it
-([ADR-1447](adr/1447-explained-rollout-decisions.md)). An outcome is enqueued once per
+restart counts for both revisions behind it. An outcome is enqueued once per
 state transition, in the same transaction as the state change; updating an
 already-terminal rollout does not enqueue another event. Webhook delivery is
 at least once, so receivers must deduplicate by the stable delivery id.
