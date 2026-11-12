@@ -13754,12 +13754,32 @@ func (s *PgStore) CreateBuildWithIDAndActivity(ctx context.Context, id, deployme
 	return s.createBuildWithID(ctx, id, deploymentID, kind, sourceBytes, logPath, &activity)
 }
 
+// createBuildWithID retries a transaction Postgres aborted to break a
+// deadlock; the whole transaction rolled back, so it is safe to run again.
 func (s *PgStore) createBuildWithID(ctx context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity *OrgActivity) (Build, int64, error) {
+	for attempt := 0; ; attempt++ {
+		build, outboxID, err := s.createBuildWithIDOnce(ctx, id, deploymentID, kind, sourceBytes, logPath, activity)
+		if attempt >= 2 || !transientLockConflict(err) || ctx.Err() != nil {
+			return build, outboxID, err
+		}
+	}
+}
+
+func (s *PgStore) createBuildWithIDOnce(ctx context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity *OrgActivity) (Build, int64, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Build{}, 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Lock the owning account before the deployment row. The
+	// lifecycle_successor_deployments trigger locks the account after the
+	// row update; a concurrent deploy already holding the account and
+	// waiting for this deployment deadlocked with it, and the customer saw
+	// "create build: deadlock detected" (Hunt 34 H34-14). Taking the
+	// account first gives both transactions the same order.
+	if _, err := tx.Exec(ctx, `select 1 from accounts where id=(select a.account_id from deployments d join apps a on a.id=d.app_id where d.id=$1) for no key update`, deploymentID); err != nil {
+		return Build{}, 0, err
+	}
 	tag, err := tx.Exec(ctx, `update deployments set status='building' where id=$1 and status in ('pending','building')`, deploymentID)
 	if err != nil {
 		return Build{}, 0, err
@@ -31841,6 +31861,31 @@ func (s *PgStore) RequestTelemetrySharedRouteLatency(ctx context.Context, appID,
 	}
 	return SharedRouteLatency{ReleaseRequests: row.ReleaseRequests, ReleaseP95LatencyMS: row.ReleaseP95LatencyMs,
 		BaselineRequests: row.BaselineRequests, BaselineP95LatencyMS: row.BaselineP95LatencyMs}, nil
+}
+
+// RequestTelemetryKnownServerErrors counts a release's 5xx responses on
+// method+route+status triples the baseline deployment also returned in its
+// window (Hunt 34 H34-17).
+func (s *PgStore) RequestTelemetryKnownServerErrors(ctx context.Context, appID, releaseID string, releaseSince, releaseUntil time.Time, baselineID string, baselineSince, baselineUntil time.Time) (int64, error) {
+	ids := make([]pgtype.UUID, 0, 3)
+	for _, id := range []string{appID, releaseID, baselineID} {
+		parsed, err := uuid.Parse(id)
+		if err != nil {
+			return 0, fmt.Errorf("state: known server errors parse id %q: %w", id, err)
+		}
+		ids = append(ids, pgtype.UUID{Bytes: parsed, Valid: true})
+	}
+	known, err := s.appErrorsQueries().RequestTelemetryKnownServerErrors(ctx, s.pool, sqlc.RequestTelemetryKnownServerErrorsParams{
+		AppID: ids[0], ReleaseID: ids[1], BaselineID: ids[2],
+		ReleaseSince:  pgtype.Timestamptz{Time: releaseSince, Valid: true},
+		ReleaseUntil:  pgtype.Timestamptz{Time: releaseUntil, Valid: true},
+		BaselineSince: pgtype.Timestamptz{Time: baselineSince, Valid: true},
+		BaselineUntil: pgtype.Timestamptz{Time: baselineUntil, Valid: true},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("state: known server errors app=%s release=%s baseline=%s: %w", appID, releaseID, baselineID, err)
+	}
+	return known, nil
 }
 
 // RequestTelemetryBaselineP95ByRoute backs the regression detector's

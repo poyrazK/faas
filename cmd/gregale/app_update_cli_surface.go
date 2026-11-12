@@ -47,7 +47,7 @@ var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"service_replicas":                     {Path: "gregale.yaml lifecycle.service_replicas"},
 	"before_checkpoint":                    {Path: "gregale.yaml lifecycle.before_checkpoint"},
 	"worker_replicas":                      {Path: "gregale worker scale"},
-	"ports":                                {KnownGap: "no existing-app CLI setter; API-only today"},
+	"ports":                                {Path: "gregale app <slug> --ports", AppFlags: []string{"ports"}},
 	"favicon":                              {KnownGap: "no customer CLI setter; API-only today"},
 	"robots_txt":                           {KnownGap: "no customer CLI setter; API-only today"},
 	"head_wakes":                           {Path: "gregale app <slug> --head-wakes", AppFlags: []string{"head-wakes"}},

@@ -2,9 +2,9 @@ import { randomUUID, createHash } from 'node:crypto'
 import { createTimings, timingPhases } from './timing.mjs'
 
 const trace = Symbol('requestTrace')
-const codes = new Set(['origin_not_allowed', 'not_found', 'invalid_path', 'method_not_allowed',
+const codes = new Set(['storage_commit_unknown','storage_sessions_unavailable','storage_checksum_mismatch','storage_session_conflict','storage_part_conflict','storage_session_limit','storage_session_not_found','storage_invalid_session','storage_invalid_part','storage_version_conflict','change_hooks_unavailable','change_hooks_busy','change_hooks_observation_unavailable','hooks_owner_required','origin_not_allowed', 'not_found', 'invalid_path', 'method_not_allowed',
   'token_required', 'token_invalid', 'read_only_identity', 'serving_contract_unavailable', 'data_api_unavailable',
-  'data_api_refresh_paused', 'data_api_refresh_unavailable', 'data_api_overloaded', 'data_api_rate_limited', 'data_api_concurrency_limited',
+  'data_api_shared_budget_unavailable', 'data_api_budget_identity_required', 'data_api_refresh_paused', 'data_api_refresh_unavailable', 'data_api_overloaded', 'data_api_rate_limited', 'data_api_concurrency_limited',
   'request_too_large', 'response_too_large', 'query_timeout', 'request_deadline_exceeded', 'schema_document_too_large', 'schema_contract_mismatch', 'upstream_error',
   'public_read_not_allowed', 'public_rpc_requires_get', 'server_key_browser_forbidden', 'server_key_permission_denied', 'data_api_monthly_cap_reached', 'rls_required',
   'data_api_public_read_unsafe', 'data_api_public_rpc_unsafe', 'data_api_change_hooks_off', 'data_api_change_hooks_unavailable', 'data_api_change_hooks_not_production',
@@ -14,14 +14,14 @@ const codes = new Set(['origin_not_allowed', 'not_found', 'invalid_path', 'metho
 
 // Unavailable codes say the runtime or a backend could not serve; busy codes
 // say it shed load.
-const unavailableCodes = new Set(['data_api_unavailable', 'data_api_refresh_unavailable', 'serving_contract_unavailable', 'data_api_change_hooks_unavailable',
+const unavailableCodes = new Set(['storage_commit_unknown','storage_sessions_unavailable','change_hooks_unavailable','change_hooks_observation_unavailable','data_api_shared_budget_unavailable','data_api_unavailable', 'data_api_refresh_unavailable', 'serving_contract_unavailable', 'data_api_change_hooks_unavailable',
   'storage_unavailable', 'storage_backend_unavailable', 'storage_commit_failed'])
-const overloadedCodes = new Set(['data_api_overloaded', 'storage_busy', 'storage_client_busy'])
+const overloadedCodes = new Set(['change_hooks_busy','data_api_overloaded', 'storage_busy', 'storage_client_busy'])
 
 function route(url) {
   if (url === '/healthz' || url === '/livez') return 'health'
   if (url === '/__gregale/schema') return 'schema'
-  if (url === '/openapi.json') return 'openapi'
+  if (url === '/openapi.json' || url === '/openapi-3.1.json') return 'openapi'
   if (url.startsWith('/rest/v1/rpc/')) return 'rpc'
   if (url.startsWith('/rest/v1/')) return 'rest'
   if (url.startsWith('/storage/v1/')) return 'storage'

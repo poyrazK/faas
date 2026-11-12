@@ -441,18 +441,24 @@ func (t *memFinancialComputeTxn) ready(app string, quiet bool) bool {
 	if app == "" {
 		return t.accountReady()
 	}
+	return t.appReadiness(app, quiet) == ""
+}
+
+// appReadiness names the first app-scope condition that does not hold, or ""
+// when all hold, as the PostgreSQL store does (Hunt 34 H34-15).
+func (t *memFinancialComputeTxn) appReadiness(app string, quiet bool) string {
 	m := t.m
 	month := financial.ComputeMonth(t.now)
 	since := month
 	appRow, ok := m.apps[app]
 	if !ok || appRow.AccountID != t.account {
-		return false
+		return financial.ComputeUnavailableAccounting
 	}
 	if appRow.CreatedAt.After(since) {
 		since = appRow.CreatedAt
 	}
 	if m.financialRetainedFrom.After(since) {
-		return false
+		return financial.ComputeUnavailableAccounting
 	}
 	for id, n := range m.computeNodes {
 		if !n.Active {
@@ -460,29 +466,30 @@ func (t *memFinancialComputeTxn) ready(app string, quiet bool) bool {
 		}
 		o, ok := m.financialComputeOwners[id]
 		if !ok || o.Incarnation != m.computeNodeRuntimeIncarnations[id] || t.now.Sub(o.ObservedAt) > 3*api.FinancialComputeOwnerHeartbeat {
-			return false
+			return financial.ComputeUnavailableNodes
 		}
 	}
 	for minute := since.Truncate(time.Minute); minute.Before(t.now.Truncate(time.Minute)); minute = minute.Add(time.Minute) {
 		if !m.financialSamplingWindows[minute].compute {
-			return false
+			return financial.ComputeUnavailableAccounting
 		}
 	}
 	if quiet {
-
 		for _, i := range m.instances {
 			if i.AppID == app && State(i.State).CountsForRAM() {
-				return false
+				return financial.ComputeUnavailableRunning
 			}
 		}
 		for _, task := range m.appTasks {
 			if task.AppID == app && (task.Status == "restoring" || task.Status == "running") {
-				return false
+				return financial.ComputeUnavailableRunning
 			}
 		}
 	}
-	active, err := t.active(app)
-	return err == nil && len(active) == 0
+	if active, err := t.active(app); err != nil || len(active) > 0 {
+		return financial.ComputeUnavailableRunning
+	}
+	return ""
 }
 func (t *memFinancialComputeTxn) initialize(app string, quiet bool) error {
 	if job, ok := computeJobKey(app); ok {
@@ -494,8 +501,8 @@ func (t *memFinancialComputeTxn) initialize(app string, quiet bool) error {
 	if app == "" {
 		return t.initializeAccount()
 	}
-	if !t.ready(app, quiet) {
-		return financial.ErrComputeUnavailable
+	if reason := t.appReadiness(app, quiet); reason != "" {
+		return financial.ComputeUnavailableBecause(reason)
 	}
 	month := financial.ComputeMonth(t.now)
 	b, err := t.book(app, month)

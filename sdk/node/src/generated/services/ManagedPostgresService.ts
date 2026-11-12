@@ -1119,6 +1119,40 @@ export class ManagedPostgresService {
     });
   }
   /**
+   * Spend shared Data API request credit
+   * Private runtime surface. Requires a dedicated gregale:data-api:budget workload assertion. Account and app come from the assertion. The body contains a digest of a verified subject or tenant and owner deployment policy. Admission spends one credit atomically across replicas; a lost reply may spend credit without customer SQL. No automatic replay is permitted.
+   * @returns any Admission decision; a refusal does not dispatch customer SQL.
+   * @throws ApiError
+   */
+  public static admitDataApiSharedBudget({
+    requestBody,
+  }: {
+    requestBody: {
+      version: 1;
+      key: string;
+      requests: number;
+      window_seconds: number;
+    },
+  }): CancelablePromise<{
+    allowed: boolean;
+    retry_after_seconds: number;
+  }> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/runtime/data-api/budget',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Publish recorded Data API row changes
    * Private runtime surface for change hooks. Requires a short-lived gregale:data-api:events workload assertion from a live instance of an active app; account and app come from it, never from the body. Only a production deployment publishes; a stage, preview or cloned environment is refused for good with 403 workload_not_production. Each event publishes as an app-scoped producer-key event under the app's own source with key data-api.change.ID, so a republished change deduplicates while its receipt is retained. Events publish in order; publication stops at the first event that may succeed later, and later events are reported as retryable without being attempted. Owner API keys and application JWTs are not accepted.
    * @returns DataAPIChangeEventBatchResponse Per-event outcomes in input order.

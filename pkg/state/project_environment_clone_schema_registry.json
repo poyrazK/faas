@@ -4872,6 +4872,17 @@
     "kind": "operational"
   },
   {
+    "table": "data_api_shared_budgets",
+    "columns": [
+      "app_id",
+      "budget_key",
+      "requests",
+      "window_end",
+      "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "data_api_change_hook_reports",
     "columns": [
       "app_id",
@@ -21282,6 +21293,57 @@
       "created_at",
       "updated_at",
       "resolved_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_rollup_audit",
+    "columns": [
+      "app_id",
+      "audited_since"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_rollup_windows",
+    "columns": [
+      "app_id",
+      "bucket_start",
+      "id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_coverage_watermarks",
+    "columns": [
+      "node_name",
+      "previous_source_at",
+      "registered_at",
+      "source_at",
+      "source_kind"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_coverage_intervals",
+    "columns": [
+      "covered_since",
+      "covered_until",
+      "node_name",
+      "source_kind"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_coverage_gaps",
+    "columns": [
+      "app_id",
+      "gap_from",
+      "gap_until",
+      "history_incomplete",
+      "node_name",
+      "source_kind"
     ],
     "kind": "operational"
   }

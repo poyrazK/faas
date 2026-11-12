@@ -1,4 +1,5 @@
 import { LIVE_TYPES, LiveProtocolError, LiveResult, parseLiveServerFrame, type LiveColumn, type LiveErrorFrame, type LiveServerFrame } from './protocol.js'
+import { parseLosslessJSON, usesLosslessNumbers } from '../numeric.js'
 
 /** The socket a live connection runs over: an app's realtime endpoint. */
 export interface LiveSocket {
@@ -108,7 +109,7 @@ export function liveRead<Query>(query: Query): {
   schema?: string
   parse: (values: ReadonlyArray<string | null>, columns: ReadonlyArray<LiveColumn>) => LiveReadRow<Query>
 } {
-  const q = query as { url?: unknown; method?: unknown; headers?: unknown; schema?: unknown }
+  const q = query as { url?: unknown; method?: unknown; headers?: unknown; schema?: unknown; fetch?: unknown }
   if (!(q?.url instanceof URL)) throw new TypeError('liveRead takes a query built with createDataClient')
   if (q.method !== undefined && q.method !== 'GET') throw new TypeError('a live query reads: build it with select()')
   const path = q.url.pathname
@@ -117,7 +118,8 @@ export function liveRead<Query>(query: Query): {
   const headers = q.headers instanceof Headers ? q.headers : new Headers((q.headers ?? {}) as Record<string, string>)
   // postgrest-js keeps .schema() on the builder and sets the header when it runs.
   const schema = typeof q.schema === 'string' ? q.schema : headers.get('Accept-Profile')
-  const parse = parseDataAPIRow as (values: ReadonlyArray<string | null>, columns: ReadonlyArray<LiveColumn>) => LiveReadRow<Query>
+  const lossless = usesLosslessNumbers(q)
+  const parse = (lossless ? (values, columns) => parseDataAPIRow(values, columns, true) : parseDataAPIRow) as (values: ReadonlyArray<string | null>, columns: ReadonlyArray<LiveColumn>) => LiveReadRow<Query>
   return { read: relation + q.url.search, ...(schema ? { schema } : {}), parse }
 }
 
@@ -168,9 +170,9 @@ export function parseLiveValue(value: string | null, type: string): unknown {
 }
 
 /** Decodes a live row as the Data API (PostgREST) returns it in JSON. */
-export function parseDataAPIRow(values: ReadonlyArray<string | null>, columns: ReadonlyArray<LiveColumn>): Record<string, unknown> {
+export function parseDataAPIRow(values: ReadonlyArray<string | null>, columns: ReadonlyArray<LiveColumn>, lossless = false): Record<string, unknown> {
   const row: Record<string, unknown> = {}
-  columns.forEach((c, i) => { row[c.name] = parseDataAPIValue(values[i] ?? null, c.type) })
+  columns.forEach((c, i) => { row[c.name] = parseDataAPIValue(values[i] ?? null, c.type, lossless) })
   return row
 }
 
@@ -182,16 +184,17 @@ const offsetHours = /([+-]\d{2})$/
  * JSON has none), ISO 8601 timestamps, arrays element by element, and JSON.
  * Embedded resources already arrive as JSON. Composite columns stay text.
  */
-export function parseDataAPIValue(value: string | null, type: string): unknown {
+export function parseDataAPIValue(value: string | null, type: string, lossless = false): unknown {
   if (value === null) return null
-  if (type.startsWith('_')) return parsePostgresArray(value, type.slice(1))
+  if (type.startsWith('_')) return parsePostgresArray(value, type.slice(1), lossless)
   switch (type) {
     case 'bool': return value === 't' || value === 'true'
     case 'int2': case 'int4': case 'int8': case 'oid': case 'numeric': case 'float4': case 'float8': {
+      if (lossless) return value
       const n = Number(value)
       return Number.isFinite(n) ? n : value
     }
-    case 'json': case 'jsonb': return JSON.parse(value)
+    case 'json': case 'jsonb': return lossless ? parseLosslessJSON(value) : JSON.parse(value)
     case 'timestamptz': return /^\d/.test(value) ? value.replace(' ', 'T').replace(offsetHours, '$1:00') : value
     case 'timestamp': return /^\d/.test(value) ? value.replace(' ', 'T') : value
     default: return value
@@ -199,7 +202,7 @@ export function parseDataAPIValue(value: string | null, type: string): unknown {
 }
 
 /** Parses a PostgreSQL array literal ({a,"b c",NULL} or nested), decoding each element. */
-function parsePostgresArray(text: string, elementType: string): unknown {
+function parsePostgresArray(text: string, elementType: string, lossless = false): unknown {
   let i = text.startsWith('[') ? text.indexOf('=') + 1 : 0 // optional dimension decoration
   const parseLevel = (): unknown[] => {
     if (text[i] !== '{') throw new SyntaxError('malformed PostgreSQL array')
@@ -216,12 +219,12 @@ function parsePostgresArray(text: string, elementType: string): unknown {
           element += text[i]
         }
         i++
-        items.push(parseDataAPIValue(element, elementType))
+        items.push(parseDataAPIValue(element, elementType, lossless))
       } else {
         const start = i
         while (i < text.length && text[i] !== ',' && text[i] !== '}') i++
         const element = text.slice(start, i).trim()
-        items.push(element.toUpperCase() === 'NULL' ? null : parseDataAPIValue(element, elementType))
+        items.push(element.toUpperCase() === 'NULL' ? null : parseDataAPIValue(element, elementType, lossless))
       }
       if (text[i] === ',') { i++; continue }
       if (text[i] === '}') { i++; return items }

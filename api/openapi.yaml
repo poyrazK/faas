@@ -18303,6 +18303,42 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/runtime/data-api/budget:
+    post:
+      tags: [managed_postgres]
+      operationId: admitDataAPISharedBudget
+      summary: Spend shared Data API request credit
+      description: Private runtime surface. Requires a dedicated gregale:data-api:budget workload assertion. Account and app come from the assertion. The body contains a digest of a verified subject or tenant and owner deployment policy. Admission spends one credit atomically across replicas; a lost reply may spend credit without customer SQL. No automatic replay is permitted.
+      x-internal: true
+      security:
+        - dataAPIBudgetWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version, key, requests, window_seconds]
+              properties:
+                version: { type: integer, enum: [1] }
+                key: { type: string, pattern: '^[a-f0-9]{64}$' }
+                requests: { type: integer, minimum: 1, maximum: 1000000 }
+                window_seconds: { type: integer, minimum: 1, maximum: 3600 }
+      responses:
+        '200':
+          description: Admission decision; a refusal does not dispatch customer SQL.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [allowed, retry_after_seconds]
+                properties:
+                  allowed: { type: boolean }
+                  retry_after_seconds: { type: integer, minimum: 1, maximum: 3600 }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/runtime/data-api/events:
     post:
       tags: [managed_postgres]
@@ -24254,7 +24290,7 @@ paths:
         - name: method
           in: query
           required: false
-          schema: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+          schema: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER] }
           description: "Exact HTTP method for the selected route. Must be provided together with `route`; omitted means all methods."
         - name: group_by
           in: query
@@ -71380,6 +71416,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Short-lived Gregale workload identity for audience gregale:data-api:usage, naming the reporting app and instance. Customer API keys cannot publish usage.
+    dataAPIBudgetWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: A short-lived workload assertion with audience gregale:data-api:budget.
     dataAPIEventsWorkloadIdentity:
       type: http
       scheme: bearer
@@ -119747,7 +119788,7 @@ components:
       required: [route, method, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms]
       properties:
         route: { type: string, description: "Route template, not an expanded URL." }
-        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER] }
         requests: { type: integer, format: int64, minimum: 0 }
         error_requests: { type: integer, format: int64, minimum: 0 }
         error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100 }
@@ -119897,7 +119938,7 @@ components:
       required: [value, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms]
       properties:
         value: { type: string }
-        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER] }
         requests: { type: integer, format: int64, minimum: 0 }
         error_requests: { type: integer, format: int64, minimum: 0 }
         error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100 }
@@ -119929,7 +119970,7 @@ components:
       required: [route, method, requests, identified_requests, anonymous_requests, unresolved_identity_requests, consumer_count, platform_tenant_count, last_observed_at, customers, customers_truncated, other_customer_requests]
       properties:
         route: { type: string, description: "Exact recorded route label; may include its HTTP method prefix." }
-        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS], description: "HTTP method for this route observation." }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER], description: "HTTP method for this route observation." }
         requests: { type: integer, format: int64, minimum: 1, description: "All weighted retained requests for this route and deployment." }
         identified_requests: { type: integer, format: int64, minimum: 0, description: "Requests with at least one resolvable account-owned consumer or tenant identity." }
         anonymous_requests: { type: integer, format: int64, minimum: 0, description: "Requests with neither consumer nor tenant identity recorded." }
@@ -119974,6 +120015,10 @@ components:
         `[from, until)`, and the route list is capped at 50 rows.
       required: [slug, since, from, until, window_clamped, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms, group_by, groups, groups_limit, groups_truncated, routes, routes_limit, routes_truncated, dependencies_truncated, as_of]
       properties:
+        omitted:
+          type: array
+          description: "Optional enrichment sections unavailable within their query budgets; traffic totals remain available."
+          items: { type: string }
         slug: { type: string }
         since: { type: string, description: "Effective lookback duration after retention clamping." }
         from: { type: string, format: date-time, description: "Inclusive lower bound of the analytics window." }
@@ -120027,7 +120072,7 @@ components:
         (`telemetry_coverage_missing`, `telemetry_coverage_stale`), telemetry switched off or sampled
         (`telemetry_disabled`, `telemetry_sampled`), requests still waiting to be delivered
         (`telemetry_ingestion_pending`), or requests lost or a gateway restarted during the window (`telemetry_window_incomplete`).
-      enum: [telemetry_coverage_missing, telemetry_coverage_stale, telemetry_disabled, telemetry_sampled, telemetry_ingestion_pending, telemetry_window_incomplete]
+      enum: [telemetry_coverage_unknown, telemetry_coverage_missing, telemetry_coverage_stale, telemetry_disabled, telemetry_sampled, telemetry_ingestion_pending, telemetry_window_incomplete]
 
     RequestAnalyticsTimeseriesPoint:
       type: object
@@ -120049,7 +120094,7 @@ components:
       required: [value, points]
       properties:
         value: { type: string }
-        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER] }
         points:
           type: array
           items: { $ref: '#/components/schemas/RequestAnalyticsTimeseriesPoint' }
@@ -120064,7 +120109,7 @@ components:
       properties:
         slug: { type: string }
         route: { type: string, maxLength: 256, description: "Exact bounded route-label filter when a route-level series was requested." }
-        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS], description: "Exact method filter when a route-level series was requested." }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER], description: "Exact method filter when a route-level series was requested." }
         since: { type: string, description: "Effective series lookback after retention clamping." }
         from: { type: string, format: date-time, description: "First instant represented by the hourly series." }
         until: { type: string, format: date-time, description: "Exclusive end instant represented by the hourly series." }
@@ -127094,6 +127139,10 @@ components:
       description: Bounded hourly, customer-safe delivery analytics for one runtime log destination.
       required: [log_drain_id, window, bucket_interval, from, to, buckets, summary]
       properties:
+        requested_from: { type: string, format: date-time, description: "Original requested lower bound before expanding to the recorded hourly observations." }
+        window_aligned: { type: boolean, description: "True when hourly observations changed the effective bounds; from/to match the counter observation times." }
+        complete: { type: boolean, description: "Whether every reported counter delta has a valid baseline without missing hourly samples." }
+        coverage_gaps: { type: array, items: { type: string }, description: "Missing baseline or hourly sample evidence; unknown deltas are omitted from totals." }
         log_drain_id: { type: string, pattern: '^[0-9a-f]{32}$' }
         window: { type: string, enum: [1h, 24h, 7d, 30d] }
         bucket_interval: { type: string, enum: [1h] }

@@ -8862,7 +8862,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				AppID:                                appUUID,
 				DeploymentID:                         deploymentUUID,
 				Route:                                telemetryRoute,
-				Method:                               r.Method,
+				Method:                               api.NormalizeRequestAnalyticsMethod(r.Method),
 				Status:                               status,
 				LatencyMS:                            int(elapsed / time.Millisecond),
 				ColdBoot:                             cold,

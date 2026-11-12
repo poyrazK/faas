@@ -96,6 +96,32 @@ func confirmSharedRouteLatency(ctx context.Context, telemetry rollbackOn5xxTelem
 	return rule, reason, regressed, nil
 }
 
+// confirmUnknownServerErrors re-judges the quiet-predecessor 5xx bar without
+// the release's 5xx its predecessor also returned, on the same method, route
+// and status, in the RollbackOn5xxKnownErrorLookback before the rollout
+// started (Hunt 34 H34-17). With too little predecessor traffic to compare
+// rates, a route that failed before the release must not roll it back.
+func confirmUnknownServerErrors(ctx context.Context, telemetry rollbackOn5xxTelemetry, c state.PostReleaseWatchCandidate, current, previous canary.HealthWindow, since, until time.Time, rule, reason string) (string, string, bool, error) {
+	reader, ok := telemetry.(knownServerErrorTelemetry)
+	if !ok {
+		return rule, reason, true, nil
+	}
+	known, err := reader.RequestTelemetryKnownServerErrors(ctx, c.AppID, c.DeploymentID, since, until,
+		c.PredecessorID, c.RolloutStartedAt.Add(-api.RollbackOn5xxKnownErrorLookback), until)
+	if err != nil {
+		return "", "", false, fmt.Errorf("read known server errors: %w", err)
+	}
+	if known == 0 {
+		return rule, reason, true, nil
+	}
+	current.ServerErrors -= known
+	rule, reason, regressed := release.JudgePostRelease(current, previous)
+	if regressed {
+		reason += fmt.Sprintf("; %d 5xx the previous release also returned on the same routes not counted", known)
+	}
+	return rule, reason, regressed, nil
+}
+
 // evaluatePostRelease compares the release since it completed with its
 // predecessor's traffic before the rollout started. Telemetry is bucketed by
 // minute, so the bucket holding the window's end still counts.
@@ -118,6 +144,11 @@ func (s *server) evaluatePostRelease(ctx context.Context, store state.PostReleas
 		return fmt.Errorf("read predecessor telemetry: %w", err)
 	}
 	rule, reason, regressed := release.JudgePostRelease(current, previous)
+	if regressed && rule == api.RolloutRuleAbortPostRelease5xx && previous.Requests < canary.CircuitBreakerMinRequests {
+		if rule, reason, regressed, err = confirmUnknownServerErrors(ctx, telemetry, c, current, previous, since, until, rule, reason); err != nil {
+			return err
+		}
+	}
 	if regressed && rule == api.RolloutRuleAbortPostReleaseP95 {
 		if rule, reason, regressed, err = confirmSharedRouteLatency(ctx, telemetry, c, reason, since, until, baselineEnd); err != nil {
 			return err

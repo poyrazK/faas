@@ -29,16 +29,21 @@ func TestRuntimeConnectionReportsRemainWorkloadOnly(t *testing.T) {
 	if err := yaml.Unmarshal(data, &document); err != nil {
 		t.Fatal(err)
 	}
+	for path, security := range map[string]string{
+		"/v1/runtime/data-api/connection-observations": "dataAPIConnectionsWorkloadIdentity",
+		"/v1/runtime/data-api/budget":                  "dataAPIBudgetWorkloadIdentity",
+	} {
+		operation := document.Paths[path].Post
+		if !operation.Internal || len(operation.Security) != 1 || len(operation.Security[0]) != 1 {
+			t.Fatalf("SDK exception for %s requires the private workload contract: %+v", path, operation)
+		}
+		if _, ok := operation.Security[0][security]; !ok {
+			t.Fatalf("SDK exception for %s requires the dedicated workload audience", path)
+		}
+	}
 	const runtimePath = "/v1/runtime/data-api/connection-observations"
-	operation := document.Paths[runtimePath].Post
-	if !operation.Internal || len(operation.Security) != 1 || len(operation.Security[0]) != 1 {
-		t.Fatalf("SDK exception requires the private workload contract: %+v", operation)
-	}
-	if _, ok := operation.Security[0]["dataAPIConnectionsWorkloadIdentity"]; !ok {
-		t.Fatal("SDK exception requires the dedicated workload audience")
-	}
 	const budgetPath = "/v1/apps/{slug}/data-api/connection-budget"
-	spec := map[string]map[string]any{runtimePath: {"post": true}, budgetPath: {"get": true}}
+	spec := map[string]map[string]any{runtimePath: {"post": true}, "/v1/runtime/data-api/budget": {"post": true}, budgetPath: {"get": true}}
 	if report := analyze(spec, map[string]bool{"GetAppDataAPIConnectionBudgets": true}); !report.ok() {
 		t.Fatalf("workload-only report should not require an account SDK method: %v", report.missing)
 	}

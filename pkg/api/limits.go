@@ -1669,6 +1669,13 @@ const RollbackOn5xxTelemetryGrace = 2 * time.Minute
 const RollbackOn5xxCheckIntervalSeconds = 15
 const RollbackOn5xxBatchSize = 100
 
+// RollbackOn5xxKnownErrorLookback is how far before a release the first-wake
+// guard and the post-release watch's quiet-predecessor bar look for 5xx its
+// predecessor already returned on the same method, route and status. Those
+// responses do not count toward an automatic rollback: a route that failed
+// before the release cannot roll it back (Hunt 34 H34-17).
+const RollbackOn5xxKnownErrorLookback = 24 * time.Hour
+
 // Post-release watch (ADR-1445). For PostReleaseWatchWindow after a release
 // reaches 100%, apid compares it with its predecessor's traffic in the
 // PostReleaseWatchBaseline before the rollout started, and rolls back a
@@ -9673,6 +9680,8 @@ const (
 	// an OTLP data point may be stamped. A later stamp would keep the value
 	// fresh after its pusher stopped (ADR-20261031144636).
 	CustomMetricMaxFutureSkewSeconds = 300
+	// Accepted producer skew is clamped to receipt time.
+	CustomMetricClockSkew = CustomMetricMaxFutureSkewSeconds * time.Second
 
 	// CustomMetricExportMaxSeries caps one ADR-745 exporter scrape. The
 	// per-app name cap already bounds the table; this bounds a scrape even
@@ -15656,6 +15665,7 @@ const (
 	RequestAnalyticsRollupDimensionsBufferMax = 10 * RequestAnalyticsRollupDimensionsMax
 	// App minutes whose lost rollups wait to be recorded as gaps.
 	RequestAnalyticsRollupPendingGapsMax = 100_000
+	RequestAnalyticsDimensionMaxBytes    = 512
 	RequestAnalyticsRollupSeenEventsMax  = 200_000
 	RequestAnalyticsRollupPendingRowsMax = 200_000
 )
@@ -16248,16 +16258,20 @@ const (
 	DataAPIRuntimeConnectionReportInterval = 15 * time.Second
 	// Owner usage telemetry (ADR-20261019102108): the runtime reports hourly
 	// deltas under workload identity. Owner-facing counts, never billing records.
-	DataAPIUsageReportMaxBytes  = 64 << 10
-	DataAPIUsageReportTimeout   = 5 * time.Second
-	DataAPIUsageReportInterval  = 15 * time.Second
-	DataAPIUsageReportMaxHours  = 48
-	DataAPIUsageMaxDelta        = 1_000_000_000_000
-	DataAPIUsageDedupWindow     = 48 * time.Hour
-	DataAPIUsageRetentionDays   = 90
-	DataAPIUsageQueryMaxDays    = 90
-	DataAPIUsageMonthlyCapMax   = 1_000_000_000_000
-	DataAPIUsagePruneBatchLimit = 1000
+	DataAPIUsageReportMaxBytes          = 64 << 10
+	DataAPIUsageReportTimeout           = 5 * time.Second
+	DataAPIUsageReportInterval          = 15 * time.Second
+	DataAPISharedBudgetTimeout          = time.Second
+	DataAPISharedBudgetMaxKeys          = 4096
+	DataAPISharedBudgetMaxRequests      = 1_000_000
+	DataAPISharedBudgetMaxWindowSeconds = 3600
+	DataAPIUsageReportMaxHours          = 48
+	DataAPIUsageMaxDelta                = 1_000_000_000_000
+	DataAPIUsageDedupWindow             = 48 * time.Hour
+	DataAPIUsageRetentionDays           = 90
+	DataAPIUsageQueryMaxDays            = 90
+	DataAPIUsageMonthlyCapMax           = 1_000_000_000_000
+	DataAPIUsagePruneBatchLimit         = 1000
 	// A wall-clock jump this large against the monotonic clock means a
 	// snapshot restore: pending counts are dropped, not reported per instance.
 	DataAPIUsageRestoreJump = 5 * time.Second
@@ -16276,6 +16290,10 @@ const (
 	DataAPIStorageObjectDefaultBytes = 25 << 20
 	DataAPIStorageObjectMaxBytes     = 100 << 20
 	DataAPIStorageTransfers          = 4
+	DataAPIStorageChunkBytes         = 5 << 20
+	DataAPIStorageSessionMaxActive   = 16
+	DataAPIStorageSessionTTL         = 24 * time.Hour
+	DataAPIChangeEventsOwnerRequests = 1
 	DataAPIStorageTransferTimeout    = 120 * time.Second
 	DataAPIStorageSignedURLTTL       = 60 * time.Second
 	// One signed-in user or anonymous visitor holds at most this many of an
@@ -16336,7 +16354,7 @@ const (
 	DataAPIAccessRecheckInterval = time.Minute
 	// Anonymous and server-key live reads renew this often, so a revoked key
 	// or a narrowed allowlist reaches open subscriptions within it.
-	LiveQueryKeySessionMax = time.Hour
+	LiveQueryKeySessionMax = 30 * time.Second
 	// Operator capacity observations never run in customer request handling.
 	DataAPIConnectionCapacityTimeout     = 10 * time.Second
 	DataAPIConnectionCapacityLease       = 15 * time.Second

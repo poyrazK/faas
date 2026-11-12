@@ -8,6 +8,22 @@ described in [Data API packaging](data-api-packaging.md).
 
 ## Create and verify
 
+To keep the verified application running with a same-origin browser example and
+local identity selector, add `--start`. It prints one private browser link; no
+token copying or second server is required:
+
+```sh
+gregale data-api onboard --path notes --bundle /path/to/data-api-bundle.json --start
+# Start an existing project:
+gregale data-api serve --directory notes --port 0 --browser
+```
+
+Once the SDK version is published to npm, `--sdk-version 0.1.0` can replace
+`--bundle`. It installs that exact public version with lifecycle scripts disabled
+and records npm integrity in the client lockfile. It does not fall back to an
+unpublished version. Bundle installation and its stronger CLI/SDK pairing remain
+available. Node 22+, npm and a local Docker daemon are still required.
+
 ```sh
 gregale data-api onboard --path notes --bundle /path/to/data-api-bundle.json
 cd notes

@@ -8,16 +8,27 @@ import (
 
 // OperatorReason is an adapter-authored explanation of a provider error that
 // is safe to log: fixed step names and provider identifiers, never response
-// payloads or credentials. Raw provider errors stay unlogged; an adapter opts
-// a reason in by constructing it. Without these, a restore stuck in
+// payloads or credentials. The one provider text allowed is the error a
+// provider returns for a refused request (its code, request id and a bounded,
+// redacted message), carried Quiet. Raw provider errors stay unlogged; an
+// adapter opts a reason in by constructing it. Without these, a restore stuck in
 // provisioning left only a bare sentinel in apid's log (production-us live
 // test 2026-10-14).
 type OperatorReason struct {
 	Err    error
 	Reason string
+	// Quiet keeps Error() to Err's own text, so the reason reaches only the
+	// operator log through LoggableReason and never an API problem or a
+	// caller that formats the error.
+	Quiet bool
 }
 
-func (r *OperatorReason) Error() string { return r.Err.Error() + ": " + r.Reason }
+func (r *OperatorReason) Error() string {
+	if r.Quiet {
+		return r.Err.Error()
+	}
+	return r.Err.Error() + ": " + r.Reason
+}
 func (r *OperatorReason) Unwrap() error { return r.Err }
 
 // Reasonf wraps err, usually a sentinel, with a loggable reason.

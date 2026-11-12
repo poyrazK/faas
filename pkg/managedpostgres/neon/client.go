@@ -81,7 +81,7 @@ func (p *Provider) doJSON(ctx context.Context, method, path string, query url.Va
 		if status == http.StatusTooManyRequests {
 			p.deferRequests(path, retryAfter)
 		}
-		return statusError(status)
+		return refusedRequestError(method, path, status, payload)
 	}
 	if output == nil || status == http.StatusNoContent {
 		return nil

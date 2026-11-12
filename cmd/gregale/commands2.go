@@ -316,6 +316,7 @@ func cmdApp(args []string) int {
 	onlyDeclaredRoutes := fs.Bool("only-declared-routes", false, "reject paths not declared by the OpenAPI document (or explicit route list) before wake")
 	noOnlyDeclaredRoutes := fs.Bool("no-only-declared-routes", false, "disable the declared-route pre-wake gate")
 	headWakes := fs.Bool("head-wakes", false, "wake a parked app for HEAD / instead of using the cached edge answer")
+	portsFlag := fs.String("ports", "", "TCP/UDP listeners: comma-separated [NAME=]tcp|udp:PORT[:internal], or none to clear")
 	crawlerPolicy := fs.String("crawler-policy", "", "known monitor/crawler policy: wake|cached|block")
 	preAuthMode := fs.String("pre-auth", "", "pre-auth source limit mode: off|observe|enforce")
 	preAuthRPS := fs.Int("pre-auth-rps", 0, "pre-auth requests per second per source")
@@ -642,6 +643,13 @@ func cmdApp(args []string) int {
 	if explicit["head-wakes"] {
 		v := *headWakes
 		req.HeadWakes = &v
+	}
+	if explicit["ports"] {
+		ports, err := parseAppPortsFlag(*portsFlag)
+		if err != nil {
+			return printErr("Invalid --ports", err)
+		}
+		req.Ports = &ports
 	}
 	if explicit["crawler-policy"] {
 		v := *crawlerPolicy
@@ -1008,6 +1016,11 @@ func cmdApp(args []string) int {
 	}
 	if hint := functionConcurrencyDeployHint(req, updated); hint != "" {
 		fmt.Fprintln(os.Stderr, hint)
+	}
+	if explicit["min"] && *min > 0 && updated.Status == "evicted_cold" {
+		// As `app scale` does (Hunt 14 H14-94): a parked app's floor holds
+		// only after its next wake (Hunt 34 H34-11).
+		PrintOK(osStdout, "%s", parkedMinInstancesNote(slug, *min))
 	}
 	if explicit["min"] && *min > 0 {
 		// Silent on Whoami failure: the customer just updated an app
@@ -4859,10 +4872,16 @@ func cmdPark(args []string) int {
 		}))
 	}
 	PrintOK(osStdout, "Parked (cold)")
-	if app, getErr := client.GetApp(context.Background(), args[0]); getErr == nil && (inspectExecutionMode(app) == api.ExecutionModeWorker || app.WorkloadClass == "worker") {
+	app, getErr := client.GetApp(context.Background(), args[0])
+	if getErr == nil && (inspectExecutionMode(app) == api.ExecutionModeWorker || app.WorkloadClass == "worker") {
 		// A parked worker pool does not autoscale on its backlog (H8-23):
 		// say how it comes back (Hunt 32 H32-32).
 		PrintWarn(osStderr, "%s is a worker pool: it stays parked, whatever its queue backlog, until `gregale app wake %s`", args[0], args[0])
+	}
+	if getErr == nil && app.MinInstances > 0 {
+		// The floor holds only for an active app (H5-54): parking a floored
+		// app parks it until the next wake, with no word (Hunt 34 H34-11).
+		PrintWarn(osStderr, "%s keeps no warm instances while parked: its floor of %d is neither held nor billed until its next request or `gregale app wake %s`", args[0], app.MinInstances, args[0])
 	}
 	return 0
 }

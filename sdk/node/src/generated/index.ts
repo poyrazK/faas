@@ -1066,6 +1066,7 @@ export type { ExecutionUsageSummaryResponse } from './models/ExecutionUsageSumma
 export type { ExecutionWorkflowResponse } from './models/ExecutionWorkflowResponse.js';
 export type { ExecutionWorkflowStatusCounts } from './models/ExecutionWorkflowStatusCounts.js';
 export type { ExecutionWorkflowUsage } from './models/ExecutionWorkflowUsage.js';
+export type { ExtendProjectEnvironmentBranchRequest } from './models/ExtendProjectEnvironmentBranchRequest.js';
 export type { FailureRule } from './models/FailureRule.js';
 export type { FailureRules } from './models/FailureRules.js';
 export type { FeatureFlag } from './models/FeatureFlag.js';
@@ -2403,6 +2404,7 @@ export type { ProjectEnvironmentApprovalResponse } from './models/ProjectEnviron
 export type { ProjectEnvironmentApprovalStatusResponse } from './models/ProjectEnvironmentApprovalStatusResponse.js';
 export type { ProjectEnvironmentBindingChangeResponse } from './models/ProjectEnvironmentBindingChangeResponse.js';
 export type { ProjectEnvironmentBindingResponse } from './models/ProjectEnvironmentBindingResponse.js';
+export type { ProjectEnvironmentBranchDatabase } from './models/ProjectEnvironmentBranchDatabase.js';
 export type { ProjectEnvironmentBranchListResponse } from './models/ProjectEnvironmentBranchListResponse.js';
 export type { ProjectEnvironmentBranchResponse } from './models/ProjectEnvironmentBranchResponse.js';
 export type { ProjectEnvironmentBranchSummary } from './models/ProjectEnvironmentBranchSummary.js';
