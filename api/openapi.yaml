@@ -39080,6 +39080,129 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/branch:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project that owns the branch.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: The environment branch.
+        schema: { type: string }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentBranch
+      summary: Show an environment branch.
+      description: |
+        Reports the branch's parent, branch point, expiry, data state, the
+        managed PostgreSQL copies it owns, and each workload with its URL in
+        the branch and its deployment there. A workload with no live
+        deployment in the branch reports `starting`.
+      responses:
+        '200':
+          description: The branch.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Branches are unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/branch/extend:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project that owns the branch.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: The environment branch.
+        schema: { type: string }
+    post:
+      tags: [projects]
+      operationId: extendProjectEnvironmentBranch
+      summary: Move an environment branch's expiry.
+      description: |
+        Sets the branch's expiry to now plus `ttl`, earlier or later. A branch
+        lives at most 30 days after its creation; a branch with managed
+        PostgreSQL copies at most 7 days, so its copies stay in the plan's
+        PostgreSQL branch allowance. The copies' expiry moves with the
+        branch. A branch whose data is still being copied cannot be extended
+        until its data is ready.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExtendProjectEnvironmentBranchRequest' }
+      responses:
+        '200':
+          description: The branch with its new expiry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Branches are unavailable, the expiry is past the branch's longest lifetime, or its data is still being copied.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/branch/reset:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project that owns the branch.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: The environment branch.
+        schema: { type: string }
+    post:
+      tags: [projects]
+      operationId: resetProjectEnvironmentBranch
+      summary: Make an environment branch again from its parent.
+      description: |
+        Deletes the branch and creates it again from its parent with the same
+        slug, egress, private-network mode and time to live. Its workloads
+        are published from the parent's current builds and its data is copied
+        again as of now. Work done in the branch is discarded, and its
+        workloads get new URLs. A branch with branches of its own cannot be
+        reset.
+      responses:
+        '200':
+          description: The new branch and its workloads.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The caller may not branch the parent.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Branches are unavailable, or the branch has branches of its own.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/gitops:
     parameters:
     - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
@@ -108378,6 +108501,11 @@ components:
         workloads:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentBranchWorkload' }
+        created_at: { type: string, format: date-time, description: When the branch was created. Reported by the branch's own view. }
+        databases:
+          type: array
+          description: The managed PostgreSQL copies the branch owns. Reported by the branch's own view.
+          items: { $ref: '#/components/schemas/ProjectEnvironmentBranchDatabase' }
 
     ProjectEnvironmentBranchWorkload:
       description: One workload the branch published from its parent's build. It starts on its first request.
@@ -108389,6 +108517,21 @@ components:
         source_deployment_id: { type: string, description: The parent deployment whose build the branch reuses. }
         status: { type: string }
         url: { type: string, description: "The workload's address in the branch. Its first request starts it." }
+
+    ProjectEnvironmentBranchDatabase:
+      description: "One managed PostgreSQL copy a branch owns."
+      type: object
+      required: [source_database_id, name]
+      properties:
+        source_database_id: { type: string }
+        name: { type: string }
+        copy_database_id: { type: string, description: "Empty until the copy is made." }
+
+    ExtendProjectEnvironmentBranchRequest:
+      description: "Moves a branch's expiry."
+      type: object
+      properties:
+        ttl: { type: string, description: "The time from now the branch lives, such as 48h. Empty takes the default (168h)." }
 
     ProjectEnvironmentBranchListResponse:
       description: "The branches of one parent environment."

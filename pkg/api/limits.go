@@ -8238,6 +8238,12 @@ const (
 	EnvironmentBranchMinTTL     = time.Hour
 	EnvironmentBranchMaxTTL     = 30 * 24 * time.Hour
 	EnvironmentBranchMaxDepth   = 2
+	// EnvironmentBranchWithDatabasesMaxLifetime caps how long after its
+	// creation a branch with managed PostgreSQL copies may live, so an
+	// extend keeps its copies in the plan's PostgreSQL branch allowance
+	// (ADR-20261106103654 amendment 1). Without copies a branch may live
+	// EnvironmentBranchMaxTTL after its creation.
+	EnvironmentBranchWithDatabasesMaxLifetime = ManagedPostgresAllowanceBranchTTLMax
 	// EnvironmentBranchSweepBatch bounds one expiry sweep.
 	EnvironmentBranchSweepBatch = 50
 

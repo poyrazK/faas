@@ -2202,7 +2202,10 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_project_environment_branches_test.go::TestEnvironmentBranchPublishesParentBuilds",
       "parent": "environments",
       "routes": [
-        "/v1/projects/{}/environments/{}/branches"
+        "/v1/projects/{}/environments/{}/branches",
+        "/v1/projects/{}/environments/{}/branch",
+        "/v1/projects/{}/environments/{}/branch/extend",
+        "/v1/projects/{}/environments/{}/branch/reset"
       ],
       "cli": [
         "projects environments branch"

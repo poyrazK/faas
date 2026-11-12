@@ -8,3 +8,8 @@ func TestPgProjectEnvironmentBranchLifecycle(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	projectEnvironmentBranchLifecycle(t, s)
 }
+
+func TestPgProjectEnvironmentBranchExtend(t *testing.T) {
+	s, _, _ := pgWithPool(t)
+	projectEnvironmentBranchExtend(t, s)
+}

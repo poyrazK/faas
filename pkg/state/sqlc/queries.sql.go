@@ -66903,6 +66903,72 @@ func (q *Queries) MigrationTaskIsContract(ctx context.Context, db DBTX, arg Migr
 	return exists, err
 }
 
+const moveManagedPostgresBranchExpiry = `-- name: MoveManagedPostgresBranchExpiry :one
+UPDATE managed_postgres_databases SET expires_at=$1::timestamptz, updated_at=clock_timestamp()
+WHERE id=$2::uuid AND deleted_at IS NULL AND state NOT IN ('deleting','deleted')
+  AND restore_source_database_id IS NOT NULL AND expires_at=$3::timestamptz
+RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+`
+
+type MoveManagedPostgresBranchExpiryParams struct {
+	ExpiresAt        pgtype.Timestamptz
+	ID               pgtype.UUID
+	CurrentExpiresAt pgtype.Timestamptz
+}
+
+// ADR-20261031193635 branch lifecycle: an environment branch's extend moves
+// its database copy's end. Only an undeleted restore that already ends, and
+// whose end is still the one the caller read, moves; the caller keeps the
+// new end within the copy's allowance.
+func (q *Queries) MoveManagedPostgresBranchExpiry(ctx context.Context, db DBTX, arg MoveManagedPostgresBranchExpiryParams) (ManagedPostgresDatabase, error) {
+	row := db.QueryRow(ctx, moveManagedPostgresBranchExpiry, arg.ExpiresAt, arg.ID, arg.CurrentExpiresAt)
+	var i ManagedPostgresDatabase
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Region,
+		&i.PostgresMajor,
+		&i.ServiceClass,
+		&i.Availability,
+		&i.ScaleToZero,
+		&i.StorageLimitBytes,
+		&i.RestoreWindowSeconds,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.State,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RestoreSourceDatabaseID,
+		&i.RestoreSourceResourceID,
+		&i.RestorePointInTime,
+		&i.CutoverID,
+		&i.EnvironmentCloneOperationID,
+		&i.DataResourceID,
+		&i.CloneResourceRole,
+		&i.AccountingRequired,
+		&i.OrgID,
+		&i.PurgeAfter,
+		&i.RestoreSlotUntil,
+		&i.Labels,
+		&i.Previews,
+		&i.PreviewSourceDatabaseID,
+		&i.PreviewEnvironmentID,
+		&i.PreviewPrNumber,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const nextCustomerOperationWorkflowRun = `-- name: NextCustomerOperationWorkflowRun :one
 SELECT w.id, w.app_id, w.workflow_name, w.status, w.current_step, w.input, w.output, w.definition_snapshot, w.scheduled_for, w.started_at, w.finished_at, w.last_error, w.created_at, w.updated_at, w.lease_until, w.operation_id, w.resume_count, w.cancelled_at, w.platform_tenant_id, w.create_idempotency_key, w.create_request_fingerprint, w.deployment_id FROM workflow_runs w
 JOIN customer_operations o ON o.id=w.operation_id AND o.current_execution_id=w.id AND o.execution_kind='workflow' AND o.app_id=w.app_id AND o.platform_tenant_id=w.platform_tenant_id

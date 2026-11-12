@@ -4997,6 +4997,11 @@ type Querier interface {
 	MigrationTaskAllowed(ctx context.Context, db DBTX, id string) (bool, error)
 	MigrationTaskIsContract(ctx context.Context, db DBTX, arg MigrationTaskIsContractParams) (bool, error)
 	MoveDomainPlanClaim(ctx context.Context, db DBTX, arg MoveDomainPlanClaimParams) (int64, error)
+	// ADR-20261031193635 branch lifecycle: an environment branch's extend moves
+	// its database copy's end. Only an undeleted restore that already ends, and
+	// whose end is still the one the caller read, moves; the caller keeps the
+	// new end within the copy's allowance.
+	MoveManagedPostgresBranchExpiry(ctx context.Context, db DBTX, arg MoveManagedPostgresBranchExpiryParams) (ManagedPostgresDatabase, error)
 	NativeIssueTicketClaim(ctx context.Context, db DBTX, arg NativeIssueTicketClaimParams) (NativeIssueTicketReceipt, error)
 	// Completed links and explicit provider rejections remain as durable
 	// idempotency evidence, but no longer occupy an unresolved-request slot.
