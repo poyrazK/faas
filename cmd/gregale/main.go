@@ -748,6 +748,9 @@ func run(args []string) (status int) {
 		return cmdStoredWorkflows(args[1:])
 	case "commit":
 		return cmdCommit(args[1:])
+	case "postgres-changes":
+		// Capture Postgres row changes into an app queue (ADR-20261112140000).
+		return cmdPostgresChanges(args[1:])
 	case "data-repair":
 		return cmdDataRepair(args[1:])
 	case "events":

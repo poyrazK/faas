@@ -99,9 +99,12 @@ Non-worker destinations keep today's behavior.
   "the platform never installs DDL" for managed databases only, where Gregale
   already owns the role model.
 - **BYO PostgreSQL: the customer installs it.** `gregale postgres-changes
-  install --connection-url <owner url>` runs the same Go install routine from
-  the customer's machine; `--print-sql` prints it instead. Gregale never holds
-  the owner credential of a BYO database.
+  install --connection-url-env <VAR>` (or `gregale deploy` when the
+  manifest's `connection_url_env` is set locally) runs the same Go install
+  routine on the customer's machine and uploads only the relay login's URL,
+  before committing the install. apid refuses any URL that does not log in
+  as the source's relay role. Gregale never holds the owner credential of a
+  BYO database.
 
 ### 5. The relay's credential is least-privilege in both cases
 
@@ -166,8 +169,11 @@ starts when the feed is installed.
 
 ### 10. Release
 
-Dark: the `postgres_changes` platform flag gates the API, CLI apply and
-manifest reconcile; schedd also needs `FAAS_COMMIT_RELAY_ENABLED`. Plans: Hobby,
+Dark: the `postgres_changes` platform flag (claiming the `postgres-changes`
+preview capability, so the routes stay out of the published SDKs) gates the
+API; a deploy for an unreleased account warns and skips the block, and the
+CLI command is out of customer discovery. schedd also needs
+`FAAS_COMMIT_RELAY_ENABLED` (and `FAAS_COMMIT_PUBLIC_DATABASES` for BYO). Plans: Hobby,
 Pro and Scale (workers are paid-only). GA additionally waits for Commit's
 open production qualification items (docs/gregale-commit.md).
 

@@ -152,10 +152,8 @@ func InstallChanges(ctx context.Context, tx pgx.Tx, in ChangesInstall) (ChangesI
 	if err := ensureRelayRole(ctx, tx, role, in.RelayPassword); err != nil {
 		return ChangesInstallResult{}, err
 	}
-	if in.SchemaOwner != "" {
-		if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+pgx.Identifier{in.SchemaOwner}.Sanitize()); err != nil {
-			return ChangesInstallResult{}, fmt.Errorf("commit: assume schema owner: %w", err)
-		}
+	if err := assumeSchemaOwner(ctx, tx, in.SchemaOwner); err != nil {
+		return ChangesInstallResult{}, err
 	}
 	if _, err := tx.Exec(ctx, Schema); err != nil {
 		return ChangesInstallResult{}, fmt.Errorf("commit: install outbox: %w", err)
@@ -191,6 +189,76 @@ func InstallChanges(ctx context.Context, tx pgx.Tx, in ChangesInstall) (ChangesI
 		return ChangesInstallResult{}, err
 	}
 	return ChangesInstallResult{RelayRole: role, Removed: removed}, nil
+}
+
+// assumeSchemaOwner switches to the customer schema owner when one is given
+// and resolves unqualified table names in public, whatever the session's
+// search_path (the managed owner session pins pg_catalog).
+func assumeSchemaOwner(ctx context.Context, tx pgx.Tx, owner string) error {
+	if owner != "" {
+		if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+pgx.Identifier{owner}.Sanitize()); err != nil {
+			return fmt.Errorf("commit: assume schema owner: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx, "SET LOCAL search_path = public, pg_catalog"); err != nil {
+		return fmt.Errorf("commit: set search path: %w", err)
+	}
+	return nil
+}
+
+// RemoveChanges drops every capture trigger and the relay login of a source.
+// The outbox and any changes still in it are kept; the source's relay stops
+// when the source is paused.
+func RemoveChanges(ctx context.Context, tx pgx.Tx, sourceID, schemaOwner string) ([]string, error) {
+	role, err := ChangesRelayRole(sourceID)
+	if err != nil {
+		return nil, err
+	}
+	if err := assumeSchemaOwner(ctx, tx, schemaOwner); err != nil {
+		return nil, err
+	}
+	var installed bool
+	if err := tx.QueryRow(ctx, `SELECT to_regprocedure('public.gregale_changes_capture()') IS NOT NULL`).Scan(&installed); err != nil {
+		return nil, err
+	}
+	var removed []string
+	if installed {
+		if removed, err = removeUndeclaredFeeds(ctx, tx, nil); err != nil {
+			return nil, err
+		}
+	}
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = $1)`, role).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if exists {
+		r := pgx.Identifier{role}.Sanitize()
+		for _, table := range []string{"public.gregale_outbox", "public.gregale_commit_binding"} {
+			var present bool
+			if err := tx.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&present); err != nil {
+				return nil, err
+			}
+			if !present {
+				continue
+			}
+			if _, err := tx.Exec(ctx, "REVOKE ALL ON "+table+" FROM "+r); err != nil {
+				return nil, fmt.Errorf("commit: revoke relay access: %w", err)
+			}
+		}
+		// Only the grant the install made, if any; a no-op otherwise.
+		if _, err := tx.Exec(ctx, "REVOKE USAGE ON SCHEMA public FROM "+r); err != nil {
+			return nil, fmt.Errorf("commit: revoke relay schema access: %w", err)
+		}
+		if schemaOwner != "" {
+			if _, err := tx.Exec(ctx, "RESET ROLE"); err != nil {
+				return nil, err
+			}
+		}
+		if _, err := tx.Exec(ctx, "DROP ROLE "+r); err != nil {
+			return nil, fmt.Errorf("commit: drop relay role: %w", err)
+		}
+	}
+	return removed, nil
 }
 
 func ensureRelayRole(ctx context.Context, tx pgx.Tx, role, password string) error {

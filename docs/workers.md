@@ -96,6 +96,10 @@ HTTP API, retries, visibility timeouts and authentication in detail.
 
 Messages are delivered at least once: make handlers idempotent.
 
+To run a worker when rows change in a Postgres database, declare
+`postgres_changes` and Gregale enqueues each change for you; see
+[Postgres change workers](postgres-changes.md) (preview).
+
 ## Scale on the backlog
 
 `worker.scale` says how many waiting messages one worker should take:

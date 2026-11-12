@@ -4076,6 +4076,29 @@
       ]
     },
     {
+      "id": "postgres-changes",
+      "name": "Postgres change workers",
+      "category": "async",
+      "description": "Capture Postgres row changes into a worker's queue, on managed databases or ones you run.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/postgres-changes",
+      "acceptance_test": "pkg/commitmanaged/changes_test.go::TestChangesSourceDeliversToWorkerQueue",
+      "routes": [
+        "/v1/apps/{}/postgres-changes"
+      ],
+      "settings": [
+        "manifest.postgres_changes"
+      ],
+      "cli": [
+        "postgres-changes"
+      ]
+    },
+    {
       "id": "postgres-compute-policy",
       "name": "Postgres compute policy and resize",
       "category": "data",

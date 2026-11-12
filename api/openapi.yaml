@@ -49105,6 +49105,95 @@ paths:
         '413': { $ref: '#/components/responses/PlanSourceBytes' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/postgres-changes:
+    get:
+      tags: [queues]
+      operationId: getPostgresChanges
+      summary: Show the app's Postgres change capture and its relay health.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      responses:
+        '200':
+          description: The app's Postgres change capture.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PostgresChangesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [queues]
+      operationId: putPostgresChanges
+      summary: Capture Postgres row changes into one of the app's queues.
+      description: Declares which table columns are captured and the queue that receives each change. For a managed database Gregale installs capture and connects at once; for a database you run, finish with `gregale postgres-changes install`.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutPostgresChangesRequest' }
+      responses:
+        '200':
+          description: Capture declared; for a managed database, installed and connected.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PostgresChangesResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [queues]
+      operationId: deletePostgresChanges
+      summary: Stop capturing Postgres changes for the app.
+      description: Pauses delivery. On a managed database the capture triggers and the relay login are removed; on a database you run, use `gregale postgres-changes uninstall`.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      responses:
+        '204':
+          description: Capture stopped.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/postgres-changes/connection:
+    put:
+      tags: [queues]
+      operationId: putPostgresChangesConnection
+      summary: Store the relay login for a database you run; credentials are never returned.
+      description: The URL must log in as the relay role the install created and verify TLS. Owner credentials are refused.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [connection_url]
+              properties:
+                connection_url: { type: string, maxLength: 8192, writeOnly: true }
+      responses:
+        '204':
+          description: Relay login sealed without returning credential material.
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/commit-sources:
     post:
       tags: [queues]
@@ -85194,6 +85283,57 @@ components:
         p50_latency_ms: { type: integer, minimum: 0, description: Request-weighted nearest-rank p50 from stored latency bucket upper bounds. }
         p95_latency_ms: { type: integer, minimum: 0, description: Request-weighted nearest-rank p95 from stored latency bucket upper bounds. }
         latency_quantized: { type: boolean, enum: [true], description: Latency values are conservative bucket upper bounds. }
+    PostgresChangeFeed:
+      description: Allowlisted columns of one table whose row changes are captured.
+      type: object
+      required: [name, table, columns]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9_]{0,39}$', description: 'Appears in each event type, database.<name>.<operation>.' }
+        table: { type: string, maxLength: 256, description: Table name; unqualified names are in the public schema. }
+        columns:
+          type: array
+          minItems: 1
+          maxItems: 100
+          description: The only columns an event carries. The primary key must be listed.
+          items: { type: string, maxLength: 63 }
+        operations:
+          type: array
+          description: Operations to capture; all three when omitted.
+          items: { type: string, enum: [insert, update, delete] }
+    PutPostgresChangesRequest:
+      description: Declares the app's Postgres change capture.
+      type: object
+      required: [queue_name, feeds]
+      properties:
+        database: { type: string, maxLength: 256, description: A managed database name or ID. Omit for a database you run. }
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: The app queue binding that receives the changes. }
+        poll_interval_seconds: { type: integer, minimum: 1, maximum: 600, description: 'How often the outbox is read; default 5. 300 or more lets an idle managed database suspend.' }
+        feeds:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { $ref: '#/components/schemas/PostgresChangeFeed' }
+    PostgresChangesResponse:
+      description: The app's Postgres change capture and its relay health.
+      type: object
+      required: [source_id, queue_name, managed, poll_interval_seconds, feeds, enabled, connected, relay_role, relay_status]
+      properties:
+        source_id: { type: string, format: uuid }
+        queue_name: { type: string }
+        database: { type: string, description: The managed database name, when managed. }
+        managed: { type: boolean }
+        poll_interval_seconds: { type: integer }
+        feeds:
+          type: array
+          items: { $ref: '#/components/schemas/PostgresChangeFeed' }
+        enabled: { type: boolean }
+        connected: { type: boolean, description: Whether Gregale holds the relay login. }
+        relay_role: { type: string, description: The least-privilege login the install creates for delivery. }
+        relay_status: { type: string }
+        last_checked_at: { type: string, format: date-time }
+        pending_events: { type: integer, format: int64 }
+        blocked_events: { type: integer, format: int64 }
+        oldest_pending_at: { type: string, format: date-time }
     CreateCommitSourceRequest:
       description: Register an immutable database source bound to managed Operations or application-event publication. Event destinations require version 3, no operation policy and no customer selection.
       type: object

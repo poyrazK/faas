@@ -350,6 +350,7 @@ var catalog = []Spec{
 	},
 	{
 		Key:         PostgresChanges,
+		Capability:  "postgres-changes",
 		Label:       "Postgres change workers",
 		Description: "Capture Postgres row changes into a worker's queue: the postgres-changes API, CLI and gregale.yaml block, with Gregale installing capture on managed databases. Off, the API refuses and deploys skip the block, as before. schedd also needs FAAS_COMMIT_RELAY_ENABLED.",
 		ADR:         "ADR-20261112140000",

@@ -1513,6 +1513,19 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		// ADR-20261112140000; dark behind the postgres_changes platform flag.
+		// Callable but out of customer discovery until launch, like other
+		// previews.
+		Name: "postgres-changes", DocSlug: "postgres-changes", Short: "Capture Postgres row changes into an app queue (preview)", Audience: cliAudienceOperator,
+		Subcommands: []cliSub{
+			{Name: "apply", Short: "Apply gregale.yaml's postgres_changes block", Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug (defaults to the linked app)"}, {Name: "path", Value: "DIR", Short: "directory holding gregale.yaml (default .)"}, {Name: "connection-url-env", Value: "VAR", Short: "local variable holding the owner URL of a database you run"}}},
+			{Name: "status", Short: "Show capture, relay health and backlog", Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug (defaults to the linked app)"}}},
+			{Name: "install", Short: "Install capture on a database you run; uploads only the relay login", Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug (defaults to the linked app)"}, {Name: "connection-url-env", Value: "VAR", Short: "local variable holding the owner URL (default: the manifest's connection_url_env)"}}},
+			{Name: "uninstall", Short: "Stop capture and remove triggers and the relay login", Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug (defaults to the linked app)"}, {Name: "connection-url-env", Value: "VAR", Short: "local variable holding the owner URL (default: the manifest's connection_url_env)"}}},
+		},
+		Examples: []string{"gregale postgres-changes apply", "ORDERS_DATABASE_URL=postgres://... gregale postgres-changes install --connection-url-env ORDERS_DATABASE_URL", "gregale postgres-changes status --app orders-worker"},
+	},
+	{
 		Name:    "events",
 		DocSlug: "events",
 		Short:   "Publish events, preview routing, inspect deliveries and backfill",

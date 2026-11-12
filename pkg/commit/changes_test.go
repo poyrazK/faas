@@ -375,6 +375,66 @@ func TestPostgresChangesSchemaOwnerAndUnsafeRole(t *testing.T) {
 	}
 }
 
+func TestPostgresChangesUnqualifiedTableAndRemove(t *testing.T) {
+	pool, writer := changesFixture(t)
+	ctx := t.Context()
+	source := uuid.NewString()
+	// The managed owner session pins search_path to pg_catalog: an
+	// unqualified table must still resolve in public.
+	if _, err := pool.Exec(ctx, `ALTER DATABASE `+pgx.Identifier{pgtestDatabase(t, pool)}.Sanitize()+` SET search_path = pg_catalog`); err != nil {
+		t.Fatal(err)
+	}
+	pool.Reset()
+	res, err := install(t, pool, ChangesInstall{SourceID: source, Feeds: []ChangeFeed{
+		{Name: "orders", Table: "orders", Columns: []string{"id", "status"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, err := RemoveChanges(ctx, tx, source, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 1 {
+		t.Fatalf("removed %v", removed)
+	}
+	var roleLeft bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)`, res.RelayRole).Scan(&roleLeft); err != nil || roleLeft {
+		t.Fatalf("relay role left behind (%v)", err)
+	}
+	if err := asRole(ctx, pool, writer, `INSERT INTO public.orders VALUES (9, 'new', 1, NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(outboxRows(t, pool)); n != 0 {
+		t.Fatalf("capture continued after removal: %d events", n)
+	}
+	// Removing again is a no-op.
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if again, err := RemoveChanges(ctx, tx, source, ""); err != nil || len(again) != 0 {
+		t.Fatalf("second removal: %v %v", again, err)
+	}
+}
+
+func pgtestDatabase(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+	var name string
+	if err := pool.QueryRow(t.Context(), `SELECT current_database()`).Scan(&name); err != nil {
+		t.Fatal(err)
+	}
+	return name
+}
+
 // The verifier must match what PostgreSQL computes for the same password and
 // salt, or the relay login would never authenticate.
 func TestPostgresChangesSCRAMVerifierMatchesServer(t *testing.T) {
