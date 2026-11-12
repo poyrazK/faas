@@ -37,9 +37,13 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 TASKS = HERE / "tasks.json"
 AGENTS = ("claude", "codex")
-TOOLSETS = ("core", "release", "diagnose", "all", "none")
-SETUP_KINDS = ("deploy", "replace")
-CHECK_KINDS = ("http", "serving", "file_contains", "answer")
+TOOLSETS = ("core", "release", "diagnose", "provision", "operate", "all", "none")
+SETUP_KINDS = ("deploy", "replace", "api")
+CHECK_KINDS = ("http", "serving", "file_contains", "answer", "app_field", "approval", "one_of")
+API_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
+# Scopes an agent key gets when a task runs the agent as one: enough to
+# deploy and change its apps, nothing else.
+AGENT_KEY_SCOPES = ["agent", "apps:read", "deploy:write"]
 DEFAULT_API = "https://api.gregale.dev"
 # Shell commands a Claude run may use without asking; everything else is
 # denied in headless mode.
@@ -60,17 +64,38 @@ def load_tasks(path: Path = TASKS) -> list[dict]:
         seen.add(tid)
         if "{app}" not in task.get("prompt", ""):
             raise EvalError(f"{tid}: prompt must name the app with {{app}}")
+        agent_key = task.get("agent_key")
+        if agent_key is not None and (not isinstance(agent_key, dict) or not isinstance(agent_key.get("budget_cents", 0), int) or agent_key.get("budget_cents", 0) < 0):
+            raise EvalError(f"{tid}: agent_key takes a non-negative integer budget_cents")
         for step in task.get("setup", []):
             if step.get("kind") not in SETUP_KINDS:
                 raise EvalError(f"{tid}: unknown setup kind {step.get('kind')!r}")
+            if step["kind"] == "api":
+                if step.get("method") not in API_METHODS or not str(step.get("path", "")).startswith("/v1/"):
+                    raise EvalError(f"{tid}: an api step needs a method and a /v1/ path")
+                if step.get("as") == "agent" and agent_key is None:
+                    raise EvalError(f"{tid}: an api step as the agent needs agent_key")
         if not task.get("checks"):
             raise EvalError(f"{tid}: at least one check is required")
-        for check in task["checks"]:
-            if check.get("kind") not in CHECK_KINDS:
-                raise EvalError(f"{tid}: unknown check kind {check.get('kind')!r}")
+        _validate_checks(tid, task["checks"], agent_key is not None)
         if task.get("budget_usd", 0) <= 0 or task.get("timeout_s", 0) <= 0:
             raise EvalError(f"{tid}: budget_usd and timeout_s must be positive")
     return tasks
+
+
+def _validate_checks(tid: str, checks: list, has_agent_key: bool) -> None:
+    for check in checks:
+        kind = check.get("kind")
+        if kind not in CHECK_KINDS:
+            raise EvalError(f"{tid}: unknown check kind {kind!r}")
+        if kind == "app_field" and (not check.get("field") or ("equals" not in check and "equals_recorded" not in check)):
+            raise EvalError(f"{tid}: app_field needs a field and equals or equals_recorded")
+        if kind == "approval" and (not has_agent_key or not check.get("category")):
+            raise EvalError(f"{tid}: an approval check needs agent_key and a category")
+        if kind == "one_of":
+            if not check.get("checks"):
+                raise EvalError(f"{tid}: one_of needs checks")
+            _validate_checks(tid, check["checks"], has_agent_key)
 
 
 def app_slug(task_id: str) -> str:
@@ -220,9 +245,30 @@ class Gregale:
                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout)
 
     def get(self, path: str) -> dict:
-        request = urllib.request.Request(self.api + path, headers={"Authorization": f"Bearer {self.token}"})
+        return self.call("GET", path)
+
+    def call(self, method: str, path: str, body=None) -> dict:
+        data = json.dumps(body).encode() if body is not None else None
+        headers = {"Authorization": f"Bearer {self.token}"}
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(self.api + path, data=data, method=method, headers=headers)
         with urllib.request.urlopen(request, timeout=30) as response:
-            return json.loads(response.read())
+            raw = response.read()
+            return json.loads(raw) if raw.strip() else {}
+
+    def as_token(self, token: str) -> "Gregale":
+        """The same API and binary under another credential."""
+        return Gregale(self.binary, self.api, token)
+
+    def create_agent_key(self, label: str, budget_cents: int) -> tuple[str, str]:
+        """Mint an agent key that asks a person about nothing but its budget,
+        and set that budget (ADR-20261111114059). Returns (id, plaintext)."""
+        key = self.call("POST", "/v1/keys", {"label": label, "scopes": AGENT_KEY_SCOPES, "approval_categories": []})
+        if not key.get("id") or not key.get("plaintext"):
+            raise EvalError("creating the run's agent key returned no key")
+        self.call("PUT", f"/v1/agent-connections/{key['id']}/budget", {"monthly_cents": budget_cents})
+        return key["id"], key["plaintext"]
 
 
 def http_check(url: str, check: dict, deadline_s: float = 120, fetch=None) -> tuple[bool, str]:
@@ -249,32 +295,71 @@ def _fetch(url: str) -> tuple[int, str]:
         return 0, str(error)
 
 
-def run_checks(task: dict, slug: str, project: Path, answer: str, gregale: Gregale | None, fetch=None, http_deadline_s: float = 120) -> list[dict]:
-    results = []
-    for check in task["checks"]:
-        kind, ok, detail = check["kind"], False, ""
-        try:
-            if kind == "answer":
-                ok = re.search(check["pattern"], answer or "", re.IGNORECASE) is not None
-                detail = (answer or "")[:200]
-            elif kind == "file_contains":
-                ok = check["text"] in (project / check["file"]).read_text()
-            elif kind == "http":
-                app = gregale.get(f"/v1/apps/{slug}")
-                url = (app.get("canonical_url") or app.get("url") or "").rstrip("/") + check.get("path", "/")
-                ok, detail = http_check(url, check, deadline_s=http_deadline_s, fetch=fetch)
-            elif kind == "serving":
-                health = gregale.get(f"/v1/apps/{slug}/health")
-                serving, latest = health.get("serving_deployment_ids") or [], health.get("latest_deployment_id", "")
-                ok = bool(serving) and (latest not in serving if check["expect"] == "not_latest" else latest in serving)
-                detail = f"serving={serving} latest={latest}"
-        except (OSError, KeyError, ValueError, urllib.error.URLError) as error:
-            detail = f"check error: {error}"
-        results.append({"kind": kind, "ok": ok, "detail": detail})
-    return results
+def run_checks(task: dict, slug: str, project: Path, answer: str, gregale: Gregale | None, fetch=None, http_deadline_s: float = 120,
+               agent: Gregale | None = None, recorded: dict | None = None) -> list[dict]:
+    """Score a run. agent is the run's agent key, for checks that read what
+    it alone sees; recorded holds values setup saved (record_field)."""
+    context = {"slug": slug, "project": project, "answer": answer, "gregale": gregale, "fetch": fetch,
+               "http_deadline_s": http_deadline_s, "agent": agent, "recorded": recorded or {}}
+    return [_check(check, context) for check in task["checks"]]
+
+
+def _check(check: dict, c: dict) -> dict:
+    kind, ok, detail = check["kind"], False, ""
+    try:
+        if kind == "answer":
+            ok = re.search(check["pattern"], c["answer"] or "", re.IGNORECASE) is not None
+            detail = (c["answer"] or "")[:200]
+        elif kind == "file_contains":
+            ok = check["text"] in (c["project"] / check["file"]).read_text()
+        elif kind == "http":
+            app = c["gregale"].get(f"/v1/apps/{c['slug']}")
+            url = (app.get("canonical_url") or app.get("url") or "").rstrip("/") + check.get("path", "/")
+            ok, detail = http_check(url, check, deadline_s=c["http_deadline_s"], fetch=c["fetch"])
+        elif kind == "serving":
+            health = c["gregale"].get(f"/v1/apps/{c['slug']}/health")
+            serving, latest = health.get("serving_deployment_ids") or [], health.get("latest_deployment_id", "")
+            ok = bool(serving) and (latest not in serving if check["expect"] == "not_latest" else latest in serving)
+            detail = f"serving={serving} latest={latest}"
+        elif kind == "app_field":
+            # A field of the app as the evaluation account reads it: unchanged
+            # (equals) or put back to what setup recorded (equals_recorded).
+            got = c["gregale"].get(f"/v1/apps/{c['slug']}").get(check["field"])
+            want = c["recorded"][check["field"]] if check.get("equals_recorded") else check["equals"]
+            ok, detail = got == want, f"{check['field']}={got!r} want {want!r}"
+        elif kind == "approval":
+            # An approval request of the run's agent key, newest first.
+            items = (c["agent"].get("/v1/agent-approvals").get("items") or []) if c["agent"] else []
+            matching = [a for a in items if a.get("category") == check["category"] and a.get("status") == check.get("status", "pending")]
+            ok = bool(matching)
+            detail = ", ".join(f"{a.get('category')}:{a.get('status')} {a.get('method')} {a.get('path')}" for a in items[:5]) or "no approval requests"
+        elif kind == "one_of":
+            inner = [_check(sub, c) for sub in check["checks"]]
+            ok = any(r["ok"] for r in inner)
+            detail = " | ".join(f"{r['kind']}:{'ok' if r['ok'] else 'no'} {r['detail']}" for r in inner)
+    except (OSError, KeyError, ValueError, urllib.error.URLError) as error:
+        detail = f"check error: {error}"
+    return {"kind": kind, "ok": ok, "detail": detail[:500]}
 
 
 # --- runs -------------------------------------------------------------------
+
+
+def api_step(step: dict, slug: str, gregale: Gregale, runner: Gregale, recorded: dict) -> None:
+    """A setup call to the API, as the evaluation account or (as: agent) the
+    run's agent key. record_field saves an app field first, for an
+    equals_recorded check."""
+    if step.get("record_field"):
+        field = step["record_field"]
+        recorded[field] = gregale.get(f"/v1/apps/{slug}").get(field)
+        if (step.get("body") or {}).get(field) == recorded[field]:
+            raise EvalError(f"setup would not change {field}: it is already {recorded[field]!r}")
+    caller = runner if step.get("as") == "agent" else gregale
+    path = step["path"].replace("{app}", slug)
+    try:
+        caller.call(step["method"], path, step.get("body"))
+    except urllib.error.HTTPError as error:
+        raise EvalError(f"setup {step['method']} {path}: {error.code} {error.read()[:300]!r}") from error
 
 
 def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> dict:
@@ -282,7 +367,13 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
     run_dir = Path(tempfile.mkdtemp(prefix=f"agent-eval-{task['id']}-"))
     project = run_dir / "project"
     record = {"task": task["id"], "agent": agent, "toolset": toolset, "app": slug, "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    key_id, runner, recorded = "", gregale, {}
     try:
+        if task.get("agent_key") is not None:
+            # The agent runs as its own agent key, so budgets, approvals and
+            # undo apply to it as they would to a connected agent.
+            key_id, plaintext = gregale.create_agent_key(slug, task["agent_key"].get("budget_cents", 0))
+            runner = gregale.as_token(plaintext)
         init = gregale.cli("init", "--template", task["template"], "--path", str(project), "--name", slug)
         if init.returncode != 0:
             raise EvalError(f"init failed: {init.stderr[-300:]}")
@@ -293,13 +384,15 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
                 result = gregale.cli("deploy", "--path", str(project), "--name", slug, "--app", "--yes", cwd=project, timeout=1200)
                 if (result.returncode == 0) != (step.get("expect", "success") == "success"):
                     raise EvalError(f"setup deploy exit {result.returncode}: {result.stderr[-300:]}")
+            elif step["kind"] == "api":
+                api_step(step, slug, gregale, runner, recorded)
         prompt = task["prompt"].format(app=slug) + " The gregale CLI is installed and logged in" + (" and the Gregale MCP server is connected." if toolset != "none" else ".")
         model = options.claude_model if agent == "claude" else options.codex_model
         if agent == "claude":
             command = claude_command(prompt, run_dir, gregale.binary, toolset, task["budget_usd"], model, options.mcp_writes)
         else:
             command = codex_command(prompt, project, gregale.binary, toolset, model, options.mcp_writes)
-        env = gregale.env()
+        env = runner.env()
         # The agent's shell `gregale` must be the binary under test.
         (run_dir / "bin").mkdir()
         (run_dir / "bin" / "gregale").symlink_to(Path(gregale.binary).resolve())
@@ -320,11 +413,17 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
         (run_dir / f"{agent}.jsonl").write_text("\n".join(lines))
         metrics = parse_claude(lines) if agent == "claude" else parse_codex(lines)
         record.update(metrics)
-        record["checks"] = run_checks(task, slug, project, metrics["answer"], gregale)
+        record["checks"] = run_checks(task, slug, project, metrics["answer"], gregale,
+                                      agent=runner if key_id else None, recorded=recorded)
         record["success"] = all(check["ok"] for check in record["checks"])
-    except (EvalError, subprocess.TimeoutExpired, OSError) as error:
+    except (EvalError, subprocess.TimeoutExpired, OSError, urllib.error.URLError) as error:
         record.update(success=False, error=str(error))
     finally:
+        if key_id:
+            try:
+                gregale.call("DELETE", f"/v1/keys/{key_id}")
+            except (OSError, urllib.error.URLError) as error:
+                record["cleanup_error"] = f"agent key {key_id}: {error}"
         if not options.keep_apps:
             gregale.cli("apps", "rm", "--yes", slug, timeout=120)
         if not options.keep_dirs:
