@@ -2280,6 +2280,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// CreateApp, upload, deployment, or other write is allowed after the
 	// authenticated client is acquired.
 	dryRun := fs.Bool("dry-run", false, "run deploy preflight without uploading or changing remote state")
+	explainFiles := fs.Bool("explain-files", false, "with --dry-run, inspect local payload files and exclusion rules without login or remote calls")
 	// --plan is the local, no-auth preview for the simple stateless app path.
 	// Unlike --dry-run/--diff it does not compare remote state or call apid; it
 	// only resolves framework, listener, resource, and state defaults.
@@ -2357,6 +2358,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// from a customer-supplied value before authentication or source I/O.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if *explainFiles {
+		return cmdDeploySourceFiles(ctx, deploySourceFilesOptions{path: *sourcePath, source: *sourceMode, worktree: *worktree,
+			function: *function, app: *app, project: *projectDeploy || *projectSlug != "", runtime: *runtime,
+			secretScan: *secretScan, secretsFile: *secretsFile, dryRun: *dryRun, json: jsonOutput || *diffJSON}, explicit)
+	}
 	if explicit["rollout"] {
 		if err := applyRolloutFlag(*rolloutChoice, explicit, safeDeploy, canaryPreset); err != nil {
 			return printErr("Invalid rollout policy", err)

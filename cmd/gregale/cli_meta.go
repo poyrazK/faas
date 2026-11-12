@@ -3188,6 +3188,7 @@ var cliCommands = []cliCommand{
 			{Name: "preview", Group: "Preview and checks", Common: true, Short: "preview local app defaults; no login needed"},
 			{Name: "plan", Group: "Preview and checks", Short: "alias of --preview"},
 			{Name: "dry-run", Group: "Preview and checks", Common: true, Short: "check against remote state without deploying"},
+			{Name: "explain-files", Group: "Preview and checks", Bool: true, Short: "with --dry-run, inspect local payload files and exclusion rules without login or remote calls"},
 			{Name: "yes", Group: "Confirmation and waiting", Common: true, Short: "skip the apply confirmation prompt"},
 			{Name: "strict", Group: "Preview and checks", Short: "fail on schema/quota/env breaks (default with --dry-run, --diff, or --server-diff)"},
 			{Name: "lenient", Group: "Preview and checks", Short: "allow diff breaks; requires --dry-run, --diff, or --server-diff; excludes --strict"},
