@@ -23,26 +23,38 @@ var errBrowserAuthInput = errors.New("invalid browser authorization request")
 // store can bind one. Only a device-bound login code is short: a person types
 // it, and it is exchanged only with the device code. A CLI that predates device
 // codes exchanges by the code alone, so it gets a 64-bit code.
-func mintBrowserAuthCode(r *http.Request, deviceCodes bool) (code string, hash []byte, device bool, err error) {
+//
+// loopbackPort is the request's LoopbackPort for a device-bound login code,
+// else 0 (ADR-20261111170000).
+func mintBrowserAuthCode(r *http.Request, deviceCodes bool) (code string, hash []byte, device bool, loopbackPort int, err error) {
 	var input api.CliAuthCodeRequest
 	if r.ContentLength != 0 && r.Body != http.NoBody {
 		if err := decodeJSON(r, &input); err != nil {
-			return "", nil, false, errBrowserAuthInput
+			return "", nil, false, 0, errBrowserAuthInput
 		}
+	}
+	if input.LoopbackPort != 0 && (!input.Device || !validLoopbackPort(input.LoopbackPort)) {
+		return "", nil, false, 0, errBrowserAuthInput
 	}
 	if input.Purpose == "" && len(input.Scopes) == 0 {
 		if input.Device && deviceCodes {
 			code, hash, err := mintCliAuthCodeRaw()
-			return code, hash, true, err
+			return code, hash, true, input.LoopbackPort, err
 		}
 		code, hash, err := mintCodeOnlyCliAuthCode()
-		return code, hash, false, err
+		return code, hash, false, 0, err
 	}
 	if input.Device {
-		return "", nil, false, errBrowserAuthInput
+		return "", nil, false, 0, errBrowserAuthInput
 	}
 	code, hash, err = mintMCPAuthCode(input)
-	return code, hash, false, err
+	return code, hash, false, 0, err
+}
+
+// validLoopbackPort reports whether port can carry a one-click login
+// callback: an unprivileged TCP port.
+func validLoopbackPort(port int) bool {
+	return port >= 1024 && port <= 65535
 }
 
 func mintMCPAuthCode(input api.CliAuthCodeRequest) (string, []byte, error) {

@@ -148,8 +148,10 @@ not appear in the process argument list:
 printf '%s' "$GREGALE_API_TOKEN" | gregale login --token-stdin
 ```
 
-Bare `gregale login` requires an interactive terminal. Existing `--token`
-calls continue to work.
+Bare `gregale login` requires an interactive terminal: it opens your browser,
+and one click on **Authorize** signs the terminal in. Over SSH, or with the
+browser on another computer, run `gregale login --device` and type the code it
+shows into the page. Existing `--token` calls continue to work.
 
 GitHub Actions already has a first-class path that needs no install — the
 action vendors the binary. A direct action reference follows the latest

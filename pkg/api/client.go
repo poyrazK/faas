@@ -4937,6 +4937,14 @@ func (c *Client) MintCliAuthCode(ctx context.Context) (CliAuthCodeResponse, erro
 	return out, c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Device: true}, &out)
 }
 
+// MintCliAuthLoopbackCode mints a one-click login code whose approval is
+// sent to 127.0.0.1:port (ADR-20261111170000). The response's Loopback is
+// false when the server kept the typed-code flow.
+func (c *Client) MintCliAuthLoopbackCode(ctx context.Context, port int) (CliAuthCodeResponse, error) {
+	var out CliAuthCodeResponse
+	return out, c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Device: true, LoopbackPort: port}, &out)
+}
+
 // ExchangeCliAuthLogin polls for a minted code's approval: with its device
 // code when the server issued one, else with the code (an older server).
 func (c *Client) ExchangeCliAuthLogin(ctx context.Context, minted CliAuthCodeResponse) (CliAuthExchangeResponse, error) {

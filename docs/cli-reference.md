@@ -931,10 +931,11 @@ Remove the linked project from this checkout
 
 Authenticate this machine
 
-`gregale login [--token <TOKEN>] [--token-stdin]`
+`gregale login [--device] [--token <TOKEN>] [--token-stdin]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--device` | sign in with a code typed in a browser on another computer (SSH, headless) |  |
 | `--token <TOKEN>` | use a pre-minted token (CI) |  |
 | `--token-stdin` | read a pre-minted token from stdin (CI) |  |
 
@@ -942,6 +943,7 @@ Examples:
 
 ```sh
 gregale login
+gregale login --device
 printf '%s' "$GREGALE_TOKEN" | gregale login --token-stdin
 ```
 

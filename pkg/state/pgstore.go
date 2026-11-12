@@ -28304,15 +28304,30 @@ func (s *PgStore) PeekCliAuthCode(ctx context.Context, tokenHash []byte) (api.Cl
 // the UPDATE is still atomic — the post-classification SELECT only
 // affects the error we report, not the state).
 func (s *PgStore) ClaimCliAuthCode(ctx context.Context, tokenHash []byte, accountID string) error {
+	return s.claimCliAuthCode(ctx, tokenHash, accountID, nil)
+}
+
+// ClaimCliAuthCodeForDevice implements CliAuthDeviceCodeStore.
+func (s *PgStore) ClaimCliAuthCodeForDevice(ctx context.Context, tokenHash []byte, accountID string, deviceHash []byte) error {
+	if len(deviceHash) == 0 {
+		return errors.New("claim cli auth code: empty device hash")
+	}
+	return s.claimCliAuthCode(ctx, tokenHash, accountID, storedCredential(credTagCLIDeviceCode, deviceHash))
+}
+
+// claimCliAuthCode claims a pending code for accountID. A non-nil
+// storedDevice replaces the row's device hash in the same statement.
+func (s *PgStore) claimCliAuthCode(ctx context.Context, tokenHash []byte, accountID string, storedDevice []byte) error {
 	lookups := credentialLookups(credTagCLIAuthCode, tokenHash)
 	for _, value := range lookups {
 		tag, err := s.pool.Exec(ctx,
 			`update cli_auth_codes
-			 set status = 'consumed', account_id = $2
+			 set status = 'consumed', account_id = $2,
+			     device_hash = coalesce($3::bytea, device_hash)
 			 where token_hash = $1
 			   and status = 'pending'
 			   and expires_at > now()`,
-			value, accountID)
+			value, accountID, storedDevice)
 		if err != nil {
 			return mapErr(err)
 		}

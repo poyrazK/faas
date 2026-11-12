@@ -5072,8 +5072,9 @@ var cliCommands = []cliCommand{
 		Name:     "login",
 		DocSlug:  "auth",
 		Short:    "Authenticate this machine",
-		Examples: []string{"gregale login", "printf '%s' \"$GREGALE_TOKEN\" | gregale login --token-stdin"},
+		Examples: []string{"gregale login", "gregale login --device", "printf '%s' \"$GREGALE_TOKEN\" | gregale login --token-stdin"},
 		Flags: []cliFlag{
+			{Name: "device", Short: "sign in with a code typed in a browser on another computer (SSH, headless)"},
 			{Name: "token", Short: "use a pre-minted token (CI)", Value: "TOKEN"},
 			{Name: "token-stdin", Short: "read a pre-minted token from stdin (CI)"},
 		},
