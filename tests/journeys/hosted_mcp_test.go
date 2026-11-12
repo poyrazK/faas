@@ -68,7 +68,9 @@ type hostedMCPJourney struct {
 	orgMCP   *mcpSession
 	// Agent approvals, activity and mcp connect (agent_approvals_test.go).
 	approvalKeyValue string
+	approvalKeyID    string
 	approvalID       string
+	reviewURL        string
 	ghost            string // an app that never exists
 }
 

@@ -488,6 +488,24 @@ type AgentRunUsage struct {
 	RecordedAt          pgtype.Timestamptz
 }
 
+type AgentUndoRecord struct {
+	ID                pgtype.UUID
+	ActivityID        pgtype.UUID
+	KeyID             pgtype.UUID
+	AccountID         pgtype.UUID
+	OrgID             pgtype.UUID
+	Method            string
+	Path              string
+	Kind              string
+	Summary           string
+	Inverse           []byte
+	Guard             []byte
+	NotUndoableReason pgtype.Text
+	CreatedAt         pgtype.Timestamptz
+	UndoneAt          pgtype.Timestamptz
+	UndoneBy          pgtype.UUID
+}
+
 // ADR-20261027090010 immutable agent versions: harness descriptor, prompt template, size and timeout.
 type AgentVersion struct {
 	AgentID               pgtype.UUID

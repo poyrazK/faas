@@ -114,15 +114,15 @@ func cmdDevLocal(args []string) int {
 	if err != nil {
 		return printErr("Could not start locally", err)
 	}
-	if err := devLocalPreflight(projectDir, fns, app, devLocalEnv(os.Environ(), nil, fileEnv)); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := devLocalPreflight(ctx, projectDir, fns, app, devLocalEnv(os.Environ(), nil, fileEnv)); err != nil {
 		return printErr("Local preflight failed", err)
 	}
 	cacheDir, err := localCacheDir(projectDir)
 	if err != nil {
 		return printErr("Could not start local functions", err)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	remote := &devLocalRemote{Env: map[string]string{}}
 	switch {
 	case *offline:
