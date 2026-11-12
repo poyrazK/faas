@@ -31,6 +31,7 @@ const (
 	runtimeConfigRekey                              = "rekey_enabled"
 	runtimeConfigHSTS                               = "hsts_enabled"
 	runtimeConfigS3                                 = "s3_enabled"
+	runtimeConfigObjectStorageOverCeiling           = "object_storage_over_ceiling_deletion"
 	runtimeConfigFrontendHosting                    = "frontend_hosting_enabled"
 	runtimeConfigFrontendHostingDurable             = "frontend_hosting_durable_routing_enabled"
 	runtimeConfigFrontendHostingConfig              = "frontend_hosting_config_enabled"
@@ -121,6 +122,7 @@ var runtimeConfigCatalog = []runtimeConfigDefinition{
 	{Key: runtimeconfig.KeyObjectInventoryQuiet, Label: "Quiet bucket inventory", Description: "How long a bucket's inventory stays fresh when nothing was written to it since its last listing, under gateway-safety accounting (ADR-20261110151628). off holds every bucket to 900 s; shadow still does, but classifies quiet buckets and counts drift when one's listing changes (faas_object_storage_inventory_drift_total); on keeps a quiet bucket's inventory for 24 h and lists it once a day. Move to on only after a shadow week with no drift.", Category: "Object storage", Kind: "enum", Default: json.RawMessage(`"off"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateObjectInventoryQuiet},
 	{Key: runtimeconfig.KeySnapshotRefreshWindowHours, Label: "Snapshot refresh window (hours)", Description: "An app that parked on a node within this many hours is a snapshot refresh candidate on that node (ADR-20261106214916).", Category: "Snapshots", Kind: "integer", Default: json.RawMessage("168"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateIntSetting(api.SnapshotRefreshWindowHoursMin, api.SnapshotRefreshWindowHoursMax, api.ValidSnapshotRefreshWindowHours)},
 	{Key: runtimeConfigEnvironmentBranches, Label: "Environment branches", Description: "Admit environment branches: lazy copies of a project environment whose workloads activate on first request (ADR-20261031193635). Projects with managed data bindings are refused until data branching ships.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
+	{Key: runtimeConfigObjectStorageOverCeiling, Label: "Object storage over-ceiling deletion", Description: "Rollout of deleting object storage held above an account's ceiling after 30 days' notice (ADR-20261111123000). off: nothing. shadow: record each account's clock and log it, with no customer effect. notify: also show the deletion date in the usage API. on: reserved for deletion. Run notify for at least 30 days before on.", Category: "Feature flags", Kind: "enum", Default: json.RawMessage(`"off"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateObjectStorageOverCeiling},
 	{Key: runtimeConfigS3, Label: "S3 object storage", Description: "Allow bucket provisioning and new signed URLs. Disabling preserves metadata and cleanup; existing URLs expire normally. Provider configuration is still required.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigTenantSurfaces, Label: "Tenant surfaces", Description: "Expose the tenant surface and certificate lifecycle API.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDomainDoctor, Label: "Domain doctor", Description: "Run DNS and certificate readiness probes for customer domains.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
@@ -741,4 +743,15 @@ func runRuntimeConfigSubscriber(ctx context.Context, pool *pgxpool.Pool, srv *se
 			}
 		}
 	}
+}
+
+func validateObjectStorageOverCeiling(value json.RawMessage) error {
+	mode, err := runtimeconfig.String(value)
+	if err != nil {
+		return err
+	}
+	if !api.ValidObjectStorageOverCeilingMode(mode) {
+		return fmt.Errorf("%q is not off, shadow, notify or on", mode)
+	}
+	return nil
 }
