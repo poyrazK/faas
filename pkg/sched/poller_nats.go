@@ -117,7 +117,10 @@ func NewNATSBroker(rawURL string) (*natsBroker, error) {
 	}
 	conn, err := nats.Connect(rawURL, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("nats_broker: connect %s: %w", parsed.Redacted(), err)
+		// A passwordless userinfo is the NATS token. URL.Redacted only
+		// hides passwords, so remove the whole credential before logging.
+		diagnostic := url.URL{Scheme: parsed.Scheme, Host: parsed.Host}
+		return nil, fmt.Errorf("nats_broker: connect %s: %w", diagnostic.String(), err)
 	}
 	js, err := jetstream.New(conn)
 	if err != nil {
@@ -164,6 +167,7 @@ type natsPoller struct {
 	// Without this, every such message collides on "seq-0" and
 	// the dispatch tick treats them as the same record.
 	seqFallback uint64
+	missing     bool
 }
 
 // natsMsg is the minimal interface we need from a JetStream
@@ -235,6 +239,18 @@ func newNATSPoller(broker *natsBroker, t sqlc.Trigger) (triggerSource, error) {
 	if err != nil {
 		return nil, fmt.Errorf("nats_poller: create consumer %s/%s: %w", cfg.Stream, cfg.Durable, err)
 	}
+	// JetStream applies the ephemeral default using the old consumer's
+	// durability during promotion. A second update clears that inherited
+	// expiry after the durable flag has taken effect, retaining the ack floor.
+	if consumer.CachedInfo().Config.InactiveThreshold > 0 {
+		consumer, err = broker.js.UpdateConsumer(context.Background(), cfg.Stream, natsConsumerConfig(cfg))
+		if err != nil {
+			return nil, fmt.Errorf("nats_poller: clear consumer expiry %s/%s: %w", cfg.Stream, cfg.Durable, err)
+		}
+		if consumer.CachedInfo().Config.InactiveThreshold > 0 {
+			return nil, fmt.Errorf("nats_poller: stream %s consumer inactivity limit must be disabled for durable triggers", cfg.Stream)
+		}
+	}
 	return &natsPoller{
 		broker:   broker,
 		consumer: consumer,
@@ -258,6 +274,7 @@ func newNATSPoller(broker *natsBroker, t sqlc.Trigger) (triggerSource, error) {
 func natsConsumerConfig(cfg natsConfig) jetstream.ConsumerConfig {
 	return jetstream.ConsumerConfig{
 		Name:          cfg.Durable,
+		Durable:       cfg.Durable,
 		FilterSubject: cfg.Subject,
 		AckPolicy:     jetstream.AckExplicitPolicy,
 		DeliverPolicy: jetstream.DeliverAllPolicy,
@@ -279,6 +296,29 @@ func natsRecordID(stream string, seq uint64, stored time.Time) string {
 // Kind returns the trigger kind this poller handles.
 func (n *natsPoller) Kind() string { return "nats" }
 
+// Missing consumers invalidate the cached poller independently of connection
+// health. The next scheduler tick recreates the durable consumer.
+func (n *natsPoller) Closed() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.missing || natsBrokerClosed(n.broker)
+}
+
+func (n *natsPoller) observeConsumerError(ctx context.Context, err error) {
+	missing := errors.Is(err, jetstream.ErrConsumerDeleted) || errors.Is(err, jetstream.ErrConsumerNotFound)
+	if !missing {
+		check, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+		_, infoErr := n.consumer.Info(check)
+		missing = errors.Is(infoErr, jetstream.ErrConsumerNotFound)
+	}
+	if missing {
+		n.mu.Lock()
+		n.missing = true
+		n.mu.Unlock()
+	}
+}
+
 // Poll fetches up to batchMax messages from the consumer. Uses
 // Fetch with a 250ms max-wait so a burst coalesces but an idle
 // trigger doesn't hog the dispatcher.
@@ -294,6 +334,7 @@ func (n *natsPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 		if errors.Is(err, jetstream.ErrNoMessages) || errors.Is(err, nats.ErrTimeout) {
 			return PollResult{Records: []SourceRecord{}}
 		}
+		n.observeConsumerError(ctx, err)
 		return PollResult{Error: fmt.Errorf("nats_poller: fetch: %w", err)}
 	}
 	out := make([]SourceRecord, 0, limit)
@@ -363,6 +404,7 @@ func (n *natsPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 		n.mu.Unlock()
 	}
 	if err := batch.Error(); err != nil && !errors.Is(err, jetstream.ErrNoMessages) {
+		n.observeConsumerError(ctx, err)
 		return PollResult{Error: fmt.Errorf("nats_poller: batch: %w", err)}
 	}
 	if out == nil {

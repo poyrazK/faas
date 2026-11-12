@@ -1,3 +1,4 @@
+// adr: 20261111172803 — failed native operations cannot advance retirement checkpoints.
 package datapipeline
 
 import (
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -176,6 +178,8 @@ func assertNativeLiveTableRemoval(t *testing.T, ctx context.Context, store *Post
 	}
 	checkCustomer(true)
 	checkHealthy()
+	assertLiveRemovalLockFailureKeepsCheckpoint(t, ctx, engine, targetURL, tick, get)
+	checkCustomer(true)
 	restart()
 	wait(func(v Pipeline) bool { return v.SchemaChange.Cancellation.Stage == "retiring" })
 	checkCustomer(false)
@@ -302,4 +306,38 @@ func assertNativeLiveTableRemoval(t *testing.T, ctx context.Context, store *Post
 		return target.QueryRow(ctx, `SELECT count(*)=1001 AND bool_or(id=1 AND total::text=$1) FROM public.orders`, originalTotal).Scan(&valid) == nil && valid
 	})
 	return p
+}
+
+func assertLiveRemovalLockFailureKeepsCheckpoint(t *testing.T, ctx context.Context, engine *Engine, targetURL string, tick func() api.DataPipeline, get func() Pipeline) {
+	t.Helper()
+	locker, err := pgx.Connect(ctx, targetURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = locker.Close(context.WithoutCancel(ctx)) }()
+	tx, err := locker.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err = tx.Exec(ctx, "LOCK TABLE public.customers IN ACCESS SHARE MODE"); err != nil {
+		t.Fatal(err)
+	}
+	original := engine.Target
+	defer func() { engine.Target = original }()
+	var observed error
+	engine.Target = func(ctx context.Context, account, database string, run func(*pgx.Conn, string) error) error {
+		return original(ctx, account, database, func(conn *pgx.Conn, owner string) error {
+			observed = run(conn, owner)
+			return observed
+		})
+	}
+	tick()
+	var pg *pgconn.PgError
+	if !errors.As(observed, &pg) || pg.Code != "55P03" {
+		t.Fatalf("removal did not exercise the held table lock: %v", observed)
+	}
+	if stage := get().SchemaChange.Cancellation.Stage; stage != "" {
+		t.Fatalf("failed removal reported an uncommitted checkpoint: %q", stage)
+	}
 }

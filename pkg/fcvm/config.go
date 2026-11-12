@@ -226,12 +226,22 @@ const guestStallWarningArgs = "rcupdate.rcu_cpu_stall_suppress=1 "
 // allowed.
 const guestBootCPUArgs = "cryptomgr.notests selinux=0 audit=0 "
 
+// guestPageReportingArgs lowers the free page reporting order (ADR-907
+// amendment 2026-11-12) from the 2 MiB pageblock to 128 KiB (order 5): the
+// guest also reports free blocks of 128 KiB to 1 MiB, which a guest that has
+// served traffic holds in quantity. On the metal bench (1 GiB Node guest,
+// Firecracker 1.17, guest 6.18) a churned VM held 314 MiB of host memory
+// instead of 408 MiB and its capture shrank 24%; restore and request times
+// did not move. It only matters with the balloon attached, and boot arguments
+// are not part of the snapshot backing identity.
+const guestPageReportingArgs = "page_reporting.page_reporting_order=5 "
+
 // guestTimerProfile is guestTimerArgs unless a diagnostic test overrides it;
 // it is recorded in every capture's backing identity.
 var guestTimerProfile = guestTimerArgs
 
 const coldBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
-	"nmi_watchdog=0 hung_task_timeout_secs=0 " + guestStallWarningArgs + guestBootCPUArgs +
+	"nmi_watchdog=0 hung_task_timeout_secs=0 " + guestStallWarningArgs + guestBootCPUArgs + guestPageReportingArgs +
 	// BuildKit generates a per-VM proxy CA during worker startup. The
 	// Firecracker guest has no boot-time user input, so explicitly allow the
 	// kernel CPU RNG and give virtio-rng maximum credit; otherwise getrandom(2)
@@ -244,7 +254,7 @@ const coldBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
 // dedicated execution VM has no Firecracker network interface, so even the
 // guest kernel receives no tenant route or DNS/gateway hint.
 const executionBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
-	"nmi_watchdog=0 hung_task_timeout_secs=0 " + guestStallWarningArgs + guestBootCPUArgs +
+	"nmi_watchdog=0 hung_task_timeout_secs=0 " + guestStallWarningArgs + guestBootCPUArgs + guestPageReportingArgs +
 	"random.trust_cpu=on rng_core.default_quality=1000 " +
 	"root=/dev/vda ro init=/sbin/init"
 

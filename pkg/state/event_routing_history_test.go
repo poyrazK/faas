@@ -30,6 +30,13 @@ func TestEventRoutingHistoryCoalescesCapacityWithoutChangingCheckpoint(t *testin
 		first := time.Now().UTC()
 		const waits = 20000
 		for i := 1; i <= waits; i++ {
+			// This stress loop can outlast a lease on a busy test host. Keep
+			// the claim as a production sweep does; expiry is tested separately.
+			if i%500 == 0 {
+				if err := store.(state.PublishedEventClaimRenewalStore).RenewPublishedEventClaims(ctx, []*state.PublishedEventWork{receipt}, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+			}
 			p := state.PublishedEventRecipientProgress{State: state.PublishedEventRecipientPending, Attempts: i, CapacityDeferrals: i, CapacityScope: "consumer", UpdatedAt: first.Add(time.Duration(i) * time.Microsecond)}
 			if err := store.RecordPublishedEventRecipientProgress(ctx, receipt.ID, receipt.ClaimToken, sub, p); err != nil {
 				t.Fatal(err)
