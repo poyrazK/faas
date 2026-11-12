@@ -7434,6 +7434,19 @@ groups:
           summary: "Event routing sweeps are slow"
           description: "The p95 event routing sweep has taken longer than 30 seconds for fifteen minutes. Events still route, but late. Check the routing claim and recovery queries, database latency and the events backlog."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+      - alert: FaasInvocationDispatchSaturated
+        expr: |
+          avg_over_time((schedd_invocation_dispatch_slots_used / (schedd_invocation_dispatch_slots > 0))[15m:1m]) >= 0.9
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: event_routing
+          public_status: internal
+        annotations:
+          summary: "A schedd's invocation dispatch pool is full"
+          description: "{{ $labels.instance }}'s drain dispatch pool has been at least 90% full for fifteen minutes, so every tenant's async invocations, event deliveries and inbound webhooks on that node wait for a slot. Check the database before raising hot_path.invocation_dispatch_concurrency."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
       - alert: FaasEventDeliveryCapacityBacklog
         expr: max(schedd_event_delivery_capacity_waiting) > 10000
         for: 30m
