@@ -429,8 +429,7 @@ schemas. In Python, import `functions` from `gregale_functions` instead of the
 SDK to get the types. Siblings without a schema and `calls:` apps get unknown
 (`Any`) types. `gregale deploy` refreshes files that already exist when a
 schema changed. In CI, `gregale function types --check` fails without writing
-anything when a file is out of date. The design is recorded in
-[ADR-20261111150000](adr/20261111150000-typed-function-to-function-clients.md).
+anything when a file is out of date.
 
 ## Snapshot hooks
 
