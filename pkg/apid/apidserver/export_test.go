@@ -2489,3 +2489,10 @@ func ProjectEnvironmentPlanURLs(t *testing.T) (string, map[string]string, api.Pl
 
 // ProjectEnvironmentWorkloadURL exposes the environment URL builder.
 var ProjectEnvironmentWorkloadURL = projectEnvironmentWorkloadURL
+
+// PlatformOwnedDomain reports the apps/platform namespace check for a server
+// with the given domains.
+func PlatformOwnedDomain(apps, platform, domain string) bool {
+	return (&server{domain: apps, platformDomain: platform}).platformOwnedDomain(domain)
+}
+
