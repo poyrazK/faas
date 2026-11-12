@@ -1,0 +1,16 @@
+# Typed function-to-function calls (ADR-20261111150000): the deploy binds
+# web and users to each other and sets GREGALE_FUNCTIONS; users declares an
+# input schema its adapter checks on typed-client calls.
+functions:
+  - name: web
+    root: web
+    runtime: node24
+  - name: users
+    root: users
+    runtime: node24
+    input:
+      type: object
+      required: [email]
+      additionalProperties: false
+      properties:
+        email: {type: string, pattern: "@"}

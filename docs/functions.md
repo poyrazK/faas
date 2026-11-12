@@ -431,6 +431,12 @@ SDK to get the types. Siblings without a schema and `calls:` apps get unknown
 schema changed. In CI, `gregale function types --check` fails without writing
 anything when a file is out of date.
 
+`gregale dev --local` runs the same calls between the functions it serves:
+`call()` reaches the local sibling, `send()` answers at once and runs the call
+in the background, and the callee checks its `input` schema as it does when
+deployed. It also refreshes generated type files that are out of date.
+`calls:` apps are not served locally.
+
 ## Snapshot hooks
 
 A parked function wakes from a snapshot of its workers, so anything they set
