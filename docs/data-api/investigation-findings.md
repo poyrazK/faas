@@ -6,6 +6,9 @@ and manual reproductions only. Stable IDs let later fixes retain the original
 evidence and record their resolution. Locations refer to the investigated
 checkout.
 
+The third review also compared these Data API source paths with upstream main
+`10034cea1` (2026-11-12); the reviewed implementation paths were unchanged.
+
 P1 means prioritize correctness or recovery work. P2 means a bounded correctness
 gap, operational improvement, or scalability work. An enhancement or a suspected
 performance bottleneck is not a confirmed production defect.
@@ -29,11 +32,23 @@ performance bottleneck is not a confirmed production defect.
 | DAPI013 | P2 | Reproduced | OpenAPI conversion treats field names as schema keywords | Open |
 | DAPI014 | P2 | Normalizer/codec reproduced; database integration pending | Arrays of PostgreSQL domains decode differently from generated types | Open |
 | DAPI015 | P1 | Reproduced through the HTTP gateway | Requests pass the old RLS gate before a successful restore safety refresh | Open |
+| DAPI016 | P1 | Reproduced in generated Go and Python clients | Keyset pagination removes the caller's existing OR filters | Open |
+| DAPI017 | P1 | Reproduced with loopback HTTP redirects | Generated clients follow redirects with credentials or resubmit mutations | Open |
+| DAPI018 | P2 | Reproduced by rendering and compiling | Generated type-name allocation emits duplicate declarations | Open |
+| DAPI019 | P2 | Reproduced; client expressiveness gap | Typed Go insert and RPC inputs cannot distinguish omitted values from SQL NULL | Open |
+| DAPI020 | P2 | Reproduced in rendered Go code | Legal field names break Go struct tags or change JSON keys | Open |
+| DAPI021 | P2 | Reproduced in generated Go and Python clients | Relation names are appended to URLs without path encoding | Open |
+| DAPI022 | P2 | Reproduced in generated Python client | Generated table accessors are shadowed by client configuration attributes | Open |
+| DAPI023 | P2 | Loader reproduction + write-path review | Local types output can overwrite a migration source file | Open |
+| DAPI024 | P1 | Reproduced in authorization replay | Replay assertions and captures silently round large numeric IDs | Open |
 
 Recommended first fixes: DAPI015, DAPI008, DAPI001, DAPI002, and DAPI007. DAPI003
 should follow with recovery-aware queue scheduling. Treat DAPI005 as a benchmark-led
 performance task, DAPI004/DAPI006 as operational/codec enhancements, and validate
 DAPI014 against PostgreSQL before choosing its wire-contract change.
+Include DAPI016/DAPI017/DAPI024 in the first correctness/security batch. Each ID
+is independent; fixes should retain the original evidence and add a regression
+assertion for the intended behavior.
 
 ## DAPI001 Terminal authorization errors retain live-query rows
 
@@ -332,6 +347,213 @@ after the wait and before dispatch. Cover user and anonymous paths with a
 delayed safe-to-unsafe refresh and assert zero upstream requests. Preserve the
 bounded readiness/deadline and unrelated route behavior.
 
+## DAPI016 Keyset pagination removes existing OR filters
+
+`pkg/dataapi/clientgen/golang.go:487` removes both `order` and `or` from the
+builder before applying cursor predicates. The generated Python client does
+the same at `python.go:365`. The documentation says to keep the same filters
+across pages, but an existing application `Or(...)` / `or_(...)` disappears,
+including on the first page with no cursor.
+
+Evidence: generate both clients, build a notes query with
+`title.eq.private,title.eq.team`, and apply a page ordered by unique `id`.
+The first-page request contains no `or` parameter. The next-page request
+contains only the cursor's `id` predicate; the original title predicate is
+still absent. The Go reproduction inspects real loopback HTTP requests; the
+Python reproduction inspects the resulting builder parameters.
+
+Impact: pagination broadens the requested result set and can undermine
+application-owned scope filters. RLS remains an independent protection, but
+it does not restore the omitted filter. The same Table type also exposes writes,
+so callers must not treat pagination as preserving their mutation predicates.
+
+Remediation direction: preserve caller filters and conjoin the cursor predicate
+with them; replace only pagination-owned ordering/limits. Cover multiple OR
+groups, AND/OR combinations, backward traversal, and the no-cursor first page
+in both generated languages and compare with the TypeScript behavior.
+
+## DAPI017 Generated clients follow credential-bearing redirects
+
+`pkg/dataapi/clientgen/golang.go:741` creates a default `http.Client` without a
+redirect policy; the configured client's redirect behavior is also unchanged.
+`python.go:464` uses `urllib.request.urlopen`, whose default redirect handler
+forwards the request's Authorization header. Neither generated transport pins
+the response to the originally configured API origin. The TypeScript SDK uses
+`redirect: 'error'` instead.
+
+Evidence: point the generated Python client at a loopback endpoint that redirects
+from `127.0.0.1` to `localhost` on another server. The second server receives
+`Authorization: Bearer fake-token`. In the generated Go client, a 307 redirect
+to another port on the same hostname forwards its bearer token and resubmits
+the POST body: both source and target observe a POST. The source stub records a
+simulated write before returning the redirect. All credentials were synthetic.
+
+Impact: Python application JWTs/server keys can leave the configured host;
+Go's default hostname-based header policy does not isolate origins by port and
+does not prevent a redirected mutation from executing again. This contradicts
+the generated runtime's stated no-automatic-write-replay behavior when the
+original endpoint has already applied the operation.
+
+Remediation direction: reject redirects by default and validate configured URLs
+consistently with the TypeScript SDK. Any explicitly supported redirect mode
+must not forward credentials across origins or replay an uncertain mutation.
+Test 301/302/303/307/308, hostname/port changes, and HTTPS downgrade behavior.
+
+## DAPI018 Generated name allocation emits duplicate declarations
+
+`pkg/dataapi/clientgen/model.go:122` detects that `base + Row/Insert/Update`
+collides with an existing type, but calls `types.take(base)` even when the bare
+base has never been reserved. That can return the unchanged stem, after which
+line 128 reserves the same colliding generated names. The runtime's full set of
+type/global names is also not reserved at line 100.
+
+Evidence: a valid contract with enum `api.notes_row` and table `api.notes`
+successfully renders Go code containing both `type NotesRow string` and
+`type NotesRow struct`. Compiling the generated package fails with
+`NotesRow redeclared in this block`. Both are legal, distinct PostgreSQL
+objects; the renderer reports success. The shared allocator also governs
+Python's public generated type names.
+
+Remediation direction: allocate and reserve the actual emitted declarations,
+including runtime symbols, enum constants, composite/argument types, and all
+table suffixes. Retry until the whole generated name family is free. Exercise
+enum/table collisions, names that normalize to the same identifier, and runtime
+names such as `CursorOrder` in generated compilation/import checks.
+
+## DAPI019 Typed Go inputs cannot express explicit null separately from omission
+
+`pkg/dataapi/clientgen/golang.go:127` represents an optional nullable insert
+field as a pointer with `omitempty`; nil means omission and a non-nil pointer
+can only encode a value. Optional RPC arguments at line 161 have the same
+limitation. Required scalar RPC inputs do not gain the nullable argument form
+that the TypeScript generator permits. Update types have `SetNull`, but insert
+types and RPC argument structs have no corresponding mechanism.
+
+Evidence: a generated optional nullable `title` field is `*string` with
+`json:"title,omitempty"`. Marshaling `NotesInsert{Id: "1", Title: nil}` produces
+`{"id":"1"}`, not a null assignment; no pointer value represents JSON null.
+The optional `set_note(title)` argument has the same generated pointer/tag.
+This is an expressiveness gap, not a claim that nil should stop selecting the
+documented database default.
+
+Impact: a nullable column with a non-null default cannot explicitly be inserted
+as NULL through the typed struct, and an optional RPC cannot distinguish
+explicit NULL from invoking its SQL default. The raw/untyped relation API can
+work around the insert limitation, losing the generated input type. Generated
+RPC methods still require their concrete argument structs; a custom HTTP call
+or another client is needed for that workaround.
+
+Remediation direction: retain omission semantics while adding explicit
+unset/null/value input representation or narrowly scoped null setters for
+inserts and RPCs. Verify wire bodies against columns/arguments with non-null
+defaults and preserve generated update behavior.
+
+## DAPI020 Legal field names break Go tags or change JSON keys
+
+`pkg/dataapi/clientgen/golang.go:81` embeds the original field name in a Go
+`encoding/json` struct tag. JSON tag syntax gives special meaning to commas and
+`-`, and a backtick in the original name terminates the raw Go string used for
+the tag. The generator accepts these names from valid PostgreSQL contracts.
+
+Evidence: generated input fields for columns `a,b` and `-`, set to `comma` and
+`dash`, serialize as `{"a":"comma"}`: the comma changes the key and the dash
+field disappears. A legal column named `tick` followed by a backtick and `mark`
+makes `RenderGo` fail Go parsing. Row decoding has the corresponding tag/key
+problem. The manually generated schema is accepted by `dataapi.Parse`.
+
+Remediation direction: encode original JSON names through custom marshaling
+where standard tags cannot represent them, or reject unsupported names with a
+clear generation diagnostic before emitting a misleading client. Include row,
+insert, update, composite, and RPC argument fields in round-trip checks.
+
+## DAPI021 Relation names are not URL path-encoded
+
+`pkg/dataapi/clientgen/golang.go:510` and the write/GetInto methods concatenate
+`t.name` into `/rest/v1/`; the generated Python table methods at
+`python.go:378` do likewise. Their shared transports then parse the result as
+a URL. A quoted PostgreSQL identifier containing URL syntax is therefore
+interpreted as URL syntax rather than one relation path segment.
+
+Evidence: render clients for legal table `api."odd?name"` and call its generated
+accessor. Go and Python both send `/rest/v1/odd?name`, targeting relation `odd`
+with query `name`, instead of `/rest/v1/odd%3Fname`. The probes inspect real
+loopback HTTP requests. The runtime can identify the correctly encoded table
+name, so this is a generated-client request-construction mismatch.
+
+Remediation direction: path-encode relation names exactly once using each
+language's URL utilities while keeping the structural `/rest/v1/` separators.
+Cover spaces, question marks, fragments, percent signs, and non-ASCII names for
+reads and writes. Keep unsupported slash/RPC routing cases explicit.
+
+## DAPI022 Python table accessors are shadowed by configuration attributes
+
+`pkg/dataapi/clientgen/python.go:155` reserves `rpc` and `table` when naming
+generated accessors, but not the instance attributes assigned at line 419:
+`base_url`, `access_token`, `server_key`, `subject`, `anonymous`, and `timeout`.
+An ordinary relation with one of these names generates a method that is hidden
+by the instance's string/callback/bool/number value.
+
+Evidence: generate a contract containing `api.base_url`, construct `DataClient`,
+and inspect `base_url`: the class has a generated callable accessor, but the
+instance has a non-callable URL string at the same name. `client.base_url()`
+therefore raises instead of constructing its typed table query. The untyped
+`client.table("base_url")` remains available.
+
+Remediation direction: reserve all public/runtime instance and class names when
+allocating generated accessors, with deterministic suffixes and documentation.
+Test collisions with every constructor attribute as well as inherited/runtime
+methods, while retaining the original database name in the request.
+
+## DAPI023 Local types output can overwrite a migration source
+
+`cmd/gregale/templates/data-api/dev-project.mjs:70` checks type-output aliases
+against configuration, seed, request collections, and several baseline/report
+inputs, but not migration files. The nearby behavior-output guard at line 78
+explicitly excludes the migrations tree. Types writing in `dev.mjs:493` and
+the watch path at line 608 uses `atomicFile`, which replaces an existing regular
+file after generating the client types.
+
+Evidence: create a minimal valid development project whose `output` is
+`migrations/sql/0001_notes.sql`. `loadDevProject` accepts it and returns that SQL
+source as the types destination. Write-path review shows it is subsequently
+passed to the normal atomic replacement routine. This probe does not run Docker
+or overwrite a real project; it verifies the accepted conflicting path using
+temporary fixtures.
+
+Impact: a mistyped or inherited development configuration can replace an
+applied migration's source with generated TypeScript, and the migration watcher
+then reports a changed migration after the original file has been lost.
+
+Remediation direction: reject types-output paths within the migrations tree
+and aliases/hardlinks to migration sources before starting the local database
+or writing any output. Apply the same input/output separation to other source
+assets and preserve legitimate custom types destinations outside inputs.
+
+## DAPI024 Replay assertions and captures round large numeric IDs
+
+`cmd/gregale/templates/data-api/dev-requests.mjs:57` reads expected JSON values
+with `JSON.parse`; `request-replay.mjs:62` does the same to actual responses.
+`matchesJSON` then compares already-rounded numbers, and `captureValue` stores
+the rounded number for later URL/body substitution. Exact matching and captured
+resource identity are no longer exact for int8/high-precision numeric values.
+
+Evidence: a request collection expecting JSON ID `9007199254740993` passes
+against a response containing different ID `9007199254740992`. The replay
+reports `passed: true` and captures `9007199254740992` for subsequent requests.
+The probe uses a synthetic response; no mutation is sent. The expected-value
+parse follows the saved-collection path's actual decoding behavior.
+
+Impact: authorization/integrity replay can report success for the wrong row,
+and capture-driven follow-up requests can select a neighboring resource.
+SDK lossless mode and the CSV exact-number helpers do not cover this tooling
+path. This is separate from DAPI007's CSV conversion and DAPI006's write codec.
+
+Remediation direction: preserve numeric lexemes and token kinds in collection
+expectations, response comparisons, captures, and substitutions, or reject
+unrepresentable numeric values explicitly before running requests. Do not
+convert numeric-looking strings heuristically. Cover int8 IDs, decimal values,
+exponents, nested objects, and capture-to-path/body round trips.
+
 ## Reproduction and validation
 
 The initial investigation ran 14 focused runtime/worker tests successfully;
@@ -347,12 +569,33 @@ DAPI004/DAPI005 are code/documentation findings without a runtime reproduction.
 Performance claims have not been load-tested. No hosted deployment or customer
 data was changed.
 
+The third pass ran the existing `pkg/dataapi/clientgen` tests successfully,
+including rendering/type checks and generated Go/Python calls against fake
+HTTP APIs. The additional [code-generation/tooling reproduction script](investigation-codegen-repros.py)
+ran successfully for all nine new IDs, DAPI016–DAPI024. It calls the real
+renderers, compiles generated code, checks synthetic serialization, starts
+loopback redirect fixtures, and exercises the actual local-project and replay
+parsers. DAPI023 covers path validation and subsequent write-path inspection;
+it does not run the full Docker-backed development workflow.
+
 From the repository root, with Node 24+ and the existing SDK/runtime development
 dependencies installed, run:
 
 ```sh
 node docs/data-api/investigation-repros.mjs
 ```
+
+Run the third-pass evidence with Python 3.9+, Node 22+, and the repository's
+Go toolchain/dependencies available:
+
+```sh
+python3 docs/data-api/investigation-codegen-repros.py
+```
+
+Set `GREGALE_GO` to the Go compiler's absolute path if it is not the `go` on
+`PATH`. Normal Go cache/dependency settings are inherited. The script creates
+and removes its own temporary generated clients and fixtures; the deliberate
+`NotesRow redeclared` compilation failure is expected evidence for DAPI018.
 
 To reuse dependencies already installed in another checkout, set
 `GREGALE_DATA_API_REVIEW_DEPS` to that checkout's absolute path. This environment
