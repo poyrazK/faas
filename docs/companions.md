@@ -16,10 +16,10 @@ companions:
 
 The built-in presets are `opentelemetry`, `sentry`, and
 `datadog-dogstatsd`. A preset supplies a stable name, port, environment
-defaults, and an operator-qualified digest-pinned image. Explicit fields
-override the defaults. If a Gregale installation has not configured the
-preset image, deployment fails with `companion_preset_unavailable`; use a
-custom digest-pinned `image` or ask the operator to enable that preset.
+defaults, and a digest-pinned image that Gregale maintains. Explicit fields
+override the defaults. If a preset is not available for your account yet,
+deployment fails with `companion_preset_unavailable`; use a custom
+digest-pinned `image` instead.
 
 ## Custom companions
 

@@ -52,6 +52,15 @@ var DevLocalEnvForTest = devLocalEnv
 // LocalPythonEnvironmentForTest resolves the function's interpreter and env.
 var LocalPythonEnvironmentForTest = localPythonEnvironment
 
+// DevLocalPreflightForTest validates the same workload and environment as startup.
+func DevLocalPreflightForTest(ctx context.Context, root, command string, env []string) error {
+	fns, app, err := planDevLocalWorkload(root, command)
+	if err != nil {
+		return err
+	}
+	return devLocalPreflight(ctx, root, fns, app, env)
+}
+
 // PlanDevLocalWorkloadForTest reports the selected local execution contract.
 func PlanDevLocalWorkloadForTest(root, command string) (string, string, bool, error) {
 	fns, app, err := planDevLocalWorkload(root, command)
@@ -59,6 +68,11 @@ func PlanDevLocalWorkloadForTest(root, command string) (string, string, bool, er
 		return "", "", len(fns) > 0, err
 	}
 	return app.command, app.framework, false, nil
+}
+
+func DevLocalAppFrameworkReloadForTest(root, command string) (bool, error) {
+	plan, err := planDevLocalApp(root, command)
+	return plan.frameworkReload, err
 }
 
 // DevLocalServerForTest plans and prepares the project's functions and

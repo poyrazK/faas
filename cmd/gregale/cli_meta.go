@@ -6887,6 +6887,23 @@ var cliCommands = []cliCommand{
 		Short:   "Print the CLI version",
 	},
 	{
+		Name:    "functions",
+		DocSlug: "functions",
+		Short:   "Generate typed clients for calls between a project's functions",
+		Subcommands: []cliSub{
+			{Name: "types", Short: "Write each function's typed client from its project's schemas",
+				Examples: []string{"gregale function types", "gregale function types --check"},
+				Notes: []string{
+					"Node functions get gregale-functions.d.ts and Python functions get gregale_functions.py in their root, typed for the functions they may call.",
+					"gregale deploy refreshes files that already exist when a schema changed; --check fails without writing, for CI.",
+				},
+				Flags: []cliFlag{
+					{Name: "path", Value: "DIR", Short: "functions project directory (default: the current one)"},
+					{Name: "check", Bool: true, Short: "write nothing; exit 1 when a generated file is missing or out of date"},
+				}},
+		},
+	},
+	{
 		Name:     "update",
 		DocSlug:  "update",
 		Short:    "Update the CLI to the newest release",

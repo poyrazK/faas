@@ -141,6 +141,27 @@
     "kind": "account_identity"
   },
   {
+    "table": "agent_undo_records",
+    "columns": [
+      "account_id",
+      "activity_id",
+      "created_at",
+      "guard",
+      "id",
+      "inverse",
+      "key_id",
+      "kind",
+      "method",
+      "not_undoable_reason",
+      "org_id",
+      "path",
+      "summary",
+      "undone_at",
+      "undone_by"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "alert_test_sends",
     "columns": [
       "id",
@@ -10828,7 +10849,8 @@
       "delete_at",
       "mail_intent_id",
       "reason",
-      "recorded_at"
+      "recorded_at",
+      "reminder_mail_intent_id"
     ],
     "kind": "operational"
   },

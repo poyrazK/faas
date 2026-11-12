@@ -16215,6 +16215,17 @@ UPDATE managed_postgres_plan_excess_notices SET recorded_at=sqlc.arg(now)::times
 WHERE database_id=ANY(sqlc.arg(database_ids)::uuid[]) AND delete_at IS NULL
     AND (mail_intent_id IS NOT NULL OR recorded_at<=sqlc.arg(stale_before)::timestamptz);
 
+-- name: ListManagedPostgresPlanExcessRemindersDue :many
+-- ADR-20261110184700 amendment 2026-11-12: notices whose mailed deletion date
+-- is between now and remind_until and whose reminder no intent has claimed,
+-- for databases not being deleted.
+SELECT n.database_id,n.reason,n.delete_at,d.account_id,d.name,d.service_class
+FROM managed_postgres_plan_excess_notices n JOIN managed_postgres_databases d ON d.id=n.database_id
+WHERE n.delete_at IS NOT NULL AND n.mail_intent_id IS NOT NULL AND n.reminder_mail_intent_id IS NULL
+    AND n.delete_at>sqlc.arg(now)::timestamptz AND n.delete_at<=sqlc.arg(remind_until)::timestamptz
+    AND d.state NOT IN ('deleting','deleted')
+ORDER BY n.delete_at,n.database_id LIMIT sqlc.arg(batch_size);
+
 -- name: ListUnmailedManagedPostgresPlanExcessNotices :many
 -- The notices still to mail: recorded after since, not yet linked to an
 -- intent, for databases not being deleted.
