@@ -8916,11 +8916,12 @@ type ManagedPostgresOveragePending struct {
 
 // Notices for managed PostgreSQL databases suspended past their plan; written only by apid (ADR-20261102125208).
 type ManagedPostgresPlanExcessNotice struct {
-	DatabaseID   pgtype.UUID
-	Reason       string
-	RecordedAt   pgtype.Timestamptz
-	MailIntentID pgtype.UUID
-	DeleteAt     pgtype.Timestamptz
+	DatabaseID           pgtype.UUID
+	Reason               string
+	RecordedAt           pgtype.Timestamptz
+	MailIntentID         pgtype.UUID
+	DeleteAt             pgtype.Timestamptz
+	ReminderMailIntentID pgtype.UUID
 }
 
 type ManagedPostgresResize struct {
@@ -15586,22 +15587,24 @@ type ScheduleOccurrence struct {
 }
 
 type ScheduledRelease struct {
-	ID                pgtype.UUID
-	AccountID         pgtype.UUID
-	AppID             pgtype.UUID
-	DeploymentID      pgtype.UUID
-	ReleaseAt         pgtype.Timestamptz
-	Canary            []byte
-	NotifyChannelIds  []pgtype.UUID
-	OverrideFreeze    string
-	OverrideFreezeIds []pgtype.UUID
-	State             string
-	OutcomeCode       string
-	OutcomeDetail     string
-	ScheduledBy       string
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
-	StartedAt         pgtype.Timestamptz
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	DeploymentID         pgtype.UUID
+	ReleaseAt            pgtype.Timestamptz
+	Canary               []byte
+	NotifyChannelIds     []pgtype.UUID
+	OverrideFreeze       string
+	OverrideFreezeIds    []pgtype.UUID
+	State                string
+	OutcomeCode          string
+	OutcomeDetail        string
+	ScheduledBy          string
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	StartedAt            pgtype.Timestamptz
+	ScheduledByAccountID pgtype.UUID
+	ScheduledByKeyID     pgtype.UUID
 }
 
 // One non-secret secretbox probe per seal domain, sealed to the domain recipient alone (ADR 20261022111812).

@@ -117,6 +117,32 @@ The amendment:
 - `shadow` still logs by the 30 days since suspension, so operators see what
   `on` would schedule before the date is mailed.
 
+## Amendment 2026-11-12: a reminder a week before the deletion
+
+The suspension email names the deletion date 30 days out and is the only
+notice an owner gets; a month later the database is gone. The owner asked for
+a reminder.
+
+- **Once, a week before.** While deletion is `on`, each sweep lists notices
+  whose mailed `delete_at` is after now and at most
+  `api.ManagedPostgresPlanExcessDeleteReminder` (7 days) away, with no
+  reminder queued, for databases not being deleted, and queues one email for
+  each.
+- **Same template, same date.** The reminder is the
+  `managed_postgres_plan_excess` email with `reminder` set in its sealed
+  payload: subject "Your database NAME will be deleted on DATE", the same
+  reason and how to resume, and the recovery window. It names the date the
+  first email named; the outbox links it with
+  `reminder_mail_intent_id` on the notice (migration `20261112120000312`) in
+  the same transaction, only while `delete_at` still equals that date, so a
+  date is reminded at most once and no template CHECK changes.
+- **Not a condition.** The deletion still runs on the mailed date whether or
+  not the reminder was sent; a failed reminder is retried by later sweeps
+  until the date passes.
+- **Skew.** An apid of the previous release rejects a payload with the new
+  field, so its sender cannot deliver a reminder. Roll apid out in one step
+  before deletion runs `on`.
+
 ## Consequences
 
 - PR preview databases are not ranked against the plan's database limit, as they are not counted at creation (ADR-20261102123523). Before 2026-11-11 the ranking included them: on a Pro account a preview copy made before a production database pushed that production database past the plan, so it was suspended and, with deletion on, scheduled for deletion.

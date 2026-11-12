@@ -13,5 +13,9 @@ export type ProjectEnvironmentBranchWorkload = {
    */
   source_deployment_id: string;
   status: string;
+  /**
+   * The workload's address in the branch. Its first request starts it.
+   */
+  url?: string;
 };
 
