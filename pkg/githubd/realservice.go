@@ -342,7 +342,7 @@ func (s *RealService) ExchangeOAuthCode(accountID, code, stateStr string) (strin
 	if len(installs) == 0 {
 		return "", "", api.ErrGitHubAppNotInstalled()
 	}
-	pick, err := s.selectOAuthInstallation(context.Background(), userToken, stateStr, installs)
+	pick, err := s.selectOAuthInstallation(context.Background(), accountID, userToken, stateStr, installs)
 	if err != nil {
 		return "", "", err
 	}
@@ -444,9 +444,10 @@ func (s *RealService) ExchangeOAuthCode(accountID, code, stateStr string) (strin
 // (apid compared it with the state cookie, so the `.N` suffix cannot be
 // forged) and must be visible to the GitHub user. Without one, the user's
 // installations they may connect are the candidates: one is taken, several
-// are returned for the customer to choose (ADR-20261101160300), and none
-// returns why the first could not be connected.
-func (s *RealService) selectOAuthInstallation(ctx context.Context, userToken, stateStr string, installs []UserInstallation) (UserInstallation, error) {
+// are returned for the customer to choose (ADR-20261101160300). Seeing only
+// other people's personal installations must continue with installing the App
+// on the user's own account, rather than trapping them on an owner refusal.
+func (s *RealService) selectOAuthInstallation(ctx context.Context, accountID, userToken, stateStr string, installs []UserInstallation) (UserInstallation, error) {
 	desired := int64(0)
 	if dot := strings.LastIndexByte(stateStr, '.'); dot >= 0 && dot+1 < len(stateStr) {
 		if parsed, err := strconv.ParseInt(stateStr[dot+1:], 10, 64); err == nil && parsed > 0 {
@@ -456,7 +457,7 @@ func (s *RealService) selectOAuthInstallation(ctx context.Context, userToken, st
 	if desired != 0 {
 		for _, installation := range installs {
 			if installation.ID == desired {
-				if err := s.Auth.AuthorizeInstallationBinder(ctx, userToken, installation); err != nil {
+				if err := s.authorizeOAuthInstallation(ctx, accountID, userToken, installation); err != nil {
 					return UserInstallation{}, err
 				}
 				return installation, nil
@@ -466,13 +467,17 @@ func (s *RealService) selectOAuthInstallation(ctx context.Context, userToken, st
 	}
 	var eligible []UserInstallation
 	var firstErr error
+	onlyOtherPersonalInstallations := true
 	for i, installation := range installs {
 		if i == githubdgrpc.MaxInstallationCandidates {
 			break
 		}
-		if err := s.Auth.AuthorizeInstallationBinder(ctx, userToken, installation); err != nil {
+		if err := s.authorizeOAuthInstallation(ctx, accountID, userToken, installation); err != nil {
 			if firstErr == nil {
 				firstErr = err
+			}
+			if p := api.AsProblem(err); p == nil || p.Code != api.CodeGitHubInstallationOwnerRequired {
+				onlyOtherPersonalInstallations = false
 			}
 			continue
 		}
@@ -482,6 +487,9 @@ func (s *RealService) selectOAuthInstallation(ctx context.Context, userToken, st
 	case len(eligible) == 1:
 		return eligible[0], nil
 	case len(eligible) == 0:
+		if onlyOtherPersonalInstallations {
+			return UserInstallation{}, api.ErrGitHubAppNotInstalled()
+		}
 		return UserInstallation{}, firstErr
 	}
 	candidates := make([]githubdgrpc.InstallationCandidate, 0, len(eligible))
@@ -491,6 +499,21 @@ func (s *RealService) selectOAuthInstallation(ctx context.Context, userToken, st
 		})
 	}
 	return UserInstallation{}, &githubdgrpc.InstallationChoiceError{Candidates: candidates}
+}
+
+// Record the rejected candidate, never the OAuth code, state or user token.
+// The callback's stable error code alone cannot identify a wrong installation.
+func (s *RealService) authorizeOAuthInstallation(ctx context.Context, accountID, userToken string, installation UserInstallation) error {
+	err := s.Auth.AuthorizeInstallationBinder(ctx, userToken, installation)
+	if p := api.AsProblem(err); p != nil && s.Audit != nil {
+		s.Audit("auth.install.connect_refused", accountID, map[string]any{
+			"installation_id": installation.ID,
+			"github_owner":    installation.Account.Login,
+			"owner_type":      installation.Account.Type,
+			"reason":          p.Code,
+		})
+	}
+	return err
 }
 
 // ListInstallableRepos returns the repos the installation can see.

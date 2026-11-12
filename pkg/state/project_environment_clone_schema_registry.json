@@ -4221,6 +4221,7 @@
     "table": "crons",
     "columns": [
       "app_id",
+      "clone_paused",
       "command",
       "command_max_output_bytes",
       "command_shell",
@@ -4246,9 +4247,18 @@
       "timezone"
     ],
     "kind": "configuration",
-    "capabilities": [],
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "deployment_scope",
+          "source_scope": true
+        }
+      ]
     }
   },
   {

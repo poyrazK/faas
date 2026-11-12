@@ -7756,6 +7756,41 @@ VALUES(sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(app_id):
 INSERT INTO project_environment_edge_policies(account_id, project_id, app_id, environment_slug, rules)
 VALUES(sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(environment)::text, sqlc.arg(rules)::jsonb);
 
+-- name: ReadProjectEnvironmentCloneCrons :many
+-- The configuration of an app's crons in one environment, without the
+-- scheduler's own columns (ADR-20261104120000 amendment 2026-11-12). A cron a
+-- clone paused counts as enabled: resuming it would.
+SELECT schedule, path, command, command_shell, command_timeout_seconds, command_max_output_bytes,
+       retry_max, retry_backoff_seconds, (enabled OR clone_paused)::boolean AS enabled, enabled AS stored_enabled,
+       timezone, skip_if_running, schedule_policy, failure_rules, labels
+FROM crons
+WHERE app_id = sqlc.arg(app_id)::uuid AND deployment_scope = sqlc.arg(scope)::text
+ORDER BY schedule, path, command;
+
+-- name: CountProjectEnvironmentCloneUncapturedCrons :one
+-- Crons of the source environment on project apps the clone does not copy.
+SELECT count(*)::bigint FROM crons c JOIN apps a ON a.id = c.app_id
+WHERE a.project_id = sqlc.arg(project_id)::uuid AND a.status <> 'deleted'
+  AND c.deployment_scope = sqlc.arg(scope)::text AND NOT (c.app_id = ANY(sqlc.arg(app_ids)::uuid[]));
+
+-- name: InsertProjectEnvironmentCloneCron :exec
+-- A copied cron starts disabled; clone_paused marks one the source ran.
+INSERT INTO crons(app_id, schedule, path, command, command_shell, command_timeout_seconds, command_max_output_bytes,
+    retry_max, retry_backoff_seconds, enabled, clone_paused, timezone, skip_if_running, schedule_policy, failure_rules,
+    labels, deployment_scope)
+VALUES(sqlc.arg(app_id)::uuid, sqlc.arg(schedule)::text, sqlc.arg(path)::text, sqlc.arg(command)::text[],
+    sqlc.arg(command_shell)::boolean, sqlc.arg(command_timeout_seconds)::integer, sqlc.arg(command_max_output_bytes)::integer,
+    sqlc.arg(retry_max)::integer, sqlc.arg(retry_backoff_seconds)::integer, false, sqlc.arg(clone_paused)::boolean,
+    sqlc.arg(timezone)::text, sqlc.arg(skip_if_running)::boolean, sqlc.narg(schedule_policy)::jsonb,
+    sqlc.narg(failure_rules)::jsonb, sqlc.arg(labels)::jsonb, sqlc.arg(scope)::text);
+
+-- name: ResumeEnvironmentClonePausedCrons :many
+-- Enables the crons a clone paused in one environment; the enable clears
+-- clone_paused and anchors the schedule.
+UPDATE crons SET enabled = true
+WHERE environment_id = sqlc.arg(environment_id)::uuid AND clone_paused AND NOT enabled
+RETURNING id, app_id;
+
 -- name: ReadProjectEnvironmentCloneObjectMutationAuthority :one
 SELECT coalesce(attempt_count = 0 AND lease_token IS NULL, false)::boolean AS legacy_allowed,
        coalesce(lease_token = nullif(sqlc.arg(worker_token)::text, '')::uuid

@@ -806,6 +806,18 @@ const ImagedImagePrepWorkers = 2
 // whose scan never ran.
 const ImagedPublishedLayerDigests = 256
 
+// ImagedLayerReuseMaxRecords bounds the records in imaged's node-local app
+// layer reuse index, per kind (layer keys, artifact digests); the oldest go
+// first (ADR-20261112170911). A record is a few hundred bytes.
+const ImagedLayerReuseMaxRecords = 4096
+
+// ImagedLayerReuseRecordMaxBytes bounds one reuse index record imaged reads.
+const ImagedLayerReuseRecordMaxBytes = 4096
+
+// ImagedLayerReuseSBOMMaxBytes bounds the SBOM imaged copies for a reused app
+// layer; syft's CycloneDX JSON for a large image is a few MB.
+const ImagedLayerReuseSBOMMaxBytes = 64 << 20
+
 // Source-build OCI verification bounds the intermediate image, including its
 // builder base. Final app layers still obey the creating account's plan limit.
 const (
@@ -11385,6 +11397,17 @@ const MaxAgentBudgetCents int64 = 100_000_000
 // AgentBudgetHoursPerMonth prices committed cost over an average month
 // (8,760 h / 12).
 const AgentBudgetHoursPerMonth = 730
+
+// ManagedPostgresMinimumQuarterComputeUnits is each managed Postgres service
+// class's smallest compute size, in quarter compute units: what a database
+// that never scales to zero keeps running, so what an agent's budget pays
+// for it (ADR-20261111114059 slice 3). It mirrors the Neon class profiles
+// (pkg/managedpostgres/neon/config.go; a test there keeps them equal).
+var ManagedPostgresMinimumQuarterComputeUnits = map[string]int64{
+	"development": 1,
+	"burstable":   1,
+	"production":  4,
+}
 
 // Self-service spend cap ceilings per paid plan, in cents (ADR-20261105120000,
 // owner's numbers 2026-11-07): Hobby $75, Pro $200, Scale $1,000. A larger
