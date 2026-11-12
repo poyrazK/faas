@@ -20,7 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func TestE2E_ServiceMesh_FunctionSendEnqueuesInvocation(t *testing.T) {
+func TestE2E_NormalPath_FunctionSendEnqueuesInvocation(t *testing.T) {
 	f := newNormalPathFixture(t, "send-caller")
 	if f == nil {
 		return
