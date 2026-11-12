@@ -340,6 +340,206 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/support/notifications:
+    get:
+      tags:
+      - support
+      operationId: personalSupportNotificationsFeed
+      summary: List personal support notifications
+      description: Personal support. Metadata-only updates for the current caller. Read state is personal to this account and support audience. Private notes never create customer notifications.
+      parameters:
+      - name: before
+        in: query
+        required: false
+        description: Sequence from the previous notification page. Applies to personalSupportNotificationsFeed.
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: unread
+        in: query
+        required: false
+        description: Return only unread updates. Applies to personalSupportNotificationsFeed.
+        schema:
+          type: boolean
+          default: false
+      responses:
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+        '200':
+          description: Current caller notification feed and scoped unread count. Applies to personalSupportNotificationsFeed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportNotificationPage'
+      security:
+      - bearerAuth: []
+  /v1/support/tickets/{ticket}/read:
+    post:
+      tags:
+      - support
+      operationId: personalSupportMarkNotificationsRead
+      summary: Mark personal support updates read
+      description: Personal support. Marks only this caller's existing ticket notifications through the observed sequence. Later updates stay unread. Repeating the request is intrinsically idempotent; no permanent receipt or expected ticket revision is required.
+      parameters:
+      - name: ticket
+        in: path
+        required: true
+        description: Support ticket UUID in this scope. Applies to personalSupportMarkNotificationsRead.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Read state committed without changing the ticket revision. Applies to personalSupportMarkNotificationsRead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportReadResult'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportReadRequest'
+  /v1/orgs/{org}/support/notifications:
+    get:
+      tags:
+      - support
+      operationId: organizationSupportNotificationsFeed
+      summary: List organization support notifications
+      description: Organization support. Metadata-only updates for the current caller. Read state is personal to this account and support audience. Private notes never create customer notifications.
+      parameters:
+      - name: org
+        in: path
+        required: true
+        description: Organization slug; current owner or administrator membership is required. Applies to organizationSupportNotificationsFeed.
+        schema:
+          type: string
+      - name: before
+        in: query
+        required: false
+        description: Sequence from the previous notification page. Applies to organizationSupportNotificationsFeed.
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: unread
+        in: query
+        required: false
+        description: Return only unread updates. Applies to organizationSupportNotificationsFeed.
+        schema:
+          type: boolean
+          default: false
+      responses:
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+        '200':
+          description: Current caller notification feed and scoped unread count. Applies to organizationSupportNotificationsFeed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportNotificationPage'
+      security:
+      - bearerAuth: []
+  /v1/orgs/{org}/support/tickets/{ticket}/read:
+    post:
+      tags:
+      - support
+      operationId: organizationSupportMarkNotificationsRead
+      summary: Mark organization support updates read
+      description: Organization support. Marks only this caller's existing ticket notifications through the observed sequence. Later updates stay unread. Repeating the request is intrinsically idempotent; no permanent receipt or expected ticket revision is required.
+      parameters:
+      - name: org
+        in: path
+        required: true
+        description: Organization slug; current owner or administrator membership is required. Applies to organizationSupportMarkNotificationsRead.
+        schema:
+          type: string
+      - name: ticket
+        in: path
+        required: true
+        description: Support ticket UUID in this scope. Applies to organizationSupportMarkNotificationsRead.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Read state committed without changing the ticket revision. Applies to organizationSupportMarkNotificationsRead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportReadResult'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportReadRequest'
   /v1/support/tickets:
     get:
       tags:
@@ -71988,6 +72188,89 @@ components:
       - body
       description: Reopen within the saved policy window and count; starts a fresh episode using that policy
         snapshot.
+    SupportNotification:
+      type: object
+      additionalProperties: false
+      description: An actor-specific support update containing metadata only.
+      properties:
+        id:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          format: int64
+        ticket_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+          - staff_reply
+          - customer_reply
+          - ticket_created
+          - assigned
+        created_at:
+          type: string
+          format: date-time
+        read_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - sequence
+      - ticket_id
+      - kind
+      - created_at
+    SupportNotificationPage:
+      type: object
+      additionalProperties: false
+      description: Sequence-ordered page of at most fifty updates in the authorized scope.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SupportNotification'
+        next_cursor:
+          type: integer
+          format: int64
+        unread_count:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - items
+      - unread_count
+    SupportReadRequest:
+      type: object
+      additionalProperties: false
+      description: Observed notification boundary; future rows are never acknowledged.
+      properties:
+        through_sequence:
+          type: integer
+          format: int64
+          minimum: 1
+      required:
+      - through_sequence
+    SupportReadResult:
+      type: object
+      additionalProperties: false
+      description: Remaining unread counts for the ticket and current support scope.
+      properties:
+        ticket_id:
+          type: string
+          format: uuid
+        unread_count:
+          type: integer
+          format: int64
+          minimum: 0
+        unread_total:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - ticket_id
+      - unread_count
+      - unread_total
     SupportTicket:
       type: object
       additionalProperties: false
@@ -72019,6 +72302,11 @@ components:
         resolved_at:
           type: string
           format: date-time
+        unread_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Unread support updates for the current caller and audience.
         can_reopen:
           type: boolean
         reopen_until:

@@ -214,7 +214,9 @@ and, for a new request, its review link. It never includes the request body.
 
 An agent can raise what you pay every month without any traffic: by keeping
 instances warm (`min_instances`, a scaling policy's floor or schedule
-windows), raising the RAM of warm instances, or prewarming. Each agent has a
+windows, a deployment's own `min_instances`), running services and workers
+(their replicas run whatever the traffic), raising the RAM of warm instances,
+or prewarming. Each agent has a
 monthly budget for this always-on capacity. A change is priced by how much it
 adds, at the overage rate ($0.05 per GB-hour, RAM plus 8 MB per instance,
 730 hours a month), before it is made. Traffic-driven usage is not counted;
@@ -244,10 +246,13 @@ of the agent's budget and the ceiling applies:
 gregale org agent policy set --org acme --agents allow --max-budget 100
 ```
 
-In this release the budget covers `PATCH /v1/apps/{slug}`,
-`POST /v1/apps/{slug}/scaling` and `POST /v1/apps/{slug}/prewarm`. Replica
-minimums in deployment manifests and project environment settings are
-priced in a later release.
+In this release the budget covers creating an app (`POST /v1/apps`: a
+service or worker is priced for the replicas it starts with),
+`PATCH /v1/apps/{slug}` (including the `execution_mode`, `service_replicas`
+and `worker_replicas` that `gregale deploy` applies from `gregale.yaml`),
+`POST /v1/apps/{slug}/scaling`, `POST /v1/apps/{slug}/prewarm` and
+`PATCH /v1/deployments/{id}`. Project environment settings and managed
+Postgres are priced in a later release.
 
 ## See what an agent changed
 

@@ -39,6 +39,7 @@ type SupportTicket struct {
 	ResolvedAt  *time.Time     `json:"resolved_at,omitempty"`
 	CanReopen   bool           `json:"can_reopen"`
 	ReopenUntil *time.Time     `json:"reopen_until,omitempty"`
+	UnreadCount int64          `json:"unread_count,omitempty"`
 }
 type SupportTicketPage struct {
 	Items      []SupportTicket `json:"items"`
@@ -73,4 +74,28 @@ type SupportSatisfaction struct {
 	EpisodeID string `json:"episode_id"`
 	Eligible  bool   `json:"eligible"`
 	Rating    *int32 `json:"rating,omitempty"`
+}
+
+// SupportNotification contains metadata only. Conversation content is read
+// through the ticket's authenticated messages endpoint.
+type SupportNotification struct {
+	ID        string     `json:"id"`
+	Sequence  int64      `json:"sequence"`
+	TicketID  string     `json:"ticket_id"`
+	Kind      string     `json:"kind"`
+	CreatedAt time.Time  `json:"created_at"`
+	ReadAt    *time.Time `json:"read_at,omitempty"`
+}
+type SupportNotificationPage struct {
+	Items       []SupportNotification `json:"items"`
+	NextCursor  int64                 `json:"next_cursor,omitempty"`
+	UnreadCount int64                 `json:"unread_count"`
+}
+type SupportReadRequest struct {
+	ThroughSequence int64 `json:"through_sequence"`
+}
+type SupportReadResult struct {
+	TicketID    string `json:"ticket_id"`
+	UnreadCount int64  `json:"unread_count"`
+	UnreadTotal int64  `json:"unread_total"`
 }

@@ -2368,6 +2368,10 @@ func (s *server) ConfigureCustomerSupportForTest(ctx context.Context, pool *pgxp
 	return s.configureCustomerSupport(ctx, pool, func(string) string { return "" })
 }
 
+func (s *server) DispatchCustomerSupportNotificationForTest(ctx context.Context) error {
+	return s.customerSupport.DispatchNotification(ctx)
+}
+
 // RegressionComparison exposes chooseRegressionComparison's choice.
 type RegressionComparison struct {
 	Cur, Prev          string

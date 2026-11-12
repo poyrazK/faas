@@ -5948,6 +5948,11 @@ from .support_message import SupportMessage
 from .support_message_author import SupportMessageAuthor
 from .support_message_page import SupportMessagePage
 from .support_message_request import SupportMessageRequest
+from .support_notification import SupportNotification
+from .support_notification_kind import SupportNotificationKind
+from .support_notification_page import SupportNotificationPage
+from .support_read_request import SupportReadRequest
+from .support_read_result import SupportReadResult
 from .support_satisfaction import SupportSatisfaction
 from .support_satisfaction_request import SupportSatisfactionRequest
 from .support_satisfaction_submission import SupportSatisfactionSubmission
@@ -12059,6 +12064,11 @@ __all__ = (
     "SupportMessageAuthor",
     "SupportMessagePage",
     "SupportMessageRequest",
+    "SupportNotification",
+    "SupportNotificationKind",
+    "SupportNotificationPage",
+    "SupportReadRequest",
+    "SupportReadResult",
     "SupportSatisfaction",
     "SupportSatisfactionRequest",
     "SupportSatisfactionSubmission",

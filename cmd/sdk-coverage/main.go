@@ -48,6 +48,9 @@ const (
 // intentionally absent from OpenAPI also belong in
 // scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
 var routeExclude = map[string]bool{
+	// ADR-20261112134100: private staff inbox metadata, outside the customer SDK.
+	"GET /v1/admin/support/notifications":          true,
+	"POST /v1/admin/support/tickets/{ticket}/read": true,
 	// ADR-202610171453: default-off internal hosting is absent from public OpenAPI/SDK discovery.
 	"DELETE /v1/internal/hosting/sites/{site}":                                     true,
 	"DELETE /v1/internal/hosting/sites/{site}/automation-credentials/{credential}": true,
@@ -572,6 +575,10 @@ var sdkMethodExclude = map[string]bool{
 var methodRouteMap = map[string]string{
 	// Customer support uses typed personal and organization methods.
 	"GET /v1/support/tickets":                                   "ListSupportTickets",
+	"GET /v1/support/notifications":                             "ListSupportNotifications",
+	"POST /v1/support/tickets/{ticket}/read":                    "MarkSupportTicketRead",
+	"GET /v1/orgs/{org}/support/notifications":                  "ListOrgSupportNotifications",
+	"POST /v1/orgs/{org}/support/tickets/{ticket}/read":         "MarkOrgSupportTicketRead",
 	"POST /v1/support/tickets":                                  "CreateSupportTicket",
 	"GET /v1/support/tickets/{ticket}":                          "GetSupportTicket",
 	"GET /v1/support/tickets/{ticket}/messages":                 "ListSupportMessages",

@@ -65831,6 +65831,35 @@ func (q *Queries) ManagedPostgresFleetTotals(ctx context.Context, db DBTX, arg M
 	return i, err
 }
 
+const managedPostgresLiveResourcesInProject = `-- name: ManagedPostgresLiveResourcesInProject :many
+SELECT provider_resource_id::text AS provider_resource_id FROM managed_postgres_databases
+WHERE (provider_resource_id=$1::text OR provider_resource_id LIKE $1::text || '/%')
+    AND state NOT IN ('deleting','deleted') AND deleted_at IS NULL
+`
+
+// ADR-20261112160000: neond refuses deleting a Neon project or branch that a
+// live managed PostgreSQL database runs on. A provider resource is the
+// project ID, or "<project>/<branch>" for a database on a branch.
+func (q *Queries) ManagedPostgresLiveResourcesInProject(ctx context.Context, db DBTX, project string) ([]string, error) {
+	rows, err := db.Query(ctx, managedPostgresLiveResourcesInProject, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var provider_resource_id string
+		if err := rows.Scan(&provider_resource_id); err != nil {
+			return nil, err
+		}
+		items = append(items, provider_resource_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const managedPostgresPersonalBindingReference = `-- name: ManagedPostgresPersonalBindingReference :one
 SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings b JOIN managed_postgres_databases d ON d.id=b.database_id JOIN orgs o ON o.id=d.org_id
  WHERE b.id=$1 AND b.account_id=$2 AND o.personal_org)::boolean
