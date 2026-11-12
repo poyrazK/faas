@@ -74,19 +74,9 @@ func localPythonVenvEnv(env []string, venv, bin string) []string {
 // exec.LookPath uses the CLI's environment. Resolve each candidate explicitly
 // instead, honoring the same final PATH the function's child process receives.
 func localPythonOnPath(env []string) (string, error) {
-	for _, dir := range filepath.SplitList(localPythonEnvPath(env)) {
-		candidate := filepath.Join(dir, "python3")
-		if !filepath.IsAbs(candidate) {
-			candidate = "." + string(os.PathSeparator) + candidate
-		}
-		exe, err := exec.LookPath(candidate)
-		if err != nil {
-			continue
-		}
-		if !filepath.IsAbs(exe) {
-			return "", fmt.Errorf("local Python PATH resolved relative to the current directory: %w", exec.ErrDot)
-		}
-		return exe, nil
+	exe, err := devLocalToolOnPath("python3", env)
+	if err != nil {
+		return "", fmt.Errorf("python3 is not available on the function's PATH; install Python or create a project virtual environment: %w", err)
 	}
-	return "", fmt.Errorf("python3 is not available on the function's PATH; install Python or create a project virtual environment: %w", exec.ErrNotFound)
+	return exe, nil
 }

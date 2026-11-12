@@ -66,6 +66,16 @@ Detected FastAPI, Flask, and Django commands receive explicit host/port options.
 Project tools in `node_modules/.bin`, `.venv/bin`, and `venv/bin` are on PATH;
 install your application's dependencies before starting it.
 
+Before connecting remote resources or starting/resetting offline Docker
+resources, local startup checks every function's runtime and detected app tools
+using the selected env-file PATH and function `env:` overrides. Missing tools
+fail immediately with a repair command such as `npm ci`,
+`pnpm install --frozen-lockfile`, or `uv sync`. Detected Python development
+servers also check that their framework/server modules are discoverable in the
+selected environment. No packages are installed automatically. Yarn PnP package
+scripts work without `node_modules`; custom commands and scripts that prepare
+their own tools are validated when they run.
+
 Override detection for a custom command (which must listen on `PORT`):
 
 ```sh

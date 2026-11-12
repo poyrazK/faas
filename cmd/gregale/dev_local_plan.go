@@ -184,22 +184,19 @@ func localCacheDir(projectDir string) (string, error) {
 // prepare writes the adapter or builds the Go handler, and sets the process
 // the runner core starts.
 func (fn *localFunction) prepare(ctx context.Context, cacheDir string, baseEnv []string) error {
-	env := append(append([]string(nil), baseEnv...), "FAAS_RUNTIME="+fn.Runtime, "GREGALE_LOCAL=1")
-	keys := make([]string, 0, len(fn.Env))
-	for k := range fn.Env {
-		keys = append(keys, k)
+	env := fn.environment(baseEnv)
+	var interpreter string
+	var err error
+	switch fn.Family {
+	case "python":
+		interpreter, env, err = localPythonEnvironment(fn.Root, fn.ProjectRoot, env)
+	case "node":
+		interpreter, err = devLocalToolOnPath("node", env)
+	case "go":
+		interpreter, err = devLocalToolOnPath("go", env)
 	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		env = append(env, k+"="+fn.Env[k])
-	}
-	var python string
-	if fn.Family == "python" {
-		var err error
-		python, env, err = localPythonEnvironment(fn.Root, fn.ProjectRoot, env)
-		if err != nil {
-			return err
-		}
+	if err != nil {
+		return err
 	}
 	// Runner pools key commands by executable and arguments, and retain their
 	// initial environment. Distinct private paths give changed environments a
@@ -211,16 +208,29 @@ func (fn *localFunction) prepare(ctx context.Context, cacheDir string, baseEnv [
 	}
 	switch fn.Family {
 	case "node":
-		return fn.prepareAdapter(dir, "adapter.cjs", "node", env, fnadapter.NodeFor)
+		return fn.prepareAdapter(dir, "adapter.cjs", interpreter, env, fnadapter.NodeFor)
 	case "python":
-		return fn.prepareAdapter(dir, "adapter.py", python, env, fnadapter.PythonFor)
+		return fn.prepareAdapter(dir, "adapter.py", interpreter, env, fnadapter.PythonFor)
 	}
-	bin, err := buildLocalGo(ctx, fn.Root, dir)
+	bin, err := buildLocalGo(ctx, fn.Root, dir, interpreter, env)
 	if err != nil {
 		return err
 	}
 	fn.setProcess(local.Function{Runtime: fn.Runtime, Executable: bin, Env: env, HandlerPath: bin, Compiled: true})
 	return nil
+}
+
+func (fn *localFunction) environment(baseEnv []string) []string {
+	env := append(append([]string(nil), baseEnv...), "FAAS_RUNTIME="+fn.Runtime, "GREGALE_LOCAL=1")
+	keys := make([]string, 0, len(fn.Env))
+	for k := range fn.Env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		env = append(env, k+"="+fn.Env[k])
+	}
+	return env
 }
 
 func (fn *localFunction) prepareAdapter(dir, name, interpreter string, env []string, adapterFor func(string) string) error {
@@ -246,11 +256,7 @@ func (fn *localFunction) prepareAdapter(dir, name, interpreter string, env []str
 // buildLocalGo builds the Go function in root. A root without go.mod (the
 // function-go template) is built from a copy with the module file the CLI
 // adds when it uploads one.
-func buildLocalGo(ctx context.Context, root, dir string) (string, error) {
-	goExe, err := exec.LookPath("go")
-	if err != nil {
-		return "", errors.New("go is not installed; it builds Go functions locally")
-	}
+func buildLocalGo(ctx context.Context, root, dir, goExe string, env []string) (string, error) {
 	bin := filepath.Join(dir, "handler")
 	buildDir := root
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); errors.Is(err, os.ErrNotExist) {
@@ -261,6 +267,7 @@ func buildLocalGo(ctx context.Context, root, dir string) (string, error) {
 	}
 	cmd := exec.CommandContext(ctx, goExe, "build", "-buildvcs=false", "-o", bin, ".")
 	cmd.Dir = buildDir
+	cmd.Env = env
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("go build failed:\n%s", strings.TrimSpace(string(out)))
 	}
