@@ -279,13 +279,13 @@ tool, which waits up to 50 seconds per call. When you approve, the tool
 answers `retry_original` and the agent repeats its call once with the same
 inputs. When you deny it or it expires, the agent gets `stop`, with your
 reason, and stops. `gregale_agent_activity` lists the agent's own write
-requests of the last 7 days (`operate` toolset).
+requests of the last 7 days (`core` toolset).
 
 An agent can undo its own changes: `gregale_plan_undo` lists them with what
 undoing each will do, and `gregale_apply_undo` applies that plan. Applying
 always asks you first, whatever approval categories the agent chose; it waits
 like any other approval and then undoes exactly the plan you approved
-(`operate` toolset; apply only on servers that allow writes).
+(`core` toolset; apply only on servers that allow writes).
 
 When the bridge applies a plan, it sends the plan's reviewable `reason` as
 the `Gregale-Agent-Reason` header, so the review page, notifications and the
@@ -333,7 +333,7 @@ turn. `--tools` lists only the selected toolsets, comma-separated
 
 | Toolset | Tools |
 |---|---|
-| `core` (default) | Context, apps, app deployments, logs, metrics, health, error groups, local deploy and env changes, secret requests, promote and rollback, saved-plan review and retained action recovery |
+| `core` (default) | Context, apps, app deployments, logs, metrics, health, error groups, local deploy and env changes, secret requests, promote and rollback, saved-plan review and retained action recovery, approval waits, the agent's own activity and undo |
 | `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets, preflight, account deployment history |
 | `diagnose` | Request, analytics, profile, wake, trace, regression and incident diagnostics |
 | `provision` | Custom domains, buckets, managed PostgreSQL and crons: provisioning, inventory and reviewed domain/cron changes |
