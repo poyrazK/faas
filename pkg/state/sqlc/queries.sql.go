@@ -2411,6 +2411,32 @@ func (q *Queries) ArchiveDeploymentCronOutcome(ctx context.Context, db DBTX, app
 	return err
 }
 
+const archiveEnvironmentDeploymentCronOutcome = `-- name: ArchiveEnvironmentDeploymentCronOutcome :exec
+INSERT INTO deployment_cron_outcomes(deployment_id,session_id,revision,status,reason)
+SELECT d.id,c.session_id,c.revision,
+ CASE WHEN c.status IN ('prepared','canceled') THEN 'discarded' ELSE c.status END,
+ CASE WHEN c.status='prepared' THEN 'intent_superseded' WHEN c.status='canceled' THEN 'activation_discarded' WHEN c.status='conflict' THEN coalesce(h.reason,'cron_guard_conflict') ELSE coalesce(h.reason,'') END
+FROM environment_deployment_cron_activations c JOIN apps a ON a.id=c.app_id
+LEFT JOIN deployment_submission_receipts r ON r.app_id=c.app_id AND r.attempt_id=c.session_id
+LEFT JOIN upload_sessions u ON u.id=c.upload_id AND u.app_slug=a.slug AND u.account_id=a.account_id AND u.status='committed'
+JOIN deployments d ON d.app_id=c.app_id AND d.id::text=coalesce(r.deployment_id::text,u.deployment_id)
+LEFT JOIN deployment_cron_outcomes h ON h.deployment_id=d.id AND h.revision=c.revision
+WHERE c.app_id=$1::text::uuid AND c.deployment_scope=$2::text
+ON CONFLICT(deployment_id) DO UPDATE SET session_id=EXCLUDED.session_id,revision=EXCLUDED.revision,
+ status=EXCLUDED.status,reason=EXCLUDED.reason,updated_at=now()
+WHERE deployment_cron_outcomes.revision<=EXCLUDED.revision
+`
+
+type ArchiveEnvironmentDeploymentCronOutcomeParams struct {
+	AppID string
+	Scope string
+}
+
+func (q *Queries) ArchiveEnvironmentDeploymentCronOutcome(ctx context.Context, db DBTX, arg ArchiveEnvironmentDeploymentCronOutcomeParams) error {
+	_, err := db.Exec(ctx, archiveEnvironmentDeploymentCronOutcome, arg.AppID, arg.Scope)
+	return err
+}
+
 const artifactEvidenceStorageTime = `-- name: ArtifactEvidenceStorageTime :one
 SELECT clock_timestamp()::timestamptz
 `
@@ -15648,7 +15674,7 @@ func (q *Queries) DeleteDeploymentAlias(ctx context.Context, db DBTX, arg Delete
 }
 
 const deleteDeploymentHTTPcrons = `-- name: DeleteDeploymentHTTPcrons :exec
-DELETE FROM crons WHERE app_id=$1::text::uuid AND cardinality(command)=0
+DELETE FROM crons WHERE app_id=$1::text::uuid AND cardinality(command)=0 AND deployment_scope=''
  AND id NOT IN (SELECT (value->>'id')::uuid FROM jsonb_array_elements($2::jsonb))
 `
 
@@ -15774,6 +15800,22 @@ func (q *Queries) DeleteEnvironmentGitOpsVariable(ctx context.Context, db DBTX, 
 		arg.Scope,
 		arg.Key,
 	)
+	return err
+}
+
+const deleteEnvironmentHTTPcrons = `-- name: DeleteEnvironmentHTTPcrons :exec
+DELETE FROM crons WHERE app_id=$1::text::uuid AND cardinality(command)=0 AND deployment_scope=$2::text
+ AND id NOT IN (SELECT (value->>'id')::uuid FROM jsonb_array_elements($3::jsonb))
+`
+
+type DeleteEnvironmentHTTPcronsParams struct {
+	AppID string
+	Scope string
+	Crons []byte
+}
+
+func (q *Queries) DeleteEnvironmentHTTPcrons(ctx context.Context, db DBTX, arg DeleteEnvironmentHTTPcronsParams) error {
+	_, err := db.Exec(ctx, deleteEnvironmentHTTPcrons, arg.AppID, arg.Scope, arg.Crons)
 	return err
 }
 
@@ -17555,6 +17597,25 @@ func (q *Queries) EnvironmentBuildArtifactOrigin(ctx context.Context, db DBTX, a
 	var f_deployment_id string
 	err := row.Scan(&f_deployment_id)
 	return f_deployment_id, err
+}
+
+const environmentCronActivationUploadAccepted = `-- name: EnvironmentCronActivationUploadAccepted :one
+SELECT EXISTS(SELECT 1 FROM environment_deployment_cron_activations c JOIN upload_sessions u ON u.id=c.upload_id
+ JOIN deployments d ON d.id::text=u.deployment_id AND d.app_id=c.app_id
+ WHERE c.app_id=$1::text::uuid AND c.deployment_scope=$2::text AND c.session_id=$3 AND u.status='committed' AND u.deployment_id IS NOT NULL)::boolean
+`
+
+type EnvironmentCronActivationUploadAcceptedParams struct {
+	AppID     string
+	Scope     string
+	SessionID string
+}
+
+func (q *Queries) EnvironmentCronActivationUploadAccepted(ctx context.Context, db DBTX, arg EnvironmentCronActivationUploadAcceptedParams) (bool, error) {
+	row := db.QueryRow(ctx, environmentCronActivationUploadAccepted, arg.AppID, arg.Scope, arg.SessionID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const environmentFieldGitOwned = `-- name: EnvironmentFieldGitOwned :one
@@ -22422,6 +22483,53 @@ func (q *Queries) ExtendWorkflowRunLeaseFenced(ctx context.Context, db DBTX, arg
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const externalTriggerReplayRecord = `-- name: ExternalTriggerReplayRecord :one
+SELECT r.id, r.trigger_id, r.item_identifier, r.payload, r.headers, r.metadata, r.state, r.attempts, r.next_fire_at, r.received_at, r.last_error, r.last_dispatched_at, r.deadline_at, r.retry_policy, r.result_retention_until, r.claim_generation, r.claim_expires_at, r.work_policy_name, r.work_key_digest, r.work_sequence, r.work_policy_revision, r.work_fairness_digest, r.work_fairness_limit, r.work_expires_at, r.operator_replay FROM trigger_records r JOIN triggers t ON t.id=r.trigger_id
+WHERE r.id=$1::uuid
+ AND ($2::uuid IS NULL OR t.account_id=$2::uuid)
+ AND ($3::uuid IS NULL OR t.app_id=$3::uuid)
+FOR UPDATE OF r
+`
+
+type ExternalTriggerReplayRecordParams struct {
+	ID                pgtype.UUID
+	ExpectedAccountID pgtype.UUID
+	ExpectedAppID     pgtype.UUID
+}
+
+func (q *Queries) ExternalTriggerReplayRecord(ctx context.Context, db DBTX, arg ExternalTriggerReplayRecordParams) (TriggerRecord, error) {
+	row := db.QueryRow(ctx, externalTriggerReplayRecord, arg.ID, arg.ExpectedAccountID, arg.ExpectedAppID)
+	var i TriggerRecord
+	err := row.Scan(
+		&i.ID,
+		&i.TriggerID,
+		&i.ItemIdentifier,
+		&i.Payload,
+		&i.Headers,
+		&i.Metadata,
+		&i.State,
+		&i.Attempts,
+		&i.NextFireAt,
+		&i.ReceivedAt,
+		&i.LastError,
+		&i.LastDispatchedAt,
+		&i.DeadlineAt,
+		&i.RetryPolicy,
+		&i.ResultRetentionUntil,
+		&i.ClaimGeneration,
+		&i.ClaimExpiresAt,
+		&i.WorkPolicyName,
+		&i.WorkKeyDigest,
+		&i.WorkSequence,
+		&i.WorkPolicyRevision,
+		&i.WorkFairnessDigest,
+		&i.WorkFairnessLimit,
+		&i.WorkExpiresAt,
+		&i.OperatorReplay,
+	)
+	return i, err
 }
 
 const failAutomaticRouteCheck = `-- name: FailAutomaticRouteCheck :execrows
@@ -49489,6 +49597,65 @@ func (q *Queries) ListDueExclusiveWork(ctx context.Context, db DBTX, rowLimit in
 	return items, nil
 }
 
+const listDueExternalTriggerReplays = `-- name: ListDueExternalTriggerReplays :many
+SELECT r.id, r.trigger_id, r.item_identifier, r.payload, r.headers, r.metadata, r.state, r.attempts, r.next_fire_at, r.received_at, r.last_error, r.last_dispatched_at, r.deadline_at, r.retry_policy, r.result_retention_until, r.claim_generation, r.claim_expires_at, r.work_policy_name, r.work_key_digest, r.work_sequence, r.work_policy_revision, r.work_fairness_digest, r.work_fairness_limit, r.work_expires_at, r.operator_replay FROM trigger_records r JOIN triggers t ON t.id=r.trigger_id
+WHERE r.trigger_id=$1::uuid AND r.operator_replay
+ AND r.state IN ('pending','retry') AND r.next_fire_at<=clock_timestamp()
+ AND t.kind IN ('kafka','nats','redis_streams')
+ORDER BY r.next_fire_at,r.id LIMIT $2::integer
+`
+
+type ListDueExternalTriggerReplaysParams struct {
+	TriggerID  pgtype.UUID
+	BatchLimit int32
+}
+
+func (q *Queries) ListDueExternalTriggerReplays(ctx context.Context, db DBTX, arg ListDueExternalTriggerReplaysParams) ([]TriggerRecord, error) {
+	rows, err := db.Query(ctx, listDueExternalTriggerReplays, arg.TriggerID, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TriggerRecord{}
+	for rows.Next() {
+		var i TriggerRecord
+		if err := rows.Scan(
+			&i.ID,
+			&i.TriggerID,
+			&i.ItemIdentifier,
+			&i.Payload,
+			&i.Headers,
+			&i.Metadata,
+			&i.State,
+			&i.Attempts,
+			&i.NextFireAt,
+			&i.ReceivedAt,
+			&i.LastError,
+			&i.LastDispatchedAt,
+			&i.DeadlineAt,
+			&i.RetryPolicy,
+			&i.ResultRetentionUntil,
+			&i.ClaimGeneration,
+			&i.ClaimExpiresAt,
+			&i.WorkPolicyName,
+			&i.WorkKeyDigest,
+			&i.WorkSequence,
+			&i.WorkPolicyRevision,
+			&i.WorkFairnessDigest,
+			&i.WorkFairnessLimit,
+			&i.WorkExpiresAt,
+			&i.OperatorReplay,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDueInvocationRows = `-- name: ListDueInvocationRows :many
 select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at, i.async_quota_subject_id, i.edge_jwt_issuer, i.edge_jwt_subject
 		  from invocations i
@@ -53040,6 +53207,60 @@ func (q *Queries) ListManagedPostgresLifecycleUsageDatabases(ctx context.Context
 	return items, nil
 }
 
+const listManagedPostgresPlanExcessRemindersDue = `-- name: ListManagedPostgresPlanExcessRemindersDue :many
+SELECT n.database_id,n.reason,n.delete_at,d.account_id,d.name,d.service_class
+FROM managed_postgres_plan_excess_notices n JOIN managed_postgres_databases d ON d.id=n.database_id
+WHERE n.delete_at IS NOT NULL AND n.mail_intent_id IS NOT NULL AND n.reminder_mail_intent_id IS NULL
+    AND n.delete_at>$1::timestamptz AND n.delete_at<=$2::timestamptz
+    AND d.state NOT IN ('deleting','deleted')
+ORDER BY n.delete_at,n.database_id LIMIT $3
+`
+
+type ListManagedPostgresPlanExcessRemindersDueParams struct {
+	Now         pgtype.Timestamptz
+	RemindUntil pgtype.Timestamptz
+	BatchSize   int32
+}
+
+type ListManagedPostgresPlanExcessRemindersDueRow struct {
+	DatabaseID   pgtype.UUID
+	Reason       string
+	DeleteAt     pgtype.Timestamptz
+	AccountID    pgtype.UUID
+	Name         string
+	ServiceClass string
+}
+
+// ADR-20261110184700 amendment 2026-11-12: notices whose mailed deletion date
+// is between now and remind_until and whose reminder no intent has claimed,
+// for databases not being deleted.
+func (q *Queries) ListManagedPostgresPlanExcessRemindersDue(ctx context.Context, db DBTX, arg ListManagedPostgresPlanExcessRemindersDueParams) ([]ListManagedPostgresPlanExcessRemindersDueRow, error) {
+	rows, err := db.Query(ctx, listManagedPostgresPlanExcessRemindersDue, arg.Now, arg.RemindUntil, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListManagedPostgresPlanExcessRemindersDueRow{}
+	for rows.Next() {
+		var i ListManagedPostgresPlanExcessRemindersDueRow
+		if err := rows.Scan(
+			&i.DatabaseID,
+			&i.Reason,
+			&i.DeleteAt,
+			&i.AccountID,
+			&i.Name,
+			&i.ServiceClass,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listManagedPostgresPlanExcessSince = `-- name: ListManagedPostgresPlanExcessSince :many
 SELECT database_id,recorded_at,delete_at FROM managed_postgres_plan_excess_notices
 WHERE database_id=ANY($1::uuid[])
@@ -55521,6 +55742,39 @@ func (q *Queries) ListReadyCronActivations(ctx context.Context, db DBTX) ([]stri
 			return nil, err
 		}
 		items = append(items, app_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReadyEnvironmentCronActivations = `-- name: ListReadyEnvironmentCronActivations :many
+SELECT c.app_id::text AS app_id,c.deployment_scope FROM environment_deployment_cron_activations c
+JOIN apps a ON a.id=c.app_id
+LEFT JOIN deployment_submission_receipts r ON r.app_id=c.app_id AND r.attempt_id=c.session_id
+LEFT JOIN upload_sessions u ON u.id=c.upload_id AND u.app_slug=a.slug AND u.account_id=a.account_id
+WHERE c.status='prepared' AND (r.deployment_id IS NOT NULL OR u.status='committed' AND u.deployment_id IS NOT NULL) ORDER BY c.updated_at,c.app_id,c.deployment_scope LIMIT 64
+`
+
+type ListReadyEnvironmentCronActivationsRow struct {
+	AppID           string
+	DeploymentScope string
+}
+
+func (q *Queries) ListReadyEnvironmentCronActivations(ctx context.Context, db DBTX) ([]ListReadyEnvironmentCronActivationsRow, error) {
+	rows, err := db.Query(ctx, listReadyEnvironmentCronActivations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListReadyEnvironmentCronActivationsRow{}
+	for rows.Next() {
+		var i ListReadyEnvironmentCronActivationsRow
+		if err := rows.Scan(&i.AppID, &i.DeploymentScope); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -60530,6 +60784,24 @@ func (q *Queries) LockDueReadinessReminderNotifications(ctx context.Context, db 
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockEnvironmentDeploymentCronState = `-- name: LockEnvironmentDeploymentCronState :one
+INSERT INTO environment_deployment_cron_states(app_id,deployment_scope) VALUES($1::text::uuid,$2::text)
+ON CONFLICT(app_id,deployment_scope) DO UPDATE SET revision=environment_deployment_cron_states.revision
+RETURNING revision
+`
+
+type LockEnvironmentDeploymentCronStateParams struct {
+	AppID string
+	Scope string
+}
+
+func (q *Queries) LockEnvironmentDeploymentCronState(ctx context.Context, db DBTX, arg LockEnvironmentDeploymentCronStateParams) (int64, error) {
+	row := db.QueryRow(ctx, lockEnvironmentDeploymentCronState, arg.AppID, arg.Scope)
+	var revision int64
+	err := row.Scan(&revision)
+	return revision, err
 }
 
 const lockEnvironmentFieldOwnershipScope = `-- name: LockEnvironmentFieldOwnershipScope :exec
@@ -85157,7 +85429,7 @@ func (q *Queries) ReadDeploymentConfiguration(ctx context.Context, db DBTX, arg 
 const readDeploymentCronSnapshot = `-- name: ReadDeploymentCronSnapshot :one
 SELECT id::text AS app_id, deployment_cron_revision,
  coalesce((SELECT d.id::text FROM deployments d WHERE d.app_id=a.id ORDER BY d.created_at DESC,d.id DESC LIMIT 1),'')::text AS latest_deployment_id,
- coalesce((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id) FROM crons c WHERE c.app_id=a.id AND cardinality(c.command)=0),'[]'::jsonb)::jsonb AS crons
+ coalesce((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id) FROM crons c WHERE c.app_id=a.id AND cardinality(c.command)=0 AND c.deployment_scope=''),'[]'::jsonb)::jsonb AS crons
 FROM apps a WHERE id=$1::text::uuid AND account_id=$2::text::uuid AND status <> 'deleted'
 `
 
@@ -85447,6 +85719,128 @@ func (q *Queries) ReadEdgeRuleTrafficAccount(ctx context.Context, db DBTX, ruleI
 	row := db.QueryRow(ctx, readEdgeRuleTrafficAccount, ruleID)
 	var i ReadEdgeRuleTrafficAccountRow
 	err := row.Scan(&i.AccountID, &i.Kind, &i.MatchHost)
+	return i, err
+}
+
+const readEnvironmentCronActivation = `-- name: ReadEnvironmentCronActivation :one
+SELECT session_id,intent,fingerprint,revision,status,coalesce(upload_id::text,'')::text AS upload_id FROM environment_deployment_cron_activations
+WHERE app_id=$1::text::uuid AND deployment_scope=$2::text FOR UPDATE
+`
+
+type ReadEnvironmentCronActivationParams struct {
+	AppID string
+	Scope string
+}
+
+type ReadEnvironmentCronActivationRow struct {
+	SessionID   string
+	Intent      []byte
+	Fingerprint string
+	Revision    int64
+	Status      string
+	UploadID    string
+}
+
+func (q *Queries) ReadEnvironmentCronActivation(ctx context.Context, db DBTX, arg ReadEnvironmentCronActivationParams) (ReadEnvironmentCronActivationRow, error) {
+	row := db.QueryRow(ctx, readEnvironmentCronActivation, arg.AppID, arg.Scope)
+	var i ReadEnvironmentCronActivationRow
+	err := row.Scan(
+		&i.SessionID,
+		&i.Intent,
+		&i.Fingerprint,
+		&i.Revision,
+		&i.Status,
+		&i.UploadID,
+	)
+	return i, err
+}
+
+const readEnvironmentCronActivationDeployment = `-- name: ReadEnvironmentCronActivationDeployment :one
+SELECT d.id::text AS deployment_id,d.status,d.scope,d.traffic_percent,d.traffic_percent_explicit,
+ d.canary_total_steps,d.rollout_state,
+ coalesce((SELECT n.id::text FROM deployments n WHERE n.app_id=d.app_id AND n.scope=d.scope
+ AND NOT(n.traffic_percent_explicit AND n.traffic_percent=0 AND n.canary_total_steps=0)
+ ORDER BY n.created_at DESC,n.id DESC LIMIT 1),'')::text AS latest_id,
+ EXISTS(SELECT 1 FROM deployments n WHERE n.app_id=d.app_id AND n.id<>d.id
+ AND n.status='live' AND n.scope=d.scope AND n.traffic_percent>0) AS competing_traffic
+FROM deployments d JOIN environment_deployment_cron_activations c ON c.app_id=d.app_id
+JOIN apps a ON a.id=c.app_id
+LEFT JOIN deployment_submission_receipts r ON r.app_id=c.app_id AND r.attempt_id=c.session_id
+LEFT JOIN upload_sessions u ON u.id=c.upload_id AND u.app_slug=a.slug AND u.account_id=a.account_id AND u.status='committed'
+WHERE d.app_id=$1::text::uuid AND c.deployment_scope=$2::text AND c.session_id=$3
+AND d.id::text=coalesce(r.deployment_id::text,u.deployment_id)
+FOR SHARE OF d
+`
+
+type ReadEnvironmentCronActivationDeploymentParams struct {
+	AppID     string
+	Scope     string
+	SessionID string
+}
+
+type ReadEnvironmentCronActivationDeploymentRow struct {
+	DeploymentID           string
+	Status                 string
+	Scope                  string
+	TrafficPercent         int32
+	TrafficPercentExplicit bool
+	CanaryTotalSteps       int32
+	RolloutState           string
+	LatestID               string
+	CompetingTraffic       bool
+}
+
+func (q *Queries) ReadEnvironmentCronActivationDeployment(ctx context.Context, db DBTX, arg ReadEnvironmentCronActivationDeploymentParams) (ReadEnvironmentCronActivationDeploymentRow, error) {
+	row := db.QueryRow(ctx, readEnvironmentCronActivationDeployment, arg.AppID, arg.Scope, arg.SessionID)
+	var i ReadEnvironmentCronActivationDeploymentRow
+	err := row.Scan(
+		&i.DeploymentID,
+		&i.Status,
+		&i.Scope,
+		&i.TrafficPercent,
+		&i.TrafficPercentExplicit,
+		&i.CanaryTotalSteps,
+		&i.RolloutState,
+		&i.LatestID,
+		&i.CompetingTraffic,
+	)
+	return i, err
+}
+
+const readEnvironmentDeploymentCronSnapshot = `-- name: ReadEnvironmentDeploymentCronSnapshot :one
+
+SELECT a.id::text AS app_id,
+ coalesce((SELECT s.revision FROM environment_deployment_cron_states s WHERE s.app_id=a.id AND s.deployment_scope=$1::text),0)::bigint AS revision,
+ coalesce((SELECT d.id::text FROM deployments d WHERE d.app_id=a.id AND d.scope=$1::text ORDER BY d.created_at DESC,d.id DESC LIMIT 1),'')::text AS latest_deployment_id,
+ coalesce((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id) FROM crons c WHERE c.app_id=a.id AND cardinality(c.command)=0 AND c.deployment_scope=$1::text),'[]'::jsonb)::jsonb AS crons
+FROM apps a WHERE a.id=$2::text::uuid AND a.account_id=$3::text::uuid AND a.status <> 'deleted'
+`
+
+type ReadEnvironmentDeploymentCronSnapshotParams struct {
+	Scope     string
+	AppID     string
+	AccountID string
+}
+
+type ReadEnvironmentDeploymentCronSnapshotRow struct {
+	AppID              string
+	Revision           int64
+	LatestDeploymentID string
+	Crons              []byte
+}
+
+// ADR-20261104120000: manifest HTTP crons staged into a non-production
+// environment. Production keeps the queries above; an environment's revision
+// and pending activation are keyed by app and scope.
+func (q *Queries) ReadEnvironmentDeploymentCronSnapshot(ctx context.Context, db DBTX, arg ReadEnvironmentDeploymentCronSnapshotParams) (ReadEnvironmentDeploymentCronSnapshotRow, error) {
+	row := db.QueryRow(ctx, readEnvironmentDeploymentCronSnapshot, arg.Scope, arg.AppID, arg.AccountID)
+	var i ReadEnvironmentDeploymentCronSnapshotRow
+	err := row.Scan(
+		&i.AppID,
+		&i.Revision,
+		&i.LatestDeploymentID,
+		&i.Crons,
+	)
 	return i, err
 }
 
@@ -95970,6 +96364,36 @@ func (q *Queries) RecordDeploymentCronOutcome(ctx context.Context, db DBTX, arg 
 	return err
 }
 
+const recordEnvironmentDeploymentCronOutcome = `-- name: RecordEnvironmentDeploymentCronOutcome :exec
+INSERT INTO deployment_cron_outcomes(deployment_id,session_id,revision,status,reason)
+SELECT d.id,c.session_id,c.revision,$1::text,$2::text
+FROM environment_deployment_cron_activations c JOIN apps a ON a.id=c.app_id
+LEFT JOIN deployment_submission_receipts r ON r.app_id=c.app_id AND r.attempt_id=c.session_id
+LEFT JOIN upload_sessions u ON u.id=c.upload_id AND u.app_slug=a.slug AND u.account_id=a.account_id AND u.status='committed'
+JOIN deployments d ON d.app_id=c.app_id AND d.id::text=coalesce(r.deployment_id::text,u.deployment_id)
+WHERE c.app_id=$3::text::uuid AND c.deployment_scope=$4::text
+ON CONFLICT(deployment_id) DO UPDATE SET session_id=EXCLUDED.session_id,revision=EXCLUDED.revision,
+ status=EXCLUDED.status,reason=EXCLUDED.reason,updated_at=now()
+WHERE deployment_cron_outcomes.revision<=EXCLUDED.revision
+`
+
+type RecordEnvironmentDeploymentCronOutcomeParams struct {
+	Status string
+	Reason string
+	AppID  string
+	Scope  string
+}
+
+func (q *Queries) RecordEnvironmentDeploymentCronOutcome(ctx context.Context, db DBTX, arg RecordEnvironmentDeploymentCronOutcomeParams) error {
+	_, err := db.Exec(ctx, recordEnvironmentDeploymentCronOutcome,
+		arg.Status,
+		arg.Reason,
+		arg.AppID,
+		arg.Scope,
+	)
+	return err
+}
+
 const recordEnvironmentGitOpsEvent = `-- name: RecordEnvironmentGitOpsEvent :exec
 INSERT INTO environment_gitops_events(source_id, actor, kind, details)
 VALUES ($1::uuid, $2::text, $3::text, $4::jsonb)
@@ -102531,6 +102955,8 @@ SET state = 'resolved',
 WHERE app_id = $1
   AND last_detected_at < $2
   AND state <> 'resolved'
+  AND (deployment_id <> $3::uuid
+       OR route = ANY($4::text[]))
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
@@ -102539,8 +102965,10 @@ RETURNING app_id, deployment_id, route,
 `
 
 type ResolveRegressionObservationsNotSeenSinceParams struct {
-	AppID          pgtype.UUID
-	LastDetectedAt pgtype.Timestamptz
+	AppID               pgtype.UUID
+	LastDetectedAt      pgtype.Timestamptz
+	CurrentDeploymentID pgtype.UUID
+	MeasuredRoutes      []string
 }
 
 // An app's complete detector pass reconfirms every regression it still sees
@@ -102549,8 +102977,19 @@ type ResolveRegressionObservationsNotSeenSinceParams struct {
 // rollback included. Resolving here, rather than 24 hours later through
 // ResolveStaleRegressionObservations, keeps the banner, status and the
 // resolved webhook current. $2 is the pass start (with clock slack).
+// Only what the pass could judge resolves: an observation of a deployment
+// the pass no longer compares (superseded or rolled back), or of a route the
+// current deployment served in this pass's window. A route that merely went
+// quiet stays open (the stale sweep closes it after the lookback): on prod an
+// unfixed 15x slowdown resolved five minutes after it was found, once its
+// traffic aged out of the window.
 func (q *Queries) ResolveRegressionObservationsNotSeenSince(ctx context.Context, db DBTX, arg ResolveRegressionObservationsNotSeenSinceParams) ([]DebugRegressionObservation, error) {
-	rows, err := db.Query(ctx, resolveRegressionObservationsNotSeenSince, arg.AppID, arg.LastDetectedAt)
+	rows, err := db.Query(ctx, resolveRegressionObservationsNotSeenSince,
+		arg.AppID,
+		arg.LastDetectedAt,
+		arg.CurrentDeploymentID,
+		arg.MeasuredRoutes,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -102714,11 +103153,11 @@ const restoreDeploymentHTTPcrons = `-- name: RestoreDeploymentHTTPcrons :execrow
 INSERT INTO crons(id,app_id,org_id,schedule,path,enabled,timezone,skip_if_running,created_at,last_fired_at,suspended_reason,schedule_revision)
 SELECT x.id,x.app_id,x.org_id,x.schedule,x.path,x.enabled,x.timezone,x.skip_if_running,x.created_at,x.last_fired_at,x.suspended_reason,x.schedule_revision+1
 FROM jsonb_populate_recordset(NULL::crons,$1::jsonb) AS x
-WHERE x.app_id=$2::text::uuid AND cardinality(x.command)=0
+WHERE x.app_id=$2::text::uuid AND cardinality(x.command)=0 AND coalesce(x.deployment_scope,'')=''
 ON CONFLICT(id) DO UPDATE SET schedule=EXCLUDED.schedule,path=EXCLUDED.path,enabled=EXCLUDED.enabled,
  timezone=EXCLUDED.timezone,skip_if_running=EXCLUDED.skip_if_running,created_at=EXCLUDED.created_at,
  last_fired_at=greatest(crons.last_fired_at,EXCLUDED.last_fired_at)
-WHERE crons.app_id=EXCLUDED.app_id AND cardinality(crons.command)=0
+WHERE crons.app_id=EXCLUDED.app_id AND cardinality(crons.command)=0 AND crons.deployment_scope=''
 `
 
 type RestoreDeploymentHTTPcronsParams struct {
@@ -103711,7 +104150,7 @@ func (q *Queries) RetryCustomerOperationBlobCleanup(ctx context.Context, db DBTX
 
 const retryExternalTriggerRecordByOperator = `-- name: RetryExternalTriggerRecordByOperator :execrows
 update trigger_records r set state='pending', attempts=0, last_error=null,
-  next_fire_at=clock_timestamp(), claim_generation=claim_generation+1, claim_expires_at=null
+  next_fire_at=clock_timestamp(), claim_generation=claim_generation+1, claim_expires_at=null, operator_replay=true
 from triggers t where r.id=$1::uuid and t.id=r.trigger_id
   and not (t.kind='queue' and coalesce(t.source in ('queue','delayed_task'),false))
   and r.state not in ('superseded','cancelled','expired')
@@ -108522,7 +108961,7 @@ SELECT x.id,$1::text::uuid,x.schedule,x.path,x.enabled,x.timezone,x.skip_if_runn
 FROM jsonb_to_recordset($2::jsonb) AS x(id uuid,schedule text,path text,enabled boolean,timezone text,skip_if_running boolean)
 ON CONFLICT(id) DO UPDATE SET schedule=EXCLUDED.schedule,path=EXCLUDED.path,enabled=EXCLUDED.enabled,
  timezone=EXCLUDED.timezone,skip_if_running=EXCLUDED.skip_if_running
-WHERE crons.app_id=EXCLUDED.app_id AND cardinality(crons.command)=0
+WHERE crons.app_id=EXCLUDED.app_id AND cardinality(crons.command)=0 AND crons.deployment_scope=''
 `
 
 type StageDeploymentHTTPcronsParams struct {
@@ -108532,6 +108971,29 @@ type StageDeploymentHTTPcronsParams struct {
 
 func (q *Queries) StageDeploymentHTTPcrons(ctx context.Context, db DBTX, arg StageDeploymentHTTPcronsParams) (int64, error) {
 	result, err := db.Exec(ctx, stageDeploymentHTTPcrons, arg.AppID, arg.Crons)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const stageEnvironmentHTTPcrons = `-- name: StageEnvironmentHTTPcrons :execrows
+INSERT INTO crons(id,app_id,deployment_scope,schedule,path,enabled,timezone,skip_if_running)
+SELECT x.id,$1::text::uuid,$2::text,x.schedule,x.path,x.enabled,x.timezone,x.skip_if_running
+FROM jsonb_to_recordset($3::jsonb) AS x(id uuid,schedule text,path text,enabled boolean,timezone text,skip_if_running boolean)
+ON CONFLICT(id) DO UPDATE SET schedule=EXCLUDED.schedule,path=EXCLUDED.path,enabled=EXCLUDED.enabled,
+ timezone=EXCLUDED.timezone,skip_if_running=EXCLUDED.skip_if_running
+WHERE crons.app_id=EXCLUDED.app_id AND cardinality(crons.command)=0 AND crons.deployment_scope=EXCLUDED.deployment_scope
+`
+
+type StageEnvironmentHTTPcronsParams struct {
+	AppID string
+	Scope string
+	Crons []byte
+}
+
+func (q *Queries) StageEnvironmentHTTPcrons(ctx context.Context, db DBTX, arg StageEnvironmentHTTPcronsParams) (int64, error) {
+	result, err := db.Exec(ctx, stageEnvironmentHTTPcrons, arg.AppID, arg.Scope, arg.Crons)
 	if err != nil {
 		return 0, err
 	}
@@ -110288,6 +110750,22 @@ func (q *Queries) TouchEdgeListenerHeartbeat(ctx context.Context, db DBTX, name 
 	return err
 }
 
+const touchEnvironmentCronActivation = `-- name: TouchEnvironmentCronActivation :exec
+UPDATE environment_deployment_cron_activations SET status=$1,updated_at=now()
+WHERE app_id=$2::text::uuid AND deployment_scope=$3::text
+`
+
+type TouchEnvironmentCronActivationParams struct {
+	Status string
+	AppID  string
+	Scope  string
+}
+
+func (q *Queries) TouchEnvironmentCronActivation(ctx context.Context, db DBTX, arg TouchEnvironmentCronActivationParams) error {
+	_, err := db.Exec(ctx, touchEnvironmentCronActivation, arg.Status, arg.AppID, arg.Scope)
+	return err
+}
+
 const touchEnvironmentGitOpsIntent = `-- name: TouchEnvironmentGitOpsIntent :exec
 UPDATE environment_git_sources SET intent_version = intent_version + 1, updated_at = now()
 WHERE id = $1::uuid
@@ -110373,6 +110851,37 @@ type TrackCronActivationUploadParams struct {
 func (q *Queries) TrackCronActivationUpload(ctx context.Context, db DBTX, arg TrackCronActivationUploadParams) (int64, error) {
 	result, err := db.Exec(ctx, trackCronActivationUpload,
 		arg.AppID,
+		arg.SessionID,
+		arg.Fingerprint,
+		arg.UploadID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const trackEnvironmentCronActivationUpload = `-- name: TrackEnvironmentCronActivationUpload :execrows
+UPDATE environment_deployment_cron_activations c SET upload_id=u.id,updated_at=now()
+FROM upload_sessions u, apps a
+WHERE c.app_id=$1::text::uuid AND c.deployment_scope=$2::text AND c.session_id=$3
+ AND c.fingerprint=$4 AND c.status='prepared'
+ AND a.id=c.app_id AND u.id=$5::text AND u.app_slug=a.slug AND u.account_id=a.account_id
+ AND (c.upload_id IS NULL OR c.upload_id=u.id OR NOT EXISTS(SELECT 1 FROM upload_sessions old WHERE old.id=c.upload_id AND old.status='committed'))
+`
+
+type TrackEnvironmentCronActivationUploadParams struct {
+	AppID       string
+	Scope       string
+	SessionID   string
+	Fingerprint string
+	UploadID    string
+}
+
+func (q *Queries) TrackEnvironmentCronActivationUpload(ctx context.Context, db DBTX, arg TrackEnvironmentCronActivationUploadParams) (int64, error) {
+	result, err := db.Exec(ctx, trackEnvironmentCronActivationUpload,
+		arg.AppID,
+		arg.Scope,
 		arg.SessionID,
 		arg.Fingerprint,
 		arg.UploadID,
@@ -113529,7 +114038,11 @@ SELECT
     EXISTS(SELECT 1 FROM invocations i WHERE i.environment_id=e.id AND (i.state='dispatching' OR i.quota_reserved)) AS busy,
     EXISTS(SELECT 1 FROM invocations i LEFT JOIN apps a ON a.id=i.app_id
         WHERE i.environment_id=e.id AND (a.id IS NULL OR a.project_id<>e.project_id OR a.account_id<>e.account_id OR i.account_id<>e.account_id
-            OR NOT ((i.source IN ('async_invoke','delayed_task') AND i.queue_name='') OR (i.source='queue' AND EXISTS(SELECT 1 FROM invocation_environment_queue_admissions q WHERE q.invocation_id=i.id AND q.environment_id=e.id AND q.app_id=i.app_id AND q.account_id=i.account_id AND q.queue_name=i.queue_name))) OR i.cron_id IS NOT NULL
+            OR NOT ((i.source IN ('async_invoke','delayed_task') AND i.queue_name='' AND i.cron_id IS NULL)
+                OR (i.source='queue' AND i.cron_id IS NULL AND EXISTS(SELECT 1 FROM invocation_environment_queue_admissions q WHERE q.invocation_id=i.id AND q.environment_id=e.id AND q.app_id=i.app_id AND q.account_id=i.account_id AND q.queue_name=i.queue_name))
+                -- An environment cron's request; a cron deleted since leaves cron_id null.
+                OR (i.source='cron' AND i.queue_name='' AND i.work_policy_name IS NULL
+                    AND (i.cron_id IS NULL OR EXISTS(SELECT 1 FROM crons c WHERE c.id=i.cron_id AND c.app_id=i.app_id AND c.environment_id=e.id))))
             OR i.on_success_destination_id IS NOT NULL OR i.on_failure_destination_id IS NOT NULL
             OR (i.work_policy_name IS NULL AND EXISTS(SELECT 1 FROM invocation_work_environment_admissions p WHERE p.invocation_id=i.id))
             OR (i.work_policy_name IS NOT NULL AND NOT EXISTS(
@@ -113584,6 +114097,14 @@ ELSE EXISTS(SELECT 1 FROM project_environments e JOIN apps a ON a.project_id=e.p
                 JOIN project_release_members m ON m.release_id=r.id AND m.app_id=a.id AND m.deployment_id=d.id
                 WHERE r.id::text=lower(i.headers->>'X-Gregale-Release') AND r.project_id=e.project_id AND r.account_id=e.account_id
                     AND r.environment_slug=e.slug AND (r.expires_at IS NULL OR r.expires_at>now())))))
+    -- ADR-20261104120000: an environment cron's HTTP request; the cron row,
+    -- whose environment is immutable, is the owner proof.
+    OR EXISTS(SELECT 1 FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
+        JOIN crons c ON c.app_id=a.id AND c.environment_id=e.id AND c.deployment_scope=e.slug
+        WHERE e.id=i.environment_id AND e.slug NOT IN ('production','default') AND a.id=i.app_id AND a.account_id=i.account_id AND a.status<>'deleted'
+            AND c.id=i.cron_id AND i.source='cron' AND i.deployment_scope=e.slug AND i.queue_name='' AND i.queue_binding_id IS NULL AND coalesce(i.ack_url,'')=''
+            AND i.on_success_destination_id IS NULL AND i.on_failure_destination_id IS NULL AND i.work_policy_name IS NULL
+            AND NOT i.headers ? 'X-Gregale-Revision' AND NOT i.headers ? 'X-Gregale-Release')
 END::boolean AS owner_valid
 FROM invocations i WHERE i.id=$1::uuid
 `
@@ -114667,6 +115188,51 @@ func (q *Queries) WriteDeploymentPolicyState(ctx context.Context, db DBTX, arg W
 		arg.Fingerprint,
 		arg.AppID,
 	)
+	return err
+}
+
+const writeEnvironmentCronActivation = `-- name: WriteEnvironmentCronActivation :exec
+INSERT INTO environment_deployment_cron_activations(app_id,deployment_scope,session_id,intent,fingerprint,revision,status)
+VALUES($1::text::uuid,$2::text,$3,$4::jsonb,$5,$6,$7)
+ON CONFLICT(app_id,deployment_scope) DO UPDATE SET upload_id=NULL,session_id=EXCLUDED.session_id,intent=EXCLUDED.intent,fingerprint=EXCLUDED.fingerprint,revision=EXCLUDED.revision,status=EXCLUDED.status,updated_at=now()
+`
+
+type WriteEnvironmentCronActivationParams struct {
+	AppID       string
+	Scope       string
+	SessionID   string
+	Intent      []byte
+	Fingerprint string
+	Revision    int64
+	Status      string
+}
+
+func (q *Queries) WriteEnvironmentCronActivation(ctx context.Context, db DBTX, arg WriteEnvironmentCronActivationParams) error {
+	_, err := db.Exec(ctx, writeEnvironmentCronActivation,
+		arg.AppID,
+		arg.Scope,
+		arg.SessionID,
+		arg.Intent,
+		arg.Fingerprint,
+		arg.Revision,
+		arg.Status,
+	)
+	return err
+}
+
+const writeEnvironmentDeploymentCronState = `-- name: WriteEnvironmentDeploymentCronState :exec
+UPDATE environment_deployment_cron_states SET revision=$1::bigint
+WHERE app_id=$2::text::uuid AND deployment_scope=$3::text
+`
+
+type WriteEnvironmentDeploymentCronStateParams struct {
+	Revision int64
+	AppID    string
+	Scope    string
+}
+
+func (q *Queries) WriteEnvironmentDeploymentCronState(ctx context.Context, db DBTX, arg WriteEnvironmentDeploymentCronStateParams) error {
+	_, err := db.Exec(ctx, writeEnvironmentDeploymentCronState, arg.Revision, arg.AppID, arg.Scope)
 	return err
 }
 

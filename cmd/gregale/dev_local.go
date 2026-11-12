@@ -106,13 +106,16 @@ func cmdDevLocal(args []string) int {
 	if *port < 0 || *port > 65535 {
 		return printErr("Invalid port", errors.New("--port must be between 0 and 65535"))
 	}
-	projectDir, envPath, _, err := devLocalInputs(*sourcePath, *envFile, flagSetWasSet(fs)["env-file"])
+	projectDir, envPath, fileEnv, err := devLocalInputs(*sourcePath, *envFile, flagSetWasSet(fs)["env-file"])
 	if err != nil {
 		return printErr("Could not start locally", err)
 	}
 	fns, app, err := planDevLocalWorkload(projectDir, *watchCommand)
 	if err != nil {
 		return printErr("Could not start locally", err)
+	}
+	if err := devLocalPreflight(projectDir, fns, app, devLocalEnv(os.Environ(), nil, fileEnv)); err != nil {
+		return printErr("Local preflight failed", err)
 	}
 	cacheDir, err := localCacheDir(projectDir)
 	if err != nil {

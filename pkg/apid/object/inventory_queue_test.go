@@ -53,7 +53,12 @@ func TestInventoryQueueCapsLongListings(t *testing.T) {
 	var mu sync.Mutex
 	handed := map[string]int{}
 	active, most := 0, 0
-	release := make(chan struct{})
+	// The long listings hold their slots until every short bucket is done.
+	// The last short also waits until all the slots are seen taken: shorts
+	// finish in microseconds, so without that the last long holder could
+	// still be on its way to counting itself when the others let go.
+	release, full := make(chan struct{}), make(chan struct{})
+	filled := false
 	var shortDone atomic.Int32
 	var wg sync.WaitGroup
 	for range api.ObjectStorageInventorySweepConcurrency {
@@ -69,6 +74,10 @@ func TestInventoryQueueCapsLongListings(t *testing.T) {
 				if long {
 					active++
 					most = max(most, active)
+					if active == api.ObjectStorageInventoryLongListingWorkers && !filled {
+						filled = true
+						close(full)
+					}
 				}
 				mu.Unlock()
 				if long {
@@ -81,6 +90,11 @@ func TestInventoryQueueCapsLongListings(t *testing.T) {
 					active--
 					mu.Unlock()
 				} else if shortDone.Add(1) == shorts {
+					select {
+					case <-full:
+					case <-time.After(5 * time.Second):
+						t.Error("long listings never took every slot")
+					}
 					close(release)
 				}
 				q.done(take)

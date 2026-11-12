@@ -213,7 +213,7 @@ func (m *MemStore) CreateScheduledCronAppTask(_ context.Context, cronID string, 
 	var deployment Deployment
 	for _, candidate := range m.deployments {
 		if candidate.AppID != app.ID || candidate.Status != DeployLive ||
-			candidate.RootfsKey == "" || candidate.ImageDigest == "" {
+			candidate.RootfsKey == "" || candidate.ImageDigest == "" || !CronInScope(cron, normalizedDeploymentScope(candidate.Scope)) {
 			continue
 		}
 		if deployment.ID == "" || (candidate.TrafficPercent > 0 && deployment.TrafficPercent == 0) ||
@@ -304,7 +304,7 @@ func (m *MemStore) CreateScheduledCronAppTaskOccurrence(_ context.Context, cronI
 	var deployment Deployment
 	if status == "queued" {
 		for _, candidate := range m.deployments {
-			if candidate.AppID != app.ID || candidate.Status != DeployLive || candidate.RootfsKey == "" || candidate.ImageDigest == "" {
+			if candidate.AppID != app.ID || candidate.Status != DeployLive || candidate.RootfsKey == "" || candidate.ImageDigest == "" || !CronInScope(cron, normalizedDeploymentScope(candidate.Scope)) {
 				continue
 			}
 			if deployment.ID == "" || (candidate.TrafficPercent > 0 && deployment.TrafficPercent == 0) ||
@@ -452,7 +452,7 @@ func (m *MemStore) CreateExclusiveCommandCronAppTask(_ context.Context, accountI
 	}
 	var deployment Deployment
 	for _, candidate := range m.deployments {
-		if candidate.AppID != appID || candidate.Status != DeployLive || candidate.RootfsKey == "" || candidate.ImageDigest == "" {
+		if candidate.AppID != appID || candidate.Status != DeployLive || candidate.RootfsKey == "" || candidate.ImageDigest == "" || !CronInScope(cron, normalizedDeploymentScope(candidate.Scope)) {
 			continue
 		}
 		if deployment.ID == "" || (candidate.TrafficPercent > 0 && deployment.TrafficPercent == 0) ||
@@ -527,7 +527,7 @@ func (m *MemStore) AdmitExclusiveCommandCronFireNow(_ context.Context, requestID
 	}
 	deploymentAvailable := false
 	for _, deployment := range m.deployments {
-		if deployment.AppID == app.ID && deployment.Status == DeployLive && deployment.RootfsKey != "" && deployment.ImageDigest != "" {
+		if deployment.AppID == app.ID && deployment.Status == DeployLive && deployment.RootfsKey != "" && deployment.ImageDigest != "" && CronInScope(cron, normalizedDeploymentScope(deployment.Scope)) {
 			deploymentAvailable = true
 			break
 		}
@@ -612,7 +612,7 @@ func (m *MemStore) CreateManualCronAppTaskForFireNow(_ context.Context, requestI
 	var deployment Deployment
 	for _, candidate := range m.deployments {
 		if candidate.AppID != app.ID || candidate.Status != DeployLive ||
-			candidate.RootfsKey == "" || candidate.ImageDigest == "" {
+			candidate.RootfsKey == "" || candidate.ImageDigest == "" || !CronInScope(cron, normalizedDeploymentScope(candidate.Scope)) {
 			continue
 		}
 		if deployment.ID == "" || (candidate.TrafficPercent > 0 && deployment.TrafficPercent == 0) ||

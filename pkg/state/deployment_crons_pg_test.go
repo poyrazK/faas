@@ -72,3 +72,8 @@ func TestDeploymentCronJournalPGCompanyApp(t *testing.T) {
 		t.Fatalf("stage company crons=%+v err=%v", staged, err)
 	}
 }
+
+func TestEnvironmentDeploymentCronsPG(t *testing.T) {
+	store, _ := pgStore(t)
+	testEnvironmentDeploymentCrons(t, store)
+}

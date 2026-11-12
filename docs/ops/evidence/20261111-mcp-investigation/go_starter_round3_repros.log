@@ -1,0 +1,7 @@
+=== RUN   TestInvestigationBusyWorkerKeepsCapabilitiesFresh
+    zz_investigation_round3_test.go:84: completed executions=2889; queued=3111; capability heartbeat age=47.003s (freshness budget=45s)
+    zz_investigation_round3_test.go:89: live busy worker expired from the capability inventory: heartbeat age 47.003s
+--- FAIL: TestInvestigationBusyWorkerKeepsCapabilitiesFresh (47.16s)
+FAIL
+FAIL	github.com/onebox-faas/faas/cmd/gregale/templates/mcp-go	47.168s
+FAIL

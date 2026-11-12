@@ -18,5 +18,9 @@ export type DeploymentCronStagingRequest = {
   expected_revision: number;
   before: Array<DeploymentCronConfig>;
   desired: Array<DeploymentCronConfig>;
+  /**
+   * Stages the manifest's HTTP crons into this non-production environment of the app's project; it activates when the environment's deployment owns all of its traffic and replaces only its manifest crons. Only prepare, cancel and track_upload take one.
+   */
+  environment?: string;
 };
 

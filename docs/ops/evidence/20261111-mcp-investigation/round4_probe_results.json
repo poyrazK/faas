@@ -1,0 +1,10 @@
+[
+  {
+    "log": "hosting_round4_repros.log",
+    "exit_code": 1
+  },
+  {
+    "log": "node_round4_repros.log",
+    "exit_code": 1
+  }
+]

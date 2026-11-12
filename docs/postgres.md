@@ -50,8 +50,9 @@ Operators: see the [operator guide](managed-postgres.md).
   upgrade, delete a database, or resize it to an included class. The next
   usage sweep, within minutes, resumes it.
   - A database still suspended 30 days later is deleted. The email names the
-    date. Its app bindings are removed, and `gregale postgres recover` brings
-    it back for 7 days after that.
+    date, and a reminder follows a week before it. Its app bindings are
+    removed, and `gregale postgres recover` brings it back for 7 days after
+    that.
 - A subscription that ends drops the account to Free, which includes no
   databases, so every database it holds is suspended this way.
 
@@ -67,8 +68,8 @@ The database starts in `provisioning` and moves to `ready`. Options:
 - `--class development|burstable|production`: the compute class your plan
   allows. The default is `development`.
 - `--postgres-major N`: the PostgreSQL major version, 15 to 18. The default is
-  16. PostgreSQL 14 reaches its end of life in November 2026, so new databases
-  cannot choose it.
+  16. PostgreSQL 14 reached its end of life in November 2026 and is not
+  supported.
 - `--storage-bytes N` and `--restore-window-seconds N`: default to your plan's
   allowance.
 
@@ -117,8 +118,7 @@ databases:
 - All of one deployment's database entries use the same scope.
 
 Add `create` to have the deploy create the database when none with that name
-exists, so a new project needs no `gregale postgres create` first
-([ADR-20261106105015](adr/20261106105015-declarative-resources-connect-and-lifecycle-helpers.md)):
+exists, so a new project needs no `gregale postgres create` first:
 
 ```yaml
 databases:

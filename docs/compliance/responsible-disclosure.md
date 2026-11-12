@@ -56,29 +56,20 @@ will notify the reporter and explain. The SLAs are NOT a contract.
 
 **In scope:**
 
-- The Gregale platform (`poyrazK/faas` repo), running on a customer
-  deployment. Includes the `apid`, `gatewayd-public`,
-  `gatewayd-internal`, `schedd`, `vmmd`, `builderd`, `imaged`,
-  `meterd`, `gregale` daemons, plus the `pkg/{api,state,fcvm,netns,
-  oci,rootfs,meter,billing,wire}` shared libraries.
+- The Gregale platform: the API, the gateways that route traffic to apps,
+  the build and deploy pipeline, the microVM isolation boundary between
+  customers, and the `gregale` CLI and SDKs.
 - Customer-facing dashboard and app endpoints at `*.gregale.dev`.
-- The Stripe / Paddle / Resend / Postmark / GitHub / Google OAuth
-  integrations listed in
-  [`subprocessors.md`](subprocessors.md), to the extent that Gregale
-  code can affect them.
+- The third-party integrations listed in [Sub-processors](subprocessors.md),
+  to the extent that Gregale code can affect them.
 
 **Out of scope:**
 
 - Denial-of-service attacks, volumetric or otherwise.
 - Rate-limit testing that intentionally exhausts shared resources
   (CPU, RAM, network bandwidth).
-- Social engineering of the operator or Gregale staff.
-- Physical attacks against the Hetzner datacenter (see vendor
-  assessment file `docs/compliance/vendor-assessments/hetzner.md`
-  for physical controls).
-- Reports against a deployment running a known-vulnerable Firecracker
-  version past the 90-day patch window — these are operator-side
-  hygiene, not Gregale code.
+- Social engineering of Gregale staff.
+- Physical attacks against data centers.
 - Third-party plugins / customer code deployed on Gregale apps.
 - End-user input validation in customer-deployed apps (the customer
   is the Controller; the customer's ISMS owns that surface).
@@ -86,10 +77,7 @@ will notify the reporter and explain. The SLAs are NOT a contract.
 **Excluded by design:**
 
 - Issues that depend on a customer already having lost their
-  authentication credentials (e.g. a leaked cookie used in an
-  `auth.session.stolen` flow — see `events.kind` in spec §5.1).
-- Issues that depend on a customer self-hosting a Gregale deployment
-  with `unprivileged_userns_clone=1` or other spec §11 violations.
+  authentication credentials (e.g. a leaked session cookie).
 
 ## 5. Safe harbour
 
@@ -130,22 +118,15 @@ Reports are triaged faster when they include:
 5. **The reporter's preferred disclosure timeline**, with a default
    of 90 days from the operator's fix ship date.
 
-## 8. Operator commitments
+## 8. Our commitments
 
-- All reports land in an encrypted internal tracker (operator-side,
-  not in this repo) keyed by the `security@gregale.dev` mailbox.
-- The tracker row carries: `received_at`, `acknowledged_at`,
-  `severity`, `affected_component`, `reporter_handle`,
-  `pgp_fingerprint_of_reporter` (if PGP used), `internal_status`,
-  `fix_shipped_at`, `public_advisory_url`, `closed_at`.
-- The tracker is reviewed at every quarterly `access-review.sql` run
-  (PR-9) — any open reports older than 90 days are flagged for
-  escalation.
-- Inbound reports emit an audit row in the `events` table per
-  spec §5.1 + ADR-035. The kind name lives in the ADR-035 family
-  (canonical registry of all customer-facing audit kinds); the
-  audit row carries no payload beyond `report_id` and a redacted
-  `reporter_handle`.
+- Every report is tracked in an encrypted internal tracker tied to the
+  `security@gregale.dev` mailbox, from receipt and acknowledgement through
+  the fix and any public advisory.
+- Open reports older than 90 days are escalated at our quarterly access
+  review.
+- Each inbound report is recorded in our audit log with only a report ID and
+  a redacted reporter handle.
 
 ## 9. Cross-references
 
@@ -153,10 +134,4 @@ Reports are triaged faster when they include:
   window applies when a vulnerability is exploited against customer
   data.
 - DPA §5 (Processor obligations — confidentiality).
-- [`soc2-control-mapping.md`](soc2-control-mapping.md) CC2.3 /
-  CC4.1 / CC7.4 / CC7.5 / CC7.6.
-- [`iso27001-statement-of-applicability.md`](iso27001-statement-of-applicability.md) A.5.24 / A.5.25 / A.5.26 / A.5.28 / A.6.6 / A.6.8.
-- [`../../SECURITY.md`](../../SECURITY.md) — repo-root mirror
-  (GitHub convention).
-- [`subprocessors.md`](subprocessors.md) §3 for the in-scope
-  third-party surface.
+- [Sub-processors](subprocessors.md) for the in-scope third-party surface.

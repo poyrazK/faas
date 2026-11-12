@@ -1148,6 +1148,26 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Service bindings are source-managed", "edit depends_on or an x-gregale-service-* extension in the project source; preview bindings inherit from their source app"))
 		return
 	}
+	if req.FunctionCallables != nil {
+		if app.Type != state.AppTypeFunction {
+			api.WriteProblem(w, api.ErrValidation("function_callables applies to function apps"))
+			return
+		}
+		if err := api.ValidateFunctionCallables(*req.FunctionCallables, app.Slug); err != nil {
+			api.WriteProblem(w, api.ErrValidation(err.Error()))
+			return
+		}
+	}
+	if req.FunctionInputSchema != nil {
+		if app.Type != state.AppTypeFunction {
+			api.WriteProblem(w, api.ErrValidation("function_input_schema applies to function apps"))
+			return
+		}
+		if err := api.ValidateFunctionInputSchema(*req.FunctionInputSchema); err != nil {
+			api.WriteProblem(w, api.ErrValidation(err.Error()))
+			return
+		}
+	}
 	bindings, bindingsProblem := standaloneServiceBindings(req.ServiceBindingTargets, app.Slug)
 	if bindingsProblem != nil {
 		api.WriteProblem(w, bindingsProblem)
@@ -1393,6 +1413,22 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			lifecycleManifest = &copyOfManifest
 		}
 		lifecycleManifest.AllowedServiceCallScopes = allowedCallScopes
+		lifecycleChanged = true
+	}
+	if req.FunctionCallables != nil {
+		if lifecycleManifest == nil {
+			copyOfManifest := app.Manifest
+			lifecycleManifest = &copyOfManifest
+		}
+		lifecycleManifest.FunctionCallables = nonEmptyCallables(*req.FunctionCallables)
+		lifecycleChanged = true
+	}
+	if req.FunctionInputSchema != nil {
+		if lifecycleManifest == nil {
+			copyOfManifest := app.Manifest
+			lifecycleManifest = &copyOfManifest
+		}
+		lifecycleManifest.FunctionInputSchema = nonEmptySchema(*req.FunctionInputSchema)
 		lifecycleChanged = true
 	}
 	if req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil || req.ServiceBindingTransport != nil || len(req.ServiceReliability) > 0 {
@@ -4551,6 +4587,11 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if path == "" {
 		path = "/"
 	}
+	scope, scopeProblem := s.cronEnvironmentScope(r.Context(), app, req.Environment)
+	if scopeProblem != nil {
+		api.WriteProblem(w, scopeProblem)
+		return
+	}
 	skipIfRunning := false
 	if req.SkipIfRunning != nil {
 		skipIfRunning = *req.SkipIfRunning
@@ -4560,7 +4601,7 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		Timezone: timezone, SkipIfRunning: skipIfRunning, Command: cronCommand,
 		CommandShell: commandShell, CommandTimeoutSeconds: commandTimeoutSeconds,
 		CommandMaxOutputBytes: commandMaxOutputBytes, RetryMax: req.RetryMax,
-		RetryBackoffSeconds: req.RetryBackoffSeconds,
+		RetryBackoffSeconds: req.RetryBackoffSeconds, DeploymentScope: scope,
 	})
 	if err != nil {
 		var qe *state.CronQuotaError
@@ -7102,6 +7143,7 @@ func cronResponse(c state.Cron) api.CronResponse {
 	if !c.LastFiredAt.IsZero() {
 		resp.LastFiredAt = c.LastFiredAt.UTC().Format(time.RFC3339)
 	}
+	resp.Environment = c.DeploymentScope
 	return resp
 }
 

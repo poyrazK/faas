@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/poyrazK/faas/sdk/go/preview"
+	"github.com/gregale-dev/gregale-go/preview"
 )
 
 // BudgetAdoptionCommand builds an explicit decision from selected metadata. The

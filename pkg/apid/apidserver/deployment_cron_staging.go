@@ -14,7 +14,7 @@ func (s *server) cronStagingHandlers() deploystaging.CronHandlers {
 	return deploystaging.CronHandlers{Store: store, LoadApp: s.loadApp, Changed: func(ctx context.Context, accountID, appID, operation string) {
 		_ = s.notif.Notify(ctx, db.NotifyCronChanged, `{"kind":"reconciled","app_id":"`+appID+`"}`)
 		s.audit.Emit(ctx, "cron.set_updated", &accountID, map[string]any{"app_id": appID, "source": "deploy_staging", "operation": operation})
-	}}
+	}, Environment: s.cronEnvironmentScope}
 }
 func (s *server) getDeploymentCronStagingSnapshot(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	s.cronStagingHandlers().Snapshot(w, r, acct)

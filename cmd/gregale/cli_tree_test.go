@@ -208,6 +208,8 @@ func TestCliTreeRewrite(t *testing.T) {
 		{"bucket object-lock set GOVERNANCE", "bucket object-lock GOVERNANCE"},
 		{"bucket multipart list", "bucket uploads list"},
 		{"bucket multipart get u1", "bucket uploads status u1"},
+		{"bucket multipart cancel demo b1 u1", "bucket uploads abort demo b1 u1"},
+		{"bucket uploads abort demo b1 u1", "bucket uploads abort demo b1 u1"},
 		{"bucket uploads list", "bucket uploads list"},
 		{"bucket version delete k", "bucket version-delete k"},
 		{"bucket version list", "bucket versions list"},

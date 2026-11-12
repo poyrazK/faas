@@ -5,9 +5,32 @@ metadata is valid, the artifacts build, and the license is decided (Apache-2.0,
 2026-10-29; see [Licensing](#licensing)). What remains is registering the
 package names and wiring the publish jobs, below.
 
+The Go, Node and Python SDKs are published as source to public repositories in
+the `gregale-dev` org ([ADR-20261112110000](../docs/adr/20261112110000-sdk-public-repositories.md)):
+[gregale-go](https://github.com/gregale-dev/gregale-go),
+[gregale-js](https://github.com/gregale-dev/gregale-js) (`packages/sdk-node`)
+and [gregale-python](https://github.com/gregale-dev/gregale-python). This
+repository stays the source of truth: the `sdk-mirror` workflow runs
+`scripts/sdk_mirror.py` on every merge that touches `sdk/go`, `sdk/node`,
+`sdk/python` or `sdk/mirror*`, and commits the result with an
+`Upstream-Commit:` trailer. Never commit to those repositories directly; the
+next sync overwrites it. Packages missing from `sdk/mirror.json` (Auth, Data,
+the sandbox packages, Swift, Kotlin) stay here until they launch.
+
+Each repository has its own deploy key with write access, stored here as
+`SDK_MIRROR_DEPLOY_KEY_GO`, `SDK_MIRROR_DEPLOY_KEY_JS` and
+`SDK_MIRROR_DEPLOY_KEY_PYTHON`. To publish a new repository, add it to
+`sdk/mirror.json` and the workflow matrix, create the empty public repository,
+add its deploy key and secret, and run the workflow. Check a tree locally with:
+
+```sh
+python3 scripts/sdk_mirror.py check
+python3 scripts/sdk_mirror.py build --repo gregale-go --out /tmp/gregale-go
+```
+
 | Language | Install name | Import as | Registry state |
 |---|---|---|---|
-| Go | `github.com/poyrazK/faas/sdk/go` | `faas` | needs a `sdk/go/vX.Y.Z` tag |
+| Go | `github.com/gregale-dev/gregale-go` | `faas` | needs a `vX.Y.Z` tag on gregale-go |
 | Node | `@gregale/sdk-node` | `@gregale/sdk-node` | not published; npm scope `@gregale` exists |
 | Data API | `@gregale/data` | `@gregale/data` | not published; release job ready, off (see [Data API SDK](#data-api-sdk)) |
 | Application Auth | `@gregale/auth` | `@gregale/auth` | source package in `sdk/auth`; not published |
@@ -48,22 +71,25 @@ permanent.
 
 ## Go
 
-Nested modules in a monorepo resolve versions from **directory-prefixed
-tags**. A bare `v0.1.0` will not work:
+The module lives at the root of `gregale-dev/gregale-go`, so versions are
+plain tags there. Tag the mirror commit whose `Upstream-Commit:` trailer is the
+release you want:
 
 ```sh
-git tag sdk/go/v0.1.0
-git push origin sdk/go/v0.1.0
+git clone https://github.com/gregale-dev/gregale-go && cd gregale-go
+git tag v0.1.0 <mirror-commit>
+git push origin v0.1.0
 ```
 
-Then `go get github.com/poyrazK/faas/sdk/go@v0.1.0` resolves via the module
+Then `go get github.com/gregale-dev/gregale-go@v0.1.0` resolves via the module
 proxy. Nothing else is required — no registry account, no secrets. Go is the
-only one of the three that needs no external setup.
+only one of the three that needs no external setup. A Go tag is permanent
+once the proxy has seen it.
 
 Verify a tag before announcing it:
 
 ```sh
-GOPROXY=proxy.golang.org go list -m github.com/poyrazK/faas/sdk/go@v0.1.0
+GOPROXY=proxy.golang.org go list -m github.com/gregale-dev/gregale-go@v0.1.0
 ```
 
 ## Node
@@ -134,4 +160,4 @@ paths customers can use right now:
 
 - Node — `npm pack` a tarball, then `npm install /path/to/tarball.tgz`
 - Python — `poetry build -f wheel`, then `pip install dist/*.whl`
-- Go — already works via `go get` once a `sdk/go/vX.Y.Z` tag exists
+- Go — `go get github.com/gregale-dev/gregale-go@<commit>` works today; a `vX.Y.Z` tag on gregale-go adds versions
