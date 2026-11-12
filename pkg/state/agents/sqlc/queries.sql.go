@@ -62,6 +62,37 @@ func (q *Queries) AgentCallbacksRevokedAt(ctx context.Context, db DBTX, arg Agen
 	return revoked_at, err
 }
 
+const agentGitHubSubscriptionByCall = `-- name: AgentGitHubSubscriptionByCall :one
+SELECT id::text AS id, repository, event_types, expires_at FROM agent_github_subscriptions
+ WHERE endpoint_id = $1::text::uuid AND thread_id = $2::text
+   AND tool_call_id = $3::text
+`
+
+type AgentGitHubSubscriptionByCallParams struct {
+	EndpointID string
+	ThreadID   string
+	ToolCallID string
+}
+
+type AgentGitHubSubscriptionByCallRow struct {
+	ID         string
+	Repository string
+	EventTypes []string
+	ExpiresAt  pgtype.Timestamptz
+}
+
+func (q *Queries) AgentGitHubSubscriptionByCall(ctx context.Context, db DBTX, arg AgentGitHubSubscriptionByCallParams) (AgentGitHubSubscriptionByCallRow, error) {
+	row := db.QueryRow(ctx, agentGitHubSubscriptionByCall, arg.EndpointID, arg.ThreadID, arg.ToolCallID)
+	var i AgentGitHubSubscriptionByCallRow
+	err := row.Scan(
+		&i.ID,
+		&i.Repository,
+		&i.EventTypes,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const agentRunQueueStats = `-- name: AgentRunQueueStats :one
 SELECT count(*)::integer AS queued,
   coalesce(extract(epoch FROM now()-min(queued_at)), 0)::float8 AS oldest_seconds
@@ -79,6 +110,49 @@ func (q *Queries) AgentRunQueueStats(ctx context.Context, db DBTX) (AgentRunQueu
 	row := db.QueryRow(ctx, agentRunQueueStats)
 	var i AgentRunQueueStatsRow
 	err := row.Scan(&i.Queued, &i.OldestSeconds)
+	return i, err
+}
+
+const agentVersionPrivatePeak = `-- name: AgentVersionPrivatePeak :one
+SELECT count(*)::integer AS runs,
+       coalesce(percentile_disc(0.95) WITHIN GROUP (ORDER BY h.peak_private_mb), 0)::bigint AS peak_mb
+  FROM (SELECT u.peak_private_mb
+          FROM agent_run_usage u JOIN agent_runs r ON r.id = u.run_id
+         WHERE u.account_id = $1::text::uuid AND r.agent_id = $2::text::uuid
+           AND r.agent_version = $3::integer
+           AND (r.checkout_repository IS NOT NULL) = $4::boolean
+           AND u.samples::bigint * 100 >= u.expected_samples::bigint * (100 - $5::integer)
+         ORDER BY u.recorded_at DESC
+         LIMIT $6::integer) h
+`
+
+type AgentVersionPrivatePeakParams struct {
+	AccountID     string
+	AgentID       string
+	AgentVersion  int32
+	Checkout      bool
+	MaxGapPercent int32
+	WindowRuns    int32
+}
+
+type AgentVersionPrivatePeakRow struct {
+	Runs   int32
+	PeakMb int64
+}
+
+// ADR-20261027090015 §3: the p95 private peak of a version's recent measured
+// runs of one input class, leaving out runs with too many missing samples.
+func (q *Queries) AgentVersionPrivatePeak(ctx context.Context, db DBTX, arg AgentVersionPrivatePeakParams) (AgentVersionPrivatePeakRow, error) {
+	row := db.QueryRow(ctx, agentVersionPrivatePeak,
+		arg.AccountID,
+		arg.AgentID,
+		arg.AgentVersion,
+		arg.Checkout,
+		arg.MaxGapPercent,
+		arg.WindowRuns,
+	)
+	var i AgentVersionPrivatePeakRow
+	err := row.Scan(&i.Runs, &i.PeakMb)
 	return i, err
 }
 
@@ -291,6 +365,23 @@ func (q *Queries) CountAgentRunsToday(ctx context.Context, db DBTX, accountID st
 	return column_1, err
 }
 
+const countLiveAgentGitHubSubscriptions = `-- name: CountLiveAgentGitHubSubscriptions :one
+SELECT count(*)::integer FROM agent_github_subscriptions
+ WHERE endpoint_id = $1::text::uuid AND expires_at > $2::timestamptz
+`
+
+type CountLiveAgentGitHubSubscriptionsParams struct {
+	EndpointID string
+	Now        pgtype.Timestamptz
+}
+
+func (q *Queries) CountLiveAgentGitHubSubscriptions(ctx context.Context, db DBTX, arg CountLiveAgentGitHubSubscriptionsParams) (int32, error) {
+	row := db.QueryRow(ctx, countLiveAgentGitHubSubscriptions, arg.EndpointID, arg.Now)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countLiveAgentRuns = `-- name: CountLiveAgentRuns :one
 SELECT count(*)::integer FROM agent_runs
  WHERE agent_id=$1::text::uuid AND account_id=$2::text::uuid
@@ -347,6 +438,25 @@ func (q *Queries) CountSandboxPorts(ctx context.Context, db DBTX, arg CountSandb
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const deleteExpiredAgentGitHubSubscriptions = `-- name: DeleteExpiredAgentGitHubSubscriptions :execrows
+DELETE FROM agent_github_subscriptions WHERE id IN (
+  SELECT id FROM agent_github_subscriptions WHERE expires_at < $1::timestamptz
+   ORDER BY expires_at LIMIT $2::integer)
+`
+
+type DeleteExpiredAgentGitHubSubscriptionsParams struct {
+	Before  pgtype.Timestamptz
+	MaxRows int32
+}
+
+func (q *Queries) DeleteExpiredAgentGitHubSubscriptions(ctx context.Context, db DBTX, arg DeleteExpiredAgentGitHubSubscriptionsParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteExpiredAgentGitHubSubscriptions, arg.Before, arg.MaxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteSandboxPort = `-- name: DeleteSandboxPort :execrows
@@ -1407,6 +1517,40 @@ func (q *Queries) InsertAgentDelivery(ctx context.Context, db DBTX, arg InsertAg
 	return err
 }
 
+const insertAgentGitHubSubscription = `-- name: InsertAgentGitHubSubscription :one
+INSERT INTO agent_github_subscriptions (account_id, endpoint_id, thread_id, tool_call_id, repository, event_types, issued_at, expires_at)
+VALUES ($1::text::uuid, $2::text::uuid, $3::text, $4::text,
+  $5::text, $6::text[], $7::timestamptz, $8::timestamptz)
+RETURNING id::text AS id
+`
+
+type InsertAgentGitHubSubscriptionParams struct {
+	AccountID  string
+	EndpointID string
+	ThreadID   string
+	ToolCallID string
+	Repository string
+	EventTypes []string
+	IssuedAt   pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+}
+
+func (q *Queries) InsertAgentGitHubSubscription(ctx context.Context, db DBTX, arg InsertAgentGitHubSubscriptionParams) (string, error) {
+	row := db.QueryRow(ctx, insertAgentGitHubSubscription,
+		arg.AccountID,
+		arg.EndpointID,
+		arg.ThreadID,
+		arg.ToolCallID,
+		arg.Repository,
+		arg.EventTypes,
+		arg.IssuedAt,
+		arg.ExpiresAt,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const insertAgentRun = `-- name: InsertAgentRun :one
 INSERT INTO agent_runs (account_id,agent_id,agent_version,tenant_id,trigger,dedupe_key,prompt,inputs,ram_mb,timeout_sec,
   checkout_repository,checkout_commit,checkout_installation_id,github_repository,github_number,github_installation_id,
@@ -2065,6 +2209,63 @@ func (q *Queries) ListClaimableSandboxSessions(ctx context.Context, db DBTX, max
 	return items, nil
 }
 
+const listLiveAgentGitHubSubscriptions = `-- name: ListLiveAgentGitHubSubscriptions :many
+SELECT id::text AS id, endpoint_id::text AS endpoint_id, thread_id, tool_call_id, issued_at
+ FROM agent_github_subscriptions
+ WHERE account_id = $1::text::uuid AND repository = $2::text
+   AND $3::text = ANY (event_types) AND expires_at > $4::timestamptz
+ ORDER BY created_at, id LIMIT $5::integer
+`
+
+type ListLiveAgentGitHubSubscriptionsParams struct {
+	AccountID  string
+	Repository string
+	EventType  string
+	Now        pgtype.Timestamptz
+	MaxRows    int32
+}
+
+type ListLiveAgentGitHubSubscriptionsRow struct {
+	ID         string
+	EndpointID string
+	ThreadID   string
+	ToolCallID string
+	IssuedAt   pgtype.Timestamptz
+}
+
+// The live subscriptions of one account to one repository's event type.
+func (q *Queries) ListLiveAgentGitHubSubscriptions(ctx context.Context, db DBTX, arg ListLiveAgentGitHubSubscriptionsParams) ([]ListLiveAgentGitHubSubscriptionsRow, error) {
+	rows, err := db.Query(ctx, listLiveAgentGitHubSubscriptions,
+		arg.AccountID,
+		arg.Repository,
+		arg.EventType,
+		arg.Now,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLiveAgentGitHubSubscriptionsRow{}
+	for rows.Next() {
+		var i ListLiveAgentGitHubSubscriptionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.EndpointID,
+			&i.ThreadID,
+			&i.ToolCallID,
+			&i.IssuedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSandboxPorts = `-- name: ListSandboxPorts :many
 SELECT p.port, p.visibility, p.created_at FROM sandbox_ports p
  WHERE p.sandbox_id=$1::text::uuid AND p.account_id=$2::text::uuid ORDER BY p.port
@@ -2533,6 +2734,17 @@ SELECT pg_advisory_xact_lock(hashtextextended('agent-runs:' || $1::text, 0))
 // Serializes every agent write and run admission of one account (ADR-20261027090010 §4).
 func (q *Queries) LockAccountAgents(ctx context.Context, db DBTX, accountID string) error {
 	_, err := db.Exec(ctx, lockAccountAgents, accountID)
+	return err
+}
+
+const lockAgentGitHubSubscriptionEndpoint = `-- name: LockAgentGitHubSubscriptionEndpoint :exec
+SELECT pg_advisory_xact_lock(hashtextextended('agent-github-subscriptions:' || $1::text, 0))
+`
+
+// ADR-20261030125501 §4: serializes gregale_github_subscribe calls of one
+// endpoint, so its live subscriptions stay within the plan's limit.
+func (q *Queries) LockAgentGitHubSubscriptionEndpoint(ctx context.Context, db DBTX, endpointID string) error {
+	_, err := db.Exec(ctx, lockAgentGitHubSubscriptionEndpoint, endpointID)
 	return err
 }
 

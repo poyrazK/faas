@@ -548,6 +548,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/ops/accounts/{id}/reset-mfa":                    true, // operator-only account recovery (ADR-20261108160000)
 	"POST /v1/admin/ops/accounts/{id}/revert-email":                 true, // operator-only account recovery (ADR-20261110100000)
 	"POST /v1/admin/ops/accounts/{id}/object-storage-ceiling":       true, // operator-only support grant (ADR-20261101214152)
+	"POST /v1/admin/ops/accounts/{id}/complimentary":                true, // operator-only complimentary plan (ADR-20261111140000)
 	"POST /v1/admin/ops/nodes/{name}/drain":                         true, // operator-only node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/force-drain":                   true, // operator-only destructive node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/activate":                      true, // operator-only node lifecycle control
@@ -730,6 +731,9 @@ var routeExclude = map[string]bool{
 	"GET /dashboard/apps/{slug}/workflows/stored/live-verifications/{run_id}":     true, // ADR-1293 session-authenticated HTML progress fragment
 	"POST /dashboard/apps/{slug}/workflows/stored/live-verifications/{run_id}":    true, // ADR-1293 CSRF-protected assertion check fragment
 	"POST /dashboard/apps/{slug}/workflows/stored/live-suites/{suite_id}/advance": true, // ADR-1297: session-only HTML continuation with CSRF.
+
+	// ADR-20261110200000: CSRF-protected HTML form on the organization page.
+	"POST /dashboard/orgs/{slug}/github/{installationID}/disconnect": true,
 }
 
 func init() {
@@ -998,6 +1002,7 @@ var dtoExclude = map[string]bool{
 	// every other Obs* DTO stays admin-only and is excluded here.
 	"ObsAccountMutationResponse":      true,
 	"ObsObjectStorageCeilingResponse": true, // operator-only support grant view (ADR-20261101214152)
+	"ObsComplimentaryResponse":        true, // operator-only complimentary plan view (ADR-20261111140000)
 	"ObsAppDetail":                    true,
 	"ObsAppDetailResponse":            true,
 	"ObsAppHealth":                    true,
@@ -1957,7 +1962,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", appTasksFile),
 		filepath.Join(root, "pkg", "api", imageRunsFile),
 		filepath.Join(root, "pkg", "api", projectsFile),
-		filepath.Join(root, "pkg", "api", "project_environment_clones.go"), // ADR-590
+		filepath.Join(root, "pkg", "api", "project_environment_clones.go"),   // ADR-590
+		filepath.Join(root, "pkg", "api", "project_environment_branches.go"), // ADR-20261031193635
 		filepath.Join(root, "pkg", "api", "project_environment_queues.go"),
 		filepath.Join(root, "pkg", "api", "project_environment_secrets.go"), // ADR-1139
 		filepath.Join(root, "pkg", "api", "project_release_bindings.go"),
@@ -2102,6 +2108,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "agent_connections.go"), // ADR-20261030133644: connected agents
 		filepath.Join(root, "pkg", "api", "agent_approvals.go"),   // ADR-20261104140058: approvals for risky agent actions
 		filepath.Join(root, "pkg", "api", "agent_activity.go"),    // ADR-20261107220000: agent activity log
+		filepath.Join(root, "pkg", "api", "agent_budget.go"),      // ADR-20261111114059: agent budgets
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

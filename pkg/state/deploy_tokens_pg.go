@@ -205,6 +205,30 @@ func (s *PgStore) AuthenticateDeployToken(ctx context.Context, hash []byte) (Acc
 		CreatedAt: t.CreatedAt, ExpiresAt: t.ExpiresAt, Status: t.Status}, nil
 }
 
+func (s *PgStore) ListLiveDeployTokensHeldBy(ctx context.Context, accountID string) ([]DeployToken, error) {
+	if accountID == "" {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`select `+deployTokenSelectCols+` from deploy_tokens
+		 where coalesce(created_by_account_id, account_id) = $1::uuid
+		   and status <> 'revoked' and expires_at > now()
+		 order by created_at`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DeployToken
+	for rows.Next() {
+		t, err := scanDeployToken(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 func (s *PgStore) TouchDeployTokenLastUsed(ctx context.Context, tokenID string) error {
 	if tokenID == "" {
 		return nil

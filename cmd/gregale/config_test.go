@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/zalando/go-keyring"
 )
@@ -22,6 +23,9 @@ type fakeKeyring struct {
 	setErr error
 	getErr error
 	delErr error
+	// calls logs every operation as "get|set|delete <service>", so a
+	// test can prove the keychain (and its unlock dialog) was not asked.
+	calls []string
 }
 
 func newFakeKeyring() *fakeKeyring {
@@ -32,9 +36,16 @@ func (f *fakeKeyring) storeKey(service, account string) string {
 	return service + "\x00" + account
 }
 
+func (f *fakeKeyring) callLog() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
 func (f *fakeKeyring) Get(service, account string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.calls = append(f.calls, "get "+service)
 	if f.getErr != nil {
 		return "", f.getErr
 	}
@@ -48,6 +59,7 @@ func (f *fakeKeyring) Get(service, account string) (string, error) {
 func (f *fakeKeyring) Set(service, account, value string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.calls = append(f.calls, "set "+service)
 	if f.setErr != nil {
 		return f.setErr
 	}
@@ -58,6 +70,7 @@ func (f *fakeKeyring) Set(service, account, value string) error {
 func (f *fakeKeyring) Delete(service, account string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.calls = append(f.calls, "delete "+service)
 	if f.delErr != nil {
 		return f.delErr
 	}
@@ -324,15 +337,180 @@ func TestLoadToken_PrefersEnvOverKeychain(t *testing.T) {
 	}
 }
 
-// TestLoadToken_PrefersKeychainOverFile covers the keychain taking
-// priority over the plaintext-file fallback when env is unset.
-func TestLoadToken_PrefersKeychainOverFile(t *testing.T) {
+// TestLoadToken_PrefersFileOverKeychain pins the read order: the token
+// file exists only when the keychain did not take the key, so it is
+// read first and the keychain — whose unlock dialog a WSL user saw on
+// every command after cancelling it once at login — is never asked.
+func TestLoadToken_PrefersFileOverKeychain(t *testing.T) {
 	setupHermeticTokensEnv(t)
 	writeLegacyToken(t, testAPIKey('b'))
+	f := setFakeKeyring(t, withEntry(keyringService, keyringAccount, testAPIKey('a')))
+
+	if got := loadToken(); got != testAPIKey('b') {
+		t.Errorf("loadToken = %q, want file value (file wins over keychain)", got)
+	}
+	if calls := f.callLog(); len(calls) != 0 {
+		t.Errorf("keychain was asked although the token file holds a valid key: %v", calls)
+	}
+}
+
+// TestLoadToken_ReadsKeychainWhenNoFile covers the keychain path when
+// no token file exists (the normal state after a keychain login).
+func TestLoadToken_ReadsKeychainWhenNoFile(t *testing.T) {
+	setupHermeticTokensEnv(t)
 	setFakeKeyring(t, withEntry(keyringService, keyringAccount, testAPIKey('a')))
 
 	if got := loadToken(); got != testAPIKey('a') {
-		t.Errorf("loadToken = %q, want keychain value (keychain wins over file)", got)
+		t.Errorf("loadToken = %q, want keychain value", got)
+	}
+}
+
+// TestLoadToken_LockedKeychainAskedOnce: when the keychain refuses a
+// read (unlock cancelled), the pre-#439 legacy keychain entry is not
+// asked too — that would be a second unlock dialog for one command.
+func TestLoadToken_LockedKeychainAskedOnce(t *testing.T) {
+	setupHermeticTokensEnv(t)
+	f := setFakeKeyring(t, withGetErr(errors.New("failed to unlock correct collection '/org/freedesktop/secrets/aliases/default'")))
+
+	stderr, restore := captureStderr(t)
+	defer restore()
+	if got := loadToken(); got != "" {
+		t.Errorf("loadToken = %q, want empty", got)
+	}
+	if calls := f.callLog(); len(calls) != 1 || calls[0] != "get "+keyringService {
+		t.Errorf("keychain calls = %v, want one read of %q", calls, keyringService)
+	}
+	for _, want := range []string{"the keyring is locked", "GREGALE_KEYRING=off", "--insecure-storage"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("warning missing %q; got %q", want, stderr.String())
+		}
+	}
+}
+
+// TestKeyringOptOut covers GREGALE_KEYRING=off and login
+// --insecure-storage: the key goes to the token file with no warning,
+// and the keychain is never asked — not on save, load or delete.
+func TestKeyringOptOut(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T)
+	}{
+		{"env off", func(t *testing.T) { t.Setenv(keyringModeEnv, "off") }},
+		{"env 0", func(t *testing.T) { t.Setenv(keyringModeEnv, "0") }},
+		{"insecure-storage flag", func(t *testing.T) {
+			loginInsecureStorage = true
+			t.Cleanup(func() { loginInsecureStorage = false })
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupHermeticTokensEnv(t)
+			f := setFakeKeyring(t, withEntry(keyringService, keyringAccount, testAPIKey('a')))
+			tc.setup(t)
+			want := testAPIKey('b')
+
+			stderr, restore := captureStderr(t)
+			defer restore()
+			store, err := saveTokenStore(want)
+			if err != nil {
+				t.Fatalf("saveTokenStore: %v", err)
+			}
+			if store.Path != mustTokenPath(t) {
+				t.Errorf("store = %+v, want token file %s", store, mustTokenPath(t))
+			}
+			if strings.TrimSpace(stderr.String()) != "" {
+				t.Errorf("opt-out printed a warning: %q", stderr.String())
+			}
+			if got := loadToken(); got != want {
+				t.Errorf("loadToken = %q, want file token", got)
+			}
+			deleteToken()
+			if _, err := os.Stat(mustTokenPath(t)); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("token file should be removed on logout; Stat err=%v", err)
+			}
+			if calls := f.callLog(); len(calls) != 0 {
+				t.Errorf("keychain was asked despite the opt-out: %v", calls)
+			}
+		})
+	}
+}
+
+// TestKeyringOptOut_OtherValuesKeepKeychain: only explicit off values
+// disable the keychain.
+func TestKeyringOptOut_OtherValuesKeepKeychain(t *testing.T) {
+	setupHermeticTokensEnv(t)
+	t.Setenv(keyringModeEnv, "on")
+	f := setFakeKeyring(t)
+	store, err := saveTokenStore(testAPIKey('a'))
+	if err != nil {
+		t.Fatalf("saveTokenStore: %v", err)
+	}
+	if store.Path != "" {
+		t.Errorf("store = %+v, want keychain", store)
+	}
+	if got, _ := f.Get(keyringService, keyringAccount); got != testAPIKey('a') {
+		t.Errorf("keychain entry = %q, want saved token", got)
+	}
+}
+
+// blockingKeyring never answers, like go-keyring waiting on an unlock
+// dialog that cannot be shown (WSL without WSLg, SSH).
+type blockingKeyring struct{ release chan struct{} }
+
+func (b blockingKeyring) Get(string, string) (string, error) {
+	<-b.release
+	return "", keyring.ErrNotFound
+}
+func (b blockingKeyring) Set(string, string, string) error { <-b.release; return nil }
+func (b blockingKeyring) Delete(string, string) error      { <-b.release; return nil }
+
+// TestKeyringTimeout_FallsBackToFile: a keychain that never answers
+// cannot hang login; the key goes to the token file and the warning
+// says the keychain did not respond.
+func TestKeyringTimeout_FallsBackToFile(t *testing.T) {
+	setupHermeticTokensEnv(t)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	installKeyringStub(t, blockingKeyring{release: release})
+	prevWait := keyringWait
+	keyringWait = func() time.Duration { return 20 * time.Millisecond }
+	t.Cleanup(func() { keyringWait = prevWait })
+
+	stderr, restore := captureStderr(t)
+	defer restore()
+	store, err := saveTokenStore(testAPIKey('c'))
+	if err != nil {
+		t.Fatalf("saveTokenStore: %v", err)
+	}
+	if store.Path != mustTokenPath(t) {
+		t.Errorf("store = %+v, want token file", store)
+	}
+	if !strings.Contains(stderr.String(), "OS keychain did not respond") {
+		t.Errorf("expected timeout warning; got %q", stderr.String())
+	}
+	if got := loadToken(); got != testAPIKey('c') {
+		t.Errorf("loadToken = %q, want file token", got)
+	}
+}
+
+// TestSaveToken_FallbackWarningIsActionable pins the wording a WSL user
+// sees after cancelling the keyring unlock dialog at login.
+func TestSaveToken_FallbackWarningIsActionable(t *testing.T) {
+	setupHermeticTokensEnv(t)
+	setFakeKeyring(t, withSetErr(errors.New("failed to unlock correct collection '/org/freedesktop/secrets/aliases/default'")))
+
+	stderr, restore := captureStderr(t)
+	defer restore()
+	if _, err := saveTokenStore(testAPIKey('d')); err != nil {
+		t.Fatalf("saveTokenStore: %v", err)
+	}
+	got := stderr.String()
+	for _, want := range []string{"the keyring is locked", "plaintext file readable only by you", "unlock it and run 'gregale login' again", "--insecure-storage", "GREGALE_KEYRING=off"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("warning missing %q; got %q", want, got)
+		}
+	}
+	if strings.Contains(got, "/org/freedesktop") {
+		t.Errorf("warning leaks the raw D-Bus error: %q", got)
 	}
 }
 
@@ -347,10 +525,21 @@ func TestLoadToken_InvalidKeychainFallsThroughToFile(t *testing.T) {
 	writeLegacyToken(t, want)
 	setFakeKeyring(t, withEntry(keyringService, keyringAccount, "stale-session-value"))
 
-	stderr, restore := captureStderr(t)
-	defer restore()
 	if got := loadToken(); got != want {
 		t.Errorf("loadToken = %q, want valid file token after invalid keychain value", got)
+	}
+}
+
+// TestLoadToken_InvalidKeychainWarns: with no token file, an invalid
+// keychain value is ignored with a warning, never sent to the server.
+func TestLoadToken_InvalidKeychainWarns(t *testing.T) {
+	setupHermeticTokensEnv(t)
+	setFakeKeyring(t, withEntry(keyringService, keyringAccount, "stale-session-value"))
+
+	stderr, restore := captureStderr(t)
+	defer restore()
+	if got := loadToken(); got != "" {
+		t.Errorf("loadToken = %q, want empty for an invalid keychain value", got)
 	}
 	if !strings.Contains(stderr.String(), "keychain contains an invalid Gregale API key") {
 		t.Errorf("expected invalid-keychain warning; got %q", stderr.String())
@@ -391,13 +580,13 @@ func TestLoadToken_KeychainErrNotFound_FallsThroughToFile(t *testing.T) {
 	_ = tmp
 }
 
-// TestLoadToken_KeychainOtherError_FallsThroughToFileAndWarns covers
-// the WARN branch: a keychain error other than ErrNotFound falls
-// through to the file and emits a WARN to stderr.
-func TestLoadToken_KeychainOtherError_FallsThroughToFileAndWarns(t *testing.T) {
+// TestLoadToken_KeychainOtherError_FallsThroughToLegacyFileAndWarns
+// covers the WARN branch: a keychain error other than ErrNotFound
+// emits a WARN and the remaining (legacy) file store is still read.
+func TestLoadToken_KeychainOtherError_FallsThroughToLegacyFileAndWarns(t *testing.T) {
 	setupHermeticTokensEnv(t)
 	want := testAPIKey('b')
-	writeLegacyToken(t, want)
+	writePreRenamePlaintextToken(t, want)
 	setFakeKeyring(t, withGetErr(errors.New("keychain broken")))
 
 	stderr, restore := captureStderr(t)
@@ -405,9 +594,9 @@ func TestLoadToken_KeychainOtherError_FallsThroughToFileAndWarns(t *testing.T) {
 	got := loadToken()
 
 	if got != want {
-		t.Errorf("loadToken = %q, want valid file token", got)
+		t.Errorf("loadToken = %q, want valid legacy file token", got)
 	}
-	if !strings.Contains(stderr.String(), "OS keychain lookup failed") {
+	if !strings.Contains(stderr.String(), "Could not read the API key from the OS keychain: keychain broken") {
 		t.Errorf("expected WARN to mention keychain failure; got %q", stderr.String())
 	}
 }
@@ -483,8 +672,8 @@ func TestEffectiveKeyring_FallsBackToProductionWhenNil(t *testing.T) {
 // for the duration of the test.
 func TestKeyringStub_IsWired(t *testing.T) {
 	f := setFakeKeyring(t)
-	if kr := effectiveKeyring(); kr != keyringStub(f) {
-		t.Errorf("effectiveKeyring is not the installed fake")
+	if kr, ok := effectiveKeyring().(timeoutKeyring); !ok || kr.inner != keyringStub(f) {
+		t.Errorf("effectiveKeyring does not wrap the installed fake")
 	}
 }
 

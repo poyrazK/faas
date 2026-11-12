@@ -277,9 +277,14 @@ func (s *PgStore) JobCreate(ctx context.Context, accountID, name, kind, imageRef
 // customer CRUD — the dashboard's admin audit path is a separate
 // surface that bypasses this gate).
 func (s *PgStore) JobGetByID(ctx context.Context, id string) (Job, error) {
+	return s.jobByID(ctx, id, false)
+}
+
+func (s *PgStore) jobByID(ctx context.Context, id string, imageRunHistory bool) (Job, error) {
 	row := s.pool.QueryRow(ctx,
-		`select `+jobSelectCols+` from jobs where id = $1::uuid and status <> 'deleted'`,
-		id)
+		`select `+jobSelectCols+` from jobs where id = $1::uuid
+		 and (status <> 'deleted' or ($2::boolean and kind = 'image_run'))`,
+		id, imageRunHistory)
 	return scanJob(row)
 }
 
@@ -920,12 +925,15 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 		return JobRun{}, nil, fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
-	var imageStatus string
-	if err := tx.QueryRow(ctx, `select image_materialization_status from jobs
-	    where id = $1::uuid and account_id = $2::uuid and status <> 'deleted' for update`, jobID, accountID).Scan(&imageStatus); err != nil {
+	var imageStatus, imageKey string
+	if err := tx.QueryRow(ctx, `select image_materialization_status, coalesce(image_storage_key, '') from jobs
+	    where id = $1::uuid and account_id = $2::uuid and status <> 'deleted' for update`, jobID, accountID).Scan(&imageStatus, &imageKey); err != nil {
 		return JobRun{}, nil, mapErr(err)
 	}
 	if imageStatus == "failed" {
+		return JobRun{}, nil, ErrConflict
+	}
+	if opts.ExpectedImageStorageKey != "" && (imageStatus != "ready" || imageKey != opts.ExpectedImageStorageKey) {
 		return JobRun{}, nil, ErrConflict
 	}
 	if exclusiveOperationID != "" {
@@ -964,7 +972,7 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 		             else j.command[1:1] || $9::text[] end,
 		        $10, $11, $12, $13, $14, nullif($15, ''),
 		        j.image_ref, j.image_resolved_digest, j.image_storage_key,
-		        j.ram_mb, j.env_overrides || $4::jsonb,
+		        coalesce($24::int, j.ram_mb), j.env_overrides || $4::jsonb,
 		        nullif($16, ''), nullif($17, ''), coalesce($18::jsonb, j.failure_rules), nullif($20, '')::uuid, nullif($21::bigint, 0),
 		        nullif($22, ''), nullif($23, '')
 		   from jobs j
@@ -977,7 +985,7 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 		executionClass, eligibleAt, latestStartAt, failurePolicy,
 		manifestVersion, inputDigest, inputManifestURI, inputManifestSHA256,
 		policyJSON(opts.FailureRules), runID, exclusiveOperationID, exclusiveGeneration,
-		opts.ProcessUser, opts.ProcessWorkdir)
+		opts.ProcessUser, opts.ProcessWorkdir, opts.RAMMB)
 	run, err := scanJobRun(row)
 	if err != nil {
 		// mapErr unwraps FK violations + ErrNoRows to ErrNotFound.

@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "6255c3053692a769753328938e3545f72e650b8d369f25d7c3e1a1c54c14d62f",
+      "revision": "965c825d6a16f475e9448a5f87aa1e55b4bdc78590a26ce68c6c4ad53f6b9728",
       "files": [
         "faas.rules.yml"
       ],
@@ -2649,6 +2649,19 @@
           }
         },
         {
+          "id": "57397a26dbb7860074d5cabd658e872697bcc474ad6eb9e233082d5b7913a5d0",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageInventoryQuietBacklog",
+          "definition": {
+            "expression_hash": "efdab032c9fcf7d5249705784bbb59aab5cbfc4ab4840b6f03a588cb3eefdec4",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9c70fa6d93a121a0555a530719ff281a303d646a9699d1bcb18ab9c00347a9a8"
+          }
+        },
+        {
           "id": "57f242a7004adb2b0265c708867081ac21886232970daf99d1edf074d06e95ef",
           "file_name": "faas.rules.yml",
           "group_name": "faas_app_tasks",
@@ -3803,6 +3816,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "ed13a5d764d593fb499bc5604969d3ce5e5f36d518ec4294a176e39bef16977c"
+          }
+        },
+        {
+          "id": "85ee32bcb96e5122f74f386755db0b524d4753c327446c2469c9301430a6d8e3",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageInventoryDrift",
+          "definition": {
+            "expression_hash": "acefe20aec12b5b4251d083a4325abbf45dab6f72e1dc07e0e6b97fb7d974695",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "594181c670051a6c5eaba752c2a4a1f461455d532ae476f554821a3ce1424ee5"
           }
         },
         {
@@ -7085,7 +7111,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "f357abd0c39d3884331c88eae7f2b121894f5559cf308465a7d0d35e6ccd4b58",
+      "revision": "8cc8a2c7f6370709a6ff051a0950291e1b59da3ed9fd3ce84aac3919efc14c38",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -9838,6 +9864,19 @@
           }
         },
         {
+          "id": "57397a26dbb7860074d5cabd658e872697bcc474ad6eb9e233082d5b7913a5d0",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageInventoryQuietBacklog",
+          "definition": {
+            "expression_hash": "efdab032c9fcf7d5249705784bbb59aab5cbfc4ab4840b6f03a588cb3eefdec4",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9c70fa6d93a121a0555a530719ff281a303d646a9699d1bcb18ab9c00347a9a8"
+          }
+        },
+        {
           "id": "57f242a7004adb2b0265c708867081ac21886232970daf99d1edf074d06e95ef",
           "file_name": "faas.rules.yml",
           "group_name": "faas_app_tasks",
@@ -11070,6 +11109,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "ed13a5d764d593fb499bc5604969d3ce5e5f36d518ec4294a176e39bef16977c"
+          }
+        },
+        {
+          "id": "85ee32bcb96e5122f74f386755db0b524d4753c327446c2469c9301430a6d8e3",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageInventoryDrift",
+          "definition": {
+            "expression_hash": "acefe20aec12b5b4251d083a4325abbf45dab6f72e1dc07e0e6b97fb7d974695",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "594181c670051a6c5eaba752c2a4a1f461455d532ae476f554821a3ce1424ee5"
           }
         },
         {

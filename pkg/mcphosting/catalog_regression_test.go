@@ -1,0 +1,91 @@
+package mcphosting
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+func TestMCPRegressionSchemaLiteralDataDoesNotHideTools(t *testing.T) {
+	for _, keyword := range []string{"default", "examples", "const", "enum"} {
+		t.Run(keyword, func(t *testing.T) {
+			// These keys are ordinary application data, not schema keywords or
+			// actual header annotations. Every schema below is valid JSON Schema.
+			var literal any = map[string]any{"properties": "customer data"}
+			if keyword == "examples" || keyword == "enum" {
+				literal = []any{literal}
+			}
+			schema := map[string]any{"type": "object", "properties": map[string]any{
+				"metadata": map[string]any{"type": "object", keyword: literal},
+			}}
+			client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					ID int `json:"id"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID,
+					"result": map[string]any{"tools": []Tool{{Name: "lookup", InputSchema: schema}}}})
+			})
+			tools, exchange, err := client.Tools(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(tools) != 1 || len(exchange.RejectedTools) != 0 {
+				t.Fatalf("valid tool was hidden because %s data was interpreted as schema: tools=%d rejected=%+v", keyword, len(tools), exchange.RejectedTools)
+			}
+		})
+	}
+}
+
+func TestMCPRegressionCatalogAcceptsStandardMetadata(t *testing.T) {
+	meta := mcp.Meta{"example.com/fixture": "catalog metadata"}
+	for _, kind := range []string{"resource", "template", "prompt"} {
+		t.Run(kind, func(t *testing.T) {
+			// Marshal official SDK objects to establish that _meta is a supported
+			// protocol field, rather than a made-up extension on the wire.
+			var entries any
+			field := ""
+			switch kind {
+			case "resource":
+				field = "resources"
+				entries = []*mcp.Resource{{Meta: meta, Name: "fixture", URI: "fixture://one"}}
+			case "template":
+				field = "resourceTemplates"
+				entries = []*mcp.ResourceTemplate{{Meta: meta, Name: "fixture", URITemplate: "fixture://{id}"}}
+			case "prompt":
+				field = "prompts"
+				entries = []*mcp.Prompt{{Meta: meta, Name: "fixture"}}
+			}
+			client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					ID int `json:"id"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{field: entries}})
+			})
+			var err error
+			switch kind {
+			case "resource":
+				_, err = client.Resources(context.Background())
+			case "template":
+				_, err = client.ResourceTemplates(context.Background())
+			case "prompt":
+				_, _, err = client.Prompts(context.Background())
+			}
+			if err != nil {
+				t.Fatalf("official SDK %s definition with standard _meta was rejected: %v", kind, err)
+			}
+		})
+	}
+}

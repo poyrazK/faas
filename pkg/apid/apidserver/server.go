@@ -129,59 +129,66 @@ type server struct {
 	domainChecks domainverify.Checker
 	// requestIDLookups resolves request IDs kept on compute nodes
 	// (ADR-20261101085552); nil in tests that do not wire it.
-	requestIDLookups                       *receivers.RequestIDLookupHub
-	dataRepair                             repairapi.Managed
-	rehearsalNetworkEnabled                bool
-	rehearsalSimulationEnabled             bool
-	rehearsalWorkersEnabled                bool
-	rehearsalWorkerFaultsEnabled           bool
-	rehearsalPostgresFaultsEnabled         bool
-	rehearsalColdStartEnabled              bool
-	rehearsalSuspendResumeEnabled          bool
-	rehearsalRunningSuspendEnabled         bool
-	rehearsalCommandsEnabled               bool
-	rehearsalObjectsEnabled                bool
-	rehearsalObjects                       *objruntime.Service
-	rehearsalPostgresEnabled               bool
-	rehearsalPostgres                      *pgruntime.Service
-	ciConfig                               ci.Config
-	ciBlobs                                *ci.ManagedBlobs
-	ciRuntimeOrigin                        string
-	ciHealthMetrics                        *ci.HealthMetrics
-	hostingConfig                          *hosting.Config
-	hostingMetrics                         *hostingapi.Metrics
-	hosting                                hostingapi.Service
-	issueSlackResponses                    *issueslack.Client
-	issueSlackOAuthConfig                  issueslack.OAuthConfig
-	issueSlackOAuthClient                  *issueslack.Client
-	linearOAuthConfig                      issuetracker.LinearOAuthConfig
-	linearOAuthProvider                    issuetracker.LinearOAuthProvider
-	nativeLinearVerifier                   issuetrackers.LinearConnectionVerifier
-	nativeTrackerProvider                  issuetracker.StatusProvider
-	nativeTicketProvider                   issuetracker.Provider
-	dataPipelines                          *pipelineapi.Handler
-	environmentGitOpsAcceptanceEnforcement atomic.Bool
-	profileBackend                         profiling.Backend
-	profileQuerySlots                      chan struct{}
-	guestTracingEnabled                    bool            // ADR-958 broker on (FAAS_GUEST_TRACING_ENABLED=1)
-	durable                                durable.Service // ADR-977; Host wired in newServer
-	object                                 object.Service  // ADR-977; Host wired in newServer
-	devBridgeEnabled                       bool
-	changeTimelineEnabled                  bool // ADR-751 (FAAS_CHANGE_TIMELINE_ENABLED=1)
-	anomalyAlertsEnabled                   bool // ADR-744 (FAAS_ANOMALY_ALERTS_ENABLED=1)
-	customMetricHistoryEnabled             bool // ADR-745 (FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1)
-	datadogIntegrationEnabled              bool // ADR-752 (FAAS_DATADOG_INTEGRATION_ENABLED=1)
-	devBridgeURL                           string
-	devBridgeObserver                      *devbridge.Observer
-	operation                              operation.Service // ADR-977; Host wired in newServer
-	productControl                         product.Service
-	appEvents                              appevents.Service     // ADR-977; Host wired in newServer
-	eventPublishLimiter                    events.PublishLimiter // ADR-20261026140000
-	serviceMap                             servicemap.Service    // ADR-1131; Host wired in newServer
-	logSearch                              logsearch.Service     // ADR-20261018083536; Host wired in newServer
-	logReads                               *logsearch.ReadLimiter
-	dashboards                             dashboards.Service // ADR-20261022173833; Host wired in newServer
-	incidents                              incidents.Service  // ADR-20261022193512; Host wired in newServer
+	requestIDLookups        *receivers.RequestIDLookupHub
+	dataRepair              repairapi.Managed
+	rehearsalNetworkEnabled bool
+	// environmentBranchContainmentEnabled admits contained environment
+	// branches (ADR-20261031193635 slice 6a).
+	environmentBranchContainmentEnabled bool
+	// environmentBranchContainedObjectsEnabled admits contained branches of
+	// environments with object storage through the bridge object relay
+	// (ADR-20261031193635 slice 6c).
+	environmentBranchContainedObjectsEnabled bool
+	rehearsalSimulationEnabled               bool
+	rehearsalWorkersEnabled                  bool
+	rehearsalWorkerFaultsEnabled             bool
+	rehearsalPostgresFaultsEnabled           bool
+	rehearsalColdStartEnabled                bool
+	rehearsalSuspendResumeEnabled            bool
+	rehearsalRunningSuspendEnabled           bool
+	rehearsalCommandsEnabled                 bool
+	rehearsalObjectsEnabled                  bool
+	rehearsalObjects                         *objruntime.Service
+	rehearsalPostgresEnabled                 bool
+	rehearsalPostgres                        *pgruntime.Service
+	ciConfig                                 ci.Config
+	ciBlobs                                  *ci.ManagedBlobs
+	ciRuntimeOrigin                          string
+	ciHealthMetrics                          *ci.HealthMetrics
+	hostingConfig                            *hosting.Config
+	hostingMetrics                           *hostingapi.Metrics
+	hosting                                  hostingapi.Service
+	issueSlackResponses                      *issueslack.Client
+	issueSlackOAuthConfig                    issueslack.OAuthConfig
+	issueSlackOAuthClient                    *issueslack.Client
+	linearOAuthConfig                        issuetracker.LinearOAuthConfig
+	linearOAuthProvider                      issuetracker.LinearOAuthProvider
+	nativeLinearVerifier                     issuetrackers.LinearConnectionVerifier
+	nativeTrackerProvider                    issuetracker.StatusProvider
+	nativeTicketProvider                     issuetracker.Provider
+	dataPipelines                            *pipelineapi.Handler
+	environmentGitOpsAcceptanceEnforcement   atomic.Bool
+	profileBackend                           profiling.Backend
+	profileQuerySlots                        chan struct{}
+	guestTracingEnabled                      bool            // ADR-958 broker on (FAAS_GUEST_TRACING_ENABLED=1)
+	durable                                  durable.Service // ADR-977; Host wired in newServer
+	object                                   object.Service  // ADR-977; Host wired in newServer
+	devBridgeEnabled                         bool
+	changeTimelineEnabled                    bool // ADR-751 (FAAS_CHANGE_TIMELINE_ENABLED=1)
+	anomalyAlertsEnabled                     bool // ADR-744 (FAAS_ANOMALY_ALERTS_ENABLED=1)
+	customMetricHistoryEnabled               bool // ADR-745 (FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1)
+	datadogIntegrationEnabled                bool // ADR-752 (FAAS_DATADOG_INTEGRATION_ENABLED=1)
+	devBridgeURL                             string
+	devBridgeObserver                        *devbridge.Observer
+	operation                                operation.Service // ADR-977; Host wired in newServer
+	productControl                           product.Service
+	appEvents                                appevents.Service     // ADR-977; Host wired in newServer
+	eventPublishLimiter                      events.PublishLimiter // ADR-20261026140000
+	serviceMap                               servicemap.Service    // ADR-1131; Host wired in newServer
+	logSearch                                logsearch.Service     // ADR-20261018083536; Host wired in newServer
+	logReads                                 *logsearch.ReadLimiter
+	dashboards                               dashboards.Service // ADR-20261022173833; Host wired in newServer
+	incidents                                incidents.Service  // ADR-20261022193512; Host wired in newServer
 	// configGuardTelemetry overrides the store's request telemetry for
 	// config guards (ADR-1451); nil reads it from the store.
 	configGuardTelemetry state.ConfigGuardTelemetryStore
@@ -2238,7 +2245,9 @@ func (s *server) handler() http.Handler {
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, s.dashboardExportLimiter)(s.auth(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.exportAccount)))))
 	mux.HandleFunc("DELETE /v1/account", s.auth(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.idempotent(s.deleteAccount))))))
-	mux.HandleFunc("POST /v1/account/restore", s.auth(s.requireScope(api.ScopesDeployWriteSurface...)(s.restoreAccount)))
+	// Restoring re-enables every key and app the deletion stopped, so it
+	// needs a full-access key, like deleting (ADR-20261111150000).
+	mux.HandleFunc("POST /v1/account/restore", s.auth(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.restoreAccount))))
 	mux.HandleFunc("GET /v1/account/dpa", s.dpaTemplate)
 
 	// IAM-3 server-side session revocation (ADR-039, issue #187
@@ -2308,6 +2317,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/dev/test-runs/{run_id}/chaos/matches", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.getScenarioTestChaosMatches))))
 	mux.HandleFunc("DELETE /v1/dev/test-runs/{run_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteScenarioTest))))
 	mux.HandleFunc("POST /v1/dev/sessions/{project}/syncs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.recordDevSync)))))
+	mux.HandleFunc("POST /v1/dev/sessions/{project}/seed", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.seedDevSessionFromEnvironmentBranch)))))
 	mux.HandleFunc("GET /v1/dev/sessions/{project}/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDevSyncHistory))))
 	mux.HandleFunc("GET /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployTargetReadSurface...)(s.getApp))))
 	// App-owned raw TCP listeners. The public port is stable and the
@@ -3545,11 +3555,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.ListEventAcknowledgmentHistory))))
 	mux.HandleFunc("GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.EventAcknowledgmentPolicy))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appEvents.EventAcknowledgmentPolicy))))
-	mux.HandleFunc("GET /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.EventAcknowledgment))))
-	mux.HandleFunc("POST /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/renew", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appEvents.RenewEventAcknowledgment))))
-	mux.HandleFunc("POST /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/complete", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appEvents.CompleteEventAcknowledgment))))
-	mux.HandleFunc("POST /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appEvents.RetryEventAcknowledgment))))
-	mux.HandleFunc("POST /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/dead-letter", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appEvents.DeadLetterEventAcknowledgment))))
+	mux.HandleFunc("GET /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment", s.eventAckRoute(api.ScopesReadSurface, s.appEvents.EventAcknowledgment))
+	mux.HandleFunc("POST /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/renew", s.eventAckRoute(api.ScopesDeployWriteSurface, s.appEvents.RenewEventAcknowledgment))
+	mux.HandleFunc("POST /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/complete", s.eventAckRoute(api.ScopesDeployWriteSurface, s.appEvents.CompleteEventAcknowledgment))
+	mux.HandleFunc("POST /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/retry", s.eventAckRoute(api.ScopesDeployWriteSurface, s.appEvents.RetryEventAcknowledgment))
+	mux.HandleFunc("POST /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/dead-letter", s.eventAckRoute(api.ScopesDeployWriteSurface, s.appEvents.DeadLetterEventAcknowledgment))
 	mux.HandleFunc("POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.PreviewEventSubscriptionRateLimit))))
 	mux.HandleFunc("GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pending-summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.GetEventSubscriptionPendingSummary))))
 	mux.HandleFunc("GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/deadline-window", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.GetEventSubscriptionDeadlineWindow))))
@@ -3725,6 +3735,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{slug}/environment-clones", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createFullProjectEnvironmentClone))))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environment-clones/{clone}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentCloneOperation))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironment))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/branches", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createProjectEnvironmentBranch))))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/branches", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectEnvironmentBranches))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/releases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentReleases))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/qualifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentQualifySurface...)(s.idempotent(s.createProjectEnvironmentQualification)))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/release-sets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectReleaseSets))))
@@ -4428,6 +4440,10 @@ func (s *server) handler() http.Handler {
 	// connected it and for the agent itself.
 	mux.HandleFunc("GET /v1/agent-connections/self/activity", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.SelfActivity(agentConnections))))
 	mux.HandleFunc("GET /v1/agent-connections/{id}/activity", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(agentconnections.Activity(agentConnections)))))
+	// ADR-20261111114059: an agent's monthly budget for committed cost.
+	mux.HandleFunc("GET /v1/agent-connections/self/budget", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.SelfBudget(agentConnections))))
+	mux.HandleFunc("GET /v1/agent-connections/{id}/budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(agentconnections.Budget(agentConnections)))))
+	mux.HandleFunc("PUT /v1/agent-connections/{id}/budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(agentconnections.SetBudget(agentConnections)))))
 	// ADR-20261104140058: an agent polls its approval requests; a person lists
 	// the ones they may decide. Deciding happens only on the review page.
 	mux.HandleFunc("GET /v1/agent-approvals", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.ListApprovals(agentConnections))))
@@ -4719,6 +4735,10 @@ func (s *server) handler() http.Handler {
 	// billing subject's object-storage ceiling.
 	mux.Handle("POST /v1/admin/ops/accounts/{id}/object-storage-ceiling",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsObjectStorageCeiling))))
+	// ADR-20261111140000: an operator gives an account a paid plan without a
+	// subscription, or ends it.
+	mux.Handle("POST /v1/admin/ops/accounts/{id}/complimentary",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountComplimentary))))
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/drain",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeDrain))))
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/force-drain",
@@ -5435,6 +5455,7 @@ func (s *server) handler() http.Handler {
 	// provider-confirmed checkout or portal flow. The local plan changes
 	// only after the provider webhook confirms the operation.
 	mux.Handle("POST /dashboard/postgres/overage", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardPostgresOverage))))))
+	mux.Handle("POST /dashboard/orgs/{slug}/github/{installationID}/disconnect", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDisconnectOrgGitHub))))
 	mux.Handle("POST /dashboard/account/plan", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(http.HandlerFunc(s.dashboardAccountPlan)))))
 	// Issue #561 — spend cap self-service form. Same CSRF-envelope
 	// envelope shape as dashboardDelete (see cmd/apid/dashboard_delete.go).
@@ -6310,7 +6331,7 @@ func (s *server) idempotentWithInEnvironment(environmentID string, next accountH
 		// Partition receipts by the actual caller and credential so another
 		// member cannot replay an earlier member's response under that account.
 		key = postgresaccess.IdempotencyKey(r, projectaccess.IdempotencyKey(r, appaccess.IdempotencyKey(r, key)))
-		if strings.HasPrefix(r.URL.Path, "/v1/executions") || strings.HasPrefix(r.URL.Path, "/v1/execution-artifact-grants/") {
+		if strings.HasPrefix(r.URL.Path, "/v1/executions") || strings.HasPrefix(r.URL.Path, "/v1/execution-workflows") || strings.HasPrefix(r.URL.Path, "/v1/execution-artifact-grants/") {
 			access, problem := executionAccessForRequest(r)
 			if problem != nil {
 				writeExecutionAccessError(w, problem)
@@ -6393,7 +6414,7 @@ func idempotencyResponseReplayable(status int, body []byte) bool {
 		return problem.Code != api.CodeReleasePhaseUnavailable
 	}
 	switch problem.Code {
-	case "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged, api.CodeRouteRemovalRequired, api.CodeRouteRemovalPolicyChanged,
+	case api.CodeImageRunCacheFull, "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged, api.CodeRouteRemovalRequired, api.CodeRouteRemovalPolicyChanged,
 		api.CodeFullEnvironmentCloneUnavailable:
 		return false
 	default:

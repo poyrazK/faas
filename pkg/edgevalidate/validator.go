@@ -17,6 +17,9 @@ type Rule struct {
 	// It's the cache key for CompiledSchema lookup; the schema body
 	// itself is not on the hot path.
 	SchemaDigest [32]byte
+	// Schema is the immutable source retained by the loaded policy so an LRU
+	// eviction or reset can be recovered without invalidating the host policy.
+	Schema []byte
 
 	// ApplyWhileStreaming mirrors the per-rule
 	// apply_while_streaming knob from EdgeRuleValidateAction. When

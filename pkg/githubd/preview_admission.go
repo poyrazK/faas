@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/projectsetup"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -24,12 +25,12 @@ import (
 // app's pr-preview scope (ADR-20261028090000), so those are what is checked.
 // previewed are the production apps whose previews this PR builds. It
 // returns "" when every such service has a value.
-func (s *Service) previewDatastoreShortfall(ctx context.Context, fsys fs.FS, accountID string, scan reposcan.Result,
+func (s *Service) previewDatastoreShortfall(ctx context.Context, fsys fs.FS, subject platformflags.Subject, scan reposcan.Result,
 	previewed []state.App, headValues map[string]map[string]string) (string, error) {
 	if len(scan.Managed) == 0 {
 		return "", nil
 	}
-	env, err := reposcan.ReadProjectEnv(fsys, s.scanOptions(accountID), scan.Workloads)
+	env, err := reposcan.ReadProjectEnv(fsys, s.scanOptions(subject), scan.Workloads)
 	if err != nil {
 		// The PR head's values could not be read either; the build reports it.
 		return "", nil //nolint:nilerr // an unreadable Compose file is the build's failure to report, not this check's.
@@ -40,8 +41,10 @@ func (s *Service) previewDatastoreShortfall(ctx context.Context, fsys fs.FS, acc
 			byWorkload[strings.ToLower(app.WorkloadName)] = app
 		}
 	}
+	previewDatabases := s.capabilityAllowed(PreviewDatabasesCapability, subject)
 	var missing []string
 	seen := map[string]bool{}
+	provided := map[string]map[string]bool{}
 	for _, m := range scan.Managed {
 		for _, consumer := range projectsetup.ManagedConsumers(env, scan.Workloads, m.Name, m.EnvHint) {
 			workload := strings.ToLower(consumer.Workload)
@@ -52,6 +55,15 @@ func (s *Service) previewDatastoreShortfall(ctx context.Context, fsys fs.FS, acc
 			seen[workload+"\x00"+consumer.EnvKey] = true
 			if headValues[workload][consumer.EnvKey] != "" {
 				continue
+			}
+			if previewDatabases {
+				keys, err := s.previewDatabaseEnvKeys(ctx, app, provided)
+				if err != nil {
+					return "", err
+				}
+				if keys[consumer.EnvKey] {
+					continue // the preview's own database binds it (ADR-20261102123523)
+				}
 			}
 			unset, err := projectsetup.UnsetEnvKeys(ctx, s.Reconcile.Store, app.AccountID, api.PreviewEnvScope, &app, []string{consumer.EnvKey})
 			if err != nil {
@@ -67,8 +79,41 @@ func (s *Service) previewDatastoreShortfall(ctx context.Context, fsys fs.FS, acc
 	if len(missing) == 0 {
 		return "", nil
 	}
-	return fmt.Sprintf("previews get no database or other datastore of their own, and %s. Point each at a test datastore in the production app's pr-preview scope, then push again.",
-		strings.Join(missing, "; ")), nil
+	hint := ""
+	if previewDatabases {
+		hint = " For a managed PostgreSQL database, `gregale postgres previews DATABASE empty` (or `copy`) gives each PR its own instead."
+	}
+	return fmt.Sprintf("previews get no database or other datastore of their own, and %s. Point each at a test datastore in the production app's pr-preview scope, then push again.%s",
+		strings.Join(missing, "; "), hint), nil
+}
+
+// PreviewDatabasesCapability gates PR preview databases; apid gates their
+// setup with the same flag (ADR-20261102123523).
+const PreviewDatabasesCapability = "preview-databases"
+
+// previewDatabaseEnvKeys returns, once per app, the keys the app's previews
+// get from their own databases. A store that cannot tell reports none, so
+// the check stays as strict as before.
+func (s *Service) previewDatabaseEnvKeys(ctx context.Context, app state.App, cache map[string]map[string]bool) (map[string]bool, error) {
+	if keys, ok := cache[app.ID]; ok {
+		return keys, nil
+	}
+	keys := map[string]bool{}
+	lookup := s.PreviewDatabaseEnvKeys
+	if store, ok := s.Reconcile.Store.(state.PreviewDatabaseEnvKeyStore); ok && lookup == nil {
+		lookup = store.AppPreviewDatabaseEnvKeys
+	}
+	if lookup != nil {
+		list, err := lookup(ctx, app.AccountID, app.ID)
+		if err != nil {
+			return nil, fmt.Errorf("githubd: read %s preview databases: %w", app.Slug, err)
+		}
+		for _, key := range list {
+			keys[key] = true
+		}
+	}
+	cache[app.ID] = keys
+	return keys, nil
 }
 
 // previewDeployShortfall reports when the PR's preview builds do not all fit

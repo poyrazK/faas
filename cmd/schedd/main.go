@@ -1842,6 +1842,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Info("node memory reports enabled (ADR 20261101091815)",
 				"report_seconds", api.NodeMemoryReportSeconds, "peer_max_age_seconds", api.NodeMemoryPeerMaxAgeSeconds)
 		}
+		// ADR-20261027090015 §3: agent run VMs are charged their measured
+		// memory or their version's peak, which measured admission needs.
+		if strings.TrimSpace(os.Getenv("FAAS_SCHEDD_AGENT_MEASURED_CHARGE")) == "1" {
+			engine.Ledger().EnableAgentMeasuredCharge(func(nodeID string) (map[string]float64, time.Time, bool) {
+				return reader.VMMemory(nodeID, time.Now())
+			})
+			log.Info("agent measured charge enabled (ADR-20261027090015)",
+				"charge_floor_mb", api.AgentChargeFloorMB, "reservation_floor_mb", api.AgentReservationFloorMB)
+		}
 	}
 	if cfg.QuietPauseLedger {
 		ledger := instancestats.NewPauseLedger(store,
@@ -1991,6 +2000,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if agentRunner.SandboxesEnabled() {
 			grpcHandler.WithSandboxRunner(agentRunner)
 			log.Info("sandbox sessions enabled")
+			// ADR-20261027090013 §12: a deleted template's warm snapshots go.
+			go agentRunner.RunSandboxTemplateSnapshotSweep(ctx)
 		}
 	}
 	// An empty NodeName is the single-box, Unix-socket posture. Passing a
@@ -2676,6 +2687,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if forkCoordinator != nil {
 		go forkCoordinator.Run(ctx)
 	}
+	// ADR-20261031193635 slice 5a: credential-free captures of branch
+	// parents. Rows exist only once an opted-in branch cold-boots.
+	go sched.NewEnvironmentBranchCaptureWorker(store, engine, 0, log).Run(ctx)
 	if strings.TrimSpace(os.Getenv("FAAS_CRASH_SNAPSHOTS")) == "1" {
 		// ADR-733: captures pause a serving instance, so one coordinator
 		// runs them one at a time. vmmd seals every capture at the source,

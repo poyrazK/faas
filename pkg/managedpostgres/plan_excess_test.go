@@ -31,6 +31,11 @@ func TestPlanExcess(t *testing.T) {
 		return Database{ID: id, ProviderResourceID: "proj-" + id, State: StateReady, Spec: Spec{Class: class},
 			CreatedAt: start.Add(time.Duration(age) * time.Hour)}
 	}
+	preview := func(id string, age int) Database {
+		d := database(id, age, ClassDevelopment)
+		d.Preview = PreviewOwner{SourceDatabaseID: "a", EnvironmentID: "project-1", PRNumber: age}
+		return d
+	}
 	slot := database("slot", 0, ClassDevelopment)
 	slot.RestoreSlotUntil = start.Add(7 * 24 * time.Hour)
 	deleting := database("deleting", 0, ClassDevelopment)
@@ -60,6 +65,15 @@ func TestPlanExcess(t *testing.T) {
 			want:      map[string]string{"a": PlanExcessServiceClass, "d": PlanExcessDatabaseLimit}},
 		{name: "the restore slot, a deleting database and one not yet provisioned are not ranked",
 			databases: []Database{slot, deleting, pending, database("a", 1, ClassDevelopment), database("b", 2, ClassDevelopment)},
+			limits:    hobby,
+			want:      map[string]string{"b": PlanExcessDatabaseLimit}},
+		{name: "PR preview databases are outside the limit and never past it",
+			databases: []Database{database("a", 1, ClassDevelopment), preview("p1", 2), preview("p2", 3), preview("p3", 4),
+				database("b", 5, ClassDevelopment), database("c", 6, ClassDevelopment)},
+			limits: pro,
+			want:   map[string]string{}},
+		{name: "PR preview databases do not take a production database's place in the ranking",
+			databases: []Database{database("a", 1, ClassDevelopment), preview("p1", 2), database("b", 3, ClassDevelopment)},
 			limits:    hobby,
 			want:      map[string]string{"b": PlanExcessDatabaseLimit}},
 		{name: "the same creation time ranks by ID",
@@ -335,7 +349,7 @@ func TestMemoryStorePlanExcessNotices(t *testing.T) {
 	if err != nil || len(notices) != 1 || notices[0].DatabaseName != "events" || notices[0].ServiceClass != ClassProduction || notices[0].AccountID != "acct" {
 		t.Fatalf("unmailed = %+v, %v", notices, err)
 	}
-	store.markPlanExcessNoticeMailed("db-2")
+	store.markPlanExcessNoticeMailed("db-2", time.Time{})
 	if notices, _ := store.UnmailedPlanExcessNotices(ctx, at.Add(-time.Hour), 10); len(notices) != 0 {
 		t.Fatalf("a mailed notice is listed: %+v", notices)
 	}

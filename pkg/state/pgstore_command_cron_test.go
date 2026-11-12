@@ -3,6 +3,7 @@ package state_test
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -545,5 +546,100 @@ func TestPgDeleteCommandCronKeepsFinishedRunHistory(t *testing.T) {
 	if kept.CronID != "" || kept.Status != state.AppTaskSucceeded || kept.ExitCode == nil || *kept.ExitCode != 0 ||
 		kept.FinishedAt == nil || !kept.FinishedAt.Equal(*finished.FinishedAt) {
 		t.Fatalf("finished run after cron delete = %+v; want the same outcome with no cron link", kept)
+	}
+}
+
+// Hunt 33 H33-17: H32-46's fix still failed on prod, because a real cron run
+// is linked to its schedule occurrence. Deleting the cron cascades to
+// schedule_occurrences, whose FK sets app_tasks.occurrence_id to NULL, and
+// the terminal-task trigger allowed only cron_id to change.
+func TestPgDeleteCommandCronKeepsFinishedOccurrenceRun(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	_, appID, deploymentID := seedLiveDeploy(t, store, ctx, "delete-occurrence-cron-"+uuid.NewString(), "delete-occ-"+uuid.NewString()[:8])
+	if err := store.SetDeploymentRootfs(ctx, deploymentID, "/tmp/delete-occurrence.ext4", "apps/delete/occurrence.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	cron, err := store.CreateCronWithOptions(ctx, appID, "* * * * *", "", true, state.CronOptions{
+		Command: []string{"bin/report"},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	firedAt := time.Now().UTC().Truncate(time.Minute)
+	task, occurrence, created, err := store.CreateScheduledCronAppTaskOccurrence(ctx, cron.ID, nil, firedAt,
+		state.CronScheduledOccurrenceOptions{ScheduledFor: firedAt, ScheduleRevision: cron.ScheduleRevision})
+	if err != nil || !created || task.OccurrenceID == "" || task.OccurrenceID != occurrence.ID {
+		t.Fatalf("CreateScheduledCronAppTaskOccurrence = %+v / %+v, created=%t, err=%v", task, occurrence, created, err)
+	}
+	claimed, err := store.ClaimNextAppTask(ctx, "delete-occurrence-worker", firedAt.Add(time.Second), time.Minute)
+	if err != nil || claimed.ID != task.ID {
+		t.Fatalf("ClaimNextAppTask = %+v, err %v", claimed, err)
+	}
+	running, err := store.MarkAppTaskRunning(ctx, task.ID, *claimed.LeaseToken, firedAt.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("MarkAppTaskRunning: %v", err)
+	}
+	exitCode := 0
+	finished, err := store.CompleteAppTask(ctx, state.CompleteAppTaskParams{
+		ID: task.ID, LeaseToken: *running.LeaseToken, Status: state.AppTaskSucceeded,
+		ExitCode: &exitCode, FinishedAt: firedAt.Add(3 * time.Second),
+	})
+	if err != nil || finished.Status != state.AppTaskSucceeded {
+		t.Fatalf("CompleteAppTask = %+v, err %v", finished, err)
+	}
+
+	if err := store.DeleteCron(ctx, cron.ID, appID); err != nil {
+		t.Fatalf("DeleteCron of a command cron with a finished occurrence run: %v", err)
+	}
+	kept, err := store.AppTaskByID(ctx, finished.AccountID, appID, task.ID)
+	if err != nil {
+		t.Fatalf("finished run after cron delete: %v", err)
+	}
+	if kept.CronID != "" || kept.OccurrenceID != "" || kept.Status != state.AppTaskSucceeded ||
+		kept.ExitCode == nil || *kept.ExitCode != 0 || kept.FinishedAt == nil || !kept.FinishedAt.Equal(*finished.FinishedAt) {
+		t.Fatalf("finished run after cron delete = %+v; want the same outcome with no cron or occurrence link", kept)
+	}
+}
+
+// The detach exception covers only the two links: any other change to a
+// finished task is still refused.
+func TestPgTerminalAppTaskRefusesChangesBesideItsLinks(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	_, appID, deploymentID := seedLiveDeploy(t, store, ctx, "terminal-immutable-"+uuid.NewString(), "term-imm-"+uuid.NewString()[:8])
+	if err := store.SetDeploymentRootfs(ctx, deploymentID, "/tmp/terminal.ext4", "apps/terminal/rootfs.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	cron, err := store.CreateCronWithOptions(ctx, appID, "* * * * *", "", true, state.CronOptions{Command: []string{"bin/report"}})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	firedAt := time.Now().UTC().Truncate(time.Minute)
+	task, _, _, err := store.CreateScheduledCronAppTaskOccurrence(ctx, cron.ID, nil, firedAt,
+		state.CronScheduledOccurrenceOptions{ScheduledFor: firedAt, ScheduleRevision: cron.ScheduleRevision})
+	if err != nil {
+		t.Fatalf("CreateScheduledCronAppTaskOccurrence: %v", err)
+	}
+	claimed, err := store.ClaimNextAppTask(ctx, "terminal-worker", firedAt.Add(time.Second), time.Minute)
+	if err != nil || claimed.ID != task.ID {
+		t.Fatalf("ClaimNextAppTask = %+v, err %v", claimed, err)
+	}
+	running, err := store.MarkAppTaskRunning(ctx, task.ID, *claimed.LeaseToken, firedAt.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("MarkAppTaskRunning: %v", err)
+	}
+	exitCode := 0
+	if _, err := store.CompleteAppTask(ctx, state.CompleteAppTaskParams{
+		ID: task.ID, LeaseToken: *running.LeaseToken, Status: state.AppTaskSucceeded,
+		ExitCode: &exitCode, FinishedAt: firedAt.Add(3 * time.Second),
+	}); err != nil {
+		t.Fatalf("CompleteAppTask: %v", err)
+	}
+	for name, stmt := range map[string]string{
+		"detach and rewrite exit code": `update app_tasks set occurrence_id = null, exit_code = 1 where id = $1`,
+		"relink to another cron":       `update app_tasks set cron_id = gen_random_uuid() where id = $1`,
+	} {
+		if _, err := pool.Exec(ctx, stmt, task.ID); err == nil || !strings.Contains(err.Error(), "is immutable") {
+			t.Fatalf("%s: err = %v, want the terminal task to stay immutable", name, err)
+		}
 	}
 }

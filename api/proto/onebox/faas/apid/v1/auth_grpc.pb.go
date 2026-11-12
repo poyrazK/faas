@@ -41,6 +41,8 @@ const (
 	Auth_MatchCredential_FullMethodName        = "/onebox.faas.apid.v1.Auth/MatchCredential"
 	Auth_VerifySession_FullMethodName          = "/onebox.faas.apid.v1.Auth/VerifySession"
 	Auth_SandboxTokenKeys_FullMethodName       = "/onebox.faas.apid.v1.Auth/SandboxTokenKeys"
+	Auth_DecideAgentRequest_FullMethodName     = "/onebox.faas.apid.v1.Auth/DecideAgentRequest"
+	Auth_RecordAgentActivity_FullMethodName    = "/onebox.faas.apid.v1.Auth/RecordAgentActivity"
 )
 
 // AuthClient is the client API for Auth service.
@@ -98,6 +100,18 @@ type AuthClient interface {
 	// derived from its session key; a gateway verifies with these and cannot
 	// mint one (ADR-20261102191500). Unavailable: apid has no session key.
 	SandboxTokenKeys(ctx context.Context, in *SandboxTokenKeysRequest, opts ...grpc.CallOption) (*SandboxTokenKeysResponse, error)
+	// DecideAgentRequest runs the agent approval gate for a gateway
+	// (ADR-20261111150000): apid is the only writer of approval requests, so
+	// a gateway serving a route that needs a person's approval (the
+	// developer debugger tunnel) asks apid. apid loads the key, classifies
+	// the pattern itself, and uses an approval or records a new request.
+	// Errors are InvalidArgument, NotFound (no such key on the account) and
+	// Unavailable (no gate, or the store failed).
+	DecideAgentRequest(ctx context.Context, in *DecideAgentRequestRequest, opts ...grpc.CallOption) (*DecideAgentRequestResponse, error)
+	// RecordAgentActivity writes one agent activity row for a gateway
+	// (ADR-20261111150000); apid is the only writer of the activity log.
+	// Errors are InvalidArgument, NotFound and Unavailable.
+	RecordAgentActivity(ctx context.Context, in *RecordAgentActivityRequest, opts ...grpc.CallOption) (*RecordAgentActivityResponse, error)
 }
 
 type authClient struct {
@@ -152,6 +166,26 @@ func (c *authClient) SandboxTokenKeys(ctx context.Context, in *SandboxTokenKeysR
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SandboxTokenKeysResponse)
 	err := c.cc.Invoke(ctx, Auth_SandboxTokenKeys_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *authClient) DecideAgentRequest(ctx context.Context, in *DecideAgentRequestRequest, opts ...grpc.CallOption) (*DecideAgentRequestResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DecideAgentRequestResponse)
+	err := c.cc.Invoke(ctx, Auth_DecideAgentRequest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *authClient) RecordAgentActivity(ctx context.Context, in *RecordAgentActivityRequest, opts ...grpc.CallOption) (*RecordAgentActivityResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RecordAgentActivityResponse)
+	err := c.cc.Invoke(ctx, Auth_RecordAgentActivity_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -213,6 +247,18 @@ type AuthServer interface {
 	// derived from its session key; a gateway verifies with these and cannot
 	// mint one (ADR-20261102191500). Unavailable: apid has no session key.
 	SandboxTokenKeys(context.Context, *SandboxTokenKeysRequest) (*SandboxTokenKeysResponse, error)
+	// DecideAgentRequest runs the agent approval gate for a gateway
+	// (ADR-20261111150000): apid is the only writer of approval requests, so
+	// a gateway serving a route that needs a person's approval (the
+	// developer debugger tunnel) asks apid. apid loads the key, classifies
+	// the pattern itself, and uses an approval or records a new request.
+	// Errors are InvalidArgument, NotFound (no such key on the account) and
+	// Unavailable (no gate, or the store failed).
+	DecideAgentRequest(context.Context, *DecideAgentRequestRequest) (*DecideAgentRequestResponse, error)
+	// RecordAgentActivity writes one agent activity row for a gateway
+	// (ADR-20261111150000); apid is the only writer of the activity log.
+	// Errors are InvalidArgument, NotFound and Unavailable.
+	RecordAgentActivity(context.Context, *RecordAgentActivityRequest) (*RecordAgentActivityResponse, error)
 	mustEmbedUnimplementedAuthServer()
 }
 
@@ -237,6 +283,12 @@ func (UnimplementedAuthServer) VerifySession(context.Context, *VerifySessionRequ
 }
 func (UnimplementedAuthServer) SandboxTokenKeys(context.Context, *SandboxTokenKeysRequest) (*SandboxTokenKeysResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SandboxTokenKeys not implemented")
+}
+func (UnimplementedAuthServer) DecideAgentRequest(context.Context, *DecideAgentRequestRequest) (*DecideAgentRequestResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DecideAgentRequest not implemented")
+}
+func (UnimplementedAuthServer) RecordAgentActivity(context.Context, *RecordAgentActivityRequest) (*RecordAgentActivityResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RecordAgentActivity not implemented")
 }
 func (UnimplementedAuthServer) mustEmbedUnimplementedAuthServer() {}
 func (UnimplementedAuthServer) testEmbeddedByValue()              {}
@@ -349,6 +401,42 @@ func _Auth_SandboxTokenKeys_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Auth_DecideAgentRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DecideAgentRequestRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServer).DecideAgentRequest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Auth_DecideAgentRequest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServer).DecideAgentRequest(ctx, req.(*DecideAgentRequestRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Auth_RecordAgentActivity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RecordAgentActivityRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServer).RecordAgentActivity(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Auth_RecordAgentActivity_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServer).RecordAgentActivity(ctx, req.(*RecordAgentActivityRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Auth_ServiceDesc is the grpc.ServiceDesc for Auth service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -375,6 +463,14 @@ var Auth_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SandboxTokenKeys",
 			Handler:    _Auth_SandboxTokenKeys_Handler,
+		},
+		{
+			MethodName: "DecideAgentRequest",
+			Handler:    _Auth_DecideAgentRequest_Handler,
+		},
+		{
+			MethodName: "RecordAgentActivity",
+			Handler:    _Auth_RecordAgentActivity_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

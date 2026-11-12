@@ -261,6 +261,7 @@ type ManagedPostgresPlanExcessNotice struct {
 	Reason       string
 	RecordedAt   pgtype.Timestamptz
 	MailIntentID pgtype.UUID
+	DeleteAt     pgtype.Timestamptz
 }
 
 // Restore slot notices for a managed PostgreSQL copy (ending soon, delete scheduled); written only by apid (ADR-20261031123259).

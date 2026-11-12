@@ -106,8 +106,9 @@ func (a storeAuthAdapter) APIKeyProjectLimit(ctx context.Context, keyID string) 
 // An agent key's risky requests wait for a person's approval
 // (ADR-20261104140058).
 var (
-	_ middleware.AgentApprovalGate    = storeAuthAdapter{}
-	_ middleware.OrgAgentPolicyReader = storeAuthAdapter{}
+	_ middleware.AgentApprovalGate       = storeAuthAdapter{}
+	_ middleware.AgentApprovalWindowGate = storeAuthAdapter{}
+	_ middleware.OrgAgentPolicyReader    = storeAuthAdapter{}
 )
 
 // errNoApprovalStore fails a gated request closed on a store that cannot
@@ -128,6 +129,14 @@ func (a storeAuthAdapter) ConsumeAgentApproval(ctx context.Context, binding stat
 		return "", false, errNoApprovalStore
 	}
 	return store.ConsumeAgentApproval(ctx, binding)
+}
+
+func (a storeAuthAdapter) AgentApprovalUsedWithin(ctx context.Context, binding state.AgentApprovalBinding, window time.Duration) (string, bool, error) {
+	store, ok := a.Store.(state.AgentApprovalStore)
+	if !ok {
+		return "", false, nil
+	}
+	return store.AgentApprovalUsedWithin(ctx, binding, window)
 }
 
 func (a storeAuthAdapter) RecentAgentApprovalOutcome(ctx context.Context, binding state.AgentApprovalBinding, window time.Duration) (state.AgentApproval, bool, error) {
@@ -157,6 +166,47 @@ func (a storeAuthAdapter) RecordAgentActivity(ctx context.Context, row state.Age
 		return nil
 	}
 	return store.RecordAgentActivity(ctx, row)
+}
+
+var _ state.AgentBudgetStore = storeAuthAdapter{}
+
+// agentBudgets is the optional budget store (ADR-20261111114059).
+func (a storeAuthAdapter) agentBudgets() (state.AgentBudgetStore, bool) {
+	store, ok := a.Store.(state.AgentBudgetStore)
+	return store, ok
+}
+
+// AgentKeyBudget forwards the key's budget; a store without budgets has
+// none set, so the plan default applies.
+func (a storeAuthAdapter) AgentKeyBudget(ctx context.Context, keyID string) (state.AgentKeyBudget, error) {
+	if store, ok := a.agentBudgets(); ok {
+		return store.AgentKeyBudget(ctx, keyID)
+	}
+	return state.AgentKeyBudget{}, nil
+}
+
+// SetAgentKeyBudget forwards a budget change.
+func (a storeAuthAdapter) SetAgentKeyBudget(ctx context.Context, keyID string, budget state.AgentKeyBudget, updatedBy string) error {
+	if store, ok := a.agentBudgets(); ok {
+		return store.SetAgentKeyBudget(ctx, keyID, budget, updatedBy)
+	}
+	return state.ErrNotFound
+}
+
+// AgentBudgetSpent forwards the key's spend this month.
+func (a storeAuthAdapter) AgentBudgetSpent(ctx context.Context, keyID string, at time.Time) (int64, error) {
+	if store, ok := a.agentBudgets(); ok {
+		return store.AgentBudgetSpent(ctx, keyID, at)
+	}
+	return 0, nil
+}
+
+// AddAgentBudgetSpend forwards recorded spend.
+func (a storeAuthAdapter) AddAgentBudgetSpend(ctx context.Context, keyID string, at time.Time, millicents int64) error {
+	if store, ok := a.agentBudgets(); ok {
+		return store.AddAgentBudgetSpend(ctx, keyID, at, millicents)
+	}
+	return nil
 }
 
 // OrgAgentPolicy forwards the organization's agent policy; a store without

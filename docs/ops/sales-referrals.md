@@ -16,10 +16,15 @@ This feature requires PostgreSQL. It ships disabled. It never enables payouts.
    additive; older code ignores the new tables and view.
 2. Deploy apid and gatewayd-public, including the exact sales-origin session
    policy and host classifiers. Keep `sales` reserved from customer apps.
-3. Deploy `faas-sales` as its own service/project and route `sales.gregale.dev`
-   to that frontend over HTTPS. Its server proxies only sales and required
-   authentication routes to `https://api.gregale.dev`. Do not route the sales
-   root to apid. The legacy API-host `/dashboard/sales` redirects to the frontend.
+3. Import `poyrazK/faas-sales` as its own Vercel project using its committed
+   Go framework preset. Vercel supplies `PORT`; leave `LISTEN_ADDR` unset. Set
+   `SALES_API_ORIGIN=https://api.gregale.dev` and
+   `SALES_PRODUCT_ORIGIN=https://gregale.dev`, then configure `sales.gregale.dev`
+   as its custom domain using the exact DNS records Vercel provides. Its server
+   proxies only sales and required authentication routes to the API. Do not
+   route the sales root to apid. The old API-host `/dashboard/sales` redirects
+   to this frontend. Live session mutations require the canonical sales origin,
+   so Vercel preview hostnames are not added to the backend CSRF allowlist.
 4. Configure manager and rep email lists and enable the backend feature. Use
    existing Gregale accounts with verified email and an enrolled authenticator.
    Removing an email removes access on the next request, including existing
@@ -141,7 +146,7 @@ rewrite attribution, grant operator rights or issue payments.
 
 ## Lead pipeline and follow-up tasks
 
-Apply `20261111125847978_sales_pipeline.sql` before the matching apid release.
+Apply `20261112112455065_sales_pipeline.sql` before the matching apid release.
 The existing `FAAS_SALES_ENABLED` flag covers the lead pipeline and task inbox.
 No `faas-web` change is needed for these additions; the independently deployed
 `faas-sales` frontend presents them. Existing sales membership, verified email and MFA rules apply.
@@ -238,7 +243,7 @@ and that comparison/collection CSVs preserve the selected period and scope.
 
 ## Website contact/demo intake
 
-Apply `20261111125848993_sales_intake.sql` after the CRM migration, then deploy
+Apply `20261112112456780_sales_intake.sql` after the CRM migration, then deploy
 apid and the website. The website `/contact` route, footer **Contact sales**
 link and pricing **Request a demo** action are enabled by the build-time flag
 `VITE_FEATURE_SALES_INTAKE=1`. Both `/v1/*` and the website must share the
@@ -283,7 +288,7 @@ agent. Disable the intake flag to stop capture while retaining staff access.
 
 ## Activity history and leads needing attention
 
-Apply `20261111125850162_sales_activity.sql` before the new apid release. The
+Apply `20261112112458301_sales_activity.sql` before the new apid release. The
 existing `FAAS_SALES_ENABLED` flag covers activity history and attention alerts;
 there is no website build or new public endpoint for this release.
 
@@ -324,7 +329,7 @@ establish referral attribution, account access, rewards or commission.
 
 ## Lead qualification and closing reasons
 
-Apply `20261111125851200_sales_qualification.sql` before deploying the new apid.
+Apply `20261112112459811_sales_qualification.sql` before deploying the new apid.
 The embedded sales portal ships in the same binary; no `faas-web` release or new
 flag is required. Existing sales access, email verification, session MFA and
 origin checks apply. Drain the old apid writer when rolling out mandatory closing
@@ -370,7 +375,7 @@ staff data and backup controls, outside application clones.
 
 ## Sales message templates
 
-Apply `20261111125852301_sales_templates.sql` before apid. The existing sales
+Apply `20261112112501306_sales_templates.sql` before apid. The existing sales
 flag and staff/session restrictions cover these routes. Templates start empty.
 In **Message templates**, managers create introductions, demo invitations,
 follow-ups and stalled-deal messages. A template has a suggested stage, optional

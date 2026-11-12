@@ -75,6 +75,7 @@ from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsRes
 from .advance_canary_request import AdvanceCanaryRequest
 from .advance_stored_workflow_live_suite_request import AdvanceStoredWorkflowLiveSuiteRequest
 from .after_restore_hook import AfterRestoreHook
+from .after_restore_hook_identity import AfterRestoreHookIdentity
 from .agent_activity_entry import AgentActivityEntry
 from .agent_activity_entry_method import AgentActivityEntryMethod
 from .agent_activity_response import AgentActivityResponse
@@ -90,6 +91,9 @@ from .agent_approval_webhook_payload import AgentApprovalWebhookPayload
 from .agent_approval_webhook_payload_category import AgentApprovalWebhookPayloadCategory
 from .agent_approval_webhook_payload_status import AgentApprovalWebhookPayloadStatus
 from .agent_approvals_response import AgentApprovalsResponse
+from .agent_budget_request import AgentBudgetRequest
+from .agent_budget_response import AgentBudgetResponse
+from .agent_budget_response_source import AgentBudgetResponseSource
 from .agent_client_request import AgentClientRequest
 from .agent_connection_response import AgentConnectionResponse
 from .agent_connection_response_approvals_item import AgentConnectionResponseApprovalsItem
@@ -322,6 +326,8 @@ from .app_response_consumer_auth_mode import AppResponseConsumerAuthMode
 from .app_response_cpu_millicores import AppResponseCpuMillicores
 from .app_response_deployment_availability import AppResponseDeploymentAvailability
 from .app_response_eviction_priority import AppResponseEvictionPriority
+from .app_response_function_callables import AppResponseFunctionCallables
+from .app_response_function_input_schema import AppResponseFunctionInputSchema
 from .app_response_preview_pr_state import AppResponsePreviewPrState
 from .app_response_release_policy import AppResponseReleasePolicy
 from .app_response_runtime import AppResponseRuntime
@@ -979,6 +985,11 @@ from .create_project_binding_verification_run_request_review_digests import (
     CreateProjectBindingVerificationRunRequestReviewDigests,
 )
 from .create_project_environment_approval_request import CreateProjectEnvironmentApprovalRequest
+from .create_project_environment_branch_request import CreateProjectEnvironmentBranchRequest
+from .create_project_environment_branch_request_egress import CreateProjectEnvironmentBranchRequestEgress
+from .create_project_environment_branch_request_private_networks import (
+    CreateProjectEnvironmentBranchRequestPrivateNetworks,
+)
 from .create_project_environment_qualification_request import CreateProjectEnvironmentQualificationRequest
 from .create_project_environment_qualification_request_secret_revision_hashes import (
     CreateProjectEnvironmentQualificationRequestSecretRevisionHashes,
@@ -1581,6 +1592,8 @@ from .environment_git_ops_changed_webhook_payload_version import EnvironmentGitO
 from .environment_git_ops_diagnostic import EnvironmentGitOpsDiagnostic
 from .environment_git_ops_diagnostic_actor import EnvironmentGitOpsDiagnosticActor
 from .environment_git_ops_explanation import EnvironmentGitOpsExplanation
+from .environment_git_ops_explanation_report_freshness import EnvironmentGitOpsExplanationReportFreshness
+from .environment_git_ops_explanation_report_status import EnvironmentGitOpsExplanationReportStatus
 from .environment_git_ops_explanation_source_freshness import EnvironmentGitOpsExplanationSourceFreshness
 from .environment_git_ops_explanation_status import EnvironmentGitOpsExplanationStatus
 from .environment_git_ops_override_request import EnvironmentGitOpsOverrideRequest
@@ -3146,6 +3159,7 @@ from .object_storage_compute_binding_list import ObjectStorageComputeBindingList
 from .object_storage_compute_binding_secret_keys import ObjectStorageComputeBindingSecretKeys
 from .object_storage_compute_trigger import ObjectStorageComputeTrigger
 from .object_storage_compute_trigger_events_item import ObjectStorageComputeTriggerEventsItem
+from .object_storage_over_ceiling_deletion import ObjectStorageOverCeilingDeletion
 from .object_storage_policy import ObjectStoragePolicy
 from .object_storage_policy_accounting_mode import ObjectStoragePolicyAccountingMode
 from .object_storage_pricing import ObjectStoragePricing
@@ -4558,6 +4572,14 @@ from .project_environment_binding_change_response_change import ProjectEnvironme
 from .project_environment_binding_change_response_kind import ProjectEnvironmentBindingChangeResponseKind
 from .project_environment_binding_response import ProjectEnvironmentBindingResponse
 from .project_environment_binding_response_kind import ProjectEnvironmentBindingResponseKind
+from .project_environment_branch_list_response import ProjectEnvironmentBranchListResponse
+from .project_environment_branch_response import ProjectEnvironmentBranchResponse
+from .project_environment_branch_response_data import ProjectEnvironmentBranchResponseData
+from .project_environment_branch_response_private_networks import ProjectEnvironmentBranchResponsePrivateNetworks
+from .project_environment_branch_summary import ProjectEnvironmentBranchSummary
+from .project_environment_branch_summary_data import ProjectEnvironmentBranchSummaryData
+from .project_environment_branch_summary_private_networks import ProjectEnvironmentBranchSummaryPrivateNetworks
+from .project_environment_branch_workload import ProjectEnvironmentBranchWorkload
 from .project_environment_clone_operation_response import ProjectEnvironmentCloneOperationResponse
 from .project_environment_clone_operation_response_status import ProjectEnvironmentCloneOperationResponseStatus
 from .project_environment_clone_resource_response import ProjectEnvironmentCloneResourceResponse
@@ -5625,6 +5647,8 @@ from .security_activity_response import SecurityActivityResponse
 from .security_quarantine_recovery_request import SecurityQuarantineRecoveryRequest
 from .security_quarantine_recovery_response import SecurityQuarantineRecoveryResponse
 from .security_quarantine_recovery_response_status import SecurityQuarantineRecoveryResponseStatus
+from .seed_dev_session_from_environment_branch_request import SeedDevSessionFromEnvironmentBranchRequest
+from .seed_dev_session_from_environment_branch_response import SeedDevSessionFromEnvironmentBranchResponse
 from .select_referral_code_body import SelectReferralCodeBody
 from .select_referral_code_response_200 import SelectReferralCodeResponse200
 from .selected_trace_app import SelectedTraceApp
@@ -6006,6 +6030,8 @@ from .update_app_request_eviction_priority_type_3_type_1 import UpdateAppRequest
 from .update_app_request_execution_mode_type_1 import UpdateAppRequestExecutionModeType1
 from .update_app_request_execution_mode_type_2_type_1 import UpdateAppRequestExecutionModeType2Type1
 from .update_app_request_execution_mode_type_3_type_1 import UpdateAppRequestExecutionModeType3Type1
+from .update_app_request_function_callables_type_0 import UpdateAppRequestFunctionCallablesType0
+from .update_app_request_function_input_schema_type_0 import UpdateAppRequestFunctionInputSchemaType0
 from .update_app_request_pause import UpdateAppRequestPause
 from .update_app_request_release_policy_type_1 import UpdateAppRequestReleasePolicyType1
 from .update_app_request_release_policy_type_2_type_1 import UpdateAppRequestReleasePolicyType2Type1
@@ -6472,6 +6498,7 @@ __all__ = (
     "AdvanceCanaryRequest",
     "AdvanceStoredWorkflowLiveSuiteRequest",
     "AfterRestoreHook",
+    "AfterRestoreHookIdentity",
     "AgentActivityEntry",
     "AgentActivityEntryMethod",
     "AgentActivityResponse",
@@ -6487,6 +6514,9 @@ __all__ = (
     "AgentApprovalWebhookPayload",
     "AgentApprovalWebhookPayloadCategory",
     "AgentApprovalWebhookPayloadStatus",
+    "AgentBudgetRequest",
+    "AgentBudgetResponse",
+    "AgentBudgetResponseSource",
     "AgentClientRequest",
     "AgentConnectionResponse",
     "AgentConnectionResponseApprovalsItem",
@@ -6812,6 +6842,8 @@ __all__ = (
     "AppResponseCpuMillicores",
     "AppResponseDeploymentAvailability",
     "AppResponseEvictionPriority",
+    "AppResponseFunctionCallables",
+    "AppResponseFunctionInputSchema",
     "AppResponsePreviewPrState",
     "AppResponseReleasePolicy",
     "AppResponseRuntime",
@@ -7353,6 +7385,9 @@ __all__ = (
     "CreateProjectBindingVerificationRunRequest",
     "CreateProjectBindingVerificationRunRequestReviewDigests",
     "CreateProjectEnvironmentApprovalRequest",
+    "CreateProjectEnvironmentBranchRequest",
+    "CreateProjectEnvironmentBranchRequestEgress",
+    "CreateProjectEnvironmentBranchRequestPrivateNetworks",
     "CreateProjectEnvironmentQualificationRequest",
     "CreateProjectEnvironmentQualificationRequestSecretRevisionHashes",
     "CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes",
@@ -7942,6 +7977,8 @@ __all__ = (
     "EnvironmentGitOpsDiagnostic",
     "EnvironmentGitOpsDiagnosticActor",
     "EnvironmentGitOpsExplanation",
+    "EnvironmentGitOpsExplanationReportFreshness",
+    "EnvironmentGitOpsExplanationReportStatus",
     "EnvironmentGitOpsExplanationSourceFreshness",
     "EnvironmentGitOpsExplanationStatus",
     "EnvironmentGitOpsOverrideRequest",
@@ -9405,6 +9442,7 @@ __all__ = (
     "ObjectStorageComputeBindingSecretKeys",
     "ObjectStorageComputeTrigger",
     "ObjectStorageComputeTriggerEventsItem",
+    "ObjectStorageOverCeilingDeletion",
     "ObjectStoragePolicy",
     "ObjectStoragePolicyAccountingMode",
     "ObjectStoragePricing",
@@ -10683,6 +10721,14 @@ __all__ = (
     "ProjectEnvironmentBindingChangeResponseKind",
     "ProjectEnvironmentBindingResponse",
     "ProjectEnvironmentBindingResponseKind",
+    "ProjectEnvironmentBranchListResponse",
+    "ProjectEnvironmentBranchResponse",
+    "ProjectEnvironmentBranchResponseData",
+    "ProjectEnvironmentBranchResponsePrivateNetworks",
+    "ProjectEnvironmentBranchSummary",
+    "ProjectEnvironmentBranchSummaryData",
+    "ProjectEnvironmentBranchSummaryPrivateNetworks",
+    "ProjectEnvironmentBranchWorkload",
     "ProjectEnvironmentCloneOperationResponse",
     "ProjectEnvironmentCloneOperationResponseStatus",
     "ProjectEnvironmentCloneResourceResponse",
@@ -11704,6 +11750,8 @@ __all__ = (
     "SecurityQuarantineRecoveryRequest",
     "SecurityQuarantineRecoveryResponse",
     "SecurityQuarantineRecoveryResponseStatus",
+    "SeedDevSessionFromEnvironmentBranchRequest",
+    "SeedDevSessionFromEnvironmentBranchResponse",
     "SelectedTraceApp",
     "SelectedTraceInvocation",
     "SelectedTraceLookupResponse",
@@ -12069,6 +12117,8 @@ __all__ = (
     "UpdateAppRequestExecutionModeType1",
     "UpdateAppRequestExecutionModeType2Type1",
     "UpdateAppRequestExecutionModeType3Type1",
+    "UpdateAppRequestFunctionCallablesType0",
+    "UpdateAppRequestFunctionInputSchemaType0",
     "UpdateAppRequestPause",
     "UpdateAppRequestReleasePolicyType1",
     "UpdateAppRequestReleasePolicyType2Type1",

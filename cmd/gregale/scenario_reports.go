@@ -130,6 +130,9 @@ func collectTestValidationForEngine(scenarios map[string]testScenario, manifestD
 		if err := validateTestScenarioExecution(scenario, engine, profiles...); err != nil {
 			return nil, fmt.Errorf("scenario %q: %w", name, err)
 		}
+		if err := validateTestBranchSources(scenario, engine); err != nil {
+			return nil, fmt.Errorf("scenario %q: %w", name, err)
+		}
 		if scenario.CommandExecution != nil {
 			source := scenario.Source
 			if source == "" {

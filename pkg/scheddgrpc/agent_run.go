@@ -110,7 +110,7 @@ func agentRunStartFromProto(start *scheddpb.AgentRunStart) (sched.AgentRunAdmiss
 	}
 	admission := sched.AgentRunAdmission{RunID: start.GetRunId(), AccountID: start.GetAccountId(), Plan: api.Plan(start.GetPlan()),
 		RAMMB: int(start.GetRamMb()), VCPU: int(start.GetVcpu()), CPUMillicores: int(start.GetCpuMillicores()),
-		PauseDuringModelCalls: start.GetPauseDuringModelCalls()}
+		PauseDuringModelCalls: start.GetPauseDuringModelCalls(), HistoryPeakMB: int(start.GetHistoryPeakPrivateMb())}
 	var run agentrunproto.Request
 	if err := json.Unmarshal(start.GetRun(), &run); err != nil {
 		return sched.AgentRunAdmission{}, agentrunproto.Request{}, status.Error(codes.InvalidArgument, "run is not an agent run request")

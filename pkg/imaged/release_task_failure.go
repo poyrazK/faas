@@ -14,6 +14,7 @@ import "github.com/onebox-faas/faas/pkg/whycopy"
 var releaseTaskInfrastructureFailures = map[string]struct{}{
 	"restore_failed":                {},
 	"restore_timeout":               {},
+	"capacity_unavailable":          {},
 	"execution_transport_failed":    {},
 	"guest_protocol_error":          {},
 	"attach_unroutable":             {},

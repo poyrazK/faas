@@ -15,6 +15,7 @@ import (
 var _ ObjectStorageAccountingStore = (*PgStore)(nil)
 var _ ObjectStorageBillingStore = (*PgStore)(nil)
 var _ ObjectInventoryReleaser = (*PgStore)(nil)
+var _ ObjectBucketPlanLimitsStore = (*PgStore)(nil)
 
 func objectUsageTime(t time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: t, Valid: true} }
 
@@ -43,6 +44,37 @@ func lockObjectUsageScope(ctx context.Context, tx pgx.Tx, account, bucket pgtype
 	return q.ObjectUsageLockAccount(ctx, tx, account)
 }
 
+// ObjectBucketPlanLimits returns the object-storage limits of the plan that
+// pays for the bucket now (ADR-20261111123000 decision 8).
+func (s *pgCore) ObjectBucketPlanLimits(ctx context.Context, account, bucket string) (api.ObjectStoragePlanLimits, error) {
+	if !validUUID(account) || !validUUID(bucket) {
+		return api.ObjectStoragePlanLimits{}, ErrNotFound
+	}
+	subject, err := sqlc.New().ObjectStorageSubject(ctx, s.pool, sqlc.ObjectStorageSubjectParams{BucketID: mustPgUUID(bucket), AccountID: mustPgUUID(account)})
+	if err != nil {
+		return api.ObjectStoragePlanLimits{}, mapErr(err)
+	}
+	return readObjectPlanLimits(ctx, s.pool, pgUUIDString(subject))
+}
+
+// readObjectPlanLimits returns a billing subject's object-storage plan
+// limits. ADR-1320: checks tighten the operator policy by the plan's
+// ceilings. A missing account keeps the operator policy, as before.
+func readObjectPlanLimits(ctx context.Context, db sqlc.DBTX, subject string) (api.ObjectStoragePlanLimits, error) {
+	owner, err := sqlc.New().ObjectUsageAccountPlanCap(ctx, db, mustPgUUID(subject))
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return api.ObjectStoragePlanLimits{}, err
+	}
+	var capCents, grantBytes *int64
+	if owner.OverageCapCents.Valid {
+		capCents = &owner.OverageCapCents.Int64
+	}
+	if owner.CeilingGrantBytes.Valid {
+		grantBytes = &owner.CeilingGrantBytes.Int64
+	}
+	return objectStoragePlanLimits(api.Plan(owner.Plan), grantBytes, capCents), nil
+}
+
 // Storage namespace selects the bucket; financial ownership selects its quota pool.
 func readObjectBucketUsage(ctx context.Context, db sqlc.DBTX, account, bucket string, now time.Time) (ObjectUsageSnapshot, error) {
 	subject, err := sqlc.New().ObjectStorageSubject(ctx, db, sqlc.ObjectStorageSubjectParams{BucketID: mustPgUUID(bucket), AccountID: mustPgUUID(account)})
@@ -55,25 +87,18 @@ func readObjectBucketUsage(ctx context.Context, db sqlc.DBTX, account, bucket st
 func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string, periodStart time.Time) (ObjectUsageSnapshot, error) {
 	q := sqlc.New()
 	out := ObjectUsageSnapshot{}
-	// ADR-1320: checks tighten the operator policy by the plan's ceilings. A
-	// missing account keeps the operator policy, as before.
-	owner, err := q.ObjectUsageAccountPlanCap(ctx, db, mustPgUUID(account))
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	limits, err := readObjectPlanLimits(ctx, db, account)
+	if err != nil {
 		return out, err
 	}
-	var capCents, grantBytes *int64
-	if owner.OverageCapCents.Valid {
-		capCents = &owner.OverageCapCents.Int64
-	}
-	if owner.CeilingGrantBytes.Valid {
-		grantBytes = &owner.CeilingGrantBytes.Int64
-	}
-	out.PlanLimits = objectStoragePlanLimits(api.Plan(owner.Plan), grantBytes, capCents)
+	out.PlanLimits = limits
 	rows, err := q.ObjectUsageBuckets(ctx, db, sqlc.ObjectUsageBucketsParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(ObjectStoragePeriod(periodStart))})
 	if err != nil {
 		return out, err
 	}
+	out.InventoryQuiet = api.ObjectInventoryQuietOff
 	for _, r := range rows {
+		out.InventoryQuiet = r.InventoryQuietMode
 		out.Buckets = append(out.Buckets, ObjectBucketUsage{
 			Bucket:         ObjectBucket{ID: pgUUIDString(r.ID), OrgID: pgUUIDString(r.OrgID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), BackendID: r.BackendID, BackendFingerprint: r.BackendFingerprint, PhysicalName: r.PhysicalName, State: r.State, PublicRead: r.PublicRead, ServeAt: r.ServeAt.String, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time},
 			MultipartBytes: r.MultipartBytes, InventoryScope: r.InventoryScope.String, BaselineBytes: r.BaselineBytes.Int64, BaselineKeys: r.BaselineKeys.Int64, GrantedBytes: r.GrantedBytes.Int64, GrantedKeys: r.GrantedKeys.Int64,
@@ -81,7 +106,7 @@ func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string,
 			RequestCount: r.GatewayRequestCount, EgressBytes: r.GatewayEgressBytes, GatewayMetricsKnown: true,
 			StoredByteHours: r.GatewayStoredByteHours, StorageMeteredThrough: r.GatewayStorageThrough.Time,
 			InventoryScan: ObjectInventoryScan{StartedAt: r.ScanStartedAt.Time, ProgressAt: r.ScanProgressAt.Time, Bytes: r.ScanBytes.Int64, Keys: r.ScanKeys.Int64, Pages: int(r.ScanPages.Int32), Complete: r.ScanComplete.Bool},
-			InventoryHeld: r.InventoryHeld,
+			InventoryHeld: r.InventoryHeld, MutatedAt: r.MutatedAt.Time, ActiveSince: r.ActiveSince.Time,
 		})
 	}
 	reports, err := q.ObjectUsageReports(ctx, db, sqlc.ObjectUsageReportsParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(periodStart)})
@@ -259,7 +284,7 @@ func (s *pgCore) RecordObjectUsageReport(ctx context.Context, r api.ObjectStorag
 }
 
 func (s *pgCore) DueObjectInventories(ctx context.Context, limit int32) ([]ObjectBucket, error) {
-	due, err := s.DueObjectInventoryQueue(ctx, limit, nil)
+	due, err := s.DueObjectInventoryQueue(ctx, limit, nil, false)
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +295,7 @@ func (s *pgCore) DueObjectInventories(ctx context.Context, limit int32) ([]Objec
 	return out, nil
 }
 
-func (s *pgCore) DueObjectInventoryQueue(ctx context.Context, limit int32, skip []string) ([]ObjectInventoryDue, error) {
+func (s *pgCore) DueObjectInventoryQueue(ctx context.Context, limit int32, skip []string, quiet bool) ([]ObjectInventoryDue, error) {
 	if limit < 1 || limit > 100 {
 		return nil, ErrConflict
 	}
@@ -278,7 +303,11 @@ func (s *pgCore) DueObjectInventoryQueue(ctx context.Context, limit int32, skip 
 	for _, id := range skip {
 		ids = append(ids, mustPgUUID(id))
 	}
-	rows, err := sqlc.New().ObjectInventoriesDue(ctx, s.pool, sqlc.ObjectInventoriesDueParams{LongKeys: api.ObjectStorageInventoryLongListingKeys, ScanMaxAgeSeconds: int64(api.ObjectInventoryScanMaxAge / time.Second), Skip: ids, RowLimit: limit})
+	rows, err := sqlc.New().ObjectInventoriesDue(ctx, s.pool, sqlc.ObjectInventoriesDueParams{
+		LongKeys: api.ObjectStorageInventoryLongListingKeys, ScanMaxAgeSeconds: int64(api.ObjectInventoryScanMaxAge / time.Second), Skip: ids, RowLimit: limit,
+		Quiet: quiet, GranularitySeconds: int64(api.ObjectInventoryMutationStampGranularity / time.Second), QuietVerifySeconds: int64(api.ObjectInventoryQuietVerifyAfter / time.Second),
+		QuietMaxAgeSeconds: int64(api.ObjectInventoryQuietMaxAge / time.Second), WindowSeconds: api.ObjectStorageInventoryMaxAgeSeconds,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -289,12 +318,17 @@ func (s *pgCore) DueObjectInventoryQueue(ctx context.Context, limit int32, skip 
 	return out, nil
 }
 
-func (s *pgCore) ObjectInventoryBacklog(ctx context.Context) (ObjectInventoryBacklog, error) {
-	r, err := sqlc.New().ObjectInventoryBacklog(ctx, s.pool, sqlc.ObjectInventoryBacklogParams{ScanMaxAgeSeconds: int64(api.ObjectInventoryScanMaxAge / time.Second), ProgressWindowSeconds: int64(api.ObjectInventoryScanProgressWindow / time.Second)})
+func (s *pgCore) ObjectInventoryBacklog(ctx context.Context, quiet bool) (ObjectInventoryBacklog, error) {
+	r, err := sqlc.New().ObjectInventoryBacklog(ctx, s.pool, sqlc.ObjectInventoryBacklogParams{
+		ScanMaxAgeSeconds: int64(api.ObjectInventoryScanMaxAge / time.Second), ProgressWindowSeconds: int64(api.ObjectInventoryScanProgressWindow / time.Second),
+		Quiet: quiet, GranularitySeconds: int64(api.ObjectInventoryMutationStampGranularity / time.Second),
+		QuietMaxAgeSeconds: int64(api.ObjectInventoryQuietMaxAge / time.Second), QuietVerifySeconds: int64(api.ObjectInventoryQuietVerifyAfter / time.Second),
+	})
 	if err != nil {
 		return ObjectInventoryBacklog{}, err
 	}
-	return ObjectInventoryBacklog{DueBuckets: r.DueBuckets, OldestObservationAge: time.Duration(max(r.OldestAgeSeconds, 0) * float64(time.Second))}, nil
+	seconds := func(v float64) time.Duration { return time.Duration(max(v, 0) * float64(time.Second)) }
+	return ObjectInventoryBacklog{DueBuckets: r.DueBuckets, OldestObservationAge: seconds(r.OldestAgeSeconds), OldestQuietObservationAge: seconds(r.OldestQuietAgeSeconds)}, nil
 }
 
 func (s *pgCore) ClaimObjectInventory(ctx context.Context, bucket, token string) error {
@@ -349,6 +383,9 @@ func (s *pgCore) FinishObjectInventory(ctx context.Context, bucket, token string
 	}
 	if n != 1 {
 		return ErrConflict
+	}
+	if err = q.ObjectBucketMarkOutstandingMutations(ctx, tx, mustPgUUID(bucket)); err != nil {
+		return err
 	}
 	if err = q.ObjectInventorySample(ctx, tx, sqlc.ObjectInventorySampleParams{BucketID: mustPgUUID(bucket), Token: token}); err != nil {
 		return err

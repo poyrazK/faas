@@ -194,6 +194,20 @@ SELECT method, samples, expected_samples, measured_ms, paused_ms, private_mb_ms,
        billable_mb_ms, peak_private_mb, cold_boot
   FROM agent_run_usage WHERE run_id=sqlc.arg(run_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
 
+-- name: AgentVersionPrivatePeak :one
+-- ADR-20261027090015 §3: the p95 private peak of a version's recent measured
+-- runs of one input class, leaving out runs with too many missing samples.
+SELECT count(*)::integer AS runs,
+       coalesce(percentile_disc(0.95) WITHIN GROUP (ORDER BY h.peak_private_mb), 0)::bigint AS peak_mb
+  FROM (SELECT u.peak_private_mb
+          FROM agent_run_usage u JOIN agent_runs r ON r.id = u.run_id
+         WHERE u.account_id = sqlc.arg(account_id)::text::uuid AND r.agent_id = sqlc.arg(agent_id)::text::uuid
+           AND r.agent_version = sqlc.arg(agent_version)::integer
+           AND (r.checkout_repository IS NOT NULL) = sqlc.arg(checkout)::boolean
+           AND u.samples::bigint * 100 >= u.expected_samples::bigint * (100 - sqlc.arg(max_gap_percent)::integer)
+         ORDER BY u.recorded_at DESC
+         LIMIT sqlc.arg(window_runs)::integer) h;
+
 -- name: RenewAgentRunLease :one
 UPDATE agent_runs SET lease_expires_at=now()+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision), updated_at=now()
  WHERE id=sqlc.arg(run_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state IN ('starting','running','delivering')
@@ -414,6 +428,39 @@ SELECT c.run_id::text AS run_id, c.account_id::text AS account_id, c.endpoint_id
 
 -- name: MarkAgentRunCallbackDelivered :exec
 UPDATE agent_run_callbacks SET delivered_at = now() WHERE run_id = sqlc.arg(run_id)::text::uuid AND delivered_at IS NULL;
+
+-- name: LockAgentGitHubSubscriptionEndpoint :exec
+-- ADR-20261030125501 §4: serializes gregale_github_subscribe calls of one
+-- endpoint, so its live subscriptions stay within the plan's limit.
+SELECT pg_advisory_xact_lock(hashtextextended('agent-github-subscriptions:' || sqlc.arg(endpoint_id)::text, 0));
+
+-- name: AgentGitHubSubscriptionByCall :one
+SELECT id::text AS id, repository, event_types, expires_at FROM agent_github_subscriptions
+ WHERE endpoint_id = sqlc.arg(endpoint_id)::text::uuid AND thread_id = sqlc.arg(thread_id)::text
+   AND tool_call_id = sqlc.arg(tool_call_id)::text;
+
+-- name: CountLiveAgentGitHubSubscriptions :one
+SELECT count(*)::integer FROM agent_github_subscriptions
+ WHERE endpoint_id = sqlc.arg(endpoint_id)::text::uuid AND expires_at > sqlc.arg(now)::timestamptz;
+
+-- name: InsertAgentGitHubSubscription :one
+INSERT INTO agent_github_subscriptions (account_id, endpoint_id, thread_id, tool_call_id, repository, event_types, issued_at, expires_at)
+VALUES (sqlc.arg(account_id)::text::uuid, sqlc.arg(endpoint_id)::text::uuid, sqlc.arg(thread_id)::text, sqlc.arg(tool_call_id)::text,
+  sqlc.arg(repository)::text, sqlc.arg(event_types)::text[], sqlc.arg(issued_at)::timestamptz, sqlc.arg(expires_at)::timestamptz)
+RETURNING id::text AS id;
+
+-- name: ListLiveAgentGitHubSubscriptions :many
+-- The live subscriptions of one account to one repository's event type.
+SELECT id::text AS id, endpoint_id::text AS endpoint_id, thread_id, tool_call_id, issued_at
+ FROM agent_github_subscriptions
+ WHERE account_id = sqlc.arg(account_id)::text::uuid AND repository = sqlc.arg(repository)::text
+   AND sqlc.arg(event_type)::text = ANY (event_types) AND expires_at > sqlc.arg(now)::timestamptz
+ ORDER BY created_at, id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: DeleteExpiredAgentGitHubSubscriptions :execrows
+DELETE FROM agent_github_subscriptions WHERE id IN (
+  SELECT id FROM agent_github_subscriptions WHERE expires_at < sqlc.arg(before)::timestamptz
+   ORDER BY expires_at LIMIT sqlc.arg(max_rows)::integer);
 
 -- name: AgentCallbackClock :one
 -- ADR-20261030125501 §3: the clock RevokeAgentCallbacks records, read when a

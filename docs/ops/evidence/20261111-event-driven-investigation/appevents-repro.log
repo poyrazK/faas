@@ -1,0 +1,45 @@
+=== RUN   TestAuditDataAPIChangeEventKeepsCompanyBoundary
+=== RUN   TestAuditDataAPIChangeEventKeepsCompanyBoundary/memory
+    zz_event_audit_repro_test.go:76: Data API change event stored producer="" and routed company payload to removed creator's personal app=true; recipients=[{AcknowledgmentLeaseSeconds:0 SchemaVersions:[] DeliveryAgeOverride:false RoutingRetryPolicy:<nil> WebhookEndpointID: WebhookProvider: Workflow:[] DeploymentID: ID:bdc606c8-da0d-4891-bd19-9b181341f151 AccountID:9eabbcfc-c83f-8d6c-8096-daadcae1c115 AppID:b68fd668-9a2b-4b5b-b68b-9377b7e69950 PlatformTenantID: Source:* Type:* Filter:[123 125] WorkSnapshotCaptured:true Work:<nil> ObjectNotification:<nil>} {AcknowledgmentLeaseSeconds:0 SchemaVersions:[] DeliveryAgeOverride:false RoutingRetryPolicy:<nil> WebhookEndpointID: WebhookProvider: Workflow:[] DeploymentID: ID:0ed0afe5-37e3-4586-bada-9d6cbbdcb546 AccountID:9eabbcfc-c83f-8d6c-8096-daadcae1c115 AppID:dd9faf88-2088-492a-b32a-79ea8d00cdfc PlatformTenantID: Source:* Type:* Filter:[123 125] WorkSnapshotCaptured:true Work:<nil> ObjectNotification:<nil>}]
+=== RUN   TestAuditDataAPIChangeEventKeepsCompanyBoundary/postgres
+    zz_event_audit_repro_test.go:76: Data API change event stored producer="" and routed company payload to removed creator's personal app=true; recipients=[{AcknowledgmentLeaseSeconds:0 SchemaVersions:[] DeliveryAgeOverride:false RoutingRetryPolicy:<nil> WebhookEndpointID: WebhookProvider: Workflow:[] DeploymentID: ID:49bee89b-e10a-46fc-b585-4bff4c001ce3 AccountID:e815a37b-db14-4654-a7fe-961eeebf5706 AppID:f19f4717-fdd1-4990-920a-606349443c6c PlatformTenantID: Source:* Type:* Filter:[123 125] WorkSnapshotCaptured:true Work:<nil> ObjectNotification:<nil>} {AcknowledgmentLeaseSeconds:0 SchemaVersions:[] DeliveryAgeOverride:false RoutingRetryPolicy:<nil> WebhookEndpointID: WebhookProvider: Workflow:[] DeploymentID: ID:c2b018d7-6842-47af-9310-8a210cf075bd AccountID:e815a37b-db14-4654-a7fe-961eeebf5706 AppID:de980789-bb02-4f22-9c59-cd79a83a81b6 PlatformTenantID: Source:* Type:* Filter:[123 125] WorkSnapshotCaptured:true Work:<nil> ObjectNotification:<nil>}]
+--- FAIL: TestAuditDataAPIChangeEventKeepsCompanyBoundary (21.22s)
+    --- FAIL: TestAuditDataAPIChangeEventKeepsCompanyBoundary/memory (0.01s)
+    --- FAIL: TestAuditDataAPIChangeEventKeepsCompanyBoundary/postgres (21.21s)
+=== RUN   TestAuditRetentionHidesRevokedCompanyEvents
+=== RUN   TestAuditRetentionHidesRevokedCompanyEvents/memory
+    zz_event_audit_repro_test.go:100: receipt correctly returns 404 but retention exposes revoked company's event identity: {"unknown_deadline_receipts":0,"observed_at":"2026-11-11T12:58:48.330792286Z","window_seconds":2592000,"retained_receipts":1,"retained_bytes":780,"unsettled_receipts":0,"held_receipts":0,"recovery_holds":0,"running_backfill_holds":0,"retryable_backfill_holds":0,"held_due_receipts":0,"eligible_for_pruning":0,"expiring_receipts":1,"storage":{"retained_events":1,"retained_bytes":780,"pending_events":0,"oldest_pending_at":null,"limits":{"retained_events":1048576,"retained_bytes":2147483648,"settled_retention_seconds":604800}},"storage_count_utilization_pct":0.000095367431640625,"storage_bytes_utilization_pct":0.00003632158041000366,"storage_utilization_pct":0.000095367431640625,"sample":[{"event_source":"company-orders","event_id":"private-company-order-492","accepted_at":"2026-11-11T12:58:48.327729968Z","retain_until":"2026-11-18T12:58:48.328374024Z","retained_bytes":780,"status":"expiring","hold_reason":""}],"sample_truncated":false}
+=== RUN   TestAuditRetentionHidesRevokedCompanyEvents/postgres
+    zz_event_audit_repro_test.go:100: receipt correctly returns 404 but retention exposes revoked company's event identity: {"unknown_deadline_receipts":0,"observed_at":"2026-11-11T12:58:48.800680044Z","window_seconds":2592000,"retained_receipts":1,"retained_bytes":988,"unsettled_receipts":0,"held_receipts":0,"recovery_holds":0,"running_backfill_holds":0,"retryable_backfill_holds":0,"held_due_receipts":0,"eligible_for_pruning":0,"expiring_receipts":1,"storage":{"retained_events":1,"retained_bytes":988,"pending_events":0,"oldest_pending_at":null,"limits":{"retained_events":1048576,"retained_bytes":2147483648,"settled_retention_seconds":604800}},"storage_count_utilization_pct":0.000095367431640625,"storage_bytes_utilization_pct":0.00004600733518600464,"storage_utilization_pct":0.000095367431640625,"sample":[{"event_source":"company-orders","event_id":"private-company-order-492","accepted_at":"2026-11-11T12:58:48.735855Z","retain_until":"2026-11-18T12:58:48.773445Z","retained_bytes":988,"status":"expiring","hold_reason":""}],"sample_truncated":false}
+--- FAIL: TestAuditRetentionHidesRevokedCompanyEvents (0.66s)
+    --- FAIL: TestAuditRetentionHidesRevokedCompanyEvents/memory (0.01s)
+    --- FAIL: TestAuditRetentionHidesRevokedCompanyEvents/postgres (0.65s)
+=== RUN   TestAuditAcceptedEventsRemainRetryableAfterSchemaRegistration
+=== RUN   TestAuditAcceptedEventsRemainRetryableAfterSchemaRegistration/memory
+=== RUN   TestAuditAcceptedEventsRemainRetryableAfterSchemaRegistration/memory/single
+    zz_event_audit_repro_test.go:119: same retained identity changed from 202 to 422 after schema registration: {"type":"about:blank","title":"Event schema validation failed","status":422,"code":"validation_failed","detail":"event schema version is required"}
+=== RUN   TestAuditAcceptedEventsRemainRetryableAfterSchemaRegistration/memory/batch
+    zz_event_audit_repro_test.go:124: same retained identity rejected by batch after schema registration: {"results":[{"index":0,"status":"rejected","retryable":false,"problem":{"type":"","title":"Event schema validation failed","status":422,"code":"validation_failed","detail":"event schema version is required"}}]}
+=== RUN   TestAuditAcceptedEventsRemainRetryableAfterSchemaRegistration/postgres
+=== RUN   TestAuditAcceptedEventsRemainRetryableAfterSchemaRegistration/postgres/single
+    zz_event_audit_repro_test.go:119: same retained identity changed from 202 to 422 after schema registration: {"type":"about:blank","title":"Event schema validation failed","status":422,"code":"validation_failed","detail":"event schema version is required"}
+=== RUN   TestAuditAcceptedEventsRemainRetryableAfterSchemaRegistration/postgres/batch
+    zz_event_audit_repro_test.go:124: same retained identity rejected by batch after schema registration: {"results":[{"index":0,"status":"rejected","retryable":false,"problem":{"type":"","title":"Event schema validation failed","status":422,"code":"validation_failed","detail":"event schema version is required"}}]}
+--- FAIL: TestAuditAcceptedEventsRemainRetryableAfterSchemaRegistration (1.47s)
+    --- FAIL: TestAuditAcceptedEventsRemainRetryableAfterSchemaRegistration/memory (0.00s)
+        --- FAIL: TestAuditAcceptedEventsRemainRetryableAfterSchemaRegistration/memory/single (0.00s)
+        --- FAIL: TestAuditAcceptedEventsRemainRetryableAfterSchemaRegistration/memory/batch (0.00s)
+    --- FAIL: TestAuditAcceptedEventsRemainRetryableAfterSchemaRegistration/postgres (1.47s)
+        --- FAIL: TestAuditAcceptedEventsRemainRetryableAfterSchemaRegistration/postgres/single (0.06s)
+        --- FAIL: TestAuditAcceptedEventsRemainRetryableAfterSchemaRegistration/postgres/batch (0.01s)
+=== RUN   TestAuditDataAPIChangeEventsSupportRegisteredSchemas
+=== RUN   TestAuditDataAPIChangeEventsSupportRegisteredSchemas/memory
+    zz_event_audit_repro_test.go:155: registering an accepting schema stops Data API changes permanently: status=rejected retryable=false problem=validation_failed: event schema version is required; neither DataAPIChangeEvent nor AppProducerEvent can supply a schema version
+=== RUN   TestAuditDataAPIChangeEventsSupportRegisteredSchemas/postgres
+    zz_event_audit_repro_test.go:155: registering an accepting schema stops Data API changes permanently: status=rejected retryable=false problem=validation_failed: event schema version is required; neither DataAPIChangeEvent nor AppProducerEvent can supply a schema version
+--- FAIL: TestAuditDataAPIChangeEventsSupportRegisteredSchemas (0.53s)
+    --- FAIL: TestAuditDataAPIChangeEventsSupportRegisteredSchemas/memory (0.00s)
+    --- FAIL: TestAuditDataAPIChangeEventsSupportRegisteredSchemas/postgres (0.53s)
+FAIL
+FAIL	github.com/onebox-faas/faas/pkg/apid/appevents	23.944s
+FAIL

@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // ObjectBucket is a durable placement record, not an upstream S3 bucket name
@@ -67,8 +69,15 @@ type ObjectBucketReservationResultStore interface {
 
 const ObjectBucketLeaseDuration = 2 * time.Minute
 
+// validObjectBucketRetry bounds a deferred bucket operation's delay to an
+// hour, except a cleanup waiting for kept retention to end, which waits up to
+// api.ObjectOwnedCleanupProtectedRetryMax (ADR-20261111123000 decision 8).
 func validObjectBucketRetry(code string, delay time.Duration) bool {
-	if delay < time.Second || delay > time.Hour {
+	limit := time.Hour
+	if code == "protected" {
+		limit = api.ObjectOwnedCleanupProtectedRetryMax
+	}
+	if delay < time.Second || delay > limit {
 		return false
 	}
 	switch code {

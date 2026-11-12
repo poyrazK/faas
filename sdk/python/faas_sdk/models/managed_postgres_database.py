@@ -69,10 +69,10 @@ class ManagedPostgresDatabase:
     resizing to an included class resumes it."""
     hold: ManagedPostgresDatabaseHold | Unset = UNSET
     """Set while the platform stops this database's compute and refuses its connections although its state is
-    ready: compute_ceiling once the account used its monthly compute ceiling; egress once its apps and databases
-    sent the plan's monthly egress allowance; inactive while the account is suspended; plan_excess (see
-    plan_excess); preview for a PR preview database once the account used 80% of its compute. Its data is kept.
-    Omitted while nothing holds it; the platform applies a change within a few minutes."""
+    ready: compute_ceiling once the account used its monthly compute ceiling; egress once this database sent its own
+    monthly egress allowance (500 GB); inactive while the account is suspended; plan_excess (see plan_excess);
+    preview for a PR preview database once the account used 80% of its compute. Its data is kept. Omitted while
+    nothing holds it; the platform applies a change within a few minutes."""
     restore_range: ManagedPostgresRestoreRange | Unset = UNSET
     """The span a point-in-time restore from this database can target now. Absent while the database cannot be
     restored from."""

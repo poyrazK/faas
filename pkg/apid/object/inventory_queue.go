@@ -190,10 +190,14 @@ func (q *inventoryQueue) failure() error {
 }
 
 // inventoryDue reads the store's sweep queue, or adapts DueObjectInventories
-// for a store without one (no skip list, no long listings).
-func inventoryDue(st state.ObjectStorageAccountingStore) inventoryDueFunc {
+// for a store without one (no skip list, no long listings, no quiet buckets).
+// quiet lets object_inventory_quiet leave quiet buckets to their daily
+// verification (gateway-safety accounting, ADR-20261110151628 §2).
+func inventoryDue(st state.ObjectStorageAccountingStore, quiet bool) inventoryDueFunc {
 	if queue, ok := st.(state.ObjectInventoryQueueStore); ok {
-		return queue.DueObjectInventoryQueue
+		return func(ctx context.Context, limit int32, skip []string) ([]state.ObjectInventoryDue, error) {
+			return queue.DueObjectInventoryQueue(ctx, limit, skip, quiet)
+		}
 	}
 	return func(ctx context.Context, limit int32, _ []string) ([]state.ObjectInventoryDue, error) {
 		rows, err := st.DueObjectInventories(ctx, limit)

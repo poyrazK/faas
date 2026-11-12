@@ -788,12 +788,18 @@ const (
 
 // A scan is reused only while the scanner and vulnerability database that
 // made it are still the installed ones (ADR-20261028102540). imaged reads that
-// identity with `grype version` and `grype db status` and keeps it this long;
-// every real scan also refreshes it.
+// identity with `grype version` and `grype db status` and keeps it
+// ScannerIdentityCacheTTL; every real scan also refreshes it. While a stat of
+// the Grype binary and of every file under GRYPE_DB_CACHE_DIR (at most
+// ScannerInstallStampMaxEntries entries) is unchanged it keeps the identity up
+// to ScannerIdentityUnchangedMaxAge: the probe took 3-10 s, and deploys are
+// rarer than one a minute, so every deploy paid it.
 const (
-	ScannerIdentityCacheTTL       = time.Minute
-	ScannerIdentityProbeTimeout   = 30 * time.Second
-	ScannerIdentityMaxOutputBytes = 64 << 10
+	ScannerIdentityCacheTTL        = time.Minute
+	ScannerIdentityUnchangedMaxAge = 6 * time.Hour
+	ScannerInstallStampMaxEntries  = 256
+	ScannerIdentityProbeTimeout    = 30 * time.Second
+	ScannerIdentityMaxOutputBytes  = 64 << 10
 )
 
 // Reused scans no longer run Grype often enough for its own update check to
@@ -909,6 +915,15 @@ const ManagedPostgresOverageCloseWindow = 7 * 24 * time.Hour
 // allowance ($0.10, neon.com/pricing on 2026-11-02, ADR-20261102072425).
 const ManagedPostgresNeonMillicentsPerEgressGB = 10_000
 
+// ManagedPostgresDatabaseEgressAllowanceBytes is each managed PostgreSQL
+// database's monthly egress allowance on every plan that includes one:
+// 500 GB (10^9 bytes, Neon's unit). Neon includes 500 GB of public network
+// transfer per project per month on its paid plans, and every database is
+// its own project (neon.com/pricing, 2026-11-11; ADR-20261110160000
+// amendment 2026-11-11). Database egress no longer counts toward the plan's
+// app egress allowance.
+const ManagedPostgresDatabaseEgressAllowanceBytes int64 = 500 * 1_000_000_000
+
 // ManagedPostgresEgressOverageMillicentsPerGB prices database egress past the
 // plan's shared egress allowance for a subject that elected egress overage:
 // Neon's price plus the markup, $0.105 per GB (ADR-20261110160000 slice 3).
@@ -969,6 +984,31 @@ func ManagedPostgresPreviewDatabasesMax(p Plan) int {
 		return 0
 	}
 	return limits.PreviewApps * databases.DatabasesMax
+}
+
+// ManagedPostgresAllowanceBranchTTLMax is the longest TTL a branch may carry
+// and still sit in the plan's branch allowance instead of its database limit
+// (ADR-20261106103654 amendment 1). A branch with a longer TTL, or none,
+// counts toward DatabasesMax like any restore.
+const ManagedPostgresAllowanceBranchTTLMax = 7 * 24 * time.Hour
+
+// managedPostgresBranchesMax is how many short-lived branches (a TTL of at
+// most ManagedPostgresAllowanceBranchTTLMax) an account may hold at once
+// outside its database limit (ADR-20261106103654 amendment 1). On Neon a
+// branch lives in its source's project, which includes 25 branches, so the
+// allowance costs only the branch's compute and the data written to it,
+// both metered like any database.
+var managedPostgresBranchesMax = map[Plan]int{
+	PlanFree:  0,
+	PlanHobby: 2,
+	PlanPro:   5,
+	PlanScale: 20,
+}
+
+// ManagedPostgresBranchesMax returns the plan's branch allowance. Unknown
+// plans fail closed.
+func ManagedPostgresBranchesMax(p Plan) int {
+	return managedPostgresBranchesMax[p]
 }
 
 // ManagedPostgresPreviewFleetSharePercent caps one account's PR preview
@@ -2047,6 +2087,7 @@ const EnvironmentGitOpsMaxDeclaredRoutes = 50
 // These intervals do not grant authority to execute enforce-mode intent.
 const EnvironmentGitOpsReportLeaseDuration = time.Minute
 const EnvironmentGitOpsReportCheckInterval = time.Minute
+const EnvironmentGitOpsReportStaleAfter = 3 * EnvironmentGitOpsReportCheckInterval
 const EnvironmentGitOpsReportRetryInterval = 30 * time.Second
 const EnvironmentGitOpsReportIdleInterval = 5 * time.Second
 
@@ -2950,6 +2991,20 @@ const MaxObjectCopyDateHeaderBytes = 128
 // including exact-version protection reads. Further batches use durable retries.
 const ObjectOwnedCleanupBatchSize = 100
 
+// ObjectOwnedCleanupProtectedPages bounds how many version pages one cleanup
+// pass reads past versions it must keep (COMPLIANCE retention, or protection
+// the pass may not release) before it waits for the earliest of them to end
+// (ADR-20261111123000 decision 8). A pass that deleted something stops after
+// its page and continues on the next retry. ObjectOwnedCleanupProtectedRetryMin
+// and ObjectOwnedCleanupProtectedRetryMax bound that wait: protection without a
+// date is checked again after the minimum, and a far date is checked again
+// after the maximum in case the provider ended it early.
+const (
+	ObjectOwnedCleanupProtectedPages    = 3
+	ObjectOwnedCleanupProtectedRetryMin = time.Hour
+	ObjectOwnedCleanupProtectedRetryMax = 30 * 24 * time.Hour
+)
+
 // ObjectOwnedCleanupBucketBatch bounds the account grace sweep, including
 // buckets attached to app tombstones.
 const ObjectOwnedCleanupBucketBatch = 20
@@ -3073,6 +3128,10 @@ const (
 	// deletes cannot starve inventory (ADR-20261025115958).
 	ObjectInventoryDeletionDrain = 10 * time.Second
 	ObjectInventoryDeletionYield = ObjectInventoryDeletionDrain + ObjectCapacityInventoryTimeout
+	// ObjectBucketTransitionRetryAfterSeconds is the Retry-After a deletion
+	// refused by a running versioning or capacity inventory carries: about
+	// half of one inventory scan (ObjectCapacityInventoryTimeout).
+	ObjectBucketTransitionRetryAfterSeconds = 30
 	// A bucket's listing resumes across attempts from its last listed key
 	// (ADR-20261030100835). While it advanced within
 	// ObjectInventoryScanProgressWindow, its bucket stays fresh on an
@@ -3080,6 +3139,19 @@ const (
 	// longer ago than that starts again.
 	ObjectInventoryScanMaxAge         = time.Hour
 	ObjectInventoryScanProgressWindow = 5 * time.Minute
+	// Postgres stamps a bucket's mutated_at at most once per
+	// ObjectInventoryMutationStampGranularity (object_bucket_mark_mutated, a
+	// literal there), so a burst of writes rewrites its activity row once. A
+	// bucket is quiet only when mutated_at is older than its listing's start by
+	// more than this (ADR-20261110151628 §2); object_inventory_schedule's
+	// quiet_after holds the same literal (ADR-20261111152144).
+	ObjectInventoryMutationStampGranularity = 30 * time.Second
+	// Under gateway-safety accounting with object_inventory_quiet on, a quiet
+	// bucket's inventory stays fresh for ObjectInventoryQuietMaxAge, and the
+	// sweep verifies it once its observation is ObjectInventoryQuietVerifyAfter
+	// old, leaving an hour for a long listing (ADR-20261110151628 §2).
+	ObjectInventoryQuietMaxAge      = 24 * time.Hour
+	ObjectInventoryQuietVerifyAfter = 23 * time.Hour
 	// Read-only owned-node audits retain bounded diagnostics and publish cached
 	// metrics. These are operator work bounds, not customer allowances.
 	ObjectNodeInventoryInterval         = time.Minute
@@ -3353,6 +3425,11 @@ const (
 	DevDebugIdleTimeout          = 30 * time.Minute
 	DevDebugMaxBytes       int64 = 256 << 20
 	DevDebugWakeTimeout          = 60 * time.Second
+	// DevDebugApprovalWindow is how long one person's approval lets an agent
+	// key open debugger tunnels to one developer app (ADR-20261111150000): a
+	// debugger opens a tunnel per connection, so a per-request approval would
+	// leave agents unable to debug. The window starts at the first attach.
+	DevDebugApprovalWindow = time.Hour
 	// MaxDelayedTaskDelaySeconds bounds how far a one-shot invocation may be
 	// scheduled into the future. A one-year ceiling prevents effectively
 	// immortal pending rows while still covering annual workflows.
@@ -3721,6 +3798,30 @@ const (
 // ValidSnapshotRefresh reports whether v is a valid `snapshot_refresh`.
 func ValidSnapshotRefresh(v string) bool {
 	return v == SnapshotRefreshOff || v == SnapshotRefreshShadow || v == SnapshotRefreshOn
+}
+
+// ValidGatewayAwaitingResponseMax reports whether v is a valid
+// `gateway_awaiting_response_max`.
+func ValidGatewayAwaitingResponseMax(v int) bool {
+	return v >= GatewayAwaitingResponseMaxMin && v <= GatewayAwaitingResponseMaxMax
+}
+
+// object_inventory_quiet (ADR-20261110151628 §2): off changes nothing;
+// shadow classifies quiet buckets and verifies their listings but still holds
+// every bucket to 900 s; on keeps a quiet bucket's inventory for
+// ObjectInventoryQuietMaxAge. Only gateway-safety accounting uses it.
+const (
+	// ObjectInventoryQuietConfigKey is the runtime config key
+	// (runtimeconfig.KeyObjectInventoryQuiet).
+	ObjectInventoryQuietConfigKey = "object_inventory_quiet"
+	ObjectInventoryQuietOff       = "off"
+	ObjectInventoryQuietShadow    = "shadow"
+	ObjectInventoryQuietOn        = "on"
+	DefaultObjectInventoryQuiet   = ObjectInventoryQuietOff
+)
+
+func ValidObjectInventoryQuiet(v string) bool {
+	return v == ObjectInventoryQuietOff || v == ObjectInventoryQuietShadow || v == ObjectInventoryQuietOn
 }
 
 // ValidSnapshotRefreshWindowHours reports whether v is a valid
@@ -4132,6 +4233,14 @@ type ObjectStoragePlanLimits struct {
 	IncludedBytes       int64
 	IncludedRequests    int64
 	IncludedEgressBytes int64
+	// MaxLockRetentionDays bounds Object Lock retention, in either mode, on
+	// the plan (ADR-20261111123000 decision 8): Free 0 (Object Lock and legal
+	// holds not included), Hobby 90, Pro 366 and Scale 2557 days (one and
+	// seven years, leap days included). Unlike the ceilings above, zero is a
+	// limit, not "no plan value". A retention date, event-hold duration,
+	// default retention or bucket lock configuration beyond it is refused at
+	// write; longer retention set before the cap is reported, not shortened.
+	MaxLockRetentionDays int32
 }
 
 // Anonymous reads of public bucket mounts (H9-S137, ADR-20261023223000).
@@ -4247,6 +4356,46 @@ const ObjectStorageLimitsDocsURL = "https://github.com/poyrazK/faas/blob/main/do
 // ObjectStorageBillingHoursPerMonth is the conventional month used to price
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
+
+// Storage held above a subject's ceiling (ADR-20261111123000). The first
+// sweep that sees a subject store more than its ceiling starts a clock and
+// schedules deletion ObjectStorageOverCeilingGraceDays later; getting back
+// under the ceiling clears it. Notices go out when the clock starts and
+// ObjectStorageOverCeilingNoticeDays before deletion. apid sweeps every
+// ObjectStorageOverCeilingSweepInterval.
+//
+// apid's `object_storage_over_ceiling_deletion` runtime config rolls it out:
+// off, shadow (record clocks and log, no customer effect), notify (also show
+// the date and send the notices) and on (also delete). Notify must run for
+// the full grace before on, so no subject is deleted without the notice.
+const (
+	ObjectStorageOverCeilingGraceDays     = 30
+	ObjectStorageOverCeilingSweepInterval = time.Hour
+
+	ObjectStorageOverCeilingOff    = "off"
+	ObjectStorageOverCeilingShadow = "shadow"
+	ObjectStorageOverCeilingNotify = "notify"
+	ObjectStorageOverCeilingOn     = "on"
+	// DefaultObjectStorageOverCeiling is the compiled
+	// `object_storage_over_ceiling_deletion`.
+	DefaultObjectStorageOverCeiling = ObjectStorageOverCeilingOff
+)
+
+// ObjectStorageOverCeilingNoticeDays are the days before deletion that a
+// reminder goes out, besides the notice when the clock starts.
+var ObjectStorageOverCeilingNoticeDays = []int{7, 1}
+
+// ValidObjectStorageOverCeilingMode reports a valid
+// `object_storage_over_ceiling_deletion` value.
+func ValidObjectStorageOverCeilingMode(v string) bool {
+	return v == ObjectStorageOverCeilingOff || v == ObjectStorageOverCeilingShadow || v == ObjectStorageOverCeilingNotify || v == ObjectStorageOverCeilingOn
+}
+
+// ObjectStorageOverCeilingVisible reports a mode in which customers see the
+// clock: the usage API's deletion date and the notices.
+func ObjectStorageOverCeilingVisible(mode string) bool {
+	return mode == ObjectStorageOverCeilingNotify || mode == ObjectStorageOverCeilingOn
+}
 
 // ObjectStoragePlanLimitsMax is the largest storage ceiling, monthly requests
 // and monthly egress any plan sells. An installation's safety policy
@@ -4376,6 +4525,10 @@ type Limits struct {
 	// request's preview holds none (ADR-20261026090000). A preview lease is
 	// temporary and never consumes a DeployedApps slot.
 	PreviewApps int
+	// EnvironmentBranches caps an account's live environment branches
+	// (ADR-20261031193635). A branch boots nothing until it is called, so the
+	// cap bounds rows and parked deployments, not running compute.
+	EnvironmentBranches int
 	// OutboundRequestsPerDayMax (ADR-257) caps the customer-selected daily
 	// request limit on any one managed outbound integration. It is a policy
 	// ceiling, not an included usage allowance; an omitted limit remains uncapped.
@@ -6062,6 +6215,7 @@ var planLimits = map[Plan]Limits{
 		Plan:                      PlanFree,
 		DeployedApps:              1,
 		PreviewApps:               1,
+		EnvironmentBranches:       1,
 		OutboundRequestsPerDayMax: 100_000,
 		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60,
 		DeveloperLeaseMaxHours: 24, // `gregale dev --ttl` ceiling
@@ -6482,6 +6636,7 @@ var planLimits = map[Plan]Limits{
 		Plan:                      PlanHobby,
 		DeployedApps:              5,
 		PreviewApps:               2,
+		EnvironmentBranches:       2,
 		OutboundRequestsPerDayMax: 1_000_000,
 		OutboundRatePerSecondMax:  20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120,
 		DeveloperLeaseMaxHours: 72, // `gregale dev --ttl` ceiling
@@ -6500,7 +6655,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       200,
 		// ADR-1430: 10 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyRequests: 500_000, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyRequests: 500_000, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30, MaxLockRetentionDays: 90},
 		PriceMillicents: 1_000_000, // $10.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
@@ -6929,6 +7084,7 @@ var planLimits = map[Plan]Limits{
 		Plan:                      PlanPro,
 		DeployedApps:              25,
 		PreviewApps:               5,
+		EnvironmentBranches:       5,
 		OutboundRequestsPerDayMax: 10_000_000,
 		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600,
 		DeveloperLeaseMaxHours: 168, // `gregale dev --ttl` ceiling
@@ -6947,7 +7103,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       1000,
 		// ADR-1430: 50 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyRequests: 2_500_000, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyRequests: 2_500_000, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30, MaxLockRetentionDays: 366},
 		PriceMillicents: 3_000_000, // $30.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
@@ -7341,6 +7497,7 @@ var planLimits = map[Plan]Limits{
 		Plan:                      PlanScale,
 		DeployedApps:              100,
 		PreviewApps:               20,
+		EnvironmentBranches:       20,
 		OutboundRequestsPerDayMax: MaxOutboundRequestsPerDay,
 		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000,
 		DeveloperLeaseMaxHours: 336, // `gregale dev --ttl` ceiling
@@ -7359,7 +7516,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       3000,
 		// ADR-1430: 200 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyRequests: 10_000_000, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyRequests: 10_000_000, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30, MaxLockRetentionDays: 2557},
 		PriceMillicents: 9_900_000, // $99.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
@@ -8102,6 +8259,15 @@ const (
 	AppForkMinTTL     = time.Minute
 	AppForkMaxTTL     = 4 * time.Hour
 
+	// Environment branches (ADR-20261031193635) expire at their TTL, which
+	// matches the preview range. A branch of a branch may go this deep.
+	EnvironmentBranchDefaultTTL = 7 * 24 * time.Hour
+	EnvironmentBranchMinTTL     = time.Hour
+	EnvironmentBranchMaxTTL     = 30 * 24 * time.Hour
+	EnvironmentBranchMaxDepth   = 2
+	// EnvironmentBranchSweepBatch bounds one expiry sweep.
+	EnvironmentBranchSweepBatch = 50
+
 	// Live forks (ADR-732) capture the newest running instance when the
 	// fork is created. The capture pauses a serving instance, so a new one
 	// is refused within LiveForkCaptureCooldown of the app's last capture.
@@ -8132,6 +8298,13 @@ const (
 	CrashCaptureRetention = 7 * 24 * time.Hour
 	CrashCaptureCooldown  = 10 * time.Minute
 	CrashCaptureTimeout   = 5 * time.Minute
+
+	// EnvironmentBranchCaptureLease bounds one credential-free capture attempt
+	// (ADR-20261031193635 slice 5a): cold boot, capture and retirement. A
+	// capture failed this many times stays failed and its branches keep
+	// cold-booting.
+	EnvironmentBranchCaptureLease       = 10 * time.Minute
+	EnvironmentBranchCaptureMaxAttempts = 3
 
 	// PreflightRateLimitPerHour bounds anonymous "would this run here" checks per
 	// client IP. The check is unauthenticated, so the ceiling exists to protect
@@ -8197,6 +8370,19 @@ const (
 	// a momentarily full fleet failed a finished build, and the customer had
 	// to rebuild to retry.
 	SnapshotPrimeCapacityMaxWait = 5 * time.Minute
+	// AppTaskCapacityMaxWait is how long after node budgets first refused it
+	// a release command keeps waiting for a compute node with room for its
+	// environment (ADR-20261029103512 amendment 3). Inside the window schedd
+	// returns the task to the queue for AppTaskCapacityRetryDelay; after it
+	// the task fails with capacity_unavailable. Other app tasks (one-off and
+	// interactive commands, crons) fail at once, as before. Without the wait
+	// a momentarily full fleet failed the release, and its deployment with it
+	// (production, 2026-11-05). It matches the first-boot wait of the same
+	// deployment.
+	AppTaskCapacityMaxWait = SnapshotPrimeCapacityMaxWait
+	// AppTaskCapacityRetryDelay is how long a release command that node
+	// budgets refused waits in the queue before schedd places it again.
+	AppTaskCapacityRetryDelay = 20 * time.Second
 
 	// Deployment watchdog (ADR-20261024140100). apid fails an in-flight
 	// deployment that can no longer finish on its own, so every deployment
@@ -8261,13 +8447,20 @@ const (
 	// biggest-over-quota accounts first). Matches spec §12. NaN lv-fc
 	// readings (lvs missing on dev/macOS) short-circuit the pressure branch.
 	SnapshotBudgetAlarmPct = 90.0
-	// SnapshotStaleRetention is how long a snapshot lives in stale state
-	// after the F2 FC-version sweep marks it before imaged evicts it
-	// (F-07). Spec §4.4 + ADR-005: stale snapshots must remain
-	// restore-able for a brief window so an operator rollback across a
-	// firecracker upgrade doesn't pay an extra cold boot. 7 days is the
-	// v1 box's typical reset cycle.
-	SnapshotStaleRetention = 7 * 24 * time.Hour
+	// SnapshotStaleRetention is how long a stale snapshot is kept, from its
+	// stale_at, before imaged deletes its row and files (F-07).
+	//
+	// It was 7 days, so that an operator rollback across a Firecracker
+	// upgrade would not pay a cold boot. But a snapshot only restores while
+	// stale=false (spec §6), and nothing ever clears stale, so a stale
+	// snapshot is never restored again. The window only held dead files: on
+	// 2026-11-11 production kept 361 stale snapshots, 47 GB, none of them
+	// Firecracker-version marks; 325 belonged to deployments still live.
+	//
+	// The hour covers a restore or replica fetch that read the row just
+	// before it was marked. imaged evicts on its GC tick, so files go
+	// within a tick of the hour passing.
+	SnapshotStaleRetention = time.Hour
 	// FcVolumeRoot is where the spec §8 lv-fc volume (app layers +
 	// snapshots) is mounted. Schedd statfs-es it to populate
 	// `fcvm_lv_fc_used_pct`; the gauge reports no data where the path is
@@ -8393,6 +8586,28 @@ const (
 	// for a gateway admission slot. Per-app waiter caps are enforced by
 	// WakeAdmissionPolicyForPlan in pkg/gateway; this is the cross-app bound.
 	GatewayWakeAdmissionQueueCap = 128
+
+	// GatewayAwaitingResponseMax bounds the app requests one gatewayd-internal
+	// process holds before their response head is written: waiting for a
+	// wake, a concurrency slot or the guest's first byte. Past it the gateway
+	// answers 503 gateway_overloaded at once instead of holding another one
+	// (pkg/gateway/backlog). A node saturated on CPU otherwise holds requests
+	// until the process passes its MemoryMax: on 2026-11-11 1,400 req/s at one
+	// node grew gatewayd-internal from ~120 MB to ~500 MB and the kernel
+	// killed it, taking the node's entry down. A waiting request held about
+	// 100 KB there, so 2,048 keeps the backlog near 200 MB, under the unit's
+	// GOMEMLIMIT of 384 MiB. A healthy node holds tens: 1,000 req/s at 60 ms.
+	// The gateway_awaiting_response_max runtime-config key changes it without
+	// a restart, between GatewayAwaitingResponseMaxMin and
+	// GatewayAwaitingResponseMaxMax; raise MemoryMax and GOMEMLIMIT with it.
+	GatewayAwaitingResponseMax    = 2048
+	GatewayAwaitingResponseMaxMin = 64
+	GatewayAwaitingResponseMaxMax = 65536
+	// A gateway_overloaded answer's Retry-After is drawn from
+	// GatewayOverloadedRetryAfterMin to GatewayOverloadedRetryAfterMax seconds,
+	// so refused clients don't return together.
+	GatewayOverloadedRetryAfterMin = 1
+	GatewayOverloadedRetryAfterMax = 3
 
 	// Gateway wake admission defaults are plan policy, kept here with the
 	// rest of the platform's quotas so gateway and scheduler-facing code do
@@ -8610,6 +8825,11 @@ const (
 	// MaxRequestBodyBytes (which bounds inbound request bodies, not
 	// schema documents).
 	MaxEdgeRuleValidateSchemaBytes = 64 * 1024 // 64 KiB
+	// Exact validation arithmetic has a separate per-number work bound
+	// (ADR-20261111140000), independent of the request/schema byte ceiling.
+	MaxEdgeRuleValidateNumberBytes     = 4096
+	MaxEdgeRuleValidateNumberExponent  = 4096
+	MaxEdgeRuleValidateNumberWorkBytes = MaxRequestBodyBytes
 
 	// MaxEdgeRuleRespondBodyBytes bounds the JSON body stored in a
 	// preview-only kind=respond rule. Keeping this bounded protects both
@@ -10604,6 +10824,25 @@ const (
 	// schedd keeps across nodes (ADR-20261027090013 §12); a shape past it
 	// cold-boots every session.
 	SandboxWarmSnapshotsMax = 512
+	// SandboxTemplateSnapshotSweepSec is how often schedd drops the warm
+	// snapshots of deleted templates and deletes their objects on the node
+	// (ADR-20261027090013 §12).
+	SandboxTemplateSnapshotSweepSec = 300
+	// Measured charge and reservation of agent run VMs on agent nodes
+	// (ADR-20261027090015 §3, proposed; schedd agent_measured_charge). A run
+	// is charged max(memory, its version's p95 private peak,
+	// AgentChargeFloorMB) + 8 MB and books min(ram_mb,
+	// max(AgentReservationFloorMB, AgentReservationPeakFactorPercent of the
+	// peak)) + 8 MB against the overcommit bound. A version has a peak once
+	// AgentSizeHistoryMinRuns of its last AgentSizeHistoryWindowRuns runs
+	// were measured with at most AgentSizeHistoryMaxGapPercent of their
+	// samples missing; until then its runs book and are charged ram_mb.
+	AgentChargeFloorMB                = 64
+	AgentReservationFloorMB           = 128
+	AgentReservationPeakFactorPercent = 150
+	AgentSizeHistoryMinRuns           = 20
+	AgentSizeHistoryWindowRuns        = 100
+	AgentSizeHistoryMaxGapPercent     = 20
 	// AgentModelIntegrationsMax bounds a version's model integrations: one
 	// per model provider a harness may point at the relay.
 	AgentModelIntegrationsMax = 2
@@ -10628,6 +10867,14 @@ const (
 	// at most 30 days ahead. A sleep also counts against the endpoint's
 	// realtime schedules (state.ManagedRealtimeScheduleLimit).
 	AgentSleepMaxSeconds = 2_592_000
+	// AgentGitHubSubscriptionMaxSeconds bounds a gregale_github_subscribe
+	// (ADR-20261030125501 §4): a thread receives a repository's events for
+	// at most 30 days, and subscribes again to keep them.
+	AgentGitHubSubscriptionMaxSeconds = 2_592_000
+	// AgentGitHubSubscriptionsPerEndpoint bounds the live subscriptions of one
+	// agent inbox endpoint in preview, as the realtime schedule limit bounds
+	// its sleeps; each forwarded event is published to every matching one.
+	AgentGitHubSubscriptionsPerEndpoint = 64
 	// SandboxIdleFreezeSec freezes a sandbox session with no calls, and
 	// SandboxIdleExpirySec ends it (ADR-20261027090013 §5). The expiry equals
 	// FrozenTTLSeconds and bounds a session's idle timeout.
@@ -11113,6 +11360,26 @@ func (p Plan) DefaultOverageCapCents() (int64, bool) {
 	}
 	return int64(p.PlanIncludedGBHours()) * DefaultOverageCapAllowances * OverageMillicentsPerGBHour / MillicentsPerCent, true
 }
+
+// AgentBudgetDefaultCents is the monthly budget for committed cost an agent
+// key gets when neither it nor its organization chose one
+// (ADR-20261111114059): half the plan's default spend cap, so Hobby $5, Pro
+// $25, Scale $75. Free has none: it cannot keep instances warm.
+func (p Plan) AgentBudgetDefaultCents() int64 {
+	spendCap, ok := p.DefaultOverageCapCents()
+	if !ok {
+		return 0
+	}
+	return spendCap / 2
+}
+
+// MaxAgentBudgetCents bounds a budget a key or an organization sets
+// (ADR-20261111114059): $1,000,000 a month, the column CHECK.
+const MaxAgentBudgetCents int64 = 100_000_000
+
+// AgentBudgetHoursPerMonth prices committed cost over an average month
+// (8,760 h / 12).
+const AgentBudgetHoursPerMonth = 730
 
 // Self-service spend cap ceilings per paid plan, in cents (ADR-20261105120000,
 // owner's numbers 2026-11-07): Hobby $75, Pro $200, Scale $1,000. A larger

@@ -101,13 +101,26 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 			return Database{}, false, ErrConflict
 		}
 	}
-	active, err := s.countReservationOwner(ctx, tx, database)
-	if err != nil {
-		return Database{}, false, mapPostgresError(err)
-	}
-	slot, err := s.reservationTakesRestoreSlot(ctx, tx, database, active, limit)
-	if err != nil {
-		return Database{}, false, err
+	slot := false
+	if database.InBranchAllowance() {
+		// A short-lived branch takes a place in the branch allowance, never
+		// the database limit or the restore slot (ADR-20261106103654
+		// amendment 1). The owner lock above serializes the count.
+		held, err := s.countBranchAllowanceOwner(ctx, tx, database)
+		if err != nil {
+			return Database{}, false, mapPostgresError(err)
+		}
+		if allowance := branchLimit(ctx); allowance < 1 || held >= int64(allowance) {
+			return Database{}, false, ErrBranchLimit
+		}
+	} else {
+		active, err := s.countReservationOwner(ctx, tx, database)
+		if err != nil {
+			return Database{}, false, mapPostgresError(err)
+		}
+		if slot, err = s.reservationTakesRestoreSlot(ctx, tx, database, active, limit); err != nil {
+			return Database{}, false, err
+		}
 	}
 	row, err = q.InsertManagedPostgresLifecycleDatabase(ctx, tx, lifecycleInsertParams(database, accountID, databaseID))
 	if err != nil {

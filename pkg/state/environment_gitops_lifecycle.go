@@ -32,8 +32,20 @@ func (m *MemStore) detachGitSourceLocked(accountID, sourceID string, generation 
 		}
 	}
 	for _, graph := range memory.graphs {
-		if graph.Phase == "preparing" {
+		if graph.Phase != "preparing" {
+			continue
+		}
+		if graph.Generation == memory.source.Generation && graph.IntentVersion == memory.source.IntentVersion && graph.RevisionID == memory.source.ApprovedRevisionID {
 			return ErrConflict
+		}
+		// An obsolete graph cannot be reconciled with a current lease. Its
+		// journal alone is not physical work; unfinished candidates still are.
+		for _, member := range graph.Members {
+			candidate, exists := m.deployments[member.CandidateDeploymentID]
+			if exists && !candidate.Status.IsTerminal() &&
+				(candidate.Status != DeploySnapshotting && candidate.Status != DeployLive || candidate.RootfsPath == "" && candidate.RootfsKey == "") {
+				return ErrConflict
+			}
 		}
 	}
 	// Report mode fences claims and new admission. Retained requests and

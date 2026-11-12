@@ -25,7 +25,7 @@ class AgentApprovalResponse:
     id: UUID
     """The request's id."""
     category: AgentApprovalResponseCategory
-    """The kind of action."""
+    """The kind of action; budget for a change past the agent's monthly budget."""
     method: str
     """The HTTP method of the request the approval allows."""
     path: str
