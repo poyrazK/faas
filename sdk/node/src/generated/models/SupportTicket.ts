@@ -16,6 +16,10 @@ export type SupportTicket = {
   created_at: string;
   updated_at: string;
   resolved_at?: string;
+  /**
+   * Unread support updates for the current caller and audience.
+   */
+  unread_count?: number;
   can_reopen: boolean;
   reopen_until?: string;
 };
