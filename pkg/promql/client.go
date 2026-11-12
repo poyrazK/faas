@@ -363,7 +363,7 @@ func (c *Client) QueryRange(ctx context.Context, query, start, end, step string)
 				continue
 			}
 			ts, ok := v[0].(float64)
-			if !ok {
+			if !ok || math.IsNaN(ts) || math.IsInf(ts, 0) {
 				continue
 			}
 			raw, ok := v[1].(string)
