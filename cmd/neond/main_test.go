@@ -25,6 +25,9 @@ func TestConfigFromEnv(t *testing.T) {
 		{name: "no key file", edit: map[string]string{"FAAS_NEOND_ADMIN_KEY_FILE": ""}, want: "ADMIN_KEY_FILE is required"},
 		{name: "no callers", edit: map[string]string{"FAAS_NEOND_CALLERS": " , "}, want: "CALLERS is required"},
 		{name: "bad limit", edit: map[string]string{"FAAS_NEOND_DESTRUCTIVE_PER_HOUR": "0"}, want: "positive integer"},
+		{name: "project keys", edit: map[string]string{"FAAS_NEOND_ORG_ID": "org-quiet-1", "FAAS_SEAL_DOMAIN_NEON_IDENTITY_PATH": "/run/credentials/faas-neond.service/faas_seal_domain_neon"}},
+		{name: "org without identity", edit: map[string]string{"FAAS_NEOND_ORG_ID": "org-quiet-1"}, want: "both FAAS_NEOND_ORG_ID"},
+		{name: "identity without org", edit: map[string]string{"FAAS_SEAL_DOMAIN_NEON_IDENTITY_PATH": "/x"}, want: "both FAAS_NEOND_ORG_ID"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env := map[string]string{}
