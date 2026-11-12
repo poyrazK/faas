@@ -40084,6 +40084,35 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/automation/resume:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project whose stage automation is resumed.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Stage whose paused automation is enabled; production is refused.
+        schema: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+    post:
+      tags: [projects]
+      operationId: resumeEnvironmentAutomation
+      summary: Enable the crons a full environment clone copied paused.
+      description: Enables only the copied crons the source environment ran. A cron the source had disabled, or one enabled or disabled since, stays as it is.
+      responses:
+        '200':
+          description: Crons enabled in the environment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResumeEnvironmentAutomationResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments:
     parameters:
       - name: slug
@@ -108751,6 +108780,7 @@ components:
         created_at: { type: string, format: date-time }
         last_fired_at: { type: [string, "null"], format: date-time }
         environment: { type: string, description: "Project environment the cron runs in; omitted for production.", example: "staging" }
+        clone_paused: { type: boolean, description: "A full environment clone copied this cron disabled although the source ran it; resuming the environment's automation enables it." }
         schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
 
@@ -111141,6 +111171,17 @@ components:
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
 
+    ResumeEnvironmentAutomationResponse:
+      type: object
+      description: Crons enabled by resuming a stage's automation after a full environment clone.
+      required: [environment, crons_resumed, cron_ids]
+      properties:
+        environment: { type: string, description: "Stage whose paused automation was enabled.", example: "staging" }
+        crons_resumed: { type: integer, minimum: 0, description: "Number of crons enabled." }
+        cron_ids:
+          type: array
+          description: Crons enabled by this call.
+          items: { type: string }
     ProjectEnvironmentCloneOperationResponse:
       description: Durable clone progress within one account and project, excluding private source configuration and worker credentials.
       type: object

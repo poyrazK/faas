@@ -155,3 +155,23 @@ the 20 s gate.
 - **Slices,** each shipped with the switch off: the guest and manifest
   fields; vmmd's optional drive2; builderd's seed run, copy and janitor; the
   metal test.
+- **builderd** (`FAAS_BUILD_BUILDKIT_SEED`, off by default) checks every
+  `api.BuildKitSeedCheckEvery` (1 min). It boots the seed run only when no
+  build holds the builder slot and free space covers the build-drive floor
+  plus `api.BuildKitSeedReserveBytes` (4 GiB). After a failed run it waits
+  `api.BuildKitSeedRetryMin` (2 min), doubling per failure up to
+  `api.BuildKitSeedRetryMax` (30 min): the metal run's first seed attempt
+  met the new builder base's scan still pending. Drain stops a seed run's VM as it
+  does a build's.
+- **Reflink only.** A copy that cannot share the seed's blocks is not made:
+  the seed is a 28 GiB sparse image, so a byte copy would cost more than the
+  pull it saves. Without a copy the build runs as today. `/srv/fc` is XFS
+  with `reflink=1` on the production nodes.
+- **Seed key.** It covers the builder base identity and digest (guest-init,
+  BuildKit and Railpack, whose plan pins the builder image), the platform,
+  the snapshotter, the seed app's digest and a format version.
+- **Eligible builds.** Railpack builds only: not Dockerfile builds (by
+  framework or Compose options), warm builders or the seed run. A deferred
+  cache export attaches the build's copy to the export VM only when the
+  guest reported `buildkit_seeded`; otherwise the copy goes when the build
+  ends.

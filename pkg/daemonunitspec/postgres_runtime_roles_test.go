@@ -48,6 +48,11 @@ func peerRuntimeRoles(t *testing.T) (map[string]string, map[string]bool) {
 	for _, m := range regexp.MustCompile(`'([a-z_]+)'`).FindAllStringSubmatch(array[1], -1) {
 		created[m[1]] = true
 	}
+	// Peer logins outside faas_runtime (neond's faas_neond) are created one
+	// by one, each with its own narrow grants.
+	for _, m := range regexp.MustCompile(`(?m)^\s*CREATE ROLE (faas_[a-z_]+) LOGIN;`).FindAllStringSubmatch(runtimeRolesSQL(t), -1) {
+		created[m[1]] = true
+	}
 	return mapped, created
 }
 
@@ -216,8 +221,9 @@ func TestOwnerContractLeavesOnlyRoot(t *testing.T) {
 			t.Errorf("contracted faas_map maps %v to the owner, want only root", users)
 		}
 		// Daemons born after the owner contract began never logged in as the
-		// owner, so they never map to it (ADR-20261109170000: signd).
-		ownerless := map[string]bool{"faas-signd": true}
+		// owner, so they never map to it (ADR-20261109170000: signd;
+		// ADR-20261112160000: neond).
+		ownerless := map[string]bool{"faas-signd": true, "faas-neond": true}
 		for _, u := range users {
 			if ownerless[u] {
 				t.Errorf("contracted=%t: faas_map maps %s to the owner; it never needed it", contracted, u)

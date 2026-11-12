@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -18,8 +19,14 @@ import (
 
 const maximumResponseBytes = 4 << 20
 
+// brokerForwarder sends one Neon call through neond (ADR-20261112160000),
+// which holds the key.
+type brokerForwarder interface {
+	Forward(ctx context.Context, method, path, rawQuery string, body []byte) (status int, reply []byte, retryAfter string, err error)
+}
+
 func (p *Provider) doJSON(ctx context.Context, method, path string, query url.Values, input, output any, accepted ...int) (err error) {
-	if p == nil || p.baseURL == nil || p.httpClient == nil || p.apiKey == "" || !strings.HasPrefix(path, "/") {
+	if p == nil || !strings.HasPrefix(path, "/") || (p.broker == nil && (p.baseURL == nil || p.httpClient == nil || p.apiKey == "")) {
 		return managedpostgres.ErrUnavailable
 	}
 	if err := ctx.Err(); err != nil {
@@ -45,58 +52,41 @@ func (p *Provider) doJSON(ctx context.Context, method, path string, query url.Va
 		}
 		span.End()
 	}()
-	endpoint := *p.baseURL
-	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + path
-	endpoint.RawQuery = query.Encode()
-
-	var body io.Reader
+	var encoded []byte
 	if input != nil {
-		encoded, err := json.Marshal(input)
-		if err != nil {
+		if encoded, err = json.Marshal(input); err != nil {
 			return managedpostgres.ErrInvalid
 		}
-		body = bytes.NewReader(encoded)
 	}
-	request, err := http.NewRequestWithContext(ctx, method, endpoint.String(), body)
-	if err != nil {
-		return managedpostgres.ErrInvalid
+	var (
+		status     int
+		payload    []byte
+		retryAfter string
+	)
+	if p.broker != nil {
+		status, payload, retryAfter, err = p.broker.Forward(ctx, method, path, query.Encode(), encoded)
+	} else {
+		status, payload, retryAfter, err = p.callNeon(ctx, method, path, query, encoded)
 	}
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Authorization", "Bearer "+p.apiKey)
-	if input != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	// New pins the authority to apiBaseURL and rejects redirects. Caller data
-	// changes only URL.Path and RawQuery; it cannot select a different origin.
-	response, err := p.httpClient.Do(request)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if errors.Is(err, managedpostgres.ErrInvalid) {
+			return err
+		}
 		return managedpostgres.ErrUnavailable
 	}
-	defer func() { _ = response.Body.Close() }()
-
-	if !acceptedStatus(response.StatusCode, accepted) {
-		if response.StatusCode == http.StatusTooManyRequests {
-			p.deferRequests(path, response.Header.Get("Retry-After"))
+	if !acceptedStatus(status, accepted) {
+		if status == http.StatusTooManyRequests {
+			p.deferRequests(path, retryAfter)
 		}
-		if _, err := io.Copy(io.Discard, io.LimitReader(response.Body, maximumResponseBytes)); err != nil && ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return statusError(response.StatusCode)
+		return statusError(status)
 	}
-	if output == nil || response.StatusCode == http.StatusNoContent {
-		if _, err := io.Copy(io.Discard, io.LimitReader(response.Body, maximumResponseBytes)); err != nil && ctx.Err() != nil {
-			return ctx.Err()
-		}
+	if output == nil || status == http.StatusNoContent {
 		return nil
 	}
-	payload, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
-	if err != nil || len(payload) > maximumResponseBytes {
-		if err != nil && ctx.Err() != nil {
-			return ctx.Err()
-		}
+	if len(payload) > maximumResponseBytes {
 		return managedpostgres.ErrUnavailable
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
@@ -108,6 +98,39 @@ func (p *Provider) doJSON(ctx context.Context, method, path string, query url.Va
 		return managedpostgres.ErrUnavailable
 	}
 	return nil
+}
+
+// callNeon sends one request to Neon with the backend's own key and reads at
+// most maximumResponseBytes+1 of the reply.
+func (p *Provider) callNeon(ctx context.Context, method, path string, query url.Values, encoded []byte) (int, []byte, string, error) {
+	endpoint := *p.baseURL
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + path
+	endpoint.RawQuery = query.Encode()
+	var body io.Reader
+	if encoded != nil {
+		body = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, endpoint.String(), body)
+	if err != nil {
+		return 0, nil, "", managedpostgres.ErrInvalid
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if encoded != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	// New pins the authority to apiBaseURL and rejects redirects. Caller data
+	// changes only URL.Path and RawQuery; it cannot select a different origin.
+	response, err := p.httpClient.Do(request)
+	if err != nil {
+		return 0, nil, "", err
+	}
+	defer func() { _ = response.Body.Close() }()
+	payload, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
+	if err != nil {
+		return 0, nil, "", err
+	}
+	return response.StatusCode, payload, response.Header.Get("Retry-After"), nil
 }
 
 func acceptedStatus(status int, accepted []int) bool {

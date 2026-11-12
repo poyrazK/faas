@@ -139,6 +139,11 @@ func (s *PgStore) CreateCapturedProjectEnvironmentCloneOperation(ctx context.Con
 				return ProjectEnvironmentCloneOperation{}, err
 			}
 		}
+		if request.CronLimits != nil {
+			if err := checkCloneCronQuotaTx(ctx, tx, capturedCloneCrons(records), *request.CronLimits, false); err != nil {
+				return ProjectEnvironmentCloneOperation{}, err
+			}
+		}
 	}
 	capture, raw, err := cloneConfigurationRoot(op, records)
 	if err != nil {
@@ -245,6 +250,11 @@ func captureCloneConfigurationWorkloadsForScopesTx(ctx context.Context, tx pgx.T
 		if err := captureCloneQueuesTx(ctx, tx, op, &snapshot); err != nil {
 			return nil, err
 		}
+		crons, err := captureCloneCronsDB(ctx, tx, appID, op.SourceEnvironment)
+		if err != nil {
+			return nil, err
+		}
+		snapshot.Crons = &crons
 		raw, hash, err := encodeCloneWorkloadSnapshot(snapshot)
 		if err != nil {
 			return nil, err
@@ -254,6 +264,13 @@ func captureCloneConfigurationWorkloadsForScopesTx(ctx context.Context, tx pgx.T
 			return nil, err
 		}
 		records = append(records, record)
+	}
+	appIDs := make([]string, 0, len(records))
+	for _, record := range records {
+		appIDs = append(appIDs, record.AppID)
+	}
+	if err := requireCloneCronsCapturedDB(ctx, tx, op.ProjectID, op.SourceEnvironment, appIDs); err != nil {
+		return nil, err
 	}
 	return records, nil
 }

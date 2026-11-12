@@ -5158,6 +5158,7 @@ from .restore_deleted_app_body import RestoreDeletedAppBody
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .restore_mcp_readiness_policy_request import RestoreMCPReadinessPolicyRequest
 from .restore_stored_workflow_revision_request import RestoreStoredWorkflowRevisionRequest
+from .resume_environment_automation_response import ResumeEnvironmentAutomationResponse
 from .resume_project_migration_request import ResumeProjectMigrationRequest
 from .resume_stored_workflow_failure_pause_request import ResumeStoredWorkflowFailurePauseRequest
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
@@ -11297,6 +11298,7 @@ __all__ = (
     "RestoreManagedPostgresDatabaseRequest",
     "RestoreMCPReadinessPolicyRequest",
     "RestoreStoredWorkflowRevisionRequest",
+    "ResumeEnvironmentAutomationResponse",
     "ResumeProjectMigrationRequest",
     "ResumeStoredWorkflowFailurePauseRequest",
     "ResumeWorkflowRunRequest",

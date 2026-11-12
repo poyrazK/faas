@@ -105,3 +105,33 @@ the app's production HTTP crons with the stage manifest's.
   databases, and custom events its code publishes); environment broker
   triggers get a platform-derived consumer group or durable name per
   environment, so a stage never competes with production for messages.
+
+## Amendment 2026-11-12: full clones copy crons paused
+
+Decision 4 for crons, with the owner's choices of 2026-11-12:
+
+- **Scope.** Only a full clone (`gregale env create STAGE --from ENV --full`)
+  copies crons. A plain clone and an environment branch still create none.
+- **What is copied.** Every cron of a captured workload in the source
+  environment, manual and manifest alike, with its configuration: schedule,
+  path or command, timezone, overlap, retry, schedule policy, failure rules
+  and labels. The scheduler's own columns (last fire, schedule anchor,
+  revision, suspension) are not part of the capture, so a source that fires
+  during the clone has not changed. The clone refuses a source with crons on
+  an app that has no workload in it (`source.crons`).
+- **Paused.** Each copy is disabled. `crons.clone_paused` marks the copies the
+  source ran (a source cron that is itself clone-paused counts as running). A
+  manifest deploy into the stage replaces its HTTP crons as usual.
+- **Resume.** Per cron with the existing enable, or all at once with
+  `POST /v1/projects/{slug}/environments/{environment}/automation/resume`
+  (`gregale env resume-automation STAGE`), which enables exactly the
+  clone-paused crons. Any explicit change of `enabled`, by any writer, clears
+  the mark (trigger `clear_cron_clone_pause`), so the bulk resume never undoes
+  a customer's decision or turns on a cron the source had off.
+- **Limits.** Copies count against the plan's cron limits like any other cron,
+  disabled or not. Admission refuses a clone whose copy would pass a per-app
+  or per-account limit (`plan_cron_quota`); materialization checks again under
+  the cron quota lock and ends a clone that crossed it with
+  `cron_limit_exceeded`.
+- **Proof.** Publication checks that the stage holds exactly the captured
+  crons, each still disabled.

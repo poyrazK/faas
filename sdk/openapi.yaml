@@ -33920,6 +33920,7 @@ components:
         created_at: {type: string, format: date-time}
         last_fired_at: {type: [string, "null"], format: date-time}
         environment: {type: string, description: "Project environment the cron runs in; omitted for production.", example: "staging"}
+        clone_paused: {type: boolean, description: "A full environment clone copied this cron disabled although the source ran it; resuming the environment's automation enables it."}
         schedule_policy: {$ref: '#/components/schemas/SchedulePolicy'}
         failure_rules: {$ref: '#/components/schemas/FailureRules'}
     CronRun:

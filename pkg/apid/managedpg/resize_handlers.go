@@ -34,6 +34,11 @@ type Resizes struct {
 	Audit         interface {
 		Emit(ctx context.Context, kind string, accountID *string, data map[string]any)
 	}
+	// Charge prices a new resize against an agent's budget
+	// (ADR-20261111114059) before it is journaled; nil charges nothing. It
+	// returns a commit to call once the resize is accepted, or answered when
+	// it wrote a 428 or an error and the request must stop.
+	Charge func(w http.ResponseWriter, r *http.Request, acct state.Account, database, targetClass string) (commit func(), answered bool)
 }
 
 // resizeBody is the request as sent, so an absent storage limit is
@@ -63,15 +68,24 @@ func (rs Resizes) Post(w http.ResponseWriter, r *http.Request, acct state.Accoun
 		request.StorageLimitBytes = *body.StorageLimitBytes
 	}
 	database := r.PathValue("id")
-	if err := rs.admit(r.Context(), acct, database, request); err != nil {
+	replay, err := rs.admit(r.Context(), acct, database, request)
+	if err != nil {
 		rs.Problem(w, err)
 		return
+	}
+	commit := func() {}
+	if !replay && rs.Charge != nil {
+		var answered bool
+		if commit, answered = rs.Charge(w, r, acct, database, request.ServiceClass); answered {
+			return
+		}
 	}
 	operation, err := rs.Service.Resize(r.Context(), ResizeRequest(acct.ID, database, request))
 	if err != nil {
 		rs.Problem(w, err)
 		return
 	}
+	commit()
 	view := resizeViewFor(operation, storage)
 	if rs.Audit != nil {
 		rs.Audit.Emit(r.Context(), "managed_postgres.database.resize_requested", &acct.ID, map[string]any{"database_id": database, "request_id": operation.ID,
@@ -97,14 +111,14 @@ func (rs Resizes) Get(w http.ResponseWriter, r *http.Request, acct state.Account
 }
 
 // admit checks a new request against the plan. Accepted requests stay
-// readable and replayable after a plan change.
-func (rs Resizes) admit(ctx context.Context, acct state.Account, database string, request api.ResizeManagedPostgresDatabaseRequest) error {
+// readable and replayable after a plan change; replay reports one.
+func (rs Resizes) admit(ctx context.Context, acct state.Account, database string, request api.ResizeManagedPostgresDatabaseRequest) (replay bool, err error) {
 	if _, err := rs.Service.GetResize(ctx, acct.ID, database, request.RequestID); err == nil {
-		return nil
+		return true, nil
 	} else if !errors.Is(err, managedpostgres.ErrNotFound) {
-		return err
+		return false, err
 	}
-	return AdmitResize(acct.Plan, request)
+	return false, AdmitResize(acct.Plan, request)
 }
 
 // resizeViewFor is ResizeView without storage limits outside the preview.

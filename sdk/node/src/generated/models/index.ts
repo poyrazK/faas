@@ -2715,6 +2715,7 @@ export type { ResourceStatus } from './ResourceStatus.js';
 export type { RestoreMCPReadinessPolicyRequest } from './RestoreMCPReadinessPolicyRequest.js';
 export type { RestoreManagedPostgresDatabaseRequest } from './RestoreManagedPostgresDatabaseRequest.js';
 export type { RestoreStoredWorkflowRevisionRequest } from './RestoreStoredWorkflowRevisionRequest.js';
+export type { ResumeEnvironmentAutomationResponse } from './ResumeEnvironmentAutomationResponse.js';
 export type { ResumeProjectMigrationRequest } from './ResumeProjectMigrationRequest.js';
 export type { ResumeStoredWorkflowFailurePauseRequest } from './ResumeStoredWorkflowFailurePauseRequest.js';
 export type { ResumeWorkflowRunRequest } from './ResumeWorkflowRunRequest.js';

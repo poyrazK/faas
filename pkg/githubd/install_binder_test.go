@@ -46,7 +46,7 @@ func TestExchangeOAuthCodeRequiresInstallationAuthority(t *testing.T) {
 			defer fake.Close()
 			auth := newTestAppAuth(t, "100", fake.URL)
 			svc := NewRealService(auth, NewTokenCache(auth, 5*time.Minute), nil, newMemBindingsStore(), newMemStoreInstalls(), recipient, ident, newRecordingAuditFn().AuditEvent)
-			_, _, err := svc.ExchangeOAuthCode("acct-1", "code", "state")
+			_, _, err := svc.ExchangeOAuthCode("acct-1", "code", "state.77")
 			if tc.wantErr == "" && err != nil {
 				t.Fatalf("ExchangeOAuthCode: %v", err)
 			}
@@ -54,6 +54,44 @@ func TestExchangeOAuthCodeRequiresInstallationAuthority(t *testing.T) {
 				t.Fatalf("ExchangeOAuthCode err = %v, want %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// A user can see the App on collaborators' accounts before installing it on
+// their own. Discovery must offer installation, without connecting or minting
+// credentials for those other owners. Explicit selection still refuses above.
+func TestExchangeOAuthCodeOtherPersonalInstallationsRequireInstall(t *testing.T) {
+	ident, recipient := newTestAgeKeypair(t)
+	fake := newFakeGithubServer(t, fakeGithubOpts{
+		accessToken: "private-user-token",
+		installs: []map[string]any{
+			{"id": float64(77), "account": map[string]any{"login": "other-owner", "type": "User"}},
+			{"id": float64(88), "account": map[string]any{"login": "another-owner", "type": "User"}},
+		},
+		appID: "100",
+	})
+	defer fake.Close()
+	auth := newTestAppAuth(t, "100", fake.URL)
+	audit := newRecordingAuditFn()
+	installs := newMemStoreInstalls()
+	svc := NewRealService(auth, NewTokenCache(auth, 5*time.Minute), nil, newMemBindingsStore(), installs, recipient, ident, audit.AuditEvent)
+	_, _, err := svc.ExchangeOAuthCode("acct-1", "private-code", "private-state")
+	if p := api.AsProblem(err); p == nil || p.Code != api.CodeGitHubAppNotInstalled {
+		t.Fatalf("discovery = %v, want installation recovery", err)
+	}
+	if len(audit.events) != 2 {
+		t.Fatalf("refusal diagnostics = %v, want both rejected candidates", audit.events)
+	}
+	for i, event := range audit.events {
+		if event.event != "auth.install.connect_refused" || event.accountID != "acct-1" ||
+			event.payload["installation_id"] != []int64{77, 88}[i] ||
+			event.payload["github_owner"] != []string{"other-owner", "another-owner"}[i] ||
+			event.payload["owner_type"] != "User" || event.payload["reason"] != api.CodeGitHubInstallationOwnerRequired || len(event.payload) != 4 {
+			t.Fatalf("refusal diagnostic %d = %+v", i, event)
+		}
+	}
+	if _, err := installs.ForAccount(t.Context(), "acct-1"); err == nil {
+		t.Fatal("recovery must not connect another owner's installation")
 	}
 }
 
@@ -73,10 +111,13 @@ func TestExchangeOAuthCodeChoosesAmongConnectableInstallations(t *testing.T) {
 		installed []map[string]any
 	}{
 		{name: "one connectable", orgRole: "member", state: "state", installed: []map[string]any{personal, org}, wantID: "77"},
+		{name: "own personal installation after another owner's", state: "state", installed: []map[string]any{{"id": float64(66), "account": map[string]any{"login": "another-owner", "type": "User"}}, personal}, wantID: "77"},
 		{name: "several connectable", orgRole: "admin", state: "state", installed: []map[string]any{personal, org}, wantIDs: []int64{77, 88}},
 		{name: "chosen in the state", orgRole: "admin", state: "state.77", installed: []map[string]any{personal, org}, wantID: "77"},
 		{name: "chosen but not visible", orgRole: "admin", state: "state.99", installed: []map[string]any{personal, org}, wantCode: api.CodeGitHubInstallationNotAccessible},
 		{name: "none installed", state: "state", wantCode: api.CodeGitHubAppNotInstalled},
+		{name: "organization member still refused during discovery", orgRole: "member", state: "state", installed: []map[string]any{org}, wantCode: api.CodeGitHubOrgAdminRequired},
+		{name: "organization permission still required during discovery", orgRole: "forbidden", state: "state", installed: []map[string]any{org}, wantCode: api.CodeGitHubPermissionPending},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
