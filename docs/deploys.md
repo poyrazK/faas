@@ -1163,11 +1163,14 @@ rollback to any deploy, and `--rollback-on-5xx=false` skips it.
 The first window opens when Gregale first sees traffic for the completed
 release and lasts 5 minutes. If at least 5 of the release's responses are 5xx,
 and those are at least half its requests, Gregale rolls back to the release it
-replaced. The check runs every 15 seconds, and the release keeps serving until
-the previous one is ready again. The rolled-back release records the decision,
-and `gregale release summary <id>` shows it with or without a canary, for
-example `abort_post_release_5xx: first-wake 5xx: 5 of 5 responses failed;
-rolled back automatically to <previous>`. While a rollout runs, a plain
+replaced. A 5xx the replaced release also returned in the 24 hours before, for
+the same method, route and status, does not count: a route that already failed
+cannot roll a release back. The check runs every 15 seconds, and the release
+keeps serving until the previous one is ready again. The rolled-back release
+records the decision, and `gregale release summary <id>` shows it with or
+without a canary, for example `abort_post_release_5xx: first-wake 5xx: 5 of 5
+responses failed; rolled back automatically to <previous>`. While a rollout
+runs, a plain
 `gregale rollback my-api` is refused because traffic is split; to stop the
 rollout and return its traffic to the release it replaced, run
 `gregale release traffic rollback my-api` (the same as
@@ -1262,7 +1265,9 @@ aborted and traffic returns to the previous revision, even with no traffic.
 For 30 minutes after a release reaches 100%, Gregale keeps comparing it with
 the previous release's traffic from before the rollout. A clear 5xx or p95
 latency regression rolls it back automatically and records why on the
-deployment (`gregale release summary`). This also covers immediate
+deployment (`gregale release summary`). When the previous release had too
+little traffic to compare, the first-window bar applies instead, again leaving
+out 5xx the previous release also returned. This also covers immediate
 releases, and anything the canary's share of traffic did not show. Releases
 deployed with `--rollback-on-5xx=false` are not watched. The watch ends early
 only when a newer release takes traffic; deploying one with `--no-traffic`,

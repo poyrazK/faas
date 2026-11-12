@@ -116,3 +116,47 @@ func TestSupportUnreadBadgesAndAcknowledgementWaitForFinalMessagePage(t *testing
 		}
 	}
 }
+
+func TestSupportStaffTicketShowsCustomerAccountPanel(t *testing.T) {
+	attack := `<script>alert("panel")</script>`
+	now := time.Date(2026, 11, 12, 11, 0, 0, 0, time.UTC)
+	ticket := api.SupportTicket{ID: "case-id", Subject: "Deploys fail", Status: "open", Revision: 3, CreatedAt: now, UpdatedAt: now}
+	staffTicket := support.StaffTicket{Ticket: ticket, Priority: "normal", Episode: support.Episode{FirstResponseDue: now, ResolutionDue: now}}
+	panel := &supportportal.CustomerContext{AccountID: "acct-1", OrgSlug: "acme", Plan: "pro", Status: "active", Apps: 2,
+		Diagnosis: api.ObsTenantDiagnosis{
+			Restrictions:      []api.ObsTenantRestriction{{Kind: api.RestrictionAbuseHold, Reason: attack, Since: &now}},
+			FailedDeployments: []api.ObsTenantFailedDeploy{{AppSlug: "shop", ErrorCode: "build_failed", Error: "npm ci exited 1", CreatedAt: now}},
+			DomainIssues:      []api.ObsTenantDomainIssue{{Domain: "www.shop.example", Problem: "certificate issuance failed"}},
+			EnabledFlags:      []string{"customer_support"},
+			CustomerErrors:    api.ObsCustomerErrorSummary{WindowHours: 24, Total: 3, ByCode: []api.ObsCustomerErrorCode{{Code: "plan_excess", Count: 3, LastAt: now}}},
+			Unavailable:       []string{"domains"},
+		}}
+	render := func(d supportportal.Data) string {
+		t.Helper()
+		d.Filters, d.Keys = url.Values{}, map[string]string{}
+		w := httptest.NewRecorder()
+		if err := dashboard.Render(w, slog.New(slog.NewTextHandler(io.Discard, nil)), "n", dashboard.Page{Title: "Support", Body: "support", Data: d}); err != nil {
+			t.Fatal(err)
+		}
+		return w.Body.String()
+	}
+	body := render(supportportal.Data{Base: "/dashboard/admin/support", StaffMode: true, ActorID: "agent", Customer: panel,
+		PortalView: support.PortalView{Role: "agent", Ticket: &ticket, StaffTicket: &staffTicket}})
+	if strings.Contains(body, attack) {
+		t.Fatal("unescaped restriction reason")
+	}
+	for _, want := range []string{"Customer account", "<code>acct-1</code>", "acme", "abuse_hold", "&lt;script&gt;", "<code>build_failed</code>",
+		"npm ci exited 1", "www.shop.example", "certificate issuance failed", "3 refused", "<code>plan_excess</code> × 3",
+		"<code>customer_support</code>", "Not loaded: domains", "gregalectl accounts 360 --account-id acct-1"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if !strings.Contains(render(supportportal.Data{Base: "/dashboard/admin/support", StaffMode: true, Customer: &supportportal.CustomerContext{Unavailable: true},
+		PortalView: support.PortalView{Role: "agent", Ticket: &ticket, StaffTicket: &staffTicket}}), "Account context could not be loaded") {
+		t.Error("unavailable panel not rendered")
+	}
+	if strings.Contains(render(supportportal.Data{Base: "/dashboard/support", Customer: panel, PortalView: support.PortalView{Ticket: &ticket}}), "Customer account") {
+		t.Error("customer view rendered the staff account panel")
+	}
+}
