@@ -7,7 +7,7 @@ import type { AccountHealthDomain } from './AccountHealthDomain.js';
 import type { AccountHealthRequests } from './AccountHealthRequests.js';
 import type { AccountHealthRestriction } from './AccountHealthRestriction.js';
 /**
- * What may stop the calling account from working: restrictions with the next step, failed deployments, custom-domain problems and refused API requests (ADR-20261112210000).
+ * What may stop the calling account from working: restrictions with the next step, failed deployments, custom-domain problems and refused API requests.
  */
 export type AccountHealth = {
   /**

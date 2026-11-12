@@ -22,7 +22,7 @@ T = TypeVar("T", bound="AccountHealth")
 @_attrs_define
 class AccountHealth:
     """What may stop the calling account from working: restrictions with the next step, failed deployments, custom-domain
-    problems and refused API requests (ADR-20261112210000).
+    problems and refused API requests.
 
     """
 

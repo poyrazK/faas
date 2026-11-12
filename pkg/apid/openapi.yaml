@@ -90251,7 +90251,7 @@ components:
           description: Catalog capabilities, internal ones included, whose platform flag is off for this account. Clients hide their commands and links. Omitted when nothing is hidden and by servers without the capability gate.
 
     AccountHealth:
-      description: "What may stop the calling account from working: restrictions with the next step, failed deployments, custom-domain problems and refused API requests (ADR-20261112210000)."
+      description: "What may stop the calling account from working: restrictions with the next step, failed deployments, custom-domain problems and refused API requests."
       type: object
       required: [generated_at, attention, restrictions, failed_deployments, domain_issues, refused_requests]
       properties:
