@@ -18,7 +18,7 @@ func pipelineFixture(t *testing.T) (*pgxpool.Pool, *referrals.PostgresStore, str
 	if _, err := pool.Exec(t.Context(), "ALTER TABLE accounts ADD COLUMN mfa_enrolled_at timestamptz; UPDATE accounts SET mfa_enrolled_at=now()"); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := migrations.FS.ReadFile("20261112165230788_sales_pipeline.sql")
+	raw, err := migrations.FS.ReadFile("20261112205735922_sales_pipeline.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func pipelineFixture(t *testing.T) (*pgxpool.Pool, *referrals.PostgresStore, str
 	if _, err = pool.Exec(t.Context(), up); err != nil {
 		t.Fatal(err)
 	}
-	raw, err = migrations.FS.ReadFile("20261112165235631_sales_qualification.sql")
+	raw, err = migrations.FS.ReadFile("20261112205739878_sales_qualification.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

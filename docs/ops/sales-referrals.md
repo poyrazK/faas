@@ -91,7 +91,7 @@ failed or abandoned checkouts retain it, and repeating the same code is safe.
 The optional field can be cleared to continue purchasing without a new selection.
 Only a verified browser session can submit a checkout code; API keys cannot.
 
-Apply `20261112165239499_checkout_referrals.sql` before deploying the checkout
+Apply `20261112205742661_checkout_referrals.sql` before deploying the checkout
 API. It adds `attribution_source` (`signup` or `checkout`, default `signup`).
 Invoice updates and checkout selection share a per-account transaction lock.
 For checkout attribution, an invoice must be created after selection and no
@@ -171,7 +171,7 @@ rewrite attribution, grant operator rights or issue payments.
 
 ## Lead pipeline and follow-up tasks
 
-Apply `20261112165230788_sales_pipeline.sql` before the matching apid release.
+Apply `20261112205735922_sales_pipeline.sql` before the matching apid release.
 The existing `FAAS_SALES_ENABLED` flag covers the lead pipeline and task inbox.
 No `faas-web` change is needed for these additions; the independently deployed
 `faas-sales` frontend presents them. Existing sales membership, verified email and MFA rules apply.
@@ -268,7 +268,7 @@ and that comparison/collection CSVs preserve the selected period and scope.
 
 ## Website contact/demo intake
 
-Apply `20261112165232343_sales_intake.sql` after the CRM migration, then deploy
+Apply `20261112205737339_sales_intake.sql` after the CRM migration, then deploy
 apid and the website. The website `/contact` route, footer **Contact sales**
 link and pricing **Request a demo** action are enabled by the build-time flag
 `VITE_FEATURE_SALES_INTAKE=1`. Both `/v1/*` and the website must share the
@@ -313,7 +313,7 @@ agent. Disable the intake flag to stop capture while retaining staff access.
 
 ## Activity history and leads needing attention
 
-Apply `20261112165233987_sales_activity.sql` before the new apid release. The
+Apply `20261112205738517_sales_activity.sql` before the new apid release. The
 existing `FAAS_SALES_ENABLED` flag covers activity history and attention alerts;
 there is no website build or new public endpoint for this release.
 
@@ -354,7 +354,7 @@ establish referral attribution, account access, rewards or commission.
 
 ## Lead qualification and closing reasons
 
-Apply `20261112165235631_sales_qualification.sql` before deploying the new apid.
+Apply `20261112205739878_sales_qualification.sql` before deploying the new apid.
 Deploy the matching standalone `faas-sales` frontend; no `faas-web` release or
 new flag is required. Existing sales access, email verification, session MFA and
 origin checks apply. Drain the old apid writer when rolling out mandatory closing
@@ -400,7 +400,7 @@ staff data and backup controls, outside application clones.
 
 ## Sales message templates
 
-Apply `20261112165237322_sales_templates.sql` before apid. The existing sales
+Apply `20261112205741250_sales_templates.sql` before apid. The existing sales
 flag and staff/session restrictions cover these routes. Templates start empty.
 In **Message templates**, managers create introductions, demo invitations,
 follow-ups and stalled-deal messages. A template has a suggested stage, optional

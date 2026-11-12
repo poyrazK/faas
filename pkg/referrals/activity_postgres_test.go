@@ -16,7 +16,7 @@ import (
 func activityFixture(t *testing.T) (*pgxpool.Pool, *referrals.PostgresStore, string, string, string) {
 	t.Helper()
 	pool, store, owner, other := pipelineFixture(t)
-	raw, err := migrations.FS.ReadFile("20261112165233987_sales_activity.sql")
+	raw, err := migrations.FS.ReadFile("20261112205738517_sales_activity.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

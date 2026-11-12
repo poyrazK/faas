@@ -23,7 +23,7 @@ CREATE TABLE invoices(id uuid PRIMARY KEY,account_id uuid NOT NULL,status text N
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := migrations.FS.ReadFile("20261112165224763_sales_referrals.sql")
+	raw, err := migrations.FS.ReadFile("20261112205731835_sales_referrals.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ CREATE TABLE invoices(id uuid PRIMARY KEY,account_id uuid NOT NULL,status text N
 	if _, err = pool.Exec(ctx, up); err != nil {
 		t.Fatal(err)
 	}
-	raw, err = migrations.FS.ReadFile("20261112165227154_short_referral_codes.sql")
+	raw, err = migrations.FS.ReadFile("20261112205733308_short_referral_codes.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ CREATE TABLE invoices(id uuid PRIMARY KEY,account_id uuid NOT NULL,status text N
 	if _, err = pool.Exec(ctx, up); err != nil {
 		t.Fatal(err)
 	}
-	raw, err = migrations.FS.ReadFile("20261112165229079_validate_referral_codes.sql")
+	raw, err = migrations.FS.ReadFile("20261112205734655_validate_referral_codes.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestTouchTokens(t *testing.T) {
 
 func applyCheckoutMigration(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
-	raw, err := migrations.FS.ReadFile("20261112165239499_checkout_referrals.sql")
+	raw, err := migrations.FS.ReadFile("20261112205742661_checkout_referrals.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

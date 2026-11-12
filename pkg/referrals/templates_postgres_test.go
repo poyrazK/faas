@@ -13,7 +13,7 @@ import (
 func TestSalesTemplatesPermissionsVersionsAndPersonalization(t *testing.T) {
 	pool, s, owner, other := pipelineFixture(t)
 	ctx := t.Context()
-	raw, err := migrations.FS.ReadFile("20261112165237322_sales_templates.sql")
+	raw, err := migrations.FS.ReadFile("20261112205741250_sales_templates.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
