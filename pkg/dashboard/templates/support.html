@@ -76,6 +76,7 @@
     <section class="panel"><h2>Details</h2><dl><dt>Ticket</dt><dd><code>{{.Ticket.ID}}</code></dd><dt>Last updated</dt><dd>{{.Date .Ticket.UpdatedAt}}</dd>
     {{with .Ticket.Context.AppID}}<dt>App</dt><dd><code>{{.}}</code></dd>{{end}}{{with .Ticket.Context.DeploymentID}}<dt>Deployment</dt><dd><code>{{.}}</code></dd>{{end}}{{with .Ticket.Context.RequestID}}<dt>Request</dt><dd><code>{{.}}</code></dd>{{end}}
     {{with .StaffTicket}}<dt>Priority</dt><dd>{{.Priority}}</dd><dt>Team</dt><dd>{{$d.TeamName .TeamID}}</dd><dt>Assigned to</dt><dd>{{$d.StaffName .AssigneeID}}</dd><dt>Response target</dt><dd>{{$d.ResponseTarget .Episode}}</dd><dt>Resolution target</dt><dd>{{$d.ResolutionTarget .Episode}}</dd>{{end}}</dl></section>
+    {{if .StaffMode}}{{template "support-customer" .}}{{end}}
     {{if and (ne .Ticket.Status "resolved") (or (not .StaffMode) .CanManage)}}<section class="panel"><h2>Conversation status</h2><div class="actions">
       <form method="post" action="{{.URL}}">{{template "support-form-fields" (.Fields "close")}}<button type="submit">Mark resolved</button></form>
       {{if .StaffMode}}{{if .StaffTicket.Episode.WaitSince}}<form method="post" action="{{.URL}}">{{template "support-form-fields" (.Fields "resume")}}<button type="submit">Resume support clock</button></form>{{else}}<form method="post" action="{{.URL}}">{{template "support-form-fields" (.Fields "pause")}}<button type="submit">Wait for customer</button></form>{{end}}{{end}}
@@ -160,3 +161,19 @@
 <label>Required skills <input name="required_skills" value="{{.Value "triage" "required_skills" .Skills}}" aria-describedby="skills-hint"></label><p class="meta" id="skills-hint">Separate skill names with spaces.</p>
 <label>Reason for change <input name="reason" required maxlength="{{.ReasonMax}}" value="{{.Value "triage" "reason" ""}}"></label><button type="submit">Save assignment</button></form></details>{{end}}
 {{end}}
+
+{{define "support-customer"}}{{$d := .}}{{with .Customer}}
+<section class="panel" aria-label="Customer account"><h2>Customer account</h2>
+{{if .Unavailable}}<p class="muted">Account context could not be loaded. The conversation is unaffected.</p>{{else}}
+<dl><dt>Account</dt><dd><code>{{.AccountID}}</code></dd>{{with .OrgSlug}}<dt>Organization</dt><dd>{{.}}</dd>{{end}}<dt>Plan</dt><dd>{{.Plan}}</dd><dt>Status</dt><dd>{{.Status}}</dd><dt>Apps</dt><dd>{{.Apps}}</dd></dl>
+{{with .Diagnosis}}
+<h3>Restrictions</h3>{{range .Restrictions}}<p><strong>{{.Kind}}</strong>{{with .Reason}}: {{.}}{{end}}{{with .Since}} <small class="muted">since {{$d.Date .}}</small>{{end}}</p>{{else}}<p class="muted">None.</p>{{end}}
+<h3>Failed deployments, last 7 days</h3>{{range .FailedDeployments}}<p>{{with .AppSlug}}<code>{{.}}</code> {{end}}{{with .ErrorCode}}<code>{{.}}</code> {{end}}{{.Error}} <small class="muted">{{$d.Date .CreatedAt}}</small></p>{{else}}<p class="muted">None.</p>{{end}}
+<h3>Custom domains</h3>{{range .DomainIssues}}<p><code>{{.Domain}}</code>: {{.Problem}}{{with .CertLastError}} ({{.}}){{end}}</p>{{else}}<p class="muted">No problems ({{.HealthyDomains}} healthy).</p>{{end}}
+<h3>Refused API requests, last 24 hours</h3>{{if .CustomerErrors.Total}}<p>{{.CustomerErrors.Total}} refused.</p><ul>{{range .CustomerErrors.ByCode}}<li><code>{{.Code}}</code> × {{.Count}}, last {{$d.Date .LastAt}}</li>{{end}}</ul>{{else}}<p class="muted">None recorded.</p>{{end}}
+{{with .EnabledFlags}}<h3>Previews</h3><p>{{range $i, $flag := .}}{{if $i}}, {{end}}<code>{{$flag}}</code>{{end}}</p>{{end}}
+{{with .Unavailable}}<p class="muted">Not loaded: {{range $i, $section := .}}{{if $i}}, {{end}}{{$section}}{{end}}</p>{{end}}
+{{end}}
+<p class="meta">Full view: <code>gregalectl accounts 360 --account-id {{.AccountID}}</code></p>
+{{end}}</section>
+{{end}}{{end}}

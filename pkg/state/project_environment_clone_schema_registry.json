@@ -4373,6 +4373,20 @@
     }
   },
   {
+    "table": "customer_api_errors",
+    "columns": [
+      "id",
+      "account_id",
+      "occurred_at",
+      "route",
+      "code",
+      "app_slug",
+      "request_id",
+      "trace_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_approval_forms",
     "columns": [
       "account_id",

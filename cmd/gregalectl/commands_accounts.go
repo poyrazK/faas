@@ -36,12 +36,14 @@ type accountMutationOutput struct {
 
 func cmdAccountsDispatch(args []string) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl accounts: missing subcommand; want list|show|360|activity|suspend|restore|revoke-sessions|reset-mfa|revert-email|object-storage-ceiling|complimentary")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl accounts: missing subcommand; want list|find|show|360|activity|suspend|restore|revoke-sessions|reset-mfa|revert-email|object-storage-ceiling|complimentary")
 		return 2
 	}
 	switch args[0] {
 	case "list":
 		return cmdAccountsList(args[1:])
+	case "find":
+		return cmdAccountsFind(args[1:])
 	case "show":
 		return cmdAccountsShow(args[1:])
 	case "360":
@@ -184,6 +186,82 @@ func cmdAccounts360(args []string) int {
 		response.Usage.OverageCents, response.Usage.UsedCPUHours, response.Usage.Requests, response.Usage.ColdBootTotal)
 	_, _ = fmt.Fprintf(osStdout, "billing current_overage_cents=%d active_credits_cents=%d invoices=%d\n",
 		response.Billing.CurrentMonthOverageCents, response.Billing.ActiveCreditsCents, len(response.Billing.Invoices))
+	printAccountDiagnosis(response.Diagnosis)
+	return 0
+}
+
+// printAccountDiagnosis prints the "why is it broken" part of the 360
+// (ADR-20261112170000), one key=value line per finding.
+func printAccountDiagnosis(d api.ObsTenantDiagnosis) {
+	for _, r := range d.Restrictions {
+		since := ""
+		if r.Since != nil {
+			since = r.Since.UTC().Format(time.RFC3339)
+		}
+		_, _ = fmt.Fprintf(osStdout, "restriction kind=%s since=%s reason=%q\n", r.Kind, since, r.Reason)
+	}
+	for _, f := range d.FailedDeployments {
+		_, _ = fmt.Fprintf(osStdout, "failed_deployment id=%s app=%s code=%s at=%s error=%q\n",
+			f.DeploymentID, f.AppSlug, f.ErrorCode, f.CreatedAt.Format(time.RFC3339), f.Error)
+	}
+	for _, issue := range d.DomainIssues {
+		_, _ = fmt.Fprintf(osStdout, "domain_issue domain=%s app=%s problem=%q cert_status=%s cert_error=%q\n",
+			issue.Domain, issue.AppSlug, issue.Problem, issue.CertStatus, issue.CertLastError)
+	}
+	_, _ = fmt.Fprintf(osStdout, "domains healthy=%d issues=%d\n", d.HealthyDomains, len(d.DomainIssues))
+	if len(d.EnabledFlags) > 0 {
+		_, _ = fmt.Fprintf(osStdout, "flags enabled=%s\n", strings.Join(d.EnabledFlags, ","))
+	}
+	_, _ = fmt.Fprintf(osStdout, "api_errors window_hours=%d total=%d\n", d.CustomerErrors.WindowHours, d.CustomerErrors.Total)
+	for _, c := range d.CustomerErrors.ByCode {
+		_, _ = fmt.Fprintf(osStdout, "api_error_code code=%s count=%d last_at=%s\n", c.Code, c.Count, c.LastAt.Format(time.RFC3339))
+	}
+	for _, e := range d.CustomerErrors.Recent {
+		_, _ = fmt.Fprintf(osStdout, "api_error at=%s route=%q code=%s app=%s request_id=%s trace_id=%s\n",
+			e.OccurredAt.Format(time.RFC3339), e.Route, e.Code, e.AppSlug, e.RequestID, e.TraceID)
+	}
+	if len(d.Unavailable) > 0 {
+		_, _ = fmt.Fprintf(osStdout, "diagnosis_unavailable sections=%s\n", strings.Join(d.Unavailable, ","))
+	}
+}
+
+// cmdAccountsFind resolves a customer-supplied identifier (email, app slug,
+// hostname or URL, account/app/deployment id, request or trace id) to the
+// account it belongs to.
+func cmdAccountsFind(args []string) int {
+	fs := flag.NewFlagSet("find", flag.ContinueOnError)
+	fs.SetOutput(osStderr)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 || strings.TrimSpace(fs.Arg(0)) == "" {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl accounts find: want exactly one identifier: email, app slug, hostname or URL, account/app/deployment id, request id or trace id")
+		return 2
+	}
+	query := strings.TrimSpace(fs.Arg(0))
+	if len(query) > api.ObsLookupQueryMaxBytes {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl accounts find: identifier must be at most %d bytes\n", api.ObsLookupQueryMaxBytes)
+		return 2
+	}
+	var response api.ObsLookupResponse
+	if code := accountGet("find", "/v1/admin/obs/lookup?"+url.Values{"q": {query}}.Encode(), &response); code != 0 {
+		return code
+	}
+	if jsonEnabled() {
+		return emitOperatorJSON(response)
+	}
+	if len(response.Matches) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "no matches")
+		return 1
+	}
+	for _, m := range response.Matches {
+		at := ""
+		if m.At != nil {
+			at = m.At.UTC().Format(time.RFC3339)
+		}
+		_, _ = fmt.Fprintf(osStdout, "match kind=%s account_id=%s app_id=%s app=%s at=%s detail=%q\n",
+			m.Kind, m.AccountID, m.AppID, m.AppSlug, at, m.Detail)
+	}
 	return 0
 }
 
