@@ -765,7 +765,22 @@ func printPublicURLs(w io.Writer, workloads []api.PlanWorkload) {
 	sort.Slice(ws, func(i, j int) bool { return ws[i].Name < ws[j].Name })
 	fmt.Fprintln(w, "\nPublic on the internet:")
 	for _, wl := range ws {
-		fmt.Fprintf(w, "  - %-20s %s\n", wl.Name, wl.PublicURL)
+		fmt.Fprintf(w, "  - %-20s %s%s\n", wl.Name, wl.PublicURL, publicAuthNote(wl.PublicAuthMode))
+	}
+}
+
+// publicAuthNote says when a public URL refuses anonymous requests, so the
+// list does not promise access the app's auth will refuse (Hunt 32 H32-30).
+func publicAuthNote(mode string) string {
+	switch mode {
+	case "":
+		return ""
+	case api.AppPublicAuthModeBearer:
+		return " (needs an API key)"
+	case api.AppPublicAuthModeBasic:
+		return " (needs HTTP basic auth)"
+	default:
+		return " (" + mode + " access only)"
 	}
 }
 

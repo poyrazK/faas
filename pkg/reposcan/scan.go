@@ -225,6 +225,10 @@ type Workload struct {
 	// this is the STRUCTURED form a client can branch on without
 	// parsing that string. Populated by mergeByKey.
 	DetectedBy Detection
+
+	// Function is set when the workload deploys as a function app: one
+	// entry of a functions project (ADR-20261108160000).
+	Function *FunctionWorkload `json:",omitempty"`
 }
 
 // ServiceBindingPolicy is the repository declaration consumed by reconcile.
@@ -395,6 +399,11 @@ type ScanOptions struct {
 	// metadata.labels to its workload (ADR-20261031100025 §7, the
 	// resource-labels capability). The zero value drops them, as before.
 	ResourceLabels bool
+	// Functions reads a functions project (gregale.yaml functions: or
+	// functions/<name>/ handlers with config in code) as one function
+	// workload per function, and nothing else (ADR-20261108160000, the
+	// repository-functions capability). The zero value scans as before.
+	Functions bool
 	// withoutProjectConfig leaves the project block (or the legacy
 	// .gregale/project.yaml) off the workloads, so ExplainProjectSetting can
 	// show what detection alone declares.
@@ -412,6 +421,11 @@ func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 		detectionWarnings []DetectionWarning
 		highestTier       Tier
 	)
+	if opts.Functions {
+		if result, ok, err := scanFunctionsProject(fsys); err != nil || ok {
+			return result, err
+		}
+	}
 
 	// Tier 1 — explicit sources. Each detector is paired with its
 	// detector tag so the merge rule can break ties on detector

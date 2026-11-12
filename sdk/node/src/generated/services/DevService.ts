@@ -29,6 +29,8 @@ import type { ScenarioSuspendResumeEvidence } from '../models/ScenarioSuspendRes
 import type { ScenarioTestChaosMatchesResponse } from '../models/ScenarioTestChaosMatchesResponse.js';
 import type { SealScenarioObjectsRequest } from '../models/SealScenarioObjectsRequest.js';
 import type { SealScenarioPostgresRequest } from '../models/SealScenarioPostgresRequest.js';
+import type { SeedDevSessionFromEnvironmentBranchRequest } from '../models/SeedDevSessionFromEnvironmentBranchRequest.js';
+import type { SeedDevSessionFromEnvironmentBranchResponse } from '../models/SeedDevSessionFromEnvironmentBranchResponse.js';
 import type { UpsertDevSessionRequest } from '../models/UpsertDevSessionRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -868,6 +870,43 @@ export class DevService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Seed a rehearsal member from a simulated environment branch.
+   * Deploys one workload of a simulated environment branch into the developer session of a rehearsal run. The member reuses the branch deployment's build and gets the branch's variables and secrets; managed PostgreSQL and object-storage bindings are not copied, so the rehearsal declares isolated fixtures. The deployment goes live after one boot. Repeating the request returns the deployment already seeded.
+   * @returns SeedDevSessionFromEnvironmentBranchResponse The member's deployment, priming or already live.
+   * @throws ApiError
+   */
+  public static seedDevSessionFromEnvironmentBranch({
+    project,
+    requestBody,
+  }: {
+    /**
+     * Local project label of the developer session to seed, as for PUT /v1/dev/sessions/{project}.
+     */
+    project: string,
+    requestBody: SeedDevSessionFromEnvironmentBranchRequest,
+  }): CancelablePromise<SeedDevSessionFromEnvironmentBranchResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/dev/sessions/{project}/seed',
+      path: {
+        'project': project,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

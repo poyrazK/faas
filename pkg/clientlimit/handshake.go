@@ -47,6 +47,10 @@ type HandshakeGate struct {
 	proxies           []netip.Prefix
 	mu                sync.Mutex
 	inflight          map[netip.Prefix]int
+
+	// overload, when set, resets connections before their handshake while
+	// the edge sheds load (WithOverload).
+	overload *Overload
 }
 
 // WithPerAddress caps the handshakes one client address (an IPv4 address or
@@ -126,6 +130,33 @@ func (g *HandshakeGate) unclaim(key netip.Prefix) {
 	g.mu.Unlock()
 }
 
+// WithOverload resets a new connection before its handshake when o sheds it
+// (ADR-20261110123517 §2), ahead of the per-address and in-progress caps.
+// Call before the first Accept.
+func (g *HandshakeGate) WithOverload(o *Overload) *HandshakeGate {
+	g.overload = o
+	return g
+}
+
+// shedByOverload reports why o refuses c before its handshake, if it does.
+func (g *HandshakeGate) shedByOverload(c net.Conn) (string, bool) {
+	if g.overload == nil {
+		return "", false
+	}
+	key, ok := keyOf(c.RemoteAddr())
+	if !ok {
+		return g.overload.ShedConnection(netip.Prefix{}, false)
+	}
+	proxy := false
+	for _, p := range g.proxies {
+		if p.Contains(key.Addr()) {
+			proxy = true
+			break
+		}
+	}
+	return g.overload.ShedConnection(key, proxy)
+}
+
 // WithSettle makes the gate ask settle about each completed handshake before
 // serving the connection; a false answer resets it. Call before the first
 // Accept.
@@ -171,6 +202,11 @@ func (g *HandshakeGate) acceptLoop(ctx context.Context) {
 		tc, ok := c.(*tls.Conn)
 		if !ok {
 			g.deliver(c)
+			continue
+		}
+		if reason, shed := g.shedByOverload(tc); shed {
+			g.refused(reason)
+			reset(tc)
 			continue
 		}
 		key, ok := g.claim(tc.RemoteAddr())

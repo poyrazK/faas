@@ -35,6 +35,10 @@ class DeploymentCronStagingRequest:
     desired: list[DeploymentCronConfig]
     upload_id: str | Unset = UNSET
     """Owned opaque upload identity to track for autonomous committed-upload recovery."""
+    environment: str | Unset = UNSET
+    """Stages the manifest's HTTP crons into this non-production environment of the app's project; it activates
+    when the environment's deployment owns all of its traffic and replaces only its manifest crons. Only prepare,
+    cancel and track_upload take one."""
 
     def to_dict(self) -> dict[str, Any]:
         session_id = self.session_id
@@ -59,6 +63,8 @@ class DeploymentCronStagingRequest:
 
         upload_id = self.upload_id
 
+        environment = self.environment
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -74,6 +80,8 @@ class DeploymentCronStagingRequest:
         )
         if upload_id is not UNSET:
             field_dict["upload_id"] = upload_id
+        if environment is not UNSET:
+            field_dict["environment"] = environment
 
         return field_dict
 
@@ -108,6 +116,8 @@ class DeploymentCronStagingRequest:
 
         upload_id = d.pop("upload_id", UNSET)
 
+        environment = d.pop("environment", UNSET)
+
         deployment_cron_staging_request = cls(
             session_id=session_id,
             operation=operation,
@@ -117,6 +127,7 @@ class DeploymentCronStagingRequest:
             before=before,
             desired=desired,
             upload_id=upload_id,
+            environment=environment,
         )
 
         return deployment_cron_staging_request

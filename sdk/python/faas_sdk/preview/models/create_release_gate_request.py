@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -15,6 +15,10 @@ from ..models.create_release_gate_request_kind import (
     check_create_release_gate_request_kind,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.create_release_gate_request_labels import CreateReleaseGateRequestLabels
+
 
 T = TypeVar("T", bound="CreateReleaseGateRequest")
 
@@ -50,6 +54,9 @@ class CreateReleaseGateRequest:
     """synthetic gates: default 10."""
     max_change_percent: int | Unset = UNSET
     """metric_change gates: the change, in percent of the average before the rollout, that fails the gate."""
+    labels: CreateReleaseGateRequestLabels | Unset = UNSET
+    """custom_metric and metric_change gates: judge the one labelled series with exactly these labels instead of
+    the metric's aggregate. Keys match ^[a-z_][a-z0-9_]{0,62}$."""
     min_samples: int | Unset = UNSET
     """Default 20; 6 probes for synthetic gates."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -83,6 +90,10 @@ class CreateReleaseGateRequest:
 
         max_change_percent = self.max_change_percent
 
+        labels: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.labels, Unset):
+            labels = self.labels.to_dict()
+
         min_samples = self.min_samples
 
         field_dict: dict[str, Any] = {}
@@ -115,6 +126,8 @@ class CreateReleaseGateRequest:
             field_dict["max_failure_percent"] = max_failure_percent
         if max_change_percent is not UNSET:
             field_dict["max_change_percent"] = max_change_percent
+        if labels is not UNSET:
+            field_dict["labels"] = labels
         if min_samples is not UNSET:
             field_dict["min_samples"] = min_samples
 
@@ -122,6 +135,8 @@ class CreateReleaseGateRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.create_release_gate_request_labels import CreateReleaseGateRequestLabels
+
         d = dict(src_dict)
         name = d.pop("name")
 
@@ -154,6 +169,13 @@ class CreateReleaseGateRequest:
 
         max_change_percent = d.pop("max_change_percent", UNSET)
 
+        _labels = d.pop("labels", UNSET)
+        labels: CreateReleaseGateRequestLabels | Unset
+        if isinstance(_labels, Unset):
+            labels = UNSET
+        else:
+            labels = CreateReleaseGateRequestLabels.from_dict(_labels)
+
         min_samples = d.pop("min_samples", UNSET)
 
         create_release_gate_request = cls(
@@ -170,6 +192,7 @@ class CreateReleaseGateRequest:
             check=check,
             max_failure_percent=max_failure_percent,
             max_change_percent=max_change_percent,
+            labels=labels,
             min_samples=min_samples,
         )
 

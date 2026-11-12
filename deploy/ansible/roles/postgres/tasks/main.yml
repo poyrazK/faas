@@ -425,6 +425,9 @@
       faas_map faas-outboundd faas_outboundd
       faas_map faas-bridged faas_bridged
       faas_map faas-mcp-bridge faas_mcp_bridge
+      # ADR-20261109170000: signd logs in only as faas_signd, never as the
+      # owner: it reads build claims and inserts artifact_signatures rows.
+      faas_map faas-signd   faas_signd
   register: pg_ident
   failed_when: false
   notify: reload postgresql

@@ -2,12 +2,14 @@
 
 Alerts: `FaasObjectStorageProviderRefusingCredentials`,
 `FaasObjectStorageBucketOperationsStalled`, `FaasObjectStorageInventoryFailing`,
-`FaasObjectStorageInventorySweepStopped`, `FaasS3GatewayErrorRateHigh`,
+`FaasObjectStorageInventorySweepStopped`, `FaasObjectStorageInventoryBacklog`,
+`FaasObjectStorageInventoryQuietBacklog`, `FaasObjectStorageInventoryDrift`,
+`FaasS3GatewayErrorRateHigh`,
 `FaasObjectStorageUsageExportStale`, `FaasObjectStorageRegionNearlyFull`,
 `FaasObjectStorageRegionFull`, `FaasS3GatewayReadUsageFlushFailing`,
 `FaasPublicObjectReadUsageFlushFailing`, `FaasS3GatewayPortShareSaturated`,
-`FaasComputeObjectGatewayDown`, `FaasComputeObjectGatewayConnectorDisconnected`,
-`FaasComputeObjectGatewayUnavailable`.
+`FaasS3GatewayDown`, `FaasComputeObjectGatewayDown`,
+`FaasComputeObjectGatewayConnectorDisconnected`, `FaasComputeObjectGatewayUnavailable`.
 Sources: apid's inventory sweep (`pkg/apid/object/storage_accounting.go`),
 `s3-gatewayd` (`pkg/s3gateway`), apid's provider usage exporter
 (`pkg/apid/object/usage_export.go`), and public bucket reads in `gatewayd-public`
@@ -16,6 +18,9 @@ Metrics: `faas_object_storage_provider_refusing_credentials`,
 `faas_object_storage_recovery_attempts_total{operation,outcome}`,
 `faas_object_storage_inventory_scans_total{outcome}`,
 `faas_object_storage_inventory_sweep_last_success_timestamp_seconds`,
+`faas_object_storage_inventory_due_buckets`,
+`faas_object_storage_inventory_oldest_observation_age_seconds{class}`,
+`faas_object_storage_inventory_drift_total{direction}`,
 `faas_object_storage_inventory_provider_requests_total`,
 `s3_gateway_ops_total{op="s3_request",code}`,
 `faas_object_storage_usage_export_last_success_timestamp_seconds{backend}`,
@@ -36,6 +41,7 @@ Metrics: `faas_object_storage_provider_refusing_credentials`,
 `cloudflared_tunnel_ha_connections{job="cloudflared-s3"}`.
 Decision records: [ADR 20261023223000](../adr/20261023223000-object-storage-bucket-scoped-availability.md),
 [ADR 20261030100835](../adr/20261030100835-object-storage-resumable-inventory.md) (resumable inventory),
+[ADR 20261110151628](../adr/20261110151628-object-inventory-follows-activity.md) (sweep scheduling, backlog, quiet buckets),
 [ADR 20261029174627](../adr/20261029174627-object-storage-backend-pools.md) (bucket placement),
 [ADR 20261030075301](../adr/20261030075301-object-storage-reads-off-the-database.md) (cached read admission),
 [ADR 20261031122757](../adr/20261031122757-s3-gateway-on-compute-nodes.md) (gateway on compute nodes, port share).
@@ -43,6 +49,12 @@ Severity: warn, except `FaasComputeObjectGatewayUnavailable`, which pages.
 
 ## Symptom
 
+- **Control-plane gateway down.** `FaasS3GatewayDown`: Prometheus cannot
+  scrape `faas-s3-gatewayd` on the control plane (`127.0.0.1:9096`), and every
+  request to `s3.<domain>` fails. Check `systemctl status faas-s3-gatewayd`
+  and its journal, then restart it. Prometheus scrapes the gateway whenever
+  its unit exists, managed by the manifest or not; before 2026-11-10 only a
+  managed gateway was scraped, so production-us's gateway alerts never fired.
 - **Provider refusing credentials.** A provider answered 401/403 to a bucket
   operation. apid withdraws object storage for an hour: capabilities report
   it off, `gregale feature list` shows it disabled, and bucket creates answer
@@ -59,6 +71,37 @@ Severity: warn, except `FaasComputeObjectGatewayUnavailable`, which pages.
   answering 503. The sweep runs on its own loop, apart from billing; check
   apid is running and its database pool is not exhausted, then look for
   `object storage inventory sweep failed` in apid's log.
+- **Inventory backlog.** Sweeps complete, but the oldest inventory that
+  admission still needs is over 600 s old, so the sweep is falling behind:
+  that bucket answers 503 at 900 s. Buckets held by a versioning, Object Lock
+  or capacity change, and buckets listing within the 5-minute progress
+  window, are left out of the age. Compare
+  `faas_object_storage_inventory_due_buckets` with the sweep's rate
+  (`rate(faas_object_storage_inventory_scans_total[5m])`) and its listing
+  pages (`rate(faas_object_storage_inventory_provider_requests_total[5m])`):
+  a growing backlog with steady scans means more buckets than one sweep
+  keeps fresh; scans that slowed point at provider listing latency. One
+  sweep keeps about 32,000 one-page buckets fresh at 200 ms per page
+  ([evidence](../ops/evidence/20261110-object-inventory-capacity/REPORT.md)).
+  With `object_inventory_quiet` on, the age counts an active bucket that was
+  quiet on its observation from when it turned active.
+- **Quiet bucket inventory.** The `object_inventory_quiet` runtime switch
+  (`off`, `shadow`, `on`; gateway-safety accounting only) lets a quiet bucket
+  keep its inventory for 24 h: nothing was admitted to it since its last
+  listing started (`object_bucket_activity.mutated_at`, stamped by Postgres).
+  The sweep verifies a quiet bucket once its observation is 23 h old.
+  `FaasObjectStorageInventoryQuietBacklog` means that verification is past
+  23.5 h, and the bucket answers 503 at 24 h; check the sweep as for the
+  backlog above. `class="quiet"` reads 0 unless the switch is `on`.
+- **Inventory drift.** A quiet bucket's listing counted different bytes or
+  keys than the one before it, so something wrote to it without passing
+  admission: root on a compute node using the gateway credential, an operator
+  in the provider console, or a write path that does not journal itself
+  (`object_bucket_mutations`). apid logs `object storage inventory drift on a
+  quiet bucket` with the bucket and both counts. Counted with the switch
+  `shadow` or `on`. Keep it out of `on` until the cause is understood (if it
+  is already `on`, see Recover step 9 before switching back): a
+  drifted bucket's capacity and storage bill lag by up to a day.
 - **Gateway 5xx.** S3 clients get `ServiceUnavailable` (provider unreachable
   or accounting stale) or `SlowDown` (another delete or write of the same
   key, or an inventory scan of the bucket, is still settling). Both count as
@@ -205,3 +248,14 @@ Severity: warn, except `FaasComputeObjectGatewayUnavailable`, which pages.
    gateway is still the fallback (one release after the cutover), point
    `s3.<domain>`'s record back at the control-plane origin and set
    `faas_object_gateway_endpoint_on_tunnel` back to false.
+9. Quiet bucket inventory (ADR-20261110151628 step 4): set the runtime
+   config `object_inventory_quiet` (operator console, Object storage) to
+   `shadow`. apid applies it; a value apid has not applied reads as `off`
+   everywhere. After a week, `sum(increase(faas_object_storage_inventory_drift_total[7d]))`
+   must still be 0 before it moves to `on`, with the owner's go-ahead.
+   Leaving `on` (for `shadow` or `off`) holds every bucket to 900 s again at
+   once: each quiet bucket listed longer ago answers 503 until the sweep lists
+   it, about 32,000 one-page buckets per 15 minutes. One drifting bucket does
+   not need that: its capacity still bounds admitted writes, and only its
+   bill lags by up to a day. Leave the switch `on` while you find the writer,
+   and step back to `shadow` at a quiet hour only for widespread drift.

@@ -153,7 +153,13 @@ func cloneObjectCredentialPreparationContract(t *testing.T, s cloneCredentialPre
 		case "credential_quota":
 			bad.Target.MaxCredentialsPerBucket = 0
 		case "secret_quota":
-			bad.Target.MaxSecretsPerApp = 11
+			// Only customer-authored secrets count toward the plan's secret
+			// quota (ADR-20261109180000); managed binding envelopes do not.
+			// CUSTOMER_TOKEN plus this probe exceed a quota of one.
+			if err := s.UpsertAppSecretWithClassInScope(ctx, account.ID, app.ID, "production", "QUOTA_PROBE", "customer-kid", "2222222222222222", state.SecretClassPersistent, []byte("probe")); err != nil {
+				t.Fatal(err)
+			}
+			bad.Target.MaxSecretsPerApp = 1
 		case "mixed_secret_owner":
 			bad.Target.Secrets[0].ManagedPostgresBindingID = uuid.NewString()
 		case "ephemeral":
@@ -161,6 +167,11 @@ func cloneObjectCredentialPreparationContract(t *testing.T, s cloneCredentialPre
 		}
 		if _, err := s.PrepareProjectEnvironmentCloneObjectCredential(ctx, badLease, bad); !errors.Is(err, state.ErrConflict) && !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("accepted invalid %s preparation: %v", fault, err)
+		}
+		if fault == "secret_quota" {
+			if err := s.DeleteAppSecretInScope(ctx, account.ID, app.ID, "production", "QUOTA_PROBE"); err != nil {
+				t.Fatal(err)
+			}
 		}
 		creds, err := s.ListObjectS3Credentials(ctx, account.ID, target.ID)
 		if err != nil || len(creds) != 0 {

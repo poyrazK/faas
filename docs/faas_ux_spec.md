@@ -284,16 +284,14 @@ Events that email the user: email verification; deploy failed (with log link) �
 
 ## 10. Billing & plan-change UX
 
-- **Plans are shown as the model prices them:** Free $0, Hobby $10, Pro $30, Scale $99 (USD, ADR-1430), with each plan's deployed/concurrent/RAM/GB-h limits stated plainly (from `pkg/api/limits.go`, the single source). No hidden asterisks. The same plan table publishes the canonical guest CPU/RAM shape used by the optional `gregale deploy --vcpu` assertion:
+- **Plans are shown as the model prices them:** Free $0, Hobby $10, Pro $30, Scale $99 (USD, ADR-1430), with each plan's deployed/concurrent/RAM/GB-h limits stated plainly (from `pkg/api/limits.go`, the single source). No hidden asterisks. CPU is not a plan limit: an instance's vCPUs follow its RAM (one per GB, at least one), it can burst into any idle CPU on its host, and a busy host shares CPU in proportion to RAM (ADR-20261109172421). The optional `gregale deploy --vcpu` assertion must name that count:
 
-  | Plan | Canonical RAM | Guest vCPU |
-  |---|---:|---:|
-  | Free | 256 MB | 2 |
-  | Hobby | 512 MB | 2 |
-  | Pro | 1024 MB | 2 |
-  | Scale | 2048 MB | 4 |
+  | RAM | Guest vCPU |
+  |---:|---:|
+  | 128–1024 MB | 1 |
+  | 2048 MB | 2 |
 
-  Omitting `vcpu` preserves the plan default and existing custom RAM/profile behavior. Supplying it with a different `ram_mb` pair returns `invalid_cpu_ram_pair` before the app is created.
+  Omitting `vcpu` uses the RAM's count. Supplying a count that does not match `ram_mb` returns `invalid_cpu_ram_pair` before the app is created.
 - **Usage before cost:** `gregale usage` and the dashboard bar always show current GB-h vs. the included quota and any accrued overage at $0.05/GB-h, updated hourly (matches metering push cadence, implementation spec §4.7).
 - **Upgrade is instant and obvious** (the configured billing provider handles
   the money); **downgrade** runs quota checks first and, if the user is over the

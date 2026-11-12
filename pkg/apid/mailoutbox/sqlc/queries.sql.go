@@ -709,9 +709,14 @@ func (q *Queries) ClaimDeploymentFailureCooldown(ctx context.Context, db DBTX, a
 }
 
 const claimMagicLinkOwnership = `-- name: ClaimMagicLinkOwnership :exec
-UPDATE accounts SET email_verified_at=clock_timestamp(),password_reset_revision=password_reset_revision+1 WHERE id=$1
+UPDATE accounts SET email_verified_at=clock_timestamp(),password_reset_revision=password_reset_revision+1,
+    mfa_secret_encrypted=NULL,mfa_recovery_codes_hash=NULL,mfa_enrolled_at=NULL
+WHERE id=$1
 `
 
+// A pre-verification authenticator is the squatter's too: clearing it keeps
+// the real owner from facing a second factor they never had (ADR
+// 20261109120000). An explicit mfa_required policy stays.
 func (q *Queries) ClaimMagicLinkOwnership(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, claimMagicLinkOwnership, id)
 	return err
@@ -2453,17 +2458,20 @@ func (q *Queries) LinkManagedPostgresCapEvent(ctx context.Context, db DBTX, arg 
 }
 
 const linkManagedPostgresPlanExcessNotice = `-- name: LinkManagedPostgresPlanExcessNotice :execrows
-UPDATE managed_postgres_plan_excess_notices SET mail_intent_id=$1::uuid
-WHERE database_id=$2::uuid AND mail_intent_id IS NULL
+UPDATE managed_postgres_plan_excess_notices SET mail_intent_id=$1::uuid,delete_at=$2::timestamptz
+WHERE database_id=$3::uuid AND mail_intent_id IS NULL
 `
 
 type LinkManagedPostgresPlanExcessNoticeParams struct {
 	IntentID   pgtype.UUID
+	DeleteAt   pgtype.Timestamptz
 	DatabaseID pgtype.UUID
 }
 
+// delete_at is the deletion date the email names (ADR-20261110184700): the
+// database is deleted only on a date its owner was mailed.
 func (q *Queries) LinkManagedPostgresPlanExcessNotice(ctx context.Context, db DBTX, arg LinkManagedPostgresPlanExcessNoticeParams) (int64, error) {
-	result, err := db.Exec(ctx, linkManagedPostgresPlanExcessNotice, arg.IntentID, arg.DatabaseID)
+	result, err := db.Exec(ctx, linkManagedPostgresPlanExcessNotice, arg.IntentID, arg.DeleteAt, arg.DatabaseID)
 	if err != nil {
 		return 0, err
 	}

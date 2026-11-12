@@ -1,0 +1,12 @@
+✔ payload key rotation reads legacy and previous versions and authenticates field and key ID (17.322999ms)
+✔ canonical and retained Go owner aliases share execution capacity across authentication and group merges (382.789549ms)
+✔ migration and runtime startup accept retained native v2 Tasks and preserve authenticated payloads (382.663806ms)
+✔ payload rotation preserves ownership, input state and mixed-key results, and guards key removal (386.269863ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1908.606323

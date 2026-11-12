@@ -235,6 +235,13 @@ func (e *CapEnforcer) observeStorageScopes(ctx context.Context, databases []Data
 		if !database.RestoreSlotUntil.IsZero() {
 			continue
 		}
+		// A PR preview database is left out too (ADR-20261102123523
+		// decision 6), so a busy preview cannot block production's writes.
+		// It stops at its own spec limit: the provider object it gets is
+		// created with that limit.
+		if !database.Preview.IsZero() {
+			continue
+		}
 		backend, err := e.registry.Resolve(database.BackendID, database.BackendFingerprint)
 		if err != nil {
 			return nil, nil, err

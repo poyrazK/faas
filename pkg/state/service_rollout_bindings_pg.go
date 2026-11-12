@@ -223,7 +223,7 @@ func (s *PgStore) RequestServiceRolloutAbort(ctx context.Context, appID, id, pre
 	if err := saveServiceHandoff(ctx, tx, target); err != nil {
 		return target, 0, err
 	}
-	auditID, err := sqlc.New().AppendServiceRolloutBindingAudit(ctx, tx, sqlc.AppendServiceRolloutBindingAuditParams{DeploymentID: mustPgUUID(id), AppID: mustPgUUID(appID), Kind: string(DeployRolledBack), Actor: "operator:cli:recover_rollout", Data: serviceAbortReceiptData(ctx, target, reason)})
+	auditID, err := sqlc.New().AppendServiceRolloutBindingAudit(ctx, tx, sqlc.AppendServiceRolloutBindingAuditParams{DeploymentID: mustPgUUID(id), AppID: mustPgUUID(appID), Kind: string(DeployRolledBack), Actor: rolloutRecoveryActor(ctx), Data: serviceAbortReceiptData(ctx, target, reason)})
 	if err != nil {
 		return target, 0, err
 	}

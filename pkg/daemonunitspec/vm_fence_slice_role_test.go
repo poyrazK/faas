@@ -12,9 +12,10 @@ import (
 // Spec §11: every slice that parents VM scopes needs an always-active fence
 // pin slice. Without one, any systemd daemon-reload empties the parent's
 // cgroup.subtree_control and strips memory.max, cpu.weight and cpu.max from
-// every live VM.
+// every live VM. faas-tenant itself parents VMs launched with flat tenant
+// cgroups (ADR-20261109172421 step 6.5).
 func TestSystemdSlicesPinsEveryVMParent(t *testing.T) {
-	want := []string{"faas-cp-build"}
+	want := []string{"faas-cp-build", "faas-tenant"}
 	for _, plan := range api.Plans {
 		want = append(want, "faas-"+plan.SliceName())
 	}

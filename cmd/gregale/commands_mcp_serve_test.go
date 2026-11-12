@@ -80,7 +80,7 @@ func TestMCPServeStdioUsesSelectedProfile(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = session.Close() })
 	tools, err := session.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 23 || requests.Load() != 0 {
+	if err != nil || len(tools.Tools) != 24 || requests.Load() != 0 {
 		t.Fatalf("discovery count=%d discovery=%+v error=%v requests=%d", len(tools.Tools), tools, err, requests.Load())
 	}
 	listed := map[string]bool{}

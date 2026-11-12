@@ -126,6 +126,8 @@ type Machine struct {
 type NetIface struct {
 	IfaceID     string `json:"iface_id"`
 	HostDevName string `json:"host_dev_name"`
+	// GuestMAC fixes the guest's MAC; empty lets Firecracker pick one.
+	GuestMAC string `json:"guest_mac,omitempty"`
 }
 
 // Entropy carries no fields; its presence enables virtio-rng.
@@ -224,12 +226,22 @@ const guestStallWarningArgs = "rcupdate.rcu_cpu_stall_suppress=1 "
 // allowed.
 const guestBootCPUArgs = "cryptomgr.notests selinux=0 audit=0 "
 
+// guestPageReportingArgs lowers the free page reporting order (ADR-907
+// amendment 2026-11-12) from the 2 MiB pageblock to 128 KiB (order 5): the
+// guest also reports free blocks of 128 KiB to 1 MiB, which a guest that has
+// served traffic holds in quantity. On the metal bench (1 GiB Node guest,
+// Firecracker 1.17, guest 6.18) a churned VM held 314 MiB of host memory
+// instead of 408 MiB and its capture shrank 24%; restore and request times
+// did not move. It only matters with the balloon attached, and boot arguments
+// are not part of the snapshot backing identity.
+const guestPageReportingArgs = "page_reporting.page_reporting_order=5 "
+
 // guestTimerProfile is guestTimerArgs unless a diagnostic test overrides it;
 // it is recorded in every capture's backing identity.
 var guestTimerProfile = guestTimerArgs
 
 const coldBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
-	"nmi_watchdog=0 hung_task_timeout_secs=0 " + guestStallWarningArgs + guestBootCPUArgs +
+	"nmi_watchdog=0 hung_task_timeout_secs=0 " + guestStallWarningArgs + guestBootCPUArgs + guestPageReportingArgs +
 	// BuildKit generates a per-VM proxy CA during worker startup. The
 	// Firecracker guest has no boot-time user input, so explicitly allow the
 	// kernel CPU RNG and give virtio-rng maximum credit; otherwise getrandom(2)
@@ -242,7 +254,7 @@ const coldBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
 // dedicated execution VM has no Firecracker network interface, so even the
 // guest kernel receives no tenant route or DNS/gateway hint.
 const executionBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
-	"nmi_watchdog=0 hung_task_timeout_secs=0 " + guestStallWarningArgs + guestBootCPUArgs +
+	"nmi_watchdog=0 hung_task_timeout_secs=0 " + guestStallWarningArgs + guestBootCPUArgs + guestPageReportingArgs +
 	"random.trust_cpu=on rng_core.default_quality=1000 " +
 	"root=/dev/vda ro init=/sbin/init"
 
@@ -339,6 +351,9 @@ type ColdBootSpec struct {
 	// only by the dedicated disposable-execution path; ordinary app and job
 	// boots retain the identical inner network contract.
 	Networkless bool
+	// GuestMAC fixes the guest's MAC, which the netns guard enforces
+	// (netns.Config.GuestMAC). Empty lets Firecracker pick one.
+	GuestMAC string
 	// AppTask stages the platform-owned marker that makes guest-init wait for
 	// one command on the app-task vsock channel instead of starting the app.
 	// Unlike Networkless, it retains the deployment's normal network policy.
@@ -493,7 +508,7 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 	if s.AgentInput {
 		drives = append(drives, Drive{DriveID: DriveAgentInput, PathOnHost: s.InputKey, IsReadOnly: true})
 	}
-	network := []NetIface{{IfaceID: "eth0", HostDevName: s.Tap}}
+	network := []NetIface{{IfaceID: "eth0", HostDevName: s.Tap, GuestMAC: s.GuestMAC}}
 	if s.Networkless {
 		// An empty list, not nil: Firecracker's --config-file parser rejects
 		// "network-interfaces": null ("expected a sequence").
@@ -705,6 +720,9 @@ type JailerSpec struct {
 	// IsBuilder routes the jailer to faas-cp-build.slice and uses a neutral
 	// cgroup weight instead of a tenant plan weight.
 	IsBuilder bool
+	// CPUWeight, when positive, replaces the plan's cpu.weight for an app VM
+	// (ADR-20261109172421).
+	CPUWeight int
 	// MemoryMaxBytes is passed as a cgroup creation parameter. Zero preserves
 	// the legacy/test command shape; production Manager.Wake supplies the
 	// billable VM ceiling before jailer drops privileges.
@@ -736,18 +754,32 @@ type JailerSpec struct {
 // reach it without dragging the rest of JailerSpec into scope.
 func PerInstanceScope(instance string) string { return instance }
 
-// vmCPUWeight is the per-VM cpu.weight jailer sets when it creates the scope.
-// Builders and an empty plan use the legacy neutral 256 (the kernel accepts
-// [1, 10000]).
-func vmCPUWeight(plan api.Plan, isBuilder bool) int {
+// MaxCPUWeight is the largest cgroup v2 cpu.weight.
+const MaxCPUWeight = 10000
+
+// vmCPUWeight is the cpu.weight jailer sets for a VM without its own weight:
+// a builder's neutral 256 in its own slice, else the cgroup v2 default 100
+// (a database VM; the kernel accepts [1, 10000]). No weight depends on the
+// plan (ADR-20261109172421).
+func vmCPUWeight(isBuilder bool) int {
 	if isBuilder {
 		return 256
 	}
-	if w := plan.CPUWeight(); w > 0 {
-		return w
-	}
-	return 256
+	return 100
 }
+
+// jailerCPUWeight is the cpu.weight a VM scope gets: its own weight (its
+// memory's, ADR-20261109172421), else vmCPUWeight.
+func jailerCPUWeight(isBuilder bool, weight int) int {
+	if weight > 0 && !isBuilder {
+		return min(weight, MaxCPUWeight)
+	}
+	return vmCPUWeight(isBuilder)
+}
+
+// leaseCPUWeight is jailerCPUWeight for a lease; the cgroup fence repairs
+// to it.
+func leaseCPUWeight(l Lease) int { return jailerCPUWeight(l.IsBuilder, l.CPUWeight) }
 
 // JailerCommand builds the jailer argv (Appendix B). vmmd execs this as root; the
 // jailer drops privileges to UID/GID, chroots, applies seccomp, and joins the
@@ -795,7 +827,7 @@ func JailerCommand(s JailerSpec) []string {
 	if s.ChrootBase != "" {
 		chrootBase = s.ChrootBase
 	}
-	cpuWeight := vmCPUWeight(s.Plan, s.IsBuilder)
+	cpuWeight := jailerCPUWeight(s.IsBuilder, s.CPUWeight)
 	args := []string{
 		"jailer",
 		"--id", PerInstanceScope(s.Instance),

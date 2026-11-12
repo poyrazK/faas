@@ -11,7 +11,8 @@ import (
 )
 
 // spec: §6.2 invariant 5. ADR-680 reseeds Node and Python userspace generators
-// on restore and lists Go, Java, Ruby and PHP as not covered.
+// on restore and lists Go, Java, Ruby and PHP as not covered; ADR-20261110150000
+// adds the Java agent.
 // TestMetalRestoreUncoveredRuntimeRNG measures those runtimes so the docs
 // state evidence instead of an assumption (ADR-20261107160000).
 //
@@ -51,7 +52,10 @@ func TestMetalRestoreUncoveredRuntimeRNG(t *testing.T) {
 		{
 			name: "java", rootfsEnv: "FAAS_TEST_RNG_JAVA_ROOTFS", file: "srv/RngApp.java",
 			content: func(*testing.T) string { return rngJavaApp }, entrypoint: []string{"/opt/java/openjdk/bin/java", "/srv/RngApp.java"},
-			mustDiffer: []string{}, known: []string{"random", "secure", "math"},
+			// ADR-20261110150000: the reseed agent resets Math.random,
+			// ThreadLocalRandom and the seed of a post-restore new Random().
+			// A Random created before the snapshot stays the documented gap.
+			mustDiffer: []string{"secure", "math", "tlr", "fresh"}, known: []string{"random"},
 		},
 	}
 	ran := 0
@@ -147,6 +151,7 @@ import java.net.InetSocketAddress;
 import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 
 public class RngApp {
     static final Random RANDOM = new Random();
@@ -156,12 +161,14 @@ public class RngApp {
         RANDOM.nextLong();
         SECURE.nextBytes(new byte[16]);
         Math.random();
+        ThreadLocalRandom.current().nextLong();
         HttpServer server = HttpServer.create(new InetSocketAddress("0.0.0.0", 8080), 0);
         server.createContext("/", exchange -> {
             byte[] b = new byte[16];
             SECURE.nextBytes(b);
             String body = "{\"random\":\"" + RANDOM.nextLong() + "\",\"secure\":\"" + HexFormat.of().formatHex(b)
-                + "\",\"math\":\"" + Math.random() + "\",\"pid\":" + ProcessHandle.current().pid() + "}";
+                + "\",\"math\":\"" + Math.random() + "\",\"tlr\":\"" + ThreadLocalRandom.current().nextLong()
+                + "\",\"fresh\":\"" + new Random().nextLong() + "\",\"pid\":" + ProcessHandle.current().pid() + "}";
             byte[] out = body.getBytes();
             exchange.getResponseHeaders().add("content-type", "application/json");
             exchange.sendResponseHeaders(200, out.length);

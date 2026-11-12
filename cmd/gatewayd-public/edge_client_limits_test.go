@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -27,9 +28,11 @@ import (
 func TestEdgeClientLimitsFromEnv(t *testing.T) {
 	for _, tc := range []struct {
 		name, value, proxies string
+		overload             string
 		mode                 publicEdgeMode
 		wantOn               bool
 		wantProxies          int
+		wantOverload         clientlimit.OverloadMode
 		wantErr              string
 	}{
 		{name: "unset", mode: edgeModeCompute},
@@ -39,6 +42,11 @@ func TestEdgeClientLimitsFromEnv(t *testing.T) {
 		{name: "not a switch value", value: "yes", mode: edgeModeCompute, wantErr: edgeClientLimitsEnv},
 		{name: "on with Cloudflare ranges", value: "1", proxies: "173.245.48.0/20, 2400:cb00::/32", mode: edgeModeCompute, wantOn: true, wantProxies: 2},
 		{name: "a proxy entry is no prefix", value: "1", proxies: "173.245.48.1/20", mode: edgeModeCompute, wantErr: edgeProxyCIDRsEnv},
+		{name: "overload off", value: "1", overload: "off", mode: edgeModeCompute, wantOn: true},
+		{name: "overload observe", value: "1", overload: "observe", mode: edgeModeCompute, wantOn: true, wantOverload: clientlimit.OverloadObserve},
+		{name: "overload on", value: "1", overload: "on", mode: edgeModeCompute, wantOn: true, wantOverload: clientlimit.OverloadOn},
+		{name: "overload without the limits", overload: "on", mode: edgeModeCompute, wantErr: edgeClientLimitsEnv + "=1"},
+		{name: "overload not a mode", value: "1", overload: "yes", mode: edgeModeCompute, wantErr: edgeOverloadEnv},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			l, err := edgeClientLimitsFromEnv(tc.mode, func(k string) string {
@@ -47,6 +55,8 @@ func TestEdgeClientLimitsFromEnv(t *testing.T) {
 					return tc.value
 				case edgeProxyCIDRsEnv:
 					return tc.proxies
+				case edgeOverloadEnv:
+					return tc.overload
 				}
 				return ""
 			})
@@ -61,6 +71,46 @@ func TestEdgeClientLimitsFromEnv(t *testing.T) {
 			}
 			if l.on != tc.wantOn || len(l.proxies) != tc.wantProxies {
 				t.Fatalf("on = %v with %d proxies, want %v with %d", l.on, len(l.proxies), tc.wantOn, tc.wantProxies)
+			}
+			if got := l.overload.Mode(); got != tc.wantOverload {
+				t.Fatalf("overload = %s, want %s", got, tc.wantOverload)
+			}
+		})
+	}
+}
+
+// TestEdgeClientLimitsShedOnlyWhenOverloadIsOn pins that the overload level
+// refuses requests only in on mode: observe measures and refuses nothing.
+func TestEdgeClientLimitsShedOnlyWhenOverloadIsOn(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	refused := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "refused"}, []string{"reason"})
+	for _, tc := range []struct {
+		mode string
+		want int
+	}{
+		{"observe", http.StatusNoContent},
+		{"on", http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			l, err := edgeClientLimitsFromEnv(edgeModeCompute, func(k string) string {
+				return map[string]string{edgeClientLimitsEnv: "1", edgeOverloadEnv: tc.mode}[k]
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			l.refused = refused
+			for range 20 {
+				l.overload.Update(clientlimit.OverloadSignals{SchedDelayP99: time.Second})
+			}
+			// No app has answered for this host, so at level 1 it is refused
+			// first.
+			rec := httptest.NewRecorder()
+			l.shed(next, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "https://unknown.gregale.dev/", nil))
+			if rec.Code != tc.want {
+				t.Fatalf("status %d, want %d", rec.Code, tc.want)
+			}
+			if tc.want == http.StatusServiceUnavailable && !strings.Contains(rec.Body.String(), "edge_overloaded") {
+				t.Fatalf("body %q, want the edge_overloaded problem", rec.Body.String())
 			}
 		})
 	}

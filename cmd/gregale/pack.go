@@ -790,39 +790,7 @@ func detectShape(srcDir string) shape {
 // same wire shape they would have got via
 // `gregale --template function-node --tarball ...`.
 func inferFunctionRuntime(srcDir string) (runtime, handler string, ok bool) {
-	if manifest, found, err := gregalemanifest.Load(srcDir); err == nil && found && manifest.Function != nil {
-		if err := manifest.Validate(); err == nil {
-			return strings.TrimSpace(manifest.Function.Runtime), strings.TrimSpace(manifest.Function.Handler), true
-		}
-	}
-	entries, err := os.ReadDir(srcDir)
-	if err != nil {
-		return "", "", false
-	}
-	var picked string
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		if functionHandlerFiles[strings.ToLower(e.Name())] {
-			if picked != "" {
-				return "", "", false // ambiguous — multiple handlers
-			}
-			picked = strings.ToLower(e.Name())
-		}
-	}
-	if picked == "" {
-		return "", "", false
-	}
-	switch strings.ToLower(picked) {
-	case "handler.js", "handler.ts":
-		return runtimeNode22, defaultTemplateHandler, true
-	case "handler.py":
-		return runtimePython312, defaultTemplateHandler, true
-	case "handler.go":
-		return runtimeGo124, defaultTemplateHandler, true
-	}
-	return "", "", false
+	return gregalemanifest.InferFunctionRuntime(srcDir)
 }
 
 // defaultZeroConfigSourceCapMB is the conservative per-plan floor used when

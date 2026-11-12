@@ -26,13 +26,17 @@ func freshNodePlacement(ctx context.Context) bool {
 func (e *Engine) nodePlacementContext(ctx context.Context, p Placement, r Request) context.Context {
 	admission := state.NodeAdmission{NodeID: p.NodeID, Generation: p.LifecycleGeneration,
 		BookedCPUMillicores: r.BookedCPUMillicores}
+	if r.BookedCPUMillicores > 0 {
+		// An app instance stores the vCPU count it boots with, its size's
+		// (ADR-20261109172421).
+		admission.BookedVCPU = r.VCPU
+	}
 	if e.ledger != nil {
 		admission.ReservationPercent = e.ledger.ReservationPercent(p.NodeID)
 		// ADR-20261107122928: the idle ladder discount placement applied.
 		admission.ReservationDiscountMB = e.ledger.ReservationDiscountMB(p.NodeID)
-		if !r.AllowResidentRecovery {
-			admission.Compute = e.admissionCompute(p.NodeID, r.VCPU, r.CPUMillicores)
-		}
+		// No Compute: memory is the only capacity limit, so the durable
+		// node reservation checks memory alone (ADR-20261109172421).
 	}
 	return state.WithNodeAdmission(ctx, admission)
 }
@@ -90,16 +94,4 @@ func (e *Engine) createWithNodePlacement(ctx context.Context, request Request, r
 	}
 	return state.Instance{}, Placement{}, nil, explainAdmission(api.ErrCapacity("The node fleet changed during placement; retry admission"),
 		api.WorkerAdmissionBlocker{Code: "placement_changed"})
-}
-
-// admissionCompute is the vCPU and CPU an instance books on nodeID's budgets
-// at the durable node reservation, with the discounts placement applied.
-// Observing cpu_admission it is none: the guard then checks memory only
-// (ADR-20261109172421).
-func (e *Engine) admissionCompute(nodeID string, vcpu, cpuMillicores int) state.NodeCompute {
-	if e.cpuObserving() {
-		return state.NodeCompute{}
-	}
-	discountVCPU, discountCPU := e.ledger.CPUDiscount(nodeID)
-	return state.NodeCompute{VCPU: vcpu, CPUMillicores: cpuMillicores, QuietVCPU: discountVCPU, QuietCPUMillicores: discountCPU}
 }

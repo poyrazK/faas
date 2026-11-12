@@ -1,11 +1,20 @@
 package api
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // ManagedPostgresPlanLimits is the customer-facing allowance for managed
 // PostgreSQL. Provider adapters may impose a lower ceiling, but never raise
 // these plan limits.
 type ManagedPostgresPlanLimits struct {
+	// NotIncluded marks a plan that includes no managed PostgreSQL at all
+	// (Free, ADR-20261110184700): it creates none, and every database its
+	// subject still holds, say after a paid plan ended, is past the plan.
+	// The zero value with DatabasesMax 0 is an unknown plan instead, which
+	// suspends nothing.
+	NotIncluded  bool
 	DatabasesMax int
 	// StorageLimitBytes is the account's pooled storage (ADR-1430): every
 	// database together, and so also the most one database may use. The pool
@@ -23,6 +32,12 @@ type ManagedPostgresPlanLimits struct {
 	// Keeping this as an entitlement makes the future always-on tier explicit
 	// instead of allowing a customer request to bypass the COGS guardrail.
 	AlwaysOnAllowed bool
+	// OverageOnByDefault turns compute overage on for a subject that never
+	// chose (ADR-20261025094915 amendment 2026-11-11): its databases keep
+	// running past the monthly compute allowance, up to twice it, and the
+	// excess is billed. An explicit choice either way always wins. Only Scale,
+	// whose production databases should not stop mid-month, has it.
+	OverageOnByDefault bool
 }
 
 const (
@@ -33,15 +48,40 @@ const (
 
 // managedPostgresPlanLimits follows the October 2026 COGS report (ADR-1430):
 // databases, highest service class, pooled storage and monthly compute units.
+// Free includes no managed PostgreSQL (ADR-20261110184700).
 var managedPostgresPlanLimits = map[Plan]ManagedPostgresPlanLimits{
-	PlanFree: {DatabasesMax: 1, StorageLimitBytes: managedPostgresGiB / 2, MonthlyComputeUnitSeconds: 5 * managedPostgresComputeUnitHour,
-		RestoreWindowSeconds: managedPostgresRestoreWindowSecond, DevelopmentAllowed: true},
+	PlanFree: {NotIncluded: true},
 	PlanHobby: {DatabasesMax: 1, StorageLimitBytes: managedPostgresGiB, MonthlyComputeUnitSeconds: 25 * managedPostgresComputeUnitHour,
 		RestoreWindowSeconds: managedPostgresRestoreWindowSecond, DevelopmentAllowed: true},
 	PlanPro: {DatabasesMax: 3, StorageLimitBytes: 5 * managedPostgresGiB, MonthlyComputeUnitSeconds: 75 * managedPostgresComputeUnitHour,
 		RestoreWindowSeconds: managedPostgresRestoreWindowSecond, DevelopmentAllowed: true, BurstableAllowed: true},
 	PlanScale: {DatabasesMax: 10, StorageLimitBytes: 20 * managedPostgresGiB, MonthlyComputeUnitSeconds: 200 * managedPostgresComputeUnitHour,
-		RestoreWindowSeconds: managedPostgresRestoreWindowSecond, DevelopmentAllowed: true, BurstableAllowed: true, ProductionAllowed: true},
+		RestoreWindowSeconds: managedPostgresRestoreWindowSecond, DevelopmentAllowed: true, BurstableAllowed: true, ProductionAllowed: true,
+		OverageOnByDefault: true},
+}
+
+// ManagedPostgresOverageDefaultPlans lists the plans whose compute overage is
+// on for a subject that never chose, sorted; the overage biller lists those
+// subjects for billing.
+func ManagedPostgresOverageDefaultPlans() []string {
+	var plans []string
+	for plan, limits := range managedPostgresPlanLimits {
+		if limits.OverageOnByDefault {
+			plans = append(plans, string(plan))
+		}
+	}
+	slices.Sort(plans)
+	return plans
+}
+
+// ManagedPostgresOverageEffective is a subject's compute overage: its stored
+// choice when it made one, else its plan's default.
+func ManagedPostgresOverageEffective(p Plan, enabled, chosen bool) bool {
+	if chosen {
+		return enabled
+	}
+	limits, ok := managedPostgresPlanLimits[p]
+	return ok && limits.OverageOnByDefault
 }
 
 // ManagedPostgresPlanDatabasesMax is the most databases any plan allows. A
@@ -53,6 +93,13 @@ func ManagedPostgresPlanDatabasesMax() int {
 		most = max(most, limits.DatabasesMax)
 	}
 	return most
+}
+
+// ManagedPostgresIncluded reports whether plan p includes managed PostgreSQL:
+// a known plan with at least one database.
+func ManagedPostgresIncluded(p Plan) bool {
+	limits, ok := managedPostgresPlanLimits[p]
+	return ok && !limits.NotIncluded && limits.DatabasesMax > 0
 }
 
 // ManagedPostgresLimitsFor returns a copy of the closed-set entitlement for p.
@@ -87,12 +134,25 @@ type ManagedPostgresDatabase struct {
 	// database once the account has room; otherwise its delete is scheduled
 	// at this time.
 	RestoreSlotUntil string `json:"restore_slot_until,omitempty"`
+	// ExpiresAt is set on a restore made with ttl_seconds (a branch;
+	// ADR-20261106103654): its bindings are revoked and it is purged then.
+	ExpiresAt string `json:"expires_at,omitempty"`
 	// PlanExcess is set while the plan no longer includes the database and
 	// it is suspended (ADR-20261102125208): database_limit when it ranks
 	// past the plan's database limit, oldest first, or service_class when
 	// the plan does not include its class. Upgrading, deleting a database
 	// or resizing to an included class resumes it.
 	PlanExcess string `json:"plan_excess,omitempty"`
+	// Hold says why the platform stops this database's compute and refuses
+	// its connections while its state stays ready (ADR-20261110160000
+	// amendment 2026-11-10): compute_ceiling (the account used its monthly
+	// compute ceiling), egress (this database sent its own monthly egress
+	// allowance, amendment 2026-11-11), inactive (the account is suspended), plan_excess
+	// (see PlanExcess) or preview (a PR preview database once the account
+	// used 80% of its compute). Omitted while nothing holds it. It is read
+	// from the same rules as the cap sweep, which applies them within a few
+	// minutes.
+	Hold string `json:"hold,omitempty"`
 	// RestoreRange is the span a point-in-time restore from this database
 	// can target now; absent while it cannot be restored from.
 	RestoreRange *ManagedPostgresRestoreRange `json:"restore_range,omitempty"`
@@ -100,6 +160,25 @@ type ManagedPostgresDatabase struct {
 	// list and read while the resource-labels capability is on for the
 	// caller. Labels are not secret.
 	Labels map[string]string `json:"labels,omitempty"`
+	// Previews is what this database gives PR preview environments
+	// (ADR-20261102123523): "empty" or "copy"; omitted when off.
+	Previews string `json:"previews,omitempty"`
+	// Preview is set on a database a PR preview environment owns: it is
+	// purged with the environment.
+	Preview *ManagedPostgresPreviewOwner `json:"preview,omitempty"`
+}
+
+// ManagedPostgresPreviewOwner names the PR preview environment that owns a
+// database: the production database it stands in for and the pull request.
+type ManagedPostgresPreviewOwner struct {
+	SourceDatabaseID string `json:"source_database_id"`
+	PRNumber         int    `json:"pr_number"`
+}
+
+// SetManagedPostgresPreviewsRequest sets what a database gives PR preview
+// environments: "off", "empty" or "copy" (ADR-20261102123523).
+type SetManagedPostgresPreviewsRequest struct {
+	Previews string `json:"previews"`
 }
 
 // ManagedPostgresRestoreRange bounds a restore's point_in_time: from
@@ -161,7 +240,44 @@ type ManagedPostgresUsageResponse struct {
 	// ComputeSuspendedAt is when the cap suspended the databases this month,
 	// present while compute_cap_state is suspended.
 	ComputeSuspendedAt *time.Time `json:"compute_suspended_at,omitempty"`
+	// EgressAllowanceBytes is each database's own monthly egress allowance,
+	// 500 GB as Neon's per project (ADR-20261110160000 amendment 2026-11-11);
+	// EgressBytes is what all the databases sent. EgressState is that of the
+	// database that sent the most: healthy, warning (at 80% of the hold),
+	// overage (past its allowance while the account's egress overage
+	// election bills database egress, up to twice it) or held (that database
+	// is stopped until the month ends); held is reported only while caps are
+	// enforced. Both are omitted on a plan without databases.
+	// AppEgressBytes is deprecated and always omitted: apps no longer share
+	// the databases' allowance.
+	EgressAllowanceBytes int64  `json:"egress_allowance_bytes,omitempty"`
+	AppEgressBytes       int64  `json:"app_egress_bytes,omitempty"`
+	EgressState          string `json:"egress_state,omitempty"`
+	// Hold is set while every database of the account is held:
+	// compute_ceiling or inactive, as on each database. Egress holds one
+	// database at a time and is reported on that database only.
+	Hold string `json:"hold,omitempty"`
 }
+
+// Why the platform holds a managed database (ManagedPostgresDatabase.Hold).
+const (
+	ManagedPostgresHoldComputeCeiling = "compute_ceiling"
+	ManagedPostgresHoldEgress         = "egress"
+	ManagedPostgresHoldInactive       = "inactive"
+	ManagedPostgresHoldPlanExcess     = "plan_excess"
+	ManagedPostgresHoldPreview        = "preview"
+)
+
+// ManagedPostgresUsageResponse.EgressState values.
+const (
+	ManagedPostgresEgressHealthy = "healthy"
+	ManagedPostgresEgressWarning = "warning"
+	ManagedPostgresEgressHeld    = "held"
+	// ManagedPostgresEgressOverage: past the allowance while the account's
+	// egress overage election bills database egress (ADR-20261110160000
+	// slice 3); held at twice the allowance.
+	ManagedPostgresEgressOverage = "overage"
+)
 
 // ManagedPostgresOverage is GET and PUT /v1/postgres/overage. With overage on,
 // a paid account's databases keep running past the monthly compute allowance
@@ -238,9 +354,22 @@ type CreateManagedPostgresDatabaseRequest struct {
 }
 
 type RestoreManagedPostgresDatabaseRequest struct {
-	Name        string `json:"name"`
-	PointInTime string `json:"point_in_time"`
+	Name string `json:"name"`
+	// PointInTime is an RFC3339 time inside the source's restore range.
+	// Empty restores from the latest point (ADR-20261106103654): apid's
+	// clock minus a couple of seconds.
+	PointInTime string `json:"point_in_time,omitempty"`
+	// TTLSeconds, when set, purges the copy that long after it is created
+	// (a branch; ADR-20261106103654). From ManagedPostgresBranchTTLMinSeconds
+	// to ManagedPostgresBranchTTLMaxSeconds.
+	TTLSeconds int64 `json:"ttl_seconds,omitempty"`
 }
+
+// The bounds of a restore's ttl_seconds (ADR-20261106103654).
+const (
+	ManagedPostgresBranchTTLMinSeconds = 300
+	ManagedPostgresBranchTTLMaxSeconds = 30 * 24 * 3600
+)
 
 type ManagedPostgresBinding struct {
 	ID                   string `json:"id"`

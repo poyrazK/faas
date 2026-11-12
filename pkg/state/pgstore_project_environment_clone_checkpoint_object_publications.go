@@ -214,7 +214,9 @@ func checkpointObjectPublicationAdmissionTx(ctx context.Context, tx pgx.Tx, plan
 		if err != nil {
 			return mapErr(err)
 		}
-		if count+int64(needed[id]) > int64(limits.SecretCountMax) {
+		// The managed values this publishes do not count toward the
+		// customer-secret cap (ADR-20261110120000).
+		if count > int64(limits.SecretCountMax) {
 			return ErrQuotaExceeded
 		}
 	}

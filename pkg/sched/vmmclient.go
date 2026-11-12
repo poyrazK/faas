@@ -447,6 +447,9 @@ type VMInstanceStat struct {
 // (current behaviour preserved).
 type AppSpec struct {
 	RehearsalRunID string
+	// EnvironmentBranchContained asks for the contained environment branch
+	// profile (ADR-20261031193635); the runtime must acknowledge it.
+	EnvironmentBranchContained bool
 	// Migration evidence stays in schedd; no receipt values enter the protobuf
 	// envelope. The flat APIEnv/sealed inputs already carry the boot payload.
 	migrationRuntime     *migrationRuntimeInputs
@@ -460,6 +463,12 @@ type AppSpec struct {
 	MemSizeMiB    int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
 	CPUMillicores int32  // sustained cgroup CPU allowance; 250, 500, or 1000
 	EgressMbit    int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
+	// CPUWeight and CPUUncapped carry CPU that follows instance size
+	// (ADR-20261109172421, Engine.appCPUWeight): the instance's cpu.weight,
+	// and no quota while CPUMillicores is the app default. Zero and false
+	// keep the plan's weight and quota.
+	CPUWeight   int32
+	CPUUncapped bool
 	// RequestConcurrency is vmmd's HTTP admission limit for the instance
 	// (ADR-20261101215228, vmmRequestConcurrency); 0 keeps the plan bound.
 	RequestConcurrency int32
@@ -501,6 +510,10 @@ type AppSpec struct {
 	// guest-originated flow, inbound only from the platform veth. Only
 	// the fork coordinator sets it.
 	Quarantine bool
+	// IdentityReload (ADR-20261031193635) restores an environment branch
+	// from its parent's credential-free capture: vmmd has the guest reload
+	// the branch's identity through after_restore and checks its digest.
+	IdentityReload bool
 	// PrivateNetworkCIDRs are provider-verified VPC destinations. They are
 	// additive to EgressAllowlist and only reach vmmd when the attachment is
 	// ready; vmmd validates them again before programming the netns.
@@ -657,6 +670,9 @@ type SnapshotBytes struct {
 // proto side stays narrow.
 type WakeOutcome struct {
 	RehearsalRunID string
+	// EnvironmentBranchContained: the runtime installed the contained
+	// environment branch profile (ADR-20261031193635).
+	EnvironmentBranchContained bool
 	// Populated only by CreateAdmittedRuntime after exact receipt validation.
 	RuntimeAdmissionReceipt *runtimeadmission.Receipt
 
@@ -789,6 +805,9 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 		return nil, liftErr(err)
 	}
 	if err := c.confirmRehearsalNetwork(ctx, app, instance, resp); err != nil {
+		return nil, err
+	}
+	if err := c.confirmEnvironmentBranchContainment(ctx, app, instance, resp); err != nil {
 		return nil, err
 	}
 	if err := c.confirmSecretAliasSupport(ctx, app, instance, resp.GetSupportsSecretAliases()); err != nil {
@@ -1188,6 +1207,9 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 		return nil, liftErr(err)
 	}
 	if err := c.confirmRehearsalNetwork(ctx, app, instance, resp); err != nil {
+		return nil, err
+	}
+	if err := c.confirmEnvironmentBranchContainment(ctx, app, instance, resp); err != nil {
 		return nil, err
 	}
 	if err := c.confirmSecretAliasSupport(ctx, app, instance, resp.GetSupportsSecretAliases()); err != nil {
@@ -1981,24 +2003,28 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		})
 	}
 	out := &vmmdpb.AppSpec{
-		RehearsalRunId:     a.RehearsalRunID,
-		BaseKey:            a.BaseKey,
-		LayerKey:           a.LayerKey,
-		VcpuCount:          a.VCPUCount,
-		MemSizeMib:         a.MemSizeMiB,
-		CpuMillicores:      a.CPUMillicores,
-		RequestConcurrency: a.RequestConcurrency,
-		EgressMbit:         a.EgressMbit,
-		AppId:              a.AppID,
-		SealedEnv:          sealed,
-		ApiEnv:             apiEnv,
-		Sidecars:           sidecars,
-		MainDependsOn:      mainDependsOn,
-		EgressAllowlist:    a.EgressAllowlist,
-		EgressPorts:        egressPortsToWire(a.EgressPorts),
-		EgressRevision:     a.EgressRevision,
-		Quarantine:         a.Quarantine,
-		Port:               uint32(a.Port),
+		RehearsalRunId:             a.RehearsalRunID,
+		BaseKey:                    a.BaseKey,
+		LayerKey:                   a.LayerKey,
+		VcpuCount:                  a.VCPUCount,
+		MemSizeMib:                 a.MemSizeMiB,
+		CpuMillicores:              a.CPUMillicores,
+		CpuWeight:                  a.CPUWeight,
+		CpuUncapped:                a.CPUUncapped,
+		RequestConcurrency:         a.RequestConcurrency,
+		EgressMbit:                 a.EgressMbit,
+		AppId:                      a.AppID,
+		SealedEnv:                  sealed,
+		ApiEnv:                     apiEnv,
+		Sidecars:                   sidecars,
+		MainDependsOn:              mainDependsOn,
+		EgressAllowlist:            a.EgressAllowlist,
+		EgressPorts:                egressPortsToWire(a.EgressPorts),
+		EgressRevision:             a.EgressRevision,
+		Quarantine:                 a.Quarantine,
+		IdentityReload:             a.IdentityReload,
+		EnvironmentBranchContained: a.EnvironmentBranchContained,
+		Port:                       uint32(a.Port),
 		// Per-deployment HTTP readiness path, paired with the gRPC
 		// mode/service fields above.
 		HealthcheckPath:          a.HealthcheckPath,
@@ -2087,16 +2113,17 @@ func sidecarProbeToProto(in *api.SidecarProbe) *vmmdpb.SidecarProbeSpec {
 
 func outcomeFromProto(r *vmmdpb.WakeResponse) *WakeOutcome {
 	o := &WakeOutcome{
-		RehearsalRunID:        r.GetRehearsalRunId(),
-		Instance:              r.GetInstance(),
-		LeaseUID:              r.GetLeaseUid(),
-		HostIP:                r.GetHostIp(),
-		Netns:                 r.GetNetns(),
-		VethHost:              r.GetVethHost(),
-		VethPeer:              r.GetVethPeer(),
-		Method:                r.GetMethod(),
-		RequestedMethod:       r.GetRequestedMethod(),
-		RestoreFallbackReason: r.GetRestoreFallbackReason(),
+		RehearsalRunID:             r.GetRehearsalRunId(),
+		EnvironmentBranchContained: r.GetEnvironmentBranchContained(),
+		Instance:                   r.GetInstance(),
+		LeaseUID:                   r.GetLeaseUid(),
+		HostIP:                     r.GetHostIp(),
+		Netns:                      r.GetNetns(),
+		VethHost:                   r.GetVethHost(),
+		VethPeer:                   r.GetVethPeer(),
+		Method:                     r.GetMethod(),
+		RequestedMethod:            r.GetRequestedMethod(),
+		RestoreFallbackReason:      r.GetRestoreFallbackReason(),
 	}
 	// ADR-051 PR-D: decode the optional characterization struct
 	// back into pkg/api.CharacterizationReport. Empty struct =

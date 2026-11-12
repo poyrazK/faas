@@ -43,9 +43,9 @@ func (r *devLocalRemote) close() {
 
 // attachDevLocalRemote connects to the source directory's developer session.
 // Every failure degrades to a note: local functions still run without it.
-func attachDevLocalRemote(ctx context.Context, sourcePath string, progress io.Writer) *devLocalRemote {
+func attachDevLocalRemote(ctx context.Context, sourcePath, name string, progress io.Writer) *devLocalRemote {
 	r := &devLocalRemote{Env: map[string]string{}}
-	target, terr := resolveDevTarget(sourcePath, "")
+	target, terr := resolveDevTarget(sourcePath, name)
 	if terr != nil {
 		r.note("Remote resources: off (%v)", terr.err)
 		return r

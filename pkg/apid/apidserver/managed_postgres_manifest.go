@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
@@ -208,7 +209,7 @@ func (s *server) resolveManifestPostgresBindings(
 		// Application Auth is a dark launch: without it the mode is unknown.
 		if access == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(subject) {
 			return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
-				"Invalid manifest", fmt.Sprintf("database[%d]: access %q not in {read_write, read_only, migration, data_api}", i, access))
+				"Invalid manifest", fmt.Sprintf("database[%d]: access %q not in {read_write, read_only, migration, data_api, session}", i, access))
 		}
 		if problem := s.dataAPIAccessProblem(subject, access, fmt.Sprintf(`database[%d]: access "data_api"`, i)); problem != nil {
 			return nil, problem
@@ -282,7 +283,7 @@ func (s *server) manifestDatabaseCreateSpec(ctx context.Context, acct state.Acco
 			"Cannot create managed PostgreSQL database", detail("creating a database needs a credential with postgres:manage; deploy tokens and deploy:write keys can only bind existing databases"))
 	}
 	limits, ok := api.ManagedPostgresLimitsFor(acct.Plan)
-	if !ok || limits.DatabasesMax == 0 || managedPostgresFreeClosed(acct.Plan, s.managedPostgresCapMode) {
+	if !ok || managedPostgresNotInPlan(acct.Plan) {
 		return managedpostgres.Spec{}, managedPostgresManifestProblem(managedpostgres.ErrNotInPlan, detail("the plan does not include managed databases"))
 	}
 	discovery, err := s.managedPostgres.DiscoverCapabilities(ctx, acct.ID, strings.TrimSpace(create.Region))
@@ -437,6 +438,11 @@ func (s *server) bindResolvedManagedPostgresBindings(
 		}
 		if err != nil {
 			rollback()
+			if errors.Is(err, managedpostgres.ErrConflict) {
+				if problem := s.manifestBindingChangedProblem(ctx, acct.ID, appID, dependency, database.Name); problem != nil {
+					return nil, problem
+				}
+			}
 			return nil, managedPostgresManifestProblem(err, fmt.Sprintf("database dependency %d (%q): create binding", i+1, dependency.databaseName()))
 		}
 		if dependency.pending && binding.State == managedpostgres.BindingStateProvisioning {
@@ -451,7 +457,38 @@ func (s *server) bindResolvedManagedPostgresBindings(
 	return created, nil
 }
 
+// manifestBindingChangedProblem explains a gregale.yaml database entry whose
+// environment key already belongs to a binding of another database or access
+// mode (ADR-20261110120000). A deploy never replaces such a binding: that
+// would revoke the credential the serving release uses. Nil when the conflict
+// is something else.
+func (s *server) manifestBindingChangedProblem(ctx context.Context, accountID, appID string, dependency resolvedManagedPostgresBinding, databaseName string) *api.Problem {
+	bindings, err := s.managedPostgresBindings.ListForApp(ctx, accountID, appID, dependency.scope)
+	if err != nil {
+		// The caller reports the original conflict instead.
+		return nil //nolint:nilerr // explanation is best-effort
+	}
+	for _, existing := range bindings {
+		if existing.EnvironmentKey != dependency.environmentKey || existing.Scope != dependency.scope ||
+			existing.State == string(managedpostgres.BindingStateDeleted) {
+			continue
+		}
+		if existing.DatabaseName == databaseName && existing.Access == string(dependency.access) {
+			return nil
+		}
+		return api.NewProblem(http.StatusConflict, "managed_postgres_binding_changed", "gregale.yaml changes an existing binding",
+			fmt.Sprintf("%s in scope %q is bound to database %q with %s access; gregale.yaml asks for database %q with %s access. A deploy does not replace a binding, because that would revoke the credential the serving release uses.",
+				dependency.environmentKey, dependency.scope, existing.DatabaseName, existing.Access, databaseName, dependency.access)).
+			WithHint("Bind the new database or access under another env key and switch the app to it, or delete the old binding (gregale postgres bindings) and deploy again.").
+			WithDocs("https://gregale.dev/docs/managed-postgres")
+	}
+	return nil
+}
+
 func managedPostgresManifestProblem(err error, detail string) *api.Problem {
+	if problem := managedpg.LimitProblem(err); problem != nil {
+		return problem
+	}
 	status, code, title := http.StatusInternalServerError, "managed_postgres_error", "Managed PostgreSQL error"
 	switch {
 	case errors.Is(err, managedpostgres.ErrUnavailable):

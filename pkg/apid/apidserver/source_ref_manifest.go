@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"path"
 	"reflect"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/eventfilter"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/reposcan"
@@ -131,7 +133,7 @@ func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan, agen
 		return nil, prob
 	}
 	if err := m.ValidateForPlan(plan); err != nil {
-		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
+		return nil, manifestValidationProblem(err)
 	}
 	if skip, err := m.RepositoryDeployFunctions(app.Type == state.AppTypeFunction); err != nil {
 		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
@@ -219,7 +221,26 @@ func releasePhaseOffProblem() *api.Problem {
 			"but release commands are not available on this Gregale installation yet. Remove the declaration and run the command from the app or a machine you control.")
 }
 
+// resolveSourceReleaseDeclaration refuses a release command on a function
+// app: release tasks run the deployment's container image, and a function
+// deployment has none, so imaged retried "app task deployment artifact is
+// unavailable" until the deploy was cancelled (Hunt 33 H33-54).
 func resolveSourceReleaseDeclaration(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
+	resolved, problem := declaredSourceReleaseCommand(sourcePath, app, manifest)
+	if problem == nil && len(resolved.command) > 0 && app.Type == state.AppTypeFunction {
+		return deploymentReleaseCommand{}, functionReleaseCommandProblem()
+	}
+	return resolved, problem
+}
+
+func functionReleaseCommandProblem() *api.Problem {
+	return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Release commands need an app",
+		"This function app declares a release command (gregale.yaml release.command, a Procfile release: process, or its project's Compose file). "+
+			"Release commands run in an app's container image, which a function deployment does not have. "+
+			"Remove the declaration, or run the command from an app (type: app) in the same project or from a machine you control.")
+}
+
+func declaredSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
 	if manifest != nil && manifest.Release != nil && manifest.Release.Command != "" {
 		return validateDeploymentReleaseCommand(manifest.Release.Command)
 	}
@@ -683,7 +704,7 @@ func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Acc
 		}
 		subscription, convertErr := declaration.AsSubscription(acct.ID)
 		if convertErr != nil {
-			return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", convertErr.Error())
+			return manifestValidationProblem(convertErr)
 		}
 		key, keyErr := eventSubscriptionManifestKey(subscription.Source, subscription.Type, subscription.Filter)
 		if keyErr != nil {
@@ -828,7 +849,33 @@ func (s *server) checkSourceRefEventSubscriptionQuota(ctx context.Context, acct 
 	return nil
 }
 
+// manifestValidationProblem maps a manifest validation error to its problem:
+// an event filter over its size or depth cap is a limit problem with the
+// limit and observed value, anything else is app_manifest_invalid.
+func manifestValidationProblem(err error) *api.Problem {
+	if problem := eventFilterBoundProblem(err); problem != nil {
+		return problem
+	}
+	return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
+}
+
+// eventFilterBoundProblem returns the limit problem for an event filter over
+// its cap (events hunt #9), or nil when err is not one.
+func eventFilterBoundProblem(err error) *api.Problem {
+	var bound *eventfilter.BoundError
+	if !errors.As(err, &bound) {
+		return nil
+	}
+	if bound.Bound == eventfilter.BoundDepth {
+		return api.ErrEventSubscriptionFilterTooDeep("event trigger filter", bound.Limit, bound.Observed)
+	}
+	return api.ErrEventSubscriptionFilterTooLarge("event trigger filter", bound.Limit, bound.Observed)
+}
+
 func sourceRefEventSubscriptionProblem(err error) *api.Problem {
+	if problem := eventFilterBoundProblem(err); problem != nil {
+		return problem
+	}
 	if errors.Is(err, state.ErrNotFound) {
 		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
 	}
@@ -915,8 +962,10 @@ func (s *server) applySourceManifestSettings(ctx context.Context, acct state.Acc
 
 // applyBridgeSourceSettings applies a GitHub deploy's gregale.yaml settings
 // for the githubd bridge, which has no server of its own. It returns the app
-// as it now is and the undo for a failed enqueue.
-func (s *server) applyBridgeSourceSettings(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest) (state.App, func(context.Context), *api.Problem) {
+// as it now is and the undo for a failed enqueue. push names the environment
+// the push deploys ("" is production) and who pushed; a function's settings
+// follow the environment and are attributed to the pusher.
+func (s *server) applyBridgeSourceSettings(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest, push sourcePush) (state.App, func(context.Context), *api.Problem) {
 	staged := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
 	baseline, err := s.store.LatestDeployment(ctx, app.ID)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
@@ -937,6 +986,14 @@ func (s *server) applyBridgeSourceSettings(ctx context.Context, acct state.Accou
 			app = reloaded
 		}
 	}
+	if m.FunctionSettings != nil {
+		updated, problem := s.applySourceFunctionSettings(ctx, acct, app, *m.FunctionSettings, push)
+		if problem != nil {
+			undo(context.WithoutCancel(ctx))
+			return app, func(context.Context) {}, problem
+		}
+		app = updated
+	}
 	return app, undo, nil
 }
 
@@ -951,6 +1008,9 @@ func (s *server) applySourceRefLifecycle(ctx context.Context, acct state.Account
 		return api.ErrCapacity("could not resolve account plan limits")
 	}
 	if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
+		return prob
+	}
+	if prob := s.afterRestoreBudgetProblem(ctx, acct.ID, app.ID, req.AfterRestore); prob != nil {
 		return prob
 	}
 	if prob := s.executionModeApprovalProblem(ctx, app, &req); prob != nil {
@@ -1108,7 +1168,13 @@ func scalingPoliciesEqual(left, right *state.ScalingPolicy) bool {
 	leftFields, rightFields := *left, *right
 	leftFields.Targets, rightFields.Targets = nil, nil
 	leftFields.Schedules, rightFields.Schedules = nil, nil
-	return reflect.DeepEqual(leftFields, rightFields) && slices.Equal(left.Targets, right.Targets) && slices.Equal(left.Schedules, right.Schedules)
+	return reflect.DeepEqual(leftFields, rightFields) && slices.EqualFunc(left.Targets, right.Targets, scalingTargetsEqual) &&
+		slices.Equal(left.Schedules, right.Schedules)
+}
+
+// scalingTargetsEqual compares targets with nil and empty labels alike.
+func scalingTargetsEqual(a, b state.ScalingTarget) bool {
+	return a.Metric == b.Metric && a.Value == b.Value && a.Name == b.Name && maps.Equal(a.Labels, b.Labels)
 }
 
 func sourceRefManifestStoreProblem(err error, plan api.Plan, cron bool) *api.Problem {

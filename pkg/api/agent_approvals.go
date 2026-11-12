@@ -17,6 +17,11 @@ const (
 	AgentApprovalBilling     = "billing"
 )
 
+// AgentApprovalBudget is a request that would take an agent past its
+// monthly budget (ADR-20261111114059). It is not one of the categories a
+// connection chooses: the budget itself decides when it applies.
+const AgentApprovalBudget = "budget"
+
 // AgentApprovalCategories lists every category, in display order. An agent
 // connection that chose none gets all of them.
 var AgentApprovalCategories = []string{AgentApprovalDelete, AgentApprovalProduction, AgentApprovalCredentials, AgentApprovalBilling}
@@ -101,6 +106,9 @@ type AgentApprovalResponse struct {
 	DecidedAt string `json:"decided_at,omitempty"`
 	// Note is the person's reason for a denial, when they gave one.
 	Note string `json:"note,omitempty"`
+	// Reason is what the agent said the request is for, when it said
+	// (ADR-20261110182236). Untrusted agent text.
+	Reason string `json:"reason,omitempty"`
 }
 
 // AgentApprovalChannelsRequest replaces the notification channels that get

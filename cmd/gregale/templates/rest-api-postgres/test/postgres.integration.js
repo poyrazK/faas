@@ -168,25 +168,29 @@ test("generated PostgreSQL starter survives real TLS/SCRAM connection failures",
     assert.equal((await admin.query("SELECT count(*)::int AS count FROM notes WHERE body='terminated'")).rows[0].count, 0);
     assert.equal((await fetch(`${base}/healthz`)).status, 200);
   });
-  await t.test("a missing workload fails restore and keeps readiness closed", async () => {
+  // ADR-20261109180000: after_restore runs no SQL, so a missing schema or a
+  // blocked database surfaces on readiness and the first query, never as a
+  // restore failure that would turn the wake into a cold boot.
+  await t.test("a missing workload passes restore and keeps readiness closed until it returns", async () => {
     const generation = db.generation;
     await admin.query("ALTER TABLE notes RENAME TO notes_saved");
-    assert.equal((await hook()).status, 503); assert.equal(db.generation, generation);
-    assert.equal((await fetch(`${base}/healthz`)).status, 503);
-    await admin.query("ALTER TABLE notes_saved RENAME TO notes");
-    assert.equal((await hook()).status, 204); assert.equal(db.generation, generation + 1);
+    try {
+      assert.equal((await hook()).status, 204); assert.equal(db.generation, generation + 1);
+      assert.equal((await fetch(`${base}/healthz`)).status, 503);
+    } finally { await admin.query("ALTER TABLE notes_saved RENAME TO notes"); }
+    assert.equal((await fetch(`${base}/healthz`)).status, 200);
   });
-  await t.test("blocked restore SQL obeys the total deadline and cannot become ready after a late result", async () => {
-    const bounded = await runtime(role, { restoreTimeoutMS: 100 });
+  await t.test("restore stays off a blocked database and the first query obeys its own deadline", async () => {
+    const bounded = await runtime(role, { restoreTimeoutMS: 100, timeoutMS: 500 });
     await bounded.query("SELECT id FROM notes LIMIT 1");
     await admin.query("BEGIN"); await admin.query("LOCK TABLE notes IN ACCESS EXCLUSIVE MODE");
-    const started = performance.now();
-    try { await assert.rejects(bounded.restore(), /database_unavailable/); }
-    finally { await admin.query("ROLLBACK"); }
-    assert.ok(performance.now() - started < 1_500, "restore exceeded its total deadline");
-    assert.equal(bounded.generation, 0);
-    await assert.rejects(bounded.query("SELECT 1"), /database_unavailable/);
-    await bounded.restore(); assert.equal(bounded.generation, 1); await bounded.close();
+    try {
+      const started = performance.now();
+      await bounded.restore(); assert.equal(bounded.generation, 1);
+      assert.ok(performance.now() - started < 1_500, "restore waited for the database");
+      await assert.rejects(bounded.query("SELECT id FROM notes LIMIT 1"), /database_(cancelled|unavailable)/);
+    } finally { await admin.query("ROLLBACK"); }
+    await bounded.query("SELECT id FROM notes LIMIT 1"); await bounded.close();
   });
   await t.test("before_checkpoint closes every server session; restore reconnects", async () => {
     const generation = db.generation;
@@ -290,9 +294,12 @@ test("generated PostgreSQL starter survives real TLS/SCRAM connection failures",
     await refreshed.query("SELECT id FROM notes LIMIT 1");
     await admin.query(`ALTER ROLE "${role}" NOLOGIN`); await terminate(role);
     assert.equal((await fetch(`${base}/healthz`)).status, 503);
-    assert.equal((await hook()).status, 503);
+    // Restore runs no SQL, so it succeeds; the revoked login fails on use.
+    assert.equal((await hook()).status, 204);
+    assert.equal((await fetch(`${base}/healthz`)).status, 503);
     await assert.rejects(refreshed.query("SELECT id FROM notes LIMIT 1"), /database_unavailable/);
-    await assert.rejects(refreshed.restore(), /database_unavailable/);
+    await refreshed.restore();
+    await assert.rejects(refreshed.query("SELECT id FROM notes LIMIT 1"), /database_unavailable/);
     const replacement = await runtime(nextRole), nextBase = await listen(replacement);
     assert.equal((await fetch(`${nextBase}/healthz`)).status, 200);
     assert.ok((await (await fetch(`${nextBase}/notes`)).json()).notes.some(note => note.body === "preserved"));

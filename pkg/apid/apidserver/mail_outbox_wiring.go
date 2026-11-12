@@ -187,7 +187,7 @@ func (s *server) noticeManagedPostgresPlanExcess(ctx context.Context, notice man
 	}
 	err := s.deletionMailOutbox.NoticeManagedPostgresPlanExcess(ctx, notice.AccountID, mailoutbox.ManagedPostgresPlanExcessNotice{
 		DatabaseID: notice.DatabaseID, DatabaseName: notice.DatabaseName, ServiceClass: string(notice.ServiceClass),
-		Reason: notice.Reason, RecordedAt: notice.RecordedAt,
+		Reason: notice.Reason, RecordedAt: notice.RecordedAt, DeleteAt: notice.DeleteAt,
 	})
 	if errors.Is(err, internalmail.ErrDisabled) {
 		return nil

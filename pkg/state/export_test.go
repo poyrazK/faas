@@ -1184,3 +1184,37 @@ func (m *MemStore) SeedLegacyWorkflowEvent(event WorkflowEvent) {
 	m.workflowEvents[event.RunID] = append(m.workflowEvents[event.RunID], event)
 	m.workflowEventApps[event.RunID] = m.workflowRuns[event.RunID].AppID
 }
+
+// CandidatePostgresDeadlineForAccess runs candidatePostgresEvidenceDeadline
+// for one settled binding of the access mode whose receipt was recorded at
+// recorded and whose delivery the candidate was captured and restored with
+// (ADR-20261110120000).
+func CandidatePostgresDeadlineForAccess(access string, recorded time.Time, age time.Duration) (time.Time, error) {
+	request := EnvironmentWorkloadQualificationRequest{ID: "request", Attempt: 1}
+	request.FrozenInputs.Scope = "production"
+	delivery := candidatePostgresDelivery{BindingID: "binding", EnvironmentKey: "DATABASE_URL", Access: access, CredentialGeneration: 1, DeliveryVersion: 3, Settled: true}
+	receipts := map[string]time.Time{qualificationPostgresReceiptKey(request.ID, request.Attempt, delivery.BindingID, 1, 3): recorded}
+	inputs := RuntimeConfigInputs{SecretVersions: map[string]int64{"production/DATABASE_URL": 3}}
+	return candidatePostgresEvidenceDeadline(request, []candidatePostgresDelivery{delivery}, receipts, inputs, inputs, age, recorded.Add(time.Second))
+}
+
+// AgeObjectBucketActivityForTest moves a bucket's activity stamps back by d,
+// as the PG tests do with an UPDATE (ADR-20261110151628).
+func (m *MemStore) AgeObjectBucketActivityForTest(bucket string, d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if a, ok := m.objectBucketActivity[bucket]; ok {
+		a.mutatedAt, a.activeSince = a.mutatedAt.Add(-d), a.activeSince.Add(-d)
+		m.objectBucketActivity[bucket] = a
+	}
+}
+
+// AgeObjectUsageForTest moves a bucket's observation and attempt back by d,
+// as the PG tests do with an UPDATE (ADR-20261110151628).
+func (m *MemStore) AgeObjectUsageForTest(bucket string, d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u := m.objectUsage[bucket]
+	u.ObservedAt, u.AttemptAt = u.ObservedAt.Add(-d), u.AttemptAt.Add(-d)
+	m.objectUsage[bucket] = u
+}

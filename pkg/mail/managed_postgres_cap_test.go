@@ -63,3 +63,29 @@ func TestManagedPostgresCapBodyV1(t *testing.T) {
 		}
 	}
 }
+
+// ADR-20261110160000 amendment 2026-11-11: the egress hold email names each
+// database's own allowance, what the held database sent, that apps and other
+// databases are unaffected, and how to resume sooner.
+func TestManagedPostgresCapBodyV1EgressHeld(t *testing.T) {
+	reached := time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)
+	const gb = 1_000_000_000
+	n := mail.ManagedPostgresCapNotice{Threshold: mail.ManagedPostgresCapEgressHeld, UsedSeconds: 500 * gb, Allowance: 500 * gb, Ceiling: 500 * gb, ReachedAt: reached}
+	subject, body, ok := mail.ManagedPostgresCapBodyV1("one@example.net", n)
+	if !ok || !strings.Contains(subject, "paused until next month") {
+		t.Fatalf("subject %q, ok %v", subject, ok)
+	}
+	for _, want := range []string{"own 500.0 GB monthly egress allowance", "sent 500.0 GB by 2026-11-20 08:00 UTC", "apps and other databases are not affected", "resumes on 2026-12-01", "gregale billing egress-overage on"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "share") {
+		t.Errorf("body still describes a shared allowance:\n%s", body)
+	}
+	n.Overage, n.Ceiling, n.UsedSeconds = true, 1000*gb, 1000*gb
+	_, body, ok = mail.ManagedPostgresCapBodyV1("one@example.net", n)
+	if !ok || !strings.Contains(body, "a database is paused at 1000.0 GB") || strings.Contains(body, "egress-overage on") {
+		t.Fatalf("overage body:\n%s", body)
+	}
+}

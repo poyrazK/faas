@@ -514,6 +514,21 @@
     mode: "0644"
   notify: restart faas-gatewayd-internal
 
+# Manifest hot_path: these switches were first turned on by hand on
+# production (2026-11-06). 99-faas-role.conf now carries them, so the hand-made
+# drop-ins go; left behind they would keep a switch on after the manifest
+# turned it off.
+- name: gatewayd_internal_service — remove the hand-made hot-path drop-ins
+  notify: restart faas-gatewayd-internal
+  ansible.builtin.file:
+    path: "/etc/systemd/system/faas-gatewayd-internal.service.d/{{ item }}"
+    state: absent
+  loop:
+    - 60-faas-edge-local-first.conf
+    - 60-faas-request-journal-local.conf
+    - 61-faas-request-telemetry-minute-collapse.conf
+    - 63-faas-gateway-local-vmmd-socket.conf
+
 - name: gatewayd_internal_service — install split-box public listener drop-in
   ansible.builtin.template:
     src: 99-faas-public-listen.conf.j2

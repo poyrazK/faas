@@ -48,6 +48,32 @@ GUARDED_EVENTS_KIND = (
 )
 
 
+class DynamicDDLTest(unittest.TestCase):
+    # 20261107145315064 renamed eleven tables through EXECUTE format(); the
+    # previous-release reference check never saw them and the previous release
+    # failed deployments until restarted (prod 2026-11-09).
+    RENAME = ("-- +goose StatementBegin\n"
+              "DO $fn$ BEGIN EXECUTE format('ALTER TABLE %I RENAME TO %I', 'apps', 'stored_apps'); END $fn$;\n"
+              "-- +goose StatementEnd")
+
+    def test_built_rename_is_flagged(self):
+        self.assertIn(("dynamic-ddl", "*"), lint(LT + self.RENAME))
+
+    def test_concatenated_drop_is_flagged(self):
+        up = "DO $$ BEGIN EXECUTE 'DROP TABLE ' || quote_ident(t); END $$;"
+        self.assertIn(("dynamic-ddl", "*"), lint(LT + up))
+
+    def test_literal_execute_is_not_flagged(self):
+        self.assertNotIn(("dynamic-ddl", "*"), lint(GUARDED_EVENTS_KIND))
+
+    def test_waiver_with_reason(self):
+        header = "-- migration-lint: allow dynamic-ddl: the previous release reads none of these tables\n"
+        self.assertNotIn(("dynamic-ddl", "*"), lint(LT + self.RENAME, header=header))
+
+    def test_is_a_contract_change(self):
+        self.assertIn("dynamic-ddl", ec.CONTRACT_RULES)
+
+
 class LockTimeoutTest(unittest.TestCase):
     def test_alter_existing_table_needs_lock_timeout(self):
         self.assertEqual(lint("ALTER TABLE apps ADD COLUMN note text;"), [("lock-timeout", "apps")])

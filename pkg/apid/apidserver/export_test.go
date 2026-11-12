@@ -86,6 +86,10 @@ var SealNotificationChannel = sealChannel
 var BuildDebugRequestCorrelation = buildDebugRequestCorrelation
 var DashboardDebugStatusView = dashboardDebugStatusView
 
+// ManifestDeclaresManagedBinding is the deploy-time bound-app check
+// (ADR-20261110120000).
+var ManifestDeclaresManagedBinding = manifestDeclaresManagedBinding
+
 // Package-level types
 type AffectedPartition = affectedPartition
 type AnnotationForm = annotationForm
@@ -578,6 +582,7 @@ var ManagedPostgresSpecFromRequest = managedPostgresSpecFromRequest
 var ManagedPostgresUsageCeilings = managedPostgresUsageCeilings
 var ManagedPostgresUsageOperatorView = managedPostgresUsageOperatorView
 var ManagedPostgresUsageView = managedPostgresUsageView
+var ManagedPostgresUsageHoldView = managedPostgresUsageHoldView
 var ManagedPostgresView = managedPostgresView
 var ManagedWorkflowCanConsumeFailedDependencies = managedWorkflowCanConsumeFailedDependencies
 var MapReconcileError = mapReconcileError
@@ -588,6 +593,17 @@ var MustCreateAlertRule = mustCreateAlertRule
 var MustSeedApp = mustSeedApp
 var MustSeedAppFor = mustSeedAppFor
 var MustSeedDeployment = mustSeedDeployment
+var LockUploadSession = lockUploadSession
+
+// UploadSessionLockTracked reports whether key still has an entry in the
+// upload-session lock map.
+func UploadSessionLockTracked(key string) bool {
+	uploadSessionLocksMu.Lock()
+	defer uploadSessionLocksMu.Unlock()
+	_, ok := uploadSessionLocks[key]
+	return ok
+}
+
 var MustSeedEdgeRuleApp = mustSeedEdgeRuleApp
 var NearestRunningTelemetryRow = nearestRunningTelemetryRow
 var NewAppSecretCredentialSink = newAppSecretCredentialSink
@@ -613,6 +629,8 @@ var NewObsPR3Env = newObsPR3Env
 var NewPgBackupPushedSampler = newPgBackupPushedSampler
 var NewPreviewJanitor = newPreviewJanitor
 var NewProjectLifecycleFixture = newProjectLifecycleFixture
+
+var CopyPromotedArtifactStamps = copyPromotedArtifactStamps
 var NewRuntimeConfigManager = newRuntimeConfigManager
 
 func (s *server) ConfigureHostingForTest(getenv func(string) string) error {
@@ -783,6 +801,7 @@ var SetupWithScopes = setupWithScopes
 var SourceDeltaLimits = sourceDeltaLimits
 var SourceRefAsyncRouteTestFixture = sourceRefAsyncRouteTestFixture
 var SourceRefManifestNeedsRollback = sourceRefManifestNeedsRollback
+var SourceRefEventSubscriptionProblem = sourceRefEventSubscriptionProblem
 var SpoolRoot = spoolRoot
 var SseFanIn = sseFanIn
 var StartSSEStream = startSSEStream
@@ -1594,8 +1613,17 @@ func (r *server) UpsertWorkPolicy(p0 http.ResponseWriter, p1 *http.Request, p2 s
 func (r *server) ValidateProjectDeploymentEnvironment(p0 context.Context, p1 state.Account, p2 string, p3 string) *api.Problem {
 	return r.validateProjectDeploymentEnvironment(p0, p1, p2, p3)
 }
-func (r *server) VerifyOAuthAccountEmail(p0 context.Context, p1 state.Account) (state.Account, error) {
-	return r.verifyOAuthAccountEmail(p0, p1)
+func (r *server) VerifyOAuthAccountEmail(p0 context.Context, p1 state.Account, p2 string) (state.Account, error) {
+	return r.verifyOAuthAccountEmail(p0, p1, p2)
+}
+func (r *server) EndOtherAccessAfterMFAEnroll(p0 *http.Request, p1 state.Account) {
+	r.endOtherAccessAfterMFAEnroll(p0, p1)
+}
+func (r *server) KeysLeftAfterReset(p0 context.Context, p1 state.Account) []state.APIKey {
+	return r.keysLeftAfterReset(p0, p1)
+}
+func (r *server) RemoveForeignProviderLinks(p0 context.Context, p1 string, p2 string) {
+	r.removeForeignProviderLinks(p0, p1, p2)
 }
 func (r *server) VmmdMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.vmmdMetricsDiscovery(p0, p1)
@@ -1692,6 +1720,18 @@ func (r *fakeObjectProvider) CreateErr() *error  { return &r.createErr }
 func (r *fakeObjectProvider) DeleteErr() *error  { return &r.deleteErr }
 func (r *server) CleanupDevSessionResources(ctx context.Context, app state.App) error {
 	return r.cleanupDevSessionResources(ctx, app)
+}
+
+// Preview databases (ADR-20261102123523).
+var PreviewDatabasesStatus = previewDatabasesStatus
+var PreviewDeployDatabasesProblem = previewDeployDatabasesProblem
+
+func (r *server) SweepPreviewDatabases(ctx context.Context, setupBefore time.Time) (int, error) {
+	return r.previewDatabaseManager().SweepAll(ctx, r.store, setupBefore)
+}
+
+func (r *server) PrepareBuildPreviewDatabases(ctx context.Context, acct state.Account, plan api.Plan, preview state.App) error {
+	return r.prepareBuildPreviewDatabases(ctx, acct, plan, preview)
 }
 
 func IssueNativeSetClients(e pgHandlerEnv, gh GithubdClient, provider issuetracker.StatusProvider) {
@@ -1797,6 +1837,27 @@ func (r *server) ConfigureProductEmail(getenv func(string) string) error {
 }
 
 func (s *server) RehearsalNetworkEnabled() *bool { return &s.rehearsalNetworkEnabled }
+
+// EnvironmentBranchContainmentEnabled is the contained/simulated branch
+// operator gate (ADR-20261031193635 slices 6a and 6b).
+func (s *server) EnvironmentBranchContainmentEnabled() *bool {
+	return &s.environmentBranchContainmentEnabled
+}
+
+// EnvironmentBranchContainedObjectsEnabled is the bridge object relay gate
+// (ADR-20261031193635 slice 6c).
+func (s *server) EnvironmentBranchContainedObjectsEnabled() *bool {
+	return &s.environmentBranchContainedObjectsEnabled
+}
+
+// EnableEnvironmentBranchesForTest turns environment_branches_enabled on.
+func (s *server) EnableEnvironmentBranchesForTest(t *testing.T) {
+	t.Helper()
+	s.runtimeConfig = newRuntimeConfigManager(nil)
+	if err := s.runtimeConfig.apply(runtimeConfigEnvironmentBranches, json.RawMessage("true")); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func (s *server) RehearsalSimulationEnabled() *bool { return &s.rehearsalSimulationEnabled }
 func (s *server) RehearsalCommandsEnabled() *bool   { return &s.rehearsalCommandsEnabled }
@@ -2001,6 +2062,9 @@ var WriteExclusiveError = writeExclusiveError
 // (alert, log drain, webhook, channel) passes.
 var ResolveAndCheckEgress = resolveAndCheckEgress
 
+// LegacyNumericHost spots "2130706433"-style hosts before resolution.
+var LegacyNumericHost = legacyNumericHost
+
 // PlanDowngradeProblemForTest runs the pre-downgrade quota check (Hunt 17
 // H17-4) for a subject the HTTP route would resolve, such as an organization.
 func (r *server) PlanDowngradeProblemForTest(ctx context.Context, subject state.Account, target api.Plan) *api.Problem {
@@ -2054,6 +2118,40 @@ func SecurityMailAllow(now func() time.Time) func(accountID, kind string) bool {
 	l.now = now
 	return l.allow
 }
+
+// AgeSignInsForTest makes every browser session look signed in d earlier to
+// the recent-sign-in check (ADR 20261110100000). Not for parallel tests.
+func AgeSignInsForTest(t testing.TB, d time.Duration) {
+	prev := recentSignInNow
+	recentSignInNow = func() time.Time { return time.Now().Add(d) }
+	t.Cleanup(func() { recentSignInNow = prev })
+}
+
+// ReserveTOTPAttempt counts one TOTP attempt; zero means allowed.
+func (r *server) ReserveTOTPAttempt(ctx context.Context, accountID string) time.Duration {
+	return r.reserveTOTPAttempt(ctx, accountID)
+}
+
+// ResetTOTPAttempts clears the counted TOTP attempts.
+func (r *server) ResetTOTPAttempts(ctx context.Context, accountID string) {
+	r.resetTOTPAttempts(ctx, accountID)
+}
+
+// TOTPMaxFailures is the per-account TOTP attempt limit.
+const TOTPMaxFailures = totpMaxFailures
+
+// ExpireComplimentaryAccounts runs one complimentary-account expiry sweep at now.
+func (r *server) ExpireComplimentaryAccounts(ctx context.Context, now time.Time) int {
+	return r.expireComplimentaryAccounts(ctx, now)
+}
+
+// ExpireUnverifiedAccounts runs one unverified-account expiry sweep.
+func (r *server) ExpireUnverifiedAccounts(ctx context.Context) int {
+	return r.expireUnverifiedAccounts(ctx)
+}
+
+// OperatorRevertEmail exposes the operator email revert.
+var OperatorRevertEmail = (*server).operatorRevertEmail
 
 // AdvanceSecurityMailClockForTest moves the per-account sign-in mail
 // limiter's clock d ahead, as if the next request came that much later.
@@ -2175,6 +2273,14 @@ func CapabilitiesWithReleasePhase(enabled bool) *httptest.ResponseRecorder {
 	return recorder
 }
 
+// CapabilitiesWithWorkloadVerifier answers GET /v1/capabilities for a Scale
+// account with the cluster workload-identity verifier set or nil.
+func CapabilitiesWithWorkloadVerifier(verifier *workloadidentity.Verifier) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	(&server{workloadVerifier: verifier}).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanScale})
+	return recorder
+}
+
 // ReleasePhaseEnabledFromEnv exposes how apid reads FAAS_RELEASE_PHASE_ENABLED.
 var ReleasePhaseEnabledFromEnv = releasePhaseEnabledFromEnv
 
@@ -2281,6 +2387,10 @@ var CSVSafeCell = csvSafeCell
 // enforcement.
 var ManagedPostgresCapNoticeReady = managedPostgresCapNoticeReady
 
+// ManagedPostgresPlanExcessDeleteReady exposes the startup gate on deleting
+// databases past their plan (ADR-20261110184700).
+var ManagedPostgresPlanExcessDeleteReady = managedPostgresPlanExcessDeleteReady
+
 func (s *server) GetEnvironmentRollbackReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	s.getEnvironmentRollbackReceipt(w, r, acct)
 }
@@ -2289,5 +2399,76 @@ func (s *server) GetEnvironmentPromotionReceipt(w http.ResponseWriter, r *http.R
 	s.getEnvironmentPromotionReceipt(w, r, acct)
 }
 
+// AppEffectiveLimits exposes appEffectiveLimits.
+func AppEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
+	return appEffectiveLimits(a, plan)
+}
+
+// ApplySourceFunctionSettingsForTest runs applySourceFunctionSettings on a
+// server holding only store.
+func ApplySourceFunctionSettingsForTest(ctx context.Context, store state.Store, acct state.Account, app state.App, spec gregalemanifest.FunctionSpec, scope string) (state.App, *api.Problem) {
+	return (&server{store: store, log: slog.New(slog.DiscardHandler)}).applySourceFunctionSettings(ctx, acct, app, spec, sourcePush{Scope: scope, Pusher: "octocat"})
+}
+
+// WithPendingFunctionSteps exposes withPendingFunctionSteps.
+var WithPendingFunctionSteps = withPendingFunctionSteps
+
 // SourceLivenessOverrides is a multipart deploy's liveness_probe override.
 var SourceLivenessOverrides = sourceLivenessOverrides
+
+// ValidateCustomMetricAlertLabels exposes the custom_metric rule label check.
+var ValidateCustomMetricAlertLabels = validateCustomMetricAlertLabels
+
+func (r *server) ManagedPostgresEgressAllowance(ctx context.Context, subjectID string, now time.Time) (managedpostgres.EgressAllowance, error) {
+	return r.managedPostgresEgressAllowance(ctx, subjectID, now)
+}
+
+// NewUsageSummaryEgressProvider is a billing provider whose egress meter
+// policy is mode for every paid plan.
+func NewUsageSummaryEgressProvider(mode billing.MeterDeliveryMode) billing.Provider {
+	return &usageSummaryEgressProvider{mode: mode}
+}
+
+// PlanWorkloadPublicAuthMode exposes the plan's public URL auth (H32-30).
+var PlanWorkloadPublicAuthMode = planWorkloadPublicAuthMode
+
+var KeyApprovalCategories = keyApprovalCategories
+
+// ProjectEnvironmentPlanURLs applies the two-service project fixture, adds a
+// staging environment and scans it (Hunt 33 H33-33). It returns the staging
+// environment ID, the apps' IDs by workload name and the staging plan.
+func ProjectEnvironmentPlanURLs(t *testing.T) (string, map[string]string, api.PlanResponse) {
+	t.Helper()
+	s, store, acct, key := projectSecretsTestServer(t, api.ScopesAdminOnly)
+	if rec := projectSecretsRequest(t, s, key, "/v1/projects", "", nil); rec.Code != 200 {
+		t.Fatalf("initial apply: %d %s", rec.Code, rec.Body)
+	}
+	project, err := store.MemStore.ProjectBySlug(t.Context(), acct.ID, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := store.MemStore.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apps, err := store.MemStore.AppsForProject(t.Context(), acct.ID, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]string{}
+	for _, app := range apps {
+		ids[app.WorkloadName] = app.ID
+	}
+	rec := projectSecretsRequest(t, s, key, "/v1/projects/scan", "", map[string]string{"environment": "staging"})
+	if rec.Code != 200 {
+		t.Fatalf("staging scan: %d %s", rec.Code, rec.Body)
+	}
+	var plan api.PlanResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	return env.ID, ids, plan
+}
+
+// ProjectEnvironmentWorkloadURL exposes the environment URL builder.
+var ProjectEnvironmentWorkloadURL = projectEnvironmentWorkloadURL

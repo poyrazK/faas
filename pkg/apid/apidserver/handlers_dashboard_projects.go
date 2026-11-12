@@ -33,6 +33,8 @@ func projectDashboardFlash(r *http.Request) string {
 		return "Type the project slug exactly before deleting it."
 	case "stages":
 		return "Delete the project's stage environments first; that removes their managed resources."
+	case "calls":
+		return "The project's services call each other by service name, and deleting the project detaches them. Delete the services instead, or confirm that they no longer call each other."
 	case "error":
 		return "The project action failed. Try again."
 	default:
@@ -294,8 +296,21 @@ func (s *server) dashboardDeleteProject(w http.ResponseWriter, r *http.Request) 
 		projectDashboardRedirect(w, r, slug, status)
 		return
 	}
-	if err := s.store.DeleteProject(r.Context(), project.ID); err != nil {
-		projectDashboardRedirect(w, r, slug, "error")
+	if r.FormValue("detach_services") != "on" {
+		if problem := s.projectServiceCallsProblem(r, acct, project); problem != nil {
+			status := "calls"
+			if problem.Status != http.StatusConflict {
+				status = "error"
+			}
+			projectDashboardRedirect(w, r, slug, status)
+			return
+		}
+	}
+	// The checked delete serializes with stage creation and clone reservation
+	// and enforces the organization access fence; raw DeleteProject is for
+	// internal compensation only.
+	if status := s.deleteProjectChecked(r, acct, project); status != "" {
+		projectDashboardRedirect(w, r, slug, status)
 		return
 	}
 	s.audit.Emit(r.Context(), "project.deleted", &acct.ID, map[string]any{

@@ -179,7 +179,7 @@ func TestUnverifiedAccountRestrictedAfterGrace(t *testing.T) {
 	}
 
 	token := flowLastToken(t, mailer, regexp.MustCompile(`/v1/auth/verify-email\?token=([A-Za-z0-9_-]+)`))
-	if rec := flowForm(h, "/v1/auth/verify-email", url.Values{"token": {token}}); rec.Code >= 400 {
+	if rec := flowForm(h, "/v1/auth/verify-email", url.Values{"token": {token}}, flowSession(t, store, mgr, late.ID)); rec.Code >= 400 {
 		t.Fatalf("verify = %d %s", rec.Code, rec.Body.String())
 	}
 	if acct, err := store.AccountByEmail(t.Context(), "late@example.com"); err != nil || !acct.EmailVerified() {
@@ -291,8 +291,16 @@ func TestEmailChangeConfirmsNewAddress(t *testing.T) {
 	if err != nil || moved.ID != acct.ID || !moved.EmailVerified() {
 		t.Fatalf("account after change: %+v err=%v", moved, err)
 	}
-	if got := flowMailsTo(mailer, "before@example.com"); len(got) != 1 || !strings.Contains(got[0], "a***@example.com") {
-		t.Fatalf("old address notice = %q", got)
+	// The old address hears at the request (ADR 20261110100000) and at the
+	// change; neither shows the new address in full.
+	got := flowMailsTo(mailer, "before@example.com")
+	if len(got) != 2 || !strings.Contains(got[0], "Nothing has changed yet") || !strings.Contains(got[1], "changed its sign-in email") {
+		t.Fatalf("old address notices = %q", got)
+	}
+	for _, body := range got {
+		if !strings.Contains(body, "a***@example.com") || strings.Contains(body, "after@example.com") {
+			t.Errorf("old address notice does not mask the new address: %q", body)
+		}
 	}
 	if rec := flowSessionJSON(t, h, mgr, cookie, acct.ID, http.MethodGet, "/v1/account", "", nil); rec.Code != http.StatusUnauthorized {
 		t.Errorf("session after email change = %d, want 401", rec.Code)

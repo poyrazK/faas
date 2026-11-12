@@ -1,11 +1,14 @@
 package middleware
 
 import (
+	"bufio"
 	"context"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -20,7 +23,12 @@ const maxAgentActivityPath = 512
 
 // agentActivityNote carries what the approval gate learned about a request
 // to the recorder: the approval it went through on.
-type agentActivityNote struct{ approvalID string }
+type agentActivityNote struct {
+	approvalID string
+	// binding is taken before the handler reads the body on routes that
+	// charge the agent budget (ADR-20261111114059).
+	binding *state.AgentApprovalBinding
+}
 
 type agentActivityNoteKey struct{}
 
@@ -50,6 +58,9 @@ func agentWrite(method string) bool {
 type activityWriter struct {
 	http.ResponseWriter
 	status int
+	// onHijack records the row when a handler takes the connection over: a
+	// WebSocket handler returns only when the connection ends.
+	onHijack func()
 }
 
 func (a *activityWriter) WriteHeader(status int) {
@@ -72,12 +83,28 @@ func (a *activityWriter) Unwrap() http.ResponseWriter { return a.ResponseWriter 
 // Flush keeps streaming handlers streaming.
 func (a *activityWriter) Flush() { _ = http.NewResponseController(a.ResponseWriter).Flush() }
 
+// Hijack hands the connection to a WebSocket handler; the request is
+// recorded as switching protocols at that moment (ADR-20261111150000).
+func (a *activityWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, rw, err := http.NewResponseController(a.ResponseWriter).Hijack()
+	if err == nil && a.status == 0 {
+		a.status = http.StatusSwitchingProtocols
+		if a.onHijack != nil {
+			a.onHijack()
+		}
+	}
+	return conn, rw, err
+}
+
 // recordAgentActivity writes the row off the request path: a detached
 // context with a short timeout, so a slow database never delays the answer.
 func (m *Middleware) recordAgentActivity(r *http.Request, acct state.Account, key state.APIKey, status int, note *agentActivityNote) {
 	rec, ok := m.Authn.(AgentActivityRecorder)
 	if !ok {
-		return
+		// A gateway's store does not record activity; apid does it for it.
+		if rec, ok = m.ActivityRecorder, m.ActivityRecorder != nil; !ok {
+			return
+		}
 	}
 	if status == 0 {
 		// Nothing was written through this writer: the rate-limit probe
@@ -94,6 +121,7 @@ func (m *Middleware) recordAgentActivity(r *http.Request, acct state.Account, ke
 	row := state.AgentActivity{
 		KeyID: key.ID, AccountID: acct.ID, OrgID: key.OrgID, Method: r.Method, Path: path,
 		Status: status, ApprovalID: note.approvalID, CreatedAt: time.Now().UTC(),
+		Reason: api.SanitizeAgentReason(r.Header.Get(api.AgentReasonHeader)),
 	}
 	//nolint:contextcheck // detached-context is load-bearing, as for TouchKeyLastUsed.
 	go func() {

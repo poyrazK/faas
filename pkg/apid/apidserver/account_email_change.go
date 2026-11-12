@@ -136,6 +136,15 @@ func (s *server) startEmailChange(ctx context.Context, flow state.AccountFlowSto
 	if err := s.mailer.Send(ctx, Message{To: []string{newEmail}, Subject: subject, TextBody: body}); err != nil {
 		s.log.Error("email_change.mailer", "err", err, "account_id", acct.ID)
 	}
+	// The current address hears about it while it can still stop it
+	// (ADR 20261110100000). Its own mail kind, so the confirm link above
+	// does not use up the notice's slot.
+	subject, body = mailpkg.EmailChangeRequestedBody(acct.Email, newEmail, time.Now(), expiresAt)
+	if s.allowSecurityMail(ctx, acct, "email_change_requested") {
+		if err := s.mailer.Send(ctx, Message{To: []string{acct.Email}, Subject: subject, TextBody: body}); err != nil {
+			s.log.Error("email_change.notice_mailer", "err", err, "account_id", acct.ID)
+		}
+	}
 }
 
 var emailChangeConfirmPage = template.Must(template.New("email-change-confirm").Parse(`<!doctype html>
@@ -198,6 +207,9 @@ func (s *server) confirmEmailChange(w http.ResponseWriter, r *http.Request) {
 // device, so there is no session to keep) and notifies the old address.
 func (s *server) finishEmailChange(r *http.Request, change state.EmailChange) {
 	s.revokeSessionsAfterPasswordChange(r.Context(), change.AccountID, "")
+	if acct, err := s.store.AccountByID(r.Context(), change.AccountID); err == nil {
+		s.revokeInteractiveSignInKeys(r, acct, "email_changed")
+	}
 	s.audit.Emit(r.Context(), "account.email_changed", &change.AccountID, nil)
 	s.moveBillingEmailsInBackground(r.Context(), change)
 	subject, body := mailpkg.EmailChangedNoticeBody(change.OldEmail, change.NewEmail, time.Now())

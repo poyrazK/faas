@@ -276,8 +276,10 @@ read failures preserve other results and make inventory incomplete.
 
 The endpoint requires app read access and completed MFA for browser sessions.
 PostgreSQL metadata additionally requires `managed-postgres:read`; storage
-metadata requires `storage:manage`, matching the existing compute-binding read
-surface. An admin key or authenticated session has the existing full access.
+metadata requires `storage:read` or `storage:manage`, as does listing compute
+bindings; neither returns a credential, so a least-privilege CI key can run
+`gregale app binding check`. An admin key or authenticated session has the
+existing full access.
 Insufficient resource permissions omit that section without reading it.
 
 If a section or consumer status cannot be read, the API returns HTTP 200 with
@@ -1002,6 +1004,13 @@ workers, jobs and scheduled workloads join only as declared dependencies
 ([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md)).
 A dependency that is absent from that set can still resolve to the production
 app, so the gateway applies the project's production-dependency policy.
+
+A PR preview of an app bound without a project has no project policy. It
+calls only the previews of its own pull request's preview set, named by their
+production slugs, and every call to a production app is refused with
+`preview_production_dependency_denied`
+([ADR-20261105090226](adr/20261105090226-previews-without-a-project-stay-in-their-set.md)).
+`gregale dev` sessions keep account-wide resolution.
 
 All projects use `preview_service_policy: deny` by default. A denied call returns
 `403 application/problem+json` with code

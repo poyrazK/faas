@@ -70,6 +70,19 @@ export interface FunctionConfig {
   webhooks?: FunctionWebhookConfig[];
   queueBindings?: FunctionQueueBindingConfig[];
   eventTriggers?: FunctionEventTriggerConfig[];
+  /** Milliseconds beforeSnapshot may take (default 500, at most 2000). */
+  beforeSnapshotTimeoutMs?: number;
+  /** Milliseconds afterRestore may take (default 500, at most 2000). */
+  afterRestoreTimeoutMs?: number;
+  /**
+   * JSON Schema of the request body, or a path to a .json file in the
+   * function's root; typed clients are generated from it.
+   */
+  input?: Record<string, unknown> | string;
+  /** JSON Schema of the response body, or a path to a .json file. */
+  output?: Record<string, unknown> | string;
+  /** Other apps of the account, by slug, the typed client may call. */
+  calls?: string[];
 }
 
 /**
@@ -83,4 +96,39 @@ export interface FunctionConfig {
  */
 export function defineConfig<T extends FunctionConfig>(config: T): T {
   return config;
+}
+
+/**
+ * What a function's snapshot hook receives (ADR-20261110190000).
+ * `signal` fires if the call is cancelled.
+ */
+export interface FunctionHookContext {
+  signal: AbortSignal;
+  /** The hook being run: 'before_snapshot' or 'after_restore'; absent for init. */
+  hook?: 'before_snapshot' | 'after_restore';
+}
+
+/**
+ * Snapshot hooks a function declares on its default export or as named
+ * exports beside `handler`. `gregale deploy` finds them without running the
+ * module, so declare them in the exported object literal itself:
+ *
+ * ```js
+ * // handler.js
+ * /** @type {import('@gregale/sdk-node').FunctionSnapshotHooks} *\/
+ * export default {
+ *   async init() { db = await connect(); },
+ *   async beforeSnapshot() { await db.end(); },
+ *   async afterRestore() { db = await connect(); },
+ *   async fetch(request) { return new Response('ok'); },
+ * };
+ * ```
+ */
+export interface FunctionSnapshotHooks {
+  /** Runs in each worker before it is ready; the snapshot waits for it. */
+  init?(ctx: FunctionHookContext): void | Promise<void>;
+  /** Runs in every worker before a new snapshot is captured (500 ms). */
+  beforeSnapshot?(ctx: FunctionHookContext): void | Promise<void>;
+  /** Runs in every worker after a restore, before serving (500 ms). */
+  afterRestore?(ctx: FunctionHookContext): void | Promise<void>;
 }

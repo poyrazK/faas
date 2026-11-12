@@ -157,6 +157,27 @@ func (q *Queries) AddRequestAnalyticsMinutes(ctx context.Context, db DBTX, arg A
 	return err
 }
 
+const claimRequestAnalyticsRollupBatch = `-- name: ClaimRequestAnalyticsRollupBatch :execrows
+INSERT INTO request_analytics_rollup_batches (batch_id, node_id)
+VALUES ($1, $2)
+ON CONFLICT (batch_id) DO NOTHING
+`
+
+type ClaimRequestAnalyticsRollupBatchParams struct {
+	BatchID pgtype.UUID
+	NodeID  string
+}
+
+// ADR-20261103113952 amendment 5: record a gateway rollup batch in the
+// transaction that applies it; 0 rows means the batch was applied before.
+func (q *Queries) ClaimRequestAnalyticsRollupBatch(ctx context.Context, db DBTX, arg ClaimRequestAnalyticsRollupBatchParams) (int64, error) {
+	result, err := db.Exec(ctx, claimRequestAnalyticsRollupBatch, arg.BatchID, arg.NodeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getRequestAnalyticsRollupCoverage = `-- name: GetRequestAnalyticsRollupCoverage :one
 SELECT covered_since, hours_covered_since FROM request_analytics_rollup_coverage WHERE app_id = $1
 `

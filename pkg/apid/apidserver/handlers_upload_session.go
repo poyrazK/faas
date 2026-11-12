@@ -77,25 +77,48 @@ import (
 // insert + status-flip commit critical section.
 //
 // In-process only — apid is a single replica per CLAUDE.md,
-// so a package-level sync.Map is sufficient. Cross-replica
+// so a package-level map is sufficient. Cross-replica
 // concurrency would need pg_advisory_xact_lock (deferred).
-var uploadSessionLocks sync.Map // map[string]*sync.Mutex
+//
+// Entries are reference-counted and removed when the last holder or waiter
+// unlocks. Before, one mutex per upload ID and per "account:" key stayed in a
+// sync.Map for the life of the process (deploy review 2026-11-10).
+var (
+	uploadSessionLocksMu sync.Mutex
+	uploadSessionLocks   = map[string]*uploadSessionLock{}
+)
 
-// acquireUploadSessionLock returns a per-upload_id mutex that the
-// caller MUST Unlock after the critical section exits.
-func acquireUploadSessionLock(uploadID string) *sync.Mutex {
-	if v, ok := uploadSessionLocks.Load(uploadID); ok {
-		return v.(*sync.Mutex)
+type uploadSessionLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lockUploadSession locks the per-key mutex and returns the function that
+// unlocks it; the caller MUST call it exactly once.
+func lockUploadSession(key string) (unlock func()) {
+	uploadSessionLocksMu.Lock()
+	l := uploadSessionLocks[key]
+	if l == nil {
+		l = &uploadSessionLock{}
+		uploadSessionLocks[key] = l
 	}
-	mu := &sync.Mutex{}
-	actual, _ := uploadSessionLocks.LoadOrStore(uploadID, mu)
-	return actual.(*sync.Mutex)
+	l.refs++
+	uploadSessionLocksMu.Unlock()
+	l.mu.Lock()
+	return func() {
+		l.mu.Unlock()
+		uploadSessionLocksMu.Lock()
+		l.refs--
+		if l.refs == 0 {
+			delete(uploadSessionLocks, key)
+		}
+		uploadSessionLocksMu.Unlock()
+	}
 }
 
 // startUploadRequest is the JSON body POST /v1/uploads accepts.
-// total_size is required; sha256_hex is optional (build
-// provenance audit row records it, but server does not
-// re-verify — ADR-115 trust boundary).
+// total_size is required; sha256_hex is optional. When it is set,
+// commit compares it with the received bytes (verifyUploadChecksum).
 type startUploadRequest struct {
 	AppSlug       string                   `json:"app_slug"`
 	TotalSize     int64                    `json:"total_size"`
@@ -154,6 +177,10 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 			"Invalid total_size", "total_size must be > 0"))
 		return
 	}
+	if prob := uploadSHA256HexProblem(req.Sha256Hex); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	app, err := s.store.AppBySlug(r.Context(), req.AppSlug)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -200,9 +227,8 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 	// dynamic; serializing starts for one account closes the in-process
 	// check-then-insert race across different apps. A multi-replica
 	// deployment still needs a database-backed admission primitive.
-	startMu := acquireUploadSessionLock("account:" + acct.ID)
-	startMu.Lock()
-	defer startMu.Unlock()
+	unlockStart := lockUploadSession("account:" + acct.ID)
+	defer unlockStart()
 
 	openCount, err := s.store.CountOpenUploadSessionsByAccountApp(r.Context(), sqlc.CountOpenUploadSessionsByAccountAppParams{
 		Column1: acctUUID,
@@ -425,9 +451,8 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 	// the paired row/file transition. Re-read after acquiring it: the
 	// first row read can race a commit, cancel, or the reaper while the
 	// request body is being received.
-	mu := acquireUploadSessionLock(uploadID)
-	mu.Lock()
-	defer mu.Unlock()
+	unlock := lockUploadSession(uploadID)
+	defer unlock()
 	row, err = s.store.GetUploadSession(ctx, uploadID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -547,10 +572,9 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	// prevent two concurrent commit retries both calling
 	// apidsource.Enqueue and leaving an orphan deployment.
 	// In-process only (single-replica per CLAUDE.md); see
-	// acquireUploadSessionLock above for the deferral note.
-	mu := acquireUploadSessionLock(uploadID)
-	mu.Lock()
-	defer mu.Unlock()
+	// lockUploadSession above for the deferral note.
+	unlock := lockUploadSession(uploadID)
+	defer unlock()
 	row, err := s.store.GetUploadSession(r.Context(), uploadID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -617,6 +641,16 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Incomplete upload",
 			fmt.Sprintf("Session received %d of %d bytes; PATCH the remaining bytes before committing.", row.ReceivedBytes, row.TotalSize)))
+		return
+	}
+	if prob, err := s.verifyUploadChecksum(r.Context(), row, acct.ID); err != nil || prob != nil {
+		if prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		writeCustomerInternalProblem(w, r, s.log, "verify upload checksum",
+			"Gregale could not check the uploaded archive.",
+			"Retry the commit request; contact support if it continues.", err)
 		return
 	}
 	// ADR-20261104140058: an agent deploying a production app needs a
@@ -930,9 +964,8 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 // → cancelled and removes the .part file.
 func (s *server) handleCancelUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	uploadID := r.PathValue("id")
-	mu := acquireUploadSessionLock(uploadID)
-	mu.Lock()
-	defer mu.Unlock()
+	unlock := lockUploadSession(uploadID)
+	defer unlock()
 	row, err := s.store.GetUploadSession(r.Context(), uploadID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {

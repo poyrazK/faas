@@ -30,7 +30,7 @@ func accountWebhookCLISubcommand() cliSub {
 		{Name: "add", Short: "Create a receiver; omitted signing secret is generated and shown once", Flags: add},
 		{Name: "info", Short: "Show one receiver with a masked signing secret", Positionals: []string{"<id>"}},
 		{Name: "update", Short: "Update a receiver", Positionals: []string{"<id>"}, Flags: update},
-		{Name: "rm", Short: "Delete a receiver", Positionals: []string{"<id>"}},
+		{Name: "rm", Short: "Delete a receiver", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "yes", Short: "accepted for consistency; rm does not prompt", Bool: true}}},
 		{Name: "deliveries", Short: "Page through receiver deliveries", Positionals: []string{"<id>"}, Flags: []cliFlag{
 			{Name: "page-size", Short: "delivery page size (1..100, default 50)", Value: "N"},
 			{Name: "page-token", Short: "opaque delivery cursor", Value: "CURSOR"},

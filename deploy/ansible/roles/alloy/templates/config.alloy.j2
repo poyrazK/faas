@@ -149,6 +149,23 @@ loki.source.file "audit" {
   forward_to    = [loki.process.security.receiver]
 }
 
+// Tetragon's kprobe events (ADR-20261110183000), one JSON object per line.
+local.file_match "tetragon" {
+  path_targets = [{
+    "__path__"  = "{{ alloy_security_tetragon_log }}",
+    job         = "faas-security",
+    host        = "{{ alloy_host_label }}",
+    environment = "{{ alloy_environment }}",
+    source      = "tetragon",
+  }]
+}
+
+loki.source.file "tetragon" {
+  targets       = local.file_match.tetragon.targets
+  tail_from_end = true
+  forward_to    = [loki.process.security.receiver]
+}
+
 // Every security line reaches Loki. A line that matches one of the event
 // selectors below also gets an event label and counts in
 // faas_security_events_total, which the faas_host_security alerts read.
@@ -181,6 +198,28 @@ loki.process "security" {
       values = {
         audit_type = "",
         audit_key  = "",
+      }
+    }
+  }
+
+  // The policy stays a label; the process's binary and uid are labels only
+  // until the event stages below have read them.
+  stage.match {
+    selector = "{source=\"tetragon\"}"
+
+    stage.json {
+      expressions = {
+        tetragon_policy = "process_kprobe.policy_name",
+        tetragon_binary = "process_kprobe.process.binary",
+        tetragon_uid    = "process_kprobe.process.uid",
+      }
+    }
+
+    stage.labels {
+      values = {
+        tetragon_policy = "",
+        tetragon_binary = "",
+        tetragon_uid    = "",
       }
     }
   }
@@ -293,6 +332,53 @@ loki.process "security" {
     }
   }
 
+  stage.match {
+    selector = "{tetragon_policy=\"faas-secret-open\", tetragon_binary!~\"{{ alloy_security_tetragon_secret_reader_exes }}\"}"
+
+    stage.template {
+      source   = "event"
+      template = "tetragon_secret_open"
+    }
+  }
+
+  stage.match {
+    selector = "{tetragon_policy=\"faas-module-load\"}"
+
+    stage.template {
+      source   = "event"
+      template = "tetragon_module_load"
+    }
+  }
+
+  stage.match {
+    selector = "{tetragon_policy=\"faas-ptrace\"}"
+
+    stage.template {
+      source   = "event"
+      template = "tetragon_ptrace"
+    }
+  }
+
+  // A jailer uid (20000-29999) is a Firecracker VM's: it never opens a node
+  // secret or asks for root.
+  stage.match {
+    selector = "{tetragon_policy=\"faas-secret-open\", tetragon_uid=~\"2[0-9]{4}\"}"
+
+    stage.template {
+      source   = "event"
+      template = "tetragon_jailed_secret_open"
+    }
+  }
+
+  stage.match {
+    selector = "{tetragon_policy=\"faas-setuid-root\", tetragon_uid=~\"2[0-9]{4}\"}"
+
+    stage.template {
+      source   = "event"
+      template = "tetragon_jailed_setuid_root"
+    }
+  }
+
   stage.labels {
     values = {
       event = "",
@@ -310,6 +396,10 @@ loki.process "security" {
       action            = "inc"
       max_idle_duration = "8760h"
     }
+  }
+
+  stage.label_drop {
+    values = ["tetragon_binary", "tetragon_uid"]
   }
 }
 {% endif %}

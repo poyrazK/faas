@@ -215,8 +215,16 @@ func TestOwnerContractLeavesOnlyRoot(t *testing.T) {
 		if contracted && strings.Join(users, ",") != "root" {
 			t.Errorf("contracted faas_map maps %v to the owner, want only root", users)
 		}
-		if !contracted && len(users) != len(runtime)+1 {
-			t.Errorf("faas_map maps %v to the owner before the contract, want root and the %d daemon users", users, len(runtime))
+		// Daemons born after the owner contract began never logged in as the
+		// owner, so they never map to it (ADR-20261109170000: signd).
+		ownerless := map[string]bool{"faas-signd": true}
+		for _, u := range users {
+			if ownerless[u] {
+				t.Errorf("contracted=%t: faas_map maps %s to the owner; it never needed it", contracted, u)
+			}
+		}
+		if !contracted && len(users) != len(runtime)+1-len(ownerless) {
+			t.Errorf("faas_map maps %v to the owner before the contract, want root and the %d daemon users that predate the contract", users, len(runtime)-len(ownerless))
 		}
 		for user, role := range runtime {
 			if !regexp.MustCompile(`(?m)^faas_map\s+` + regexp.QuoteMeta(user) + `\s+` + role + `\s*$`).MatchString(rendered) {

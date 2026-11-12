@@ -96,7 +96,7 @@ func TestWriteMemoryMaxAppendsNewline(t *testing.T) {
 // adr: 20261027090014 — the pre-boot fence writes the cpu.max it records: an app's
 // configured tier, or an agent run's whole vCPUs (two on Pro).
 func TestPreBootCgroupFenceWritesLeaseCPU(t *testing.T) {
-	period := api.PlanPro.CPUPeriodUS()
+	period := cpuMaxPeriodUS
 	for _, tc := range []struct {
 		name  string
 		lease Lease
@@ -146,7 +146,7 @@ func TestJailerVMMUpdateCPULimitCancelsStaleStartupBoostTail(t *testing.T) {
 	if err := os.MkdirAll(scope, 0o755); err != nil {
 		t.Fatalf("setup cgroup scope: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(scope, "cpu.max"), []byte("500000 500000\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(scope, "cpu.max"), []byte("100000 100000\n"), 0o644); err != nil {
 		t.Fatalf("seed startup quota: %v", err)
 	}
 	tail := &startupCPUBoostTail{
@@ -163,7 +163,7 @@ func TestJailerVMMUpdateCPULimitCancelsStaleStartupBoostTail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read updated cpu.max: %v", err)
 	}
-	if got, want := string(body), "125000 500000\n"; got != want {
+	if got, want := string(body), "25000 100000\n"; got != want {
 		t.Fatalf("cpu.max = %q, want %q", got, want)
 	}
 	if _, ok := vmm.cpuBoostTails[lease.Instance]; ok {
@@ -176,7 +176,7 @@ func TestJailerVMMUpdateCPULimitCancelsStaleStartupBoostTail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read cpu.max after stale callback: %v", err)
 	}
-	if got, want := string(body), "125000 500000\n"; got != want {
+	if got, want := string(body), "25000 100000\n"; got != want {
 		t.Fatalf("stale callback changed cpu.max to %q, want %q", got, want)
 	}
 }
@@ -243,7 +243,7 @@ func TestStartupCPUProfileBoostsThenRestoresConfiguredQuota(t *testing.T) {
 			t.Fatalf("%s = %q, want %q", path, got, want)
 		}
 	}
-	assertCPU(filepath.Join(parent, "cpu.max"), "1000000 1000000\n")
+	assertCPU(filepath.Join(parent, "cpu.max"), "100000 100000\n")
 	if _, err := os.Stat(filepath.Join(parent, WorkloadNameMain)); !os.IsNotExist(err) {
 		t.Fatalf("host workload leaf must not be created; guest-init owns per-workload cgroups, err=%v", err)
 	}
@@ -251,7 +251,7 @@ func TestStartupCPUProfileBoostsThenRestoresConfiguredQuota(t *testing.T) {
 	if err := v.restoreConfiguredCPUFence(lease, workloads, profile.ConfiguredMillicores); err != nil {
 		t.Fatalf("restore configured fence: %v", err)
 	}
-	assertCPU(filepath.Join(parent, "cpu.max"), "250000 1000000\n")
+	assertCPU(filepath.Join(parent, "cpu.max"), "25000 100000\n")
 }
 
 func TestStartupCPUBoostTailRestoresConfiguredQuotaAsynchronously(t *testing.T) {
@@ -262,7 +262,7 @@ func TestStartupCPUBoostTailRestoresConfiguredQuotaAsynchronously(t *testing.T) 
 	if err := os.MkdirAll(scope, 0o755); err != nil {
 		t.Fatalf("setup scope: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(scope, "cpu.max"), []byte("500000 500000\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(scope, "cpu.max"), []byte("100000 100000\n"), 0o644); err != nil {
 		t.Fatalf("write startup quota: %v", err)
 	}
 
@@ -278,7 +278,7 @@ func TestStartupCPUBoostTailRestoresConfiguredQuotaAsynchronously(t *testing.T) 
 		if err != nil {
 			t.Fatalf("read cpu.max: %v", err)
 		}
-		if string(body) == "125000 500000\n" {
+		if string(body) == "25000 100000\n" {
 			return
 		}
 		time.Sleep(time.Millisecond)
@@ -298,7 +298,7 @@ func TestCancelStartupCPUBoostTailStopsPendingRestore(t *testing.T) {
 	if err := os.MkdirAll(scope, 0o755); err != nil {
 		t.Fatalf("setup scope: %v", err)
 	}
-	startupQuota := []byte("500000 500000\n")
+	startupQuota := []byte("100000 100000\n")
 	if err := os.WriteFile(filepath.Join(scope, "cpu.max"), startupQuota, 0o644); err != nil {
 		t.Fatalf("write startup quota: %v", err)
 	}

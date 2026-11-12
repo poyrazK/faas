@@ -272,6 +272,19 @@ gregale org agent policy set --org acme --agents allow --approvals delete,produc
 `gregale mcp connection list` shows each connection's approvals, and
 `GET /v1/agent-approvals` lists the requests waiting for you.
 
+Over MCP, the tool error carries the request in `approval` (its id, review
+link, category and expiry) and a recovery of `await_approval` naming
+`gregale_wait_for_approval`. The agent shows you the link, then calls that
+tool, which waits up to 50 seconds per call. When you approve, the tool
+answers `retry_original` and the agent repeats its call once with the same
+inputs. When you deny it or it expires, the agent gets `stop`, with your
+reason, and stops. `gregale_agent_activity` lists the agent's own write
+requests of the last 7 days (`operate` toolset).
+
+When the bridge applies a plan, it sends the plan's reviewable `reason` as
+the `Gregale-Agent-Reason` header, so the review page, notifications and the
+activity log show you why the agent asked.
+
 ## Connect a local agent to Gregale
 
 `gregale mcp serve` exposes Gregale management tools over stdio, with writes
@@ -388,6 +401,8 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_get_health` | Current health, readiness checks, freshness, and serving releases. |
 | `gregale_get_routes` | Observed routes and telemetry coverage, including unavailable sources. |
 | `gregale_get_action_outcome` | Read supported native receipts for a retained action attempt, including after plan expiry; missing evidence stays unresolved. |
+| `gregale_wait_for_approval` | Wait up to 50 seconds for a person to decide an agent approval request; answers `retry_original`, `await_approval` or `stop`. |
+| `gregale_agent_activity` | The calling agent key's write requests of the last 7 days, with status and the approval each used. |
 | `gregale_get_route_budgets` | Effective advisory budgets, inheritance source and policy revisions for the selected environment. |
 | `gregale_plan_route_budgets` | Review an environment override or return to app-budget inheritance without saving intent. |
 | `gregale_apply_route_budgets` | Opt-in write: apply the reviewed budget plan with native revision guards and durable replay. |
@@ -2724,6 +2739,9 @@ allowing additive native evidence. Errors and plan/status receipts include
 | `retry_same_plan` | Apply the original `plan_id`; do not create a replacement plan. |
 | `replan` | Obtain a new review with the indicated planning tool. |
 | `request_access` | Restore current authorization or the required capability before continuing. |
+| `await_approval` | Show the user `approval.review_url`, then call `gregale_wait_for_approval` with the given `approval_id`. |
+| `retry_original` | A person approved: repeat the original call once with exactly the same inputs. |
+| `stop` | A person denied the request, or it expired: do not retry; tell the user, with `approval.note` if present. |
 
 When supplied, `tool` and `arguments` identify a listed tool and value-free
 selectors such as `plan_id`. `reuse_original_inputs` tells the agent to reuse
@@ -4087,6 +4105,16 @@ after changing a resource so clients can re-read it. With the default local
 adapter, publisher events reach streams on that web process; multi-replica apps
 should connect a shared event adapter. Notification streams still reconcile on
 `--interval`, and servers without URI subscriptions use polling.
+
+Application resource subscriptions require an explicit authorization callback,
+shared with resource reads and checked again before each update. Pass a
+synchronous `authorize(uri, {authInfo, config})` callback as the fifth argument to
+Node's `registerResource`/`replaceResource`, `authorize(uri, caller)` to Python's
+`register_resource`/`replace_resource`, or an `MCPResourceAuthorizer` to Go's
+`RegisterMCPResource`/`ReplaceMCPResource`. Return true only when that caller may
+read the resource. Without this callback, existing custom read handlers retain
+their authorization checks and custom URI subscriptions are denied. The sample
+customer resources enforce caller ownership for reads, completions and updates.
 
 The Node starter counts pending Task/resource subscription setup toward its
 128-stream process limit. Disconnects, setup errors and drain release reservations.

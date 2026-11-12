@@ -78,6 +78,7 @@ type memEmailChange struct {
 	accountID, oldEmail, newEmail string
 	expiresAt                     time.Time
 	consumed                      bool
+	consumedAt                    time.Time
 }
 
 type memAccountFlow struct {
@@ -88,6 +89,8 @@ type memAccountFlow struct {
 	trustedBrowsers map[string]*memMFATrustedBrowser
 	// mailSlots: account ID + "\x00" + kind → mail counter.
 	mailSlots map[string]*memMailSlot
+	// loginFailures: keyed email hash → failed password checks.
+	loginFailures map[string]*memLoginFailures
 }
 
 func (m *MemStore) IssueEmailChange(_ context.Context, tokenHash []byte, accountID, newEmail string, expiresAt time.Time) error {
@@ -132,6 +135,7 @@ func (m *MemStore) ConsumeEmailChange(_ context.Context, tokenHash []byte) (Emai
 		a.EmailVerifiedAt = &now
 		m.storeRouteCheckAccountLocked(a.ID, a)
 		c.consumed = true
+		c.consumedAt = now
 		m.accountFlow.emailChanges[string(stored)] = c
 		// Spend account-bound links mailed to the old address.
 		for k, t := range m.loginTokens {

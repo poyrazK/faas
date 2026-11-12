@@ -212,3 +212,80 @@ func TestDrainDefersWorkHeldByAComputeBudget(t *testing.T) {
 		t.Fatalf("attempts = %d, want %d: a hold spends no attempt", got.Attempts, inv.Attempts)
 	}
 }
+
+// A sync invoke's caller already receives the handler's failure, so the row
+// ends failed after one attempt instead of retrying for a day (Hunt 32
+// H32-65: a thrown sync invoke on prod ran 11 attempts in 23 min with a
+// 25-attempt budget, waking the app each time).
+func TestThrownSyncInvokeEndsAfterOneAttempt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d, store, _, _, ds := sched.NewDrainHarness(t, api.PlanPro, true)
+	ds.AppStatus().Store(http.StatusInternalServerError)
+	apps, err := store.ListAllApps(ctx)
+	if err != nil || len(apps) == 0 {
+		t.Fatalf("ListAllApps: %v / %d apps", err, len(apps))
+	}
+	inv, err := store.EnqueueInvocation(ctx, state.Invocation{
+		AppID: apps[0].ID, AccountID: apps[0].AccountID, Source: state.InvocationAsyncInvoke,
+		Method: "POST", Path: "/x", DueAt: time.Now().Add(-time.Second),
+		RetryPolicyJSON: state.MarkSyncInvokeRetryPolicy(json.RawMessage(`{"max_attempts":25,"base_seconds":1}`)),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation: %v", err)
+	}
+
+	d.Tick(ctx)
+
+	got, err := store.InvocationByID(ctx, inv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != state.InvocationFailed || got.Attempts != 1 {
+		t.Fatalf("a thrown sync invoke is %s after %d attempts, want failed after 1", got.State, got.Attempts)
+	}
+}
+
+// Hunt 33 H33-30: an app's ordinary 502 to a sync invoke was retried as a
+// platform failure, 9 attempts after the CLI had given up, each re-running
+// the handler. The caller is answered with the app's response, so the row
+// ends on it; a transient platform failure still retries.
+func TestSyncInvokeEndsOnTheAppsOwn5xx(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name  string
+		setup func(*sched.DrainSynth)
+		want  state.InvocationState
+	}{
+		{"app answered 502", func(ds *sched.DrainSynth) { ds.AppAnswered().Store(http.StatusBadGateway) }, state.InvocationFailed},
+		{"platform failure", func(ds *sched.DrainSynth) { ds.Transient().Store(true) }, state.InvocationPending},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, store, _, _, ds := sched.NewDrainHarness(t, api.PlanPro, true)
+			tc.setup(ds)
+			apps, err := store.ListAllApps(ctx)
+			if err != nil || len(apps) == 0 {
+				t.Fatalf("ListAllApps: %v / %d apps", err, len(apps))
+			}
+			inv, err := store.EnqueueInvocation(ctx, state.Invocation{
+				AppID: apps[0].ID, AccountID: apps[0].AccountID, Source: state.InvocationAsyncInvoke,
+				Method: "GET", Path: "/call", DueAt: time.Now().Add(-time.Second),
+				RetryPolicyJSON: state.MarkSyncInvokeRetryPolicy(json.RawMessage(`{"max_attempts":25,"base_seconds":1}`)),
+			})
+			if err != nil {
+				t.Fatalf("EnqueueInvocation: %v", err)
+			}
+
+			d.Tick(ctx)
+
+			got, err := store.InvocationByID(ctx, inv.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.State != tc.want || got.Attempts != 1 {
+				t.Fatalf("sync invoke is %s after %d attempts, want %s after 1", got.State, got.Attempts, tc.want)
+			}
+		})
+	}
+}

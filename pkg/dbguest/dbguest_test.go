@@ -18,7 +18,8 @@ func TestParseCmdline(t *testing.T) {
 	}{
 		{name: "app boot", cmdline: "console=ttyS0 root=/dev/vda ro init=/sbin/init"},
 		{name: "database 17", cmdline: "root=/dev/vda ro gregale.mode=database gregale.pg_major=17", database: true, major: 17},
-		{name: "major first", cmdline: "gregale.pg_major=14 gregale.mode=database", database: true, major: 14},
+		{name: "major first", cmdline: "gregale.pg_major=15 gregale.mode=database", database: true, major: 15},
+		{name: "14 is dropped", cmdline: "gregale.mode=database gregale.pg_major=14", database: true, wantErr: true},
 		{name: "missing major", cmdline: "gregale.mode=database", database: true, wantErr: true},
 		{name: "too old", cmdline: "gregale.mode=database gregale.pg_major=12", database: true, wantErr: true},
 		{name: "too new", cmdline: "gregale.mode=database gregale.pg_major=19", database: true, wantErr: true},
@@ -133,14 +134,14 @@ func TestReportableExtensions(t *testing.T) {
 }
 
 func TestUpgradeFromArg(t *testing.T) {
-	line := "console=ttyS0 " + ModeArg + " " + MajorArgKey + "=17 " + UpgradeFromArg(14)
-	if from, err := UpgradeFrom(line, 17); err != nil || from != 14 {
+	line := "console=ttyS0 " + ModeArg + " " + MajorArgKey + "=17 " + UpgradeFromArg(15)
+	if from, err := UpgradeFrom(line, 17); err != nil || from != 15 {
 		t.Fatalf("upgrade from = %d, %v", from, err)
 	}
 	if from, err := UpgradeFrom("console=ttyS0 "+ModeArg, 17); err != nil || from != 0 {
 		t.Fatalf("no upgrade = %d, %v", from, err)
 	}
-	for _, bad := range []string{UpgradeFromArg(17), UpgradeFromArg(18), UpgradeFromArg(MinMajor - 1), UpgradeFromArgKey + "=x"} {
+	for _, bad := range []string{UpgradeFromArg(17), UpgradeFromArg(18), UpgradeFromArg(MinMajor - 1), UpgradeFromArg(14), UpgradeFromArgKey + "=x"} {
 		if _, err := UpgradeFrom(bad, 17); err == nil {
 			t.Errorf("accepted %q for major 17", bad)
 		}

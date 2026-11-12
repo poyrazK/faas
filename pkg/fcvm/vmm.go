@@ -773,6 +773,11 @@ func firecrackerControlLine(line []byte) bool {
 		// queue worker's customer log on production-us rc.294 (Hunt 14
 		// H14-5).
 		"spurious notification from api thread",
+		// Firecracker's vsock device losing a host-side stream, e.g. "vsock:
+		// error writing to local stream (lp=1027, pp=…): GuestMemoryMmap(
+		// IOError(Os { code: 32, kind: BrokenPipe … }))". It reached a
+		// function's customer log on production-us rc.336 (Hunt 32 H32-69).
+		"vsock: error ",
 	} {
 		if strings.Contains(body, marker) {
 			return true
@@ -1443,6 +1448,11 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 			return fmt.Errorf("vmm: stage job manifest: %w", err)
 		}
 	}
+	if len(l.SandboxManifest) > 0 {
+		if err := v.stageSandboxManifestForOwner(ctx, stagingOwner, l.Instance, []byte(l.SandboxManifest)); err != nil {
+			return fmt.Errorf("vmm: stage sandbox manifest: %w", err)
+		}
+	}
 	stagedRuntimeAt := time.Now()
 	cfgBytes, err := json.Marshal(jailed)
 	if err != nil {
@@ -1857,7 +1867,7 @@ func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) e
 // child is kept in sync for accurate cgroup inspection even though guest
 // processes do not join that host-side leaf.
 func (v *JailerVMM) restoreConfiguredCPUFence(l Lease, workloads []WorkloadSpec, configuredMillicores int) error {
-	parentScope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
+	parentScope := filepath.Join(cgroupRoot, tenantCgroupParent(l), PerInstanceScope(l.Instance))
 	value, err := appCPUMax(l.Plan, configuredMillicores)
 	if err != nil {
 		return err
@@ -1889,16 +1899,16 @@ func (v *JailerVMM) UpdateCPULimit(ctx context.Context, l Lease, cpuMillicores i
 		return fmt.Errorf("vmm: update CPU limit: invalid cpu_millicores %d", cpuMillicores)
 	}
 
-	value, err := appCPUMax(l.Plan, cpuMillicores)
+	value, err := liveAppCPUMax(l, cpuMillicores)
 	if err != nil {
 		return fmt.Errorf("vmm: update CPU limit for %s: %w", l.Instance, err)
 	}
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	scope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
+	scope := filepath.Join(cgroupRoot, tenantCgroupParent(l), PerInstanceScope(l.Instance))
 	revert := v.trackFenceValue(l.Instance, fenceCPUMax, value)
-	if err := writeAppCPUMaxTo(scope, l.Plan, cpuMillicores); err != nil {
+	if err := writeCPUMaxValueTo(scope, value); err != nil {
 		revert()
 		return fmt.Errorf("vmm: update CPU limit for %s: %w", l.Instance, err)
 	}
@@ -3173,8 +3183,11 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 		// ADR-20261107160000: the serving instance's identity, which a
 		// restored process's environment cannot reflect.
 		Identity *resumeIdentityWire `json:"identity,omitempty"`
+		// ADR-20261031193635: reload the environment branch's identity
+		// through after_restore and echo its digest in the timing frame.
+		IdentityReload bool `json:"identityReload,omitempty"`
 	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy), Traceparent: traceparent, EventPublishVerdict: true,
-		QualificationReceipt: qualificationReceipt, Identity: resumeIdentityWireFromContext(ctx)})
+		QualificationReceipt: qualificationReceipt, Identity: resumeIdentityWireFromContext(ctx), IdentityReload: l.restoreIdentity.pending()})
 	if err != nil {
 		return fmt.Errorf("vmm: marshal resume body: %w", err)
 	}
@@ -3221,6 +3234,13 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 	}
 	guest, err := readResumeCapabilities(conn)
 	if err != nil {
+		return err
+	}
+	guestIdentity := ""
+	if guest != nil {
+		guestIdentity = guest.IdentityDigest
+	}
+	if err := checkRestoreIdentityAck(l.restoreIdentity, guestIdentity); err != nil {
 		return err
 	}
 	if validatePeer != nil {
@@ -4235,10 +4255,7 @@ func (v *JailerVMM) Kill(ctx context.Context, l Lease) (err error) {
 	if err := v.sweepMaterialised(l.Instance); err != nil {
 		return err
 	}
-	parent := ParentCgroupFor(l.Plan)
-	if l.IsBuilder {
-		parent = BuilderCgroupParent
-	}
+	parent := vmCgroupParent(l)
 	scope := filepath.Join(cgroupRoot, parent, PerInstanceScope(l.Instance))
 	if err := os.RemoveAll(scope); err != nil {
 		return fmt.Errorf("vmm: remove cgroup scope %s: %w", l.Instance, err)
@@ -5615,9 +5632,11 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	execFile = v.residentExecutable(FirecrackerBin, execFile)
 	argv := append(JailerCommand(JailerSpec{
 		Instance: l.Instance, UID: l.UID, GID: l.GID, Netns: l.Netns, ExecFile: execFile,
-		Plan:        l.Plan,
-		Networkless: l.Networkless,
-		IsBuilder:   l.IsBuilder,
+		Plan:         l.Plan,
+		ParentCgroup: l.cgroupParent,
+		Networkless:  l.Networkless,
+		IsBuilder:    l.IsBuilder,
+		CPUWeight:    l.CPUWeight,
 		MemoryMaxBytes: func() int64 {
 			if l.MemoryMaxMiB < 1 {
 				return 0
@@ -6968,7 +6987,7 @@ func characterizationBootOutcome(report api.CharacterizationReport, executionMod
 		if len(tail) > 0 {
 			detail += ": " + string(tail)
 		}
-		return true, api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
+		return true, startupCrashProblem(report.LogTail, detail)
 	}
 
 	switch executionMode {
@@ -7221,9 +7240,19 @@ func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
 	// and exited. Without it the guest itself failed (overlay, pivot, init),
 	// which stays a platform failure (production-us hunt #9, H9-106).
 	if supervisedWorkloadExited(lines) {
-		return api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
+		return startupCrashProblem(strings.Join(lines, "\n"), detail)
 	}
 	return errors.New(detail)
+}
+
+// startupCrashProblem names a workload that exited during startup. A
+// function whose init hook failed says so in its output, and gets its own
+// code (ADR-20261110190000).
+func startupCrashProblem(output, detail string) *api.Problem {
+	if strings.Contains(output, api.FunctionInitFailedMarker) {
+		return api.NewProblem(422, api.CodeFunctionInitFailed, "function init failed", detail)
+	}
+	return api.NewProblem(422, api.CodeAppStartupCrash, "app exited during startup", detail)
 }
 
 // supervisedWorkloadMarkers are guest-init's own console lines for a

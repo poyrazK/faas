@@ -36,6 +36,7 @@ func releaseGateView(g state.ReleaseGate, names map[string]string) api.ReleaseGa
 	case state.ReleaseGateCustomMetric:
 		threshold := g.Threshold
 		out.Metric, out.Comparison, out.Threshold = g.MetricName, g.Comparison, &threshold
+		out.Labels = g.MetricLabels
 	case state.ReleaseGateAI:
 		out.Metric, out.MaxIncreasePercent = g.MetricName, int(g.Threshold)
 	case state.ReleaseGateSynthetic:
@@ -43,6 +44,7 @@ func releaseGateView(g state.ReleaseGate, names map[string]string) api.ReleaseGa
 		out.Check, out.MaxFailurePercent = names[g.SyntheticCheckID], &maxFailure
 	case state.ReleaseGateMetricChange:
 		out.Metric, out.Comparison, out.MaxChangePercent = g.MetricName, g.Comparison, g.MaxChangePercent
+		out.Labels = g.MetricLabels
 	}
 	return out
 }
@@ -156,7 +158,7 @@ func (s *server) createReleaseGate(w http.ResponseWriter, r *http.Request, acct 
 		MaxBurnRate: spec.MaxBurnRate, MaxNewGroups: spec.MaxNewGroups, MinEvents: spec.MinEvents,
 		MetricName: spec.MetricName, Comparison: spec.Comparison, Threshold: spec.Threshold,
 		MinSamples: spec.MinSamples, CreatedBy: configActor(r, acct), MaxFailurePercent: spec.MaxFailurePercent,
-		MaxChangePercent: spec.MaxChangePercent}
+		MaxChangePercent: spec.MaxChangePercent, MetricLabels: spec.MetricLabels}
 	if p := s.resolveReleaseGateTarget(r, &gate, spec, slos, app.Slug); p != nil {
 		api.WriteProblem(w, p)
 		return

@@ -123,6 +123,7 @@ native_e2e_phase_files() {
       customer_http_operations_features_metal_test.go \
       feature_flags_native_restore_metal_test.go \
       before_checkpoint_metal_test.go \
+      function_snapshot_hooks_metal_test.go \
       fleet_wake_dedup_e2e_test.go \
       private_service_tcp_stale_metal_test.go \
       private_tcp_wake_ahead_metal_test.go \
@@ -132,6 +133,10 @@ native_e2e_phase_files() {
       live_fork_metal_test.go \
       crash_snapshot_metal_test.go \
       crash_snapshot_sdk_metal_test.go \
+      environment_branch_contained_metal_test.go \
+      environment_branch_objects_metal_test.go \
+      environment_branch_restore_metal_test.go \
+      environment_branch_seed_metal_test.go \
       vmmd_restart_metal_test.go \
       cpu_fairness_test.go ;;
     # Response streaming and the h2c/gRPC inner leg (G19.3).

@@ -110,6 +110,8 @@ deployment action such as rollback; the API and the database both reject one.
 
 Each webhook delivery is a JSON body with `event` (`alert.fired`), the rule, metric, threshold and observed value. `X-Faas-Alert-Signature` is `sha256=` followed by the hex HMAC-SHA256 of `<X-Faas-Alert-Timestamp>.<X-Faas-Alert-Id>.<body>`, keyed with the rule's webhook secret. Verify it before processing, deduplicate by `X-Faas-Alert-Id`, and return a 2xx quickly. A 5xx, 408, 429 or network error is retried with backoff for up to 30 seconds; any other status is final. Every fire and its outcome is listed by `gregale alert deliveries`. A failing endpoint is not paused: each new fire is attempted again.
 
+A rule's cool-down (15 minutes by default) limits repeat notices for one incident: while the metric stays in breach, the rule fires again only after the cool-down. Once the rule recovers and its resolve goes out, the next breach is a new incident and fires at once, even inside the old cool-down, so every resolve follows a fire you received.
+
 Add `--notify-resolved` (`notify_resolved` in the API) to also receive a signed `alert.resolved` event, with the same headers, when the rule recovers. It is off by default because receivers written before it count every delivery as a fire; turn it on once yours checks `event`. Notification channels always receive resolves. A firing rule that stops being evaluated (you disable it, the plan or account no longer covers it, or its app is deleted) gets an `alert.resolved` with `reason` (`disabled`, `not_released` or `app_deleted`) and a null `observed`; a deleted rule sends none, since its webhook secret goes with it.
 
 For dashboards and SLOs, use the app metrics endpoint and correlate alert event ids with deployment ids. Never put credentials in an alert URL.
@@ -406,4 +408,17 @@ OpenTelemetry cumulative sum) is compared on its per-second rate over the
 window. If nothing was pushed in the window, or the metric was deleted, the
 rule is `unknown` and does not fire: a stopped pusher never satisfies a "below"
 rule by silence. These rules are webhook-only and support windows up to `24h`.
+
+A rule on a labelled metric reads its aggregate (the sum of a counter's
+series, the maximum of a gauge's). To watch one series instead, give its exact
+labels with `custom_metric_labels` (`--metric-label key=value`, repeatable):
+
+```bash
+printf '%s\n' "$ALERT_SECRET" | gregale alert create --app shop --name "email queue backing up" \
+  --metric custom_metric --custom-metric queue_depth --metric-label queue=emails \
+  --comparison gt --threshold 500 --window-spec 15m \
+  --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+A series that stops being pushed leaves the rule `unknown`, as for a whole metric.
 See [custom metrics](scaling-policy.md#custom-metrics) for pushing values.

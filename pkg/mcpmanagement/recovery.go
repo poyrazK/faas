@@ -73,6 +73,12 @@ func (m *management) recoveryTool(r Recovery, tool string, args map[string]any) 
 }
 
 func plannerFor(p *releasePlan) string {
+	if p.LocalSource != nil {
+		if p.LocalSource.Uploaded {
+			return "gregale_plan_upload_deploy"
+		}
+		return "gregale_plan_local_deploy"
+	}
 	if p.Operation != nil {
 		switch p.Operation.Kind {
 		case "env":
@@ -117,6 +123,12 @@ func retryPlanArguments(id, tool string) map[string]any {
 }
 
 func applyToolFor(p *releasePlan) string {
+	if p.LocalSource != nil {
+		if p.LocalSource.Uploaded {
+			return "gregale_apply_upload_deploy"
+		}
+		return "gregale_apply_local_deploy"
+	}
 	if p.Operation != nil {
 		if p.Operation.Kind == "env" {
 			return "gregale_apply_env_change"
@@ -187,6 +199,10 @@ func (m *management) operationFailure(p *releasePlan, err error, priorAttempt bo
 func (m *management) toolErrorForCall(name string, args any, err error) *mcp.CallToolResult {
 	result := m.toolError(err)
 	p := result.StructuredContent.(ToolError)
+	if p.Approval != nil {
+		// A person decides; the plan and its retry advice wait for them.
+		return result
+	}
 	var lookup planLookupArgs
 	raw, _ := json.Marshal(args)
 	_ = json.Unmarshal(raw, &lookup)

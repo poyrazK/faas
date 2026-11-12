@@ -1,6 +1,7 @@
 # Page fixtures for FaasEdgeCertificateUnexpected (edgednsd Certificate
-# Transparency watch) and FaasObjectStorageInventorySweepStopped (apid's
-# object storage inventory sweep).
+# Transparency watch), and FaasObjectStorageInventorySweepStopped,
+# FaasObjectStorageInventoryBacklog, FaasObjectStorageInventoryQuietBacklog and
+# FaasObjectStorageInventoryDrift (apid's object storage inventory sweep).
 rule_files:
   - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
 
@@ -49,3 +50,69 @@ tests:
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
               summary: "apid's object storage inventory sweep has not completed for over 10 minutes"
               description: "No inventory sweep has completed without error for 20m 0s. Gateway reads and writes need a bucket inventory under 900 s old, so buckets start answering 503 within minutes."
+
+  - name: an inventory backlog past ten minutes warns after five
+    interval: 1m
+    input_series:
+      - series: faas_object_storage_inventory_oldest_observation_age_seconds{job="apid",instance="cp-1",class="active"}
+        values: 300 400 500 620 680 740 800 860 920 980 1040
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FaasObjectStorageInventoryBacklog
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: FaasObjectStorageInventoryBacklog
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: object_storage
+            exp_annotations:
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+              summary: "apid's object storage inventory sweep is falling behind"
+              description: "The oldest bucket inventory admission still needs is 16m 20s old. At 900 s that bucket's reads and writes answer 503; faas_object_storage_inventory_due_buckets shows the backlog."
+
+  - name: a quiet bucket past 23.5 hours warns after five minutes
+    interval: 1m
+    input_series:
+      - series: faas_object_storage_inventory_oldest_observation_age_seconds{job="apid",instance="cp-1",class="quiet"}
+        values: 84000 84060 84120 84180 84240 84300 84360 84420 84480 84540 84600 84660 84720 84780 84840 84900 84960 85020
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasObjectStorageInventoryQuietBacklog
+        exp_alerts: []
+      - eval_time: 17m
+        alertname: FaasObjectStorageInventoryQuietBacklog
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: object_storage
+            exp_annotations:
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+              summary: "apid's daily verification of quiet buckets is falling behind"
+              description: "The oldest quiet bucket inventory is 23h 37m 0s old. At 24 h that bucket's reads and writes answer 503."
+
+  - name: drift on a quiet bucket warns at once and clears after an hour
+    interval: 1m
+    input_series:
+      - series: faas_object_storage_inventory_drift_total{job="apid",instance="cp-1",direction="up"}
+        values: 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: FaasObjectStorageInventoryDrift
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: FaasObjectStorageInventoryDrift
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: object_storage
+            exp_annotations:
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+              summary: "A quiet bucket's contents changed without passing admission"
+              description: "1 verification listings of quiet buckets in the last hour counted different bytes or keys than the listing before. apid logs each bucket (\"object storage inventory drift on a quiet bucket\")."
+      - eval_time: 75m
+        alertname: FaasObjectStorageInventoryDrift
+        exp_alerts: []

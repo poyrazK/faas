@@ -17,6 +17,7 @@ import type { CheckedProjectReleaseResponse } from '../models/CheckedProjectRele
 import type { CreateEnvironmentGitSourceRequest } from '../models/CreateEnvironmentGitSourceRequest.js';
 import type { CreateProjectBindingVerificationRunRequest } from '../models/CreateProjectBindingVerificationRunRequest.js';
 import type { CreateProjectEnvironmentApprovalRequest } from '../models/CreateProjectEnvironmentApprovalRequest.js';
+import type { CreateProjectEnvironmentBranchRequest } from '../models/CreateProjectEnvironmentBranchRequest.js';
 import type { CreateProjectEnvironmentQualificationRequest } from '../models/CreateProjectEnvironmentQualificationRequest.js';
 import type { CreateProjectEnvironmentRequest } from '../models/CreateProjectEnvironmentRequest.js';
 import type { CreateProjectMigrationRequest } from '../models/CreateProjectMigrationRequest.js';
@@ -50,6 +51,7 @@ import type { ProjectDeploymentCheckRequest } from '../models/ProjectDeploymentC
 import type { ProjectDeploymentReadiness } from '../models/ProjectDeploymentReadiness.js';
 import type { ProjectEnvironmentApprovalResponse } from '../models/ProjectEnvironmentApprovalResponse.js';
 import type { ProjectEnvironmentApprovalStatusResponse } from '../models/ProjectEnvironmentApprovalStatusResponse.js';
+import type { ProjectEnvironmentBranchListResponse } from '../models/ProjectEnvironmentBranchListResponse.js';
 import type { ProjectEnvironmentCloneOperationResponse } from '../models/ProjectEnvironmentCloneOperationResponse.js';
 import type { ProjectEnvironmentConfigDiffResponse } from '../models/ProjectEnvironmentConfigDiffResponse.js';
 import type { ProjectEnvironmentConfigResponse } from '../models/ProjectEnvironmentConfigResponse.js';
@@ -748,17 +750,27 @@ export class ProjectsService {
   }
   /**
    * Delete a project and detach its live workloads.
-   * The apps remain live. Their project_id is cleared by the database foreign-key action.
+   * The apps remain live. Their project_id is cleared by the database
+   * foreign-key action. While the project's services call each other by
+   * service name, deletion is refused with 409
+   * project_services_call_each_other, because detached services no longer
+   * resolve those names; pass detach_services=true once they do not.
+   *
    * @returns void
    * @throws ApiError
    */
   public static deleteProject({
     slug,
+    detachServices,
   }: {
     /**
      * Project slug to inspect, update, or delete in the authenticated account.
      */
     slug: string,
+    /**
+     * Confirms the project's services no longer call each other by service name.
+     */
+    detachServices?: boolean,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
       method: 'DELETE',
@@ -766,9 +778,13 @@ export class ProjectsService {
       path: {
         'slug': slug,
       },
+      query: {
+        'detach_services': detachServices,
+      },
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -1059,6 +1075,95 @@ export class ProjectsService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Branch a project environment.
+   * Creates a new environment that copies the parent's configuration and
+   * publishes each of the parent's live workloads from its existing build.
+   * Nothing starts until a workload is called: its first request starts it
+   * cold. Each managed PostgreSQL database the parent binds is copied as of
+   * the branch point and bound to the branch with new credentials; while
+   * `branch.data` is `pending`, the branch's workloads wait for the copies.
+   * The branch is deleted when its time to live ends. Parents that bind
+   * managed object storage cannot be branched yet.
+   *
+   * @returns ProjectEnvironmentResponse The branch exists and its workloads are published.
+   * @throws ApiError
+   */
+  public static createProjectEnvironmentBranch({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project that owns the environment.
+     */
+    slug: string,
+    /**
+     * Parent environment to branch from or list branches of.
+     */
+    environment: string,
+    requestBody: CreateProjectEnvironmentBranchRequest,
+  }): CancelablePromise<ProjectEnvironmentResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/branches',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `The plan's environment branch limit is reached.`,
+        404: `code: not_found`,
+        409: `Branches are unavailable, the slug is taken, the branch would be too deep, or the parent binds managed object storage.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List the branches of a project environment.
+   * @returns ProjectEnvironmentBranchListResponse The environment's direct branches.
+   * @throws ApiError
+   */
+  public static listProjectEnvironmentBranches({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project that owns the environment.
+     */
+    slug: string,
+    /**
+     * Parent environment to branch from or list branches of.
+     */
+    environment: string,
+  }): CancelablePromise<ProjectEnvironmentBranchListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/branches',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `Branches are unavailable.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

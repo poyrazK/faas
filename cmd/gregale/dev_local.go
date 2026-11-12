@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	devLocalUsage        = "usage: gregale dev --local [--path DIR] [--port N] [--env-file PATH] [--no-remote | --offline [--postgres] [--bucket NAME]... [--reset]] [--no-reload]"
+	devLocalUsage        = "usage: gregale dev --local [--path DIR] [--name PROJECT] [--port N] [--env-file PATH] [--watch-command CMD] [--no-remote | --offline [--postgres] [--bucket NAME]... [--reset]] [--no-reload]"
 	devLocalDefaultPort  = 8787
 	devLocalTokenHeader  = "X-Gregale-Local-Token"
 	devLocalTriggerPath  = "/__gregale/trigger"
@@ -79,9 +79,11 @@ func hasLocalFlag(args []string) ([]string, bool) {
 func cmdDevLocal(args []string) int {
 	fs := newFlagSet("dev --local", flag.ContinueOnError)
 	sourcePath := fs.String("path", "", "source directory (relative to the current directory)")
+	name := fs.String("name", "", "developer-session project name whose database and buckets to use")
 	port := fs.Int("port", devLocalDefaultPort, "local port")
-	envFile := fs.String("env-file", "", "KEY=VALUE file whose entries every function gets")
-	noReload := fs.Bool("no-reload", false, "do not reload functions when their source changes")
+	envFile := fs.String("env-file", "", "local KEY=VALUE file (default: dev.env_file); changes restart the app or functions")
+	watchCommand := fs.String("watch-command", "", "local HTTP app command (default: detected development or start command)")
+	noReload := fs.Bool("no-reload", false, "do not restart the local app or functions on source or env-file edits")
 	noRemote := fs.Bool("no-remote", false, "do not connect to the developer session's database and buckets")
 	offline := fs.Bool("offline", false, "run Postgres and buckets in Docker instead of using the developer session")
 	postgres := fs.Bool("postgres", false, "with --offline, start Postgres and set DATABASE_URL")
@@ -95,16 +97,22 @@ func cmdDevLocal(args []string) int {
 	if (*postgres || len(buckets) > 0 || *reset) && !*offline {
 		return printErr("Invalid flags", errors.New("--postgres, --bucket and --reset go with --offline; without it the developer session's database and buckets are used"))
 	}
+	if *name != "" && (*offline || *noRemote) {
+		return printErr("Invalid flags", errors.New("--name picks the developer session to connect to; it does nothing with --offline or --no-remote"))
+	}
 	if *offline && *noRemote {
 		return printErr("Invalid flags", errors.New("--offline already skips the developer session; drop --no-remote"))
 	}
-	projectDir, fileEnv, err := devLocalInputs(*sourcePath, *envFile)
-	if err != nil {
-		return printErr("Could not start local functions", err)
+	if *port < 0 || *port > 65535 {
+		return printErr("Invalid port", errors.New("--port must be between 0 and 65535"))
 	}
-	fns, err := planLocalFunctions(projectDir)
+	projectDir, envPath, _, err := devLocalInputs(*sourcePath, *envFile, flagSetWasSet(fs)["env-file"])
 	if err != nil {
-		return printErr("Could not start local functions", err)
+		return printErr("Could not start locally", err)
+	}
+	fns, app, err := planDevLocalWorkload(projectDir, *watchCommand)
+	if err != nil {
+		return printErr("Could not start locally", err)
 	}
 	cacheDir, err := localCacheDir(projectDir)
 	if err != nil {
@@ -123,10 +131,25 @@ func cmdDevLocal(args []string) int {
 			return printErr("Could not start local resources", err)
 		}
 	case !*noRemote:
-		remote = attachDevLocalRemote(ctx, *sourcePath, osStderr)
+		remote = attachDevLocalRemote(ctx, *sourcePath, *name, osStderr)
 	}
 	defer remote.close()
-	baseEnv := devLocalEnv(os.Environ(), remote.Env, fileEnv)
+	envConfig := devLocalEnvConfig{path: envPath, base: devLocalEnv(os.Environ(), remote.Env, nil)}
+	baseEnv, err := envConfig.load()
+	if err != nil {
+		return printErr("Could not read local config", err)
+	}
+	if app != nil {
+		printDevLocalRemote(osStdout, remote, baseEnv, nil)
+		err := serveDevLocalApp(ctx, devLocalAppOptions{
+			root: projectDir, command: *watchCommand, plan: *app, env: baseEnv, envConfig: envConfig,
+			port: *port, noReload: *noReload, out: osStdout, errOut: osStderr,
+		})
+		if err != nil {
+			return printErr("Local app stopped", err)
+		}
+		return 0
+	}
 	for _, fn := range fns {
 		if err := fn.prepare(ctx, cacheDir, baseEnv); err != nil {
 			return printErr("Could not start function "+fn.Name, err)
@@ -136,7 +159,7 @@ func cmdDevLocal(args []string) int {
 	if err != nil {
 		return printErr("Could not start local functions", err)
 	}
-	srv.baseEnv = baseEnv
+	srv.envConfig = envConfig
 	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(*port))
 	if err != nil {
 		return printErr("Could not listen", fmt.Errorf("port %d: %w; pass --port", *port, err))
@@ -152,9 +175,20 @@ func cmdDevLocal(args []string) int {
 	for _, fn := range fns {
 		srv.prewarm(ctx, fn)
 	}
+	watchCtx, stopWatch := context.WithCancel(ctx)
+	watchDone := make(chan struct{})
 	if !*noReload {
-		go srv.watch(ctx, cacheDir)
+		go func() { defer close(watchDone); srv.watch(watchCtx, cacheDir) }()
+	} else {
+		close(watchDone)
 	}
+	defer func() {
+		stopWatch()
+		<-watchDone
+		for _, fn := range fns {
+			local.Reload(fn.process())
+		}
+	}()
 	httpSrv := &http.Server{Handler: srv, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
@@ -165,19 +199,18 @@ func cmdDevLocal(args []string) int {
 	if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return printErr("Local server stopped", err)
 	}
-	for _, fn := range fns {
-		local.Reload(fn.proc)
-	}
+	stopWatch()
+	<-watchDone
 	_, _ = fmt.Fprintln(osStdout, "\nStopped.")
 	return 0
 }
 
 // devLocalInputs resolves the project directory and reads the --env-file
 // entries as KEY=VALUE strings.
-func devLocalInputs(sourcePath, envFile string) (string, []string, error) {
+func devLocalInputs(sourcePath, envFile string, explicitEnvFile bool) (string, string, []string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 	projectDir := cwd
 	if sourcePath != "" {
@@ -187,23 +220,14 @@ func devLocalInputs(sourcePath, envFile string) (string, []string, error) {
 		}
 	}
 	if projectDir, err = filepath.Abs(projectDir); err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
-	var env []string
-	if envFile != "" {
-		path, err := resolveDevEnvFilePath(cwd, envFile)
-		if err != nil {
-			return "", nil, err
-		}
-		pairs, _, err := readDevEnvFile(path)
-		if err != nil {
-			return "", nil, err
-		}
-		for _, p := range pairs {
-			env = append(env, p.Key+"="+p.Value)
-		}
+	path, err := resolveDevLocalEnvFile(cwd, projectDir, envFile, explicitEnvFile)
+	if err != nil {
+		return "", "", nil, err
 	}
-	return projectDir, env, nil
+	env, err := (devLocalEnvConfig{path: path}).load()
+	return projectDir, path, env, err
 }
 
 // devLocalEnv layers the base environment: the shell, then the developer
@@ -280,7 +304,7 @@ type devLocalServer struct {
 	byName     map[string]*localFunction
 	entry      *localFunction
 	projectDir string
-	baseEnv    []string
+	envConfig  devLocalEnvConfig
 	token      string
 	port       int
 	out        io.Writer
@@ -331,7 +355,7 @@ func (s *devLocalServer) printBanner(w io.Writer) {
 func (s *devLocalServer) prewarm(ctx context.Context, fn *localFunction) {
 	warm, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := local.Prewarm(warm, fn.proc); err != nil {
+	if err := local.Prewarm(warm, fn.process()); err != nil {
 		_, _ = fmt.Fprintf(s.out, "! %s did not start: %v (fix it and save; it reloads)\n", fn.Name, err)
 	}
 }
@@ -370,7 +394,13 @@ func (s *devLocalServer) invoke(w http.ResponseWriter, r *http.Request, fn *loca
 	defer cancel()
 	started := time.Now()
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-	local.Handler(fn.proc).ServeHTTP(rec, r.WithContext(ctx))
+	proc := fn.process()
+	defer func() {
+		if fn.process().HandlerPath != proc.HandlerPath {
+			local.Reload(proc) // retire an old environment after its request drains
+		}
+	}()
+	local.Handler(proc).ServeHTTP(rec, r.WithContext(ctx))
 	_, _ = fmt.Fprintf(s.out, "%s %-6s %s → %d (%s)\n", fn.Name, r.Method, r.URL.RequestURI(), rec.status, time.Since(started).Round(time.Millisecond))
 }
 
@@ -457,12 +487,23 @@ func matchFunctionRoute(pattern, path string) (int, bool) {
 	return len(pattern), path == pattern
 }
 
-// watch reloads a function when a file under its root changes.
+// watch settles source and selected env-file edits together. Configuration is
+// validated before any worker is recycled, so bad edits leave current workers.
 func (s *devLocalServer) watch(ctx context.Context, cacheDir string) {
-	sigs := map[string]string{}
-	for _, fn := range s.fns {
-		sigs[fn.Name] = treeSignature(fn.Root, cacheDir)
+	scan := func() (map[string]string, string) {
+		env := s.envConfig.fingerprint()
+		sigs := map[string]string{}
+		var combined strings.Builder
+		for _, fn := range s.fns {
+			sig := fmt.Sprintf("%s\x00%x", treeSignature(fn.Root, cacheDir), env)
+			sigs[fn.Name] = sig
+			_, _ = fmt.Fprintf(&combined, "%d:%s", len(sig), sig)
+		}
+		return sigs, combined.String()
 	}
+	applied, previous := scan()
+	candidate := previous
+	var changedAt time.Time
 	ticker := time.NewTicker(devLocalPollInterval)
 	defer ticker.Stop()
 	for {
@@ -471,31 +512,43 @@ func (s *devLocalServer) watch(ctx context.Context, cacheDir string) {
 			return
 		case <-ticker.C:
 		}
+		sigs, current := scan()
+		if current != candidate {
+			candidate, changedAt = current, time.Now()
+		}
+		if candidate == previous || changedAt.IsZero() || time.Since(changedAt) < devWatchSettleInterval {
+			continue
+		}
+		previous = candidate
+		env, err := s.envConfig.load()
+		if err != nil {
+			_, _ = fmt.Fprintf(s.out, "Could not reload local config: %v; fix the env file and save again.\n", err)
+			continue
+		}
 		for _, fn := range s.fns {
-			sig := treeSignature(fn.Root, cacheDir)
-			if sig == sigs[fn.Name] {
+			if sigs[fn.Name] == applied[fn.Name] {
 				continue
 			}
-			sigs[fn.Name] = sig
-			s.reload(ctx, fn, cacheDir)
+			if s.reload(ctx, fn, cacheDir, env) {
+				applied[fn.Name] = sigs[fn.Name]
+			}
 		}
 	}
 }
 
-func (s *devLocalServer) reload(ctx context.Context, fn *localFunction, cacheDir string) {
+func (s *devLocalServer) reload(ctx context.Context, fn *localFunction, cacheDir string, env []string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	started := time.Now()
-	old := fn.proc
-	if fn.Family == "go" {
-		if err := fn.prepare(ctx, cacheDir, s.baseEnv); err != nil {
-			_, _ = fmt.Fprintf(s.out, "! %s: %v\n", fn.Name, err)
-			return
-		}
+	old := fn.process()
+	if err := fn.prepare(ctx, cacheDir, env); err != nil {
+		_, _ = fmt.Fprintf(s.out, "! %s: %v\n", fn.Name, err)
+		return false
 	}
 	local.Reload(old)
 	s.prewarm(ctx, fn)
 	_, _ = fmt.Fprintf(s.out, "↻ reloaded %s (%s)\n", fn.Name, time.Since(started).Round(time.Millisecond))
+	return true
 }
 
 // treeSignature summarizes the files under root: names, sizes and mtimes,

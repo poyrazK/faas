@@ -106,11 +106,11 @@ func (r *SnapshotRefresher) admitRefresh(ctx context.Context, nodeID string, t r
 			others = append(others, n.ID)
 		}
 	}
-	cpu := e.appCPUBookingMillicores(t.app, t.limits)
+	cpu := appCPUBookingMillicores(t.app)
 	wakeID := uuid.NewString()
 	ins, placement, _, err := e.createWithNodePlacement(ctx, Request{
-		AppID: t.app.ID, Plan: t.acct.Plan, RAMMB: t.app.RAMMB, VCPU: e.guestVCPUs(t.app, t.limits),
-		CPUMillicores: cpu, MaxConcurrency: t.app.MaxConcurrency, BookedCPUMillicores: e.appCPUBookingStamp(t.app, t.limits),
+		AppID: t.app.ID, Plan: t.acct.Plan, RAMMB: t.app.RAMMB, VCPU: appVCPUs(t.app),
+		CPUMillicores: cpu, MaxConcurrency: t.app.MaxConcurrency, BookedCPUMillicores: appCPUBookingMillicores(t.app),
 		PreferredNodeID: nodeID, ExcludeNodeIDs: others,
 	}, false, func(admitCtx context.Context, p Placement) (state.Instance, error) {
 		if p.NodeID != nodeID {
@@ -137,7 +137,7 @@ func (r *SnapshotRefresher) admitRefresh(ctx context.Context, nodeID string, t r
 	e.emitInstanceChanged(ctx, ins.ID, t.app.ID, state.StateColdBooting, wakeID)
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: t.app.ID, DeploymentID: t.dep.ID, DeploymentScope: t.dep.Scope, Plan: t.acct.Plan,
-		RAMMB: t.app.RAMMB, VCPU: e.guestVCPUs(t.app, t.limits), CPUMillicores: cpu, MaxConcurrency: t.app.MaxConcurrency,
+		RAMMB: t.app.RAMMB, VCPU: appVCPUs(t.app), CPUMillicores: cpu, MaxConcurrency: t.app.MaxConcurrency,
 		Kind:   KindSnapshotPrime,
 		NodeID: placement.NodeID, NodeCeilingMB: placement.CeilingMB,
 		VCPUBudget: placement.VCPUBudget, CPUBudgetMillicores: placement.CPUBudgetMillicores,

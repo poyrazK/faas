@@ -59,7 +59,8 @@ Cloudflare let a function declare at least part of this next to its code.
   `functions/digest/handler.js` with `export const config = { cron: "0 8 * * *" }`.
 - Config in code is read by the CLI, so repository deploys connected
   through GitHub, which ignore `functions:` for a function app (ADR-985),
-  ignore it too. Server-side reading is a follow-up.
+  ignore it too. Server-side reading is a follow-up
+  (ADR-20261108160000).
 - Go and `binary` functions keep yaml only in this slice.
 
 ## Alternatives

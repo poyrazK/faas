@@ -16,6 +16,9 @@ import (
 // StorageDocsURL documents storage limits and their growth.
 const StorageDocsURL = "https://gregale.dev/docs/managed-postgres#storage"
 
+// BindingDocsURL documents the per-app binding limit.
+const BindingDocsURL = "https://gregale.dev/docs/plans"
+
 // StorageLimitError is a storage target above the plan's per-database
 // limit. It is a managedpostgres.ErrQuotaExceeded.
 type StorageLimitError struct {
@@ -28,9 +31,24 @@ func (e *StorageLimitError) Error() string {
 
 func (e *StorageLimitError) Unwrap() error { return managedpostgres.ErrQuotaExceeded }
 
-// LimitProblem renders a StorageLimitError with its limit, observed value
-// and docs; nil for any other error.
+// LimitProblem renders the managed PostgreSQL refusals that carry their own
+// code: a StorageLimitError or BindingLimitError with its limit, observed
+// value and docs, and a binding refused for release-pinned secrets; nil for
+// any other error.
 func LimitProblem(err error) *api.Problem {
+	if errors.Is(err, managedpostgres.ErrReleaseSecretsPinned) {
+		return api.NewProblem(http.StatusConflict, "project_release_secrets_pinned", "Secret versions are release-bound",
+			"This app's secrets in the environment are pinned to an active project release, and release secrets cannot carry managed credentials.").
+			WithHint("Bind the database in an environment whose release does not pin secrets, or release without pinned secrets first.").
+			WithDocs("https://gregale.dev/docs/secrets")
+	}
+	var bindings *managedpostgres.BindingLimitError
+	if errors.As(err, &bindings) {
+		return api.NewProblem(http.StatusForbidden, "managed_postgres_binding_limit", "Managed PostgreSQL binding limit reached", bindings.Error()).
+			WithLimit(int64(bindings.Limit), int64(bindings.Observed)).
+			WithHint("Delete a binding the app no longer uses (gregale postgres bindings delete) or upgrade the plan.").
+			WithDocs(BindingDocsURL)
+	}
 	var limit *StorageLimitError
 	if !errors.As(err, &limit) {
 		return nil

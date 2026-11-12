@@ -1148,6 +1148,26 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Service bindings are source-managed", "edit depends_on or an x-gregale-service-* extension in the project source; preview bindings inherit from their source app"))
 		return
 	}
+	if req.FunctionCallables != nil {
+		if app.Type != state.AppTypeFunction {
+			api.WriteProblem(w, api.ErrValidation("function_callables applies to function apps"))
+			return
+		}
+		if err := api.ValidateFunctionCallables(*req.FunctionCallables, app.Slug); err != nil {
+			api.WriteProblem(w, api.ErrValidation(err.Error()))
+			return
+		}
+	}
+	if req.FunctionInputSchema != nil {
+		if app.Type != state.AppTypeFunction {
+			api.WriteProblem(w, api.ErrValidation("function_input_schema applies to function apps"))
+			return
+		}
+		if err := api.ValidateFunctionInputSchema(*req.FunctionInputSchema); err != nil {
+			api.WriteProblem(w, api.ErrValidation(err.Error()))
+			return
+		}
+	}
 	bindings, bindingsProblem := standaloneServiceBindings(req.ServiceBindingTargets, app.Slug)
 	if bindingsProblem != nil {
 		api.WriteProblem(w, bindingsProblem)
@@ -1219,6 +1239,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.afterRestoreBudgetProblem(r.Context(), acct.ID, app.ID, req.AfterRestore); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -1391,6 +1415,22 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		lifecycleManifest.AllowedServiceCallScopes = allowedCallScopes
 		lifecycleChanged = true
 	}
+	if req.FunctionCallables != nil {
+		if lifecycleManifest == nil {
+			copyOfManifest := app.Manifest
+			lifecycleManifest = &copyOfManifest
+		}
+		lifecycleManifest.FunctionCallables = nonEmptyCallables(*req.FunctionCallables)
+		lifecycleChanged = true
+	}
+	if req.FunctionInputSchema != nil {
+		if lifecycleManifest == nil {
+			copyOfManifest := app.Manifest
+			lifecycleManifest = &copyOfManifest
+		}
+		lifecycleManifest.FunctionInputSchema = nonEmptySchema(*req.FunctionInputSchema)
+		lifecycleChanged = true
+	}
 	if req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil || req.ServiceBindingTransport != nil || len(req.ServiceReliability) > 0 {
 		if lifecycleManifest == nil {
 			copyOfManifest := app.Manifest
@@ -1428,6 +1468,12 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	var retryPolicyPtr *[]byte
 	if req.RetryPolicy != nil {
 		retryPolicyPtr = &retryPolicyJSON
+	}
+	// ADR-20261111114059: an agent's added standing cost is charged to its
+	// budget, after validation and before the write.
+	commitBudget, answered := s.chargeAppUpdate(w, r, acct, app, req, ram)
+	if answered {
+		return
 	}
 	params := state.UpdateAppParams{
 		Visibility:         visibilityPtr(req.Visibility),
@@ -1685,7 +1731,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		fallback := api.ErrCapacity("could not update app")
+		fallback := appUpdateUnavailable(err)
 		if problem := deploySettingsUpdateProblem(err); problem != nil {
 			fallback = problem
 		} else if errors.Is(err, state.ErrServiceBindingPlanConflict) {
@@ -1702,6 +1748,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, trafficproblem.Policy(err, fallback))
 		return
 	}
+	commitBudget()
 	if req.BeforeCheckpoint != nil || req.Profiling != nil || req.Tracing != nil {
 		// Existing process snapshots were created with the previous hook
 		// setting. The runtime-config stamp also retires live guests whose
@@ -4540,6 +4587,11 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if path == "" {
 		path = "/"
 	}
+	scope, scopeProblem := s.cronEnvironmentScope(r.Context(), app, req.Environment)
+	if scopeProblem != nil {
+		api.WriteProblem(w, scopeProblem)
+		return
+	}
 	skipIfRunning := false
 	if req.SkipIfRunning != nil {
 		skipIfRunning = *req.SkipIfRunning
@@ -4549,7 +4601,7 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		Timezone: timezone, SkipIfRunning: skipIfRunning, Command: cronCommand,
 		CommandShell: commandShell, CommandTimeoutSeconds: commandTimeoutSeconds,
 		CommandMaxOutputBytes: commandMaxOutputBytes, RetryMax: req.RetryMax,
-		RetryBackoffSeconds: req.RetryBackoffSeconds,
+		RetryBackoffSeconds: req.RetryBackoffSeconds, DeploymentScope: scope,
 	})
 	if err != nil {
 		var qe *state.CronQuotaError
@@ -5459,10 +5511,19 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 // handler is the only caller; nil-safe when the cache is nil
 // (legacy tests that pre-date the cache field).
 func (s *server) resolveGraceWindow(ctx context.Context, accountID string) (*int, error) {
+	var days *int
+	var err error
 	if s.graceWindowCache == nil {
-		return s.store.GetAccountKeyGraceWindow(ctx, accountID)
+		days, err = s.store.GetAccountKeyGraceWindow(ctx, accountID)
+	} else {
+		days, err = s.graceWindowCache.resolveGraceWindow(ctx, s.store, accountID)
 	}
-	return s.graceWindowCache.resolveGraceWindow(ctx, s.store, accountID)
+	// A value saved before the cap existed is held to it (ADR 20261109120000).
+	if err == nil && days != nil && *days > api.APIKeyGraceWindowMaxDays {
+		capped := api.APIKeyGraceWindowMaxDays
+		days = &capped
+	}
+	return days, err
 }
 
 // --- usage -----------------------------------------------------------------
@@ -5710,6 +5771,10 @@ func (s *server) raiseOverageCap(w http.ResponseWriter, r *http.Request, acct st
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Bad request", err.Error()))
+		return
+	}
+	if problem := s.complimentaryRefusal(r.Context(), acct.ID); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	// ADR-20261105120000: a paid subject keeps a cap, at most its plan's
@@ -7078,6 +7143,7 @@ func cronResponse(c state.Cron) api.CronResponse {
 	if !c.LastFiredAt.IsZero() {
 		resp.LastFiredAt = c.LastFiredAt.UTC().Format(time.RFC3339)
 	}
+	resp.Environment = c.DeploymentScope
 	return resp
 }
 
@@ -8493,6 +8559,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 			Metric: sp.Target.Metric,
 			Value:  sp.Target.Value,
 			Name:   sp.Target.Name,
+			Labels: sp.Target.Labels,
 		}
 	}
 	// ADR-194 targets, ADR-195 schedules. These were absent here for the
@@ -8506,7 +8573,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 	// fails if a field is added to either type without being copied here.
 	for _, t := range sp.Targets {
 		out.Targets = append(out.Targets, state.ScalingTarget{
-			Metric: t.Metric, Value: t.Value, Name: t.Name,
+			Metric: t.Metric, Value: t.Value, Name: t.Name, Labels: t.Labels,
 		})
 	}
 	out.Timezone = sp.Timezone
@@ -8556,4 +8623,17 @@ func (s *server) notifyAppRenamed(ctx context.Context, acct state.Account, updat
 	// both so a future relax of validSlug (or a hostile migration)
 	// cannot smuggle CR/LF into the audit line.
 	s.log.Info("app renamed", "app", updated.ID, "from", logsanitize.Field(oldSlug), "to", logsanitize.Field(newSlug), "account", acct.ID)
+}
+
+// appUpdateUnavailable is the fallback refusal of an app update that failed
+// for a reason the customer cannot fix. A control-plane database that did
+// not answer in time gets its own detail and a Retry-After: Hunt 32 H32-56
+// saw "Briefly at capacity — could not update app" for a deadline exceeded
+// while the CP database was slow, which read like a quota.
+func appUpdateUnavailable(err error) *api.Problem {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return api.ErrCapacity("the control plane did not answer in time; the app was not changed, retry shortly").
+			WithHeader("Retry-After", "5")
+	}
+	return api.ErrCapacity("could not update app")
 }

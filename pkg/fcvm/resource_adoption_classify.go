@@ -404,16 +404,28 @@ func (c adoptionClassifier) checkProcess(r resourceJournalRecord) (AdoptionVerdi
 	return AdoptionVerdict{}, true
 }
 
-// checkCgroup verifies the process sits in its plan scope. A memory.max that
-// drifted from the recorded fence is repairable, not a refusal.
+// checkCgroup verifies the process sits in its VM scope: its plan's
+// sub-slice, the flat tenant slice for a tenant VM (ADR-20261109172421 step
+// 6.5), or the build slice for a builder. A memory.max that drifted from the
+// recorded fence is repairable, not a refusal.
 func (c adoptionClassifier) checkCgroup(r resourceJournalRecord) (repair bool, _ AdoptionVerdict, _ bool) {
 	id := r.Lease.Instance
 	raw, err := os.ReadFile(filepath.Join(c.procRoot, strconv.Itoa(r.Process.PID), "cgroup"))
 	if err != nil {
 		return false, refuse(id, adoptionRefusedUnreadable, err.Error()), false
 	}
-	scope := filepath.Join(vmCgroupParent(r.Lease), PerInstanceScope(id))
-	if strings.TrimSpace(string(raw)) != "0::/"+scope {
+	parents := []string{BuilderCgroupParent}
+	if !r.Lease.IsBuilder {
+		parents = []string{ParentCgroupFor(r.Lease.Plan), CgroupMountRoot}
+	}
+	scope := ""
+	for _, parent := range parents {
+		if candidate := filepath.Join(parent, PerInstanceScope(id)); strings.TrimSpace(string(raw)) == "0::/"+candidate {
+			scope = candidate
+			break
+		}
+	}
+	if scope == "" {
 		return false, refuse(id, adoptionRefusedCgroup, "process is in "+strings.TrimSpace(string(raw))), false
 	}
 	maxRaw, err := os.ReadFile(filepath.Join(c.cgroupRoot, scope, "memory.max"))

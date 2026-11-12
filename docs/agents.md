@@ -12,7 +12,8 @@ directly.
 Connect any MCP client to Gregale's hosted MCP server at
 `https://api.gregale.dev/mcp`. There's nothing to install and no key to copy.
 
-With the Gregale CLI installed, one command sets up Claude Code and Codex:
+With the Gregale CLI installed, one command sets up Claude Code, Codex,
+Cursor, VS Code and Windsurf, and prints the steps for Claude Desktop:
 
 ```sh
 gregale mcp connect
@@ -23,7 +24,17 @@ server user-wide, and checks that Gregale answers. `--client codex` picks one,
 `--project` writes this project's `.mcp.json` instead, `--toolsets` selects
 toolsets, and `--dry-run` shows the change first. For an agent with no person
 at a browser, `--headless` mints an agent key, prints it once, and points the
-config at `$GREGALE_AGENT_KEY`. For other clients, add the server yourself:
+config at `$GREGALE_AGENT_KEY`. When an agent does not see Gregale,
+`gregale mcp connect --check` changes nothing and names the fix for each
+problem: the client's config, this project's `.mcp.json`, the agent key, your
+connected agents and approval requests waiting for you. Projects made with
+`gregale init` include a `.mcp.json`, so agents opened there are offered
+Gregale (`--no-mcp` leaves it out). For an agent in GitHub Actions, `gregale mcp connect --ci --repo OWNER/NAME`
+mints an agent key, stores it as the repository secret `GREGALE_AGENT_KEY`
+with `gh` (it is never shown), and writes `.github/workflows/gregale-agent.yml`
+for you to commit. The key needs your approval for deletes, production
+changes, credentials and billing unless you pass `--approvals`. For other
+clients, add the server yourself:
 
 Claude Code:
 
@@ -127,7 +138,14 @@ the exact request are checked again when the change runs.
 An agent key, and an agent you connect to the hosted MCP server, must ask a
 person before it deletes something, deploys or rolls back a production app,
 creates or rotates credentials, or changes billing. Previews are not
-gated. Choose the categories when you create the key:
+gated. Project deploys, environment promotions, release-set changes and GitOps
+source changes count as production on every environment, because an
+environment does not say whether it serves production. Changing a production
+app's variables, secrets, secret references or settings also counts as
+production, because the app runs with them at its next wake; the same writes
+in a stage scope do not ask. Project environment configuration, shared
+secrets and workload policies ask on every environment. Choose the categories
+when you create the key:
 
 ```sh
 gregale key create ci-agent --scopes agent,deploy:write --approvals delete,billing
@@ -144,6 +162,12 @@ owner or admin of its organization, can decide, and only from a signed-in
 session, never with an API key. After you approve, the agent repeats exactly
 the same request once. A request expires 30 minutes after it was made.
 
+Attaching a debugger to a developer environment (`gregale dev --debug`) is
+a `credentials` request, because a debugger can run code in the app and read
+its secrets. A debugger opens a new connection for each attach, so one
+approval covers that environment's debugger for an hour from the first
+attach. After that, the next attach asks again.
+
 The CLI prints the review link with the error. Put `--wait-for-approval`
 before the command (or set `GREGALE_WAIT_FOR_APPROVAL=1`) to have it wait
 for your decision and repeat the request once when you approve:
@@ -151,6 +175,22 @@ for your decision and repeat the request once when you approve:
 ```sh
 gregale --non-interactive --wait-for-approval app delete demo --yes
 ```
+
+An agent can say why it makes a request, so you are not deciding from the
+method and path alone. It sends the `Gregale-Agent-Reason` header (up to 280
+characters) on the write request; the CLI sends it with `--agent-reason`
+before the command, or `GREGALE_AGENT_REASON`:
+
+```sh
+gregale --agent-reason "remove the demo app we replaced with shop-api" app delete demo --yes
+```
+
+The reason shows on the review page, in the approval email, channel
+notification and webhook events, in `GET /v1/agent-approvals` (`reason`) and
+in the agent's activity log. It is the agent's own words, not evidence:
+what you approve is still the exact method, path and body shown. Over MCP,
+the bridge sends the `reason` of the plan you reviewed when it applies the
+plan. The Go SDK sets it per call with `api.WithAgentReason(ctx, text)`.
 
 If you deny, you can give the agent a reason. When the agent repeats a
 request you denied, or one that expired, within 30 minutes, it gets
@@ -170,12 +210,53 @@ gregale webhook account add --target-url https://example.com/approvals \
 Each event names the request, the key, the category, the method and path,
 and, for a new request, its review link. It never includes the request body.
 
+## Limit what an agent adds to your bill
+
+An agent can raise what you pay every month without any traffic: by keeping
+instances warm (`min_instances`, a scaling policy's floor or schedule
+windows), raising the RAM of warm instances, or prewarming. Each agent has a
+monthly budget for this always-on capacity. A change is priced by how much it
+adds, at the overage rate ($0.05 per GB-hour, RAM plus 8 MB per instance,
+730 hours a month), before it is made. Traffic-driven usage is not counted;
+your account's spend cap still bounds it.
+
+Within the budget the change goes through. Past it, Gregale answers
+`428 approval_required` with a review link, as for other approvals, and the
+review page shows the change's added monthly cost. Approving lets that one
+change through. Lowering cost never asks, and does not give budget back.
+
+Without a budget of its own, an agent gets half its plan's default spend cap:
+$5 a month on Hobby, $25 on Pro, $75 on Scale ($0 on Free, which cannot keep
+instances warm). Set a budget, make it unlimited, or go back to the default:
+
+```sh
+gregale mcp connection budget <id>             # budget and this month's use
+gregale mcp connection budget <id> --set 40    # $40 a month
+gregale mcp connection budget <id> --unlimited
+gregale mcp connection budget <id> --default
+```
+
+An agent reads its own with `gregale mcp connection budget --self`, so it can
+plan within it. An organization can cap every agent acting in it; the lower
+of the agent's budget and the ceiling applies:
+
+```sh
+gregale org agent policy set --org acme --agents allow --max-budget 100
+```
+
+In this release the budget covers `PATCH /v1/apps/{slug}`,
+`POST /v1/apps/{slug}/scaling` and `POST /v1/apps/{slug}/prewarm`. Replica
+minimums in deployment manifests and project environment settings are
+priced in a later release.
+
 ## See what an agent changed
 
 Gregale keeps each agent's write requests (`POST`, `PUT`, `PATCH` and
 `DELETE`) for 7 days: when, method, path, the response status, and the
-approval request it went through on, if any. Reads are not listed, and
-neither are requests waiting for approval. Request bodies are never kept.
+approval request it went through on, if any, and the reason the agent gave
+for it (`Gregale-Agent-Reason`), if any. Reads are not listed, except
+debugger attaches (`GET /v1/apps/{slug}/debug`, status `101`). Requests
+waiting for approval are not listed either. Request bodies are never kept.
 
 ```sh
 gregale mcp connection list                 # find the agent's id

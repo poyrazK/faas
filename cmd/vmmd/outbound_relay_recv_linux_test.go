@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -62,5 +63,31 @@ func TestSpliceOutboundRelayPropagatesBytesAndHalfClose(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("splice did not finish after both directions closed")
+	}
+}
+
+// A node without workload identity answers the app's request with a 503
+// problem instead of silently closing the relay connection.
+func TestOutboundRelayUnconfiguredAnswers503(t *testing.T) {
+	app, host := unixConnPair(t)
+	defer func() { _ = app.Close() }()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		writeOutboundRelayUnavailable(host, true)
+		_ = host.Close()
+	}()
+	if _, err := io.WriteString(app, "POST /v1/outbound/x HTTP/1.1\r\nHost: relay\r\nContent-Length: 2\r\n\r\n{}"); err != nil {
+		t.Fatal(err)
+	}
+	_ = app.SetReadDeadline(time.Now().Add(5 * time.Second))
+	reply, err := io.ReadAll(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	got := string(reply)
+	if !strings.HasPrefix(got, "HTTP/1.1 503 ") || !strings.Contains(got, `"code":"outbound_relay_unavailable"`) || !strings.Contains(got, "workload identity") {
+		t.Fatalf("reply = %q", got)
 	}
 }

@@ -40,7 +40,7 @@ func (s *server) appPostgresBindingsProblem(ctx context.Context, app state.App) 
 	}
 	return api.NewProblem(http.StatusConflict, "app_has_postgres_bindings", "Conflict",
 		fmt.Sprintf("Delete this app's managed PostgreSQL bindings before deleting the app: %s.", strings.Join(live, ", "))).
-		WithHint(fmt.Sprintf("Run gregale postgres bindings delete ID for each binding, or gregale data-api delete %s for a Data API.", app.Slug)).
+		WithHint(fmt.Sprintf("Run gregale app delete %[1]s --delete-bindings to revoke them first, gregale postgres bindings delete ID for each binding, or gregale data-api delete %[1]s for a Data API.", app.Slug)).
 		WithDocs("https://gregale.dev/docs/managed-postgres")
 }
 

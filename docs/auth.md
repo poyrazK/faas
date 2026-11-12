@@ -100,8 +100,14 @@ accounts are always asked. See [account](account.md#profile-sign-in-and-sessions
 
 ## Email verification
 
-A password signup must verify its email address. Until it does, deploying and
-billing changes answer `email_verification_required`. Send a new 24-hour link
+A password signup must verify its email address. Until it does, deploying,
+billing changes, creating API keys and organizations, and inviting members
+answer `email_verification_required`. The verification link works only in a
+browser signed in to that account: opened anywhere else, it asks you to sign
+in first and then verifies. (Someone who signed up with your address cannot
+verify their account by getting you to click the link; if you did not create
+the account, use **Forgot password** or a sign-in link instead, which claims
+it.) Send a new 24-hour link
 with `gregale account email verify` or the account page's button. After 30
 days unverified the account keeps its data, but password sign-in and existing
 sessions and keys only reach the account page, logout, deletion, the resend and
@@ -111,7 +117,10 @@ in with Google or GitHub at the same address lifts the restriction. Accounts
 created before 16 November 2026 get their 30 days from that date
 (`api.EmailVerificationEnforcedFrom`). In the last 7 days before the deadline,
 an account that is still in use (a signed-in browser or an API key) is mailed
-a fresh verification link at most once a day.
+a fresh verification link at most once a day. An account still unverified 60
+days after sign-up (counted from 16 November 2026 for older accounts) that
+never created an app and has no billing is scheduled for deletion: its
+address is mailed and it can be restored for 30 days.
 
 If you never verified and forgot your password, use **Forgot password** anyway:
 an unverified account receives a magic sign-in link. Opening it proves the

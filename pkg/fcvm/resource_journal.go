@@ -77,6 +77,9 @@ func resourceLeaseMatches(a, b Lease) bool {
 	// (production-us hunt #9, H9-83).
 	b.processGeneration = a.processGeneration
 	b.profileStartedAt = a.profileStartedAt
+	// cgroupParent is private and absent from JSON too: a lease read back
+	// from a record finds it from the process's cgroup (tenantCgroupParent).
+	b.cgroupParent = a.cgroupParent
 	b.CPUMillicores = a.CPUMillicores
 	return a == b
 }

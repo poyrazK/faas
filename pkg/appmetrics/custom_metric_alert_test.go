@@ -12,6 +12,7 @@ import (
 func TestFetchCustomMetricAlert(t *testing.T) {
 	tests := []struct {
 		name       string
+		seriesKey  string
 		kind       string
 		value      float64
 		err        error
@@ -19,18 +20,20 @@ func TestFetchCustomMetricAlert(t *testing.T) {
 		wantValue  float64
 		wantSource string
 	}{
-		{"gauge averages the window", appmetrics.CustomMetricKindGauge, 42, nil,
+		{"gauge averages the window", "", appmetrics.CustomMetricKindGauge, 42, nil,
 			`max(avg_over_time(gregale_app_custom_metric{app="app-1",name="orders_pending"}[15m])) or vector(-1)`, 42, appmetrics.SourcePrometheus},
-		{"counter is a rate", appmetrics.CustomMetricKindCounter, 0.5, nil,
+		{"counter is a rate", "", appmetrics.CustomMetricKindCounter, 0.5, nil,
 			`max(rate(gregale_app_custom_metric{app="app-1",name="orders_pending"}[15m])) or vector(-1)`, 0.5, appmetrics.SourcePrometheus},
-		{"no samples is insufficient", appmetrics.CustomMetricKindGauge, -1, nil, "", 0, appmetrics.SourceInsufficientPrefix},
-		{"query failure is degraded", appmetrics.CustomMetricKindGauge, 0, errors.New("prometheus unavailable"), "", 0, appmetrics.SourceDegradedPrefix},
+		{"labels read the one series", `region=eu,tier=say "hi"`, appmetrics.CustomMetricKindGauge, 7, nil,
+			`max(avg_over_time(gregale_app_custom_metric_series{app="app-1",name="orders_pending",labels="region=eu,tier=say \"hi\""}[15m])) or vector(-1)`, 7, appmetrics.SourcePrometheus},
+		{"no samples is insufficient", "", appmetrics.CustomMetricKindGauge, -1, nil, "", 0, appmetrics.SourceInsufficientPrefix},
+		{"query failure is degraded", "", appmetrics.CustomMetricKindGauge, 0, errors.New("prometheus unavailable"), "", 0, appmetrics.SourceDegradedPrefix},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var seen string
 			stub := &stubPromQL{fn: func(q string) (float64, error) { seen = q; return tt.value, tt.err }}
-			got, source := appmetrics.FetchCustomMetricAlert(context.Background(), stub, nil, "app-1", "orders_pending", tt.kind, "15m")
+			got, source := appmetrics.FetchCustomMetricAlert(context.Background(), stub, nil, "app-1", "orders_pending", tt.seriesKey, tt.kind, "15m")
 			if tt.wantQuery != "" && seen != tt.wantQuery {
 				t.Fatalf("query = %s, want %s", seen, tt.wantQuery)
 			}
@@ -47,11 +50,11 @@ func TestFetchCustomMetricAlertRejectsBadInput(t *testing.T) {
 		{"app-1", `x"}`, "5m"},
 		{"app-1", "orders", "2h"},
 	} {
-		if _, source := appmetrics.FetchCustomMetricAlert(context.Background(), stub, nil, tc.app, tc.name, appmetrics.CustomMetricKindGauge, tc.rng); !appmetrics.IsDegradedSource(source) {
+		if _, source := appmetrics.FetchCustomMetricAlert(context.Background(), stub, nil, tc.app, tc.name, "", appmetrics.CustomMetricKindGauge, tc.rng); !appmetrics.IsDegradedSource(source) {
 			t.Fatalf("%+v: source = %q, want degraded", tc, source)
 		}
 	}
-	if _, source := appmetrics.FetchCustomMetricAlert(context.Background(), nil, nil, "app-1", "orders", appmetrics.CustomMetricKindGauge, "5m"); !appmetrics.IsDegradedSource(source) {
+	if _, source := appmetrics.FetchCustomMetricAlert(context.Background(), nil, nil, "app-1", "orders", "", appmetrics.CustomMetricKindGauge, "5m"); !appmetrics.IsDegradedSource(source) {
 		t.Fatalf("nil fetcher source = %q, want degraded", source)
 	}
 }

@@ -189,23 +189,33 @@ export class DeploymentsService {
    * Read the HTTP cron set and its deployment staging revision.
    * Snapshots only HTTP scheduling intent for the owned app. Command crons,
    * execution progress and server-held original rows are excluded.
+   * `environment` reads one non-production environment's manifest crons
+   * and its own revision and latest deployment.
    *
    * @returns DeploymentCronStagingSnapshot The captured HTTP scheduling set.
    * @throws ApiError
    */
   public static getDeploymentCronStagingSnapshot({
     slug,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * A project environment of the app; omitted or `production` is production.
+     */
+    environment?: string,
   }): CancelablePromise<DeploymentCronStagingSnapshot> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/deployment-cron-staging',
       path: {
         'slug': slug,
+      },
+      query: {
+        'environment': environment,
       },
       errors: {
         401: `code: unauthorized`,
@@ -936,7 +946,9 @@ export class DeploymentsService {
         \`profile_investigation_limit\`.
         `,
         503: `The GitHub integration unreachable or source-ref tarball fetch failed
-        (code: source_ref_unavailable). Retry in ~30s.
+        (code: source_ref_unavailable). Retry in ~30s. A PR preview whose
+        managed PostgreSQL database is still provisioning answers
+        code: preview_database_provisioning; retry after Retry-After.
         `,
       },
     });

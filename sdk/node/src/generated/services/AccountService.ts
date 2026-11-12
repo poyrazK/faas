@@ -187,7 +187,7 @@ export class AccountService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        403: `An API key was used, or a recent authenticator verification is required (\`step_up_required\`).`,
+        403: `An API key was used, a recent authenticator verification is required (\`step_up_required\`), or, on an account with neither a password nor an authenticator, the browser session signed in more than 15 minutes ago (\`recent_sign_in_required\`): sign in again.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -271,6 +271,7 @@ export class AccountService {
       },
       errors: {
         401: `code: unauthorized`,
+        403: `A recent authenticator verification is required (\`step_up_required\`), or, without an authenticator, the browser session signed in more than 15 minutes ago (\`recent_sign_in_required\`): sign in again.`,
         404: `The provider is not linked to this account.`,
         409: `The provider is the last way to sign in.`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -811,7 +812,7 @@ export class AccountService {
   }
   /**
    * Restore a `deleted_pending` account.
-   * Cancels a staged deletion. Returns 409 `account_not_restorable` if the 30-day grace has elapsed.
+   * Cancels a staged deletion and emails the account. Needs a full-access (`admin`) key or a browser session, and two-factor authentication when it is required. Returns 409 `account_not_restorable` if the 30-day grace has elapsed.
    * @returns AccountResponse Restored.
    * @throws ApiError
    */

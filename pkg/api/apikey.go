@@ -658,8 +658,11 @@ var (
 
 	// Object-storage route surfaces. Admin remains the universal escape
 	// hatch; session-cookie principals are implicitly admin in requireScope.
-	ScopesStorageManageSurface             = []string{ScopeAdmin, ScopeStorageManage}
-	ScopesStorageReadSurface               = []string{ScopeAdmin, ScopeStorageRead}
+	ScopesStorageManageSurface = []string{ScopeAdmin, ScopeStorageManage}
+	ScopesStorageReadSurface   = []string{ScopeAdmin, ScopeStorageRead}
+	// ScopesStorageBindingReadSurface reads compute-binding metadata (never a
+	// credential), so a least-privilege CI key can run `app binding check`.
+	ScopesStorageBindingReadSurface        = []string{ScopeAdmin, ScopeStorageManage, ScopeStorageRead}
 	ScopesStorageWriteSurface              = []string{ScopeAdmin, ScopeStorageWrite}
 	ScopesStorageListSurface               = []string{ScopeAdmin, ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite}
 	ScopesManagedPostgresManageSurface     = []string{ScopeAdmin, ScopeManagedPostgresManage}

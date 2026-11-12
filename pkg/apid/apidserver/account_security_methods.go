@@ -101,6 +101,12 @@ func (s *server) unlinkSignInMethod(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, csrfMismatchProblem)
 		return
 	}
+	// Step-up covers an enrolled account; without an authenticator a
+	// browser session must have signed in recently. A full-access API key
+	// is its own proof here, as documented.
+	if _, isSession := sessionFrom(r); isSession && !acct.MFAEnrolled() && !s.requireRecentSignIn(w, r, acct, "sign_in_method_unlink") {
+		return
+	}
 	if problem := s.unlinkProvider(r.Context(), acct, r.PathValue("provider")); problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -134,6 +140,8 @@ func (s *server) unlinkProvider(ctx context.Context, acct state.Account, provide
 		return api.ErrCapacity("could not remove the sign-in method")
 	}
 	s.audit.Emit(ctx, "account.sign_in_method_unlinked", &acct.ID, map[string]any{"provider": provider})
+	subject, body := mailpkg.SignInMethodRemovedBody(acct.Email, provider, time.Now())
+	s.sendSecurityNotice(ctx, acct, "sign_in_method_removed", subject, body)
 	return nil
 }
 
@@ -292,6 +300,7 @@ func (s *server) revokeAllBrowserSessions(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.forgetTrustedBrowsers(r.Context(), acct.ID, "sign_out_everywhere")
+	s.endPendingGrants(r.Context(), acct.ID, "sign_out_everywhere")
 	s.audit.Emit(r.Context(), "auth.sessions.revoke_all", &acct.ID, map[string]any{"revoked_count": n, "via": "api_key"})
 	writeJSON(w, http.StatusOK, api.SessionsRevokeAllResponse{Revoked: n})
 }

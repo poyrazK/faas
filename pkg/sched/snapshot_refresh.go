@@ -19,6 +19,12 @@ import (
 
 // Snapshot refresh pass outcomes, one per candidate app
 // (schedd_snapshot_refresh_total{outcome}).
+// SnapshotRefreshDetailVCPUs is a would_refresh candidate's detail when its
+// snapshot was captured at another guest vCPU count than its app boots with
+// now: vmmd would refuse the restore (fcvm.ErrSnapshotVCPUMismatch) and the
+// wake would cold-boot (ADR-20261109172421).
+const SnapshotRefreshDetailVCPUs = "vcpu_count_changed"
+
 const (
 	// SnapshotRefreshWouldRefresh: the app's snapshot on the node is stale;
 	// a shadow pass counts it, an on pass would refresh it.
@@ -157,16 +163,19 @@ func (r *SnapshotRefresher) Tick(ctx context.Context) {
 	wg.Wait()
 }
 
-// tickNode runs nodeID's pass when its release, or the CPU shape apps boot
-// with, has not been passed yet. A pass that deferred a refresh, or whose
-// vmmd did not answer, runs again on the next tick.
+// tickNode runs nodeID's pass when its release or the mode has not been
+// passed yet: turning shadow into on refreshes what the shadow pass found
+// without waiting for the next release. A pass
+// that deferred a refresh, or whose vmmd did not answer, runs again on the
+// next tick.
 func (r *SnapshotRefresher) tickNode(ctx context.Context, node state.ComputeNode) {
 	r.reapOrphanedRefreshes(ctx, node.ID)
 	release := ""
 	if node.ReleaseID != nil {
 		release = *node.ReleaseID
 	}
-	key := release + "\x00" + r.e.guestVCPUShapeKey()
+	mode, _ := r.settings()
+	key := release + "\x00" + mode
 	r.mu.Lock()
 	done, seen := r.passed[node.ID]
 	r.mu.Unlock()
@@ -208,15 +217,8 @@ func (r *SnapshotRefresher) Pass(ctx context.Context, nodeID, releaseID string) 
 	if err != nil {
 		return pass, fmt.Errorf("sched: snapshot refresh: list candidates: %w", err)
 	}
-	vcpus, vcpusKnown, err := r.e.readVCPUShapeHistory(ctx)
-	if err != nil {
-		return pass, err
-	}
-	if !vcpusKnown {
-		r.log.Info("snapshot refresh: CPU shape history does not explain the current settings; restores check the vCPU count", "node_id", nodeID)
-	}
 	for _, c := range cands {
-		outcome, detail, target, err := r.classify(ctx, nodeID, c, vcpus, vcpusKnown)
+		outcome, detail, target, err := r.classify(ctx, nodeID, c)
 		if errors.Is(err, ErrSnapshotBackingUnsupported) {
 			r.log.Info("snapshot refresh: node's vmmd predates the backing check; pass ends", "node_id", nodeID, "release_id", releaseID)
 			break
@@ -246,8 +248,8 @@ func (r *SnapshotRefresher) Pass(ctx context.Context, nodeID, releaseID string) 
 
 // classify decides one candidate without changing anything, and for a stale
 // one returns what its refresh boots. An error means the node's vmmd did not
-// answer. vcpus is consulted only when vcpusKnown.
-func (r *SnapshotRefresher) classify(ctx context.Context, nodeID string, c state.SnapshotRefreshCandidate, vcpus vcpuShapeHistory, vcpusKnown bool) (outcome, detail string, t refreshTarget, err error) {
+// answer.
+func (r *SnapshotRefresher) classify(ctx context.Context, nodeID string, c state.SnapshotRefreshCandidate) (outcome, detail string, t refreshTarget, err error) {
 	e := r.e
 	t.app, t.acct, t.limits, err = e.resolveAppAccount(ctx, c.AppID)
 	if err != nil {
@@ -277,16 +279,12 @@ func (r *SnapshotRefresher) classify(ctx context.Context, nodeID string, c state
 	if (t.app.AppProtocol == api.AppProtocolHTTP2 || t.app.AppProtocol == api.AppProtocolGRPC) && t.snap.BaseImageVersion != fcvm.FAAS_BASE_IMAGE_VERSION {
 		return SnapshotRefreshWouldRefresh, ColdReasonBaseImage, t, nil
 	}
-	// The check vmmd makes after the restore (fcvm.ErrSnapshotVCPUMismatch).
-	// The app's last instance ran at the count schedd chose when it
-	// started, and so does the snapshot it captured or restored from: an
-	// instance that started before a change and parked after it captured the
-	// old count.
-	vcpusAt := c.StartedAt
-	if vcpusAt.IsZero() {
-		vcpusAt = t.snap.CreatedAt
-	}
-	if vcpusKnown && vcpus.vcpusAt(vcpusAt, t.app, t.limits) != e.guestVCPUs(t.app, t.limits) {
+	// The check vmmd makes after the restore (fcvm.ErrSnapshotVCPUMismatch):
+	// the app's last instance booked the vCPU count it booted or restored
+	// with, and so does the snapshot it captured or restored from. An
+	// instance booted before a change and parked after it captured the old
+	// count.
+	if c.VCPUs > 0 && c.VCPUs != appVCPUs(t.app) {
 		return SnapshotRefreshWouldRefresh, SnapshotRefreshDetailVCPUs, t, nil
 	}
 	verdict, detail, err := r.askBacking(ctx, nodeID, t)

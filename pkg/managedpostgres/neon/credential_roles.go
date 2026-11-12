@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -21,6 +22,9 @@ type credentialRole struct {
 	name, schemaOwner, authOwner, marker, scope, database, legacy, bindingID string
 	access                                                                   managedpostgres.CredentialAccess
 	liveLegacyScope                                                          string
+	// session marks a session login, whose connection limit is enforced on
+	// an existing role too (ADR-20261110120000).
+	session bool
 }
 
 type credentialRoleManager interface {
@@ -50,11 +54,17 @@ func (p *Provider) credentialRole(request managedpostgres.CredentialRequest) cre
 	case managedpostgres.CredentialAuth:
 		prefix = "gregale_auth_"
 	}
+	connectionLimit := request.ConnectionLimit
+	if request.Access == managedpostgres.CredentialSession && connectionLimit == 0 {
+		// Session logins hold server connections directly; the role limit
+		// keeps one binding from exhausting the compute (ADR-20261110120000).
+		connectionLimit = api.SessionBindingConnectionLimit
+	}
 	return credentialRole{name: prefix + hex.EncodeToString(identity[:20]), schemaOwner: "gregale_schema_" + hex.EncodeToString(owner[:16]),
-		connectionLimit: request.ConnectionLimit,
-		authOwner:       "gregale_authowner_" + hex.EncodeToString(owner[:16]), scope: hex.EncodeToString(scope[:20]),
+		connectionLimit: connectionLimit, session: request.Access == managedpostgres.CredentialSession,
+		authOwner: "gregale_authowner_" + hex.EncodeToString(owner[:16]), scope: hex.EncodeToString(scope[:20]),
 		marker:   "gregale:credential:v1:" + hex.EncodeToString(scope[:20]) + ":" + string(request.Access),
-		database: p.databaseName, access: request.Access, legacy: p.roleName(request.ProviderResourceID, request.IdentityKey), bindingID: request.BindingID}
+		database: p.databaseName, access: request.Access.Privileges(), legacy: p.roleName(request.ProviderResourceID, request.IdentityKey), bindingID: request.BindingID}
 }
 
 func (m *sqlCredentialRoles) connection(ctx context.Context, material managedpostgres.CredentialMaterial) (*pgx.Conn, error) {
@@ -194,6 +204,11 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 	}
 	if !info.matches(role) {
 		return managedpostgres.ErrConflict
+	}
+	if role.session {
+		if _, err := tx.Exec(ctx, "ALTER ROLE "+roleIdentifier(role.name)+" CONNECTION LIMIT "+strconv.FormatInt(role.connectionLimit, 10)); err != nil {
+			return err
+		}
 	}
 	if role.connectionLimit > 0 {
 		var limit int64

@@ -286,7 +286,7 @@ func TestRouteHealthNotificationsPostgresRollback(t *testing.T) {
 			}
 			current, _ := s.DeploymentByID(t.Context(), d.ID)
 			audits, _ := s.ListDeploymentAudit(t.Context(), d.ID, 10)
-			if current.CanaryStep != 0 || current.TrafficPercent != 1 || len(audits) != 0 {
+			if current.CanaryStep != 0 || current.TrafficPercent != 1 || len(advanceAudits(audits)) != 0 {
 				t.Fatal("failure changed traffic/audit")
 			}
 			switch fault {

@@ -557,6 +557,10 @@ type worker struct {
 	// completion version 1 separates a response from execution completion and
 	// uses request IDs even on a one-slot worker.
 	completion bool
+	// functionHooks is set when the adapter runs a function's snapshot hooks
+	// for an envelope's function_hook (ADR-20261110190000); an older adapter
+	// would pass that envelope to the handler instead.
+	functionHooks bool
 	// mux is set when slots > 1 or execution completion uses request IDs.
 	// The pool's mutex guards active, gone and removed.
 	mux     *mux
@@ -598,6 +602,7 @@ func startWorker(ctx context.Context, spec Spec) (*worker, error) {
 			Concurrency              int  `json:"concurrency"`
 			CompletionVersion        int  `json:"completion_version"`
 			ResourceLifecycleVersion int  `json:"resource_lifecycle_version"`
+			FunctionHooksVersion     int  `json:"function_hooks_version"`
 		}
 		if err := json.Unmarshal(line, &handshake); err != nil {
 			ready <- fmt.Errorf("decode ready handshake: %w", err)
@@ -613,6 +618,7 @@ func startWorker(ctx context.Context, spec Spec) (*worker, error) {
 		}
 		w.slots = min(max(handshake.Concurrency, 1), maxWorkerSlots)
 		w.completion = handshake.CompletionVersion == 1
+		w.functionHooks = handshake.FunctionHooksVersion == 1
 		ready <- nil
 	}()
 	select {

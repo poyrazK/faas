@@ -83,3 +83,32 @@ func TestTelemetryCoverageReceiver(t *testing.T) {
 		})
 	}
 }
+
+// The analytics part of a heartbeat reaches the store; counting reads as off
+// on an apid that keeps no rollups (ADR-20261103113952 amendment 6).
+func TestTelemetryCoverageReceiverAnalyticsPart(t *testing.T) {
+	app := uuid.NewString()
+	for _, rollups := range []bool{true, false} {
+		store := &coverageReceiverStore{MemStore: state.NewMemStore()}
+		receiver := NewRequestTelemetryReceiver(store, nil, nil, true)
+		if rollups {
+			NewRequestAnalyticsRollups(&fakeRollupStore{}, nil, nil).applyRequestTelemetry(receiver)
+		}
+		_, err := receiver.RecordTelemetryCoverage(t.Context(), &apidpb.TelemetryCoverage{
+			NodeName: state.DefaultLocalNodeName, BootId: uuid.NewString(), Sequence: 1, Enabled: true, SamplingBasisPoints: 10000,
+			SourceAtUnixMs: time.Now().UnixMilli(), AppScoped: true,
+			AppGaps:   []*apidpb.TelemetryAppGap{{AppId: app, AnalyticsDroppedCount: 3, AnalyticsPendingCount: 2}},
+			Analytics: &apidpb.AnalyticsCoverage{Counting: true, UnattributedDroppedTotal: 1},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		a := store.report.Analytics
+		if a == nil || a.Counting != rollups || a.UnattributedDroppedTotal != 1 {
+			t.Fatalf("rollups %v: analytics = %+v", rollups, a)
+		}
+		if g := store.report.AppGaps; len(g) != 1 || g[0].AnalyticsDroppedCount != 3 || g[0].AnalyticsPendingCount != 2 {
+			t.Fatalf("gaps = %+v", g)
+		}
+	}
+}

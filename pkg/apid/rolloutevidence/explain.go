@@ -92,6 +92,10 @@ func (r Reader) Explain(ctx context.Context, app state.App, deploymentID string,
 		return out, nil
 	}
 	out.DeploymentID, out.TrafficPercent = dep.ID, dep.TrafficPercent
+	if dep.Status == state.DeployCancelled {
+		out.Headline = "Cancelled before it served traffic: no rollout to explain."
+		return out, nil
+	}
 	out.State, out.Decision = r.decision(ctx, dep)
 	if out.State == api.DebugRolloutAborted && out.Decision == nil {
 		out.AbortedReason = dep.RolloutAbortedReason
@@ -158,6 +162,12 @@ func (r Reader) rolloutDeployment(ctx context.Context, appID, deploymentID strin
 		return state.Deployment{}, false, fmt.Errorf("rolloutevidence: list deployments: %w", err)
 	}
 	for _, dep := range deps {
+		// A cancelled build never served: cancellation stamps its rollout
+		// aborted, which read as "Rolled back" against a stable release that
+		// did not exist yet (Hunt 32 H32-43).
+		if dep.Status == state.DeployCancelled {
+			continue
+		}
 		if dep.CanaryTotalSteps > 0 || dep.RolloutState == api.DebugRolloutAborted || len(dep.RolloutDecision) > 0 {
 			return dep, true, nil
 		}

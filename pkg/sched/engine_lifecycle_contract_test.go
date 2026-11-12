@@ -73,10 +73,6 @@ func TestPrimeAllowsWarmReplacementAtServingConcurrencyCap(t *testing.T) {
 	store := state.NewMemStore()
 	acct, app, oldDep := sched.SeedApp(t, store, api.PlanScale, 1024, 1)
 	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
-	limits, ok := api.LimitsFor(acct.Plan)
-	if !ok {
-		t.Fatalf("LimitsFor(%q) failed", acct.Plan)
-	}
 
 	old, err := store.CreateInstance(context.Background(), app.ID, oldDep.ID,
 		string(state.StateRunning), app.RAMMB, (*e.DefaultLocalNodeID()), "old-live-wake")
@@ -85,7 +81,7 @@ func TestPrimeAllowsWarmReplacementAtServingConcurrencyCap(t *testing.T) {
 	}
 	if err := e.Ledger().Admit(sched.Request{
 		Instance: old.ID, AppID: app.ID, DeploymentID: oldDep.ID,
-		Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU,
+		Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: api.SizeVCPUs(app.RAMMB),
 		MaxConcurrency: app.MaxConcurrency, NodeID: (*e.DefaultLocalNodeID()),
 	}); err != nil {
 		t.Fatalf("admit old live instance: %v", err)

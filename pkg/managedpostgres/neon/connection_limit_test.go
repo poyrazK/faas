@@ -3,6 +3,7 @@ package neon
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -34,7 +35,16 @@ func TestBoundedCredentialEnforcesConnectionLimitBeforeDelivery(t *testing.T) {
 	if err = first.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
-	replacement, err := pgx.ConnectConfig(ctx, cfg)
+	// The server frees the closed connection's slot when its backend exits,
+	// which can trail the client's close: retry the refusal briefly.
+	var replacement *pgx.Conn
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		replacement, err = pgx.ConnectConfig(ctx, cfg)
+		if err == nil || !errors.As(err, &pg) || pg.Code != "53300" || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

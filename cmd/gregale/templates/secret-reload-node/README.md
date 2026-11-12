@@ -23,8 +23,8 @@ gregale deploy --template secret-reload-node --name <slug> \
 
 The included `gregale.yaml` declares the shared adapter's snapshot hooks.
 `/internal/before-checkpoint` drains every SQL session before a capture, and
-`/internal/after-restore` builds and validates a fresh pool from the latest
-snapshot before readiness. Both answer only loopback requests carrying their
+`/internal/after-restore` builds a fresh pool from the latest snapshot without
+running SQL; the first query connects (ADR-20261109180000). Both answer only loopback requests carrying their
 exact marker header. Declaring the checkpoint hook turns off warm captures.
 
 The Dockerfile opts into `SIGHUP` and required reload readiness. The coordinator

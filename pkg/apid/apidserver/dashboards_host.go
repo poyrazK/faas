@@ -145,7 +145,7 @@ func (d dashboardSources) Released(acct state.Account, app state.App, kind strin
 }
 
 func (d dashboardSources) CustomMetricSeries(ctx context.Context, app state.App, name, rng string) api.CustomMetricSeriesResponse {
-	return d.s.customMetricSeries(ctx, app.ID, name, d.s.customMetricKind(ctx, app.ID, name), rng, time.Now().UTC())
+	return d.s.customMetricSeries(ctx, app.ID, name, "", d.s.customMetricKind(ctx, app.ID, name), rng, time.Now().UTC())
 }
 
 func (d dashboardSources) SLOStatus(ctx context.Context, acct state.Account, app state.App, sloID string) (*api.SLOStatus, error) {

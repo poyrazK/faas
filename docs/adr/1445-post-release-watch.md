@@ -96,3 +96,9 @@ The cursor wraps after a short or empty page so a later regression in an earlier
 healthy release is still detected. Removed candidates cannot shift the next
 page past another release. The watch window, telemetry comparison and guarded
 rollback remain unchanged; the cursor grants no execution authority.
+
+## Amendment 7 (2026-11-10): latency is judged on the routes both releases served
+
+A production test (Hunt 32 H32-33, 2026-11-09) shipped a release of a small app that added an endpoint which is slow by design (an egress check, 3 s). The release served 34 requests in its window. Three of them were that endpoint and one was a cold health check, so its whole-app p95 was 800 ms against its predecessor's 40 ms, and the watch rolled production back to the predecessor seven minutes after the deploy had exited 0. The predecessor had never served the new endpoint, so the comparison measured the change in traffic mix, not a regression.
+
+When the whole-app p95 rule fires, the watch now runs one more query: the release's and the predecessor's p95 over only the method and route pairs both of them served in their windows (`RequestTelemetrySharedRouteLatency`, long-lived sessions excluded as before). It rolls back only if the canary latency rule (factor, absolute delta, and the 20-request floor on both sides) also holds on that shared sample. The decision summary then says "on routes both releases served". A route only one side served, and a shared sample below the floor, cannot trigger a latency rollback. The 5xx rules and release gates are unchanged, so a new route that fails still rolls back. The query runs only after the whole-app rule fired, so a healthy release costs no extra read. A telemetry reader without the query keeps the whole-app verdict. The in-rollout canary comparison (ADR-1446) is unchanged.

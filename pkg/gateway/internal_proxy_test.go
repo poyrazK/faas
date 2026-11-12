@@ -1005,6 +1005,35 @@ func (c *chunkedReader) Close() error {
 	return nil
 }
 
+// A body whose length the upstream declared flushes every chunk but the one
+// that completes it: the server sends that one with the end of the response.
+// A body of unknown length flushes every chunk.
+func TestCopyResponseBodyLeavesTheFinalChunkOfADeclaredLengthToTheServer(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		chunks int
+		length int64
+		want   int
+	}{
+		{"one chunk, declared", 1, 1024, 0},
+		{"three chunks, declared", 3, 3 * 1024, 2},
+		{"three chunks, unknown length", 3, -1, 3},
+		{"declared longer than sent", 2, 4 * 1024, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &flushingRecorder{}
+			src := io.NopCloser(io.Reader(newChunkedReader(tc.chunks, 1024, 0)))
+			n, err := copyResponseBodyWithActivity(context.Background(), rec, src, tc.length, nil)
+			if err != nil || n != int64(tc.chunks*1024) {
+				t.Fatalf("copied %d bytes, err %v; want %d, nil", n, err, tc.chunks*1024)
+			}
+			if got := rec.flushCount(); got != tc.want {
+				t.Fatalf("Flush count = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestCopyResponseBody_FlushesPerChunk pins the issue #687
 // per-Write Flush contract: an http.Flusher dst sees one
 // Flush() call per non-empty Read, so SSE / chunked-JSON

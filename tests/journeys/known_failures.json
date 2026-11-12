@@ -45,6 +45,16 @@
     "since": "2026-10-29"
   },
   {
+    "step": "TestQueuePullLeases/queues_enabled",
+    "bug": "queues and pull leases are still preview (GA row 99): gregale feature list reports them disabled until they are released to the e2e account, and the journey's other steps report blocked; remove once the owner releases them",
+    "since": "2026-11-05"
+  },
+  {
+    "step": "TestOutboundIntegrations/outbound_enabled",
+    "bug": "outbound integrations are still preview (GA row 115): gregale feature list reports outbound-integrations disabled until it is released to the e2e account, and the journey's other steps report blocked; remove once the owner releases it",
+    "since": "2026-11-05"
+  },
+  {
     "step": "TestRealtime/realtime_enabled",
     "bug": "realtime is still preview (GA row 112): gregale feature list reports realtime disabled until the capability is released to the e2e account, and the journey's other steps report blocked; remove once the owner releases it",
     "since": "2026-10-30"

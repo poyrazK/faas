@@ -17,6 +17,12 @@ type ObjectVersionDeleter interface {
 	DeleteObjectVersion(context.Context, string, string, string) (VersionDeleteResult, error)
 }
 
+// GovernanceBypassDeleter deletes a version whose GOVERNANCE retention has
+// not ended. COMPLIANCE retention still refuses.
+type GovernanceBypassDeleter interface {
+	DeleteObjectVersionBypassingGovernance(context.Context, string, string, string) (VersionDeleteResult, error)
+}
+
 type VersionDeleteResult struct {
 	DeleteMarker bool
 }

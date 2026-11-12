@@ -69,6 +69,33 @@ func postReleaseWindow(t rollbackOn5xxTelemetry, ctx context.Context, appID, dep
 		ColdBootRequests: coldBoot, ColdBootP95LatencyMS: coldBootP95}, nil
 }
 
+// postReleaseSharedRouteTelemetry is the optional reader for the shared-route
+// latency check; Postgres request telemetry implements it.
+type postReleaseSharedRouteTelemetry interface {
+	RequestTelemetrySharedRouteLatency(ctx context.Context, appID, releaseID string, releaseSince, releaseUntil time.Time, baselineID string, baselineSince, baselineUntil time.Time) (state.SharedRouteLatency, error)
+}
+
+// confirmSharedRouteLatency re-judges a whole-app p95 regression over the
+// routes both releases served (ADR-1445 amendment 2026-11-10, Hunt 32
+// H32-33). It runs only after the whole-app p95 regressed, so the extra read
+// happens on suspected regressions alone. A reader without the query keeps
+// the whole-app verdict.
+func confirmSharedRouteLatency(ctx context.Context, telemetry rollbackOn5xxTelemetry, c state.PostReleaseWatchCandidate, wholeAppReason string, since, until, baselineEnd time.Time) (rule, reason string, regressed bool, err error) {
+	reader, ok := telemetry.(postReleaseSharedRouteTelemetry)
+	if !ok {
+		return api.RolloutRuleAbortPostReleaseP95, wholeAppReason, true, nil
+	}
+	shared, err := reader.RequestTelemetrySharedRouteLatency(ctx, c.AppID, c.DeploymentID, since, until,
+		c.PredecessorID, baselineEnd.Add(-api.PostReleaseWatchBaseline), baselineEnd)
+	if err != nil {
+		return "", "", false, fmt.Errorf("read shared-route latency: %w", err)
+	}
+	rule, reason, regressed = release.ConfirmPostReleaseLatency(
+		canary.HealthWindow{Requests: shared.ReleaseRequests, P95LatencyMS: shared.ReleaseP95LatencyMS},
+		canary.HealthWindow{Requests: shared.BaselineRequests, P95LatencyMS: shared.BaselineP95LatencyMS})
+	return rule, reason, regressed, nil
+}
+
 // evaluatePostRelease compares the release since it completed with its
 // predecessor's traffic before the rollout started. Telemetry is bucketed by
 // minute, so the bucket holding the window's end still counts.
@@ -78,6 +105,9 @@ func (s *server) evaluatePostRelease(ctx context.Context, store state.PostReleas
 	if end := c.RolloutCompletedAt.Add(api.PostReleaseWatchWindow); end.Before(now) {
 		until = end.Truncate(time.Minute).Add(time.Minute)
 	}
+	// Only closed minutes: an open minute holds 5xx rows but not the folded
+	// 2xx yet (ADR-625 amendment 2026-11-10).
+	until = canary.ClosedTelemetryUntil(until, now)
 	current, err := postReleaseWindow(telemetry, ctx, c.AppID, c.DeploymentID, since, until)
 	if err != nil {
 		return fmt.Errorf("read release telemetry: %w", err)
@@ -88,6 +118,11 @@ func (s *server) evaluatePostRelease(ctx context.Context, store state.PostReleas
 		return fmt.Errorf("read predecessor telemetry: %w", err)
 	}
 	rule, reason, regressed := release.JudgePostRelease(current, previous)
+	if regressed && rule == api.RolloutRuleAbortPostReleaseP95 {
+		if rule, reason, regressed, err = confirmSharedRouteLatency(ctx, telemetry, c, reason, since, until, baselineEnd); err != nil {
+			return err
+		}
+	}
 	var gates releasegate.Verdict
 	if !regressed {
 		// ADR-20261019071734: the app's own signals, judged against the
@@ -109,6 +144,15 @@ func (s *server) evaluatePostRelease(ctx context.Context, store state.PostReleas
 			return nil
 		}
 		rule, reason = api.RolloutRuleAbortPostReleaseGate, "after the rollout completed: "+gates.Summary()
+	}
+	if regressed {
+		// Request telemetry a gateway dropped would compare partial counts;
+		// judge again once coverage holds (ADR-625 amendment 2026-11-10).
+		for _, window := range [][2]time.Time{{since, until}, {baselineEnd.Add(-api.PostReleaseWatchBaseline), baselineEnd}} {
+			if lost, err := s.releaseTelemetryLost(ctx, telemetry, window[0], window[1]); err != nil || lost {
+				return err
+			}
+		}
 	}
 	decision := release.PostReleaseDecision(rule, reason, c.PredecessorID, current, previous, since, until, now)
 	decision.Gates = gates.Results

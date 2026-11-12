@@ -206,6 +206,10 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := validateCustomMetricAlertLabels(req.Metric, req.CustomMetricLabels); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := s.validateSyntheticCheckAlert(r.Context(), app.ID, req); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -255,6 +259,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		EdgeRuleID:                      req.EdgeRuleID,
 		FailureSource:                   state.AlertFailureSource(req.FailureSource),
 		CustomMetricName:                req.CustomMetricName,
+		CustomMetricLabels:              req.CustomMetricLabels,
 		LogQuery:                        logQuery,
 		SLOID:                           req.SLOID,
 		SyntheticCheckID:                req.SyntheticCheckID,
@@ -308,6 +313,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		"window_spec":                         row.WindowSpec,
 		"failure_source":                      row.FailureSource,
 		"custom_metric_name":                  row.CustomMetricName,
+		"custom_metric_labels":                row.CustomMetricLabels,
 		"log_query":                           row.LogQuery,
 		"slo_id":                              row.SLOID,
 		"synthetic_check_id":                  row.SyntheticCheckID,
@@ -761,6 +767,7 @@ func alertRuleResponse(r state.AlertRule) api.AlertRuleResponse {
 		EdgeRuleID:                      r.EdgeRuleID,
 		FailureSource:                   string(r.FailureSource),
 		CustomMetricName:                r.CustomMetricName,
+		CustomMetricLabels:              r.CustomMetricLabels,
 		LogQuery:                        r.LogQuery,
 		SLOID:                           r.SLOID,
 		SyntheticCheckID:                r.SyntheticCheckID,
@@ -1186,6 +1193,9 @@ func resolveAndCheckEgress(c context.Context, rawURL string) *api.Problem {
 	if host == "" {
 		return api.ErrAlertRuleInvalid("webhook_url must include a host")
 	}
+	if legacyNumericHost(host) {
+		return api.ErrAlertRuleInvalid(fmt.Sprintf("the URL's host %s is a numeric address in a legacy form; use a hostname or a dotted IPv4 address", host))
+	}
 	// Resolve. If the host doesn't resolve at create-time we
 	// don't 403 — the customer might be staging a rule that fires
 	// later when DNS is back. The dispatcher re-resolves on every
@@ -1250,4 +1260,33 @@ func ptrAlertWindowSpec(p *string) *state.AlertWindowSpec {
 	}
 	v := state.AlertWindowSpec(*p)
 	return &v
+}
+
+// legacyNumericHost reports a host that is not a canonical IP address but
+// whose last label is numeric: "2130706433", "127.1" or "0x7f000001". C
+// resolvers read these as IPv4 addresses (inet_aton) while Go's resolver
+// does not resolve them, so the egress check above saw no address and a
+// rule pointing at 127.0.0.1 was saved (production, 2026-11-09). No real
+// hostname ends in a numeric label (RFC 3696 §2) (ADR-20261110090000).
+func legacyNumericHost(host string) bool {
+	if _, err := netip.ParseAddr(host); err == nil {
+		return false
+	}
+	labels := strings.Split(strings.TrimSuffix(host, "."), ".")
+	last := strings.ToLower(labels[len(labels)-1])
+	if last == "" {
+		return false
+	}
+	digits := strings.TrimPrefix(last, "0x")
+	hex := digits != last
+	if digits == "" {
+		return hex
+	}
+	for _, r := range digits {
+		if r >= '0' && r <= '9' || hex && r >= 'a' && r <= 'f' {
+			continue
+		}
+		return false
+	}
+	return true
 }

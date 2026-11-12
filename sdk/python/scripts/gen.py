@@ -873,7 +873,7 @@ from ._sse import SseEvent, aiter_sse, iter_sse
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
-from .functions import function
+from .functions import FunctionHookContext, function
 from .idempotency import (
     IdempotencyKey,
     current_idempotency_key,
@@ -943,6 +943,7 @@ def __dir__() -> list[str]:
 
 __all__ = (
     "function",
+    "FunctionHookContext",
     "FaaSClient",
     "FaaSClientOptions",
     "Client",

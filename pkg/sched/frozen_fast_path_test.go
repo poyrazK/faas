@@ -161,9 +161,8 @@ func (tc fallbackCase) check(t *testing.T, f *sched.FrozenFixture, ops *wire.Ops
 
 func TestTicketedThawLeavesARunningInstanceToPhaseOne(t *testing.T) {
 	f, ops := frozenWithTicket(t)
-	limits := api.MustLimitsFor(api.PlanPro)
 	if err := (*f.E()).Ledger().Admit(sched.Request{Instance: "00000000-0000-4000-8000-00000000f001", AppID: (*f.App()).ID, DeploymentID: (*f.Dep()).ID,
-		Plan: api.PlanPro, RAMMB: (*f.App()).RAMMB, VCPU: limits.VCPU, CPUMillicores: 1000, MaxConcurrency: (*f.App()).MaxConcurrency, NodeID: (*f.Ins()).NodeID}); err != nil {
+		Plan: api.PlanPro, RAMMB: (*f.App()).RAMMB, VCPU: api.SizeVCPUs((*f.App()).RAMMB), CPUMillicores: 1000, MaxConcurrency: (*f.App()).MaxConcurrency, NodeID: (*f.Ins()).NodeID}); err != nil {
 		t.Fatal(err)
 	}
 	if _, handled := (*f.E()).ThawFromTicketLocked(t.Context(), (*f.App()).ID, "", "", (*f.Ins()).StartedAt); handled {

@@ -221,6 +221,29 @@ func TestSnapshotRefreshTickRunsOncePerRelease(t *testing.T) {
 	}
 }
 
+// Turning shadow into on runs the pass again for the same release, so what
+// the shadow pass found is refreshed without waiting for the next release.
+func TestSnapshotRefreshTickRunsAgainWhenShadowTurnsOn(t *testing.T) {
+	f := newRefreshFixture(t)
+	f.shadow(t)
+	_, key := f.app(t, f.nodeA.ID, time.Hour, state.Snapshot{})
+	f.vmm.verdicts[key] = sched.SnapshotBackingCurrent
+
+	f.refresher.Tick(f.ctx)
+	f.refresher.Tick(f.ctx)
+	if len(f.vmm.asked) != 1 {
+		t.Fatalf("shadow: vmmd asked %v, want one pass", f.vmm.asked)
+	}
+	if err := f.refresher.SetMode(api.SnapshotRefreshOn); err != nil {
+		t.Fatal(err)
+	}
+	f.refresher.Tick(f.ctx)
+	f.refresher.Tick(f.ctx)
+	if len(f.vmm.asked) != 2 {
+		t.Fatalf("on: vmmd asked %v, want one more pass for the same release", f.vmm.asked)
+	}
+}
+
 // A vmmd that predates the check ends the pass for this release instead of
 // being asked every tick.
 func TestSnapshotRefreshStopsOnAnOlderVMMD(t *testing.T) {

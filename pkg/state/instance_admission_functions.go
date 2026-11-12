@@ -194,6 +194,7 @@ func (s *PgStore) admitWakeInstance(ctx context.Context, appID, deploymentID, ne
 	compute := nodeComputeAdmission(ctx, nodeID)
 	_, fenceOwner := fenceParams(fenceApp(ctx, appID))
 	booked := nodeBookedCPUMillicores(ctx, nodeID)
+	bookedVCPU := nodeBookedVCPU(ctx, nodeID)
 	// ADR-20261107122928: the form that takes the reservation discount, when
 	// the database has it.
 	admitArgs := []any{appID, deploymentID, newState, ramMB, nodeID, wakeID, mode,
@@ -225,10 +226,10 @@ func (s *PgStore) admitWakeInstance(ctx context.Context, appID, deploymentID, ne
 			}
 			return scanCreatedInstance(errorRow{err}, wakeID, appID)
 		}
-		if booked <= 0 {
+		if booked <= 0 && bookedVCPU <= 0 {
 			return admit(s.pool.QueryRow)
 		}
-		return admitWithBookedCPU(ctx, s.pool, booked, admit)
+		return admitWithBookings(ctx, s.pool, booked, bookedVCPU, admit)
 	})
 	if undefinedFunction(err) {
 		s.markAdmissionFunctionsMissing()
@@ -337,20 +338,21 @@ func (s *PgStore) publishOnGenerationFunction(ctx context.Context, p RuntimeInst
 	return instance, nil
 }
 
-// admitWithBookedCPU runs a one-statement admission in a transaction that
-// first sets the CPU booking capture_instance_capacity stores on the new row
-// (ADR-20261101160231 step 5b).
-func admitWithBookedCPU(ctx context.Context, pool interface {
+// admitWithBookings runs a one-statement admission in a transaction that
+// first sets the CPU booking and guest vCPU count capture_instance_capacity
+// stores on the new row (ADR-20261101160231 step 5b, ADR-20261109172421
+// step 5). A non-positive value is left unset.
+func admitWithBookings(ctx context.Context, pool interface {
 	Begin(context.Context) (pgx.Tx, error)
-}, booked int,
+}, booked, bookedVCPU int,
 	admit func(func(context.Context, string, ...any) pgx.Row) (Instance, error)) (Instance, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return Instance{}, fmt.Errorf("state: admission: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `SELECT set_config('faas.instance_booked_cpu_millicores', $1::text, true)`, strconv.Itoa(booked)); err != nil {
-		return Instance{}, fmt.Errorf("state: admission: booked CPU: %w", err)
+	if err := setInstanceBookings(ctx, tx, booked, bookedVCPU); err != nil {
+		return Instance{}, fmt.Errorf("state: admission: %w", err)
 	}
 	inst, err := admit(tx.QueryRow)
 	if err != nil {
@@ -360,4 +362,22 @@ func admitWithBookedCPU(ctx context.Context, pool interface {
 		return Instance{}, fmt.Errorf("state: admission: commit: %w", mapErr(err))
 	}
 	return inst, nil
+}
+
+// setInstanceBookings sets, for the rest of tx, what capture_instance_capacity
+// stores on the instance row tx inserts: the CPU booking and the guest vCPU
+// count. A non-positive value is left unset, keeping the app's and the
+// plan's.
+func setInstanceBookings(ctx context.Context, tx pgx.Tx, bookedCPU, bookedVCPU int) error {
+	if bookedCPU > 0 {
+		if _, err := tx.Exec(ctx, `SELECT set_config('faas.instance_booked_cpu_millicores', $1::text, true)`, strconv.Itoa(bookedCPU)); err != nil {
+			return fmt.Errorf("booked CPU: %w", err)
+		}
+	}
+	if bookedVCPU > 0 {
+		if _, err := tx.Exec(ctx, `SELECT set_config('faas.instance_booked_vcpu', $1::text, true)`, strconv.Itoa(bookedVCPU)); err != nil {
+			return fmt.Errorf("booked vCPU: %w", err)
+		}
+	}
+	return nil
 }

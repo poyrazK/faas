@@ -219,8 +219,10 @@ func TestFinancialComputeAccountReservations(t *testing.T) {
 					t.Fatal(err)
 				}
 				b := f.balance(t)
-				if b.AllowanceGranted != 400000 || b.AllowanceReserved != 307200 || b.ReservedMillicents != 0 {
-					t.Fatalf("grant was summed/revoked: %+v", b)
+				// A downgrade cannot retain the larger historical grant, and
+				// an upgrade cannot refund previously committed paid authority.
+				if b.AllowanceGranted != 500 || b.AllowanceReserved != 500 || b.ReservedMillicents <= 0 {
+					t.Fatalf("grant minted unfunded quantity: %+v", b)
 				}
 				if _, err := store.DeleteFinancialBudget(t.Context(), f.account.ID, f.policy.ID, f.policy.Revision, "test"); err != nil {
 					t.Fatal(err)
@@ -237,7 +239,7 @@ func TestFinancialComputeAccountReservations(t *testing.T) {
 				}
 				f.policy = p
 				after := f.balance(t)
-				if after.AllowanceGranted != 400000 || after.AllowanceCommitted == 0 || after.AllowanceRemaining == 400000 {
+				if after.AllowanceGranted != 500 || after.AllowanceCommitted == 0 || after.AllowanceRemaining == 500 {
 					t.Fatalf("replacement reset usage: %+v", after)
 				}
 			})

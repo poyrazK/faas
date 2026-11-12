@@ -32,6 +32,8 @@ const (
 // toolsetOf assigns every tool a primary toolset. Shared plan helpers are also
 // included in the workflow groups below. TestEveryToolHasAToolset keeps this complete.
 var toolsetOf = map[string]string{
+	"gregale_wait_for_approval":              ToolsetCore,
+	"gregale_agent_activity":                 ToolsetOperate,
 	"gregale_get_saved_plan":                 ToolsetOperate,
 	"gregale_check_plan":                     ToolsetOperate,
 	"gregale_list_actions":                   ToolsetOperate,

@@ -78,11 +78,19 @@ func (h *Handler) Maintenance(w http.ResponseWriter, r *http.Request, account st
 		if !decode(w, r, &request) {
 			return
 		}
+		if !api.ValidMCPMaintenanceReason(request.Reason) {
+			api.WriteProblem(w, api.ErrValidation("reason must be 1–500 bytes of text"))
+			return
+		}
 		window, err = source.CancelMCPReadinessMaintenance(r.Context(), account.ID, app.ID, id, request.Reason, now)
 		action = "mcp.readiness_maintenance.cancelled"
 	} else {
 		var request api.CreateMCPReadinessMaintenanceRequest
 		if !decode(w, r, &request) {
+			return
+		}
+		if err := api.ValidateMCPReadinessMaintenance(request, now); err != nil {
+			api.WriteProblem(w, api.ErrValidation(err.Error()))
 			return
 		}
 		window, err = source.CreateMCPReadinessMaintenance(r.Context(), account.ID, app.ID, request, now)

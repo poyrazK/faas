@@ -331,6 +331,7 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		Entropy             string `json:"entropy"`             // base64; decode + ioctl(RNDADDENTROPY)
 		Traceparent         string `json:"traceparent"`         // W3C; empty is tolerated (issues PR-4)
 		EventPublishVerdict bool   `json:"eventPublishVerdict"` // ADR-20261031102000; absent from an older vmmd
+		IdentityReload      bool   `json:"identityReload"`      // ADR-20261031193635; restore of a branch from a credential-free capture
 		// QualificationReceipt is sent only by a native qualification
 		// restore: re-attest the boot configuration under a fresh token.
 		QualificationReceipt *struct {
@@ -435,13 +436,39 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		log.Warn("restore: processes not covered by the userspace RNG reseed may repeat random values across wakes",
 			"processes", n, "runtimes", timings.ReseedUnregisteredRuntimes)
 	}
+	// ADR-20261110170000: Go ID libraries keep per-process random state that
+	// nothing outside the program can reset.
+	if libs := goIDLibraryModules("/proc", os.Getpid()); len(libs) > 0 {
+		log.Warn("restore: Go ID libraries in this app may generate the same IDs in instances restored from one snapshot",
+			"modules", strings.Join(libs, ","))
+	}
 	stage = time.Now()
 	resumeGuestProfiles()
 	timings.ProfilesUs = time.Since(stage).Microseconds()
 	SetResumeTraceparent(req.Traceparent)
 	// The userspace reseed above runs first, so an application
 	// after_restore callback never sees the snapshot's random state.
-	if onCritical != nil {
+	switch {
+	case req.IdentityReload:
+		// The branch's identity replaces the capture's placeholders, and
+		// the hook's acknowledgement goes back to vmmd. A guest that cannot
+		// reload refuses, so vmmd cold-boots the branch instead.
+		stage = time.Now()
+		reload := restoreIdentityReloader.Load()
+		if reload == nil {
+			log.Warn("restore identity reload requested but after_restore.identity is not reload")
+			_, _ = f.Write([]byte{VsockResumeAckAfterRestore})
+			return
+		}
+		digest, err := (*reload)()
+		if err != nil {
+			log.Warn("restore identity reload failed", "err", err)
+			_, _ = f.Write([]byte{VsockResumeAckAfterRestore})
+			return
+		}
+		timings.AfterRestoreUs = time.Since(stage).Microseconds()
+		timings.IdentityDigest = digest
+	case onCritical != nil:
 		stage = time.Now()
 		if err := onCritical(); err != nil {
 			log.Warn("application after_restore hook failed", "err", err)

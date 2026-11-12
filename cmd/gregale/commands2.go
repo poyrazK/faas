@@ -225,7 +225,7 @@ func cmdApp(args []string) int {
 	workloadRevision := int64(-1)
 	visibility := fs.String("visibility", "", "set public edge exposure: public|internal (Pro/Scale only for internal)")
 	ram := fs.Int("ram", 0, "update RAM (MB)")
-	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
+	cpuMillicores := fs.Int("cpu-millicores", 0, "cap CPU at 250 or 500 millicores; 1000 leaves it uncapped")
 	profile := new(string)
 	resourceSizeFlag(fs, profile, "update named resource size: micro|small|medium|large|xlarge")
 	conc := fs.Int("max-concurrency", 0, "update the maximum instances (replicas) the app scales to")
@@ -1032,11 +1032,12 @@ func cmdAppsRm(args []string) int {
 	quiet := fs.Bool("q", false, "suppress confirmation prompt")
 	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
 	fs.BoolVar(quiet, "quiet", false, "suppress confirmation prompt")
+	deleteBindings := fs.Bool("delete-bindings", false, "revoke the app's managed PostgreSQL bindings first (deleting the app otherwise refuses while any is live)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale app delete <slug> [--dry-run|-q|--quiet|--yes]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app delete <slug> [--dry-run|-q|--quiet|--yes] [--delete-bindings]", "apps")
 		return 1
 	}
 	if code := requireAutomationConfirmation(*quiet || *dryRun, "--yes (or --quiet)"); code != 0 {
@@ -1066,15 +1067,42 @@ func cmdAppsRm(args []string) int {
 			return 130
 		}
 	}
+	var revoked []string
+	if *deleteBindings {
+		ctx := context.Background()
+		app, err := client.GetApp(ctx, slug)
+		if err != nil {
+			return printErr("Could not read the app", err)
+		}
+		bindings, err := appPostgresBindings(ctx, client, slug, app.ID)
+		if err != nil {
+			return printErr("Could not list the app's database bindings", err)
+		}
+		revoked, _, err = revokeDataAPIBindings(ctx, client, bindings)
+		if err != nil {
+			return printErr("Could not revoke a database binding", err)
+		}
+	}
 	if err := client.DeleteApp(context.Background(), slug); err != nil {
+		if !*deleteBindings && strings.Contains(err.Error(), "app_has_postgres_bindings") {
+			err = fmt.Errorf("%w; rerun with --delete-bindings to revoke them first", err)
+		}
 		return printErr("Could not delete app", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(map[string]any{
+		out := map[string]any{
 			"slug":    slug,
 			"status":  "deleted",
 			"deleted": true,
-		}))
+		}
+		if *deleteBindings {
+			out["revoked_bindings"] = revoked
+		}
+		return jsonOut(writeJSON(out))
+	}
+	if len(revoked) > 0 {
+		PrintOK(osStdout, "Revoked %d database binding(s) and deleted %s", len(revoked), slug)
+		return 0
 	}
 	PrintOK(osStdout, "Deleted %s", slug)
 	return 0
@@ -1827,7 +1855,21 @@ func deployManifestQueueBindings(ctx context.Context, client manifestQueueBindin
 	if err := m.Validate(); err != nil {
 		return err
 	}
-	return reconcileQueueBindings(ctx, client, slug, m.QueueBindings, "pull", "worker")
+	mode, class := manifestQueueBindingDefaults(m)
+	return reconcileQueueBindings(ctx, client, slug, m.QueueBindings, mode, class)
+}
+
+// manifestQueueBindingDefaults is the mode and workload class an app's
+// queue_bindings take when an entry omits them, as the server defaults them:
+// a function app (a `function:` block) consumes by push as an HTTP workload,
+// like an entry under `functions:`; every other app pulls as a worker. A
+// function app's bindings used to default to pull/worker and failed with
+// "workload_class \"worker\" does not match app workload class \"http\"".
+func manifestQueueBindingDefaults(m *gregalemanifest.Manifest) (string, string) {
+	if m != nil && m.Function != nil {
+		return "push", "http"
+	}
+	return "pull", "worker"
 }
 
 // reconcileQueueBindings makes an app's default-environment queue bindings
@@ -2058,7 +2100,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	name := fs.String("name", "", "app name (default: selected source directory, or current directory)")
 	profile := new(string)
 	resourceSizeFlag(fs, profile, "named app resource size: micro|small|medium|large|xlarge")
-	vcpu := fs.Int("vcpu", 0, "assert the plan guest vCPU shape (omit to use the plan default)")
+	vcpu := fs.Int("vcpu", 0, "assert the guest vCPU count, one per GB of RAM (omit to use the size's)")
 	executionMode := fs.String("execution-mode", "", "app lifecycle mode: request|service|worker|job")
 	restartPolicy := fs.String("restart-policy", "", "restart policy: no|on-failure|always|unless-stopped")
 	startupDeadlineS := fs.Int("startup-deadline-s", 0, "maximum startup deadline in seconds (0 = plan default)")
@@ -4128,6 +4170,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err := deployManifestObjectStorageBindings(ctx, client, slug, sourceDir, *environment); err != nil {
 		return printErr("Manifest object-storage bindings failed", err)
 	}
+	// Lifecycle is app-wide, so only a production deploy changes it, as a
+	// production push does (ADR-20261110190000 §5).
+	if resolvedShape == shapeFunction && *environment == "" && *image == "" && !isFunctionSetMember(ctx) {
+		if err := applyFunctionHookLifecycle(ctx, client, slug, sourceDir, deployHandler); err != nil {
+			return printErr("Could not apply snapshot hooks", err)
+		}
+	}
 	if len(deploySecrets) > 0 {
 		if err := setDeploySecretsWithScope(ctx, client, slug, deploySecrets, *environment); err != nil {
 			return printErr("Could not configure --secrets-file", err)
@@ -4161,7 +4210,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err := savedSession.preparePolicyJournal(ctx, client, sourceDir); err != nil {
 		return savedSession.failure("Could not save deployment policy journal", "configuration", err)
 	}
-	if err := savedSession.prepareCronJournal(ctx, client, sourceDir, *noTriggers || *trafficPercent == 0); err != nil {
+	if err := savedSession.prepareCronJournal(ctx, client, sourceDir, *environment, !deployStagesManifestCrons(*noTriggers, *trafficPercent)); err != nil {
 		return savedSession.failure("Could not save deployment cron journal", "configuration", err)
 	}
 	ctx = api.ContextWithDeploymentSubmissionBoundary(ctx, savedSession.markSubmissionStarted)
@@ -4810,6 +4859,11 @@ func cmdPark(args []string) int {
 		}))
 	}
 	PrintOK(osStdout, "Parked (cold)")
+	if app, getErr := client.GetApp(context.Background(), args[0]); getErr == nil && (inspectExecutionMode(app) == api.ExecutionModeWorker || app.WorkloadClass == "worker") {
+		// A parked worker pool does not autoscale on its backlog (H8-23):
+		// say how it comes back (Hunt 32 H32-32).
+		PrintWarn(osStderr, "%s is a worker pool: it stays parked, whatever its queue backlog, until `gregale app wake %s`", args[0], args[0])
+	}
 	return 0
 }
 
@@ -5439,15 +5493,34 @@ func cmdDomains(args []string) int {
 		fmt.Printf("Then run 'gregale domain list' to see when verification completes.\n")
 		return 0
 	case subRm:
-		if len(args) != 2 {
-			PrintUsage(os.Stderr, "usage: gregale domain delete <domain>", "domains")
+		// --yes / -y may come before or after the domain, like the other
+		// deletes; without it the CLI asks. It rejected a trailing --yes and
+		// deleted with no prompt (Hunt 32 H32-14).
+		var positional []string
+		yes := false
+		for _, arg := range args[1:] {
+			switch arg {
+			case "--yes", "-y", "--yes=true":
+				yes = true
+			default:
+				positional = append(positional, arg)
+			}
+		}
+		if len(positional) != 1 || strings.HasPrefix(positional[0], "-") {
+			PrintUsage(os.Stderr, "usage: gregale domain delete <domain> [--yes]", "domains")
 			return 1
+		}
+		domain := positional[0]
+		if !yes {
+			if code := confirmYesNo(fmt.Sprintf("Remove custom domain %s? Requests to it stop reaching the app.", domain), "--yes", "domain delete"); code != 0 {
+				return code
+			}
 		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		if err := client.DeleteDomain(context.Background(), args[1]); err != nil {
+		if err := client.DeleteDomain(context.Background(), domain); err != nil {
 			return printErr("Could not remove domain", err)
 		}
 		PrintOK(osStdout, "Removed")
@@ -5588,6 +5661,7 @@ func cmdCrons(args []string) int {
 		failureRulesJSON := fs.String("failure-rules", "", "versioned retry/failure rules as JSON")
 		retryMax := fs.Int("retry-max", 0, "additional command attempts after failure or timeout (0 disables retries; max 5)")
 		retryBackoff := fs.Int("retry-backoff-seconds", 60, "base retry delay in seconds; doubles per attempt (1..3600)")
+		environment := fs.String("environment", "", "project environment the cron runs in (default: production)")
 		if err := fs.Parse(addArgs); err != nil {
 			return 1
 		}
@@ -5617,7 +5691,7 @@ func cmdCrons(args []string) int {
 			return cmdCronsAddInteractive(selected)
 		}
 		if *slug == "" || *schedule == "" {
-			PrintUsage(os.Stderr, "usage: gregale cron create --app <slug> --schedule '*/5 * * * *' (--path / | --command EXEC [--arg ARG...]) [--timezone UTC] [--skip-if-running] [--retry-max N --retry-backoff-seconds N]", "crons")
+			PrintUsage(os.Stderr, "usage: gregale cron create --app <slug> --schedule '*/5 * * * *' (--path / | --command EXEC [--arg ARG...]) [--timezone UTC] [--skip-if-running] [--retry-max N --retry-backoff-seconds N] [--environment ENV]", "crons")
 			return 1
 		}
 		pathSet := false
@@ -5657,6 +5731,7 @@ func cmdCrons(args []string) int {
 		req := api.CreateCronRequest{
 			AppID: *slug, Schedule: *schedule, Enabled: boolPtr(true),
 			Timezone: *timezone, SkipIfRunning: boolPtr(*skipIfRunning),
+			Environment: *environment,
 		}
 		if *schedulePolicyJSON != "" {
 			policy, err := parseSchedulePolicyJSON(*schedulePolicyJSON)
@@ -6117,7 +6192,7 @@ func cmdKeysRotate(args []string) int {
 func cmdKeysGraceWindow(args []string) int {
 	fs := newFlagSet("keys grace-window", flag.ContinueOnError)
 	reset := fs.Bool("reset", false, "clear the per-account override (fall back to plan default)")
-	days := fs.Int("days", -1, "new grace window in days (>=0)")
+	days := fs.Int("days", -1, "new grace window in days (0 to 30)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -7411,7 +7486,7 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 			return true, 1
 		}
 		if e.Data != "" {
-			if archive != nil && !retainedLineMatches(e.Data, filter.Grep) {
+			if archive != nil && (!retainedLineMatches(e.Data, filter.Grep) || !retainedLineLevelMatches(e.Data, filter.Level)) {
 				return false, 0
 			}
 			printedLines++

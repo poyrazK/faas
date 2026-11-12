@@ -35,6 +35,11 @@ type NodeAdmission struct {
 	// ends, in place of its app's cpu_millicores (ADR-20261101160231 step
 	// 5b). Zero keeps the app's value.
 	BookedCPUMillicores int
+	// BookedVCPU, when positive, is stored on the admitted instance as the
+	// guest vCPU count it boots with, and booked as its capacity_vcpu in
+	// place of its plan's count (ADR-20261109172421 step 5). Zero keeps the
+	// plan's.
+	BookedVCPU int
 }
 
 // NodeCompute is an admission's guest vCPUs and sustained CPU millicores, and
@@ -122,6 +127,16 @@ func nodeBookedCPUMillicores(ctx context.Context, nodeID string) int {
 		return 0
 	}
 	return min(max(expected.BookedCPUMillicores, 0), api.AppCPUBookingMaxMillicores)
+}
+
+// nodeBookedVCPU is the guest vCPU count ctx's placement binding stamps on an
+// instance admitted to nodeID; zero when there is none.
+func nodeBookedVCPU(ctx context.Context, nodeID string) int {
+	expected, present := ctx.Value(nodeAdmissionKey{}).(NodeAdmission)
+	if !present || expected.NodeID != nodeID {
+		return 0
+	}
+	return min(max(expected.BookedVCPU, 0), api.GuestVCPUBookingMax)
 }
 
 // nodeReservationPercent is the reservation allowance ctx grants an admission

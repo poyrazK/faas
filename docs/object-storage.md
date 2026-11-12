@@ -15,19 +15,29 @@ Operators running Gregale themselves should read the
 
 ## Plans and pricing
 
-Object storage is available on the Hobby, Pro and Scale plans. Each plan
-includes an amount of storage, measured as the average bytes you keep over the
-billing month:
+Object storage is available on every plan. Each plan includes an amount of
+storage, measured as the average bytes you keep over the billing month, and
+has a ceiling on what you can store
+([ADR-20261101214152](adr/20261101214152-object-storage-ceiling-follows-spend-cap.md)):
 
-| Plan | Included storage |
-|---|---|
-| Hobby | 10 GiB |
-| Pro | 50 GiB |
-| Scale | 200 GiB |
+| Plan | Included storage | Storage ceiling |
+|---|---|---|
+| Free | 1 GiB | 1 GiB |
+| Hobby | 10 GiB | 20 GiB |
+| Pro | 50 GiB | 250 GiB |
+| Scale | 200 GiB | 1,000 GiB |
 
-Storage beyond the included amount costs $0.03 per GiB-month. Downloads
-(egress) and requests are not billed. Because storage is averaged, 20 GiB held
-for half a month uses 10 GiB of the allowance. See [plans](plans.md).
+On a paid plan, storage beyond the included amount costs $0.03 per GiB-month,
+up to the ceiling. Free storage is never billed: writes stop at 1 GiB.
+Downloads (egress) and requests are not billed. Because storage is averaged,
+20 GiB held for half a month uses 10 GiB of the allowance. A spend cap lowers
+the ceiling to what it pays for, and support can raise a paid account's
+ceiling. See [plans](plans.md).
+
+A write past the ceiling is refused with `account_bytes`. While an account
+stores more than its ceiling (for example after a downgrade to Free or a lower
+spend cap), downloads are refused with `402 account_bytes`; listing, `HEAD` and
+`DELETE` keep working so you can delete objects to get back under it.
 
 When your account reaches its spend cap, existing buckets keep working within
 your plan's limits. Retained object versions count toward stored bytes until
@@ -81,9 +91,14 @@ A bucket created with `--public --serve-at /assets` serves its objects at
 without waking your app. Responses are cacheable for five minutes, so a deleted
 or replaced object disappears everywhere within that time. Anonymous reads may
 use at most 75% of your account's monthly request and egress ceilings, and each
-bucket serves at most 100 reads per second (bursts to 200); past either limit,
-readers get `429`. The mount path cannot change after creation. Buckets are
-private unless created public.
+bucket serves at most 100 reads per second (bursts to 200), and one client
+address at most 10 per second per bucket (bursts to 50); past any limit,
+readers get `429`. A read of a key that does not exist answers `404` and does
+not count against your ceilings. A public URL with a query string is
+redirected (`301`) to the same path without it before anything is counted, so
+query strings never reach your bucket: put an asset's version in its key, such
+as `/assets/app.3f9c2e.js`, not in `?v=`. The mount path cannot change after
+creation. Buckets are private unless created public.
 
 When public mount paths overlap, the longest matching path serves the request.
 For example, `/assets/images/logo.png` uses the bucket mounted at
@@ -186,6 +201,15 @@ never admits it, so `image/*` does not admit `image/svg+xml`. A route on a
 public bucket mount cannot list an active type at all, and such uploads are
 refused with `415`, because the file would be served on your app's hostname.
 
+Objects read through `s3.gregale.dev` never run as pages there, because every
+customer shares that host. Every response carries
+`X-Content-Type-Options: nosniff`, and an object without a type is served as
+`application/octet-stream`. An active type keeps its `Content-Type` but is
+served as an attachment (keeping a stored filename) with a sandboxing
+`Content-Security-Policy`, including when a presigned URL asks for another
+`response-content-type`. To host pages, serve a public bucket on your app's own
+hostname.
+
 ## Use an S3 SDK
 
 Each bucket can have S3 credentials that work with standard S3 tools:
@@ -269,7 +293,8 @@ environment secrets: `<PREFIX>_ENDPOINT`, `_REGION`, `_BUCKET`,
 defaults to `GREGALE_S3_` and the bucket name in capitals, such as
 `GREGALE_S3_ASSETS`; set another with `--prefix`. Pass them to your
 S3 SDK. The credentials are sealed: they are never printed or returned by the
-API.
+API. These six values, like a managed PostgreSQL `DATABASE_URL`, do not count
+toward your plan's per-app secret limit, which covers only the secrets you set.
 
 To keep the binding next to your code, declare it in `gregale.yaml`:
 
@@ -375,8 +400,17 @@ gregale bucket lifecycle get my-api BUCKET_ID
 ```
 
 ```json
-{"rules": [{"id": "temporary", "status": "Enabled", "filter": {"prefix": "tmp/"}, "abort_incomplete_multipart_days": 7}]}
+{"rules": [
+  {"id": "temporary", "status": "Enabled", "filter": {"prefix": "tmp/"},
+   "expiration": {"days": 30}, "abort_incomplete_multipart_days": 7},
+  {"id": "old-versions", "status": "Enabled", "filter": {},
+   "noncurrent_version_expiration": {"noncurrent_days": 90}}
+]}
 ```
+
+`expiration.days` removes current objects that many days after upload, and
+`noncurrent_version_expiration.noncurrent_days` removes older versions once
+they have been noncurrent that long.
 
 Rules are checked hourly. Storage-class transitions are not supported. S3 SDKs
 can use `PutBucketLifecycleConfiguration` instead.
@@ -394,6 +428,22 @@ from being deleted or overwritten:
   `COMPLIANCE` mode. Active retention cannot be shortened or cleared, and
   `COMPLIANCE` cannot be changed to `GOVERNANCE`.
 - **A legal hold** protects a version until you turn it off.
+
+Object Lock is included on paid plans, and retention is capped by plan
+([ADR-20261111123000](adr/20261111123000-object-storage-over-ceiling-retention.md)):
+
+| Plan | Longest retention | Legal holds |
+|---|---|---|
+| Free | Not included | Not included |
+| Hobby | 90 days | Yes |
+| Pro | 1 year (366 days) | Yes |
+| Scale | 7 years (2,557 days) | Yes |
+
+The cap applies to retention dates, event-hold durations and bucket default
+retention, in both modes, measured from the time of the request. A longer one
+is refused with `403 object_lock_plan_limit` (S3 SDKs: `AccessDenied`), naming
+the limit and the days you asked for. Clearing a default and releasing a hold
+always work. Retention set before these caps is kept as it was.
 
 `GET /v1/apps/{app}/buckets/{bucket-id}/object-lock-capabilities` shows what
 your bucket supports. Enabling Object Lock on a bucket is permanent. Each
@@ -508,12 +558,13 @@ what you used.
 | Lifecycle rules per bucket | 1,000 |
 | Notification rules per bucket | 1,000 |
 | CORS rules per bucket | 100 |
-| Anonymous reads of a public bucket | 75% of the account's monthly request and egress ceilings; 100 per second per bucket |
+| Anonymous reads of a public bucket | 75% of the account's monthly request and egress ceilings; 100 per second per bucket; 10 per second per client address per bucket; missing keys not counted |
 | Requests through `s3.gregale.dev` | 100 per second per account, bursts of 200; more answer `503 SlowDown`, which S3 SDKs retry with backoff |
 | Requests each month | Free 50,000, Hobby 500,000, Pro 2,500,000, Scale 10,000,000 ([plans](plans.md#object-storage)). At the limit, every request is refused until the month ends |
 | Uploads and upload parts in progress through `s3.gregale.dev` | A few per account; more wait up to 15 seconds for a turn, then answer `503 SlowDown` |
 | Stored data | Free stops at 1 GiB, Hobby at 20 GiB, Pro at 250 GiB and Scale at 1,000 GiB. A lower spend cap lowers it to the included storage plus what the cap buys at $0.03 per GiB-month; a $0 cap stops at the included storage. Need more? Ask support to raise your account's ceiling; your spend cap still applies. At the ceiling, uploads are refused; while you store more than it, downloads answer `402` until you delete objects. Listing, `HEAD` and deletes keep working, and nothing is deleted for you. A downgrade is refused while your data does not fit the new plan |
 | Objects per account, counting retained versions | 1,000,000 on every plan |
+| Object Lock retention | Free not included, Hobby 90 days, Pro 366 days, Scale 2,557 days (`object_lock_plan_limit`) |
 | Egress each month | 10 times your plan's included storage: Free 10 GiB, Hobby 100 GiB, Pro 500 GiB, Scale 2,000 GiB ([plans](plans.md#object-storage)). Public objects served from the CDN's cache do not count. At the limit, every request except deletes is refused until the month ends |
 
 The platform also caps stored bytes, requests and egress per account; the
@@ -527,7 +578,9 @@ current values are in `GET /v1/account/object-storage-usage` under `policy`.
 - When an account is deleted, or after 21 days of non-payment, a 30-day grace
   period starts. During it, and while an account is suspended, no request can
   read or write its buckets. After the grace period, every bucket it owns is
-  emptied and deleted, except versions still under Object Lock, which are
-  deleted when their protection ends.
+  emptied and deleted. Gregale releases legal and event holds and deletes
+  `GOVERNANCE` versions too; versions under `COMPLIANCE` retention, which no
+  one can remove early, are kept until their retention ends and then deleted
+  ([ADR-20261111123000](adr/20261111123000-object-storage-over-ceiling-retention.md)).
 - A bucket created for an organization belongs to the organization, not to the
   member who created it.

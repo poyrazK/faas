@@ -21,7 +21,10 @@ type CustomMetricSeriesResponse struct {
 	Name  string `json:"name"`
 	// Kind is "gauge" (values as pushed) or "counter" (values are a
 	// per-second rate of the cumulative count).
-	Kind   string                    `json:"kind"`
+	Kind string `json:"kind"`
+	// Labels is the series key the history is for (ADR-20261108160000 slice
+	// C); empty for the metric's aggregate.
+	Labels string                    `json:"labels,omitempty"`
 	Range  string                    `json:"range"`
 	Step   string                    `json:"step"`
 	Source string                    `json:"source"`

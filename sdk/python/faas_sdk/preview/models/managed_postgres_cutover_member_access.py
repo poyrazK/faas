@@ -1,6 +1,6 @@
 from typing import Literal
 
-ManagedPostgresCutoverMemberAccess = Literal["auth", "data_api", "migration", "read_only", "read_write"]
+ManagedPostgresCutoverMemberAccess = Literal["auth", "data_api", "migration", "read_only", "read_write", "session"]
 
 MANAGED_POSTGRES_CUTOVER_MEMBER_ACCESS_VALUES: set[ManagedPostgresCutoverMemberAccess] = {
     "auth",
@@ -8,6 +8,7 @@ MANAGED_POSTGRES_CUTOVER_MEMBER_ACCESS_VALUES: set[ManagedPostgresCutoverMemberA
     "migration",
     "read_only",
     "read_write",
+    "session",
 }
 
 

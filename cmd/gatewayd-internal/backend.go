@@ -1405,7 +1405,11 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			if refresher, ok := inv.(interface {
 				RefreshLiveTargets(context.Context, string) error
 			}); ok {
-				if err := refresher.RefreshLiveTargets(ctx, p.AppID); err != nil {
+				if err := refresher.RefreshLiveTargets(ctx, p.AppID); errors.Is(err, gateway.ErrTargetPlacementChanged) {
+					// A newer placement reached the picker during the read;
+					// the 1 s placement repair converges it (~100/day/node).
+					log.Debug("gatewayd: refresh running instance raced a newer placement", "app_id", p.AppID, "instance_id", p.InstanceID)
+				} else if err != nil {
 					log.Warn("gatewayd: refresh running instance", "app_id", p.AppID, "instance_id", p.InstanceID, "err", err)
 				}
 			} else if reconciler, ok := inv.(interface {

@@ -252,10 +252,22 @@ func (s *server) releaseFreezeStatus(ctx context.Context, app state.App) (api.Re
 	return status, nil
 }
 
+// freezeReadProblem refuses a release whose app's freezes could not be read
+// (ADR-20261019071733 amendment 13). Releasing past an unreadable freeze let
+// a database error lift an admin's freeze; the caller retries instead, as a
+// scheduled release, a runtime upgrade and a rollback to a never-served
+// release already did.
+func (s *server) freezeReadProblem(app state.App, err error) *api.Problem {
+	s.log.Warn("deploy freeze: could not read freezes; refusing", "app", app.ID, "err", err)
+	return api.ErrCapacity("Gregale could not read this app's deploy freezes, so it did not release.").
+		WithHint("Retry in a moment.")
+}
+
 // releaseFreezeProblem refuses a production release while a freeze covers
 // the app, unless override carries a reason; an override is audited. A
-// store that cannot read freezes lets the release through: a freeze is a
-// guard rail, not an availability dependency.
+// store that cannot read freezes refuses the release with a retryable 503
+// (ADR-20261019071733 amendment 13): a freeze an admin set must hold even
+// while its row cannot be read.
 func (s *server) releaseFreezeProblem(r *http.Request, acct state.Account, app state.App, scope, override string) *api.Problem {
 	p, overridden := s.checkReleaseFreeze(r, acct, app, scope, override)
 	if overridden != nil {
@@ -273,8 +285,7 @@ func (s *server) checkReleaseFreeze(r *http.Request, acct state.Account, app sta
 	now := time.Now().UTC()
 	active, err := freeze.ActiveFor(r.Context(), s.store, app, scope, now)
 	if err != nil {
-		s.log.Warn("deploy freeze: could not read freezes; releasing", "app", app.ID, "err", err)
-		return nil, nil
+		return s.freezeReadProblem(app, err), nil
 	}
 	if len(active) == 0 {
 		return nil, nil
@@ -359,7 +370,7 @@ func (s *server) retryReleaseProblem(ctx context.Context, app state.App, dep sta
 	now := time.Now().UTC()
 	active, err := freeze.ActiveFor(ctx, s.store, app, dep.Scope, now)
 	if err != nil {
-		s.log.Warn("deploy freeze: could not read freezes; retrying", "app", app.ID, "err", err)
+		return s.freezeReadProblem(app, err)
 	} else if len(active) > 0 {
 		s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
 		return api.ErrReleaseFrozen(app.Slug, s.freezeViews(ctx, active, now)).
@@ -419,8 +430,7 @@ func (s *server) darkReleaseFreezeProblem(ctx context.Context, app state.App, d 
 	now := time.Now().UTC()
 	active, err := freeze.ActiveFor(ctx, s.store, app, d.Scope, now)
 	if err != nil {
-		s.log.Warn("deploy freeze: could not read freezes; releasing", "app", app.ID, "err", err)
-		return nil
+		return s.freezeReadProblem(app, err)
 	}
 	var predate []state.ReleaseFreeze
 	for _, f := range active {

@@ -54,6 +54,20 @@ const (
 type AfterRestoreHook struct {
 	Path      string `json:"path" yaml:"path"`
 	TimeoutMS int    `json:"timeout_ms,omitempty" yaml:"timeout_ms,omitempty"`
+	// Identity "reload" opts an environment branch of the app into waking
+	// from its parent deployment's credential-free capture instead of a cold
+	// boot (ADR-20261031193635 section 3): the hook then re-reads config and
+	// reconnects under the branch's identity. Empty keeps cold boot.
+	Identity string `json:"identity,omitempty" yaml:"identity,omitempty"`
+}
+
+// AfterRestoreIdentityReload is the AfterRestoreHook.Identity that opts into
+// branch restores.
+const AfterRestoreIdentityReload = "reload"
+
+// ReloadsIdentity reports whether the hook opts into branch restores.
+func (h *AfterRestoreHook) ReloadsIdentity() bool {
+	return h != nil && h.Identity == AfterRestoreIdentityReload
 }
 
 // BeforeCheckpointHook runs in the source guest before a new terminal init
@@ -67,7 +81,7 @@ func (h *BeforeCheckpointHook) Validate() error {
 	if h == nil {
 		return nil
 	}
-	return validateLifecycleHook("before_checkpoint", h.Path, h.TimeoutMS)
+	return validateLifecycleHook("before_checkpoint", h.Path, h.TimeoutMS, AfterRestoreHookMaxTimeoutMS)
 }
 
 func (h *BeforeCheckpointHook) EffectiveTimeout() time.Duration {
@@ -81,10 +95,15 @@ func (h *AfterRestoreHook) Validate() error {
 	if h == nil {
 		return nil
 	}
-	return validateLifecycleHook("after_restore", h.Path, h.TimeoutMS)
+	if h.Identity != "" && h.Identity != AfterRestoreIdentityReload {
+		return fmt.Errorf("after_restore.identity must be %q or empty", AfterRestoreIdentityReload)
+	}
+	// The bound-app cap applies here; apid refuses more than
+	// AfterRestoreHookMaxTimeoutMS for an app without a managed binding.
+	return validateLifecycleHook("after_restore", h.Path, h.TimeoutMS, AfterRestoreHookBoundMaxTimeoutMS)
 }
 
-func validateLifecycleHook(name, path string, timeoutMS int) error {
+func validateLifecycleHook(name, path string, timeoutMS, maxTimeoutMS int) error {
 	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") ||
 		strings.ContainsAny(path, "?#%") {
 		return fmt.Errorf("%s.path must be an absolute path without query, fragment, or percent escapes", name)
@@ -94,8 +113,8 @@ func validateLifecycleHook(name, path string, timeoutMS int) error {
 			return fmt.Errorf("%s.path must not contain control characters", name)
 		}
 	}
-	if timeoutMS < 0 || timeoutMS > AfterRestoreHookMaxTimeoutMS {
-		return fmt.Errorf("%s.timeout_ms must be between 0 and %d", name, AfterRestoreHookMaxTimeoutMS)
+	if timeoutMS < 0 || timeoutMS > maxTimeoutMS {
+		return fmt.Errorf("%s.timeout_ms must be between 0 and %d", name, maxTimeoutMS)
 	}
 	return nil
 }

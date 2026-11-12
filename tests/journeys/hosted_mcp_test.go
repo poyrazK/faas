@@ -22,7 +22,9 @@ import (
 // (ADR-20261030133644). Then it creates an organization and checks its agent
 // policy (ADR-20261101225122): a read-only policy refuses an agent key that
 // may deploy, an organization agent key lists the organization's apps and
-// not the account's, and denying agents revokes that key.
+// not the account's, and denying agents revokes that key. Agent approvals,
+// the activity log and `gregale mcp connect` are steps too; see
+// agent_approvals_test.go.
 
 // mcpProtocolVersion is the newest version the hosted server speaks: it keeps
 // sessions, and the go-sdk serves 2026-07-28 (per-request `_meta` versions)
@@ -42,6 +44,7 @@ func TestHostedMCP(t *testing.T) {
 	s.step("agent_key_session", j.agentKeySession)
 	s.step("lists_account_apps", j.listsAccountApps)
 	s.check("non_agent_key_refused", j.nonAgentKeyRefused)
+	j.approvalSteps(s)
 	s.step("connection_listed", j.connectionListed)
 	s.step("connection_revoked", j.connectionRevoked)
 	s.step("org_created", j.orgCreated)
@@ -63,6 +66,10 @@ type hostedMCPJourney struct {
 	org      string
 	orgKeyID string
 	orgMCP   *mcpSession
+	// Agent approvals, activity and mcp connect (agent_approvals_test.go).
+	approvalKeyValue string
+	approvalID       string
+	ghost            string // an app that never exists
 }
 
 var resourceMetadataRe = regexp.MustCompile(`resource_metadata="([^"]+)"`)
@@ -122,7 +129,7 @@ func (j *hostedMCPJourney) nonAgentKeyRefused(t *testing.T) {
 }
 
 func (j *hostedMCPJourney) connectionListed(t *testing.T) {
-	j.admin, _ = j.tg.scopedKeyWithID(t, j.root, "mcp-admin", "admin")
+	j.adminKey(t)
 	if !j.listsConnection(t, "/v1/agent-connections", j.keyID) {
 		t.Fatalf("GET /v1/agent-connections does not list agent key %s", j.keyID)
 	}

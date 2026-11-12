@@ -11,5 +11,9 @@ export type DeploymentCronStagingSnapshot = {
   revision: number;
   latest_deployment_id: string;
   crons: Array<DeploymentCronConfig>;
+  /**
+   * The non-production environment read; omitted for production.
+   */
+  environment?: string;
 };
 

@@ -19,8 +19,10 @@ import (
 // coreCatalogBudget bounds the tools/list bytes an agent loads with --tools
 // core. Raise it deliberately: every byte is paid on every turn.
 // Includes structured output envelopes and the five read-only saved-plan and
-// action-recovery tools. The fully consented hosted catalog is about 65 KB.
-const coreCatalogBudget = 65 << 10
+// action-recovery tools, and gregale_wait_for_approval, which an agent key needs
+// the moment a request is answered approval_required (ADR-20261104140058).
+// The fully consented hosted catalog is about 67 KB.
+const coreCatalogBudget = 68 << 10
 
 func TestReadOnlyCoreCatalogMatchesStdioContract(t *testing.T) {
 	backend := httptest.NewServer(http.NotFoundHandler())
@@ -31,7 +33,7 @@ func TestReadOnlyCoreCatalogMatchesStdioContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog.Tools) != 23 {
+	if len(catalog.Tools) != 24 {
 		t.Fatalf("read-only core count=%d names=%v", len(catalog.Tools), toolNamesOf(catalog.Tools))
 	}
 	for _, tool := range catalog.Tools {

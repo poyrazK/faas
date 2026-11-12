@@ -436,3 +436,30 @@ func TestMemStore_AbortedCanaryIsNotAnImplicitRollbackTarget(t *testing.T) {
 		t.Fatalf("aborted canary %s offered as the rollback target", candidate.ID)
 	}
 }
+
+// A deleted app's canary has nothing left to progress; safedeploy still sees
+// it and closes the rollout.
+func TestMemStore_CanaryInFlightSkipsDeletedApp(t *testing.T) {
+	m, ctx, _, app, dep := memDeploymentFixture(t)
+	dep.Status = DeployLive
+	dep.CanaryTotalSteps = 4
+	dep.CanaryStep = 1
+	dep.RolloutState = "rolling_out"
+	seedCanaryDeployment(m, dep)
+	deletedAt := time.Now()
+	m.mu.Lock()
+	gone := m.apps[app.ID]
+	gone.Status = AppDeleted
+	gone.DeletedAt = &deletedAt
+	m.apps[app.ID] = gone
+	m.mu.Unlock()
+
+	inFlight, err := m.ListCanaryInFlight(ctx)
+	if err != nil || len(inFlight) != 0 {
+		t.Fatalf("ListCanaryInFlight = %#v, %v; want none for a deleted app", inFlight, err)
+	}
+	pending, err := m.SafedeployListPendingRollouts(ctx)
+	if err != nil || len(pending) != 1 || pending[0].ID != dep.ID {
+		t.Fatalf("SafedeployListPendingRollouts = %#v, %v; want the deleted app's rollout", pending, err)
+	}
+}

@@ -90,17 +90,20 @@ tests:
   - interval: 30s
     name: "a spike ratio on a near-idle account stays quiet"
     input_series:
-      # 0.001 rps for 6h, then 0.05 rps for 30m: a 50x ratio below the floor.
+      # 0.001 rps for 24h, then 0.05 rps for 30m: a 50x ratio below the floor.
+      # A full day of baseline keeps the 3d average near 0.001 rps (score ~27);
+      # with only 6h the spike's own samples pulled the score to ~10, which
+      # promtool 2.x and 3.x round to opposite sides of the threshold.
       - series: 'apid_request_total{account_id="anonymous",route="GET /v1/status",code="ok"}'
-        values: '0+0.03x720 21.6+1.5x60'
+        values: '0+0.03x2880 86.4+1.5x60'
     promql_expr_test:
       # The ratio alone is past the 10x threshold; only the floor holds it.
       - expr: 'faas_apid_anomaly_score:by_account > bool 10'
-        eval_time: 6h25m
+        eval_time: 24h25m
         exp_samples:
           - labels: '{account_id="anonymous"}'
             value: 1
     alert_rule_test:
-      - eval_time: 6h25m
+      - eval_time: 24h25m
         alertname: FaasTrafficSpikeAccount
         exp_alerts: []

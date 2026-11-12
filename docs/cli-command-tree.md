@@ -127,6 +127,7 @@ touch them. The tables below map each earlier name.
 | `gregale release-gates` | `gregale release gate` |
 | `gregale routes` | `gregale api route` |
 | `gregale runs` | `gregale sandbox` |
+| `gregale sandbox-templates` | `gregale sandbox template` |
 | `gregale scan` | `gregale deploy --plan` |
 | `gregale scheduled-releases` | `gregale release schedule` |
 | `gregale secrets` | `gregale env` |
@@ -197,6 +198,7 @@ touch them. The tables below map each earlier name.
 | `gregale bucket protection legal-hold` | `gregale bucket protection legal-hold set` |
 | `gregale bucket reconcile status` | `gregale bucket inventory get` |
 | `gregale bucket reconcile` | `gregale bucket inventory` |
+| `gregale bucket uploads abort` | `gregale bucket multipart cancel` |
 | `gregale bucket uploads status` | `gregale bucket multipart get` |
 | `gregale bucket uploads` | `gregale bucket multipart` |
 | `gregale bucket version-delete` | `gregale bucket version delete` |
@@ -489,6 +491,7 @@ touch them. The tables below map each earlier name.
 | `gregale postgres compute-policy` | `gregale postgres compute-policy set` |
 | `gregale postgres overage` | `gregale postgres overage get` |
 | `gregale postgres overage` | `gregale postgres overage set` |
+| `gregale postgres previews` | `gregale postgres previews set` |
 | `gregale postgres resize-status` | `gregale postgres resize status` |
 | `gregale previews join` | `gregale feature join` |
 | `gregale previews leave` | `gregale feature leave` |
@@ -523,6 +526,7 @@ touch them. The tables below map each earlier name.
 | `gregale routes migration gate` | `gregale api route migration check` |
 | `gregale routes migration server-check` | `gregale api route migration verify` |
 | `gregale routes monitor preview` | `gregale api route monitor set --dry-run` |
+| `gregale sandbox-templates build` | `gregale sandbox template publish` |
 | `gregale secrets audit` | `gregale env audit` |
 | `gregale secrets check` | `gregale env check` |
 | `gregale secrets list` | `gregale env list` |

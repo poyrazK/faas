@@ -120,8 +120,13 @@ func renderRequestAnalytics(w io.Writer, response api.RequestAnalyticsResponse) 
 	_, _ = fmt.Fprintf(w, "App:        %s\n", response.Slug)
 	_, _ = fmt.Fprintf(w, "Group by:   %s\n", response.GroupBy)
 	_, _ = fmt.Fprintf(w, "Window:     %s (%s to %s)\n", response.Since, analyticsWindowTime(response.From), analyticsWindowTime(response.Until))
-	_, _ = fmt.Fprintf(w, "Requests:   %d\n", response.Requests)
-	_, _ = fmt.Fprintf(w, "Errors:     %d (%.2f%%)\n", response.ErrorRequests, response.ErrorRatePct)
+	// Recorded request log, so it can trail the gateway counters that
+	// `gregale metric <app>` reads (Hunt 32 H32-27).
+	_, _ = fmt.Fprintf(w, "Requests:   %d (recorded request log)\n", response.Requests)
+	// Request analytics count every HTTP status >= 400 (MCP error_basis
+	// http_status_gte_400); alerts, SLOs and app health count only 5xx, so
+	// the label says which one this is (ADR-20261110090000).
+	_, _ = fmt.Fprintf(w, "Errors:     %d (%.2f%%, 4xx+5xx)\n", response.ErrorRequests, response.ErrorRatePct)
 	_, _ = fmt.Fprintf(w, "Cold boots: %d\n", response.ColdBoots)
 	_, _ = fmt.Fprintf(w, "Latency:    p50=%dms p95=%dms p99=%dms\n", response.P50MS, response.P95MS, response.P99MS)
 	if len(response.Groups) == 0 {
@@ -131,7 +136,7 @@ func renderRequestAnalytics(w io.Writer, response api.RequestAnalyticsResponse) 
 		renderRequestAnalyticsClampNote(w, response)
 		return
 	}
-	_, _ = fmt.Fprintln(w, "\nValue\tMethod\tRequests\tErrors\tp50\tp95\tp99")
+	_, _ = fmt.Fprintln(w, "\nValue\tMethod\tRequests\tErrors (4xx+5xx)\tp50\tp95\tp99")
 	for _, group := range response.Groups {
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d (%.2f%%)\t%dms\t%dms\t%dms\n",
 			group.Value, group.Method, group.Requests, group.ErrorRequests,

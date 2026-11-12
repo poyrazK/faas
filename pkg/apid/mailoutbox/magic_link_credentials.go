@@ -24,6 +24,10 @@ type MagicLinkCredentials struct{ pool *pgxpool.Pool }
 type MagicLinkRedemption struct {
 	AccountID                       string
 	RevokedSessions, RevokedAPIKeys int64
+	// Claimed is true when the link proved a not-yet-verified address and
+	// the pre-verification credentials, authenticator included, were
+	// cleared. The caller then ends the account's pending grants.
+	Claimed bool
 }
 
 func NewMagicLinkCredentials(pool *pgxpool.Pool) *MagicLinkCredentials {
@@ -47,7 +51,8 @@ func magicLinkAvailable(email, status string, verified, abuseHold pgtype.Timesta
 // Redeem locks account before token, checks the saved recovery generation, and
 // consumes only a sign-in credential. For a new address, ownership proof also
 // removes pre-verification passwords, sessions and keys in the same transaction.
-// MFA policy and dashboard session creation remain with the existing caller.
+// The claim also clears a pre-verification authenticator; an explicit MFA
+// policy and dashboard session creation remain with the caller.
 func (c *MagicLinkCredentials) Redeem(ctx context.Context, hash []byte) (MagicLinkRedemption, error) {
 	var result MagicLinkRedemption
 	if c == nil || len(hash) != api.MagicLinkTokenBytes {
@@ -131,5 +136,6 @@ func claimMagicLinkOwnership(ctx context.Context, queries *q.Queries, tx pgx.Tx,
 	if err := queries.ClaimMagicLinkOwnership(ctx, tx, account); err != nil {
 		return result, err
 	}
+	result.Claimed = true
 	return result, nil
 }

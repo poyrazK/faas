@@ -308,7 +308,11 @@ func (c *matchCompiler) leaf(e EdgeRuleMatchExpr, at string) (matchNode, error) 
 		if len(values) != 1 || len(values[0]) > EdgeRuleMatchMaxRegexBytes {
 			return matchNode{}, fmt.Errorf("%s: regex takes one pattern of at most %d bytes", at, EdgeRuleMatchMaxRegexBytes)
 		}
-		re, err := regexp.Compile(values[0])
+		pattern := values[0]
+		if n.foldCase {
+			pattern = "(?i:" + pattern + ")"
+		}
+		re, err := regexp.Compile(pattern)
 		if err != nil {
 			return matchNode{}, fmt.Errorf("%s: invalid regex: %w", at, err)
 		}

@@ -132,6 +132,10 @@ once. `faas.RunWorkflowLocally` is the local test runner.
 | `sleep(name, duration)` | Parks the run for 1 s up to the plan's maximum wait (30 days on Hobby, 90 on Pro, 365 on Scale). |
 | `waitForEvent(name, { event, timeout })` | Waits for an event named `event` (default: `name`) sent with `gregale workflow events RUN_ID approved --payload '{...}'` or `POST /v1/workflows/runs/{id}/events`. Resolves with the payload, or `null` after `timeout` (default: the plan's maximum wait). |
 
+The exact event or callback payload `{"timeout":true}` is reserved for internal
+timeouts. If customer data needs that shape, wrap it, for example as
+`{"data":{"timeout":true}}`.
+
 - **Parallel steps.** `Promise.all([wf.step(...), wf.step(...)])` (or
   `asyncio.gather`) runs the steps concurrently in one call.
 - **Loops.** Repeating a name records `poll`, `poll#2`, `poll#3`, …, so a step
@@ -165,7 +169,7 @@ steps must be deterministic:
 | Recorded results, payloads and errors per run | 1.5 MiB |
 | Results reported by one call (parallel steps share it) | 960 KiB of JSON |
 | Workflow output | 960 KiB of JSON |
-| Operation name | 1–128 of `A-Z a-z 0-9 _ . : / -`, starting with a letter or digit; `#` is reserved for repeated names |
+| Operation base name | 1–128 of `A-Z a-z 0-9 _ . : / -`, starting with a letter or digit; SDK-generated repeat suffixes are additional, and `#` is reserved for them |
 
 A step whose result would push one call's answer past 960 KiB fails without
 retry. Large data belongs in [object storage](object-storage.md); return its

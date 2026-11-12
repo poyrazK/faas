@@ -813,4 +813,7 @@ type Stats struct {
 	// SkippedAwaitingApproval counts releases waiting for people
 	// (ADR-20261020085706).
 	SkippedAwaitingApproval int
+	// SkippedGone counts rows whose app or deployment was deleted between
+	// the list and a gate read.
+	SkippedGone int
 }

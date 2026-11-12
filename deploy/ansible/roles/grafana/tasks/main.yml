@@ -308,11 +308,10 @@
 # Byte-identical copy of deploy/grafana/top-throttled-apps.json; the
 # deploy/grafana/ tree is the operator-visible source-of-truth, the
 # ansible role's files/ tree is the production wire destination. Same
-# shape as faas-fleet.json: 4 panels (top-10 throttled apps, per-slice
-# throttle ratio gauge, customer share of fleet throttling, other bucket
-# growth) keyed off vmmd_cpu_throttle_seconds_total{account_id, app_id}
-# and vmmd_cpu_throttle_ratio{slice}. Reference: docs/runbooks/FaasCpuStarvation.md
-# §Verify (panel IDs + expressions).
+# shape as faas-fleet.json: throttle panels (top-10 throttled apps,
+# customer share of fleet throttling, other bucket growth) keyed off
+# vmmd_cpu_throttle_seconds_total{account_id, app_id}, plus the
+# streaming panels.
 - name: grafana — drop top-throttled-apps dashboard JSON (issue # 301)
   ansible.builtin.copy:
     src: top-throttled-apps.json

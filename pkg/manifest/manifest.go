@@ -139,6 +139,10 @@ type Manifest struct {
 	// platform zone. Today that is customer custom domains (ADR-520).
 	PublicEdge PublicEdge `yaml:"public_edge,omitempty"`
 
+	// HotPath turns on the compute nodes' request- and wake-path switches
+	// (hot_path.go).
+	HotPath HotPath `yaml:"hot_path,omitempty"`
+
 	// ManagedPostgres turns on native managed PostgreSQL (ADR-1027) on the
 	// fleet's database hosts (managed_postgres.go).
 	ManagedPostgres *ManagedPostgres `yaml:"managed_postgres,omitempty"`
@@ -198,6 +202,10 @@ type Manifest struct {
 	// LogArchive is the bucket customer logs are archived to. Absent leaves
 	// each host's archive credential envelope untouched.
 	LogArchive LogArchive `yaml:"log_archive,omitempty"`
+
+	// ArtifactSigner turns on the control plane's artifact signer
+	// (ADR-20261109170000). Absent keeps sign.key on the compute nodes.
+	ArtifactSigner ArtifactSigner `yaml:"artifact_signer,omitempty"`
 
 	// WorkloadIdentity turns on workload-identity tokens (ADR-1141): the
 	// renderer hands its source directory to every control-plane and
@@ -846,6 +854,11 @@ type PublicEdge struct {
 	// certificate, the peer address as client, port 443 open on each compute
 	// host's entry_ipv4 and the client limits, together. Needs entry both.
 	Front string `yaml:"front,omitempty"`
+	// Overload is the compute edges' node-wide overload level
+	// (ADR-20261110123517): "off", the default; "observe", which measures
+	// and exports it and refuses nothing; or "on", which sheds by it. Needs
+	// front none, whose client limits it extends.
+	Overload string `yaml:"overload,omitempty"`
 }
 
 // PublicEdgeDNS is the Cloudflare zone and the names edgednsd manages.
@@ -930,6 +943,9 @@ const (
 const (
 	PublicEdgeFrontCloudflare = "cloudflare"
 	PublicEdgeFrontNone       = "none"
+	PublicEdgeOverloadOff     = "off"
+	PublicEdgeOverloadObserve = "observe"
+	PublicEdgeOverloadOn      = "on"
 )
 
 // DirectEntry reports whether the compute edges take Cloudflare's direct
@@ -962,6 +978,15 @@ func (e PublicEdge) validate(hosts []Host) Errors {
 		}
 	default:
 		return Errors{{"public_edge.front", fmt.Sprintf("%q is not cloudflare or none", e.Front)}}
+	}
+	switch e.Overload {
+	case "", PublicEdgeOverloadOff:
+	case PublicEdgeOverloadObserve, PublicEdgeOverloadOn:
+		if !e.NoFront() {
+			return Errors{{"public_edge.overload", "needs public_edge.front: none, whose client limits it extends"}}
+		}
+	default:
+		return Errors{{"public_edge.overload", fmt.Sprintf("%q is not off, observe or on", e.Overload)}}
 	}
 	if e.PlacementNodeSet && !e.PlacementRouting {
 		return Errors{{"public_edge.placement_node_set", "needs public_edge.placement_routing: it spreads the routed requests"}}
@@ -1519,6 +1544,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.PrivateDNS.validate()...)
 	errs = append(errs, m.PublicEdge.CustomDomains.validate(m.DNS)...)
 	errs = append(errs, m.PublicEdge.validate(m.Fleet.Hosts)...)
+	errs = append(errs, m.HotPath.validate(m.PublicEdge)...)
 	errs = append(errs, m.validatePrivateResolution()...)
 	errs = append(errs, m.PostgreSQL.validate()...)
 	errs = append(errs, m.validatePostgresStandby()...)
@@ -1532,6 +1558,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.ObjectStorage.validate()...)
 	errs = append(errs, m.ObjectStorage.validateOnCompute(m.PublicEdge, m.Fleet.Hosts)...)
 	errs = append(errs, m.LogArchive.validate()...)
+	errs = append(errs, m.ArtifactSigner.validate()...)
 	errs = append(errs, m.WorkloadIdentity.validate()...)
 	if len(errs) > 0 {
 		return errs

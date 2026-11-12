@@ -3,12 +3,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -30,6 +33,9 @@ type OutboundRelayReceiver struct {
 	dial        outboundRelayDialer
 	now         func() time.Time
 	deployments workloadIdentityDeployments
+
+	warnMu               sync.Mutex
+	lastUnconfiguredWarn time.Time
 }
 
 // UseDeployments names each app relay assertion's environment, so outboundd
@@ -41,7 +47,8 @@ func (r *OutboundRelayReceiver) UseDeployments(d workloadIdentityDeployments) {
 }
 
 // StartOutboundRelayReceiver binds the relay port. Without a signer or a
-// target the port still accepts and immediately closes, so apps fail fast.
+// target the port still accepts and answers an outbound_relay_unavailable 503,
+// so apps fail fast with a reason instead of a dropped connection.
 func StartOutboundRelayReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm.Manager, signer *workloadidentity.Signer, dial outboundRelayDialer, jailer *fcvm.JailerVMM) (*OutboundRelayReceiver, error) {
 	if ctx == nil || jailer == nil {
 		return nil, errors.New("outbound relay vsock: context and jailer are required")
@@ -59,6 +66,52 @@ func StartOutboundRelayReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm
 }
 
 func (r *OutboundRelayReceiver) Close() {}
+
+// outboundRelayUnconfiguredWarnEvery bounds the log line an unconfigured node
+// writes for each relay attempt.
+const outboundRelayUnconfiguredWarnEvery = time.Minute
+
+func (r *OutboundRelayReceiver) warnUnconfigured(instance string) {
+	now := r.now()
+	r.warnMu.Lock()
+	due := r.lastUnconfiguredWarn.IsZero() || now.Sub(r.lastUnconfiguredWarn) >= outboundRelayUnconfiguredWarnEvery
+	if due {
+		r.lastUnconfiguredWarn = now
+	}
+	r.warnMu.Unlock()
+	if due {
+		r.log.Warn("outbound relay: refused app connection; workload identity or outboundd target is not configured on this node",
+			"instance", instance, "signer", r.signer != nil, "target", r.dial != nil)
+	}
+}
+
+// writeOutboundRelayUnavailable answers the app's first HTTP request with an
+// RFC 7807 503. It reads the request head first (bounded) so closing does not
+// reset the connection over unread bytes and discard the response.
+func writeOutboundRelayUnavailable(conn net.Conn, identityMissing bool) {
+	_ = conn.SetDeadline(time.Now().Add(outboundRelayUnavailableDeadline))
+	head := make([]byte, 0, 1024)
+	buf := make([]byte, 1024)
+	for len(head) < outboundRelayUnavailableMaxHead && !bytes.Contains(head, []byte("\r\n\r\n")) {
+		n, err := conn.Read(buf)
+		head = append(head, buf[:n]...)
+		if err != nil {
+			break
+		}
+	}
+	detail := "Managed outbound integrations are not available on this node: its workload identity is not configured."
+	if !identityMissing {
+		detail = "Managed outbound integrations are not available on this node: no outbound gateway is configured."
+	}
+	body := `{"type":"about:blank","title":"Outbound integrations unavailable","status":503,"code":"outbound_relay_unavailable","detail":"` + detail + `"}`
+	_, _ = io.WriteString(conn, "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/problem+json\r\nConnection: close\r\nContent-Length: "+
+		strconv.Itoa(len(body))+"\r\n\r\n"+body)
+}
+
+const (
+	outboundRelayUnavailableDeadline = 2 * time.Second
+	outboundRelayUnavailableMaxHead  = 16 << 10
+)
 
 func (r *OutboundRelayReceiver) handleGuestStream(instance string, guest net.Conn) (string, error) {
 	if r.mgr == nil {
@@ -79,6 +132,11 @@ func (r *OutboundRelayReceiver) handleGuestStream(instance string, guest net.Con
 		return "", r.serveRehearsalRelay(session, instance, app, account, run, guest)
 	}
 	if r.signer == nil || r.dial == nil {
+		// Not a transport failure: this node has no workload-identity key or
+		// outboundd target. Tell the app instead of dropping the connection,
+		// so the failure is visible to the customer and in vmmd's log.
+		r.warnUnconfigured(instance)
+		writeOutboundRelayUnavailable(guest, r.signer == nil)
 		return "", nil
 	}
 	preamble, err := r.relayPreamble(instance)

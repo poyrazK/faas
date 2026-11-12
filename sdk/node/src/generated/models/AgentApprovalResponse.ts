@@ -11,9 +11,9 @@ export type AgentApprovalResponse = {
    */
   id: string;
   /**
-   * The kind of action.
+   * The kind of action; budget for a change past the agent's monthly budget.
    */
-  category: 'delete' | 'production' | 'credentials' | 'billing';
+  category: 'delete' | 'production' | 'credentials' | 'billing' | 'budget';
   /**
    * The HTTP method of the request the approval allows.
    */
@@ -54,5 +54,9 @@ export type AgentApprovalResponse = {
    * Why the person denied this request, if they said; absent otherwise.
    */
   note?: string;
+  /**
+   * What the agent said the request is for (Gregale-Agent-Reason on the request that opened it), if it said. Untrusted agent text: it never changes what is approved.
+   */
+  reason?: string;
 };
 

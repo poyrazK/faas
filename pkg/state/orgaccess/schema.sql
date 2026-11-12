@@ -10,7 +10,7 @@ CREATE TABLE api_keys (
 );
 CREATE TABLE deploy_tokens (
     id uuid PRIMARY KEY, account_id uuid NOT NULL, app_id uuid NOT NULL,
-    status text NOT NULL, expires_at timestamptz
+    status text NOT NULL, expires_at timestamptz, created_by_account_id uuid
 );
 CREATE TABLE oidc_exchanged_tokens (
     id uuid PRIMARY KEY, account_id uuid NOT NULL, expires_at timestamptz NOT NULL

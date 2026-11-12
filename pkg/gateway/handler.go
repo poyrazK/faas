@@ -1142,6 +1142,9 @@ type Handler struct {
 	MirrorMaxConcurrentPerRule int64
 	// log may be nil (defaults to slog.Default()).
 	log *slog.Logger
+	// requestLogBudget bounds the Info-level gateway_request lines
+	// (api.GatewayRequestLogLinesPerSecond); nil writes every line.
+	requestLogBudget *requestLogBudget
 	// appsSuffix is the configured public suffix (e.g. ".gregale.dev").
 	// Non-empty enables a pre-Lookup host suffix check that 404s anything
 	// outside it (spec §4.1 noise filter). Custom domains (Pro+) bypass this
@@ -1583,6 +1586,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		headHeaders:        newEdgeHeadHeaderCache(),
 		appFreezes:         newAppFreezes(),
 		log:                log,
+		requestLogBudget:   newRequestLogBudget(),
 		wakePageCycles:     make(map[string]*wakePageCycle),
 		consumerKeyTouches: newConsumerKeyToucher(),
 		// mirrorSlots is sync.Map (zero value ready); the cap is
@@ -2148,6 +2152,13 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 		}
 	}
 	if !app.OnlyAllowDeclaredRoutes {
+		return false
+	}
+	// The gateway answers the app's health path itself without a VM, so it
+	// is not app surface the gate protects; refusing it broke uptime
+	// monitors on apps that turned the gate on (Hunt 32 H32-48, ADR-091
+	// amendment 2026-11-10). A health path that wakes the app stays gated.
+	if h.answersHealthAtEdge(r, app, requestPath) {
 		return false
 	}
 	if h.declaredRoutes == nil {
@@ -6296,6 +6307,7 @@ func (h *Handler) pickAfterCapacity(app App, preferredInstanceID, versionKey str
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r = r.WithContext(withResponseCacheFill(r.Context(), h.responseCache))
 	// These forwarding controls are authored below from the pinned app and
 	// streaming decision. A public header cannot turn ordinary HTTP into a
 	// detachable response and escape its deadline.
@@ -6432,9 +6444,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the response and gateway-private context, leaving cold-wake timelines
 	// without the customer-visible correlation handle.
 	r.Header.Set(api.RequestIDHeader, rid)
+	matchCtx.requestID = rid
 	if !isSyntheticInvocation(r.Context()) {
 		for name := range r.Header {
-			if api.IsReservedOperationHeader(name) || api.HasLowerPrefix(name, "x-gregale-event-") {
+			if isPlatformDeliveryHeader(name) {
 				delete(r.Header, name)
 			}
 		}
@@ -7395,7 +7408,7 @@ haveApp:
 		// check is the single chokepoint: an authed request
 		// cannot reach the tee even if applyEdgeRuleCache
 		// itself short-circuited to a miss.
-		cw := newCacheWriter(w, rec, rule, ResponseCachePerEntryMaxBytes)
+		cw := newCacheWriter(w, rec, rule, ResponseCachePerEntryMaxBytes, responseCacheFillFrom(r.Context(), h.responseCache))
 		cw.excludeManagedVersionCookie(managedVersionSetCookie)
 		cw.excludeManagedCookie(managedReleaseContextSetCookie)
 		w = cw
@@ -8655,6 +8668,7 @@ haveApp:
 // routeLabelSet; the empty-string sentinels mirror the
 // `gateway_requests_total{app="-"}` pattern.
 func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold bool, target Target) {
+	status = observedStatus(r, status)
 	code := statusClass(status)
 	requestID := requestIDFrom(r)
 	// Read the stashed route label BEFORE the sentinel-coercion
@@ -8674,7 +8688,12 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// "now() — now()").
 	elapsed := observedLatency(r, status, time.Since(startTime(r)))
 	h.observeMCPRequest(r, status, appID, elapsed)
-	if h.metrics != nil {
+	// A route probe (ADR-847) writes no customer telemetry, and the app's
+	// request series are customer telemetry too: a rollout's probes (twenty a
+	// minute) inflated an app's request count tenfold and diluted its error
+	// rate, SLOs and error-rate alerts (ADR-20261110090000). The canary
+	// counts probe results from its own record.
+	if h.metrics != nil && !isRouteProbe(r.Context()) {
 		// Use placeholder labels for the unknown-host path so 404s show up on
 		// the dashboard under a sentinel app_id (e.g. "-" or "").
 		if appID == "" {
@@ -8741,8 +8760,14 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// but recomputes; `elapsed` was already measured above.
 	// A warm 2xx is logged at Debug, which production does not write: build
 	// the line's attributes only when the handler will take it.
+	// An Info line also spends the request-log budget: past it the line is
+	// not built (see requestLogBudget).
 	decision := trafficDecisionEvidence(r.Context(), status, false)
-	if requestLog := h.log; requestLog != nil && requestLog.Enabled(r.Context(), requestLogLevel(code, cold)) {
+	level := requestLogLevel(code, cold)
+	if requestLog := h.log; requestLog != nil && requestLog.Enabled(r.Context(), level) && h.requestLogBudget.admit(level, h.metrics) {
+		if suppressed := h.requestLogBudget.takeSuppressed(); suppressed > 0 {
+			requestLog = requestLog.With("suppressed_before", suppressed)
+		}
 		if decision.path != "" {
 			requestLog = requestLog.With(decision.logAttribute())
 		}
@@ -10174,7 +10199,7 @@ func writeWakeError(w http.ResponseWriter, err error) {
 // 502: Cloudflare replaces 502 bodies.
 func publicWakeFailure(p *api.Problem) (*api.Problem, bool) {
 	switch p.Code {
-	case api.CodeAppStartupCrash, api.CodeAppNotListening, api.CodeAppStartupTimeout,
+	case api.CodeAppStartupCrash, api.CodeFunctionInitFailed, api.CodeAppNotListening, api.CodeAppStartupTimeout,
 		api.CodeAppLoopbackBound, api.CodeAppRuntimeOOM, api.CodeAppArchMismatch, api.CodeDeployFailed:
 		return api.NewProblem(http.StatusServiceUnavailable, p.Code, "App failed to start",
 			"the app's process did not become ready; its owner can find the cause in the app's logs and deployment status"), true

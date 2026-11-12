@@ -20,6 +20,7 @@ const (
 	detFly                        // fly.toml
 	detServerless                 // serverless.yml
 	detAppYaml                    // app.yaml
+	detFunctions                  // gregale.yaml functions: (ADR-20261108160000)
 )
 
 // detectorPriority is the canonical tiebreak order. Within a tier,
@@ -43,6 +44,8 @@ func (d detector) priority() uint8 {
 		return 55
 	case detAppYaml:
 		return 50
+	case detFunctions:
+		return 90
 	}
 	return 0 // convention / workspaces / root floor
 }
@@ -72,6 +75,8 @@ func (d detector) String() string {
 		return detNameServerless
 	case detAppYaml:
 		return detNameAppYaml
+	case detFunctions:
+		return detNameFunctions
 	case detOther:
 		return detNameOther
 	}
@@ -92,6 +97,7 @@ const (
 	detNameFly        = "fly"
 	detNameServerless = "serverless"
 	detNameAppYaml    = "app_yaml"
+	detNameFunctions  = "functions"
 	detNameOther      = "other"
 )
 

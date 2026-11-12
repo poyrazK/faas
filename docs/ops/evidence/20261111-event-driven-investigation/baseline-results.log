@@ -1,0 +1,166 @@
+=== RUN   TestEventFanoutFailureDoesNotLogRequestData
+--- PASS: TestEventFanoutFailureDoesNotLogRequestData (0.00s)
+=== RUN   TestEventDeliveryCapacitySchedulerRecovery
+=== RUN   TestEventDeliveryCapacitySchedulerRecovery/memory
+=== RUN   TestEventDeliveryCapacitySchedulerRecovery/memory/false
+=== RUN   TestEventDeliveryCapacitySchedulerRecovery/memory/true
+=== RUN   TestEventDeliveryCapacitySchedulerRecovery/postgres
+=== RUN   TestEventDeliveryCapacitySchedulerRecovery/postgres/false
+=== RUN   TestEventDeliveryCapacitySchedulerRecovery/postgres/true
+--- PASS: TestEventDeliveryCapacitySchedulerRecovery (27.50s)
+    --- PASS: TestEventDeliveryCapacitySchedulerRecovery/memory (0.15s)
+    --- PASS: TestEventDeliveryCapacitySchedulerRecovery/postgres (27.35s)
+=== RUN   TestEventDeliveryCapacityWarningClassification
+--- PASS: TestEventDeliveryCapacityWarningClassification (0.00s)
+=== RUN   TestRoutePublishedEventMatchesFiltersAndIsolatesAccounts
+--- PASS: TestRoutePublishedEventMatchesFiltersAndIsolatesAccounts (0.00s)
+=== RUN   TestRoutePublishedEventIsIdempotentForRepeatedNotifications
+--- PASS: TestRoutePublishedEventIsIdempotentForRepeatedNotifications (0.00s)
+=== RUN   TestRoutePublishedEventIdentityIncludesSource
+--- PASS: TestRoutePublishedEventIdentityIncludesSource (0.00s)
+=== RUN   TestEventFanoutSweepDrainsOldBacklog
+--- PASS: TestEventFanoutSweepDrainsOldBacklog (6.44s)
+=== RUN   TestEventFanoutDoesNotBackfillNewSubscription
+--- PASS: TestEventFanoutDoesNotBackfillNewSubscription (0.00s)
+=== RUN   TestEventFanoutUsesSubscriptionAtAcceptance
+--- PASS: TestEventFanoutUsesSubscriptionAtAcceptance (0.00s)
+=== RUN   TestEventFanoutLegacyReceiptKeepsCurrentSubscriptionRoutingIntegratedRouting
+--- PASS: TestEventFanoutLegacyReceiptKeepsCurrentSubscriptionRoutingIntegratedRouting (0.00s)
+=== RUN   TestEventFanoutClassifiesTerminalRecipientFailures
+=== RUN   TestEventFanoutClassifiesTerminalRecipientFailures/invalid_subscription
+=== RUN   TestEventFanoutClassifiesTerminalRecipientFailures/target_unavailable
+--- PASS: TestEventFanoutClassifiesTerminalRecipientFailures (0.00s)
+    --- PASS: TestEventFanoutClassifiesTerminalRecipientFailures/invalid_subscription (0.00s)
+    --- PASS: TestEventFanoutClassifiesTerminalRecipientFailures/target_unavailable (0.00s)
+=== RUN   TestEventFanoutMarksTransientEnqueueFailureRetryableAfterExhaustion
+--- PASS: TestEventFanoutMarksTransientEnqueueFailureRetryableAfterExhaustion (0.00s)
+=== RUN   TestRoutePublishedEventCancelsPendingWorkOnce
+--- PASS: TestRoutePublishedEventCancelsPendingWorkOnce (0.00s)
+=== RUN   TestRoutePublishedEventUsesApplicationWorkLane
+--- PASS: TestRoutePublishedEventUsesApplicationWorkLane (0.00s)
+=== RUN   TestEventFanoutKeepsWorkBindingAtAcceptance
+--- PASS: TestEventFanoutKeepsWorkBindingAtAcceptance (0.00s)
+=== RUN   TestEventFanoutLegacyReceiptKeepsCurrentSubscriptionRouting
+--- PASS: TestEventFanoutLegacyReceiptKeepsCurrentSubscriptionRouting (0.00s)
+=== RUN   TestKafka_NackPoisonCommit
+=== RUN   TestKafka_NackPoisonSeekToOffset
+=== RUN   TestKafka_NackPoisonEmptyStrategyDefaultsToCommit
+=== RUN   TestKafka_NackBrokerErrorRedelivers
+=== RUN   TestKafka_AckMultipleSucceeds
+=== RUN   TestKafka_AckCommitBrokerError
+=== RUN   TestKafka_NackBrokerErrorNeverCommits
+=== RUN   TestNATSPoller_TranslateAckToBroker
+=== RUN   TestNATSPoller_TranslateNackToBroker
+=== RUN   TestNATSPoller_SeqFallbackIsUnique
+=== RUN   TestNATSBrokerPoolDialsOutsideItsLock
+--- PASS: TestNATSBrokerPoolDialsOutsideItsLock (0.01s)
+=== RUN   TestNATSBrokerPoolClosesIdleConnections
+--- PASS: TestNATSBrokerPoolClosesIdleConnections (0.11s)
+=== RUN   TestNATSBrokerPoolReplacesClosedConnections
+--- PASS: TestNATSBrokerPoolReplacesClosedConnections (0.00s)
+=== RUN   TestKafkaGroupLagFromCommittedOffsets
+=== RUN   TestKafkaGroupLagFromCommittedOffsets/committed_offsets,_summed_over_partitions
+=== RUN   TestKafkaGroupLagFromCommittedOffsets/a_group_with_no_commit_starts_at_the_log_start
+=== RUN   TestKafkaGroupLagFromCommittedOffsets/a_partition_the_group_never_committed
+=== RUN   TestKafkaGroupLagFromCommittedOffsets/a_log_truncated_past_the_commit
+=== RUN   TestKafkaGroupLagFromCommittedOffsets/caught_up
+=== RUN   TestKafkaGroupLagFromCommittedOffsets/a_partition_error_fails_the_reading
+=== RUN   TestKafkaGroupLagFromCommittedOffsets/no_watermarks_fails_the_reading
+--- PASS: TestKafkaGroupLagFromCommittedOffsets (0.00s)
+    --- PASS: TestKafkaGroupLagFromCommittedOffsets/committed_offsets,_summed_over_partitions (0.00s)
+    --- PASS: TestKafkaGroupLagFromCommittedOffsets/a_group_with_no_commit_starts_at_the_log_start (0.00s)
+    --- PASS: TestKafkaGroupLagFromCommittedOffsets/a_partition_the_group_never_committed (0.00s)
+    --- PASS: TestKafkaGroupLagFromCommittedOffsets/a_log_truncated_past_the_commit (0.00s)
+    --- PASS: TestKafkaGroupLagFromCommittedOffsets/caught_up (0.00s)
+    --- PASS: TestKafkaGroupLagFromCommittedOffsets/a_partition_error_fails_the_reading (0.00s)
+    --- PASS: TestKafkaGroupLagFromCommittedOffsets/no_watermarks_fails_the_reading (0.00s)
+=== RUN   TestKafkaPollerReportsCommittedLag
+--- PASS: TestKafkaPollerReportsCommittedLag (0.00s)
+=== RUN   TestKafkaPollReportsConsumerGroupErrors
+--- PASS: TestKafkaPollReportsConsumerGroupErrors (0.00s)
+=== RUN   TestBrokerBatchCarriesTheRestAndDeadLettersOversizedRecords
+--- PASS: TestBrokerBatchCarriesTheRestAndDeadLettersOversizedRecords (0.01s)
+=== RUN   TestDeadLetteredBrokerRedeliverySettles
+--- PASS: TestDeadLetteredBrokerRedeliverySettles (0.01s)
+=== RUN   TestLongBrokerBatchRenewsItsClaims
+--- PASS: TestLongBrokerBatchRenewsItsClaims (0.01s)
+=== RUN   TestTriggerClaimOutcomeRetriesTransientErrors
+--- PASS: TestTriggerClaimOutcomeRetriesTransientErrors (0.60s)
+=== RUN   TestKafkaRecordIDNamesTopicAndGeneration
+--- PASS: TestKafkaRecordIDNamesTopicAndGeneration (0.00s)
+=== RUN   TestKafkaTerminalAckDoesNotCommitPastOpenOffset
+--- PASS: TestKafkaTerminalAckDoesNotCommitPastOpenOffset (0.00s)
+=== RUN   TestKafkaDeferAndRetryHold
+--- PASS: TestKafkaDeferAndRetryHold (0.00s)
+=== RUN   TestNATSRetriesWaitForTheirDueTime
+--- PASS: TestNATSRetriesWaitForTheirDueTime (0.00s)
+=== RUN   TestRedisPollDoesNotReadPastAFullPendingList
+--- PASS: TestRedisPollDoesNotReadPastAFullPendingList (0.01s)
+=== RUN   TestNATSBrokerPoolConnectsOncePerURL
+--- PASS: TestNATSBrokerPoolConnectsOncePerURL (0.00s)
+=== RUN   TestEventClaimKeeperRenewsUntilStopped
+--- PASS: TestEventClaimKeeperRenewsUntilStopped (0.02s)
+=== RUN   TestEventDeliveryHandlerFailuresRetryOrDeadLetter
+=== RUN   TestEventDeliveryHandlerErrorDeadLettersWhenAttemptsRunOut
+=== RUN   TestEventDeliveryAppRetryPolicyIsBounded
+=== RUN   TestEventDeliveryRetriesBackOffAndHonourTheAppPolicy
+--- PASS: TestEventDeliveryRetriesBackOffAndHonourTheAppPolicy (0.01s)
+=== RUN   TestEventFanoutBacklogDrainsFromOneWake
+--- PASS: TestEventFanoutBacklogDrainsFromOneWake (0.41s)
+=== RUN   TestEventFanoutSweepReleasesUnadoptedBatchClaims
+--- PASS: TestEventFanoutSweepReleasesUnadoptedBatchClaims (0.00s)
+=== RUN   TestEventFanoutHoldsAllRoutingWhileEventsIsKilled
+--- PASS: TestEventFanoutHoldsAllRoutingWhileEventsIsKilled (0.03s)
+=== RUN   TestEventFanoutHoldsAnAccountsCustomerEvents
+--- PASS: TestEventFanoutHoldsAnAccountsCustomerEvents (0.02s)
+=== RUN   TestKafkaFailedRecordIsRedeliveredAndHoldsCommits
+--- PASS: TestKafkaFailedRecordIsRedeliveredAndHoldsCommits (0.00s)
+=== RUN   TestKafkaExhaustedRecordCommits
+--- PASS: TestKafkaExhaustedRecordCommits (0.00s)
+=== RUN   TestKafkaSASLMechanism_Unknown_Mega4
+--- PASS: TestKafka_NackPoisonCommit (0.00s)
+=== RUN   TestKafka_NackBrokerErrorNeverCommits/offset=10
+=== RUN   TestKafka_NackBrokerErrorNeverCommits/offset=20
+=== RUN   TestKafka_NackBrokerErrorNeverCommits/offset=30
+--- PASS: TestNATSPoller_TranslateAckToBroker (0.00s)
+=== RUN   TestEventDeliveryHandlerFailuresRetryOrDeadLetter/thrown_handler_error_retries
+=== RUN   TestEventDeliveryHandlerFailuresRetryOrDeadLetter/request_timeout_retries
+--- PASS: TestKafkaSASLMechanism_Unknown_Mega4 (0.00s)
+--- PASS: TestNATSPoller_SeqFallbackIsUnique (0.00s)
+=== RUN   TestEventDeliveryHandlerFailuresRetryOrDeadLetter/too_many_requests_retries
+=== RUN   TestNATSPoller_TranslateNackToBroker/broker_error
+=== RUN   TestEventDeliveryHandlerFailuresRetryOrDeadLetter/refused_input_dead-letters
+=== RUN   TestEventDeliveryHandlerFailuresRetryOrDeadLetter/not_found_dead-letters
+=== RUN   TestEventDeliveryHandlerFailuresRetryOrDeadLetter/plain_async_invocation_fails
+=== RUN   TestNATSPoller_TranslateNackToBroker/poison_record
+=== RUN   TestNATSPoller_TranslateNackToBroker/max_attempts
+=== RUN   TestKafka_NackBrokerErrorRedelivers/strategy=commit
+=== RUN   TestKafka_NackBrokerErrorRedelivers/strategy=seek-to-offset
+--- PASS: TestKafka_AckCommitBrokerError (0.00s)
+=== RUN   TestKafka_NackBrokerErrorRedelivers/strategy=
+--- PASS: TestKafka_AckMultipleSucceeds (0.00s)
+--- PASS: TestKafka_NackPoisonEmptyStrategyDefaultsToCommit (0.00s)
+--- PASS: TestKafka_NackPoisonSeekToOffset (0.00s)
+--- PASS: TestKafka_NackBrokerErrorNeverCommits (0.00s)
+    --- PASS: TestKafka_NackBrokerErrorNeverCommits/offset=30 (0.00s)
+    --- PASS: TestKafka_NackBrokerErrorNeverCommits/offset=10 (0.00s)
+    --- PASS: TestKafka_NackBrokerErrorNeverCommits/offset=20 (0.00s)
+--- PASS: TestEventDeliveryAppRetryPolicyIsBounded (0.00s)
+--- PASS: TestEventDeliveryHandlerErrorDeadLettersWhenAttemptsRunOut (0.01s)
+--- PASS: TestNATSPoller_TranslateNackToBroker (0.00s)
+    --- PASS: TestNATSPoller_TranslateNackToBroker/broker_error (0.00s)
+    --- PASS: TestNATSPoller_TranslateNackToBroker/max_attempts (0.00s)
+    --- PASS: TestNATSPoller_TranslateNackToBroker/poison_record (0.00s)
+--- PASS: TestKafka_NackBrokerErrorRedelivers (0.00s)
+    --- PASS: TestKafka_NackBrokerErrorRedelivers/strategy=commit (0.00s)
+    --- PASS: TestKafka_NackBrokerErrorRedelivers/strategy= (0.00s)
+    --- PASS: TestKafka_NackBrokerErrorRedelivers/strategy=seek-to-offset (0.00s)
+--- PASS: TestEventDeliveryHandlerFailuresRetryOrDeadLetter (0.00s)
+    --- PASS: TestEventDeliveryHandlerFailuresRetryOrDeadLetter/thrown_handler_error_retries (0.00s)
+    --- PASS: TestEventDeliveryHandlerFailuresRetryOrDeadLetter/plain_async_invocation_fails (0.01s)
+    --- PASS: TestEventDeliveryHandlerFailuresRetryOrDeadLetter/not_found_dead-letters (0.01s)
+    --- PASS: TestEventDeliveryHandlerFailuresRetryOrDeadLetter/too_many_requests_retries (0.00s)
+    --- PASS: TestEventDeliveryHandlerFailuresRetryOrDeadLetter/request_timeout_retries (0.01s)
+    --- PASS: TestEventDeliveryHandlerFailuresRetryOrDeadLetter/refused_input_dead-letters (0.01s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/sched	35.302s

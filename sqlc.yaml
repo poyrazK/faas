@@ -29,6 +29,17 @@ sql:
         sql_package: "pgx/v5"
         emit_methods_with_db_argument: true
         emit_empty_slices: true
+  # signd's build claims and the signatures it records (ADR-20261109170000).
+  - engine: "postgresql"
+    queries: "pkg/signd/signpg/queries.sql"
+    schema: "pkg/signd/signpg/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/signd/signpg/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
   # Hosted management MCP bridge state and lease (ADR-20261026195952).
   - engine: "postgresql"
     queries: "pkg/mcpmanagement/statepg/queries.sql"
@@ -265,6 +276,7 @@ sql:
       - "pkg/state/event_subscription_control_queries.sql"
       - "pkg/state/financial_budget_monitor_queries.sql"
       - "pkg/state/financial_budget_queries.sql"
+      - "pkg/state/cost_control_safety_queries.sql"
       - "pkg/state/financial_budget_stop_queries.sql"
       - "pkg/state/financial_compute_egress_queries.sql"
       - "pkg/state/financial_compute_job_queries.sql"
@@ -302,6 +314,7 @@ sql:
       - "pkg/state/job_log_retention_queries.sql"
       - "pkg/state/agent_approval_queries.sql"
       - "pkg/state/agent_activity_queries.sql"
+      - "pkg/state/agent_budget_queries.sql"
       - "pkg/state/key_project_limit_queries.sql"
       - "pkg/state/keyed_replay_queries.sql"
       - "pkg/state/managed_postgres_cutover_activation_queries.sql"

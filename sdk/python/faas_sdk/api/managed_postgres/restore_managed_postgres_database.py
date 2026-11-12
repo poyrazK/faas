@@ -78,7 +78,8 @@ def sync_detailed(
         id (str):
         idempotency_key (str | Unset):
         body (RestoreManagedPostgresDatabaseRequest): Point-in-time restore request that creates a
-            new database.
+            new database. A restore is a copy-on-write branch of the source where the backend supports
+            it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -119,7 +120,8 @@ def sync(
         id (str):
         idempotency_key (str | Unset):
         body (RestoreManagedPostgresDatabaseRequest): Point-in-time restore request that creates a
-            new database.
+            new database. A restore is a copy-on-write branch of the source where the backend supports
+            it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -155,7 +157,8 @@ async def asyncio_detailed(
         id (str):
         idempotency_key (str | Unset):
         body (RestoreManagedPostgresDatabaseRequest): Point-in-time restore request that creates a
-            new database.
+            new database. A restore is a copy-on-write branch of the source where the backend supports
+            it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -194,7 +197,8 @@ async def asyncio(
         id (str):
         idempotency_key (str | Unset):
         body (RestoreManagedPostgresDatabaseRequest): Point-in-time restore request that creates a
-            new database.
+            new database. A restore is a copy-on-write branch of the source where the backend supports
+            it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
