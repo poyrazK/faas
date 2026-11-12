@@ -58,7 +58,7 @@ func TestHandleSustainedCPUShadowAndPaidDoNotRecycle(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := state.NewMemStore()
-			acct, app, _ := sched.SeedApp(t, store, tc.plan, 512, 5)
+			acct, app, _ := sched.SeedApp(t, store, tc.plan, 256, 1)
 			e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 			ctx := context.Background()
 			woke, err := e.Wake(ctx, app.ID, "", "", "")

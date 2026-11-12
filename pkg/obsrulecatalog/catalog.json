@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "965c825d6a16f475e9448a5f87aa1e55b4bdc78590a26ce68c6c4ad53f6b9728",
+      "revision": "3a84335aa10315550f0ebef71b22491e212d17540b924b9f767b144d9a7385da",
       "files": [
         "faas.rules.yml"
       ],
@@ -3361,6 +3361,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "10e3f9ee7b5e7d0df6583b5a194dea4fce498994d611037f53b4b0d04060b73c"
+          }
+        },
+        {
+          "id": "736e4ef53830995dc54954a06b28d959e8bf1d7fe0315f16f1fd996c4036052d",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasTenantCPUAbuse",
+          "definition": {
+            "expression_hash": "91bcd057714b60b0d4b07e84f1f2607787599c2bdb236ffd3344c9885cdf6773",
+            "labels_hash": "f5bd3832083e40708298bb2ac436a093e8a0888947298321d8462bfce2f67176",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e9b17d1c06a69f24d6c01c18e7634845aad985723792408f6053ea01ea7e303e"
           }
         },
         {
@@ -7111,7 +7124,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "8cc8a2c7f6370709a6ff051a0950291e1b59da3ed9fd3ce84aac3919efc14c38",
+      "revision": "a4d55af374acb4ecf8f24c66f7cf37e37a20fce795736cf94bfe81f42b744cb8",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -10589,6 +10602,19 @@
             "for_seconds": 1800,
             "keep_firing_for_seconds": 0,
             "fingerprint": "65e2101ed894768225236dafcd28dd788288c0269414b335b426c97ea39f0f60"
+          }
+        },
+        {
+          "id": "736e4ef53830995dc54954a06b28d959e8bf1d7fe0315f16f1fd996c4036052d",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasTenantCPUAbuse",
+          "definition": {
+            "expression_hash": "91bcd057714b60b0d4b07e84f1f2607787599c2bdb236ffd3344c9885cdf6773",
+            "labels_hash": "f5bd3832083e40708298bb2ac436a093e8a0888947298321d8462bfce2f67176",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e9b17d1c06a69f24d6c01c18e7634845aad985723792408f6053ea01ea7e303e"
           }
         },
         {
