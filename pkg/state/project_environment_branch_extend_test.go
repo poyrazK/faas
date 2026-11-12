@@ -23,7 +23,7 @@ func TestMemProjectEnvironmentBranchExtend(t *testing.T) {
 			ManagedPostgresAccess: "read_write"}); err != nil {
 			t.Fatal(err)
 		}
-		createExtendBranch(t, s, accountID, projectID, "pr-2")
+		createExtendBranch(ctx, t, s, accountID, projectID, "pr-2")
 		return "pr-2"
 	})
 }
@@ -32,13 +32,13 @@ func TestMemProjectEnvironmentBranchExtend(t *testing.T) {
 // returns its slug.
 type pendingBranch func(t *testing.T, accountID, projectID, appID string) string
 
-func createExtendBranch(t *testing.T, s contractTestStore, accountID, projectID, slug string) state.ProjectEnvironmentBranch {
+func createExtendBranch(ctx context.Context, t *testing.T, s contractTestStore, accountID, projectID, slug string) state.ProjectEnvironmentBranch {
 	t.Helper()
-	acct, err := s.AccountByID(context.Background(), accountID)
+	acct, err := s.AccountByID(ctx, accountID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, branch, _, err := s.CreateProjectEnvironmentBranch(context.Background(), state.ProjectEnvironmentBranchCreate{
+	_, branch, _, err := s.CreateProjectEnvironmentBranch(ctx, state.ProjectEnvironmentBranchCreate{
 		AccountID: accountID, ProjectID: projectID, ParentSlug: "production", Slug: slug,
 		ExpiresAt: time.Now().Add(time.Hour), EgressMode: state.EnvironmentBranchEgressLive, MaxDepth: api.EnvironmentBranchMaxDepth,
 	}, api.MustLimitsFor(acct.Plan))
@@ -80,7 +80,7 @@ func projectEnvironmentBranchExtend(t *testing.T, s contractTestStore, makePendi
 	if err := s.MarkDeploymentLive(ctx, parent.ID); err != nil {
 		t.Fatal(err)
 	}
-	branch := createExtendBranch(t, s, acct.ID, project.ID, "pr-1")
+	branch := createExtendBranch(ctx, t, s, acct.ID, project.ID, "pr-1")
 	later := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Microsecond)
 	extended, err := extender.ExtendProjectEnvironmentBranch(ctx, acct.ID, project.ID, "pr-1", later)
 	if err != nil || !extended.ExpiresAt.Equal(later) || extended.EnvironmentID != branch.EnvironmentID {

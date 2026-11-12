@@ -15,7 +15,7 @@ func TestPgProjectEnvironmentBranchExtend(t *testing.T) {
 	// is put back to pending directly, as a branch waiting for its copies.
 	projectEnvironmentBranchExtend(t, s, func(t *testing.T, accountID, projectID, _ string) string {
 		t.Helper()
-		branch := createExtendBranch(t, s, accountID, projectID, "pr-2")
+		branch := createExtendBranch(ctx, t, s, accountID, projectID, "pr-2")
 		if _, err := pool.Exec(ctx, `update project_environment_branches set data_state = 'pending' where environment_id = $1`, branch.EnvironmentID); err != nil {
 			t.Fatal(err)
 		}
