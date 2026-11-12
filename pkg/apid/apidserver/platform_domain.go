@@ -44,4 +44,3 @@ func (s *server) platformOwnedDomain(domain string) bool {
 	}
 	return false
 }
-
