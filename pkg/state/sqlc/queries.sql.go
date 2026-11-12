@@ -102405,6 +102405,56 @@ func (q *Queries) RequestTelemetryErrorsByRoute(ctx context.Context, db DBTX, ar
 	return items, nil
 }
 
+const requestTelemetryKnownServerErrors = `-- name: RequestTelemetryKnownServerErrors :one
+WITH known AS (
+    SELECT DISTINCT method, route, status
+      FROM request_telemetry
+     WHERE app_id = $1::uuid
+       AND deployment_id = $5::uuid
+       AND received_at >= $6::timestamptz
+       AND received_at < $7::timestamptz
+       AND status >= 500 AND status < 600
+)
+SELECT COALESCE(SUM(r.count::bigint), 0)::bigint AS known_server_errors
+  FROM request_telemetry AS r
+  JOIN known AS k ON k.method = r.method AND k.route = r.route AND k.status = r.status
+ WHERE r.app_id = $1::uuid
+   AND r.deployment_id = $2::uuid
+   AND r.received_at >= $3::timestamptz
+   AND r.received_at < $4::timestamptz
+   AND r.status >= 500 AND r.status < 600
+`
+
+type RequestTelemetryKnownServerErrorsParams struct {
+	AppID         pgtype.UUID
+	ReleaseID     pgtype.UUID
+	ReleaseSince  pgtype.Timestamptz
+	ReleaseUntil  pgtype.Timestamptz
+	BaselineID    pgtype.UUID
+	BaselineSince pgtype.Timestamptz
+	BaselineUntil pgtype.Timestamptz
+}
+
+// A release's 5xx responses on method+route+status triples its predecessor
+// also answered in the baseline window (Hunt 34 H34-17). The first-wake 5xx
+// guard and the post-release watch's quiet-predecessor bar leave them out,
+// so a route that already failed before the release cannot roll it back.
+// Both windows use request_telemetry_app_dep_received_idx.
+func (q *Queries) RequestTelemetryKnownServerErrors(ctx context.Context, db DBTX, arg RequestTelemetryKnownServerErrorsParams) (int64, error) {
+	row := db.QueryRow(ctx, requestTelemetryKnownServerErrors,
+		arg.AppID,
+		arg.ReleaseID,
+		arg.ReleaseSince,
+		arg.ReleaseUntil,
+		arg.BaselineID,
+		arg.BaselineSince,
+		arg.BaselineUntil,
+	)
+	var known_server_errors int64
+	err := row.Scan(&known_server_errors)
+	return known_server_errors, err
+}
+
 const requestTelemetryLatencyWeightsByRoute = `-- name: RequestTelemetryLatencyWeightsByRoute :many
 SELECT route,
        latency_ms,

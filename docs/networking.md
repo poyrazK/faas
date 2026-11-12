@@ -1417,6 +1417,19 @@ them at the service address, but they never get a public
 supported; UDP and port ranges are skipped with a warning. Through the app
 API, set `"internal": true` on an entry in `ports`.
 
+An app deployed without Compose declares its ports with the CLI. Each entry is
+`[NAME=]tcp|udp:PORT`, with `:internal` for a listener that stays private; an
+entry without a name is named `tcp-<port>` or `udp-<port>`. The list replaces
+the app's declared ports, and `--ports none` clears them:
+
+```bash
+gregale app my-api --ports tcp:7000,udp:5353,cache=tcp:6379:internal
+```
+
+A raw TCP listener (`gregale app listener create`) and a UDP listener
+(`gregale app my-api udp add`) need a declared port with the same name and
+guest port.
+
 Each declared dependency also receives `GREGALE_SERVICE_<NAME>_HOST`, the bare
 host for non-HTTP clients:
 
