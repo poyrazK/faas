@@ -1164,7 +1164,10 @@ The first window opens when Gregale first sees traffic for the completed
 release and lasts 5 minutes. If at least 5 of the release's responses are 5xx,
 and those are at least half its requests, Gregale rolls back to the release it
 replaced. The check runs every 15 seconds, and the release keeps serving until
-the previous one is ready again. While a rollout runs, a plain
+the previous one is ready again. The rolled-back release records the decision,
+and `gregale release summary <id>` shows it with or without a canary, for
+example `abort_post_release_5xx: first-wake 5xx: 5 of 5 responses failed;
+rolled back automatically to <previous>`. While a rollout runs, a plain
 `gregale rollback my-api` is refused because traffic is split; to stop the
 rollout and return its traffic to the release it replaced, run
 `gregale release traffic rollback my-api` (the same as

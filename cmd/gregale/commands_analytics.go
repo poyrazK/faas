@@ -120,6 +120,17 @@ func renderRequestAnalytics(w io.Writer, response api.RequestAnalyticsResponse) 
 	_, _ = fmt.Fprintf(w, "App:        %s\n", response.Slug)
 	_, _ = fmt.Fprintf(w, "Group by:   %s\n", response.GroupBy)
 	_, _ = fmt.Fprintf(w, "Window:     %s (%s to %s)\n", response.Since, analyticsWindowTime(response.From), analyticsWindowTime(response.Until))
+	if response.TelemetryComplete == nil {
+		_, _ = fmt.Fprintln(w, "Telemetry:  completeness unknown")
+	} else if !*response.TelemetryComplete {
+		_, _ = fmt.Fprintln(w, "Telemetry:  incomplete; totals may be missing requests")
+	}
+	if len(response.Omitted) > 0 {
+		_, _ = fmt.Fprintf(w, "Unavailable: %s\n", strings.ReplaceAll(strings.Join(response.Omitted, ", "), "_", " "))
+	}
+	for _, gap := range response.TelemetryGaps {
+		_, _ = fmt.Fprintf(w, "  - %s\n", gap)
+	}
 	// Recorded request log, so it can trail the gateway counters that
 	// `gregale metric <app>` reads (Hunt 32 H32-27).
 	_, _ = fmt.Fprintf(w, "Requests:   %d (recorded request log)\n", response.Requests)
