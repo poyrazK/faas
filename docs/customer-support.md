@@ -42,6 +42,48 @@ Copy any draft before reloading. Pages use `Cache-Control: no-store`. The custom
 preview flag also gates the portal routes; staff access uses the independent live
 roster checks.
 
+### Notifications and unread updates
+
+Support pages show an Updates feed, a scoped unread total and per-conversation
+badges. Read state is personal to each user and separates customer and staff
+activity, including when the same account has both roles. Opening the final message
+page automatically marks only the updates observed on that page read. Without
+JavaScript, use **Mark conversation read**. Later replies remain unread; read updates
+do not change the conversation revision or any service deadline.
+
+Initial customer messages, replies and reopening messages notify the assignee;
+unassigned work notifies the current team and managers. Assignment changes notify
+the new assignee. Public staff replies and reviewed public engineering messages
+notify the personal owner or current organization owners/admins. Own actions and
+private notes do not create customer notifications.
+
+Email uses Gregale's configured platform mail transport. Each email contains an
+authenticated conversation link and ticket identifier, without the subject,
+conversation body or private notes. Notification intent commits with the ticket
+update; a mail outage does not require resubmitting the message. Existing messages
+are not backfilled into notification email. Handoffs use stable
+provider idempotency keys, fenced leases and bounded backoff (eight attempts within
+24 hours). The transport's idempotency guarantees apply; exactly-once email delivery
+is not promised. Read, expired, ineligible and disabled-preview notifications are
+skipped. Membership, verification, staff access and assignment are rechecked before
+delivery; an address changed after an ambiguous handoff is not retried at the new
+address. Temporary eligibility-lookup outages remain retryable. Fanout is limited
+to 1,000 recipients per event; over-limit writes return 429 before committing.
+In-app history remains for 90 days even when email fails.
+
+Use `GET /v1/support/notifications` or
+`GET /v1/orgs/{org}/support/notifications` with optional `before` sequence and
+`unread=true`. Responses include `items`, `next_cursor` and `unread_count`.
+`POST .../tickets/{ticket}/read` accepts `{"through_sequence":123}` and returns the
+remaining ticket and scoped unread totals. It updates only the caller's read state,
+is intrinsically idempotent, and requires neither an expected ticket revision nor
+a permanent UUID receipt. The private staff equivalents live under
+`/v1/admin/support`. Own read-state updates require a current authorized session
+(MFA-completed for staff) and trusted origin; they do not require fresh staff
+step-up. Browser forms retain CSRF protection. Conversation/configuration writes
+still require fresh staff step-up. Go SDK callers use `ListSupportNotifications`,
+`ListOrgSupportNotifications`, `MarkSupportTicketRead` and `MarkOrgSupportTicketRead`.
+
 ## Customer API
 
 Use `/v1/support` for personal cases or `/v1/orgs/{org}/support` for an organization's
@@ -63,7 +105,7 @@ collections remain separate, including when an organization is personal.
 | POST | `/tickets/{ticket}/reopen` | New episode, with `expected_revision` and explanatory `body` |
 | GET/POST | `/tickets/{ticket}/satisfaction` | Current eligible episode; submit `episode_id` and rating 1–5 |
 
-Writes return HTTP 202 after committing, with a durable receipt. Use a UUID
+Conversation writes return HTTP 202 after committing, with a durable receipt. Use a UUID
 `Idempotency-Key`, retained for retries. Reusing a key with a different actor,
 operation, resource or decoded request returns 409. Successful retries return the
 original receipt even after the reopening window expires; current authorization
@@ -86,7 +128,7 @@ filters, and message pagination accepts the numeric `after` sequence.
 All private endpoints start with `/v1/admin/support`. API keys are rejected.
 Reads require an MFA-completed session and current enrolled/verified/active staff
 access. All POSTs also require a fresh five-minute step-up and trusted control-plane
-origin. An `FAAS_ADMIN_EMAILS` operator without a roster entry bootstraps as manager;
+origin, except the own read-state operation described above. An `FAAS_ADMIN_EMAILS` operator without a roster entry bootstraps as manager;
 explicit agent or revoked entries override bootstrap. Managers should provision
 another manager before reducing their own role.
 

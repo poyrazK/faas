@@ -318,9 +318,18 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 	// PlacementClaimSubscriber stamps the owner (see emitAppCreated
 	// for the full architectural rationale + docs/adr/055).
 	app.NodeID = ""
+	// ADR-20261111114059: a service or worker an agent creates runs its
+	// replicas from the start, so their standing cost is charged here.
+	commitBudget, answered := s.chargeAppCreate(w, r, acct, app)
+	if answered {
+		return
+	}
 	// The store serializes quota counting/insertion across creators and holds
 	// the organization plan stable. Personal pools exclude company apps.
 	created, err := s.createAppIfUnderQuotaWithActivity(r.Context(), r, acct, app, limits)
+	if err == nil {
+		commitBudget()
+	}
 	if err != nil {
 		var qe *state.QuotaError
 		switch {

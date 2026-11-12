@@ -162,6 +162,9 @@ var OptionalRegistry = []Entry{
 	// ADR-20261109170000: the artifact signer, turned on by the signd_service
 	// role's faas_signd_listen.
 	{Name: "signd", Unit: UnitSignd, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{Probe: ProbeSystemd}},
+	// ADR-20261112160000: the Neon key holder, turned on by the neond_service
+	// role's faas_neond_enabled.
+	{Name: "neond", Unit: UnitNeond, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{Probe: ProbeUnix, ProbeTarget: "/run/faas/neond.sock"}},
 	{Name: "gatewayd-public-edge", Unit: UnitGatewaydPublicEdge, Role: RoleComputeOnly, Critical: false, Lifecycle: Lifecycle{After: []string{"gatewayd-internal"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:8090", ReadyzURL: "http://127.0.0.1:" + ComputeEdgeControlPort + "/readyz"}},
 	// ADR-20261031122757: the S3 gateway on a compute node, turned on per
 	// cell by the manifest's object_storage.compute_nodes.

@@ -374,3 +374,20 @@ under a cost cap those models are refused with `403 outbound_ai_model_unpriced`.
    ([operator guide](../ops/outbound-integrations.md#built-in-price-catalog)).
 3. One account's custom or OpenAI-compatible model: the customer adds it to
    the integration's price list with `gregale ai prices`.
+
+## FaasAIGatewayEnabledWithoutAppRelay
+
+The `ai_gateway` platform flag is on, but no `outboundd` serves the app relay
+(ADR-989), so deployed apps have no path to the gateway: `GREGALE_OUTBOUND_URL`
+calls fail and only access-token callers on the public host work
+(ADR 20261027132936 amendment 1).
+
+1. `outbound_ai_app_relay_ready` by instance shows which `outboundd` lacks the
+   relay; its log says "the app relay is off" at startup.
+2. If the gateway was turned on before go-live, turn the flag off again with
+   `gregalectl flags`.
+3. Otherwise finish the relay setup in the
+   [operator guide](../ops/outbound-integrations.md#app-relay): install the
+   workload-identity key, set `faas_outboundd_relay_listen` for the control
+   plane and `faas_vmmd_outbound_relay_target` plus
+   `faas_vmmd_outbound_relay_tls_managed` for compute nodes, then converge.

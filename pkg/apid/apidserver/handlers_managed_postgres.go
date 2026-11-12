@@ -477,6 +477,10 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		}
 		return
 	}
+	commitBudget, answered := s.chargePostgresCreate(w, r, acct, req.RequestID, spec)
+	if answered {
+		return
+	}
 	request := managedpostgres.CreateRequest{AccountID: acct.ID, Name: req.Name, Spec: spec}
 	var database managedpostgres.Database
 	if req.RequestID != "" {
@@ -493,6 +497,7 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		managedPostgresProblem(w, err)
 		return
 	}
+	commitBudget()
 	s.audit.Emit(r.Context(), "managed_postgres.database.created", &acct.ID, map[string]any{
 		"database_id": database.ID, "name": database.Name, "state": database.State,
 		"service_class": database.Spec.Class, "storage_limit_bytes": database.Spec.StorageLimitBytes,
@@ -639,11 +644,18 @@ func (s *server) restoreManagedPostgresDatabase(w http.ResponseWriter, r *http.R
 		managedPostgresProblem(w, err)
 		return
 	}
+	// The copy keeps the source's class and compute policy, so an
+	// always-on source makes an always-on copy (ADR-20261111114059).
+	commitBudget, answered := s.chargeAgentBudget(w, r, acct.Plan, 0, postgresStanding(source.Spec))
+	if answered {
+		return
+	}
 	database, err := s.managedPostgres.Restore(r.Context(), restore)
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return
 	}
+	commitBudget()
 	s.audit.Emit(r.Context(), "managed_postgres.database.restored", &acct.ID, managedPostgresRestoredEvent(database, restore.Latest))
 	writeJSON(w, http.StatusCreated, managedPostgresView(database))
 }

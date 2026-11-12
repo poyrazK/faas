@@ -1219,6 +1219,9 @@ func (r *server) CreateFinancialBudget(p0 http.ResponseWriter, p1 *http.Request,
 func (r *server) CreateFullProjectEnvironmentClone(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.createFullProjectEnvironmentClone(p0, p1, p2)
 }
+func (r *server) ResumeEnvironmentAutomation(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.resumeEnvironmentAutomation(p0, p1, p2)
+}
 func (r *server) CreateImageRun(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.createImageRun(p0, p1, p2)
 }
@@ -2366,6 +2369,10 @@ var RouteProbeAccountQueues = routeProbeAccountQueues
 
 func (s *server) ConfigureCustomerSupportForTest(ctx context.Context, pool *pgxpool.Pool) error {
 	return s.configureCustomerSupport(ctx, pool, func(string) string { return "" })
+}
+
+func (s *server) DispatchCustomerSupportNotificationForTest(ctx context.Context) error {
+	return s.customerSupport.DispatchNotification(ctx)
 }
 
 // RegressionComparison exposes chooseRegressionComparison's choice.

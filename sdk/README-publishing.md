@@ -17,11 +17,13 @@ repository stays the source of truth: the `sdk-mirror` workflow runs
 next sync overwrites it. Packages missing from `sdk/mirror.json` (Auth, Data,
 the sandbox packages, Swift, Kotlin) stay here until they launch.
 
-Each repository has its own deploy key with write access, stored here as
-`SDK_MIRROR_DEPLOY_KEY_GO`, `SDK_MIRROR_DEPLOY_KEY_JS` and
-`SDK_MIRROR_DEPLOY_KEY_PYTHON`. To publish a new repository, add it to
-`sdk/mirror.json` and the workflow matrix, create the empty public repository,
-add its deploy key and secret, and run the workflow. Check a tree locally with:
+The workflow pushes as the gregale-dev "SDK mirror" GitHub App (Contents
+read/write, installed on the SDK repositories only). Its client ID is the
+repository variable `SDK_MIRROR_APP_CLIENT_ID` and its private key the secret
+`SDK_MIRROR_APP_PRIVATE_KEY`; each job mints a token for its one repository.
+To publish a new repository, add it to `sdk/mirror.json` and the workflow
+matrix, create the empty public repository, add it to the App's installation,
+and run the workflow. Check a tree locally with:
 
 ```sh
 python3 scripts/sdk_mirror.py check

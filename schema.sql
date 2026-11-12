@@ -7039,6 +7039,22 @@ $$;
 
 
 --
+-- Name: clear_cron_clone_pause(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.clear_cron_clone_pause() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NEW.enabled IS DISTINCT FROM OLD.enabled THEN
+    NEW.clone_paused := false;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: clone_checkpoint_admission_snapshot_guard(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -30960,7 +30976,7 @@ CREATE TABLE public.alert_presets (
     CONSTRAINT alert_presets_cooldown_chk CHECK (((default_cooldown_minutes >= 5) AND (default_cooldown_minutes <= 1440))),
     CONSTRAINT alert_presets_description_len_chk CHECK (((char_length(description) >= 1) AND (char_length(description) <= 512))),
     CONSTRAINT alert_presets_display_name_len_chk CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 128))),
-    CONSTRAINT alert_presets_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text, 'workflow_failures'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])) OR (metric = 'mcp_readiness_unhealthy'::text) OR (metric = 'route_insights_detected'::text) OR (metric = ANY (ARRAY['route_monitor_incidents'::text, 'route_health_holds'::text])))),
+    CONSTRAINT alert_presets_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text, 'workflow_failures'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])) OR (metric = 'mcp_readiness_unhealthy'::text) OR (metric = 'route_insights_detected'::text) OR (metric = ANY (ARRAY['route_monitor_incidents'::text, 'route_health_holds'::text])) OR (metric = 'ai_budget_alerts'::text))),
     CONSTRAINT alert_presets_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_presets_plan_chk CHECK ((minimum_plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
     CONSTRAINT alert_presets_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
@@ -31032,6 +31048,7 @@ CREATE TABLE public.alert_rules (
     notify_resolved boolean DEFAULT false NOT NULL,
     custom_metric_labels jsonb,
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
+    CONSTRAINT alert_rules_ai_budget_alerts_chk CHECK (((metric <> 'ai_budget_alerts'::text) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text, 'above_baseline'::text, 'below_baseline'::text]))),
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
     CONSTRAINT alert_rules_custom_metric_chk CHECK ((((metric = 'custom_metric'::text) = (custom_metric_name IS NOT NULL)) AND ((metric <> 'custom_metric'::text) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text])) AND (custom_metric_name ~ '^[a-z][a-z0-9_]{0,62}$'::text))))),
@@ -31055,7 +31072,7 @@ END)::double precision)) OR ((metric <> ALL (ARRAY['mcp_protocol_error_rate_pct'
     CONSTRAINT alert_rules_mcp_readiness_action_chk CHECK (((metric <> 'mcp_readiness_unhealthy'::text) OR ((action = 'webhook'::text) AND (app_id IS NOT NULL)))),
     CONSTRAINT alert_rules_mcp_readiness_scope_chk CHECK (((mcp_readiness_scope = ''::text) OR ((metric = 'mcp_readiness_unhealthy'::text) AND (app_id IS NOT NULL) AND (mcp_readiness_scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)))),
     CONSTRAINT alert_rules_mcp_tasks_notification_chk CHECK (((metric <> ALL (ARRAY['mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text])) OR (action = 'webhook'::text))),
-    CONSTRAINT alert_rules_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text, 'mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text, 'edge_rule_hits'::text, 'edge_rule_log_hits'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])) OR (metric = 'custom_metric'::text) OR (metric = ANY (ARRAY['log_error_lines'::text, 'log_warn_lines'::text])) OR (metric = ANY (ARRAY['slo_budget_burn'::text, 'slo_budget_remaining_pct'::text])) OR (metric = ANY (ARRAY['synthetic_check_consecutive_failures'::text, 'synthetic_check_latency_p95_ms'::text])) OR (metric = ANY (ARRAY['mcp_protocol_error_rate_pct'::text, 'mcp_protocol_execution_p95_ms'::text])) OR (metric = 'mcp_readiness_unhealthy'::text) OR (metric = 'edge_rule_activity'::text) OR (metric = 'route_insights_detected'::text) OR (metric = 'log_search_matches'::text) OR (metric = ANY (ARRAY['queue_backlog'::text, 'queue_oldest_age_seconds'::text])) OR (metric = ANY (ARRAY['route_monitor_incidents'::text, 'route_health_holds'::text])))),
+    CONSTRAINT alert_rules_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text, 'mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text, 'edge_rule_hits'::text, 'edge_rule_log_hits'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])) OR (metric = 'custom_metric'::text) OR (metric = ANY (ARRAY['log_error_lines'::text, 'log_warn_lines'::text])) OR (metric = ANY (ARRAY['slo_budget_burn'::text, 'slo_budget_remaining_pct'::text])) OR (metric = ANY (ARRAY['synthetic_check_consecutive_failures'::text, 'synthetic_check_latency_p95_ms'::text])) OR (metric = ANY (ARRAY['mcp_protocol_error_rate_pct'::text, 'mcp_protocol_execution_p95_ms'::text])) OR (metric = 'mcp_readiness_unhealthy'::text) OR (metric = 'edge_rule_activity'::text) OR (metric = 'route_insights_detected'::text) OR (metric = 'log_search_matches'::text) OR (metric = ANY (ARRAY['queue_backlog'::text, 'queue_oldest_age_seconds'::text])) OR (metric = ANY (ARRAY['route_monitor_incidents'::text, 'route_health_holds'::text])) OR (metric = 'ai_budget_alerts'::text))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_rules_post_deploy_rollback_window_seconds_check CHECK (((post_deploy_rollback_window_seconds >= 0) AND (post_deploy_rollback_window_seconds <= 3600))),
     CONSTRAINT alert_rules_preauth_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text])) OR (action = 'webhook'::text))),
@@ -35818,6 +35835,7 @@ CREATE TABLE public.crons (
     labels jsonb DEFAULT '{}'::jsonb NOT NULL,
     deployment_scope text DEFAULT ''::text NOT NULL,
     environment_id uuid,
+    clone_paused boolean DEFAULT false NOT NULL,
     CONSTRAINT crons_command_output_check CHECK (((command_max_output_bytes >= 1024) AND (command_max_output_bytes <= 16777216))),
     CONSTRAINT crons_command_shape_check CHECK ((((cardinality(command) = 0) AND (NOT command_shell)) OR (((cardinality(command) >= 1) AND (cardinality(command) <= 64)) AND (array_position(command, NULL::text) IS NULL) AND ((octet_length(command[1]) >= 1) AND (octet_length(command[1]) <= 4096)) AND ((octet_length(array_to_string(command, ''::text)) >= 1) AND (octet_length(array_to_string(command, ''::text)) <= 16384)) AND ((NOT command_shell) OR (cardinality(command) = 1))))),
     CONSTRAINT crons_command_timeout_check CHECK (((command_timeout_seconds >= 1) AND (command_timeout_seconds <= 3600))),
@@ -59261,6 +59279,52 @@ ALTER TABLE public.support_messages ALTER COLUMN sequence ADD GENERATED ALWAYS A
 
 
 --
+-- Name: support_notifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_notifications (
+    id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    event_id uuid NOT NULL,
+    ticket_id uuid NOT NULL,
+    recipient_id uuid NOT NULL,
+    audience text NOT NULL,
+    kind text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    read_at timestamp with time zone,
+    email_state text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    lease_id uuid,
+    lease_until timestamp with time zone,
+    available_at timestamp with time zone NOT NULL,
+    destination_hash bytea,
+    CONSTRAINT support_notifications_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT support_notifications_audience_check CHECK ((audience = ANY (ARRAY['customer'::text, 'staff'::text]))),
+    CONSTRAINT support_notifications_available_at_check CHECK (isfinite(available_at)),
+    CONSTRAINT support_notifications_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT support_notifications_destination_hash_check CHECK (((destination_hash IS NULL) OR (octet_length(destination_hash) = 32))),
+    CONSTRAINT support_notifications_email_state_check CHECK ((email_state = ANY (ARRAY['queued'::text, 'inflight'::text, 'accepted'::text, 'failed'::text, 'skipped'::text]))),
+    CONSTRAINT support_notifications_kind_check CHECK ((kind = ANY (ARRAY['staff_reply'::text, 'customer_reply'::text, 'ticket_created'::text, 'assigned'::text]))),
+    CONSTRAINT support_notifications_lease_until_check CHECK (((lease_until IS NULL) OR isfinite(lease_until))),
+    CONSTRAINT support_notifications_read_at_check CHECK (((read_at IS NULL) OR isfinite(read_at)))
+);
+
+
+--
+-- Name: support_notifications_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.support_notifications ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.support_notifications_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: support_outbox; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -73707,6 +73771,30 @@ ALTER TABLE ONLY public.support_messages
 
 
 --
+-- Name: support_notifications support_notifications_event_id_recipient_id_audience_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_notifications
+    ADD CONSTRAINT support_notifications_event_id_recipient_id_audience_key UNIQUE (event_id, recipient_id, audience);
+
+
+--
+-- Name: support_notifications support_notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_notifications
+    ADD CONSTRAINT support_notifications_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_notifications support_notifications_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_notifications
+    ADD CONSTRAINT support_notifications_sequence_key UNIQUE (sequence);
+
+
+--
 -- Name: support_outbox support_outbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -84604,6 +84692,34 @@ CREATE INDEX support_messages_ticket_idx ON public.support_messages USING btree 
 
 
 --
+-- Name: support_notifications_age_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_notifications_age_idx ON public.support_notifications USING btree (created_at, id);
+
+
+--
+-- Name: support_notifications_ready_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_notifications_ready_idx ON public.support_notifications USING btree (available_at, id) WHERE (email_state = ANY (ARRAY['queued'::text, 'inflight'::text]));
+
+
+--
+-- Name: support_notifications_recipient_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_notifications_recipient_idx ON public.support_notifications USING btree (recipient_id, audience, ticket_id, sequence);
+
+
+--
+-- Name: support_notifications_unread_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_notifications_unread_idx ON public.support_notifications USING btree (recipient_id, audience, sequence) WHERE (read_at IS NULL);
+
+
+--
 -- Name: support_outbox_ready_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -87380,6 +87496,13 @@ CREATE TRIGGER checked_project_rollback_identity BEFORE UPDATE ON public.project
 --
 
 CREATE TRIGGER checked_rollback_traffic BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_checked_rollback_traffic();
+
+
+--
+-- Name: crons clear_cron_clone_pause; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clear_cron_clone_pause BEFORE UPDATE OF enabled ON public.crons FOR EACH ROW EXECUTE FUNCTION public.clear_cron_clone_pause();
 
 
 --
@@ -108655,6 +108778,30 @@ ALTER TABLE ONLY public.support_messages
 
 ALTER TABLE ONLY public.support_messages
     ADD CONSTRAINT support_messages_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_notifications support_notifications_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_notifications
+    ADD CONSTRAINT support_notifications_event_id_fkey FOREIGN KEY (event_id) REFERENCES public.support_events(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_notifications support_notifications_recipient_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_notifications
+    ADD CONSTRAINT support_notifications_recipient_id_fkey FOREIGN KEY (recipient_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_notifications support_notifications_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_notifications
+    ADD CONSTRAINT support_notifications_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
 
 
 --

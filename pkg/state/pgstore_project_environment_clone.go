@@ -113,6 +113,7 @@ func (s *PgStore) cloneProjectEnvironmentOnce(ctx context.Context, clone Project
 		if err != nil {
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 		}
+		clone.capturedCrons = capturedCloneCrons(records)
 	} else {
 		source, err := readCloneFeatureFlagsTx(ctx, tx, clone.AccountID, clone.ProjectID, clone.SourceSlug)
 		if err != nil {
@@ -168,6 +169,11 @@ func (s *PgStore) cloneProjectEnvironmentOnce(ctx context.Context, clone Project
 		}
 	}
 	if err := checkProjectEnvironmentCloneQuota(ctx, tx, clone, limits); err != nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+	}
+	// Copied crons count against the plan's cron limits; the quota lock holds
+	// the count until commit (ADR-20261104120000 amendment 2026-11-12).
+	if err := checkCloneCronQuotaTx(ctx, tx, clone.capturedCrons, limits, true); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
 	created, err := insertClonedProjectEnvironment(ctx, tx, clone)
@@ -445,6 +451,9 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 	}
 	if clone.capturedPolicies != nil {
 		if err := copyCapturedProjectEnvironmentScopedPolicies(ctx, tx, clone, &result); err != nil {
+			return result, err
+		}
+		if err := copyCapturedCronsTx(ctx, tx, clone, &result); err != nil {
 			return result, err
 		}
 		if result.RoutesCopied < result.WorkloadsCopied {

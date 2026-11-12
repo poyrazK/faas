@@ -7756,6 +7756,41 @@ VALUES(sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(app_id):
 INSERT INTO project_environment_edge_policies(account_id, project_id, app_id, environment_slug, rules)
 VALUES(sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(environment)::text, sqlc.arg(rules)::jsonb);
 
+-- name: ReadProjectEnvironmentCloneCrons :many
+-- The configuration of an app's crons in one environment, without the
+-- scheduler's own columns (ADR-20261104120000 amendment 2026-11-12). A cron a
+-- clone paused counts as enabled: resuming it would.
+SELECT schedule, path, command, command_shell, command_timeout_seconds, command_max_output_bytes,
+       retry_max, retry_backoff_seconds, (enabled OR clone_paused)::boolean AS enabled, enabled AS stored_enabled,
+       timezone, skip_if_running, schedule_policy, failure_rules, labels
+FROM crons
+WHERE app_id = sqlc.arg(app_id)::uuid AND deployment_scope = sqlc.arg(scope)::text
+ORDER BY schedule, path, command;
+
+-- name: CountProjectEnvironmentCloneUncapturedCrons :one
+-- Crons of the source environment on project apps the clone does not copy.
+SELECT count(*)::bigint FROM crons c JOIN apps a ON a.id = c.app_id
+WHERE a.project_id = sqlc.arg(project_id)::uuid AND a.status <> 'deleted'
+  AND c.deployment_scope = sqlc.arg(scope)::text AND NOT (c.app_id = ANY(sqlc.arg(app_ids)::uuid[]));
+
+-- name: InsertProjectEnvironmentCloneCron :exec
+-- A copied cron starts disabled; clone_paused marks one the source ran.
+INSERT INTO crons(app_id, schedule, path, command, command_shell, command_timeout_seconds, command_max_output_bytes,
+    retry_max, retry_backoff_seconds, enabled, clone_paused, timezone, skip_if_running, schedule_policy, failure_rules,
+    labels, deployment_scope)
+VALUES(sqlc.arg(app_id)::uuid, sqlc.arg(schedule)::text, sqlc.arg(path)::text, sqlc.arg(command)::text[],
+    sqlc.arg(command_shell)::boolean, sqlc.arg(command_timeout_seconds)::integer, sqlc.arg(command_max_output_bytes)::integer,
+    sqlc.arg(retry_max)::integer, sqlc.arg(retry_backoff_seconds)::integer, false, sqlc.arg(clone_paused)::boolean,
+    sqlc.arg(timezone)::text, sqlc.arg(skip_if_running)::boolean, sqlc.narg(schedule_policy)::jsonb,
+    sqlc.narg(failure_rules)::jsonb, sqlc.arg(labels)::jsonb, sqlc.arg(scope)::text);
+
+-- name: ResumeEnvironmentClonePausedCrons :many
+-- Enables the crons a clone paused in one environment; the enable clears
+-- clone_paused and anchors the schedule.
+UPDATE crons SET enabled = true
+WHERE environment_id = sqlc.arg(environment_id)::uuid AND clone_paused AND NOT enabled
+RETURNING id, app_id;
+
 -- name: ReadProjectEnvironmentCloneObjectMutationAuthority :one
 SELECT coalesce(attempt_count = 0 AND lease_token IS NULL, false)::boolean AS legacy_allowed,
        coalesce(lease_token = nullif(sqlc.arg(worker_token)::text, '')::uuid
@@ -16169,6 +16204,16 @@ LIMIT sqlc.arg(page_size)::integer;
 UPDATE managed_postgres_databases SET expires_at=sqlc.arg(expires_at)::timestamptz
 WHERE id=sqlc.arg(id)::uuid RETURNING *;
 
+-- name: MoveManagedPostgresBranchExpiry :one
+-- ADR-20261031193635 branch lifecycle: an environment branch's extend moves
+-- its database copy's end. Only an undeleted restore that already ends, and
+-- whose end is still the one the caller read, moves; the caller keeps the
+-- new end within the copy's allowance.
+UPDATE managed_postgres_databases SET expires_at=sqlc.arg(expires_at)::timestamptz, updated_at=clock_timestamp()
+WHERE id=sqlc.arg(id)::uuid AND deleted_at IS NULL AND state NOT IN ('deleting','deleted')
+  AND restore_source_database_id IS NOT NULL AND expires_at=sqlc.arg(current_expires_at)::timestamptz
+RETURNING *;
+
 -- name: ListManagedPostgresExpiredDatabasePage :many
 -- ADR-20261106103654: copies whose TTL has ended, soonest first, after a
 -- stable (expires_at, id) cursor. A copy already being purged (deleting with
@@ -16224,6 +16269,14 @@ WHERE database_id=ANY(sqlc.arg(database_ids)::uuid[]);
 UPDATE managed_postgres_plan_excess_notices SET recorded_at=sqlc.arg(now)::timestamptz,mail_intent_id=NULL
 WHERE database_id=ANY(sqlc.arg(database_ids)::uuid[]) AND delete_at IS NULL
     AND (mail_intent_id IS NOT NULL OR recorded_at<=sqlc.arg(stale_before)::timestamptz);
+
+-- name: ManagedPostgresLiveResourcesInProject :many
+-- ADR-20261112160000: neond refuses deleting a Neon project or branch that a
+-- live managed PostgreSQL database runs on. A provider resource is the
+-- project ID, or "<project>/<branch>" for a database on a branch.
+SELECT provider_resource_id::text AS provider_resource_id FROM managed_postgres_databases
+WHERE (provider_resource_id=sqlc.arg(project)::text OR provider_resource_id LIKE sqlc.arg(project)::text || '/%')
+    AND state NOT IN ('deleting','deleted') AND deleted_at IS NULL;
 
 -- name: ListManagedPostgresPlanExcessRemindersDue :many
 -- ADR-20261110184700 amendment 2026-11-12: notices whose mailed deletion date

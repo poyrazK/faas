@@ -95,3 +95,24 @@ func TestSupportKeepsDraftWhenConcurrentResolutionHidesReplyForm(t *testing.T) {
 		}
 	}
 }
+
+func TestSupportUnreadBadgesAndAcknowledgementWaitForFinalMessagePage(t *testing.T) {
+	ticket := api.SupportTicket{ID: "case-id", Subject: "Support question", Status: "open", Revision: 3, UnreadCount: 2}
+	for _, more := range []bool{false, true} {
+		d := supportportal.Data{Base: "/dashboard/support", Filters: url.Values{}, Keys: map[string]string{"read": "read-key"}, CSRF: "csrf", PortalView: support.PortalView{Ticket: &ticket, ReadThrough: 9007199254740993, Notifications: api.SupportNotificationPage{UnreadCount: 2}}}
+		if more {
+			d.Messages.NextCursor = 50
+		}
+		w := httptest.NewRecorder()
+		if err := dashboard.Render(w, slog.Default(), "nonce", dashboard.Page{Body: "support", Data: d}); err != nil {
+			t.Fatal(err)
+		}
+		html := w.Body.String()
+		if !strings.Contains(html, `data-support-ticket-unread>2`) || strings.Contains(html, `data-support-read>`) == more {
+			t.Fatalf("incorrect unread/acknowledgement state; more=%v", more)
+		}
+		if !more && !strings.Contains(html, `name="through_sequence" value="9007199254740993"`) {
+			t.Fatal("notification boundary rounded in form")
+		}
+	}
+}

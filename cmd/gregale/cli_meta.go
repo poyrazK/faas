@@ -4738,6 +4738,9 @@ var cliCommands = []cliCommand{
 				{Name: "wait", Short: "wait for the same durable clone operation to finish"},
 				{Name: "timeout", Value: "SECONDS", Short: "maximum local wait time"},
 			}},
+			{Name: "resume-automation", Short: "Enable the crons a full clone copied paused into a stage", Notes: []string{"Only crons the source ran are enabled; ones the source had disabled, or changed since, stay as they are."}, Positionals: []string{"<stage>"}, Examples: []string{"gregale env resume-automation staging --project shop"}, Flags: []cliFlag{
+				{Name: "project", Value: "SLUG", Short: "project slug (defaults to linked project)"},
+			}},
 			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Examples: []string{"gregale env pull --app my-api", "gregale env pull --app my-api --env staging"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"},
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
@@ -5079,8 +5082,9 @@ var cliCommands = []cliCommand{
 		Name:     "login",
 		DocSlug:  "auth",
 		Short:    "Authenticate this machine",
-		Examples: []string{"gregale login", "printf '%s' \"$GREGALE_TOKEN\" | gregale login --token-stdin"},
+		Examples: []string{"gregale login", "gregale login --device", "printf '%s' \"$GREGALE_TOKEN\" | gregale login --token-stdin"},
 		Flags: []cliFlag{
+			{Name: "device", Short: "sign in with a code typed in a browser on another computer (SSH, headless)"},
 			{Name: "token", Short: "use a pre-minted token (CI)", Value: "TOKEN"},
 			{Name: "token-stdin", Short: "read a pre-minted token from stdin (CI)"},
 			{Name: "insecure-storage", Short: "save the key to a plaintext file instead of the OS keychain (WSL, containers, SSH)", Bool: true},
@@ -6542,12 +6546,19 @@ var cliCommands = []cliCommand{
 					{Name: "share-resources", Short: "explicitly share managed database and object-storage data", Bool: true},
 				}},
 				{Name: "delete", Short: "Delete a non-production environment", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "yes", Bool: true, Req: true, Short: "confirm environment deletion"}}},
-				{Name: "branch", Short: "Branch an environment; workloads start on first request", Notes: []string{"Deleted at its TTL or with `environment delete`."}, Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{
+				{Name: "branch", Short: "Branch an environment; workloads start on first request", Notes: []string{
+					"Deleted at its TTL or with `environment delete`.",
+					"`--status`, `--extend` and `--reset` act on an existing branch named by the second slug.",
+					"A branch lives at most 30 days after its creation, 7 with database copies; `--reset` starts a new lifetime and gives its workloads new URLs.",
+				}, Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{
 					{Name: "from", Value: "ENV", Short: "parent environment (default production)"},
 					{Name: "ttl", Value: "DURATION", Short: "time to live, 1h to 720h (default 168h)"},
 					{Name: "list", Bool: true, Short: "list the parent's branches"},
 					{Name: "egress", Value: "MODE", Short: "live (default), contained or simulated"},
 					{Name: "private-networks", Value: "MODE", Short: "off (default) or join"},
+					{Name: "status", Bool: true, Short: "show the branch's expiry, data, copies and workloads"},
+					{Name: "extend", Value: "DURATION", Short: "move the branch's expiry to this long from now"},
+					{Name: "reset", Bool: true, Short: "make the branch again from its parent"},
 				}},
 				{Name: "protect", Short: "Protect an environment"},
 				{Name: "unprotect", Short: "Remove environment protection"},

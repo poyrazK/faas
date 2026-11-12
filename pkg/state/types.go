@@ -3469,6 +3469,11 @@ type Cron struct {
 	RetryMax              int // additional attempts after the first failed/timed-out execution
 	RetryBackoffSeconds   int // base delay; later retries double it, capped at 24 hours
 	Enabled               bool
+	// ClonePaused marks a cron a full environment clone copied disabled
+	// although the source ran it; resuming the environment's automation
+	// enables it. Any explicit enable or disable clears it
+	// (ADR-20261104120000 amendment 2026-11-12).
+	ClonePaused bool
 	// SuspendedReason is set by the scheduler when customer intent remains
 	// enabled but the app has no live deployment (a later successful deploy
 	// clears it without re-enabling a cron the customer disabled
@@ -3802,6 +3807,10 @@ const (
 	// health guard holds or aborted (ADR-20261028110044).
 	AlertMetricRouteMonitorIncidents AlertMetric = "route_monitor_incidents"
 	AlertMetricRouteHealthHolds      AlertMetric = "route_health_holds"
+	// AlertMetricAIBudgetAlerts counts the AI budget threshold crossings of
+	// the app's bound integrations within the window (ADR 20261027132936
+	// amendment 2).
+	AlertMetricAIBudgetAlerts AlertMetric = "ai_budget_alerts"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -7324,6 +7333,12 @@ type CliAuthDeviceCodeStore interface {
 	// ConsumeCliAuthDeviceCode has ConsumeCliAuthCode's contract, keyed by
 	// the device code's hash.
 	ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error)
+	// ClaimCliAuthCodeForDevice is ClaimCliAuthCode that also replaces the
+	// row's device hash in the same statement. The one-click loopback login
+	// (ADR-20261111170000) hands the new device code to the approving
+	// browser's own machine, so the CLI that minted the code (possibly a
+	// phisher's) can no longer exchange it.
+	ClaimCliAuthCodeForDevice(ctx context.Context, tokenHash []byte, accountID string, deviceHash []byte) error
 }
 
 // AccountPassword is one row of the account_passwords table

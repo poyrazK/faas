@@ -3358,6 +3358,7 @@ type Cron struct {
 	Labels                []byte
 	DeploymentScope       string
 	EnvironmentID         pgtype.UUID
+	ClonePaused           bool
 }
 
 type CronFireNowRequest struct {
@@ -16017,6 +16018,24 @@ type SupportMessage struct {
 	Body      string
 	Redacted  bool
 	CreatedAt pgtype.Timestamptz
+}
+
+type SupportNotification struct {
+	ID              pgtype.UUID
+	Sequence        int64
+	EventID         pgtype.UUID
+	TicketID        pgtype.UUID
+	RecipientID     pgtype.UUID
+	Audience        string
+	Kind            string
+	CreatedAt       pgtype.Timestamptz
+	ReadAt          pgtype.Timestamptz
+	EmailState      string
+	Attempts        int32
+	LeaseID         pgtype.UUID
+	LeaseUntil      pgtype.Timestamptz
+	AvailableAt     pgtype.Timestamptz
+	DestinationHash []byte
 }
 
 type SupportOutbox struct {

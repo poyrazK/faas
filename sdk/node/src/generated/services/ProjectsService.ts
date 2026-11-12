@@ -93,6 +93,7 @@ import type { PublishProjectReleaseSetRequest } from '../models/PublishProjectRe
 import type { RebindEnvironmentGitSourceRequest } from '../models/RebindEnvironmentGitSourceRequest.js';
 import type { RemoveEnvironmentGitOpsOverrideRequest } from '../models/RemoveEnvironmentGitOpsOverrideRequest.js';
 import type { ReplaceProjectEnvironmentQueueBindingsRequest } from '../models/ReplaceProjectEnvironmentQueueBindingsRequest.js';
+import type { ResumeEnvironmentAutomationResponse } from '../models/ResumeEnvironmentAutomationResponse.js';
 import type { ResumeProjectMigrationRequest } from '../models/ResumeProjectMigrationRequest.js';
 import type { ReviewProjectBindingVerificationRequest } from '../models/ReviewProjectBindingVerificationRequest.js';
 import type { SetProjectEnvironmentSharedSecretRequest } from '../models/SetProjectEnvironmentSharedSecretRequest.js';
@@ -866,6 +867,45 @@ export class ProjectsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Enable the crons a full environment clone copied paused.
+   * Enables only the copied crons the source environment ran. A cron the source had disabled, or one enabled or disabled since, stays as it is.
+   * @returns ResumeEnvironmentAutomationResponse Crons enabled in the environment.
+   * @throws ApiError
+   */
+  public static resumeEnvironmentAutomation({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project whose stage automation is resumed.
+     */
+    slug: string,
+    /**
+     * Stage whose paused automation is enabled; production is refused.
+     */
+    environment: string,
+  }): CancelablePromise<ResumeEnvironmentAutomationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/automation/resume',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
