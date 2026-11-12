@@ -1,0 +1,81 @@
+✖ a registered visible-ASCII task name can construct a runtime (3.312269ms)
+✖ registration owns the nested definition it advertises (2.009252ms)
+✖ HTTP discovery silently changes when the original annotation object is edited (171.498351ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 0
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 690.461219
+
+✖ failing tests:
+
+test at docs/ops/evidence/20261111-mcp-investigation/node_round3_repro_test.mjs:16:1
+✖ a registered visible-ASCII task name can construct a runtime (3.312269ms)
+  AssertionError [ERR_ASSERTION]: Got unwanted exception: registration accepts this legal MCP name, but runtime startup rejects it
+  Actual message: "Invalid MCP task handler registry"
+      at TestContext.<anonymous> (file:///workspace/faas/docs/ops/evidence/20261111-mcp-investigation/node_round3_repro_test.mjs:21:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.start (node:internal/test_runner/test:1242:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: Error: Invalid MCP task handler registry
+        at mcpTaskHandlerInventory (file:///tmp/gregale-mcp-round3/node-starter/task-compatibility.js:7:107)
+        at createMcpTaskRuntime (file:///tmp/gregale-mcp-round3/node-starter/tasks.js:94:29)
+        at file:///workspace/faas/docs/ops/evidence/20261111-mcp-investigation/node_round3_repro_test.mjs:21:29
+        at getActual (node:assert:611:5)
+        at strict.doesNotThrow (node:assert:779:32)
+        at TestContext.<anonymous> (file:///workspace/faas/docs/ops/evidence/20261111-mcp-investigation/node_round3_repro_test.mjs:21:10)
+        at Test.runInAsyncScope (node:async_hooks:227:14)
+        at Test.run (node:internal/test_runner/test:1382:25)
+        at Test.start (node:internal/test_runner/test:1242:17)
+        at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17),
+    expected: undefined,
+    operator: 'doesNotThrow',
+    diff: 'simple'
+  }
+
+test at docs/ops/evidence/20261111-mcp-investigation/node_round3_repro_test.mjs:25:1
+✖ registration owns the nested definition it advertises (2.009252ms)
+  AssertionError [ERR_ASSERTION]: advertised definition changed through an external reference, with no revision or list-change notification
+  + actual - expected
+
+  + 'cc4693fed43969f5f0e116444de85347bda37da15c850a3570d68a63b2f64458'
+  - '0e2bcc6d1f63cfd58ad1eaa6e2b4067f80e7674e607388f4de55bb5edd02ad28'
+
+      at TestContext.<anonymous> (file:///workspace/faas/docs/ops/evidence/20261111-mcp-investigation/node_round3_repro_test.mjs:38:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'cc4693fed43969f5f0e116444de85347bda37da15c850a3570d68a63b2f64458',
+    expected: '0e2bcc6d1f63cfd58ad1eaa6e2b4067f80e7674e607388f4de55bb5edd02ad28',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at docs/ops/evidence/20261111-mcp-investigation/node_round3_repro_test.mjs:42:1
+✖ HTTP discovery silently changes when the original annotation object is edited (171.498351ms)
+  AssertionError [ERR_ASSERTION]: HTTP catalog changed without replaceTool or a revision change
+
+  false !== true
+
+      at TestContext.<anonymous> (file:///workspace/faas/docs/ops/evidence/20261111-mcp-investigation/node_round3_repro_test.mjs:74:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
