@@ -3414,6 +3414,17 @@ type CustomDomainTlsHost struct {
 	AdmittedAt     pgtype.Timestamptz
 }
 
+type CustomerApiError struct {
+	ID         int64
+	AccountID  pgtype.UUID
+	OccurredAt pgtype.Timestamptz
+	Route      string
+	Code       string
+	AppSlug    string
+	RequestID  string
+	TraceID    string
+}
+
 type CustomerOperation struct {
 	ID                  pgtype.UUID
 	AccountID           pgtype.UUID

@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
 	"github.com/onebox-faas/faas/pkg/apid/consumersignup"
 	"github.com/onebox-faas/faas/pkg/apid/creditdiscount"
+	"github.com/onebox-faas/faas/pkg/apid/customererrors"
 	pipelineapi "github.com/onebox-faas/faas/pkg/apid/datapipelines"
 	repairapi "github.com/onebox-faas/faas/pkg/apid/datarepair"
 	"github.com/onebox-faas/faas/pkg/apid/docsassets"
@@ -128,6 +129,12 @@ import (
 // live socket-dialed client.
 type server struct {
 	customerSupport *support.Service
+	// customerErrors records API problems returned to customers
+	// (ADR-20261112170000); nil without PostgreSQL.
+	customerErrors *customererrors.Recorder
+	// customerErrorSink receives each recorded event; it is
+	// customerErrors.Record in production and a capture in tests.
+	customerErrorSink func(customererrors.Event)
 
 	domainChecks domainverify.Checker
 	// requestIDLookups resolves request IDs kept on compute nodes
@@ -4584,6 +4591,9 @@ func (s *server) handler() http.Handler {
 		s.authLimited(s.requireAdminMutation(s.applyManagedPostgresAccountingReconciliation)))
 	mux.HandleFunc("GET /v1/admin/obs/tenants",
 		s.authLimited(s.requireOperatorSessionRead(s.obsListTenants)))
+	// ADR-20261112170000: resolve a customer-supplied identifier.
+	mux.HandleFunc("GET /v1/admin/obs/lookup",
+		s.authLimited(s.requireOperatorSessionRead(s.obsLookup)))
 	mux.HandleFunc("GET /v1/admin/obs/capacity",
 		s.authLimited(s.requireOperatorRead(s.obsCapacity)))
 	mux.HandleFunc("GET /v1/admin/obs/tenants/{id}/360",
