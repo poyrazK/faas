@@ -39085,12 +39085,12 @@ paths:
       - name: slug
         in: path
         required: true
-        description: Project that owns the branch.
+        description: Project that owns the branch to show.
         schema: { type: string }
       - name: environment
         in: path
         required: true
-        description: The environment branch.
+        description: The environment branch to show.
         schema: { type: string }
     get:
       tags: [projects]
@@ -39110,7 +39110,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Branches are unavailable.
+          description: Branches are unavailable, so the branch cannot be shown.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -39121,12 +39121,12 @@ paths:
       - name: slug
         in: path
         required: true
-        description: Project that owns the branch.
+        description: Project that owns the branch to extend.
         schema: { type: string }
       - name: environment
         in: path
         required: true
-        description: The environment branch.
+        description: The environment branch to extend.
         schema: { type: string }
     post:
       tags: [projects]
@@ -39165,12 +39165,12 @@ paths:
       - name: slug
         in: path
         required: true
-        description: Project that owns the branch.
+        description: Project that owns the branch to reset.
         schema: { type: string }
       - name: environment
         in: path
         required: true
-        description: The environment branch.
+        description: The environment branch to reset.
         schema: { type: string }
     post:
       tags: [projects]
