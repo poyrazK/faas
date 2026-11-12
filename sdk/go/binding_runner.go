@@ -2,8 +2,8 @@ package faas
 
 import (
 	"context"
-	"github.com/poyrazK/faas/sdk/go/internal/api"
-	"github.com/poyrazK/faas/sdk/go/internal/bindingrun"
+	"github.com/gregale-dev/gregale-go/internal/api"
+	"github.com/gregale-dev/gregale-go/internal/bindingrun"
 )
 
 type BindingVerificationRunnerOptions = bindingrun.Options
