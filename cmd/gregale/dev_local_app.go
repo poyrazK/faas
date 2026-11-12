@@ -118,6 +118,9 @@ func serveDevLocalApp(ctx context.Context, opts devLocalAppOptions) error {
 	go func() { served <- server.Serve(ln) }()
 	defer func() { _ = server.Close() }()
 	_, _ = fmt.Fprintf(opts.out, "Local HTTP app at http://localhost:%d\nCommand: %s\n", ln.Addr().(*net.TCPAddr).Port, opts.plan.describe())
+	if opts.plan.frameworkReload {
+		_, _ = fmt.Fprintln(opts.out, "Source reload: framework HMR.")
+	}
 	_, _ = fmt.Fprintln(opts.out, "Runs on this machine; use gregale dev to check memory limits and snapshot behavior.")
 	return superviseDevLocalApp(runCtx, opts, env, backend, &ready, served)
 }
@@ -157,7 +160,7 @@ func devLocalAppProxy(backend string, ready *atomic.Bool, transport http.RoundTr
 }
 
 func superviseDevLocalApp(ctx context.Context, opts devLocalAppOptions, env []string, backend string, ready *atomic.Bool, served <-chan error) (result error) {
-	previous, err := opts.envConfig.sourceFingerprint(opts.root)
+	previous, err := fingerprintDevLocalApp(opts.root, opts.envConfig)
 	if err != nil {
 		return fmt.Errorf("watch local app source: %w", err)
 	}
@@ -169,6 +172,7 @@ func superviseDevLocalApp(ctx context.Context, opts devLocalAppOptions, env []st
 	exited := process.done
 	started := time.Now()
 	candidate := previous
+	runningRestart := previous.restart
 	var changedAt time.Time
 	ticker := time.NewTicker(devLocalPollInterval)
 	defer ticker.Stop()
@@ -212,7 +216,7 @@ func superviseDevLocalApp(ctx context.Context, opts devLocalAppOptions, env []st
 			if opts.noReload {
 				continue
 			}
-			current, err := opts.envConfig.sourceFingerprint(opts.root)
+			current, err := fingerprintDevLocalApp(opts.root, opts.envConfig)
 			if err != nil {
 				continue // editors can rename/remove files during a scan
 			}
@@ -223,6 +227,9 @@ func superviseDevLocalApp(ctx context.Context, opts devLocalAppOptions, env []st
 				continue
 			}
 			previous = candidate
+			if process != nil && opts.plan.frameworkReload && candidate.restart == runningRestart {
+				continue // keep the framework watcher, browser state and WebSockets alive
+			}
 			plan, err := planDevLocalApp(opts.root, opts.command)
 			if err != nil {
 				_, _ = fmt.Fprintf(opts.errOut, "Could not reload local app: %v; fix the configuration and save again.\n", err)
@@ -244,6 +251,7 @@ func superviseDevLocalApp(ctx context.Context, opts devLocalAppOptions, env []st
 				return err
 			}
 			exited, started = process.done, time.Now()
+			opts.plan, runningRestart = plan, candidate.restart
 			_, _ = fmt.Fprintf(opts.out, "Reloading local app (%s).\n", plan.describe())
 		}
 	}

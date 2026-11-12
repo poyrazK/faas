@@ -58,6 +58,11 @@ func PlanDevLocalWorkloadForTest(root, command string) (string, string, bool, er
 	return app.command, app.framework, false, nil
 }
 
+func DevLocalAppFrameworkReloadForTest(root, command string) (bool, error) {
+	plan, err := planDevLocalApp(root, command)
+	return plan.frameworkReload, err
+}
+
 // DevLocalServerForTest plans and prepares the project's functions and
 // returns the local server's handler and its trigger token.
 func DevLocalServerForTest(t *testing.T, projectDir string) (http.Handler, string, error) {

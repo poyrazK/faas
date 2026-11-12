@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [ADR-20261112100408: Let local framework servers own source reload](20261112100408-local-framework-hmr-ownership.md) — accepted; preserve HMR processes and WebSockets on source edits, restart for validated launch inputs, and forward local bind flags through recognised dev scripts
+
 - [ADR-20261111183000: Automatically select supported developer watch mode](20261111183000-automatic-developer-watch-selection.md) — accepted; flags and manifest settings override detection, server eligibility can fall back for automatic choices, and workspace children preserve explicit opt-outs
 - [ADR-20261111162000: Reload selected local development environment files](20261111162000-local-development-env-reload.md) — accepted; local flags override manifest defaults, valid env edits restart apps and functions, and invalid files preserve running processes
 
