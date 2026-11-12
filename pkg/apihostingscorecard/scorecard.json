@@ -69,6 +69,7 @@
         {"kind": "test", "locator": "pkg/apid/apidserver/account_prehijack_test.go::TestMagicLinkFromSignupEndpointSignsIn"},
         {"kind": "test", "locator": "pkg/apid/apidserver/customer_support_test.go::TestCustomerSupportAuthenticatedRoutes"},
         {"kind": "test", "locator": "pkg/apid/apidserver/dashboard_support_test.go::TestCustomerSupportPortalBrowserRoutes"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/support_notifications_test.go::TestCustomerSupportNotificationRoutes"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_account_test.go::TestDashboardAccountExport_ReturnsAttachment"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_mfa_test.go::TestMFARecover_SendsBurnEmail"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_org_test.go::TestOrgUUID_Pin"},

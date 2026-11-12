@@ -18949,6 +18949,11 @@ const (
 	SupportDispatchTimeout        = 10 * time.Second
 	SupportWebhookMaxAttempts     = 10
 	SupportWebhookLease           = 30 * time.Second
+	SupportNotificationRetention  = 90 * 24 * time.Hour
+	SupportNotificationEmailTTL   = 24 * time.Hour
+	SupportNotificationRecipients = 1000
+	SupportNotificationAttempts   = 8
+	SupportNotificationLease      = time.Minute
 )
 
 // MaxObjectKeyScopeBytes bounds a bucket binding's key_prefix
