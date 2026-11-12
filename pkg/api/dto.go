@@ -7958,28 +7958,42 @@ type QuotaBlock struct {
 // account (Unaffected = noop or skipped) plus the scan's proposed
 // creates (WillDeploy.Action == "create"). Removed is a flat slug
 // list — removal has no per-row editable metadata worth surfacing.
+// FeatureHint is one Gregale behavior or feature that applies to the scanned
+// source: what the plan will do, how to change it, and the exact commands
+// (ADR-20261112223000 §1). IDs are stable.
+type FeatureHint struct {
+	ID        string   `json:"id"`
+	Workloads []string `json:"workloads,omitempty"`
+	Applied   string   `json:"applied"`
+	Change    string   `json:"change,omitempty"`
+	Commands  []string `json:"commands,omitempty"`
+}
+
 type PlanResponse struct {
-	SafeRelease           *ProjectSafeRelease    `json:"safe_release,omitempty"`
-	ProjectSlug           string                 `json:"project_slug"`
-	RepoFullName          string                 `json:"repo_full_name,omitempty"`
-	Environment           string                 `json:"environment,omitempty"`
-	EnvironmentProtected  bool                   `json:"environment_protected,omitempty"`
-	EnvironmentConfigHash string                 `json:"environment_config_hash,omitempty"`
-	ScanSource            string                 `json:"scan_source"`
-	Tier                  string                 `json:"tier"`
-	Workloads             []PlanWorkload         `json:"workloads"`
-	Managed               []PlanManaged          `json:"managed"`
-	Crons                 []PlanCron             `json:"crons"`
-	AsyncRoutes           []PlanAsyncRoute       `json:"async_routes,omitempty"`
-	Warnings              []string               `json:"warnings,omitempty"`
-	DetectionWarnings     []PlanDetectionWarning `json:"detection_warnings,omitempty"`
-	ObservedApps          int                    `json:"observed_apps"`
-	ObservedCrons         int                    `json:"observed_crons"`
-	LimitApps             int                    `json:"limit_apps"`
-	LimitCrons            int                    `json:"limit_crons"`
-	CanApply              bool                   `json:"can_apply"`
-	CronsNotAllowed       bool                   `json:"crons_not_allowed,omitempty"`
-	PlanToken             string                 `json:"plan_token"`
+	SafeRelease           *ProjectSafeRelease `json:"safe_release,omitempty"`
+	ProjectSlug           string              `json:"project_slug"`
+	RepoFullName          string              `json:"repo_full_name,omitempty"`
+	Environment           string              `json:"environment,omitempty"`
+	EnvironmentProtected  bool                `json:"environment_protected,omitempty"`
+	EnvironmentConfigHash string              `json:"environment_config_hash,omitempty"`
+	ScanSource            string              `json:"scan_source"`
+	Tier                  string              `json:"tier"`
+	Workloads             []PlanWorkload      `json:"workloads"`
+	Managed               []PlanManaged       `json:"managed"`
+	Crons                 []PlanCron          `json:"crons"`
+	AsyncRoutes           []PlanAsyncRoute    `json:"async_routes,omitempty"`
+	Warnings              []string            `json:"warnings,omitempty"`
+	// FeatureHints says which Gregale behaviors and features apply to the
+	// scanned source and the commands that change them (ADR-20261112223000).
+	FeatureHints      []FeatureHint          `json:"feature_hints,omitempty"`
+	DetectionWarnings []PlanDetectionWarning `json:"detection_warnings,omitempty"`
+	ObservedApps      int                    `json:"observed_apps"`
+	ObservedCrons     int                    `json:"observed_crons"`
+	LimitApps         int                    `json:"limit_apps"`
+	LimitCrons        int                    `json:"limit_crons"`
+	CanApply          bool                   `json:"can_apply"`
+	CronsNotAllowed   bool                   `json:"crons_not_allowed,omitempty"`
+	PlanToken         string                 `json:"plan_token"`
 	// ADR-124 can_apply rescue signal. PreExclude is the gate
 	// evaluated on the full scan (pre-`--only`/pre-`--exclude`).
 	// Rescued is true when --exclude flipped a blocked gate to

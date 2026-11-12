@@ -400,6 +400,7 @@ export type { ExecutionWorkflowStatusCounts } from './models/ExecutionWorkflowSt
 export type { ExecutionWorkflowUsage } from './models/ExecutionWorkflowUsage.js';
 export type { FailureRule } from './models/FailureRule.js';
 export type { FailureRules } from './models/FailureRules.js';
+export type { FeatureHint } from './models/FeatureHint.js';
 export type { FieldError } from './models/FieldError.js';
 export type { FinancialAllocation } from './models/FinancialAllocation.js';
 export type { FinancialAppCostAllocation } from './models/FinancialAppCostAllocation.js';
