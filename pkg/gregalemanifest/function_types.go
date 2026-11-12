@@ -355,8 +355,8 @@ func pythonFunctionTypes(callees []typedCallee) string {
 		fmt.Fprintf(&b, "\nclass %sClient(Protocol):\n", a.stem)
 		fmt.Fprintf(&b, "    async def call(self, input: %sInput, %s) -> %sOutput: ...\n", a.stem, opts, a.stem)
 		fmt.Fprintf(&b, "    def call_sync(self, input: %sInput, %s) -> %sOutput: ...\n", a.stem, opts, a.stem)
-		fmt.Fprintf(&b, "    async def send(self, input: %sInput, %s) -> FunctionInvocation: ...\n", a.stem, opts)
-		fmt.Fprintf(&b, "    def send_sync(self, input: %sInput, %s) -> FunctionInvocation: ...\n\n", a.stem, opts)
+		fmt.Fprintf(&b, "    async def send(self, input: %sInput, %s, on_complete: str | None = ...) -> FunctionInvocation: ...\n", a.stem, opts)
+		fmt.Fprintf(&b, "    def send_sync(self, input: %sInput, %s, on_complete: str | None = ...) -> FunctionInvocation: ...\n\n", a.stem, opts)
 	}
 	b.WriteString("\nclass GregaleFunctions(Protocol):\n")
 	b.WriteString("    \"\"\"The functions this function may call; a name that is not an identifier is reached by item.\"\"\"\n\n")
