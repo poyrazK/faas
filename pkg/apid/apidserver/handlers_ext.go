@@ -1433,6 +1433,12 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.RetryPolicy != nil {
 		retryPolicyPtr = &retryPolicyJSON
 	}
+	// ADR-20261111114059: an agent's added standing cost is charged to its
+	// budget, after validation and before the write.
+	commitBudget, answered := s.chargeAppUpdate(w, r, acct, app, req, ram)
+	if answered {
+		return
+	}
 	params := state.UpdateAppParams{
 		Visibility:         visibilityPtr(req.Visibility),
 		SetVisibility:      req.Visibility != nil,
@@ -1706,6 +1712,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, trafficproblem.Policy(err, fallback))
 		return
 	}
+	commitBudget()
 	if req.BeforeCheckpoint != nil || req.Profiling != nil || req.Tracing != nil {
 		// Existing process snapshots were created with the previous hook
 		// setting. The runtime-config stamp also retires live guests whose
@@ -4544,6 +4551,11 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if path == "" {
 		path = "/"
 	}
+	scope, scopeProblem := s.cronEnvironmentScope(r.Context(), app, req.Environment)
+	if scopeProblem != nil {
+		api.WriteProblem(w, scopeProblem)
+		return
+	}
 	skipIfRunning := false
 	if req.SkipIfRunning != nil {
 		skipIfRunning = *req.SkipIfRunning
@@ -4553,7 +4565,7 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		Timezone: timezone, SkipIfRunning: skipIfRunning, Command: cronCommand,
 		CommandShell: commandShell, CommandTimeoutSeconds: commandTimeoutSeconds,
 		CommandMaxOutputBytes: commandMaxOutputBytes, RetryMax: req.RetryMax,
-		RetryBackoffSeconds: req.RetryBackoffSeconds,
+		RetryBackoffSeconds: req.RetryBackoffSeconds, DeploymentScope: scope,
 	})
 	if err != nil {
 		var qe *state.CronQuotaError
@@ -7095,6 +7107,7 @@ func cronResponse(c state.Cron) api.CronResponse {
 	if !c.LastFiredAt.IsZero() {
 		resp.LastFiredAt = c.LastFiredAt.UTC().Format(time.RFC3339)
 	}
+	resp.Environment = c.DeploymentScope
 	return resp
 }
 

@@ -46,7 +46,12 @@ operation still enforces its own authorization and admission checks.
   moves too, and so does the billing email of any organization that billed to
   your previous address; if the billing provider refuses, you get an email
   saying which one to update. Wrong passwords count
-  against the same per-IP limit as sign-in.
+  against the same limits as sign-in.
+- **Failed passwords:** after 20 wrong passwords for one email address within
+  an hour, from any network, password checks for that address pause until
+  the hour is over and you get one email. Sign-in, changing your password or
+  email, and turning off two-factor authentication all count and all pause.
+  A password reset lifts the pause.
 - **Password:** `gregale account password update` opens the form. A reset
   (**Forgot password**) signs out every browser and revokes the keys that
   sign-ins created. API keys you created by hand keep working; the reset
@@ -123,4 +128,6 @@ operation still enforces its own authorization and admission checks.
 
 Exports are rate-limited and produce an audit event; store the resulting archive securely and delete it when no longer needed.
 
-Deletion requests have a grace period. Confirm the target account or organization in the command output before continuing, and revoke tokens first. The API rejects cross-organization resource references so a valid user cannot accidentally read or mutate another tenant's data.
+Deletion requests have a grace period. Cancelling a deletion (`gregale
+account restore`, or **Restore** on the account page) needs a full-access
+API key or a browser sign-in, and emails you. Confirm the target account or organization in the command output before continuing, and revoke tokens first. The API rejects cross-organization resource references so a valid user cannot accidentally read or mutate another tenant's data.

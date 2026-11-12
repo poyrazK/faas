@@ -192,8 +192,8 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Data.
 	{"postgres", "postgres"},
-	{"bucket multipart cancel", "bucket uploads abort"},
 	{"bucket multipart get", "bucket uploads status"},
+	{"bucket multipart cancel", "bucket uploads abort"},
 	{"bucket multipart", "bucket uploads"},
 	{"bucket version delete", "bucket version-delete"},
 	{"bucket version", "bucket versions"},

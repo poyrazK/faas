@@ -31,7 +31,7 @@ import (
 //	admission_ceiling_mb = 48000
 //	volume_capacity_bytes = 3000000000000
 //	boot_slots = 8
-//	postgres_majors = [14, 15, 16, 17, 18]
+//	postgres_majors = [15, 16, 17, 18]
 //
 // Listed nodes are upserted into database_nodes at startup. Without the
 // table the database RPCs return UNIMPLEMENTED.

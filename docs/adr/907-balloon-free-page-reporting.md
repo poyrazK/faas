@@ -181,3 +181,63 @@ guest 6.18.
   failed. No test failed that passes without the balloon in ADR-983's
   baseline run (1,057 passed, 35 failed, all caused by the node's leftovers
   and missing fixtures), and the run left no new leaks.
+
+## Amendment 2026-11-12: report free blocks from 128 KiB
+
+### Context
+
+The guest reports only free blocks of the pageblock order (2 MiB on x86) and
+above. A guest that has served traffic keeps much of its free memory in
+smaller blocks: freed heap, exited child processes, network buffers. Those
+pages stay resident on the host and keep their old contents, so the next
+capture stores them.
+
+`TestMetalSnapshotFreeMemoryBench` (`pkg/fcvm`) measured this on the
+internal test node with production's Firecracker 1.17 and guest kernel
+6.18.54: a 1 GiB Node guest with the balloon, 2 rounds per setting, 3 cold
+and 3 warm restores each.
+
+| guest boot args | capture after readiness | capture after churn | host memory of the churned VM | warm restore p50 |
+|---|---|---|---|---|
+| none (order 9, 2 MiB) | 135 MiB | 389–401 MiB | 407–418 MiB | 264–285 ms |
+| `page_reporting.page_reporting_order=5` (128 KiB) | — | 296–307 MiB | 314–324 MiB | 264–268 ms |
+| `page_reporting.page_reporting_order=3` (32 KiB) | 135 MiB | 291–297 MiB | 307–312 MiB | 277–290 ms |
+| `init_on_free=1` | 132 MiB | 163–165 MiB | 1,026 MiB | 268–297 ms |
+
+"Churn" is six requests that each allocate and free 160 MB of mixed heap
+objects and buffers and run a short child process; the guest settles 15 s
+before the capture. Before a churned capture the guest held ~200 MB free in
+blocks under 2 MiB (`/proc/buddyinfo`), about half the capture. The churn
+requests themselves took the same time under every setting.
+
+Production captures look like the "after readiness" column. Over seven
+days of vmmd's `snapshot memory` records on both compute nodes, the content
+the guest's own accounting does not explain is a flat 26–34 MB at every guest
+size from 128 MiB to 2 GiB, which is the kernel image and its static data, not
+free fragments. A lower order does not shrink those captures; it returns
+memory from guests that run and serve traffic.
+
+### Decision
+
+Every guest boots with `page_reporting.page_reporting_order=5`: free blocks
+of 128 KiB and above are reported to Firecracker, which discards them. The
+argument is in the cold-boot and execution (and database) command lines; it
+has no effect without the balloon, and boot arguments are not part of the
+snapshot backing identity, so existing snapshots stay valid and VMs take it at
+their next cold boot. Host transparent huge pages are `madvise`-only on the
+compute nodes and Firecracker does not request them, so discarding 128 KiB
+ranges splits no host huge pages. `FAAS_FREE_PAGE_REPORTING=0` still turns
+reporting off as a whole.
+
+Order 5 rather than 3: the two return about the same memory, and order 5
+sends a quarter as many reports per freed megabyte at most.
+
+### Rejected
+
+- **`init_on_free=1`.** It zeroes freed pages, so the capture stores none of
+  them, but the guest's balloon driver then turns free page reporting off,
+  because Firecracker's balloon does not offer `VIRTIO_BALLOON_F_PAGE_POISON`
+  (the negotiated features showed `reporting=0`). A running VM kept its whole
+  guest RAM resident on the host: 1,026 MiB against 408 MiB.
+- **Order 0 (4 KiB).** Measured once: 295 MiB after churn, no better than
+  order 3 or 5, for the most reports.

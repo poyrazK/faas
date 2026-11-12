@@ -1,0 +1,64 @@
+=== RUN   TestKafka_NackPoisonCommit
+=== PAUSE TestKafka_NackPoisonCommit
+=== RUN   TestKafka_NackPoisonSeekToOffset
+=== PAUSE TestKafka_NackPoisonSeekToOffset
+=== RUN   TestKafka_NackPoisonEmptyStrategyDefaultsToCommit
+=== PAUSE TestKafka_NackPoisonEmptyStrategyDefaultsToCommit
+=== RUN   TestKafka_NackBrokerErrorRedelivers
+=== PAUSE TestKafka_NackBrokerErrorRedelivers
+=== RUN   TestKafka_AckMultipleSucceeds
+=== PAUSE TestKafka_AckMultipleSucceeds
+=== RUN   TestKafka_AckCommitBrokerError
+=== PAUSE TestKafka_AckCommitBrokerError
+=== RUN   TestKafka_NackBrokerErrorNeverCommits
+=== PAUSE TestKafka_NackBrokerErrorNeverCommits
+=== RUN   TestBrokerBatchCarriesTheRestAndDeadLettersOversizedRecords
+--- PASS: TestBrokerBatchCarriesTheRestAndDeadLettersOversizedRecords (0.00s)
+=== RUN   TestDeadLetteredBrokerRedeliverySettles
+--- PASS: TestDeadLetteredBrokerRedeliverySettles (0.00s)
+=== RUN   TestLongBrokerBatchRenewsItsClaims
+--- PASS: TestLongBrokerBatchRenewsItsClaims (0.01s)
+=== RUN   TestTriggerClaimOutcomeRetriesTransientErrors
+--- PASS: TestTriggerClaimOutcomeRetriesTransientErrors (0.60s)
+=== RUN   TestBrokerRecordsKeepEarlierReleaseRows
+--- PASS: TestBrokerRecordsKeepEarlierReleaseRows (0.02s)
+=== CONT  TestKafka_AckMultipleSucceeds
+=== CONT  TestKafka_NackPoisonCommit
+--- PASS: TestKafka_AckMultipleSucceeds (0.00s)
+=== CONT  TestKafka_NackPoisonSeekToOffset
+--- PASS: TestKafka_NackPoisonSeekToOffset (0.00s)
+=== CONT  TestKafka_NackBrokerErrorNeverCommits
+--- PASS: TestKafka_NackPoisonCommit (0.00s)
+=== CONT  TestKafka_NackBrokerErrorRedelivers
+=== RUN   TestKafka_NackBrokerErrorNeverCommits/offset=10
+=== PAUSE TestKafka_NackBrokerErrorNeverCommits/offset=10
+=== RUN   TestKafka_NackBrokerErrorRedelivers/strategy=commit
+=== RUN   TestKafka_NackBrokerErrorNeverCommits/offset=20
+=== PAUSE TestKafka_NackBrokerErrorNeverCommits/offset=20
+=== RUN   TestKafka_NackBrokerErrorNeverCommits/offset=30
+=== PAUSE TestKafka_NackBrokerErrorNeverCommits/offset=30
+=== CONT  TestKafka_NackBrokerErrorNeverCommits/offset=10
+=== CONT  TestKafka_NackBrokerErrorNeverCommits/offset=30
+=== CONT  TestKafka_NackBrokerErrorNeverCommits/offset=20
+=== PAUSE TestKafka_NackBrokerErrorRedelivers/strategy=commit
+--- PASS: TestKafka_NackBrokerErrorNeverCommits (0.00s)
+    --- PASS: TestKafka_NackBrokerErrorNeverCommits/offset=10 (0.00s)
+    --- PASS: TestKafka_NackBrokerErrorNeverCommits/offset=30 (0.00s)
+    --- PASS: TestKafka_NackBrokerErrorNeverCommits/offset=20 (0.00s)
+=== RUN   TestKafka_NackBrokerErrorRedelivers/strategy=seek-to-offset
+=== CONT  TestKafka_AckCommitBrokerError
+=== PAUSE TestKafka_NackBrokerErrorRedelivers/strategy=seek-to-offset
+=== RUN   TestKafka_NackBrokerErrorRedelivers/strategy=
+=== PAUSE TestKafka_NackBrokerErrorRedelivers/strategy=
+=== CONT  TestKafka_NackBrokerErrorRedelivers/strategy=commit
+=== CONT  TestKafka_NackPoisonEmptyStrategyDefaultsToCommit
+=== CONT  TestKafka_NackBrokerErrorRedelivers/strategy=
+--- PASS: TestKafka_NackPoisonEmptyStrategyDefaultsToCommit (0.00s)
+=== CONT  TestKafka_NackBrokerErrorRedelivers/strategy=seek-to-offset
+--- PASS: TestKafka_AckCommitBrokerError (0.00s)
+--- PASS: TestKafka_NackBrokerErrorRedelivers (0.00s)
+    --- PASS: TestKafka_NackBrokerErrorRedelivers/strategy=commit (0.00s)
+    --- PASS: TestKafka_NackBrokerErrorRedelivers/strategy= (0.00s)
+    --- PASS: TestKafka_NackBrokerErrorRedelivers/strategy=seek-to-offset (0.00s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/sched	0.699s

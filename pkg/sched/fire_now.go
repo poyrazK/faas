@@ -351,7 +351,7 @@ func (l *Loop) processCommandCronFireNow(ctx context.Context, req state.FireNowR
 		if err != nil {
 			if errors.Is(err, state.ErrAppTaskDeploymentUnavailable) {
 				if suspender, ok := l.engine.Store().(state.CronSuspensionStore); ok {
-					if _, suspendErr := suspender.SuspendCronsForApp(ctx, cron.AppID, state.CronSuspendedNoLiveDeployment); suspendErr != nil {
+					if _, suspendErr := state.SuspendCronEnvironment(ctx, suspender, cron); suspendErr != nil {
 						l.log.Warn("sched: fire_now: suspend managed command cron without live deployment", "cron_id", cron.ID, "err", suspendErr)
 					}
 				}
@@ -376,7 +376,7 @@ func (l *Loop) processCommandCronFireNow(ctx context.Context, req state.FireNowR
 	if err != nil {
 		if errors.Is(err, state.ErrAppTaskDeploymentUnavailable) {
 			if suspender, ok := l.engine.Store().(state.CronSuspensionStore); ok {
-				if _, suspendErr := suspender.SuspendCronsForApp(ctx, cron.AppID, state.CronSuspendedNoLiveDeployment); suspendErr != nil {
+				if _, suspendErr := state.SuspendCronEnvironment(ctx, suspender, cron); suspendErr != nil {
 					l.log.Warn("sched: fire_now: suspend command cron without live deployment", "cron_id", cron.ID, "err", suspendErr)
 				}
 			}

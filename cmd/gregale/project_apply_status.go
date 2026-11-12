@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -80,6 +81,11 @@ func renderProjectApplyResultWithTimeouts(w io.Writer, plan api.PlanResponse, ap
 	case status.waitTimedOut > 0:
 		PrintWarn(w, "Project %s applied; the wait timed out with %d workload(s) still deploying; the server continues processing",
 			apply.ProjectID, status.waitTimedOut)
+	case !projectApplyProductionEnvironment(plan.Environment):
+		// A non-production environment exists only on an existing project,
+		// so "Created project" was wrong (Hunt 33 H33-33).
+		PrintOK(w, "Deployed project %s to environment %s with %d app(s)",
+			apply.ProjectID, plan.Environment, len(apply.Apps))
 	default:
 		PrintOK(w, "Created project %s with %d app(s) and %d cron(s)",
 			apply.ProjectID, len(apply.Apps), len(plan.Crons))
@@ -177,4 +183,14 @@ func reportProjectApplyFailure(w io.Writer, status projectApplyStatus) {
 		_, _ = fmt.Fprintf(w, ", unchanged=%d", status.unchanged)
 	}
 	_, _ = fmt.Fprintln(w)
+}
+
+// projectApplyProductionEnvironment matches apid's production lane: no
+// environment, default or production.
+func projectApplyProductionEnvironment(environment string) bool {
+	switch strings.TrimSpace(environment) {
+	case "", "default", "production":
+		return true
+	}
+	return false
 }

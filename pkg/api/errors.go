@@ -3901,6 +3901,14 @@ func ErrAPIContractComparisonIncomplete(detail string) *Problem {
 		WithDocs(docsBase + "/api-hosting#contract-diff")
 }
 
+// ErrCronEnvironmentRequiresProject is the 400 for an environment cron on an
+// app outside a project.
+func ErrCronEnvironmentRequiresProject() *Problem {
+	return NewProblem(http.StatusBadRequest, CodeCronInvalid, "Cron environment requires a project",
+		"only an app in a project has environments; omit environment for this app").
+		WithDocs(docsBase + "/crons#environments")
+}
+
 // ErrCronInvalid is returned for malformed cron expressions.
 func ErrCronInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeCronInvalid,
@@ -4555,6 +4563,9 @@ const (
 	// customers write runbooks that key on code !=
 	// insufficient_scope without parsing titles.
 	CodeGeoDenied = "geo_denied"
+	// CodeWAFBlocked is the 403 a blocking kind=waf edge rule sends. It
+	// answered insufficient_scope, the API-key scope code (Hunt 33 H33-18).
+	CodeWAFBlocked = "waf_blocked"
 	// CodeRequestValidationFailed is the 422 a kind=validate edge
 	// rule emits when the inbound request body fails the customer's
 	// JSON Schema. Carries Problem.Errors (Cloudflare / Stripe shape)

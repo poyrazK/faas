@@ -223,10 +223,30 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 		inputRaw = bodyBytes
 	}
 
+	if app.PlatformTenantRequired && tenantID == "" || tenantID != "" && !app.PlatformTenantRequired {
+		api.WriteProblem(w, api.ErrWorkflowTenantIdentityUnavailable())
+		return
+	}
+	if tenantID != "" {
+		tenants, ok := s.store.(state.PlatformTenantStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("platform tenant store unavailable"))
+			return
+		}
+		if err := state.ValidatePlatformTenantAppBinding(r.Context(), tenants, acct.ID, tenantID, app.ID); err != nil {
+			if errors.Is(err, state.ErrPlatformTenantSuspended) || errors.Is(err, state.ErrNotFound) {
+				api.WriteProblem(w, api.ErrWorkflowDefinitionNotFound())
+				return
+			}
+			api.WriteProblem(w, api.ErrCapacity("failed to verify workflow tenant access"))
+			return
+		}
+	}
+
 	var requestFingerprint []byte
 	if idempotencyKey != "" {
 		requestFingerprint = workflowRunCreateRequestFingerprint(inputRaw)
-		original, err := s.store.GetWorkflowRunByIdempotencyKey(r.Context(), app.ID, workflowName, idempotencyKey, requestFingerprint)
+		original, err := s.store.GetWorkflowRunByIdempotencyKey(r.Context(), app.ID, workflowName, idempotencyKey, requestFingerprint, tenantID)
 		if err == nil {
 			w.Header().Set("Idempotent-Replayed", "true")
 			writeJSON(w, http.StatusCreated, workflowRunResponse(original))
@@ -252,25 +272,6 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 	if !s.workflowRuntimeEnabled {
 		api.WriteProblem(w, api.ErrWorkflowDeploymentUnavailable())
 		return
-	}
-	if app.PlatformTenantRequired && tenantID == "" || tenantID != "" && !app.PlatformTenantRequired {
-		api.WriteProblem(w, api.ErrWorkflowTenantIdentityUnavailable())
-		return
-	}
-	if tenantID != "" {
-		tenants, ok := s.store.(state.PlatformTenantStore)
-		if !ok {
-			api.WriteProblem(w, api.ErrCapacity("platform tenant store unavailable"))
-			return
-		}
-		if err := state.ValidatePlatformTenantAppBinding(r.Context(), tenants, acct.ID, tenantID, app.ID); err != nil {
-			if errors.Is(err, state.ErrPlatformTenantSuspended) || errors.Is(err, state.ErrNotFound) {
-				api.WriteProblem(w, api.ErrWorkflowDefinitionNotFound())
-				return
-			}
-			api.WriteProblem(w, api.ErrCapacity("failed to verify workflow tenant access"))
-			return
-		}
 	}
 
 	// Runs must snapshot a definition from the current live deployment.
@@ -642,7 +643,7 @@ func (s *server) injectWorkflowEventForRun(w http.ResponseWriter, r *http.Reques
 	}
 	if err != nil {
 		if errors.Is(err, state.ErrWorkflowInvalidInput) {
-			api.WriteProblem(w, api.ErrValidation("Event payload exceeds the supported size or numeric range."))
+			api.WriteProblem(w, api.ErrValidation("Event payload exceeds the supported size or numeric range, or uses the reserved timeout marker."))
 			return
 		}
 		if errors.Is(err, state.ErrConflict) {
@@ -812,7 +813,7 @@ func (s *server) completeWorkflowCallbackForRun(w http.ResponseWriter, r *http.R
 		case errors.Is(err, state.ErrConflict):
 			api.WriteProblem(w, api.ErrWorkflowCallbackPayloadConflict())
 		case errors.Is(err, state.ErrWorkflowInvalidInput):
-			api.WriteProblem(w, api.ErrValidation("Callback payload exceeds the supported size or numeric range."))
+			api.WriteProblem(w, api.ErrValidation("Callback payload exceeds the supported size or numeric range, or uses the reserved timeout marker."))
 		default:
 			s.log.Error("complete workflow callback failed", "run_id", run.ID, "err", err)
 			api.WriteProblem(w, api.ErrCapacity("failed to complete workflow callback"))

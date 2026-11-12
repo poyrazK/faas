@@ -74,6 +74,11 @@ BEGIN
 	END IF;
 	-- Issue #574: deployctl writes the release history as the owner; daemons
 	-- only read it, so none can rewrite what was deployed.
+	-- Cost-control activation history is written only by the schema-owner
+	-- trigger; a runtime bootstrap must not restore direct mutation rights.
+	IF to_regclass('public.billing_plan_activations') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE ON public.billing_plan_activations FROM faas_runtime;
+	END IF;
 	IF to_regclass('public.platform_release_activations') IS NOT NULL THEN
 		REVOKE INSERT, UPDATE, DELETE ON public.platform_release_activations FROM faas_runtime;
 	END IF;

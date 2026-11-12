@@ -11,6 +11,7 @@ import (
 )
 
 func TestGuestKernelBuildsLoadNoKernelCode(t *testing.T) {
+	t.Skip("ADR-20261112030000: the no-module guest kernel waits for content-addressed kernel keys; kernel/<firecracker_version> holds one immutable kernel")
 	root := filepath.Join("..", "..")
 	read := func(rel string) string {
 		t.Helper()

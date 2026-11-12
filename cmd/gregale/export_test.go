@@ -2725,6 +2725,10 @@ var WithEntry = withEntry
 var CmdGithub = cmdGithub
 var CmdGithubSetup = cmdGithubSetup
 
+// Manifest cron staging stays with production deploys (ADR-20261104120000).
+var DeployStagesManifestCrons = deployStagesManifestCrons
+var CronStagingEnvironment = cronStagingEnvironment
+
 // DebugWatchPoll runs one debug requests watch poll against baseURL and
 // returns the request IDs it read and whether it reported a gap.
 func DebugWatchPoll(baseURL, slug string, limit int, seen map[string]string, follow bool) ([]string, bool, error) {
@@ -2846,3 +2850,6 @@ var WorkerNoInstancesLine = workerNoInstancesLine
 
 // PrintPublicURLs exposes the plan's public URL list (H32-30).
 var PrintPublicURLs = printPublicURLs
+
+var InvocationSourceLabel = invocationSourceLabel
+var RenderDeploymentHostingReceiptFor = renderDeploymentHostingReceiptFor
