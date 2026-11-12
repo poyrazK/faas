@@ -4449,6 +4449,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/agent-connections/{id}/budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(agentconnections.Budget(agentConnections)))))
 	mux.HandleFunc("PUT /v1/agent-connections/{id}/budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(agentconnections.SetBudget(agentConnections)))))
 	// ADR-20261112080601: a person undoes what one of their agents changed.
+	// The agent's own undo: planning is free, applying always waits for a
+	// person's approval (category undo, agentapproval.Classify).
+	mux.HandleFunc("POST /v1/agent-connections/self/undo/plan", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.SelfUndoPlan(agentConnections))))
+	mux.HandleFunc("POST /v1/agent-connections/self/undo", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.SelfUndo(agentConnections))))
 	mux.HandleFunc("POST /v1/agent-connections/{id}/undo/plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(agentconnections.UndoPlan(agentConnections)))))
 	mux.HandleFunc("POST /v1/agent-connections/{id}/undo", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(agentconnections.Undo(agentConnections)))))
 	// ADR-20261104140058: an agent polls its approval requests; a person lists

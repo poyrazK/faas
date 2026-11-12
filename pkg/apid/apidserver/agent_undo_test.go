@@ -579,6 +579,80 @@ func TestHandlers_AgentUndoDeleted(t *testing.T) {
 	}
 }
 
+// An agent undoes its own changes only with a person's approval, whatever
+// approval categories it chose: the apply waits (category undo), and once
+// approved the same request applies the plan once.
+func TestHandlers_AgentSelfUndo(t *testing.T) {
+	srv, store := apidserver.NewCliAuthTestServer(t)
+	ctx := t.Context()
+	const email = "self-undo@example.com"
+	acct, err := store.CreateAccount(ctx, email, api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "self-svc", Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60}); err != nil {
+		t.Fatal(err)
+	}
+	plaintext, hash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := store.CreateAPIKey(ctx, acct.ID, hash, "self-agent", []string{api.ScopeAgent, api.ScopeAppsRead, api.ScopeDeployWrite})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetAPIKeyApprovalCategories(ctx, key.ID, []string{}); err != nil {
+		t.Fatal(err)
+	}
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+plaintext)
+		if body != "" {
+			r.Header.Set("Content-Type", "application/json")
+		}
+		srv.ServeHTTP(rec, r)
+		return rec
+	}
+	if rec := call(http.MethodPatch, "/v1/apps/self-svc", `{"idle_timeout_s":300}`); rec.Code != http.StatusOK {
+		t.Fatalf("agent change = %d %s", rec.Code, rec.Body)
+	}
+	var plan api.AgentUndoPlan
+	if rec := call(http.MethodPost, "/v1/agent-connections/self/undo/plan", `{}`); rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &plan) != nil {
+		t.Fatalf("self plan = %d %s", rec.Code, rec.Body)
+	}
+	if plan.Undoable != 1 {
+		t.Fatalf("self plan = %+v", plan.Items)
+	}
+	apply, _ := json.Marshal(api.AgentUndoRequest{PlanDigest: plan.PlanDigest})
+	rec := call(http.MethodPost, "/v1/agent-connections/self/undo", string(apply))
+	var problem api.Problem
+	if rec.Code != http.StatusPreconditionRequired || json.Unmarshal(rec.Body.Bytes(), &problem) != nil || problem.AgentApproval == nil || problem.AgentApproval.Category != api.AgentApprovalUndo {
+		t.Fatalf("self apply = %d %s; want 428 undo", rec.Code, rec.Body)
+	}
+	if app, _ := store.AppBySlug(ctx, "self-svc"); app.IdleTimeoutS != 300 {
+		t.Fatalf("idle timeout before approval = %d; want unchanged 300", app.IdleTimeoutS)
+	}
+	page, cookie, form := apidserver.RenderAgentApprovalForTestAs(t, srv, problem.AgentApproval.ID, email)
+	if !strings.Contains(page.Body.String(), "Undo the agent") {
+		t.Fatalf("review page does not name the undo:\n%s", page.Body)
+	}
+	if approved := apidserver.DecideAgentApprovalForTest(t, srv, problem.AgentApproval.ID, cookie, form, "approve"); approved.Code != http.StatusOK {
+		t.Fatalf("approve = %d %s", approved.Code, approved.Body)
+	}
+	var res api.AgentUndoResult
+	if rec := call(http.MethodPost, "/v1/agent-connections/self/undo", string(apply)); rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &res) != nil || res.Undone != 1 {
+		t.Fatalf("approved self apply = %d %s", rec.Code, rec.Body)
+	}
+	if app, _ := store.AppBySlug(ctx, "self-svc"); app.IdleTimeoutS != 60 {
+		t.Fatalf("idle timeout after undo = %d; want 60", app.IdleTimeoutS)
+	}
+	// The agent cannot use the person's routes for its own key.
+	if rec := call(http.MethodPost, "/v1/agent-connections/"+key.ID+"/undo/plan", `{}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("agent on the person's route = %d; want 403", rec.Code)
+	}
+}
+
 func newUUID(t *testing.T) string {
 	t.Helper()
 	return uuid.NewString()

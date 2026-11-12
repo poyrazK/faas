@@ -134,17 +134,23 @@ it since, the record is skipped as `changed_since` unless the person passes
   its *own* records. Applying an undo from an agent key always waits for a
   person's approval (category `undo`, not opt-out, like `budget`); the
   approval is bound to the plan digest, so the agent cannot widen it after
-  approval. An agent cannot undo another key's records.
+  approval. An agent cannot undo another key's records. The gate asks for
+  `undo` whatever categories the key or its organization chose
+  (`agentapproval.Asks`), and the category is not listed among the ones a
+  connection chooses. The approved request applies the undo as the agent:
+  its inverses are the reverse of writes it was allowed to make. An agent's
+  undo requests themselves get no undo records.
 
 ### 5. Interfaces
 
 - `POST /v1/agent-connections/{id}/undo/plan`, `POST /v1/agent-connections/{id}/undo`
-  (org variants under `/v1/orgs/{slug}/agent-connections/{id}/…`); slice 5
-  adds `…/self/undo/plan` + `…/self/undo` for the agent's own key.
+  (org variants under `/v1/orgs/{slug}/agent-connections/{id}/…`), and
+  `…/self/undo/plan` + `…/self/undo` for the agent's own key.
 - `gregale mcp connection undo <id> [--since D | --entry ID…] [--force] [--org SLUG] [--plan] [--yes]`:
   prints the plan; applies after confirmation or with `--yes`.
-- MCP tools `gregale_plan_undo` and `gregale_apply_undo` (slice 5; the apply
-  returns the approval to wait on with `gregale_wait_for_approval`).
+- MCP tools `gregale_plan_undo` (read-only) and `gregale_apply_undo` (a write
+  tool, listed where writes are allowed; it returns the approval to wait on
+  with `gregale_wait_for_approval`), in the `operate` toolset.
 - The plan lists each change with its activity entry id, so a person can
   undo single entries.
 
@@ -157,7 +163,9 @@ Slices, each dark until its captures are complete for the kind:
 2. Deploys and traffic.
 3. Things it created.
 4. Things it deleted.
-5. Agent-requested undo through approval, MCP tools, journey.
+5. Agent-requested undo through approval (migration
+   `20261112080601752_agent_approval_undo_category`, contract: the category
+   CHECK gains `undo`), MCP tools, journey.
 
 ## Consequences
 

@@ -31,6 +31,7 @@ func (j *hostedMCPJourney) approvalSteps(s *story) {
 	s.check("cli_waits_for_approval", j.cliWaitsForApproval)
 	s.check("mcp_waits_for_approval", j.mcpWaitsForApproval)
 	s.check("activity_recorded", j.activityRecorded)
+	s.check("undo_restores_setting", j.undoRestoresSetting)
 	s.check("mcp_connect_codex", j.mcpConnectCodex)
 }
 
@@ -44,6 +45,7 @@ func (j *hostedMCPJourney) approvalKey(t *testing.T) {
 		t.Fatal("key create printed no key or id")
 	}
 	j.root.Cleanup(func() { j.tg.run(j.root, time.Minute, "key", "delete", id) })
+	j.approvalKeyID = id
 	j.ghost = j.tg.slug("mcp-ghost")
 }
 
@@ -189,4 +191,62 @@ func (j *hostedMCPJourney) adminKey(t *testing.T) string {
 		j.admin, _ = j.tg.scopedKeyWithID(t, j.root, "mcp-admin", "admin")
 	}
 	return j.admin
+}
+
+// undoRestoresSetting: the agent changes the probe app's idle timeout, and
+// `gregale mcp connection undo --entry` puts it back (ADR-20261112080601).
+func (j *hostedMCPJourney) undoRestoresSetting(t *testing.T) {
+	if j.probe == "" {
+		t.Skip("no probe app")
+	}
+	read := func() int {
+		t.Helper()
+		got := jsonBody(t, j.tg.apiCall(http.MethodGet, "/v1/apps/"+j.probe, nil, j.adminKey(t)))
+		n, _ := got["idle_timeout_s"].(float64)
+		return int(n)
+	}
+	before := read()
+	changed := 120
+	if before == changed {
+		changed = 180
+	}
+	patch := j.tg.apiCall(http.MethodPatch, "/v1/apps/"+j.probe, map[string]any{"idle_timeout_s": changed}, j.approvalKeyValue)
+	if patch.err != nil || patch.status != http.StatusOK {
+		t.Fatalf("agent PATCH idle_timeout_s = %s", patch)
+	}
+	t.Cleanup(func() {
+		if read() != before {
+			j.tg.apiCall(http.MethodPatch, "/v1/apps/"+j.probe, map[string]any{"idle_timeout_s": before}, j.adminKey(t))
+		}
+	})
+	var entry string
+	eventually(t, "the agent's change in its activity log", time.Minute, 5*time.Second, func() (bool, string) {
+		res := j.tg.runAs(t, j.approvalKeyValue, time.Minute, "mcp", "connection", "activity", "--self", "--limit", "20")
+		var page struct {
+			Activity []struct {
+				ID, Method, Path string
+			} `json:"activity"`
+		}
+		if res.exit != 0 || json.Unmarshal(res.stdout, &page) != nil {
+			return false, res.problem()
+		}
+		for _, row := range page.Activity {
+			if row.Method == http.MethodPatch && row.Path == "/v1/apps/"+j.probe {
+				entry = row.ID
+				return true, ""
+			}
+		}
+		return false, string(res.stdout)
+	})
+	res := j.tg.ok(t, time.Minute, "mcp", "connection", "undo", j.approvalKeyID, "--entry", entry, "--yes")
+	var out struct {
+		Undone int `json:"undone"`
+		Failed int `json:"failed"`
+	}
+	if json.Unmarshal(res.stdout, &out) != nil || out.Undone != 1 || out.Failed != 0 {
+		t.Fatalf("undo = %s; want one change undone", tail(string(res.stdout), 400))
+	}
+	if got := read(); got != before {
+		t.Fatalf("idle_timeout_s after undo = %d, want %d", got, before)
+	}
 }

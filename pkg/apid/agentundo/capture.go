@@ -66,6 +66,14 @@ var routes = map[string]beginFunc{
 	"POST /v1/apps/{slug}/secrets/{key}/rotate":   beginSecret,
 }
 
+// uncaptured are an agent's undo requests themselves: planning changes
+// nothing, and an applied undo is what reversed the agent's changes, not a
+// change to undo again.
+var uncaptured = map[string]bool{
+	"POST /v1/agent-connections/self/undo/plan": true,
+	"POST /v1/agent-connections/self/undo":      true,
+}
+
 // Routes lists the route patterns with a capture, for tests that check
 // each is still served.
 func Routes() []string {
@@ -80,6 +88,9 @@ func Routes() []string {
 // Begin starts the capture of an agent's write r, as acct with key. It reads
 // what the write will replace; call Finish once the handler answered.
 func (e *Engine) Begin(r *http.Request, acct state.Account, key state.APIKey) *Pending {
+	if uncaptured[r.Pattern] {
+		return nil
+	}
 	p := &Pending{
 		e: e, base: r, acct: acct, key: key, method: r.Method, path: r.URL.Path,
 		kind: api.AgentUndoKindOther, summary: r.Method + " " + r.URL.Path, reason: reasonUnknownRoute,

@@ -1282,6 +1282,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/agent-connections/self/budget":                                                           "AgentConnectionSelfBudget",
 	"GET /v1/agent-connections/{id}/budget":                                                           "AgentConnectionBudget",
 	"PUT /v1/agent-connections/{id}/budget":                                                           "SetAgentConnectionBudget",
+	"POST /v1/agent-connections/self/undo/plan":                                                       "PlanSelfAgentUndo",
+	"POST /v1/agent-connections/self/undo":                                                            "ApplySelfAgentUndo",
 	"POST /v1/agent-connections/{id}/undo/plan":                                                       "PlanAgentUndo",
 	"POST /v1/agent-connections/{id}/undo":                                                            "ApplyAgentUndo",
 	"POST /v1/orgs/{slug}/agent-connections/{id}/undo/plan":                                           "PlanOrgAgentUndo",

@@ -316,8 +316,13 @@ it, and the agent's older changes to it, as they are; pass `--force` to undo
 them anyway. Each change is undone once, and changes are kept 7 days.
 
 You can undo the agents you connected; owners and admins can undo every agent
-acting in their organization. Undoing needs an admin credential. An agent
-cannot undo, its own changes or anyone else's.
+acting in their organization. Undoing needs an admin credential.
+
+An agent can ask to undo its own changes, never another key's, through the
+MCP tools `gregale_plan_undo` and `gregale_apply_undo` (or
+`POST /v1/agent-connections/self/undo`). Applying always waits for your
+approval, whatever approval categories the agent chose; the approval covers
+exactly the plan the agent showed you.
 
 ## Run the CLI non-interactively
 

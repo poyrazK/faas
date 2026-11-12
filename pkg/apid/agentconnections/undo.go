@@ -42,6 +42,41 @@ func Undo(d Deps) httpkit.AccountHandler {
 	}
 }
 
+// SelfUndoPlan is POST /v1/agent-connections/self/undo/plan: an agent plans
+// undoing its own changes.
+func SelfUndoPlan(d Deps) httpkit.AccountHandler {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		key, req, ok := d.selfUndoTarget(w, r)
+		if !ok {
+			return
+		}
+		writeUndoPlan(w, r, d, acct, key, req)
+	}
+}
+
+// SelfUndo is POST /v1/agent-connections/self/undo: an agent applies an
+// undo of its own changes. The approval gate has already made a person
+// approve this exact request (category undo, bound to its plan digest).
+func SelfUndo(d Deps) httpkit.AccountHandler {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		key, req, ok := d.selfUndoTarget(w, r)
+		if !ok {
+			return
+		}
+		applyUndo(w, r, d, acct, key, req)
+	}
+}
+
+func (d Deps) selfUndoTarget(w http.ResponseWriter, r *http.Request) (state.APIKey, api.AgentUndoRequest, bool) {
+	key, isAgent := agentKey(r)
+	if !isAgent {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Agent key required", "only an agent's own key undoes here; people use /v1/agent-connections/{id}/undo"))
+		return state.APIKey{}, api.AgentUndoRequest{}, false
+	}
+	req, ok := d.undoRequest(w, r)
+	return *key, req, ok
+}
+
 // OrgUndoPlan and OrgUndo are the organization's variants: an owner or admin
 // undoes an agent that acts in the organization.
 func OrgUndoPlan(d OrgDeps) httpkit.AccountHandler {

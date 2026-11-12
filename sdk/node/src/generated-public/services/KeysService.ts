@@ -471,6 +471,72 @@ export class KeysService {
     });
   }
   /**
+   * Plan undoing the calling agent's own changes.
+   * An agent key plans an undo of its own changes, like a person's plan.
+   * Applying it needs a person's approval.
+   *
+   * @returns AgentUndoPlan The undo plan.
+   * @throws ApiError
+   */
+  public static planSelfAgentUndo({
+    requestBody,
+  }: {
+    requestBody: AgentUndoRequest,
+  }): CancelablePromise<AgentUndoPlan> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/agent-connections/self/undo/plan',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Undo the calling agent's own changes, once a person approves.
+   * An agent key applies a reviewed undo of its own changes. It always
+   * waits for a person's approval: the first call answers 428
+   * approval_required with the request to wait on (category undo, bound
+   * to this body and so to the plan digest); after the approval, the same
+   * call applies it once.
+   *
+   * @returns AgentUndoResult What the undo did to each change.
+   * @throws ApiError
+   */
+  public static applySelfAgentUndo({
+    requestBody,
+  }: {
+    requestBody: AgentUndoRequest,
+  }): CancelablePromise<AgentUndoResult> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/agent-connections/self/undo',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * Plan undoing a connected agent's changes.
    * Lists the agent's changes the request selects, newest first (by
    * default those of the last 24 hours; changes are kept 7 days), with

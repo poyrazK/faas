@@ -109,6 +109,17 @@ func (c *Client) ApplyAgentUndo(ctx context.Context, id string, req AgentUndoReq
 	return out, err
 }
 
+// PlanSelfAgentUndo plans undoing the calling agent key's own changes.
+func (c *Client) PlanSelfAgentUndo(ctx context.Context, req AgentUndoRequest) (AgentUndoPlan, error) {
+	return c.PlanAgentUndo(ctx, "self", req)
+}
+
+// ApplySelfAgentUndo applies the calling agent key's undo; it answers 428
+// approval_required until a person approves this exact request.
+func (c *Client) ApplySelfAgentUndo(ctx context.Context, req AgentUndoRequest) (AgentUndoResult, error) {
+	return c.ApplyAgentUndo(ctx, "self", req)
+}
+
 // PlanOrgAgentUndo and ApplyOrgAgentUndo are the organization's variants,
 // for an owner or admin.
 func (c *Client) PlanOrgAgentUndo(ctx context.Context, org, id string, req AgentUndoRequest) (AgentUndoPlan, error) {

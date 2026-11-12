@@ -66,7 +66,10 @@ func (s *server) wireAgentUndo(engine *agentundo.Engine) {
 		return
 	}
 	s.authMw.UndoCapture = func(r *http.Request, acct state.Account, key state.APIKey) authmw.AgentUndoPending {
-		return engine.Begin(r, acct, key)
+		if p := engine.Begin(r, acct, key); p != nil {
+			return p
+		}
+		return nil // not a typed nil: the middleware skips the capture
 	}
 }
 
