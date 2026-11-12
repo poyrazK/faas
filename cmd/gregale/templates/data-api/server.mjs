@@ -244,9 +244,9 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
         // (ADR 20261019102108): one past its credential, rate, row-security
         // and concurrency checks. Refusals before here count as rejected, so
         // invalid tokens or a throttled flood cannot use up an owner's cap.
-        if (counted) counted.access = access
         if (req.url.startsWith('/rest/v1/')) markQueryShape(req, res, config)
         if (req.url === '/__gregale/schema') {
+          if (counted) counted.access = access
           if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
           try {
             if (!deadline.enter('refresh')) return
@@ -263,6 +263,20 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           if (deadline.check()) problem(res, 503, 'data_api_unavailable')
           return
         }
+        if (config.accessSafety && !await config.accessSafety.ready(deadline.expiresAt - Date.now())) {
+          return problem(res, 503, 'data_api_unavailable', { reason: 'access_safety' })
+        }
+        // A restore may have changed safety while this request waited. Make
+        // the final authorization decision against the refreshed generation.
+        if (access === 'user' && !storage) {
+          const denial = rowSecurityDenial(req, config, rpc)
+          if (denial) return problem(res, denial.status, denial.code)
+        } else if (access === 'anonymous') {
+          const target = storage ? storageAnonymousTarget(storage, config) : rpc ? publicRpcTarget(req, config, rpc) : publicReadTarget(req, config)
+          if (target.code) return problem(res, { public_read_not_allowed: 403, data_api_public_read_unsafe: 503, data_api_public_rpc_unsafe: 503 }[target.code] ?? 401, target.code)
+          publicCache = storage ? null : publicReadCache(req, config, target)
+        }
+        if (counted) counted.access = access
         if (!deadline.enter('signing')) return
         // Only the binding login may become the SQL role. External role claims
         // cannot select an administrator, owner or another application's role.

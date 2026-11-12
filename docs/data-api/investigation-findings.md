@@ -1,10 +1,11 @@
 # Data API investigation backlog
 
 Investigated checkout: `2616a7170a80a08bb3b143535ec31b9939aaa5bb`
-(2026-11-12). These findings are open; this investigation adds documentation
-and manual reproductions only. Stable IDs let later fixes retain the original
-evidence and record their resolution. Locations refer to the investigated
-checkout.
+(2026-11-12). The original observations below are retained as historical
+evidence. All 30 findings now have implementations and regression coverage on
+`codex/data-api-investigation-fixes`, based on main `5d606226d`. Stable IDs are
+unchanged. Original line locations refer to the investigated checkout; the
+resolution table describes current behavior.
 
 The third review also compared these Data API source paths with upstream main
 `10034cea1` (2026-11-12); the reviewed implementation paths were unchanged.
@@ -19,36 +20,36 @@ performance bottleneck is not a confirmed production defect.
 
 | ID | Priority | Evidence | Finding | Status |
 | --- | --- | --- | --- | --- |
-| DAPI001 | P1 | Reproduced | Terminal authorization errors retain live-query rows | Open |
-| DAPI002 | P1 | Reproduced | Lost upload-start responses hide the generated recovery ID | Open |
-| DAPI003 | P1 | Worker reproduction + SQL review | Repeatedly failing oldest jobs can delay the queue | Open |
-| DAPI004 | P2 | Documented operational gap | Storage garbage collection and job-result retention require owner implementation | Open |
-| DAPI005 | P2 | Code review; load testing needed | Shared-budget admission serializes unrelated subjects on the app row | Open |
-| DAPI006 | P2 | Reproduced; documented limitation | Lossless decoding cannot preserve JSON numeric types on write-back | Open |
-| DAPI007 | P1 | Reproduced | Plain CSV import silently rounds numeric values before approval | Open |
-| DAPI008 | P1 | Failure injection + gate review | Failed access-safety checks admit requests using indefinitely stale metadata | Open |
-| DAPI009 | P2 | Reproduced | Transaction-visibility waits ignore pre-cancellation and retain abort listeners | Open |
-| DAPI010 | P2 | Reproduced | Late credential lookups can replace a fresh subscription after reconnect | Open |
-| DAPI011 | P2 | Reproduced + server expiry review | Temporary credential failures can leave live reads stale indefinitely | Open |
-| DAPI012 | P2 | Reproduced with a supported serving snapshot | Cross-schema RPC results produce dangling OpenAPI references | Open |
-| DAPI013 | P2 | Reproduced | OpenAPI conversion treats field names as schema keywords | Open |
-| DAPI014 | P2 | Real PostgreSQL descriptor and SDK codec reproduced | Arrays of PostgreSQL domains decode differently from generated types | Open |
-| DAPI015 | P1 | Reproduced through the HTTP gateway | Requests pass the old RLS gate before a successful restore safety refresh | Open |
-| DAPI016 | P1 | Reproduced in generated Go and Python clients | Keyset pagination removes the caller's existing OR filters | Open |
-| DAPI017 | P1 | Reproduced with loopback HTTP redirects | Generated clients follow redirects with credentials or resubmit mutations | Open |
-| DAPI018 | P2 | Reproduced by rendering and compiling | Generated type-name allocation emits duplicate declarations | Open |
-| DAPI019 | P2 | Reproduced; client expressiveness gap | Typed Go insert and RPC inputs cannot distinguish omitted values from SQL NULL | Open |
-| DAPI020 | P2 | Reproduced in rendered Go code | Legal field names break Go struct tags or change JSON keys | Open |
-| DAPI021 | P2 | Reproduced in generated Go and Python clients | Relation names are appended to URLs without path encoding | Open |
-| DAPI022 | P2 | Reproduced in generated Python client | Generated table accessors are shadowed by client configuration attributes | Open |
-| DAPI023 | P2 | Loader reproduction + write-path review | Local types output can overwrite a migration source file | Open |
-| DAPI024 | P1 | Reproduced in authorization replay | Replay assertions and captures silently round large numeric IDs | Open |
-| DAPI025 | P2 | Reproduced with controlled timers/transport | Initial live-access publication is not retried after identity lookup failure | Open |
-| DAPI026 | P2 | Reproduced with delayed loopback HTTP | Health invalidation reuses an old in-flight readiness probe | Open |
-| DAPI027 | P1 | Reproduced on PostgreSQL 16 | Keys-only change events include non-key covering-index columns | Open |
-| DAPI028 | P1 | Reproduced on PostgreSQL 16 | Renaming a primary-key column makes change hooks emit a null key | Open |
-| DAPI029 | P2 | Reproduced on PostgreSQL 16 | Migration transaction statements can commit schema without ledger entries | Open |
-| DAPI030 | P2 | Reproduced in an isolated child process | A named-pipe migration file blocks file loading indefinitely | Open |
+| DAPI001 | P1 | Reproduced | Terminal authorization errors retain live-query rows | Fixed |
+| DAPI002 | P1 | Reproduced | Lost upload-start responses hide the generated recovery ID | Fixed |
+| DAPI003 | P1 | Worker reproduction + SQL review | Repeatedly failing oldest jobs can delay the queue | Fixed |
+| DAPI004 | P2 | Documented operational gap | Storage garbage collection and job-result retention require owner implementation | Fixed |
+| DAPI005 | P2 | Code review; load testing needed | Shared-budget admission serializes unrelated subjects on the app row | Fixed |
+| DAPI006 | P2 | Reproduced; documented limitation | Lossless decoding cannot preserve JSON numeric types on write-back | Fixed |
+| DAPI007 | P1 | Reproduced | Plain CSV import silently rounds numeric values before approval | Fixed |
+| DAPI008 | P1 | Failure injection + gate review | Failed access-safety checks admit requests using indefinitely stale metadata | Fixed |
+| DAPI009 | P2 | Reproduced | Transaction-visibility waits ignore pre-cancellation and retain abort listeners | Fixed |
+| DAPI010 | P2 | Reproduced | Late credential lookups can replace a fresh subscription after reconnect | Fixed |
+| DAPI011 | P2 | Reproduced + server expiry review | Temporary credential failures can leave live reads stale indefinitely | Fixed |
+| DAPI012 | P2 | Reproduced with a supported serving snapshot | Cross-schema RPC results produce dangling OpenAPI references | Fixed |
+| DAPI013 | P2 | Reproduced | OpenAPI conversion treats field names as schema keywords | Fixed |
+| DAPI014 | P2 | Real PostgreSQL descriptor and SDK codec reproduced | Arrays of PostgreSQL domains decode differently from generated types | Fixed |
+| DAPI015 | P1 | Reproduced through the HTTP gateway | Requests pass the old RLS gate before a successful restore safety refresh | Fixed |
+| DAPI016 | P1 | Reproduced in generated Go and Python clients | Keyset pagination removes the caller's existing OR filters | Fixed |
+| DAPI017 | P1 | Reproduced with loopback HTTP redirects | Generated clients follow redirects with credentials or resubmit mutations | Fixed |
+| DAPI018 | P2 | Reproduced by rendering and compiling | Generated type-name allocation emits duplicate declarations | Fixed |
+| DAPI019 | P2 | Reproduced; client expressiveness gap | Typed Go insert and RPC inputs cannot distinguish omitted values from SQL NULL | Fixed |
+| DAPI020 | P2 | Reproduced in rendered Go code | Legal field names break Go struct tags or change JSON keys | Fixed |
+| DAPI021 | P2 | Reproduced in generated Go and Python clients | Relation names are appended to URLs without path encoding | Fixed |
+| DAPI022 | P2 | Reproduced in generated Python client | Generated table accessors are shadowed by client configuration attributes | Fixed |
+| DAPI023 | P2 | Loader reproduction + write-path review | Local types output can overwrite a migration source file | Fixed |
+| DAPI024 | P1 | Reproduced in authorization replay | Replay assertions and captures silently round large numeric IDs | Fixed |
+| DAPI025 | P2 | Reproduced with controlled timers/transport | Initial live-access publication is not retried after identity lookup failure | Fixed |
+| DAPI026 | P2 | Reproduced with delayed loopback HTTP | Health invalidation reuses an old in-flight readiness probe | Fixed |
+| DAPI027 | P1 | Reproduced on PostgreSQL 16 | Keys-only change events include non-key covering-index columns | Fixed |
+| DAPI028 | P1 | Reproduced on PostgreSQL 16 | Renaming a primary-key column makes change hooks emit a null key | Fixed |
+| DAPI029 | P2 | Reproduced on PostgreSQL 16 | Migration transaction statements can commit schema without ledger entries | Fixed |
+| DAPI030 | P2 | Reproduced in an isolated child process | A named-pipe migration file blocks file loading indefinitely | Fixed |
 
 Recommended first fixes: DAPI015, DAPI008, DAPI001, DAPI002, and DAPI007. DAPI003
 should follow with recovery-aware queue scheduling. Treat DAPI005 as a benchmark-led
@@ -60,6 +61,53 @@ is independent; fixes should retain the original evidence and add a regression
 assertion for the intended behavior.
 Prioritize DAPI027/DAPI028 with the change-hook correctness work; neither is a
 general event-retention or global-commit-order complaint.
+
+## Resolutions
+
+Implemented 2026-11-12. Setup and compatibility details are in
+[workflows](workflows.md) and [ADR-20261112210000](../adr/20261112210000-data-api-investigation-hardening.md).
+
+| ID | Current behavior | Regression coverage |
+| --- | --- | --- |
+| DAPI001 | Terminal closure clears observable state, protocol rows, parsed caches and initial-row references. | [Test](../../sdk/data/test/live.test.mjs) |
+| DAPI002 | Persist an upload ID before dispatch; ambiguous creation exposes UploadSessionStartError.sessionId and supports explicit idempotent creation. | [Test](../../sdk/data/test/storage.test.mjs) |
+| DAPI003 | Migrations 0014/0015 add delayed claims, saved attempt diagnostics, eight-attempt quarantine, authorized resume/cancel and safe history retirement. Ambiguous progress is reconciled. | [Test](../../tests/data-api/data-workflows.test.mjs) |
+| DAPI004 | Owner maintenance provides dry-run inventory, reference checks, delete fences/leases, durable retries, session/history retention and retired-ID protection. | [Test](../../tests/data-api/data-maintenance.test.mjs) |
+| DAPI005 | Existing keys use shared ownership protection and per-counter locks. Only registration takes the capacity lock and prunes; strict limits and cardinality bounds remain. | [Test](../../pkg/state/dataapibudget/store_test.go) |
+| DAPI006 | Opt-in exact types and immutable ExactNumber values preserve number/string identity through REST, RPC, live reads and serialization. Legacy modes remain available. | [Test](../../sdk/data/test/numeric.test.mjs) |
+| DAPI007 | Plain numeric and nested JSON CSV cells use the precision-checking decoder before producing any import payload. | [Test](../../tests/data-api/csv-import.test.mjs) |
+| DAPI008 | Only successful safety reads renew a bounded lease; expired or restored leases fail closed and retry after a bounded interval. | [Test](../../cmd/gregale/templates/data-api/test/access.test.mjs) |
+| DAPI009 | Visibility waits honor pre-aborted signals and remove listeners on resolve, abort and terminal closure. | [Test](../../sdk/data/test/live.test.mjs) |
+| DAPI010 | Attachment generations and credential attempt ordering discard results from old sockets or superseded renewals. | [Test](../../sdk/data/test/live.test.mjs) |
+| DAPI011 | Credential failures schedule cancellable exponential retries; expired seals are not reused as a failed-refresh fallback. | [Test](../../sdk/data/test/live.test.mjs) |
+| DAPI012 | Cross-profile row definitions are included while endpoint paths remain restricted to the selected schema. | [Test](../../cmd/gregale/templates/data-api/test/openapi.test.mjs) |
+| DAPI013 | Schema conversion traverses schema-valued keywords and dictionaries; property names and literal JSON remain data. | [Test](../../cmd/gregale/templates/data-api/test/openapi.test.mjs) |
+| DAPI014 | Live result metadata recursively unwraps domains and their array elements to the base wire codec. | [Test](../../pkg/livequery/result_columns_internal_test.go) |
+| DAPI015 | The gateway rechecks user and anonymous authorization after readiness and a successful safety refresh. | [Test](../../cmd/gregale/templates/data-api/test/access.test.mjs) |
+| DAPI016 | Generated pagination preserves caller OR clauses and conjoins the cursor, while replacing ordering and removing offset. | [Test](../../pkg/dataapi/clientgen/hardening_test.go) |
+| DAPI017 | Generated transports reject redirects, validate the API origin before reading credentials, and require HTTPS outside loopback. | [Test](../../pkg/dataapi/clientgen/hardening_test.go) |
+| DAPI018 | Type families, enum constants and runtime symbols share deterministic collision allocation. | [Test](../../pkg/dataapi/clientgen/hardening_test.go) |
+| DAPI019 | Go insert/update/RPC records support SetNull with field validation and conflicting-value checks, preserving omission/default behavior. | [Test](../../pkg/dataapi/clientgen/hardening_test.go) |
+| DAPI020 | Generated custom JSON methods map exact database field names independently of Go struct-tag syntax. | [Test](../../pkg/dataapi/clientgen/hardening_test.go) |
+| DAPI021 | Generated relation/RPC path segments are encoded exactly once; slash names fail explicitly. | [Test](../../pkg/dataapi/clientgen/hardening_test.go) |
+| DAPI022 | Python table accessors reserve all instance configuration names and transport methods. | [Test](../../pkg/dataapi/clientgen/hardening_test.go) |
+| DAPI023 | Generated output rejects migration-tree destinations, canonical symlink paths, and hardlink aliases before Docker or writes. | [Test](../../tests/data-api/dev-project.test.mjs) |
+| DAPI024 | Saved requests, editor inputs and response captures reject unrepresentable numeric literals before comparison or capture. Exact replay IDs can use text projections. | [Test](../../tests/data-api/dev-requests.test.mjs) |
+| DAPI025 | Access publication and initial cap totals remain retryable when identity lookup fails before an in-flight report exists. | [Test](../../cmd/gregale/templates/data-api/test/usage.test.mjs) |
+| DAPI026 | Health invalidation cancels probes, invalidates pool observations and excludes pre-invalidation refresh results and snapshots. | [Test](../../cmd/gregale/templates/data-api/test/health.test.mjs) |
+| DAPI027 | Primary-key metadata excludes INCLUDE attributes; old incompatible trigger arguments fail closed until the owner re-enables the hook. | [Test](../../tests/data-api/catalog-regressions.test.mjs) |
+| DAPI028 | Capture validates the configured parent relation and current key/exclusion metadata; rename drift raises actionable SQLSTATE 55000 until re-enabled. | [Test](../../tests/data-api/catalog-regressions.test.mjs) |
+| DAPI029 | Preflight rejects top-level transaction control before any migration content runs, while respecting SQL strings/comments/function bodies. | [Test](../../tests/data-api/catalog-regressions.test.mjs) |
+| DAPI030 | Migration files and watch reads use bounded regular-file reads; migration loading refuses symlinks/FIFOs, checks cancellation and hashes original bytes. | [Test](../../cmd/gregale/templates/data-api-starter/test/migration.test.mjs) |
+
+The independent-subject budget benchmark measured approximately 1.49 ms per
+admission (4 workers, 16-connection test pool, disposable local PostgreSQL 16).
+This is a local regression measurement, not a production capacity claim. The
+concurrency test also holds the capacity lock and a shared app-row lock while
+an existing subject proceeds. Atomic limit and key-cap checks remain covered.
+
+The sections below preserve the original observations and remediation ideas.
+They do not describe the fixed implementation.
 
 ## DAPI001 Terminal authorization errors retain live-query rows
 
@@ -749,55 +797,22 @@ with zero skips. PostgreSQL 16 ran in a dedicated disposable local container;
 the scripts removed their own temporary databases and files. No shared/customer
 database or deployed application was changed.
 
-From the repository root, with Node 24+ and the existing SDK/runtime development
-dependencies installed, run:
+For current acceptance, use the maintained regression suites:
 
 ```sh
-node docs/data-api/investigation-repros.mjs
+make data-api-check
+make data-api-acceptance
+make data-api-packaging-check
+go test ./pkg/dataapi/clientgen ./pkg/state/dataapibudget ./pkg/livequery
 ```
 
-Run the third-pass evidence with Python 3.9+, Node 22+, and the repository's
-Go toolchain/dependencies available:
+PostgreSQL acceptance requires the documented disposable database and pinned
+PostgREST environment. The new catalog and owner-maintenance regressions are
+part of that acceptance target. The benchmark is
+`go test ./pkg/state/dataapibudget -bench BenchmarkSharedBudgetIndependentSubjects`.
 
-```sh
-python3 docs/data-api/investigation-codegen-repros.py
-```
-
-Set `GREGALE_GO` to the Go compiler's absolute path if it is not the `go` on
-`PATH`. Normal Go cache/dependency settings are inherited. The script creates
-and removes its own temporary generated clients and fixtures; the deliberate
-`NotesRow redeclared` compilation failure is expected evidence for DAPI018.
-
-Run the fourth-pass runtime evidence with Node 22+ and a POSIX `mkfifo`:
-
-```sh
-node docs/data-api/investigation-runtime-repros.mjs
-```
-
-The FIFO reader runs in its own timeboxed child; terminating that deliberately
-blocked child is expected. For the SQL evidence, use Node 24+, the runtime/SDK
-development dependencies, and `DATA_API_INVESTIGATION_PG_URL` pointing to the
-`postgres` database of a disposable loopback PostgreSQL 16+ server:
-
-```sh
-node docs/data-api/investigation-postgres-repros.mjs
-```
-
-The SQL script accepts only a loopback endpoint, creates a uniquely named test
-database, and drops that database after the probes. `GREGALE_DATA_API_REVIEW_DEPS`
-can reuse already installed development dependencies from another checkout,
-as with the initial reproduction script. Migration failures and inconsistent
-event keys in this script are deliberately asserted observations.
-
-To reuse dependencies already installed in another checkout, set
-`GREGALE_DATA_API_REVIEW_DEPS` to that checkout's absolute path. This environment
-variable selects development dependencies only; the sources under investigation
-always come from this checkout. The script creates and removes its own temporary
-compilation directory and makes no external network/database calls.
-
-The assertions deliberately record the investigated defects. They are manual
-evidence, not an acceptance gate that should keep passing after fixes. When
-resolving an ID, add a regression test asserting the corrected behavior, record
-the resolution here, and retire or update the corresponding evidence assertion.
-The two fixed `data_api_access_recheck_unavailable` log events are expected from
-the injected catalog failures in DAPI008.
+The four `investigation-*-repros` scripts are historical negative assertions,
+retained for the original investigation commits (`1e1aaca86`, `b7547f7ea`, and
+`060551217`). They assert the old defects and are not acceptance gates for this
+branch. Run them only from the corresponding historical checkout when auditing
+the original evidence. No hosted application or customer database was changed.

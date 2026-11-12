@@ -1,3 +1,5 @@
+// HISTORICAL negative assertions: run from the original investigation commit.
+// Fixed behavior is covered by the regression links in investigation-findings.md.
 // Manual evidence for investigation-findings.md at revision 2616a7170.
 // Assertions record existing defects; this is not an acceptance gate. A fix
 // should invalidate its assertion and add the corresponding regression test.

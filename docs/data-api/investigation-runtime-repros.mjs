@@ -1,3 +1,5 @@
+// HISTORICAL negative assertions: run from the original investigation commit.
+// Fixed behavior is covered by the regression links in investigation-findings.md.
 // Manual evidence for DAPI025, DAPI026, and DAPI030. Requires Node 22+
 // and a POSIX mkfifo command. Assertions record defects at revision 2616a7170;
 // fixes should invalidate them and add ordinary regression tests.

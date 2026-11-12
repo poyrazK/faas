@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestSharedBudgetSerializesReplicasAndSurvivesNewStore(t *testing.T) {
@@ -28,6 +29,33 @@ func TestSharedBudgetSerializesReplicasAndSurvivesNewStore(t *testing.T) {
 	ddl, _, _ := strings.Cut(string(raw), "-- +goose Down")
 	ddl = strings.ReplaceAll(ddl, "GRANT SELECT, INSERT, UPDATE, DELETE ON data_api_shared_budgets TO faas_runtime;", "")
 	if _, err = pool.Exec(ctx, ddl); err != nil {
+		t.Fatal(err)
+	}
+	// DAPI005: an existing subject does not need the capacity lock or an
+	// exclusive apps row lock held by an unrelated admitted subject.
+	primeKey := strings.Repeat("f", 64)
+	if _, err := dataapibudget.New(pool).Take(ctx, account, app, primeKey, 7, 3600); err != nil {
+		t.Fatal(err)
+	}
+	held, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = held.Exec(ctx, "SELECT id FROM apps WHERE id=$1 FOR SHARE", app); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = held.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended('gregale:data-budget:'||$1,0))", app); err != nil {
+		t.Fatal(err)
+	}
+	independent, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	if d, err := dataapibudget.New(pool).Take(independent, account, app, primeKey, 7, 3600); err != nil || !d.Allowed {
+		t.Errorf("unrelated lock blocked existing key: %+v %v", d, err)
+	}
+	cancel()
+	if err = held.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, "DELETE FROM data_api_shared_budgets WHERE budget_key=$1", primeKey); err != nil {
 		t.Fatal(err)
 	}
 	var allowed atomic.Int32

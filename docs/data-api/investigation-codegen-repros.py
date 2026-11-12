@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# HISTORICAL negative assertions; use the original investigation checkout.
+# Current regression coverage is linked in investigation-findings.md.
 """Manual evidence for DAPI016-DAPI024 in investigation-findings.md.
 
 Requirements: Python 3.9+, Node 22+, repository Go toolchain/dependencies.

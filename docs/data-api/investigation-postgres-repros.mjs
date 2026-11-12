@@ -1,3 +1,5 @@
+// HISTORICAL negative assertions: run from the original investigation commit.
+// Fixed behavior is covered by the regression links in investigation-findings.md.
 // Manual PostgreSQL evidence for DAPI027-DAPI029 and further verification of
 // DAPI014. Requires Node 24+, PostgreSQL 16+, installed runtime pg and SDK
 // typescript dependencies. GREGALE_DATA_API_REVIEW_DEPS may select another

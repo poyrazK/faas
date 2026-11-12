@@ -28,3 +28,48 @@ test('default numbers and lossless error status codes retain existing behavior',
   const db = createDataClient({ url: 'https://data.example', accessToken: 'token', numericMode: 'lossless', fetch: async () => new Response(JSON.stringify(error), { status: 403, headers: { 'content-type': 'application/json' } }) })
   assert.equal((await db.from('x').select()).error.code, '42501')
 })
+
+test('DAPI006 exact numbers retain kind and precision through REST, RPC, live and writes',async()=>{
+ const {ExactNumber,parseExactJSON,stringifyExactJSON}=await import('../dist/index.js')
+ const wire='[{"id":9007199254740993,"decimal":1.2300e-9,"text":"9007199254740993","json":{"$gregale.exact.number":"literal","value":9007199254740993}}]'
+ const calls=[]
+ const db=createDataClient({url:'https://data.example',accessToken:'token',numericMode:'exact',fetch:async(input,init)=>{calls.push({input:String(input),...init});return new Response(wire,{headers:{'content-type':'application/json'}})}}).schema('api')
+ const query=db.from('numbers').select()
+ const {data,error}=await query
+ assert.equal(error,null)
+ assert.ok(data[0].id instanceof ExactNumber)
+ assert.equal(data[0].id.source,'9007199254740993')
+ assert.equal(data[0].decimal.source,'1.2300e-9')
+ assert.equal(data[0].text,'9007199254740993')
+ assert.equal(data[0].json['$gregale.exact.number'],'literal')
+ assert.ok(data[0].json.value instanceof ExactNumber)
+ const {liveRead}=await import('../dist/live/index.js')
+ assert.deepEqual(liveRead(query).parse(['{9007199254740993,NULL}','{"n":1.2300e-9,"s":"1.2300e-9"}'],[{name:'array',type:'_numeric'},{name:'json',type:'jsonb'}]),{array:[new ExactNumber('9007199254740993'),null],json:{n:new ExactNumber('1.2300e-9'),s:'1.2300e-9'}})
+ await db.from('numbers').insert(data)
+ assert.equal(calls.at(-1).body,wire)
+ await db.rpc('save_number',{number:data[0].id,json:data[0].json})
+ assert.equal(calls.at(-1).body,'{"number":9007199254740993,"json":{"$gregale.exact.number":"literal","value":9007199254740993}}')
+ await db.rpc('save_number',{number:data[0].id,json:data[0].json},{get:true})
+ const params=new URL(calls.at(-1).input).searchParams
+ assert.equal(params.get('number'),'9007199254740993')
+ assert.equal(params.get('json'),'{"$gregale.exact.number":"literal","value":9007199254740993}')
+ assert.equal((await query.maybeSingle()).data.id.source,'9007199254740993')
+ assert.equal(stringifyExactJSON(parseExactJSON('[-0,1e9999,"1e9999",null]')),'[-0,1e9999,"1e9999",null]')
+ assert.throws(()=>new ExactNumber('1;drop table x'))
+ assert.throws(()=>Number(new ExactNumber('1')),/explicit conversion/)
+})
+
+test('DAPI006 exact writes work without JSON.rawJSON and ordinary serialization refuses coercion',async()=>{
+ const {ExactNumber,stringifyExactJSON}=await import('../dist/index.js')
+ const descriptor=Object.getOwnPropertyDescriptor(JSON,'rawJSON')
+ Object.defineProperty(JSON,'rawJSON',{value:undefined,configurable:true,writable:true})
+ try {
+  const value=new ExactNumber('9007199254740993')
+  assert.throws(()=>JSON.stringify({value}),/stringifyExactJSON/)
+  assert.equal(stringifyExactJSON({value,text:'9007199254740993'}),'{"value":9007199254740993,"text":"9007199254740993"}')
+  let body
+  const db=createDataClient({url:'https://data.example',accessToken:'token',numericMode:'exact',fetch:async(_url,init)=>{body=init.body;return Response.json([])}})
+  assert.equal((await db.from('values').insert({value})).error,null)
+  assert.equal(body,'{"value":9007199254740993}')
+ }finally{if(descriptor)Object.defineProperty(JSON,'rawJSON',descriptor);else delete JSON.rawJSON}
+})

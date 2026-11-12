@@ -59,7 +59,8 @@ export async function replayRequest(request, { url, identities, signal, variable
     const bytes = new Uint8Array(size); let offset = 0
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length }
     let json, validJSON = false
-    try { json = JSON.parse(new TextDecoder().decode(bytes)); validJSON = true } catch {}
+    try { json = decodeJsonCell(new TextDecoder().decode(bytes)); validJSON = true }
+    catch (error) { if (error.message === 'precision_loss') throw new VariableFailure('Response contains a number that cannot be represented exactly; use a text projection for exact values.') }
     const contractMismatch = rejectContractMismatch && (json?.error?.code === 'schema_contract_mismatch' || json?.code === 'schema_contract_mismatch' || json?.message === 'schema_contract_mismatch')
     const statusMatches = !contractMismatch && response.status === request.expect.status
     const jsonMatches = !('json' in request.expect) || (validJSON && matchesJSON(json, expected))
@@ -84,3 +85,4 @@ export function collectionScenarios(collection, name = '') {
   if (!selected) throw new Error('Unknown replay scenario; select a name present in the collection.')
   return [selected]
 }
+import { decodeJsonCell } from './csv-export.mjs'

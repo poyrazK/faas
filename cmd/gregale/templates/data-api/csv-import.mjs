@@ -27,12 +27,12 @@ function convert(value,rule){
  if(['string','enum'].includes(rule.kind))return value
  if(rule.kind==='number'){
   const text=value.trim();if(!/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/.test(text))throw new Error('invalid_number')
-  return Number(text)
+  return decodeJsonCell(text)
  }
  if(rule.kind==='boolean'){
   const text=value.trim().toLowerCase();if(!['true','false'].includes(text))throw new Error('invalid_boolean');return text==='true'
  }
- try{return JSON.parse(value)}catch{throw new Error('invalid_json')}
+ try{return decodeJsonCell(value)}catch(error){if(error.message==='precision_loss')throw error;throw new Error('invalid_json')}
 }
 export function previewCsvImport(dataset,mapping,model,encoding='plain'){
  if(!['plain','json'].includes(encoding))throw new Error('Choose plain CSV values or JSON cells.')
