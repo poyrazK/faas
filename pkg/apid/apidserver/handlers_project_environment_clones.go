@@ -137,12 +137,28 @@ func (s *server) admitFullProjectEnvironmentClone(w http.ResponseWriter, r *http
 	if key == "" {
 		key = uuid.NewString()
 	}
+	owner, err := state.ProjectResourceAccountByID(r.Context(), s.store, project.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not resolve the project's plan"))
+		return
+	}
+	// Copied crons count against the cron limits of the plan that owns the
+	// project's resources, as the coordinator's materialization does.
+	cronLimits := api.MustLimitsFor(owner.Plan)
 	op, err := store.CreateCapturedProjectEnvironmentCloneOperation(r.Context(), state.ProjectEnvironmentCloneCaptureRequest{AccountID: acct.ID, ProjectID: project.ID,
 		SourceEnvironment: req.FromEnvironment, TargetEnvironment: req.Slug, IdempotencyKey: key, RequireCompleteInventory: true,
 		AdmissionSwitches:       []string{runtimeConfigFullEnvironmentClones, runtimeConfigFullEnvironmentCloneAdmission},
 		QualifiedObjectBackends: s.cloneQualifiedObjectBackends(),
-		CheckObjectCapacity:     s.cloneObjectCapacityCheck(acct)})
+		CheckObjectCapacity:     s.cloneObjectCapacityCheck(acct),
+		CronLimits:              &cronLimits})
 	if err != nil {
+		var cronQuota *state.CronQuotaError
+		if errors.As(err, &cronQuota) {
+			// The clone copies the source's crons paused; copies count against
+			// the plan's cron limits (ADR-20261104120000 amendment 2026-11-12).
+			api.WriteProblem(w, api.ErrPlanCronQuota(owner.Plan, string(cronQuota.Scope), cronQuota.Limit, cronQuota.Observed))
+			return
+		}
 		operator, _ := s.adminAllows(acct)
 		api.WriteProblem(w, fullProjectEnvironmentCloneAdmissionProblem(project.Slug, req.FromEnvironment, operator, err))
 		return
@@ -211,6 +227,8 @@ func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, ope
 		return cloneSourceRefusal("source.queue_bindings", "environment-owned queue bindings", "legacy_stage_bindings")
 	case errors.Is(err, state.ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable):
 		return cloneSourceRefusal("source.work_policies", "work policies scoped to the source environment", "isolation_unavailable")
+	case errors.Is(err, state.ErrProjectEnvironmentCloneCronCaptureUnavailable):
+		return cloneSourceRefusal("source.crons", "crons only on workloads deployed in the source environment", "workload_not_deployed")
 	case errors.Is(err, state.ErrNotFound):
 		return projectEnvironmentNotFound(projectSlug, source)
 	case errors.Is(err, state.ErrConflict), errors.Is(err, state.ErrInvalidArgument):

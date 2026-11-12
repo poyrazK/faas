@@ -53,6 +53,8 @@ func directCloneFailure(op state.ProjectEnvironmentCloneOperation, stepErr error
 		return state.CloneFailureSourceChanged
 	case errors.Is(stepErr, state.ErrObjectCapacity):
 		return state.CloneFailureObjectCapacity
+	case errors.Is(stepErr, state.ErrCronQuotaExceeded):
+		return state.CloneFailureCronLimit
 	case !op.CreatedAt.IsZero() && now.Sub(op.CreatedAt) > deadline:
 		return state.CloneFailureDeadline
 	}

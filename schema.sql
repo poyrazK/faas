@@ -7039,6 +7039,22 @@ $$;
 
 
 --
+-- Name: clear_cron_clone_pause(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.clear_cron_clone_pause() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NEW.enabled IS DISTINCT FROM OLD.enabled THEN
+    NEW.clone_paused := false;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: clone_checkpoint_admission_snapshot_guard(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -35742,6 +35758,7 @@ CREATE TABLE public.crons (
     labels jsonb DEFAULT '{}'::jsonb NOT NULL,
     deployment_scope text DEFAULT ''::text NOT NULL,
     environment_id uuid,
+    clone_paused boolean DEFAULT false NOT NULL,
     CONSTRAINT crons_command_output_check CHECK (((command_max_output_bytes >= 1024) AND (command_max_output_bytes <= 16777216))),
     CONSTRAINT crons_command_shape_check CHECK ((((cardinality(command) = 0) AND (NOT command_shell)) OR (((cardinality(command) >= 1) AND (cardinality(command) <= 64)) AND (array_position(command, NULL::text) IS NULL) AND ((octet_length(command[1]) >= 1) AND (octet_length(command[1]) <= 4096)) AND ((octet_length(array_to_string(command, ''::text)) >= 1) AND (octet_length(array_to_string(command, ''::text)) <= 16384)) AND ((NOT command_shell) OR (cardinality(command) = 1))))),
     CONSTRAINT crons_command_timeout_check CHECK (((command_timeout_seconds >= 1) AND (command_timeout_seconds <= 3600))),
@@ -87256,6 +87273,13 @@ CREATE TRIGGER checked_project_rollback_identity BEFORE UPDATE ON public.project
 --
 
 CREATE TRIGGER checked_rollback_traffic BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_checked_rollback_traffic();
+
+
+--
+-- Name: crons clear_cron_clone_pause; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clear_cron_clone_pause BEFORE UPDATE OF enabled ON public.crons FOR EACH ROW EXECUTE FUNCTION public.clear_cron_clone_pause();
 
 
 --

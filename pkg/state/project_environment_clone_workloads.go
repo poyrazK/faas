@@ -120,6 +120,9 @@ type projectCloneWorkloadSnapshot struct {
 	Values         *projectCloneWorkloadValues                `json:"values,omitempty"`
 	Bindings       *ProjectEnvironmentCloneBindingDefinitions `json:"bindings,omitempty"`
 	Policies       *projectCloneScopedPolicies                `json:"policies,omitempty"`
+	// Crons are the workload's crons in the source environment, copied into
+	// the stage paused (ADR-20261104120000 amendment 2026-11-12).
+	Crons *projectCloneCrons `json:"crons,omitempty"`
 }
 
 type projectCloneWorkloadRecord struct {
@@ -190,6 +193,16 @@ func encodeCloneWorkloadSnapshot(snapshot projectCloneWorkloadSnapshot) ([]byte,
 			return nil, "", ErrConflict
 		}
 		snapshot.Policies = &policies
+	}
+	if snapshot.Crons != nil {
+		crons, err := normalizeCloneCrons(*snapshot.Crons)
+		if err != nil {
+			return nil, "", err
+		}
+		if crons.AppID != snapshot.Artifact.AppID {
+			return nil, "", ErrConflict
+		}
+		snapshot.Crons = &crons
 	}
 	if snapshot.ProjectConfig != nil {
 		config, err := normalizeCloneProjectConfig(*snapshot.ProjectConfig)
