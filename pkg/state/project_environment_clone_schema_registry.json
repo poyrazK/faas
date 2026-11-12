@@ -4205,7 +4205,9 @@
       "command_shell",
       "command_timeout_seconds",
       "created_at",
+      "deployment_scope",
       "enabled",
+      "environment_id",
       "failure_rules",
       "id",
       "labels",
@@ -5182,6 +5184,30 @@
       "updated_at",
       "upload_id"
     ]
+  },
+  {
+    "table": "environment_deployment_cron_activations",
+    "columns": [
+      "app_id",
+      "deployment_scope",
+      "fingerprint",
+      "intent",
+      "revision",
+      "session_id",
+      "status",
+      "updated_at",
+      "upload_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_deployment_cron_states",
+    "columns": [
+      "app_id",
+      "deployment_scope",
+      "revision"
+    ],
+    "kind": "operational"
   },
   {
     "table": "deployment_cron_outcomes",
@@ -19617,6 +19643,7 @@
       "last_error",
       "metadata",
       "next_fire_at",
+      "operator_replay",
       "payload",
       "received_at",
       "result_retention_until",
@@ -20755,6 +20782,22 @@
       "endpoint_id",
       "revoked_at",
       "thread_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_github_subscriptions",
+    "columns": [
+      "account_id",
+      "created_at",
+      "endpoint_id",
+      "event_types",
+      "expires_at",
+      "id",
+      "issued_at",
+      "repository",
+      "thread_id",
+      "tool_call_id"
     ],
     "kind": "operational"
   },

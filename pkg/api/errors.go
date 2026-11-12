@@ -1901,6 +1901,10 @@ const (
 	// FunctionInitFailedMarker line in the workload output names it; it is
 	// otherwise an app_startup_crash, and customer-caused like one.
 	CodeFunctionInitFailed = "function_init_failed"
+	// CodeFunctionInputInvalid is a function adapter's 422 for a typed-client
+	// call whose body does not match the function's input schema
+	// (ADR-20261111150000); the detail names the failing path.
+	CodeFunctionInputInvalid = "function_input_invalid"
 	// FunctionInitFailedMarker begins the line the Node and Python function
 	// adapters print to stderr when init fails (pkg/fnadapter).
 	FunctionInitFailedMarker = "gregale: function init failed:"
@@ -3899,6 +3903,14 @@ func ErrAPIContractComparisonIncomplete(detail string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeAPIContractComparisonIncomplete,
 		"API contract comparison incomplete", detail).
 		WithDocs(docsBase + "/api-hosting#contract-diff")
+}
+
+// ErrCronEnvironmentRequiresProject is the 400 for an environment cron on an
+// app outside a project.
+func ErrCronEnvironmentRequiresProject() *Problem {
+	return NewProblem(http.StatusBadRequest, CodeCronInvalid, "Cron environment requires a project",
+		"only an app in a project has environments; omit environment for this app").
+		WithDocs(docsBase + "/crons#environments")
 }
 
 // ErrCronInvalid is returned for malformed cron expressions.

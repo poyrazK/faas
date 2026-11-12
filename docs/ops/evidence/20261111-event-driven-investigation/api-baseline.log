@@ -1,0 +1,5 @@
+ok  	github.com/onebox-faas/faas/pkg/apid/appevents	0.066s
+ok  	github.com/onebox-faas/faas/pkg/apid/dataapievents	1.516s
+ok  	github.com/onebox-faas/faas/pkg/events	0.067s
+ok  	github.com/onebox-faas/faas/pkg/eventcontract	0.023s
+ok  	github.com/onebox-faas/faas/pkg/triggerconfig	0.054s

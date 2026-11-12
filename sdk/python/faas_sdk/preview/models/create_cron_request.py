@@ -46,6 +46,9 @@ class CreateCronRequest:
     """Additional command attempts after failure or timeout; command crons only."""
     retry_backoff_seconds: int | Unset = UNSET
     """Base retry delay in seconds; doubles per retry and is capped at 24 hours. Command crons only."""
+    environment: str | Unset = UNSET
+    """Project environment the cron runs in; omitted or production is the app's production environment. Immutable
+    once created."""
     schedule_policy: SchedulePolicy | Unset = UNSET
     """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
     a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
@@ -90,6 +93,8 @@ class CreateCronRequest:
 
         retry_backoff_seconds = self.retry_backoff_seconds
 
+        environment = self.environment
+
         schedule_policy: dict[str, Any] | Unset = UNSET
         if not isinstance(self.schedule_policy, Unset):
             schedule_policy = self.schedule_policy.to_dict()
@@ -126,6 +131,8 @@ class CreateCronRequest:
             field_dict["retry_max"] = retry_max
         if retry_backoff_seconds is not UNSET:
             field_dict["retry_backoff_seconds"] = retry_backoff_seconds
+        if environment is not UNSET:
+            field_dict["environment"] = environment
         if schedule_policy is not UNSET:
             field_dict["schedule_policy"] = schedule_policy
         if failure_rules is not UNSET:
@@ -177,6 +184,8 @@ class CreateCronRequest:
 
         retry_backoff_seconds = d.pop("retry_backoff_seconds", UNSET)
 
+        environment = d.pop("environment", UNSET)
+
         _schedule_policy = d.pop("schedule_policy", UNSET)
         schedule_policy: SchedulePolicy | Unset
         if isinstance(_schedule_policy, Unset):
@@ -204,6 +213,7 @@ class CreateCronRequest:
             skip_if_running=skip_if_running,
             retry_max=retry_max,
             retry_backoff_seconds=retry_backoff_seconds,
+            environment=environment,
             schedule_policy=schedule_policy,
             failure_rules=failure_rules,
         )

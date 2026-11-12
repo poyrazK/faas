@@ -365,6 +365,20 @@ type AgentExecutionWorkflow struct {
 	FinishedAt      pgtype.Timestamptz
 }
 
+// ADR-20261030125501 gregale_github_subscribe rows written by apid: a thread receives a repository's gregale.github events until expires_at.
+type AgentGithubSubscription struct {
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+	EndpointID pgtype.UUID
+	ThreadID   string
+	ToolCallID string
+	Repository string
+	EventTypes []string
+	IssuedAt   pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+}
+
 type AgentKeyBudget struct {
 	KeyID        pgtype.UUID
 	MonthlyCents pgtype.Int8
@@ -3324,6 +3338,8 @@ type Cron struct {
 	ScheduleRevision      int64
 	ScheduleAnchorAt      pgtype.Timestamptz
 	Labels                []byte
+	DeploymentScope       string
+	EnvironmentID         pgtype.UUID
 }
 
 type CronFireNowRequest struct {
@@ -4979,6 +4995,24 @@ type EnvironmentBuildArtifactPin struct {
 	SourceID    pgtype.UUID
 	CandidateID pgtype.UUID
 	ArtifactID  pgtype.UUID
+}
+
+type EnvironmentDeploymentCronActivation struct {
+	AppID           pgtype.UUID
+	DeploymentScope string
+	UploadID        pgtype.Text
+	SessionID       string
+	Intent          []byte
+	Fingerprint     string
+	Revision        int64
+	Status          string
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type EnvironmentDeploymentCronState struct {
+	AppID           pgtype.UUID
+	DeploymentScope string
+	Revision        int64
 }
 
 type EnvironmentDesiredRevision struct {
@@ -16023,6 +16057,7 @@ type TriggerRecord struct {
 	WorkFairnessDigest   []byte
 	WorkFairnessLimit    pgtype.Int4
 	WorkExpiresAt        pgtype.Timestamptz
+	OperatorReplay       bool
 }
 
 type TriggerWorkBinding struct {

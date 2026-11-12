@@ -4106,6 +4106,16 @@ adapter, publisher events reach streams on that web process; multi-replica apps
 should connect a shared event adapter. Notification streams still reconcile on
 `--interval`, and servers without URI subscriptions use polling.
 
+Application resource subscriptions require an explicit authorization callback,
+shared with resource reads and checked again before each update. Pass a
+synchronous `authorize(uri, {authInfo, config})` callback as the fifth argument to
+Node's `registerResource`/`replaceResource`, `authorize(uri, caller)` to Python's
+`register_resource`/`replace_resource`, or an `MCPResourceAuthorizer` to Go's
+`RegisterMCPResource`/`ReplaceMCPResource`. Return true only when that caller may
+read the resource. Without this callback, existing custom read handlers retain
+their authorization checks and custom URI subscriptions are denied. The sample
+customer resources enforce caller ownership for reads, completions and updates.
+
 The Node starter counts pending Task/resource subscription setup toward its
 128-stream process limit. Disconnects, setup errors and drain release reservations.
 Asynchronous resource registrations that finish after cancellation are immediately disposed.

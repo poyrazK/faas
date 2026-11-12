@@ -1,0 +1,68 @@
+# CI installs vacuum in its own workflow step (ci.yml) and appends its
+# bin dir to ITHUB_PATH, so `vacuum` resolves on PATH in the next
+# step. Locally, `make spec-check` first-run will fall through to
+# `go install` if vacuum isn't on PATH yet. Each line is its own shell
+# statement so this guard stays bash -e safe.
+vacuum v0.29.10 installed
+
+ ██╗   ██╗ █████╗  ██████╗██╗   ██╗██╗   ██╗███╗   ███╗ 《《《─═─═── ·* · ˙*
+ ██║   ██║██╔══██╗██╔════╝██║   ██║██║   ██║████╗ ████║《《《──═─═──· ··* ˙˙
+ ██║   ██║███████║██║     ██║   ██║██║   ██║██╔████╔██║《《《───═─═─··· ˙˙ ˙
+ ╚██╗ ██╔╝██╔══██║██║     ██║   ██║██║   ██║██║╚██╔╝██║《《──═─═──·* ·· ˙˙
+  ╚████╔╝ ██║  ██║╚██████╗╚██████╔╝╚██████╔╝██║ ╚═╝ ██║ 《《─═─═──* · · ˙
+   ╚═══╝  ╚═╝  ╚═╝ ╚═════╝ ╚═════╝  ╚═════╝ ╚═╝     ╚═╝ 《───═─═─· ··* ˙˙ ˙
+
+ version: v0.29.10 | compiled: Wed, 11 Nov 2026 14:47:26 UTC
+ https://quobix.com/vacuum/ | https://github.com/daveshanley/vacuum
+
+ using ruleset 'api/vacuum.yaml' (containing 53 rules)
+ vacuuming file 'api/openapi.yaml' against 53 rules: https://quobix.com/vacuum/rulesets/recommended
+
+ERR Rule timed out, skipping
+  ├──  rule: oas3-valid-schema-example
+  └──  timeout: 5s
+
+ERR Rule timed out, skipping
+  ├──  rule: operation-description
+  └──  timeout: 5s
+
+ERR Rule timed out, skipping
+  ├──  rule: oas3-schema
+  └──  timeout: 5s
+
+ERR Rule timed out, skipping
+  ├──  timeout: 5s
+  └──  rule: component-description
+
+ category              ✗ errors      ▲ warnings    ● info
+ ────────────────────  ────────────  ────────────  ────────────────────────────────────────────────────────
+ Operations            0             59            0
+ Tags                  0             43            0
+ Schemas               0             115           376
+ Examples              0             3,941         0
+ ────────────────────  ────────────  ────────────  ────────────────────────────────────────────────────────
+ total                 0             4,158         376
+
+ rule                                      violations    quality impact
+ ────────────────────────────────────────  ────────────  ──────────────────────────────────────────────────
+ oas3-missing-example                      3,941         ██████████████████████████████████████████████████
+ oas-missing-type                          376           ████
+ oas3-unused-component                     75
+ paths-kebab-case                          44
+ operation-tags                            43
+ no-unnecessary-combinator                 25
+ no-request-body                           10
+ circular-references                       9
+ nullable-enum-contains-null               6
+ operation-success-response                4
+ ────────────────────────────────────────  ────────────  ──────────────────────────────────────────────────
+ total                                     4,534
+ ... and 1 more rules
+
+ --> use the <dashboard> command to be able to navigate results interactively <--
+
+ | Quality Score: 25/100 [🥵]
+
+ | ▲ Passed, but with 4,158 warnings and 376 informs.
+
+ use --debug if you want to enable developer logging
