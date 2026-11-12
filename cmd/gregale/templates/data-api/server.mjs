@@ -7,8 +7,10 @@ import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
 import { traceRequest, markRequest, markAccess, markQueryShape, markDatabaseTimings, requestID, runtimeFailure } from './logging.mjs'
 import { parseDatabaseTimings, unknownDatabaseTimings } from './database-timing.mjs'
 import { inspect, fingerprint, enrichOpenAPI } from './types.mjs'
+import { openAPI31 } from './openapi31.mjs'
 import { runtimeConfig, servingContracts, limits, enginePool, sqlDeadlineExpiry, UnsafeConfiguration } from './config.mjs'
 import { createAdmission } from './admission.mjs'
+import { sharedBudgetConfig, createSharedBudget } from './shared-budget.mjs'
 import { createHealth } from './health.mjs'
 import { createDeadline } from './deadline.mjs'
 import { checkSQLDeadlineConnection } from './sql-deadline.mjs'
@@ -18,10 +20,11 @@ import { createUserConcurrency, admitUserConcurrency, createServerKeyConcurrency
 import { qualifiedConnectionEngine, startConnectionReporter } from './connection-observations.mjs'
 import { createPoolObservation } from './pool.mjs'
 import { createUsage, addResponseBytes, accessReport } from './usage.mjs'
-import { storageRoute, handleStorage, storageAnonymousTarget, storageServerKeyAllows, checkStorageTable } from './storage.mjs'
+import { storageRoute, handleStorage, storageAnonymousTarget, storageServerKeyAllows, checkStorageTable, storageActor } from './storage.mjs'
 import { createEngine, lifecyclePaths, engineStopGraceMs } from './engine.mjs'
 import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, anonymousClient, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial, createAccessSafety } from './access.mjs'
 import { relayTables, changeHooksDrainPath, createChangeRelay, checkChangeEvents } from './changes.mjs'
+import { uploadTable } from './storage-sessions.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
@@ -29,6 +32,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
   // Tests drive the health cache with config.healthClock.
   const health = createHealth(config, upstreamPort, readyPort, config.healthClock ? { monotonic: config.healthClock } : {})
   const rateLimiter = createRateLimiter(config.rateLimit)
+  const sharedBudget = createSharedBudget(config.sharedBudget)
   // Anonymous clients always have a budget and never use subject tracking slots.
   const anonymousLimiter = config.publicRead || config.publicRpc ? createRateLimiter(config.rateLimit ?? { perSecond: limits.rateLimitDefaultPerSecond, burst: limits.rateLimitDefaultBurst }) : null
   const userConcurrency = createUserConcurrency(config.userConcurrency, enginePool(config))
@@ -42,6 +46,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
   // Change hooks (ADR-20261022121642) borrow free engine slots, never queue.
   const changes = createChangeRelay(config, { upstreamPort, tryAcquire: admitted.tryAcquire })
   const transfers = { active: 0 }
+  let hooksRequests = 0
   const server = http.createServer(async (req, res) => {
     const guarded = /^\/__gregale\/contract\/([a-f0-9]{64})(\/rest\/v1\/.*)$/.exec(req.url)
     if (guarded) req.url = guarded[2]
@@ -51,15 +56,15 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       // Edge-cached public reads are shared across origins, so they cannot vary
       // on Origin. They carry no credentials; any origin may read public rows.
       res.setHeader('Access-Control-Allow-Origin', '*')
-      res.setHeader('Access-Control-Expose-Headers', 'Content-Range,Preference-Applied,X-Request-Id,Retry-After')
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Range,Preference-Applied,X-Request-Id,Retry-After,X-Gregale-Storage-Version')
     } else if (origin && config.origins.includes(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin)
       res.setHeader('Vary', 'Origin')
-      res.setHeader('Access-Control-Expose-Headers', 'Content-Range,Preference-Applied,X-Request-Id,Retry-After,ETag')
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Range,Preference-Applied,X-Request-Id,Retry-After,ETag,X-Gregale-Storage-Version')
     }
     if (req.method === 'OPTIONS') {
       if (!origin || !config.origins.includes(origin)) return problem(res, 403, 'origin_not_allowed')
-      res.writeHead(204, { 'Access-Control-Allow-Methods': config.storage ? 'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS' : 'GET,HEAD,POST,PATCH,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Authorization,Content-Type,Prefer,Range,Range-Unit,Accept-Profile,Content-Profile', 'Access-Control-Max-Age': '600' })
+      res.writeHead(204, { 'Access-Control-Allow-Methods': config.storage ? 'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS' : 'GET,HEAD,POST,PATCH,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Authorization,Content-Type,Prefer,Range,Range-Unit,Accept-Profile,Content-Profile,X-Content-Sha256', 'Access-Control-Max-Age': '600' })
       return res.end()
     }
     if (req.url === '/livez' && req.method === 'GET') return healthResponse(res, 200, { version: 1, live: true })
@@ -98,12 +103,15 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     config.accessSafety?.maybeRefresh()
     // File storage (ADR-20261021101510) shares REST's credentials and admission.
     let storage = null
+    const hooksOperation = !guarded && ({ '/__gregale/hooks/status': 'status', '/__gregale/hooks/drain': 'drain' })[req.url]
+    if (hooksOperation && req.headers.authorization === undefined) return problem(res, 404, 'not_found')
+    if (hooksOperation && req.method !== (hooksOperation === 'status' ? 'GET' : 'POST')) return problem(res, 405, 'method_not_allowed')
     if (config.storage && req.url.startsWith('/storage/v1/') && !guarded) {
       // A missing or unsafe storage_objects table disables storage, not the API.
       if (config.storageUnavailable) return problem(res, 503, 'storage_unavailable')
       storage = storageRoute(req, config.storage)
       if (storage.code) return problem(res, storage.status, storage.code)
-    } else if (!req.url.startsWith('/rest/v1/') && req.url !== '/openapi.json' && req.url !== '/__gregale/schema') return problem(res, 404, 'not_found')
+    } else if (!hooksOperation && !req.url.startsWith('/rest/v1/') && !['/openapi.json', '/openapi-3.1.json', '/__gregale/schema'].includes(req.url)) return problem(res, 404, 'not_found')
     const writes = storage ? storage.write : !['GET', 'HEAD'].includes(req.method)
     // A committed write may have recorded changes: publish them promptly.
     if (changes && writes) res.once('finish', () => { if (res.statusCode < 300) changes.kick() })
@@ -113,7 +121,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       let path
       try { path = decodeURIComponent(raw) } catch { return problem(res, 400, 'invalid_path') }
       // Only the change event relay reads its tables, over loopback.
-      if (relayTables.includes(path)) return problem(res, 404, 'not_found')
+      if ([...relayTables, uploadTable].includes(path)) return problem(res, 404, 'not_found')
       if (path.includes('/')) {
         const match = /^rpc\/([a-z][a-z0-9_]{0,62})$/.exec(path)
         const read = ['GET', 'HEAD'].includes(req.method)
@@ -126,7 +134,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       }
     }
     if (!storage && !['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'].includes(req.method)) return problem(res, 405, 'method_not_allowed')
-    if (['/__gregale/schema', '/openapi.json'].includes(req.url) && req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
+    if (['/__gregale/schema', '/openapi.json', '/openapi-3.1.json'].includes(req.url) && req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
     const token = req.headers.authorization?.match(/^Bearer ([^\s]+)$/i)?.[1]
     let access = 'user', serverKeySlot = null, serverKeyPermissions = null, subject = null, publicCache = null
     if (req.headers.authorization === undefined) {
@@ -148,6 +156,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     }
     markAccess(res, { kind: access, ...(serverKeySlot ? { server_key_slot: serverKeySlot, ...(serverKeyPermissions ? { server_key_restricted: true } : {}) } : {}) })
     if (serverKeyPermissions && !(storage ? storageServerKeyAllows(storage, serverKeyPermissions, config) : serverKeyAllows(req, serverKeyPermissions, config, rpc))) return problem(res, 403, 'server_key_permission_denied')
+    if (hooksOperation && (access !== 'server' || serverKeyPermissions || origin)) return problem(res, 403, 'hooks_owner_required')
     if (access === 'server' && config.readOnly === true && writes) return problem(res, 403, 'read_only_identity')
     // Server keys skip per-user budgets but have their own (ADR-20261021180534).
     if (access === 'server' && serverKeyRate && !admitServerKeyRate(serverKeyRate, serverKeySlot, res, problem)) return
@@ -159,11 +168,12 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       return problem(res, 429, 'data_api_monthly_cap_reached', { cap: cap.name, limit: cap.limit, observed: cap.observed, docs: 'https://gregale.dev/docs/data-api#usage-and-monthly-caps' })
     }
     const declared = Number(req.headers['content-length'] ?? 0)
-    if (storage?.action === 'upload') {
+    if (storage?.action === 'upload' || storage?.action === 'sessionPart') {
       // The bucket stores exactly the size the owner's policy approved.
       if (req.headers['content-length'] === undefined || req.headers['transfer-encoding'] !== undefined) return problem(res, 411, 'storage_length_required')
       if (!Number.isSafeInteger(declared) || declared < 0) return problem(res, 400, 'storage_invalid_length')
-      if (declared > config.storage.maxObjectBytes) return problem(res, 413, 'storage_object_too_large', { limit: config.storage.maxObjectBytes, observed: declared })
+      const maxBytes = storage.action === 'sessionPart' ? limits.storageChunkBytes : config.storage.maxObjectBytes
+      if (declared > maxBytes) return problem(res, 413, 'storage_object_too_large', { limit: maxBytes, observed: declared })
     } else if (!Number.isSafeInteger(declared) || declared < 0 || declared > limits.bodyBytes) return problem(res, 413, 'request_too_large')
     // A server-key lease spans admission's queue too, and settles even when
     // admission never runs the handler.
@@ -177,6 +187,21 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       // Server-key leases settle exactly as user leases do.
       let userLease = serverKeyLease ?? undefined
       try {
+        if (hooksOperation) {
+          if (!changes) return problem(res, 503, 'change_hooks_unavailable')
+          if (hooksRequests >= limits.changeEventsOwnerRequests) { res.setHeader('Retry-After','1'); return problem(res,503,'change_hooks_busy') }
+          // The relay acquires its own free SQL slots. Release this HTTP
+          // admission before waiting, including when the pool has one slot.
+          release()
+          deadline.stop()
+          hooksRequests++
+          try {
+            if (hooksOperation === 'drain') await changes.cycle()
+            const status = await changes.status()
+            if (!status) return problem(res, 503, 'change_hooks_observation_unavailable')
+            return healthResponse(res, 200, { version: 1, ...status })
+          } finally { hooksRequests-- }
+        }
         let payload, concurrencyKey = null
         if (access === 'user') {
           try { payload = await verify(token) } catch {
@@ -187,6 +212,14 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           if (typeof payload.sub !== 'string' || !payload.sub || typeof payload.exp !== 'number') return problem(res, 401, 'token_invalid')
           if (payload.gregale_read_only !== undefined && typeof payload.gregale_read_only !== 'boolean') return problem(res, 401, 'token_invalid')
           if (!admitRateLimit(rateLimiter, payload.sub, res, problem)) return
+          if (sharedBudget) {
+            const refusal=await sharedBudget(payload,deadline.signal)
+            if(!deadline.check())return
+            if(refusal){
+              if(refusal.retry)res.setHeader('Retry-After',String(refusal.retry))
+              return problem(res,refusal.status,refusal.code,{reason:'shared_tenant',...(refusal.status===429?{limit:{requests:config.sharedBudget.requests,window_seconds:config.sharedBudget.window_seconds},observed:{available_requests:0},docs:'https://gregale.dev/docs/data-api#shared-request-budgets'}:{})})
+            }
+          }
           if ((config.readOnly === true || payload.gregale_read_only === true) && writes) return problem(res, 403, 'read_only_identity')
           // Storage authorizes through storage_objects' own RLS policies.
           const denial = storage ? null : rowSecurityDenial(req, config, rpc)
@@ -239,6 +272,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
         // claims: storage_objects' guard trusts gregale_storage.
         delete claims.gregale_server_key
         delete claims.gregale_storage
+        delete claims.gregale_storage_actor
         claims.gregale_access = access
         if (serverKeySlot) claims.gregale_server_key = serverKeySlot
         // A caller cannot extend or enable the internal SQL retry deadline.
@@ -257,7 +291,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           // Storage calls PostgREST more than once, after a transfer too, so
           // each call gets a fresh token and SQL deadline.
           const token = write => {
-            const fresh = { ...claims, exp: Math.ceil(Date.now() / 1000) + Math.ceil(limits.queryMs / 1000) + 5, ...(write ? { gregale_storage: 'write' } : {}) }
+            const fresh = { ...claims, gregale_storage_actor: storageActor(claims), exp: Math.ceil(Date.now() / 1000) + Math.ceil(limits.queryMs / 1000) + 5, ...(write ? { gregale_storage: 'write' } : {}) }
             if (fresh.gregale_sql_deadline) fresh.gregale_sql_deadline = { ...fresh.gregale_sql_deadline, expires_at_ms: sqlDeadlineExpiry(Date.now() + limits.queryMs) }
             return new SignJWT(fresh).setProtectedHeader({ alg: 'HS256' }).sign(key)
           }
@@ -335,7 +369,7 @@ function proxy(req, res, token, port, config, restBasePath, deadline, userLease,
   // Forward only PostgREST's data contract, never client-supplied internal
   // identity, proxy credentials or hop-by-hop headers.
   for (const name of ['accept', 'content-type', 'prefer', 'range', 'range-unit', 'accept-profile', 'content-profile']) if (req.headers[name]) headers[name] = req.headers[name]
-  const path = req.url === '/openapi.json' ? '/' : req.url.slice('/rest/v1'.length)
+  const path = ['/openapi.json', '/openapi-3.1.json'].includes(req.url) ? '/' : req.url.slice('/rest/v1'.length)
   if (!deadline.enter('upstream') || !deadline.dispatch()) return
   userLease?.dispatched()
   markDatabaseTimings(res, unknownDatabaseTimings('no_response'))
@@ -346,7 +380,7 @@ function proxy(req, res, token, port, config, restBasePath, deadline, userLease,
     if (!deadline.enter('streaming')) { response.destroy(); return }
     markDatabaseTimings(res, parseDatabaseTimings(response.headers['server-timing']))
     response.on('data', () => deadline.check())
-    if (req.method === 'GET' && path.split('?')[0] === '/' && response.statusCode === 200) return openAPISpec(response, res, config, restBasePath, deadline)
+    if (req.method === 'GET' && path.split('?')[0] === '/' && response.statusCode === 200) return openAPISpec(response, res, config, restBasePath, deadline, req.url === '/openapi-3.1.json')
     if (response.statusCode >= 400) markRequest(res, 'upstream_error')
     // The engine names a created row from its own root; clients reach it below restBasePath.
     if (typeof response.headers.location === 'string' && response.headers.location.startsWith('/')) response.headers.location = restBasePath + response.headers.location
@@ -363,7 +397,7 @@ function proxy(req, res, token, port, config, restBasePath, deadline, userLease,
   req.pipe(upstream)
 }
 
-function openAPISpec(response, res, config, restBasePath, deadline) {
+function openAPISpec(response, res, config, restBasePath, deadline, version31 = false) {
   let bytes = 0
   const chunks = []
   response.on('data', chunk => {
@@ -384,7 +418,7 @@ function openAPISpec(response, res, config, restBasePath, deadline) {
       document.basePath = restBasePath
       const schema = response.req.getHeader('accept-profile') ?? config.schemas[0]
       // The change event tables are the relay's, never part of the API.
-      for (const table of relayTables) {
+      for (const table of [...relayTables, uploadTable]) {
         delete document.paths?.[`/${table}`]
         delete document.definitions?.[table]
         for (const name of Object.keys(document.parameters ?? {})) if (name === `body.${table}` || name.startsWith(`rowFilter.${table}.`)) delete document.parameters[name]
@@ -393,7 +427,8 @@ function openAPISpec(response, res, config, restBasePath, deadline) {
         if (!config.functions?.some(f => f.schema === schema && f.name === path.slice(5))) delete document.paths[path]
         else for (const method of Object.keys(document.paths[path])) if (method !== 'post' && method !== 'parameters' && !(method === 'get' && publicRpcListed(config, { schema, name: path.slice(5) }))) delete document.paths[path][method]
       }
-      const output = JSON.stringify(enrichOpenAPI(document, config.snapshot, schema))
+      const enriched = enrichOpenAPI(document, config.snapshot, schema)
+      const output = JSON.stringify(version31 ? openAPI31(enriched) : enriched)
       if (Buffer.byteLength(output) > limits.outputBytes) return problem(res, 503, 'schema_document_too_large')
       if (!deadline.check()) return
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
@@ -404,7 +439,7 @@ function openAPISpec(response, res, config, restBasePath, deadline) {
 }
 
 export async function main(env = process.env) {
-  const config = await startupStage('configuration', 'data_api_configuration_invalid', () => runtimeConfig(env))
+  const config = await startupStage('configuration', 'data_api_configuration_invalid', () => ({...runtimeConfig(env), sharedBudget: sharedBudgetConfig(env)}))
   if (config.connectionObservation || config.sqlDeadline) {
     await startupStage('engine', 'data_api_configuration_invalid', async () => {
       const { stdout } = await promisify(execFile)(env.DATA_API_POSTGREST_BIN || '/usr/local/bin/postgrest', ['--version'], { timeout: limits.connectionReportMs, maxBuffer: limits.healthBytes })
