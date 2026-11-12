@@ -58,6 +58,10 @@ export type CronResponse = {
   skip_if_running: boolean;
   created_at: string;
   last_fired_at?: string | null;
+  /**
+   * Project environment the cron runs in; omitted for production.
+   */
+  environment?: string;
   schedule_policy?: SchedulePolicy;
   failure_rules?: FailureRules;
 };

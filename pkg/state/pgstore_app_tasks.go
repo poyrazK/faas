@@ -269,9 +269,10 @@ func (s *PgStore) CreateScheduledCronAppTask(ctx context.Context, cronID string,
 		   and d.status = 'live'
 		   and d.rootfs_key is not null and d.rootfs_key <> ''
 		   and d.image_digest <> ''
+		   and `+cronScopeDeploymentSQL("$2")+`
 		 order by (d.traffic_percent > 0) desc, d.created_at desc, d.id desc
 		 limit 1
-		 for update of d`, appID).
+		 for update of d`, appID, cronID).
 		Scan(&accountID, &deploymentID, &scope, &artifactKey, &imageDigest)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AppTask{}, false, ErrAppTaskDeploymentUnavailable
@@ -433,8 +434,9 @@ func (s *PgStore) CreateScheduledCronAppTaskOccurrence(ctx context.Context, cron
 			  from deployments d
 			 where d.app_id = $1::uuid and d.status = 'live'
 			   and d.rootfs_key is not null and d.rootfs_key <> '' and d.image_digest <> ''
+			   and `+cronScopeDeploymentSQL("$2")+`
 			 order by (d.traffic_percent > 0) desc, d.created_at desc, d.id desc
-			 limit 1 for update`, cron.AppID).Scan(&deploymentID, &scope, &artifactKey, &imageDigest)
+			 limit 1 for update`, cron.AppID, cron.ID).Scan(&deploymentID, &scope, &artifactKey, &imageDigest)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return AppTask{}, ScheduleOccurrence{}, false, ErrAppTaskDeploymentUnavailable
 		}
@@ -609,8 +611,9 @@ func (s *PgStore) CreateManualCronAppTaskForFireNow(ctx context.Context, request
 		 where d.app_id = $1::uuid and d.status = 'live'
 		   and d.rootfs_key is not null and d.rootfs_key <> ''
 		   and d.image_digest <> ''
+		   and `+cronScopeDeploymentSQL("$2")+`
 		 order by (d.traffic_percent > 0) desc, d.created_at desc, d.id desc
-		 limit 1 for update`, appID).
+		 limit 1 for update`, appID, cronID).
 		Scan(&deploymentID, &scope, &artifactKey, &imageDigest)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AppTask{}, ErrAppTaskDeploymentUnavailable
