@@ -44,6 +44,7 @@ var ungatedCommands = map[string]string{
 	"open":         "opens an app",
 	"status":       "platform status",
 	"version":      "local",
+	"functions":    "writes local type files from gregale.yaml; no server call",
 	"upload-cache": "local resumable uploads",
 	"completion":   "local",
 	"man":          "local",

@@ -395,6 +395,8 @@ func run(args []string) (status int) {
 		return cmdConnect(args[1:])
 	case "github":
 		return cmdGithub(args[1:])
+	case "functions":
+		return cmdFunction(args[1:])
 	case "open":
 		return cmdOpen(args[1:])
 	case dispatchDoctor:
