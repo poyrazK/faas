@@ -6114,6 +6114,17 @@
     "kind": "operational"
   },
   {
+    "table": "neon_project_keys",
+    "columns": [
+      "created_at",
+      "key_id",
+      "project_id",
+      "revoked_at",
+      "sealed_key"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "edge_tls_certificates",
     "columns": [
       "account_uri",

@@ -161,6 +161,36 @@ neond, for each request:
 - **Slice 2, project keys:** `neon_project_keys` (expand migration), the
   service user's key as neond's admin credential, mint on create, revoke on
   delete, the backfill sweep, rotation.
+  - Built as slice 2a (mint, use, revoke; off until `faas_neond_org_id` is
+    set). As built:
+    - `neon_project_keys` is keyed by Neon's key ID, with one live key per
+      project (partial unique index) and revoked rows kept as the record of
+      what was issued. `faas_runtime` has no access; `faas_neond` may
+      select, insert and update. Queries live in `pkg/neond/neondpg`.
+    - Keys are sealed with `secretbox.SealBytes` (namespace
+      `neon-project-key`) to a new seal domain, `neon` (ADR
+      20261022111812), whose only reader is neond on the control plane. The
+      seal_domains role stages `/etc/faas/secrets/domains/neon.age`, hands
+      it to neond through `LoadCredential`
+      (`FAAS_SEAL_DOMAIN_NEON_IDENTITY_PATH`) and proves the domain probe;
+      neond loads it with `sealdomain.LoadReaderIdentities`, so a rotation's
+      previous identity keeps old keys readable.
+    - Minting runs after a successful `POST /projects`, detached from apid's
+      deadline, before the reply. A key minted but not stored is revoked at
+      once. A failed mint leaves the project on the admin key.
+    - A project route goes out with the project key. With no key, a key
+      that will not open, or a 401/403 from Neon (the key is forgotten and
+      the call retried once), it goes out with the admin key, counted as
+      `tier="admin_fallback"`.
+    - A successful (or 404) `DELETE /projects/{id}` revokes the project's
+      live keys and marks them revoked; `neond_project_keys_total{op,outcome}`
+      counts mints and revocations.
+  - Slice 2b: the backfill sweep (mint for projects without a key, at most
+    a few per second; revoke keys whose project is gone or whose revocation
+    failed) and `gregalectl neond rotate-project-keys`.
+  - Slice 2c: the per-subject destructive limit and the "only on projects a
+    database row names" rule for password resets, role deletes and quota
+    writes.
 - **Slice 3, apid without the key:** apid refuses to start with both the
   broker and a Neon key configured; deploy drops the key from apid's
   credentials; alerts on refusals, rate limits and neond being down; a

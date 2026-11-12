@@ -13,6 +13,16 @@
       must be a positive integer.
   when: faas_neond_enabled | bool
 
+- name: neond_service — require a Neon organization ID shape
+  ansible.builtin.assert:
+    that:
+      - faas_neond_org_id is match('^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$')
+    fail_msg: >-
+      faas_neond_org_id is {{ faas_neond_org_id }}: set it to the Neon
+      organization ID (org-...), or leave it empty to keep every call on the
+      admin key.
+  when: faas_neond_enabled | bool and faas_neond_org_id | length > 0
+
 - name: neond_service — refuse the apid broker without neond
   ansible.builtin.assert:
     that:
@@ -67,6 +77,25 @@
     owner: root
     group: root
     mode: "0755"
+
+# Project keys are sealed to the neon seal domain, which the seal_domains
+# role stages (faas_seal_domain_neon_identity_src) before this role runs.
+- name: neond_service — inspect the neon seal domain identity
+  ansible.builtin.stat:
+    path: /etc/faas/secrets/domains/neon.age
+  register: faas_neond_seal_identity
+  when: faas_neond_enabled | bool and faas_neond_org_id | length > 0
+
+- name: neond_service — require the neon seal domain for project keys
+  ansible.builtin.assert:
+    that:
+      - faas_neond_seal_identity.stat.exists
+    fail_msg: >-
+      faas_neond_org_id turns on project keys, which neond seals to the neon
+      seal domain: create it with `gregalectl seal-domain init --domain neon`,
+      set faas_seal_domain_neon_identity_src and run the seal_domains role
+      first.
+  when: faas_neond_enabled | bool and faas_neond_org_id | length > 0
 
 - name: neond_service — install configuration drop-in
   ansible.builtin.template:

@@ -60,6 +60,17 @@ sql:
         sql_package: "pgx/v5"
         emit_methods_with_db_argument: true
         emit_empty_slices: true
+  # neond's project keys (ADR-20261112160000 decision 3).
+  - engine: "postgresql"
+    queries: "pkg/neond/neondpg/queries.sql"
+    schema: "pkg/neond/neondpg/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/neond/neondpg/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
   # Hosted management MCP bridge state and lease (ADR-20261026195952).
   - engine: "postgresql"
     queries: "pkg/mcpmanagement/statepg/queries.sql"

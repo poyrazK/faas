@@ -2862,3 +2862,5 @@ var InvocationSourceLabel = invocationSourceLabel
 var RenderDeploymentHostingReceiptFor = renderDeploymentHostingReceiptFor
 
 var ParseAppPortsFlag = parseAppPortsFlag
+
+var RenderThrottleSuggestions = renderThrottleSuggestions
