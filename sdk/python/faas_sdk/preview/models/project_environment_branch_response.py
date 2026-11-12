@@ -18,6 +18,7 @@ from ..models.project_environment_branch_response_private_networks import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.project_environment_branch_database import ProjectEnvironmentBranchDatabase
     from ..models.project_environment_branch_workload import ProjectEnvironmentBranchWorkload
 
 
@@ -45,6 +46,10 @@ class ProjectEnvironmentBranchResponse:
     data_error: str | Unset = UNSET
     """Why copying the parent's data failed or is being retried."""
     workloads: list[ProjectEnvironmentBranchWorkload] | Unset = UNSET
+    created_at: datetime.datetime | Unset = UNSET
+    """When the branch was created. Reported by the branch's own view."""
+    databases: list[ProjectEnvironmentBranchDatabase] | Unset = UNSET
+    """The managed PostgreSQL copies the branch owns. Reported by the branch's own view."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -71,6 +76,17 @@ class ProjectEnvironmentBranchResponse:
                 workloads_item = workloads_item_data.to_dict()
                 workloads.append(workloads_item)
 
+        created_at: str | Unset = UNSET
+        if not isinstance(self.created_at, Unset):
+            created_at = self.created_at.isoformat()
+
+        databases: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.databases, Unset):
+            databases = []
+            for databases_item_data in self.databases:
+                databases_item = databases_item_data.to_dict()
+                databases.append(databases_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -88,11 +104,16 @@ class ProjectEnvironmentBranchResponse:
             field_dict["data_error"] = data_error
         if workloads is not UNSET:
             field_dict["workloads"] = workloads
+        if created_at is not UNSET:
+            field_dict["created_at"] = created_at
+        if databases is not UNSET:
+            field_dict["databases"] = databases
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.project_environment_branch_database import ProjectEnvironmentBranchDatabase
         from ..models.project_environment_branch_workload import ProjectEnvironmentBranchWorkload
 
         d = dict(src_dict)
@@ -121,6 +142,22 @@ class ProjectEnvironmentBranchResponse:
 
                 workloads.append(workloads_item)
 
+        _created_at = d.pop("created_at", UNSET)
+        created_at: datetime.datetime | Unset
+        if isinstance(_created_at, Unset):
+            created_at = UNSET
+        else:
+            created_at = datetime.datetime.fromisoformat(_created_at)
+
+        _databases = d.pop("databases", UNSET)
+        databases: list[ProjectEnvironmentBranchDatabase] | Unset = UNSET
+        if _databases is not UNSET:
+            databases = []
+            for databases_item_data in _databases:
+                databases_item = ProjectEnvironmentBranchDatabase.from_dict(databases_item_data)
+
+                databases.append(databases_item)
+
         project_environment_branch_response = cls(
             parent=parent,
             branch_point=branch_point,
@@ -131,6 +168,8 @@ class ProjectEnvironmentBranchResponse:
             data=data,
             data_error=data_error,
             workloads=workloads,
+            created_at=created_at,
+            databases=databases,
         )
 
         project_environment_branch_response.additional_properties = d
