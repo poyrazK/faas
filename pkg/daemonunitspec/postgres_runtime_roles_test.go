@@ -196,6 +196,44 @@ func TestPgHbaAdmitsTheRuntimeGroup(t *testing.T) {
 	}
 }
 
+// adr: 20261110210000 — slices 1c-2 and 1c-3: with certificate logins both
+// pg_hba renderers admit faas_node_logins by client certificate only, ahead
+// of the faas_runtime password lines; once the shared compute passwords are
+// retired the compute networks lose those password lines (loopback keeps
+// them) and only the certificate path remains.
+func TestPgHbaComputeCertLoginsAndPasswordRetirement(t *testing.T) {
+	requireJinja(t)
+	cert := "hostssl faas            +faas_node_logins                       10.42.0.2/32                cert"
+	computePassword := "host    faas            +faas_runtime                           10.42.0.2/32                scram-sha-256"
+	loopback := "host    faas            +faas_runtime                           127.0.0.1/32            scram-sha-256"
+	for role, taskName := range map[string]string{
+		"postgres":                  "postgres — narrow pg_hba.conf to peer/local auth (spec §11)",
+		"control_plane_peer_access": "control-plane peer access — render manifest-derived pg_hba entries",
+	} {
+		_, byName := roleTasksByName(t, role)
+		copyArgs, _ := byName[taskName].body["ansible.builtin.copy"].(map[string]any)
+		content, _ := copyArgs["content"].(string)
+		for _, retired := range []bool{false, true} {
+			vars := fmt.Sprintf(`{"faas_postgres_allowed_cidrs": ["10.42.0.2/32"], "faas_postgres_owner_contracted": true,
+				"control_plane_postgres_owner_contracted": {"stat": {"exists": true}},
+				"faas_postgres_compute_cert_logins": true, "faas_compute_db_password_logins_retired": %t,
+				"control_plane_compute_passwords_retired": {"stat": {"exists": %t}}}`, retired, retired)
+			hba := renderJinja(t, content, vars)
+			reject := strings.Index(hba, "host    all             all             127.0.0.1/32            reject")
+			certAt := strings.Index(hba, cert)
+			if certAt < 0 || certAt > reject {
+				t.Errorf("%s (retired=%t): no certificate line before the reject lines:\n%s", role, retired, hba)
+			}
+			if at := strings.Index(hba, computePassword); (at >= 0) == retired || (at >= 0 && at < certAt) {
+				t.Errorf("%s (retired=%t): compute password line at %d (cert at %d):\n%s", role, retired, at, certAt, hba)
+			}
+			if !strings.Contains(hba, loopback) {
+				t.Errorf("%s (retired=%t): loopback password line gone:\n%s", role, retired, hba)
+			}
+		}
+	}
+}
+
 // After the contract only root maps to the owner, and every daemon user keeps
 // its runtime role, so the converge that removes the owner lines leaves each
 // opted-in daemon able to log in. The live check runs before anything changes.

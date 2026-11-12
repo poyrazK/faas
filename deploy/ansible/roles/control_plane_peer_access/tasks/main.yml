@@ -95,7 +95,7 @@
       local   faas            +faas_runtime                           peer map=faas_map
       host    faas            +faas_runtime                           127.0.0.1/32            scram-sha-256
       host    faas            +faas_runtime                           ::1/128                  scram-sha-256
-      {% if not control_plane_compute_passwords_retired.stat.exists %}
+      {% if not (control_plane_compute_passwords_retired is defined and control_plane_compute_passwords_retired.stat.exists) %}
       {% for cidr in faas_postgres_allowed_cidrs %}
       host    faas            +faas_runtime                           {{ cidr }}                scram-sha-256
       {% endfor %}
