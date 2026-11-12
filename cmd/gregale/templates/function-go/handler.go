@@ -1,4 +1,4 @@
-// Function template for gregale (go124 runtime contract; built with Go 1.26.10).
+// Function template for gregale (go124 runtime contract; built with Go 1.26.11).
 //
 // The go124 runner is a static binary that lives at
 // /usr/local/bin/gregale-runner in the layer. It listens on :8080 and talks
