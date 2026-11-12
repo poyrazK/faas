@@ -382,10 +382,10 @@ func beginPrewarm(_ context.Context, p *Pending, r *http.Request) {
 func beginEnv(ctx context.Context, p *Pending, r *http.Request) {
 	p.kind = api.AgentUndoKindSettings
 	slug, key := r.PathValue("slug"), r.PathValue("key")
-	switch {
-	case r.Method == http.MethodPut:
+	switch r.Method {
+	case http.MethodPut:
 		p.summary = "Set env var " + key + " on app " + slug
-	case r.Method == http.MethodDelete:
+	case http.MethodDelete:
 		p.summary = "Removed env var " + key + " from app " + slug
 	default:
 		p.summary = "Changed env vars of app " + slug

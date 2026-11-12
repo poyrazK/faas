@@ -111,7 +111,8 @@ func (e *Engine) applyOne(ctx context.Context, base *http.Request, acct state.Ac
 		return
 	}
 	status, answer := e.Dispatch(ctx, base, acct, p.inv.Method, p.inv.Path, body)
-	if !is2xx(status) && !(status == http.StatusNotFound && p.inv.GoneIsDone) {
+	gone := status == http.StatusNotFound && p.inv.GoneIsDone
+	if !is2xx(status) && !gone {
 		blocked[resource] = true
 		item.Result = api.AgentUndoResultFailed
 		item.ErrorCode, item.Error = problemOf(status, answer)

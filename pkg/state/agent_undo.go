@@ -62,7 +62,7 @@ func (s *PgStore) RecordAgentUndo(ctx context.Context, rec AgentUndoRecord) erro
 
 func (s *PgStore) AgentUndoRecords(ctx context.Context, keyID string, since time.Time, limit int) ([]AgentUndoRecord, error) {
 	if uuid.Validate(keyID) != nil {
-		return []AgentUndoRecord{}, nil
+		return []AgentUndoRecord{}, nil //nolint:nilerr // a malformed key id has no records, not an error
 	}
 	rows, err := sqlc.New().ListAgentUndoRecords(ctx, s.pool, sqlc.ListAgentUndoRecordsParams{
 		KeyID: mustPgUUID(keyID), Since: pgTime(since), RowLimit: int32(limit), //nolint:gosec // callers bound limit
@@ -90,7 +90,7 @@ func (s *PgStore) AgentUndoRecords(ctx context.Context, keyID string, since time
 
 func (s *PgStore) MarkAgentUndone(ctx context.Context, id, undoneBy string) (bool, error) {
 	if uuid.Validate(id) != nil || uuid.Validate(undoneBy) != nil {
-		return false, nil
+		return false, nil //nolint:nilerr // a malformed id names no record to mark
 	}
 	n, err := sqlc.New().MarkAgentUndoRecordUndone(ctx, s.pool, sqlc.MarkAgentUndoRecordUndoneParams{
 		ID: mustPgUUID(id), UndoneBy: mustPgUUID(undoneBy),

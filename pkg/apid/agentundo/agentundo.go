@@ -14,7 +14,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -91,13 +90,6 @@ const (
 	reasonNothing      = "the request changed nothing"
 )
 
-// summaryPath shortens a path for summaries.
-func summaryPath(path string) string {
-	if i := strings.IndexByte(path, '?'); i >= 0 {
-		path = path[:i]
-	}
-	return path
-}
 
 func is2xx(status int) bool { return status >= 200 && status < 300 }
 
