@@ -217,6 +217,11 @@ Each step is one PR behind the `agents` capability.
      - A thread that can no longer receive it gets nothing: revoked since the call, its endpoint deleted, or its account without `agents`. The run itself still finishes; revoking a thread does not cancel its runs.
    - **Next.** The template sends the app's workload token with platform tool invocations, and its scripted model learns to call `gregale_run`.
 
+   **Step 5, part four (2026-11-12): `agent-infinity-rust` runs agents.**
+   - **The template's toolset calls carry the app's workload token.** `GregaleHttp` is the RAP client's HTTP client: it posts each invocation with the `gregale:agents` token it already uses for callback URLs. Off Gregale it has no token and posts without one, so `gregale_sleep` still works from a callback URL alone.
+   - **The scripted model runs agents:** `run AGENT PROMPT` calls `gregale_run` when the toolset offers it, and the answer names the tool.
+   - **Journey.** `TestStatelessAgent`'s Infinity run asks for a run of an agent the account does not have. The answer is Gregale's `Agent not found` refusal as the call's tool result, which only an invocation carrying the app's credential gets; without one the invoke endpoint answers 401 and the runtime writes a different error result. A run that starts and ends waits for agent runs in production.
+
    **Step 5, part five (2026-11-12): `gregale_github_subscribe`.**
    - **Arguments.** `repository` (`owner/name`), and optionally `events`, the `pull_request` actions githubd forwards (`opened`, `reopened`, `synchronize`, `ready_for_review`, `closed`; all of them by default), and `until`, an RFC 3339 time at most `AgentGitHubSubscriptionMaxSeconds` (30 days) ahead, which is also the default.
    - **The app's credential.** A subscription reads the account's GitHub events, so the invocation needs the app's workload token or an API key with `deploy:write`, as `gregale_run` does. A callback URL alone gets a 401.

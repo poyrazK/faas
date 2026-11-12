@@ -3,8 +3,7 @@
 A synthetic check requests a path on your app on a schedule, from outside
 the app, and records whether it succeeded and how long it took. It catches
 what traffic-based metrics cannot: an app nobody has called for an hour can
-still be broken by a bad deploy, an expired credential, or a DNS change
-(ADR-748).
+still be broken by a bad deploy, an expired credential, or a DNS change.
 
 Each probe goes the way a user's request does — DNS, TLS, the public edge,
 and a wake if the app is parked — to your app's own hostname. Checks are

@@ -60,11 +60,37 @@ gregale dev --local --offline --postgres --bucket uploads
 
 The CLI detects the development command, falling back to the ordinary start
 command. It runs the app behind `http://localhost:8787`, passes its listening
-port as `PORT` and loopback address as `HOST`, and restarts the process group
-after source edits settle. The public local URL stays the same across restarts.
-Detected FastAPI, Flask, and Django commands receive explicit host/port options.
+port as `PORT` and loopback address as `HOST`. Recognised Next.js, Vite,
+SvelteKit, Astro, Nuxt, React Router, and Remix development servers own source
+reload: ordinary edits keep the process and HMR WebSocket connections alive.
+Detection includes simple direct `dev` scripts with the matching framework
+dependency declared. Shell wrappers, chained scripts, custom commands, Python
+servers, and ordinary start commands use Gregale process restarts after edits
+settle. Detected framework commands receive explicit host/port options, forwarded
+through the package manager when using a recognised `dev` script.
+
+Gregale still restarts framework servers after selected env-file, Gregale
+manifest, `package.json`, package-manager configuration, or dependency lockfile
+changes, including ignored launch files. The public local URL stays the same
+across restarts. Framework config edits are handled by the framework's watcher.
 Project tools in `node_modules/.bin`, `.venv/bin`, and `venv/bin` are on PATH;
 install your application's dependencies before starting it.
+
+Before connecting remote resources or starting/resetting offline Docker
+resources, local startup checks every function's runtime and detected app tools
+using the selected env-file PATH and function `env:` overrides. Missing tools
+fail immediately with a repair command such as `npm ci`,
+`pnpm install --frozen-lockfile`, or `uv sync`. Detected Python development
+servers also check that their framework/server modules are discoverable in the
+selected environment. No packages are installed automatically. Yarn PnP package
+scripts work without `node_modules`; custom commands and scripts that prepare
+their own tools are validated when they run.
+
+Launch-input reloads repeat those tool checks before stopping the current app.
+An invalid env file or missing runtime, package manager, or detected framework
+tool leaves the healthy process and its WebSocket connections serving with the
+last accepted configuration. Repair the launch inputs and save again to retry;
+the local URL stays the same when the replacement starts.
 
 Override detection for a custom command (which must listen on `PORT`):
 
@@ -75,8 +101,8 @@ gregale dev --local --watch-command 'go run ./cmd/api' --port 9000
 
 The command precedence is `--watch-command`, `dev.watch.command` in
 `gregale.yaml`, the detected framework development command, then the inferred
-start command. `--no-reload` disables CLI restarts; an explicitly selected
-command can still run its own watcher. App logs stream to the terminal. A crash
+start command. `--no-reload` disables CLI restarts; a framework or custom command
+can still run its own watcher. App logs stream to the terminal. A crash
 keeps the proxy available with an unavailable response; fix the source and save
 to restart. Ctrl-C stops the app and its child processes before closing borrowed
 resources. Managed HTTP app processes currently require Linux or macOS.
@@ -120,6 +146,19 @@ Serving 3 function(s) on this machine (ctrl-c to stop):
   digest    http://digest.localhost:8787  node   functions/digest  cron 0 8 * * *
   http://localhost:8787 routes like the entry address (entry: web)
 ```
+
+Python functions use `.venv` before `venv` in their function directory, then
+the same directories in the workspace root. Without a project interpreter,
+they resolve `python3` through the function's effective `PATH`, including
+selected env-file and function `env:` overrides. A selected virtualenv also
+supplies `PATH` and `VIRTUAL_ENV` to subprocesses; `PYTHONHOME` is cleared.
+Install dependencies into that environment before starting; shell activation
+is unnecessary. A broken project interpreter reports how to repair it.
+
+Selected env-file PATH changes reload workers with the newly resolved Python.
+An invalid runtime selection keeps existing workers serving until the file is
+repaired. Virtualenv directories themselves are excluded from source watching;
+save a source file or restart the CLI after changing installed dependencies.
 
 - Each function has its own address, `http://<name>.localhost:8787`, as it
   has its own host on Gregale. With an `entry: true` function,
@@ -350,7 +389,7 @@ lease clean up the binding and database together.
 `--postgres-seed` (or `dev.postgres_seed`) loads development data into that
 database. The CLI never receives database credentials, so the command runs
 inside the developer app instead, as a one-off
-[app task](adr/230-deployment-attached-app-tasks.md) against the live
+app task against the live
 deployment with the app's secrets and `DATABASE_URL` binding. After the first
 live sync, the CLI waits for the binding to become ready, runs the command
 through the app shell, and prints its bounded output prefixed with `seed |`.
@@ -396,7 +435,7 @@ secret, or runtime-log content is included.
 
 Receipts also carry a `dev_patch` object. It reports whether the edit could
 be applied to the running environment as a live source patch instead of a
-rebuild ([ADR-740](adr/740-developer-live-source-patch.md)), comparing the
+rebuild, comparing the
 newest source with the source of the build that is live. `eligible` is true
 when that build copied its source into the image unchanged (for example a Node
 app without a `build` script, or Python with `requirements.txt`) and the
@@ -406,8 +445,8 @@ says why, for example `build_command`, `rebuild_input_changed`,
 `no_base_manifest` (the live build predates this feature), or
 `no_live_build`. `changed_paths` and `patch_bytes` describe the changes.
 
-Applying eligible patches to the running environment is operator-gated while
-it completes native acceptance. Until it is enabled, `dev_patch` is a
+Applying eligible patches to the running environment is not enabled for every
+account yet. Until it is, `dev_patch` is a
 measurement only and the normal developer build always runs; when enabled, the
 build still runs and replaces the patched environment once it is live.
 
@@ -474,8 +513,7 @@ from the same source directory when it should be removed immediately.
 
 `gregale dev --debug` (or `debug: true` in the `dev:` block of
 `gregale.yaml`) starts the Node.js inspector inside the developer environment
-and exposes it on your machine
-([ADR-741](adr/741-developer-debugger-attach.md)):
+and exposes it on your machine:
 
 ```sh
 gregale dev --debug                    # inspector on 127.0.0.1:9229
@@ -501,16 +539,18 @@ address, for example a VS Code configuration:
 
 or open `chrome://inspect` and add `127.0.0.1:9229`. Each debugger connection
 is its own tunnel through the API (`GET /v1/apps/{slug}/debug`, a WebSocket
-served by the gateway, not apid), authenticated with your CLI credentials; the
-inspector port is never published on the app's URL. Attaches and detaches are
-recorded in the audit log (`dev.debugger.attached` / `dev.debugger.detached`).
+served by the gateway), authenticated with your CLI credentials; the
+inspector port is never published on the app's URL. Each debugging session is
+recorded in the audit log: `dev.debugger.attached` when the first connection
+opens and `dev.debugger.detached`, with the session's duration and connection
+count, a minute after the last one closes. The many short connections a
+debugger's target discovery opens belong to the same session.
 Only `gregale dev` environments accept a debugger: the platform marks them
 with `FAAS_DEVELOPER_ENVIRONMENT=1`, and the inspector switch is ignored on any
 other app.
 
-Limits ([`pkg/api/limits.go`](../pkg/api/limits.go)): up to four connections
-per environment, counted per gateway process (a multi-node gateway can admit
-a few more in total); a connection closes after 30 minutes without traffic or
+Limits: up to four connections per environment, counted per gateway (so a few
+more can be admitted in total); a connection closes after 30 minutes without traffic or
 after 256 MB in either direction. Reattach to continue. The CLI caches the
 `/json` discovery requests that debuggers poll for two seconds, so they do not
 open a tunnel each.
@@ -655,8 +695,7 @@ directory), using the same detection as `gregale start` and `gregale scan`.
 A Compose service counts when it builds from a source directory (`build:`);
 image-only services such as `postgres` or `redis` are not started. In a Go
 module with several `cmd/<name>` commands and none at its root, each command
-is its own app, built from the module root with `--go-command <name>`
-([ADR-20261026120412](adr/20261026120412-dev-go-commands.md)). Each app gets its own
+is its own app, built from the module root with `--go-command <name>`. Each app gets its own
 developer environment, stable URL, and lease, named after its workload
 (`apps/api` becomes `api`). When the root has deployable members it is treated
 as the workspace container and not started; a root with no members is the
@@ -711,9 +750,7 @@ An app that declares `depends_on` services running in the group gets the same
 `GREGALE_SERVICE_<NAME>_URL`, `GREGALE_SERVICE_<NAME>_HTTPS_URL` and
 `GREGALE_SERVICE_<NAME>_HOST` variables a deployed project service gets, set
 as developer config on its environment. A dependency outside the group, such
-as a database image, gets none; use `--postgres` for a database. See
-[ADR-20261025121530](adr/20261025121530-dev-all-namespace.md) and
-[ADR-20261026105459](adr/20261026105459-dev-all-service-names-and-urls.md).
+as a database image, gets none; use `--postgres` for a database.
 
 The group's environments belong to the `--all` root: running
 `gregale dev --path apps/api` on its own starts a separate environment outside

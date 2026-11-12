@@ -4,8 +4,7 @@ Write a durable workflow as an ordinary async function. Each `step` runs at
 least once and its result is recorded; `sleep` and `waitForEvent` park the run
 for seconds or months without keeping a VM alive. When the run resumes, your
 function is replayed: recorded steps return their stored result instantly and
-execution continues where it stopped. The design is
-[ADR-20261021204307](adr/20261021204307-code-first-workflows.md).
+execution continues where it stopped.
 
 Code-first workflows use the same engine, plans and quotas as
 [declarative workflows](event-driven.md#durable-workflow-waits): runs, steps
@@ -90,7 +89,7 @@ async. Python durations are seconds, `timedelta` or strings such as `"3d"`.
 ## Go
 
 ```go
-import faas "github.com/poyrazK/faas/sdk/go"
+import faas "github.com/gregale-dev/gregale-go"
 
 var orderFollowup = faas.DefineWorkflow("order_followup", func(ctx context.Context, wf *faas.Workflow, input json.RawMessage) (any, error) {
 	order, err := faas.WorkflowDecode[Order](input)

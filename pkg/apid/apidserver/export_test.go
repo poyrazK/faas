@@ -2367,6 +2367,10 @@ func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
 // RouteProbeAccountQueues exposes the per-account probe ordering (H79).
 var RouteProbeAccountQueues = routeProbeAccountQueues
 
+func (s *server) ConfigureCustomerSupportForTest(ctx context.Context, pool *pgxpool.Pool) error {
+	return s.configureCustomerSupport(ctx, pool, func(string) string { return "" })
+}
+
 // RegressionComparison exposes chooseRegressionComparison's choice.
 type RegressionComparison struct {
 	Cur, Prev          string

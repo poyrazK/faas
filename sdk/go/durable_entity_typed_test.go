@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/poyrazK/faas/sdk/go/preview"
+	"github.com/gregale-dev/gregale-go/preview"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	faas "github.com/gregale-dev/gregale-go"
 )
 
 func TestTypedEntityCallInitializesLocallyAndPreservesAlarm(t *testing.T) {
