@@ -4870,6 +4870,10 @@ type CronResponse struct {
 	// Environment is the project environment the cron runs in; omitted for
 	// the app's production environment (ADR-20261104120000).
 	Environment string `json:"environment,omitempty"`
+	// ClonePaused marks a cron a full environment clone copied disabled
+	// although the source ran it; resuming the environment's automation
+	// enables it (ADR-20261104120000).
+	ClonePaused bool `json:"clone_paused,omitempty"`
 	// Labels are the cron's key/value labels (ADR-20261031100025), on its
 	// list and read while the resource-labels capability is on for the
 	// caller. Labels are not secret.

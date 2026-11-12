@@ -7144,6 +7144,7 @@ func cronResponse(c state.Cron) api.CronResponse {
 		resp.LastFiredAt = c.LastFiredAt.UTC().Format(time.RFC3339)
 	}
 	resp.Environment = c.DeploymentScope
+	resp.ClonePaused = c.ClonePaused
 	return resp
 }
 

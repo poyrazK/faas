@@ -66,6 +66,7 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect":                             authz.OrgActionReadProject,
 	"PUT /v1/projects/{slug}/environments/{environment}/flags":                                            authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/flags/rollback":                                  authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/automation/resume":                              authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote":                     authz.OrgActionDeployProject,
 	"GET /v1/projects/{slug}/environments/{environment}/release-sets/staging/{stage}":                     authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs":                   authz.OrgActionReadProject,
