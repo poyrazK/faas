@@ -6559,12 +6559,19 @@ var cliCommands = []cliCommand{
 					{Name: "share-resources", Short: "explicitly share managed database and object-storage data", Bool: true},
 				}},
 				{Name: "delete", Short: "Delete a non-production environment", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "yes", Bool: true, Req: true, Short: "confirm environment deletion"}}},
-				{Name: "branch", Short: "Branch an environment; workloads start on first request", Notes: []string{"Deleted at its TTL or with `environment delete`."}, Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{
+				{Name: "branch", Short: "Branch an environment; workloads start on first request", Notes: []string{
+					"Deleted at its TTL or with `environment delete`.",
+					"`--status`, `--extend` and `--reset` act on an existing branch named by the second slug.",
+					"A branch lives at most 30 days after its creation, 7 with database copies; `--reset` starts a new lifetime and gives its workloads new URLs.",
+				}, Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{
 					{Name: "from", Value: "ENV", Short: "parent environment (default production)"},
 					{Name: "ttl", Value: "DURATION", Short: "time to live, 1h to 720h (default 168h)"},
 					{Name: "list", Bool: true, Short: "list the parent's branches"},
 					{Name: "egress", Value: "MODE", Short: "live (default), contained or simulated"},
 					{Name: "private-networks", Value: "MODE", Short: "off (default) or join"},
+					{Name: "status", Bool: true, Short: "show the branch's expiry, data, copies and workloads"},
+					{Name: "extend", Value: "DURATION", Short: "move the branch's expiry to this long from now"},
+					{Name: "reset", Bool: true, Short: "make the branch again from its parent"},
 				}},
 				{Name: "protect", Short: "Protect an environment"},
 				{Name: "unprotect", Short: "Remove environment protection"},

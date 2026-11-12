@@ -233,3 +233,34 @@ tests:
     alert_rule_test:
       - eval_time: 150m
         alertname: FaasAIGatewayUnpricedCalls
+
+  - interval: 1m
+    name: "AI gateway on without the app relay warns"
+    input_series:
+      - series: 'outbound_ai_gateway_enabled{job="outboundd",instance="cp-a:9112"}'
+        values: '1x30'
+      - series: 'outbound_ai_app_relay_ready{job="outboundd",instance="cp-a:9112"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasAIGatewayEnabledWithoutAppRelay
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: outboundd
+              family: ai_gateway
+            exp_annotations:
+              summary: "The AI gateway is on but apps cannot reach it"
+              description: "The ai_gateway platform flag is on while no outboundd serves the app relay, so deployed apps get no GREGALE_OUTBOUND_URL path to the gateway. Set faas_outboundd_relay_listen and the vmmd relay switches after the workload-identity key is installed, or turn the flag off."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
+  - interval: 1m
+    name: "AI gateway on with the app relay stays quiet"
+    input_series:
+      - series: 'outbound_ai_gateway_enabled{job="outboundd",instance="cp-a:9112"}'
+        values: '1x30'
+      - series: 'outbound_ai_app_relay_ready{job="outboundd",instance="cp-a:9112"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasAIGatewayEnabledWithoutAppRelay

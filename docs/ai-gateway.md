@@ -112,6 +112,10 @@ restart.
   and Vertex take `--region`; Vertex takes its service-account key with
   `--key-file`.
 - `--no-env` leaves the app's settings alone.
+- The gateway serves **production** deployments only. `--scope` other than
+  `default` is refused: previews and other environments call the provider
+  directly with their own key (`gregale env set --env pr-preview
+  OPENAI_API_KEY=...`), outside the gateway's caps and reports.
 
 To do the same through the API:
 
@@ -150,7 +154,17 @@ on Pro and 300 s on Scale. Once a streamed answer starts, it may run for up
 to 30 minutes, as long as the provider sends something at least every 10
 minutes. A non-streamed answer has to arrive within the timeout, so stream
 long answers. `gregale ai request-policy <id>` shows and sets the timeout,
-rate and concurrency.
+rate and concurrency. Calls from outside Gregale with an access token wait at
+most 90 s for headers, whatever the timeout, because the public host sits
+behind a proxy that gives up at 100 s.
+
+A realtime (WebSocket) session holds one of the integration's concurrent
+calls for as long as it stays open.
+
+With retries on (`max_retries`), the gateway retries an AI call only when the
+provider cannot have run it: a connection that failed before the request was
+sent, or a `425`, `429`, `502` or `503` answer. A call the provider received
+is never sent twice.
 
 A call the provider received but never answered, because the timeout ran out
 or your app went away, counts toward your caps at its reservation: the
@@ -326,6 +340,7 @@ Latency and the trace timeline come from the request log, so turn it on with
 | `400 outbound_ai_translation_unsupported` | A route cannot translate this request for its target. |
 | `400 outbound_ai_content_flagged` | The moderation check found a blocked category. `X-Gregale-AI-Moderation` names it. |
 | `503 outbound_ai_moderation_unavailable` | The moderation check failed and its policy blocks on failure. A `block` policy fails closed unless set with `--moderation-on-error allow`; a `flag` policy lets the call through. |
+| `429 outbound_ai_account_rate_limited` | The account's AI calls per second across all its integrations reached the plan limit (see Plans). Retry after a second. |
 | `401 outbound_access_token_invalid` | The access token is missing, unknown, revoked or expired. |
 | `403 outbound_ai_endpoint_unmetered` | The gateway cannot meter this call against your caps. `gregale ai policy <id> --allow-unmetered on` lets such calls through, outside the caps. |
 | `400 outbound_ai_batch_unreadable` | The gateway could not read the batch's requests to size them against your caps. |
@@ -343,16 +358,23 @@ alerts, the request log and captures each have their own retention; see the
 
 The AI gateway is included on **Hobby**, **Pro** and **Scale**. Your plan's
 outbound request policy (rate, burst and concurrency per integration) applies
-to AI calls too. Provider charges are billed by your provider to your own key;
+to AI calls too, and each account may make at most 40 (Hobby), 200 (Pro) or
+1,000 (Scale) AI calls per second across all its integrations, with bursts
+of twice that. Provider charges are billed by your provider to your own key;
 Gregale's cost figures are estimates from your price list or the built-in
 catalog, used for budgets and reports.
 
 ## Preview notes
 
 - Calls for one integration share its admission state, so very high call rates
-  are better spread across integrations.
+  are better spread across integrations, up to the account's AI rate.
+- Budget alerts are sent to the app's webhooks (`outbound.ai_budget.threshold`).
+  To get them by email, Slack or another notification channel, add an
+  `ai_budget_alerts` alert rule ([AI budget alerts](alerts.md#ai-budget-alerts)).
 - Captured content is redacted and kept for 3 days; turn capture on only for
-  traffic you may store. Reading it needs an API key with `secrets:read`.
+  traffic you may store. Reading it needs an API key with `secrets:read`;
+  replays and evaluations leave out answer texts for other keys and say so
+  with `content_withheld`.
 - The response cache keys a call by its body and headers, leaving out
   per-call telemetry such as `traceparent`, `baggage` and `user-agent`.
 - A moderation check costs one call of the check integration before each

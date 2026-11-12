@@ -95,6 +95,12 @@ var routeActions = map[string]authz.OrgAction{
 	// A branch is deleted with the configure action (environmentDeleteAction).
 	"GET /v1/projects/{slug}/environments/{environment}/branches":  authz.OrgActionReadProject,
 	"POST /v1/projects/{slug}/environments/{environment}/branches": authz.OrgActionConfigureProject,
+	// The branch's own view and lifecycle (reviewed 2026-11-12): extending
+	// and resetting configure the project; a reset of a protected parent's
+	// branch also needs the approve action (BranchParent).
+	"GET /v1/projects/{slug}/environments/{environment}/branch":         authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/branch/extend": authz.OrgActionConfigureProject,
+	"POST /v1/projects/{slug}/environments/{environment}/branch/reset":  authz.OrgActionConfigureProject,
 }
 
 const environmentDeletePattern = "DELETE /v1/projects/{slug}/environments/{environment}"

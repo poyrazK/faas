@@ -257,6 +257,41 @@ func (s *PgStore) OutboundAIRequestCaller(ctx context.Context, accountID, integr
 	return caller, mapErr(err)
 }
 
+var _ OutboundAIRequestCallersStore = (*PgStore)(nil)
+
+// OutboundAIRequestCallers reads who made each logged call of the account's
+// integrations among logIDs.
+func (s *PgStore) OutboundAIRequestCallers(ctx context.Context, accountID string, logIDs []string) (map[string]string, error) {
+	ids := make([]pgtype.UUID, 0, len(logIDs))
+	for _, logID := range logIDs {
+		if _, err := uuid.Parse(logID); err == nil {
+			ids = append(ids, mustPgUUID(logID))
+		}
+	}
+	callers := make(map[string]string, len(ids))
+	if len(ids) == 0 {
+		return callers, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT log.id::text, log.caller
+		  FROM outbound_ai_request_log log
+		  JOIN outbound_integrations integration ON integration.id = log.integration_id
+		 WHERE integration.account_id = $1 AND log.id = ANY($2::uuid[])`,
+		mustPgUUID(accountID), ids)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var logID, caller string
+		if err := rows.Scan(&logID, &caller); err != nil {
+			return nil, mapErr(err)
+		}
+		callers[logID] = caller
+	}
+	return callers, mapErr(rows.Err())
+}
+
 // GetOutboundAIRequestContent reads one logged call's captured bodies
 // (ADR-996). A call without a capture, or one outside the account's
 // integration, is not found.
