@@ -313,6 +313,9 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderAppDetail(w, r, log, acct, slug)
 		case path == "/dashboard/usage":
 			s.renderUsage(w, r, log, acct)
+		case path == "/dashboard/account/health":
+			// ADR-20261112210000 — customer account health.
+			s.renderAccountHealth(w, r, log, acct)
 		case path == "/dashboard/billing":
 			s.renderBilling(w, r, log, acct)
 		case path == "/dashboard/upgrade":
@@ -450,6 +453,7 @@ func (s *server) renderIndex(w http.ResponseWriter, r *http.Request, log *slog.L
 		DeveloperAppCount:  developerAppCount,
 		DeveloperAppsLimit: limits.DeveloperApps,
 		Plan:               string(acct.Plan),
+		Attention:          s.accountAttention(acct),
 	}}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)

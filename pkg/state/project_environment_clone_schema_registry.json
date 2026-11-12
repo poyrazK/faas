@@ -21401,6 +21401,15 @@
     "kind": "operational"
   },
   {
+    "table": "support_ticket_snapshots",
+    "columns": [
+      "ticket_id",
+      "captured_at",
+      "snapshot"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "support_tickets",
     "columns": [
       "id",

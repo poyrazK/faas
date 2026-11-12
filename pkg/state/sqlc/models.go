@@ -16308,6 +16308,12 @@ type SupportTicket struct {
 	ResolvedAt pgtype.Timestamptz
 }
 
+type SupportTicketSnapshot struct {
+	TicketID   pgtype.UUID
+	CapturedAt pgtype.Timestamptz
+	Snapshot   []byte
+}
+
 type SyntheticCheck struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID

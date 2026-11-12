@@ -681,6 +681,14 @@ func (c *Client) Whoami(ctx context.Context) (AccountResponse, error) {
 	return out, c.do(ctx, "GET", "/v1/account", nil, &out)
 }
 
+// GetAccountHealth returns what may stop the authenticated account from
+// working: restrictions, failed deployments, custom-domain problems and
+// refused API requests (ADR-20261112210000).
+func (c *Client) GetAccountHealth(ctx context.Context) (AccountHealth, error) {
+	var out AccountHealth
+	return out, c.do(ctx, "GET", "/v1/account/health", nil, &out)
+}
+
 // PatchAccountBilling updates the authenticated account's legal billing
 // identity. Omitted fields are preserved; an explicitly empty string clears
 // that field. The response is the refreshed account profile.
