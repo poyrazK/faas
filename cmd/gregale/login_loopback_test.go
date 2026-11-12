@@ -57,6 +57,8 @@ func oneClickEnv(t *testing.T, apiURL string, b browser.Launcher) {
 	browser.Default = b
 	t.Cleanup(func() { browser.Default = old })
 	setFakeKeyring(t)
+	// Not os.Stdin, so the interactive-terminal check passes; never read.
+	pipeStdin(t, "")
 }
 
 // oneClickServer mints a loopback code and exchanges only the device code
@@ -101,7 +103,7 @@ func oneClickServer(t *testing.T, plaintext, delivered string, exchanged *int32)
 // `gregale login` asks for no code anywhere: the browser click delivers the
 // device code to the CLI's loopback listener (ADR-20261111170000).
 func TestCmdLogin_OneClickLoopback(t *testing.T) {
-	plaintext := testAPIKey('l')
+	plaintext := testAPIKey('d')
 	delivered := strings.Repeat("22", 32)
 	var exchanged int32
 	srv := oneClickServer(t, plaintext, delivered, &exchanged)
@@ -110,9 +112,10 @@ func TestCmdLogin_OneClickLoopback(t *testing.T) {
 	}}
 	oneClickEnv(t, srv.URL, b)
 	out, _ := captureStdout(t)
+	errBuf, _ := captureStderr(t)
 
 	if code := cmdLogin(nil); code != 0 {
-		t.Fatalf("cmdLogin = %d\nstdout=%s", code, out.String())
+		t.Fatalf("cmdLogin = %d\nstdout=%s\nstderr=%s", code, out.String(), errBuf.String())
 	}
 	if status := <-b.status; status != http.StatusOK {
 		t.Fatalf("callback status = %d, want 200", status)
@@ -120,7 +123,7 @@ func TestCmdLogin_OneClickLoopback(t *testing.T) {
 	if saved := readSavedToken(t); saved != plaintext {
 		t.Fatalf("saved token = %q, want %q", saved, plaintext)
 	}
-	if strings.Contains(out.String(), "ABCD-1234") || strings.Contains(strings.ToLower(out.String()), "your code") {
+	if strings.Contains(strings.ToLower(out.String()), "your code") || strings.Contains(out.String(), "Paste") {
 		t.Errorf("one-click login shows a code to type: %q", out.String())
 	}
 	if !strings.Contains(out.String(), "Click Authorize") || !strings.Contains(out.String(), "Logged in as one-click@example.com") {
@@ -134,7 +137,7 @@ func TestCmdLogin_OneClickLoopback(t *testing.T) {
 // A callback for another login's code (a page probing the port) is refused
 // without an exchange; the real one still completes.
 func TestCmdLogin_OneClickRejectsForeignCallback(t *testing.T) {
-	plaintext := testAPIKey('m')
+	plaintext := testAPIKey('e')
 	delivered := strings.Repeat("33", 32)
 	var exchanged int32
 	srv := oneClickServer(t, plaintext, delivered, &exchanged)
@@ -152,9 +155,10 @@ func TestCmdLogin_OneClickRejectsForeignCallback(t *testing.T) {
 	}}
 	oneClickEnv(t, srv.URL, b)
 	out, _ := captureStdout(t)
+	errBuf, _ := captureStderr(t)
 
 	if code := cmdLogin(nil); code != 0 {
-		t.Fatalf("cmdLogin = %d\nstdout=%s", code, out.String())
+		t.Fatalf("cmdLogin = %d\nstdout=%s\nstderr=%s", code, out.String(), errBuf.String())
 	}
 	if status := <-foreign; status != http.StatusBadRequest {
 		t.Errorf("foreign callback status = %d, want 400", status)
@@ -167,7 +171,7 @@ func TestCmdLogin_OneClickRejectsForeignCallback(t *testing.T) {
 
 // --device keeps the typed code for a browser on another computer.
 func TestCmdLogin_DeviceFlagUsesTypedCode(t *testing.T) {
-	plaintext := testAPIKey('n')
+	plaintext := testAPIKey('f')
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/cli-auth/code":
@@ -194,9 +198,10 @@ func TestCmdLogin_DeviceFlagUsesTypedCode(t *testing.T) {
 	oneClickEnv(t, srv.URL, &stubLauncher{})
 	fastLoginPoll(t)
 	out, _ := captureStdout(t)
+	errBuf, _ := captureStderr(t)
 
 	if code := cmdLogin([]string{"--device"}); code != 0 {
-		t.Fatalf("cmdLogin --device = %d\nstdout=%s", code, out.String())
+		t.Fatalf("cmdLogin --device = %d\nstdout=%s\nstderr=%s", code, out.String(), errBuf.String())
 	}
 	if !strings.Contains(out.String(), "Your code: ABCD-1234") {
 		t.Errorf("stdout missing the code to type: %q", out.String())

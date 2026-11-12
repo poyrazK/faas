@@ -84,12 +84,13 @@
 
     <h1>{{.Title}}</h1>
 
-    {{with index .Data "LoopbackURL"}}
+    {{$loopback := index .Data "LoopbackURL"}}
+    {{if $loopback}}
       {{/* One-click login (ADR-20261111170000): carry the new device code
           to the CLI listening on this machine. */}}
       <p>Approved. Handing the sign-in to your terminal…</p>
-      <p class="fine">If nothing happens, <a href="{{.}}">continue to your terminal</a>.</p>
-      <script nonce="{{$.Nonce}}">window.location.replace({{.}});</script>
+      <p class="fine">If nothing happens, <a href="{{$loopback}}">continue to your terminal</a>.</p>
+      <script nonce="{{.Nonce}}">window.location.replace({{$loopback}});</script>
     {{else if index .Data "Refused"}}
       <p>{{index .Data "Detail"}}</p>
       <p class="fine">Nothing was authorized. Start the connection again from your agent.</p>
