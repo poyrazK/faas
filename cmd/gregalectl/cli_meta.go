@@ -724,6 +724,10 @@ var cliCommands = []cliCommand{
 				},
 			},
 			{
+				Name:  "find",
+				Short: "Find the account behind an email, app slug, hostname, URL, id, request id or trace id",
+			},
+			{
 				Name:  "show",
 				Short: "Show one account's apps, orgs, API keys, and sessions",
 				Flags: []cliFlag{
@@ -733,7 +737,7 @@ var cliCommands = []cliCommand{
 			},
 			{
 				Name:  "360",
-				Short: "Show one account's usage and billing support view",
+				Short: "Show one account's usage, billing and diagnosis support view",
 				Flags: []cliFlag{
 					{Name: "account-id", Short: "account id (uuid)", Req: true},
 					{Name: "month", Short: "usage month (YYYY-MM)"},
