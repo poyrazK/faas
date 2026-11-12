@@ -240,6 +240,13 @@ func superviseDevLocalApp(ctx context.Context, opts devLocalAppOptions, env []st
 				_, _ = fmt.Fprintf(opts.errOut, "Could not reload local config: %v; fix the env file and save again.\n", err)
 				continue
 			}
+			if err := devLocalAppPreflight(ctx, opts.root, plan, baseEnv); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				_, _ = fmt.Fprintf(opts.errOut, "Could not reload local app tools: %v; fix the local environment and save again.\n", err)
+				continue
+			}
 			_, port, _ := net.SplitHostPort(backend)
 			env = devLocalAppEnv(opts.root, baseEnv, port)
 			ready.Store(false)

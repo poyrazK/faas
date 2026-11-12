@@ -53,12 +53,12 @@ var DevLocalEnvForTest = devLocalEnv
 var LocalPythonEnvironmentForTest = localPythonEnvironment
 
 // DevLocalPreflightForTest validates the same workload and environment as startup.
-func DevLocalPreflightForTest(root, command string, env []string) error {
+func DevLocalPreflightForTest(ctx context.Context, root, command string, env []string) error {
 	fns, app, err := planDevLocalWorkload(root, command)
 	if err != nil {
 		return err
 	}
-	return devLocalPreflight(root, fns, app, env)
+	return devLocalPreflight(ctx, root, fns, app, env)
 }
 
 // PlanDevLocalWorkloadForTest reports the selected local execution contract.

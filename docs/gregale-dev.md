@@ -86,6 +86,12 @@ selected environment. No packages are installed automatically. Yarn PnP package
 scripts work without `node_modules`; custom commands and scripts that prepare
 their own tools are validated when they run.
 
+Launch-input reloads repeat those tool checks before stopping the current app.
+An invalid env file or missing runtime, package manager, or detected framework
+tool leaves the healthy process and its WebSocket connections serving with the
+last accepted configuration. Repair the launch inputs and save again to retry;
+the local URL stays the same when the replacement starts.
+
 Override detection for a custom command (which must listen on `PORT`):
 
 ```sh

@@ -3,7 +3,7 @@
 Date: 2026-11-12
 Status: Accepted
 Amends: ADR-20261111140000 (local HTTP apps)
-Related: ADR-1170 (framework development commands), ADR-20261111162000 (local env reload)
+Related: ADR-1170 (framework development commands), ADR-20261111162000 (local env reload), ADR-20261112120356 (local startup preflight)
 
 ## Context
 
@@ -34,8 +34,16 @@ host/port selection, so a Vite script can listen on a different backend port.
   Watch these launch inputs even when ignored; settle and validate them before
   replacing the process. Framework-specific configuration stays with its watcher.
 - Re-resolve the command and reload ownership after each launch-input change.
-  Invalid configuration keeps the current process. A stopped or crashed server
-  still recovers on the next source save regardless of reload ownership.
+  Run the same selected-environment tool preflight used at startup before
+  changing readiness, replacing the effective environment or stopping the
+  process. Invalid configuration or missing runtime/package/framework tools
+  keep the current healthy process and its WebSockets serving with the last
+  accepted environment. Report the tool and repair command without env values;
+  a corrected launch-input save retries normally. Custom commands and opaque
+  scripts retain the startup preflight's conservative handling.
+  Python module probes inherit CLI cancellation while retaining their timeout.
+  A stopped or crashed server still recovers on the next source save regardless
+  of reload ownership.
   `--no-reload` suppresses Gregale automatic restarts while leaving a framework's
   own reload behavior available.
 - Retain stable local URLs, process-group cleanup, environment layering and

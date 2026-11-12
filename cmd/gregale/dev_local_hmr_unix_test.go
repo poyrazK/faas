@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -72,6 +73,126 @@ func waitLocalHMRLog(t *testing.T, out *localAppTestOutput, text string) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("missing %q: %s", text, out.String())
+}
+
+func dialLocalHMRSocket(t *testing.T, address string, out *localAppTestOutput) *websocket.Conn {
+	t.Helper()
+	conn, resp, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(address, "http")+"/hmr", nil)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	if err != nil {
+		t.Fatalf("HMR WebSocket upgrade: %v: %s", err, out.String())
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
+}
+
+func readLocalHMRSocket(t *testing.T, conn *websocket.Conn) map[string]any {
+	t.Helper()
+	_ = conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if err := conn.WriteMessage(websocket.TextMessage, []byte("probe")); err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := conn.ReadJSON(&state); err != nil {
+		t.Fatalf("existing HMR connection stopped serving: %v", err)
+	}
+	return state
+}
+
+// adr: 20261112100408
+// Launch-input validation must complete before replacing a healthy app,
+// including both native HMR servers and CLI-supervised package scripts.
+func TestDevLocalHTTPAppRejectsUnsafeReload(t *testing.T) {
+	tools := map[string]string{}
+	for _, tool := range []string{"node", "npm", "sh"} {
+		exe, err := exec.LookPath(tool)
+		if err != nil {
+			t.Skipf("%s is not installed", tool)
+		}
+		tools[tool] = exe
+	}
+	for _, tc := range []struct {
+		name, wantTool string
+		cliOwned       bool
+	}{
+		{"missing Node", "node is not available", false},
+		{"missing package manager", "npm is not available", false},
+		{"missing framework", "next is not available", false},
+		{"CLI-owned missing Node", "node is not available", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeLocalHMRProject(t, "stable")
+			if tc.cliOwned {
+				writeLocalHMRFile(t, filepath.Join(dir, "package.json"), `{"scripts":{"dev":"node node_modules/.bin/vite --host 127.0.0.1 --port $PORT"}}`)
+			}
+			// Keep host-global framework tools out of the selected PATH.
+			validBin := t.TempDir()
+			for tool, exe := range tools {
+				if err := os.Symlink(exe, filepath.Join(validBin, tool)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			envFile := filepath.Join(t.TempDir(), "external.env")
+			writeLocalHMRFile(t, envFile, "PATH="+validBin+"\nDATABASE_URL=original-db\n")
+			address, _, out, _ := startLocalAppCLI(t, dir, "--env-file", envFile)
+			first := waitLocalAppBody(t, address, "original-db", out)
+			conn := dialLocalHMRSocket(t, address, out)
+			if state := readLocalHMRSocket(t, conn); state["pid"] != first["pid"] {
+				t.Fatal("HTTP and WebSocket did not reach the same process")
+			}
+			before := strings.Count(out.String(), "Reloading local app (")
+			if tc.name == "missing framework" {
+				writeLocalHMRFile(t, filepath.Join(dir, "package.json"), `{"scripts":{"dev":"next dev"},"devDependencies":{"next":"16"}}`)
+			} else {
+				bin := t.TempDir()
+				if tc.name == "missing package manager" {
+					if err := os.Symlink(tools["node"], filepath.Join(bin, "node")); err != nil {
+						t.Fatal(err)
+					}
+				}
+				writeLocalHMRFile(t, envFile, "PATH="+bin+"\nDATABASE_URL=private-rejected-value\n")
+			}
+			waitLocalHMRLog(t, out, "Could not reload local app tools:")
+			output := out.String()
+			warning := output[strings.LastIndex(output, "Could not reload local app tools:"):]
+			if !strings.Contains(warning, tc.wantTool) {
+				t.Fatalf("missing actionable tool diagnostic: %s", warning)
+			}
+			time.Sleep(1500 * time.Millisecond) // cover additional watch/debounce passes
+			for _, state := range []map[string]any{
+				waitLocalAppBody(t, address, "original-db", out),
+				readLocalHMRSocket(t, conn),
+			} {
+				if state["pid"] != first["pid"] || state["database"] != "original-db" {
+					t.Fatalf("rejected reload changed the running process or environment: %v -> %v", first, state)
+				}
+			}
+			if strings.Count(out.String(), "Reloading local app (") != before {
+				t.Fatalf("rejected input caused a restart: %s", out.String())
+			}
+			if tc.name == "missing framework" {
+				writeLocalHMRFile(t, filepath.Join(dir, "package.json"), `{"scripts":{"dev":"vite dev --mode repaired"},"devDependencies":{"vite":"6"}}`)
+			}
+			writeLocalHMRFile(t, envFile, "PATH="+validBin+"\nDATABASE_URL=recovered-db\n")
+			next := waitLocalAppBody(t, address, "recovered-db", out)
+			if next["pid"] == first["pid"] {
+				t.Fatal("corrected launch inputs did not replace the process")
+			}
+			time.Sleep(1500 * time.Millisecond)
+			if got := strings.Count(out.String(), "Reloading local app ("); got != before+1 {
+				t.Fatalf("repair must restart exactly once, got %d: %s", got-before, out.String())
+			}
+			if state := readLocalHMRSocket(t, dialLocalHMRSocket(t, address, out)); state["pid"] != next["pid"] || state["database"] != "recovered-db" {
+				t.Fatalf("repaired server lost its stable proxy or WebSocket route: %v", state)
+			}
+			if strings.Contains(out.String(), "private-rejected-value") {
+				t.Fatal("reload diagnostics exposed an env value")
+			}
+		})
+	}
 }
 
 func TestDevLocalHTTPAppFrameworkHMR(t *testing.T) {
