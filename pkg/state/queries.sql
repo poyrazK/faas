@@ -30199,3 +30199,13 @@ WHERE b.account_id = sqlc.arg(account_id) AND b.app_id = sqlc.arg(app_id)
   AND d.previews IN ('empty', 'copy') AND d.preview_pr_number IS NULL
   AND d.state NOT IN ('deleting', 'deleted')
 ORDER BY b.environment_key;
+
+-- name: InsertInvocationSend :exec
+-- ADR-20261112160000: the app that sent this invocation with send(), and the
+-- app its completion goes to, written with the invocation row.
+INSERT INTO invocation_sends (invocation_id, sender_app_id, on_complete_app_id)
+VALUES (sqlc.arg(invocation_id)::uuid, sqlc.arg(sender_app_id)::uuid, sqlc.narg(on_complete_app_id)::uuid);
+
+-- name: GetInvocationSend :one
+SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id
+FROM invocation_sends WHERE invocation_id = sqlc.arg(invocation_id)::uuid;
