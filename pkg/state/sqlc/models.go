@@ -365,6 +365,20 @@ type AgentExecutionWorkflow struct {
 	FinishedAt      pgtype.Timestamptz
 }
 
+// ADR-20261030125501 gregale_github_subscribe rows written by apid: a thread receives a repository's gregale.github events until expires_at.
+type AgentGithubSubscription struct {
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+	EndpointID pgtype.UUID
+	ThreadID   string
+	ToolCallID string
+	Repository string
+	EventTypes []string
+	IssuedAt   pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+}
+
 type AgentKeyBudget struct {
 	KeyID        pgtype.UUID
 	MonthlyCents pgtype.Int8
