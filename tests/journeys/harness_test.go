@@ -50,11 +50,15 @@ type target struct {
 	appsDomain string
 	token      string
 	useLogin   bool // no token: let the CLI use its own `gregale login`
-	cli        string
-	runID      string
-	tier       string
-	keep       bool
-	home       string // isolated HOME and working directory for the CLI
+	// session is a signed-in dashboard session (the browser's
+	// __Host-faas_sid cookie), for the steps only a person may take,
+	// such as approving an agent's request. Empty skips them.
+	session string
+	cli     string
+	runID   string
+	tier    string
+	keep    bool
+	home    string // isolated HOME and working directory for the CLI
 
 	preflightOnce sync.Once
 	preflightErr  error
@@ -122,6 +126,7 @@ func loadTarget(getenv func(string) string) (*target, error) {
 		appsDomain: getenv("GREGALE_E2E_APPS_DOMAIN"),
 		token:      getenv("GREGALE_E2E_TOKEN"),
 		useLogin:   getenv("GREGALE_E2E_AUTH") == "cli-login",
+		session:    getenv("GREGALE_E2E_SESSION"),
 		cli:        getenv("GREGALE_E2E_CLI"),
 		runID:      getenv("GREGALE_E2E_RUN_ID"),
 		tier:       getenv("GREGALE_E2E_TIER"),
