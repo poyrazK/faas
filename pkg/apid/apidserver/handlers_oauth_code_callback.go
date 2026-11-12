@@ -532,6 +532,13 @@ func (s *server) startConnectGitHub(w http.ResponseWriter, r *http.Request) {
 		writeGitHubConnectProblem(w, r, githubAppUnavailableProblem())
 		return
 	}
+	// Recovery must use the same authenticated, CSRF-protected form and fresh
+	// OAuth state as discovery. A bare GitHub install link loses the return
+	// destination and comes back without proof of which account started it.
+	if r.FormValue("intent") == "install" {
+		s.redirectToGitHubAppInstall(w, r)
+		return
+	}
 
 	// The installation chooser posts the installation it offered. It is a
 	// selector, not a proof: githubd connects it only when the GitHub user
