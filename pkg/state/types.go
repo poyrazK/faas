@@ -7328,6 +7328,12 @@ type CliAuthDeviceCodeStore interface {
 	// ConsumeCliAuthDeviceCode has ConsumeCliAuthCode's contract, keyed by
 	// the device code's hash.
 	ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error)
+	// ClaimCliAuthCodeForDevice is ClaimCliAuthCode that also replaces the
+	// row's device hash in the same statement. The one-click loopback login
+	// (ADR-20261111170000) hands the new device code to the approving
+	// browser's own machine, so the CLI that minted the code (possibly a
+	// phisher's) can no longer exchange it.
+	ClaimCliAuthCodeForDevice(ctx context.Context, tokenHash []byte, accountID string, deviceHash []byte) error
 }
 
 // AccountPassword is one row of the account_passwords table

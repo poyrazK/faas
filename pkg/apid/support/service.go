@@ -20,10 +20,13 @@ import (
 )
 
 type Service struct {
-	Pool     *pgxpool.Pool
-	Operator func(string, string) bool
-	Now      func() time.Time
-	Webhook  *Webhook
+	Pool            *pgxpool.Pool
+	Operator        func(string, string) bool
+	Now             func() time.Time
+	Webhook         *Webhook
+	Notify          func(context.Context, NotificationEmail) error
+	BootstrapEmails func() []string
+	EmailAllowed    func(context.Context, string, string, string, bool) (bool, error)
 }
 type session struct {
 	s     *Service
@@ -218,9 +221,11 @@ func (x *session) event(ticket, kind string, data any) error {
 		return err
 	}
 	if x.s.Webhook != nil && oneOf(kind, "created", "reply", "resolved", "reopened", "engineering_published") {
-		return x.q.OutboxQueue(x.ctx, x.tx, q.OutboxQueueParams{ID: uid(event), TicketID: uid(ticket), AvailableAt: ts(x.now)})
+		if err := x.q.OutboxQueue(x.ctx, x.tx, q.OutboxQueueParams{ID: uid(event), TicketID: uid(ticket), AvailableAt: ts(x.now)}); err != nil {
+			return err
+		}
 	}
-	return nil
+	return x.notifyEvent(event, ticket, kind, data)
 }
 func (x *session) save(t q.SupportTicket, st ticketState) error {
 	st.Episode.observe(x.now)
