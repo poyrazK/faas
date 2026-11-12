@@ -70,6 +70,25 @@ func adoptionExperimentEnv(t *testing.T) []string {
 	return env
 }
 
+// pinUnitMountNamespace holds unit's main process mount namespace open, so it
+// outlives the process and its inode number is not reused.
+func pinUnitMountNamespace(t *testing.T, unit string) *os.File {
+	t.Helper()
+	out, err := exec.Command("systemctl", "show", "--property=MainPID", "--value", unit).Output()
+	if err != nil {
+		t.Fatalf("main pid of %s: %v", unit, err)
+	}
+	pid := strings.TrimSpace(string(out))
+	if pid == "" || pid == "0" {
+		t.Fatalf("%s has no main process", unit)
+	}
+	f, err := os.Open(filepath.Join("/proc", pid, "ns", "mnt"))
+	if err != nil {
+		t.Fatalf("pin the mount namespace of %s: %v", unit, err)
+	}
+	return f
+}
+
 // runAdoptionExperimentUnit runs this test binary in role inside a transient
 // unit with vmmd's sandbox. wait=false starts it and returns its unit name.
 func runAdoptionExperimentUnit(t *testing.T, dir, role, instance string, wait bool, extraEnv ...string) (string, string) {
@@ -222,6 +241,13 @@ func TestMetalAdoptionRestartKeepsTheGuest(t *testing.T) {
 		_ = unix.Close(pidfd)
 		leakcheck.AssertZero(t)
 	})
+	// Pin the old vmmd's mount namespace until the successor has run, as
+	// production's host processes do. Otherwise the kernel recycles its inode
+	// number for the successor's namespace and jail teardown, which compares
+	// the two, passes by luck: it refused every adopted jail on fsn-2
+	// (2026-11-12) while this test stayed green.
+	pinned := pinUnitMountNamespace(t, bootUnit)
+	defer func() { _ = pinned.Close() }()
 	if out, err := exec.Command("systemctl", "kill", "--signal=SIGKILL", bootUnit).CombinedOutput(); err != nil {
 		t.Fatalf("crash the old vmmd: %v: %s", err, out)
 	}
@@ -235,6 +261,9 @@ func TestMetalAdoptionRestartKeepsTheGuest(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("successor result: %v", result)
+	if result["successor_mnt_ns_differs"] != true {
+		t.Fatalf("the successor ran in the old vmmd's mount namespace, so teardown's namespace check is not exercised: %v", result)
+	}
 	if result["adopted"] != true || result["same_pid"] != true || result["api_after_adoption"] != "Running" || result["destroyed"] != true {
 		t.Fatalf("restart did not keep and then cleanly tear down the guest: %v", result)
 	}
@@ -295,6 +324,9 @@ func adoptionExperimentAdoptRole(t *testing.T, dir string) {
 	}
 	if ns, err := resourceNetworkNamespaceAt(g.Netns); err == nil && ns != nil {
 		res["netns_binding_after_adoption"] = ns.File.Inode == g.NetnsIno
+	}
+	if mnt, err := resourceMountNamespace(); err == nil {
+		res["successor_mnt_ns_differs"] = mnt.Namespace != g.OldMntNS
 	}
 	if err := m.Destroy(ctx, g.Instance); err != nil {
 		res["destroy_error"] = err.Error()

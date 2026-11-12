@@ -127,11 +127,17 @@ func TestAnchorAdoptedJailAcceptsTheSuccessorMountNamespace(t *testing.T) {
 		t.Fatal("re-anchored a jail recorded in another boot")
 	}
 
+	// Make the replacement while the recorded directory still exists, so it
+	// cannot reuse the recorded inode, then swap it in.
 	path, replaced := jailAt(t)
+	swap := path + ".other"
+	if err := os.Mkdir(swap, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(path, 0o755); err != nil {
+	if err := os.Rename(swap, path); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := anchorAdoptedJail(replaced); err == nil {
