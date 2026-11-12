@@ -573,6 +573,14 @@ values, which are converted to the declared types before checking.
 `path_template` requires `match_path` to be the template with each
 placeholder as `?*`. A rule needs `schema`, `parameters` or both.
 
+Numeric checks preserve the exact JSON value, including integers above
+2^53. To bound validation arithmetic, each numeric token is at most 4096
+bytes and its decimal exponent is between -4096 and 4096. These limits
+apply to schemas and request values; values beyond them are validation failures.
+Documents containing many large-exponent numbers also have an aggregate numeric
+work allowance, so splitting a large expansion across many values cannot bypass
+the bound.
+
 `validate_mode` decides what a failure does: `block` (default) answers 422
 `request_validation_failed` with each error in `errors`; `observe` lets the
 request through and counts it; `warn` also adds `X-Validation-Warning: <rule
@@ -817,7 +825,7 @@ refused until the plan allows them again. Delete the ones you no longer need.
 | 401 `unauthorized` | `jwt`; `throttle` with `missing_key_policy: reject` |
 | 403 `ip_denied` | `ip` |
 | 403 `geo_denied` | `geo` |
-| 403 `forbidden` | blocking `waf` |
+| 403 `waf_blocked` | blocking `waf` |
 | 403 `penalty_box` | a client in a penalty box, with `Retry-After` |
 | 403 `challenge_required` | `challenge` on a request that is not a page load |
 | 413 `request_too_large` | `limit`, `validate` |

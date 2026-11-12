@@ -207,6 +207,15 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			}
 			return limit, nil
 		},
+		// ADR-20261106103654 amendment 1: short-lived branches sit in their
+		// own allowance, outside the database limit.
+		MaxBranchesPerAccount: func(ctx context.Context, accountID string) (int, error) {
+			account, err := state.BillingResourceAccount(ctx, accountStore, accountID)
+			if err != nil {
+				return 0, err
+			}
+			return api.ManagedPostgresBranchesMax(api.Plan(account.Plan)), nil
+		},
 		FreePlan: func(ctx context.Context, subjectID string) (bool, error) {
 			account, err := state.BillingResourceAccount(ctx, accountStore, subjectID)
 			if err != nil {
@@ -620,13 +629,18 @@ func (s *server) managedPostgresPlanExcessOf(ctx context.Context, acct state.Acc
 	return s.managedPostgresPlanExcess(databases, acct.Plan)[databaseID]
 }
 
-// managedPostgresStoredOverage reads a subject's overage choice when the
-// account may use overage at all.
+// managedPostgresStoredOverage reads a subject's compute overage when the
+// account may use overage at all: its stored choice, else its plan's default
+// (on only for Scale, ADR-20261025094915 amendment 2026-11-11).
 func managedPostgresStoredOverage(ctx context.Context, store managedpostgres.OverageStore, overage managedPostgresOverageGate, account state.Account, subject string) (bool, error) {
 	if overage == nil || !overage(account) {
 		return false, nil
 	}
-	return store.OverageEnabled(ctx, subject)
+	enabled, chosen, err := store.OverageSetting(ctx, subject)
+	if err != nil {
+		return false, err
+	}
+	return api.ManagedPostgresOverageEffective(api.Plan(account.Plan), enabled, chosen), nil
 }
 
 func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits, overage bool) managedpostgres.UsageCeilings {

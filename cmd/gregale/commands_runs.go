@@ -194,7 +194,13 @@ func cmdRun(args []string) int {
 		return printErr("Could not save artifacts", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(resp))
+		if code := jsonOut(writeJSON(resp)); code != 0 {
+			return code
+		}
+		if resp.Status != api.ExecutionStatusSucceeded {
+			return 1
+		}
+		return 0
 	}
 	return renderExecutionTerminal(resp)
 }

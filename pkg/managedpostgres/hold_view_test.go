@@ -1,5 +1,6 @@
 // adr: 20261110160000 — amendment 2026-11-10: the API reports why a ready
-// database is held, from the same rules the cap sweep applies.
+// database is held, from the same rules the cap sweep applies; amendment
+// 2026-11-11: each database's egress allowance is its own.
 package managedpostgres
 
 import (
@@ -10,21 +11,16 @@ import (
 )
 
 func TestSubjectHoldFollowsTheSweepsOrder(t *testing.T) {
-	on := HoldInputs{Mode: CapEnforcementOn, ComputeCeiling: 100, EgressCeiling: 1000}
+	spent := map[string]int64{"db": 1000}
 	tests := map[string]struct {
 		in   HoldInputs
 		want string
 	}{
-		"nothing used":                      {in: on, want: ""},
-		"shadow holds nothing":              {in: HoldInputs{Mode: CapEnforcementShadow, Inactive: true, ComputeUsed: 100, ComputeCeiling: 100}, want: ""},
-		"inactive first":                    {in: HoldInputs{Mode: CapEnforcementOn, Inactive: true, ComputeUsed: 100, ComputeCeiling: 100}, want: api.ManagedPostgresHoldInactive},
-		"compute ceiling":                   {in: HoldInputs{Mode: CapEnforcementOn, ComputeUsed: 100, ComputeCeiling: 100, DatabaseEgress: 1000, EgressCeiling: 1000}, want: api.ManagedPostgresHoldComputeCeiling},
-		"egress shared":                     {in: HoldInputs{Mode: CapEnforcementOn, ComputeCeiling: 100, DatabaseEgress: 400, AppEgress: 600, EgressCeiling: 1000}, want: api.ManagedPostgresHoldEgress},
-		"egress just under":                 {in: HoldInputs{Mode: CapEnforcementOn, DatabaseEgress: 400, AppEgress: 599, EgressCeiling: 1000}, want: ""},
-		"no egress allowance":               {in: HoldInputs{Mode: CapEnforcementOn, DatabaseEgress: math.MaxInt64}, want: ""},
-		"billed overage past the allowance": {in: HoldInputs{Mode: CapEnforcementOn, DatabaseEgress: 1000, AppEgress: 999, EgressCeiling: 1000, EgressOverageBilled: true}, want: ""},
-		"billed overage at twice it":        {in: HoldInputs{Mode: CapEnforcementOn, DatabaseEgress: 1000, AppEgress: 1000, EgressCeiling: 1000, EgressOverageBilled: true}, want: api.ManagedPostgresHoldEgress},
-		"egress overflow":                   {in: HoldInputs{Mode: CapEnforcementOn, DatabaseEgress: math.MaxInt64, AppEgress: 1, EgressCeiling: 1000}, want: api.ManagedPostgresHoldEgress},
+		"nothing used":         {in: HoldInputs{Mode: CapEnforcementOn, ComputeCeiling: 100, EgressAllowance: 1000}, want: ""},
+		"shadow holds nothing": {in: HoldInputs{Mode: CapEnforcementShadow, Inactive: true, ComputeUsed: 100, ComputeCeiling: 100}, want: ""},
+		"inactive first":       {in: HoldInputs{Mode: CapEnforcementOn, Inactive: true, ComputeUsed: 100, ComputeCeiling: 100}, want: api.ManagedPostgresHoldInactive},
+		"compute ceiling":      {in: HoldInputs{Mode: CapEnforcementOn, ComputeUsed: 100, ComputeCeiling: 100, DatabaseEgress: spent, EgressAllowance: 1000}, want: api.ManagedPostgresHoldComputeCeiling},
+		"egress holds one database, not the subject": {in: HoldInputs{Mode: CapEnforcementOn, ComputeCeiling: 100, DatabaseEgress: spent, EgressAllowance: 1000}, want: ""},
 	}
 	for name, tc := range tests {
 		if got := SubjectHold(tc.in); got != tc.want {
@@ -34,8 +30,9 @@ func TestSubjectHoldFollowsTheSweepsOrder(t *testing.T) {
 }
 
 func TestDatabaseHoldNamesTheDatabasesOwnReason(t *testing.T) {
-	ready := Database{State: StateReady}
-	preview := Database{State: StateReady, Preview: PreviewOwner{SourceDatabaseID: "source", EnvironmentID: "env", PRNumber: 7}}
+	ready := Database{ID: "db", State: StateReady}
+	other := Database{ID: "other", State: StateReady}
+	preview := Database{ID: "preview", State: StateReady, Preview: PreviewOwner{SourceDatabaseID: "source", EnvironmentID: "env", PRNumber: 7}}
 	on := HoldInputs{Mode: CapEnforcementOn, ComputeCeiling: 100}
 	if got := DatabaseHold(ready, false, on); got != "" {
 		t.Fatalf("ready database under every limit = %q", got)
@@ -51,51 +48,68 @@ func TestDatabaseHoldNamesTheDatabasesOwnReason(t *testing.T) {
 	if got := DatabaseHold(ready, false, at80); got != "" {
 		t.Fatalf("production at 80%% = %q, want running", got)
 	}
-	egress := HoldInputs{Mode: CapEnforcementOn, DatabaseEgress: 10, AppEgress: 10, EgressCeiling: 20}
-	if got := DatabaseHold(ready, true, egress); got != api.ManagedPostgresHoldEgress {
-		t.Fatalf("subject hold outranks plan excess: %q", got)
+	for _, tc := range []struct {
+		name   string
+		in     HoldInputs
+		db     Database
+		excess bool
+		want   string
+	}{
+		{name: "its own egress past its allowance", in: HoldInputs{Mode: CapEnforcementOn, DatabaseEgress: map[string]int64{"db": 20, "other": 1}, EgressAllowance: 20}, db: ready, want: api.ManagedPostgresHoldEgress},
+		{name: "another database's egress holds only that one", in: HoldInputs{Mode: CapEnforcementOn, DatabaseEgress: map[string]int64{"db": 20, "other": 19}, EgressAllowance: 20}, db: other},
+		{name: "just under", in: HoldInputs{Mode: CapEnforcementOn, DatabaseEgress: map[string]int64{"db": 19}, EgressAllowance: 20}, db: ready},
+		{name: "plan excess outranks egress", in: HoldInputs{Mode: CapEnforcementOn, DatabaseEgress: map[string]int64{"db": 20}, EgressAllowance: 20}, db: ready, excess: true, want: api.ManagedPostgresHoldPlanExcess},
+		{name: "no egress allowance", in: HoldInputs{Mode: CapEnforcementOn, DatabaseEgress: map[string]int64{"db": math.MaxInt64}}, db: ready},
+		{name: "billed overage past the allowance", in: HoldInputs{Mode: CapEnforcementOn, DatabaseEgress: map[string]int64{"db": 39}, EgressAllowance: 20, EgressOverageBilled: true}, db: ready},
+		{name: "billed overage at twice it", in: HoldInputs{Mode: CapEnforcementOn, DatabaseEgress: map[string]int64{"db": 40}, EgressAllowance: 20, EgressOverageBilled: true}, db: ready, want: api.ManagedPostgresHoldEgress},
+		{name: "shadow holds nothing", in: HoldInputs{Mode: CapEnforcementShadow, DatabaseEgress: map[string]int64{"db": 40}, EgressAllowance: 20}, db: ready},
+	} {
+		if got := DatabaseHold(tc.db, tc.excess, tc.in); got != tc.want {
+			t.Errorf("%s: DatabaseHold = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 	// A database being created, changed or deleted is its lifecycle's, as
 	// the sweep leaves it.
+	inactive := HoldInputs{Mode: CapEnforcementOn, Inactive: true}
 	for _, state := range []State{StateProvisioning, StateDeleting, StateDeleted} {
-		if got := DatabaseHold(Database{State: state}, true, egress); got != "" {
+		if got := DatabaseHold(Database{ID: "db", State: state}, true, inactive); got != "" {
 			t.Fatalf("%s database = %q, want no hold", state, got)
 		}
 	}
 }
 
 func TestEgressState(t *testing.T) {
-	in := HoldInputs{Mode: CapEnforcementOn, EgressCeiling: 100}
+	in := HoldInputs{Mode: CapEnforcementOn, EgressAllowance: 100}
 	for _, tc := range []struct {
-		database, app int64
-		mode          CapEnforcementMode
-		want          string
+		egress map[string]int64
+		mode   CapEnforcementMode
+		want   string
 	}{
-		{0, 0, CapEnforcementOn, api.ManagedPostgresEgressHealthy},
-		{40, 39, CapEnforcementOn, api.ManagedPostgresEgressHealthy},
-		{40, 40, CapEnforcementOn, api.ManagedPostgresEgressWarning},
-		{50, 50, CapEnforcementOn, api.ManagedPostgresEgressHeld},
-		{50, 50, CapEnforcementShadow, api.ManagedPostgresEgressWarning},
+		{nil, CapEnforcementOn, api.ManagedPostgresEgressHealthy},
+		{map[string]int64{"a": 79, "b": 79}, CapEnforcementOn, api.ManagedPostgresEgressHealthy},
+		{map[string]int64{"a": 80, "b": 1}, CapEnforcementOn, api.ManagedPostgresEgressWarning},
+		{map[string]int64{"a": 100, "b": 1}, CapEnforcementOn, api.ManagedPostgresEgressHeld},
+		{map[string]int64{"a": 100}, CapEnforcementShadow, api.ManagedPostgresEgressWarning},
 	} {
-		in.DatabaseEgress, in.AppEgress, in.Mode = tc.database, tc.app, tc.mode
+		in.DatabaseEgress, in.Mode = tc.egress, tc.mode
 		if got := EgressState(in); got != tc.want {
-			t.Errorf("EgressState(db %d app %d %s) = %q, want %q", tc.database, tc.app, tc.mode, got, tc.want)
+			t.Errorf("EgressState(%v %s) = %q, want %q", tc.egress, tc.mode, got, tc.want)
 		}
 	}
-	billed := HoldInputs{Mode: CapEnforcementOn, EgressCeiling: 100, EgressOverageBilled: true}
+	billed := HoldInputs{Mode: CapEnforcementOn, EgressAllowance: 100, EgressOverageBilled: true}
 	for _, tc := range []struct {
-		database, app int64
-		want          string
+		egress int64
+		want   string
 	}{
-		{40, 40, api.ManagedPostgresEgressHealthy}, // warning moves to 80% of the 2x hold
-		{50, 49, api.ManagedPostgresEgressHealthy},
-		{50, 50, api.ManagedPostgresEgressOverage},
-		{100, 99, api.ManagedPostgresEgressOverage},
-		{100, 100, api.ManagedPostgresEgressHeld},
+		{80, api.ManagedPostgresEgressHealthy}, // warning moves to 80% of the 2x hold
+		{99, api.ManagedPostgresEgressHealthy},
+		{100, api.ManagedPostgresEgressOverage},
+		{199, api.ManagedPostgresEgressOverage},
+		{200, api.ManagedPostgresEgressHeld},
 	} {
-		billed.DatabaseEgress, billed.AppEgress = tc.database, tc.app
+		billed.DatabaseEgress = map[string]int64{"a": tc.egress, "b": 1}
 		if got := EgressState(billed); got != tc.want {
-			t.Errorf("billed EgressState(db %d app %d) = %q, want %q", tc.database, tc.app, got, tc.want)
+			t.Errorf("billed EgressState(%d) = %q, want %q", tc.egress, got, tc.want)
 		}
 	}
 	if got := EgressState(HoldInputs{Mode: CapEnforcementOn}); got != "" {

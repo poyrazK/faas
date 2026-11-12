@@ -76,7 +76,7 @@ func (m *MemStore) objectUsageLocked(account string, now time.Time) ObjectUsageS
 
 func (m *MemStore) objectUsageLockedForPeriod(account string, periodStart time.Time) ObjectUsageSnapshot {
 	periodStart = ObjectStoragePeriod(periodStart)
-	out := ObjectUsageSnapshot{Authorizations: m.objectAuthorizations[account+periodStart.String()], PlanLimits: m.objectPlanLimitsLocked(account)}
+	out := ObjectUsageSnapshot{Authorizations: m.objectAuthorizations[account+periodStart.String()], PlanLimits: m.objectPlanLimitsLocked(account), InventoryQuiet: m.objectInventoryQuietModeLocked()}
 	for _, b := range m.objectBuckets {
 		if m.objectBillingSubjectForPeriodLocked(b, periodStart) == account {
 			u := m.objectUsage[b.ID]
@@ -88,6 +88,9 @@ func (m *MemStore) objectUsageLockedForPeriod(account string, periodStart time.T
 				u.StoredByteHours, u.StorageMeteredThrough = int64(g.byteHours), g.through
 			}
 			u.InventoryHeld = m.objectBucketTransitionLocked(b.ID)
+			if a, ok := m.objectBucketActivity[b.ID]; ok {
+				u.MutatedAt, u.ActiveSince = a.mutatedAt, a.activeSince
+			}
 			u.MultipartBytes = 0
 			for id, upload := range m.objectMultipartUploads {
 				if upload.BucketID == b.ID && upload.State != ObjectMultipartCompleted {
@@ -296,7 +299,7 @@ func (m *MemStore) RecordObjectUsageReport(ctx context.Context, r api.ObjectStor
 }
 
 func (m *MemStore) DueObjectInventories(ctx context.Context, limit int32) ([]ObjectBucket, error) {
-	due, err := m.DueObjectInventoryQueue(ctx, limit, nil)
+	due, err := m.DueObjectInventoryQueue(ctx, limit, nil, false)
 	if err != nil {
 		return nil, err
 	}
@@ -307,7 +310,7 @@ func (m *MemStore) DueObjectInventories(ctx context.Context, limit int32) ([]Obj
 	return out, nil
 }
 
-func (m *MemStore) DueObjectInventoryQueue(ctx context.Context, limit int32, skip []string) ([]ObjectInventoryDue, error) {
+func (m *MemStore) DueObjectInventoryQueue(ctx context.Context, limit int32, skip []string, quiet bool) ([]ObjectInventoryDue, error) {
 	if limit < 1 || limit > 100 {
 		return nil, ErrConflict
 	}
@@ -321,20 +324,30 @@ func (m *MemStore) DueObjectInventoryQueue(ctx context.Context, limit int32, ski
 		skipped[id] = true
 	}
 	now := time.Now()
+	quietOn := quiet && m.objectInventoryQuietModeLocked() == api.ObjectInventoryQuietOn
 	out := []ObjectInventoryDue{}
+	order := map[string]time.Time{}
 	for _, b := range m.objectBuckets {
-		u := m.objectUsage[b.ID]
+		u := m.objectUsageWithActivityLocked(b.ID)
 		// Active deletions do not block a claim: they yield to it and the
 		// worker waits for them before listing (ADR-20261025115958).
 		// An unfinished listing is due at once (ADR-20261030100835).
 		scan := u.InventoryScan
 		listing := scan.Pages > 0 && !scan.Complete && scan.StartedAt.After(u.ObservedAt) && now.Sub(scan.StartedAt) < api.ObjectInventoryScanMaxAge
-		if !skipped[b.ID] && !m.inventoryClaimFencedLocked(b.ID) && b.State == "ready" && (u.AttemptAt.IsZero() || now.Sub(u.AttemptAt) > 5*time.Minute || listing) && !u.LeaseUntil.After(now) {
+		// A quiet bucket waits for its daily verification (ADR-20261110151628 §2).
+		verifying := quietOn && !listing && objectBucketQuiet(u) && now.Sub(u.ObservedAt) < api.ObjectInventoryQuietVerifyAfter
+		if !skipped[b.ID] && !verifying && !m.inventoryClaimFencedLocked(b.ID) && b.State == "ready" && (u.AttemptAt.IsZero() || now.Sub(u.AttemptAt) > 5*time.Minute || listing) && !u.LeaseUntil.After(now) {
 			out = append(out, ObjectInventoryDue{Bucket: b, Long: listing || u.ObservedKeys > api.ObjectStorageInventoryLongListingKeys})
+			// A quiet bucket sorts by how close it is to its day, as an
+			// active one's attempt sorts by how close it is to 900 s.
+			order[b.ID] = u.AttemptAt
+			if quietOn && objectBucketQuiet(u) {
+				order[b.ID] = u.ObservedAt.Add(api.ObjectInventoryQuietMaxAge - time.Duration(api.ObjectStorageInventoryMaxAgeSeconds)*time.Second)
+			}
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		a, b := m.objectUsage[out[i].Bucket.ID].AttemptAt, m.objectUsage[out[j].Bucket.ID].AttemptAt
+		a, b := order[out[i].Bucket.ID], order[out[j].Bucket.ID]
 		return a.Before(b) || a.Equal(b) && out[i].Bucket.ID < out[j].Bucket.ID
 	})
 	if len(out) > int(limit) {
@@ -343,23 +356,30 @@ func (m *MemStore) DueObjectInventoryQueue(ctx context.Context, limit int32, ski
 	return out, nil
 }
 
-func (m *MemStore) ObjectInventoryBacklog(ctx context.Context) (ObjectInventoryBacklog, error) {
+func (m *MemStore) ObjectInventoryBacklog(ctx context.Context, quiet bool) (ObjectInventoryBacklog, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
 		return ObjectInventoryBacklog{}, err
 	}
 	now := time.Now()
+	quietOn := quiet && m.objectInventoryQuietModeLocked() == api.ObjectInventoryQuietOn
 	var out ObjectInventoryBacklog
 	for _, b := range m.objectBuckets {
 		if b.State != "ready" {
 			continue
 		}
-		u := m.objectUsage[b.ID]
+		u := m.objectUsageWithActivityLocked(b.ID)
 		scan := u.InventoryScan
 		listing := scan.Pages > 0 && !scan.Complete && scan.StartedAt.After(u.ObservedAt) && now.Sub(scan.StartedAt) < api.ObjectInventoryScanMaxAge
-		if !m.inventoryClaimFencedLocked(b.ID) && (u.AttemptAt.IsZero() || now.Sub(u.AttemptAt) > 5*time.Minute || listing) && !u.LeaseUntil.After(now) {
+		isQuiet := quietOn && objectBucketQuiet(u)
+		verifying := isQuiet && !listing && now.Sub(u.ObservedAt) < api.ObjectInventoryQuietVerifyAfter
+		if !verifying && !m.inventoryClaimFencedLocked(b.ID) && (u.AttemptAt.IsZero() || now.Sub(u.AttemptAt) > 5*time.Minute || listing) && !u.LeaseUntil.After(now) {
 			out.DueBuckets++
+		}
+		if isQuiet {
+			out.OldestQuietObservationAge = max(out.OldestQuietObservationAge, now.Sub(u.ObservedAt))
+			continue
 		}
 		// A bucket fresh on any observation age is exempt: held, or listing
 		// within the progress window.
@@ -367,11 +387,14 @@ func (m *MemStore) ObjectInventoryBacklog(ctx context.Context) (ObjectInventoryB
 		if !u.ObservedAt.IsZero() && !objectBucketInventoryStale(u, 0, now) {
 			continue
 		}
-		observed := u.ObservedAt
-		if observed.IsZero() {
-			observed = b.CreatedAt
+		anchor := u.ObservedAt
+		if quietOn {
+			anchor = objectBucketActiveAnchor(u)
 		}
-		out.OldestObservationAge = max(out.OldestObservationAge, now.Sub(observed))
+		if anchor.IsZero() {
+			anchor = b.CreatedAt
+		}
+		out.OldestObservationAge = max(out.OldestObservationAge, now.Sub(anchor))
 	}
 	return out, nil
 }
@@ -434,6 +457,7 @@ func (m *MemStore) FinishObjectInventory(ctx context.Context, bucket, token stri
 	u.ObservedBytes, u.ObservedKeys, u.ObservedAt = bytes, objects, u.AttemptAt
 	u.Token, u.LeaseUntil = "", time.Time{}
 	m.objectUsage[bucket] = u
+	m.markOutstandingObjectMutationsLocked(bucket)
 	return nil
 }
 

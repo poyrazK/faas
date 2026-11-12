@@ -2558,6 +2558,7 @@ func (g *gatewaydEdgeRules) compileValidateRules(storeRules []state.EdgeRule) ([
 			Methods:             buildMethodsMap(r.MatchMethods),
 			MatchHeaders:        buildMatchHeadersMap(r.MatchHeaders),
 			SchemaDigest:        digest,
+			Schema:              append([]byte(nil), schemaBytes...),
 			ContentTypes:        contentTypes,
 			ApplyWhileStreaming: action.ApplyWhileStreaming,
 			RejectUnknownFields: action.RejectOnUnknown,
@@ -2597,7 +2598,7 @@ func (g *gatewaydEdgeRules) compileValidateParameters(p *api.EdgeRuleValidatePar
 		if err != nil {
 			return nil, err
 		}
-		*loc.into = gateway.EdgeRuleParamSchemaResolved{Set: true, Digest: digest, Kinds: kinds}
+		*loc.into = gateway.EdgeRuleParamSchemaResolved{Set: true, Digest: digest, Schema: append([]byte(nil), loc.raw...), Kinds: kinds}
 	}
 	return out, nil
 }

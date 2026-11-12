@@ -193,6 +193,7 @@ var cliTreeAliases = []cliTreeAlias{
 	// Data.
 	{"postgres", "postgres"},
 	{"bucket multipart get", "bucket uploads status"},
+	{"bucket multipart cancel", "bucket uploads abort"},
 	{"bucket multipart", "bucket uploads"},
 	{"bucket version delete", "bucket version-delete"},
 	{"bucket version", "bucket versions"},
@@ -634,7 +635,9 @@ var cliTreeAliases = []cliTreeAlias{
 // cliTreeShorts summarize tree paths whose command today does more than
 // the path names.
 var cliTreeShorts = map[string]string{
-	"mcp server": "Scaffold, deploy and check the MCP servers you host",
+	"mcp server":                  "Scaffold, deploy and check the MCP servers you host",
+	"event backfill":              "Deliver retained events to a subscription again, and track the jobs",
+	"event subscription-capacity": "Set, list and read a subscription's live-delivery limit commands",
 }
 
 // cliTreeVerbSynonyms gives, for a standard verb, today's spellings that a

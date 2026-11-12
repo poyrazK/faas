@@ -18,6 +18,27 @@ type EnvironmentGitOpsActivationEvidenceStore interface {
 	EnvironmentGitOpsActivationEvidence(context.Context, EnvironmentGitOpsLease, environmentsync.Plan) (EnvironmentWorkloadActivationEvidence, error)
 }
 
+// Qualification and activation receipts remain recorded facts. Current serving
+// additionally requires fresh physical runtime and completed durable effects.
+func applyEnvironmentGitOpsRuntimeReadiness(evidence *EnvironmentWorkloadActivationEvidence, blockers []string) {
+	if len(blockers) == 0 {
+		return
+	}
+	evidence.Serving = false
+	evidence.BlockingReasons = append(evidence.BlockingReasons, blockers...)
+	slices.Sort(evidence.BlockingReasons)
+	evidence.BlockingReasons = slices.Compact(evidence.BlockingReasons)
+	for i := range evidence.Workloads {
+		workload := &evidence.Workloads[i]
+		if workload.Serving == "complete" {
+			workload.Serving = "pending"
+		}
+		workload.BlockingReasons = append(workload.BlockingReasons, blockers...)
+		slices.Sort(workload.BlockingReasons)
+		workload.BlockingReasons = slices.Compact(workload.BlockingReasons)
+	}
+}
+
 // EnvironmentGitOpsCurrentWorkloadEvidenceStore serves a read-only view of
 // evidence for the source's current approved plan. A nil result means that no
 // current candidate graph exists; stale graphs are never surfaced as current.

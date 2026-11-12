@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	managedpostgresapi "github.com/onebox-faas/faas/pkg/apid/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/redact"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -50,6 +52,15 @@ func managedPostgresProblem(w http.ResponseWriter, err error) {
 	case errors.Is(err, managedpostgres.ErrUsageStale):
 		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_usage_stale", "Managed PostgreSQL usage is stale", managedpostgres.UsageStaleDetail
 	}
+	if status >= 500 {
+		// The customer sees a generic detail, so the cause must reach the
+		// log: a branch create answered "temporarily unavailable" yet
+		// succeeded, and a restore failed generically, with no trace in
+		// apid's log (Hunt 33 H33-57). Provider errors carry no credentials;
+		// redact anyway.
+		cause, _ := redact.New(4096).Apply(err.Error())
+		slog.Default().Warn("managed postgres request failed", "status", status, "code", code, "err", cause)
+	}
 	if status >= 500 && !errors.Is(err, managedpostgres.ErrUsageStale) && !errors.Is(err, managedpostgres.ErrUnavailable) {
 		detail = "The managed PostgreSQL operation could not be completed."
 	}
@@ -62,6 +73,8 @@ func managedPostgresProblem(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, managedpostgres.ErrNotInPlan):
 		problem = problem.WithHint("Choose what your plan includes (gregale postgres capabilities) or upgrade the plan.").WithDocs("https://gregale.dev/docs/plans")
+	case errors.Is(err, managedpostgres.ErrBranchLimit):
+		problem = problem.WithHint("Delete a branch (gregale postgres branch delete), wait for one to expire, or upgrade the plan.").WithDocs("https://gregale.dev/docs/postgres#branches")
 	case errors.Is(err, managedpostgres.ErrUsageLimitReached):
 		problem = problem.WithHint(managedpostgres.UsageLimitHint).WithDocs("https://gregale.dev/docs/managed-postgres")
 	case errors.Is(err, managedpostgres.ErrQuotaExceeded):
@@ -700,6 +713,12 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 	app, err := s.store.AppByID(r.Context(), req.AppID)
 	if err != nil || !postgresaccess.CanBind(r.Context(), app, acct) {
 		s.notFound(w, "app not found")
+		return
+	}
+	// A PR preview runs unreviewed code: a binding would hand it the
+	// database's credentials (ADR-20261105090226).
+	if state.IsPRPreviewApp(app) {
+		api.WriteProblem(w, api.ErrPRPreviewResourceUnsupported("managed PostgreSQL bindings"))
 		return
 	}
 	// Application Auth is a dark launch: without it the mode is unknown.

@@ -2435,6 +2435,11 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		// either. nil ⇒ the cross-check is a no-op.
 		nil,
 	)
+	// ADR-20261111150000: an agent key's gated request here (the developer
+	// debugger tunnel) is decided, and its activity recorded, by apid, the
+	// only writer of approval requests and the activity log.
+	agentGate := apidgrpc.AgentGate{Auth: credentialAuth}
+	deps.authMw.RemoteAgentGate, deps.authMw.ActivityRecorder = agentGate, agentGate
 	// Issue #560: per-deployment require_authn (pro/Scale opt-in).
 	// Build the narrow gateway.RequireAuthnAuthenticator
 	// adapter around the production middleware and the
@@ -4301,6 +4306,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var guestServices *gateway.ServiceProxy
 	var guestServiceCallerResolver gateway.ServiceProxyCallerResolver
 	var guestServiceAliasAllowed gateway.ServiceAliasAllowed
+	// guestServiceCallerIdentity maps a bridge source address to its app and
+	// deployment; the bridge object relay (ADR-20261031193635 slice 6c)
+	// checks the deployment's branch before it forwards anything.
+	var guestServiceCallerIdentity func(context.Context, string) (string, string, error)
 	managedCircuitWired := false
 	if deps.pgStore != nil && serviceEndpointProvider != nil && deps.nodeCache != nil {
 		pgStore := deps.pgStore
@@ -4414,6 +4423,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 				return identityResolver.ResolveIdentity(ctx, remote)
 			}
+			guestServiceCallerIdentity = identityResolver.ResolveIdentity
 			guestServiceCallerResolver = func(ctx context.Context, remote string) (string, error) {
 				// DNS only publishes an alias address. Let the separate
 				// qualification alias check consider frozen graph bindings;
@@ -4747,6 +4757,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					if err := withDatabaseRouteDNS(dnsHandler, cfg, log); err != nil {
 						return err
 					}
+					if guestServiceCallerIdentity != nil {
+						dnsHandler.WithObjectRelayName(api.EnvironmentBranchObjectRelayHost)
+					}
 				}
 				dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(dnsPort))
 				listenPacket := deps.listenPacket
@@ -4777,6 +4790,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 						errc <- err
 					}
 				}()
+			}
+			if guestServiceCallerIdentity != nil && deps.pgStore != nil {
+				if err := startEnvironmentBranchObjectRelay(deps, bridgeIP, guestServiceCallerIdentity, addSrv, errc, log); err != nil {
+					return err
+				}
 			}
 		}
 	}

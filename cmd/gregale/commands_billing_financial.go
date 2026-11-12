@@ -78,8 +78,19 @@ func cmdBillingFinancial(command string, args []string) int {
 	return 0
 }
 
+// financialMoney prints millicents as currency: two decimals, and the
+// sub-cent digits only when the amount has them (Hunt 33 H33-11: a $1,000
+// budget read "USD 1000.00000").
 func financialMoney(n int64) string {
-	return fmt.Sprintf("%s %d.%05d", api.BillingCurrency, n/(100*api.MillicentsPerCent), n%(100*api.MillicentsPerCent))
+	sign := ""
+	if n < 0 {
+		sign, n = "-", -n
+	}
+	fraction := strings.TrimRight(fmt.Sprintf("%05d", n%(100*api.MillicentsPerCent)), "0")
+	for len(fraction) < 2 {
+		fraction += "0"
+	}
+	return fmt.Sprintf("%s %s%d.%s", api.BillingCurrency, sign, n/(100*api.MillicentsPerCent), fraction)
 }
 
 func printFinancialCosts(w io.Writer, response api.FinancialCostsResponse) {

@@ -221,7 +221,26 @@ func releasePhaseOffProblem() *api.Problem {
 			"but release commands are not available on this Gregale installation yet. Remove the declaration and run the command from the app or a machine you control.")
 }
 
+// resolveSourceReleaseDeclaration refuses a release command on a function
+// app: release tasks run the deployment's container image, and a function
+// deployment has none, so imaged retried "app task deployment artifact is
+// unavailable" until the deploy was cancelled (Hunt 33 H33-54).
 func resolveSourceReleaseDeclaration(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
+	resolved, problem := declaredSourceReleaseCommand(sourcePath, app, manifest)
+	if problem == nil && len(resolved.command) > 0 && app.Type == state.AppTypeFunction {
+		return deploymentReleaseCommand{}, functionReleaseCommandProblem()
+	}
+	return resolved, problem
+}
+
+func functionReleaseCommandProblem() *api.Problem {
+	return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Release commands need an app",
+		"This function app declares a release command (gregale.yaml release.command, a Procfile release: process, or its project's Compose file). "+
+			"Release commands run in an app's container image, which a function deployment does not have. "+
+			"Remove the declaration, or run the command from an app (type: app) in the same project or from a machine you control.")
+}
+
+func declaredSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
 	if manifest != nil && manifest.Release != nil && manifest.Release.Command != "" {
 		return validateDeploymentReleaseCommand(manifest.Release.Command)
 	}

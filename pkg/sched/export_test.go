@@ -701,6 +701,8 @@ func (r *drainSynth) Refused() *atomic.Bool   { return &r.refused }
 // that status (ADR-20261031100001).
 func (r *drainSynth) AppStatus() *atomic.Int64 { return &r.appStatus }
 
+func (r *drainSynth) AppAnswered() *atomic.Int64 { return &r.appAnswered }
+
 // XHTTPGatewaySynth is the drain's real gateway client pointed at base.
 func XHTTPGatewaySynth(client *http.Client, base string) interface {
 	InvokeWithWake(context.Context, string, state.Invocation, WakeResult) (state.Invocation, error)
@@ -750,11 +752,15 @@ func NewVMMWakeNotStarted(p *api.Problem) error { return vmmWakeNotStartedError{
 func (r *fakeVMM) Characterization() *api.CharacterizationReport {
 	return &r.characterization
 }
-func (r *fakeVMM) ColdBootHook() *func()            { return &r.coldBootHook }
-func (r *fakeVMM) ColdBoots() *int                  { return &r.coldBoots }
-func (r *fakeVMM) DestroyErr() *error               { return &r.destroyErr }
-func (r *fakeVMM) Destroys() *int                   { return &r.destroys }
-func (r *fakeVMM) LastColdBootSpec() *AppSpec       { return &r.lastColdBootSpec }
+func (r *fakeVMM) ColdBootHook() *func()      { return &r.coldBootHook }
+func (r *fakeVMM) ColdBoots() *int            { return &r.coldBoots }
+func (r *fakeVMM) DestroyErr() *error         { return &r.destroyErr }
+func (r *fakeVMM) Destroys() *int             { return &r.destroys }
+func (r *fakeVMM) LastColdBootSpec() *AppSpec { return &r.lastColdBootSpec }
+
+// AckEnvironmentBranchContainment makes cold boots acknowledge a requested
+// contained environment branch profile (ADR-20261031193635).
+func (r *fakeVMM) AckEnvironmentBranchContainment() { r.branchAck = true }
 func (r *fakeVMM) LastColdBootCtx() context.Context { return r.lastColdBootCtx }
 func (r *fakeVMM) LastSnapRef() *SnapshotRef        { return &r.lastSnapRef }
 func (r *fakeVMM) Mu() *sync.Mutex                  { return &r.mu }

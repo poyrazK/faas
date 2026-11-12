@@ -213,11 +213,18 @@ type resourceAdoptionNetwork struct {
 	EgressAllowlist      []string `json:"egress_allowlist,omitempty"`
 	StaticEgressIP       string   `json:"static_egress_ip,omitempty"`
 	StaticEgressExcluded bool     `json:"static_egress_excluded,omitempty"`
-	StaticEgressBlocked  bool     `json:"static_egress_blocked,omitempty"`
+	// PrivateNetworkExcluded keeps an adopted branch instance off its app's
+	// private networks (ADR-20261031193635 section 6).
+	PrivateNetworkExcluded bool `json:"private_network_excluded,omitempty"`
+	StaticEgressBlocked    bool `json:"static_egress_blocked,omitempty"`
 	// RehearsalRunID is the run whose outbound containment the guest's
 	// network carries (ADR-20261017201005). Adoption refuses such a guest:
 	// the containment and the run's recorder are not rebuilt.
 	RehearsalRunID string `json:"rehearsal_run_id,omitempty"`
+	// EnvironmentBranchContained: the guest runs in a contained environment
+	// branch (ADR-20261031193635). Adoption refuses it: its branch database
+	// set and policy are not rebuilt.
+	EnvironmentBranchContained bool `json:"environment_branch_contained,omitempty"`
 	// EgressCircuits: the guest's netns carries ADR-570 egress-circuit sets.
 	// Adoption refuses such a guest: its circuit registration is not rebuilt.
 	EgressCircuits bool `json:"egress_circuits,omitempty"`
@@ -524,14 +531,16 @@ func (m *Manager) adoptionBlockFor(inst *Instance, now time.Time) resourceAdopti
 			ObservedClass:            inst.Characterization.ObservedClass,
 		},
 		Network: resourceAdoptionNetwork{
-			AllowlistHandleV4:      inst.AllowlistHandleV4,
-			AllowlistHandleV6:      inst.AllowlistHandleV6,
-			PrivateNetworkHandleV4: inst.PrivateNetworkHandleV4,
-			PrivateNetworkHandleV6: inst.PrivateNetworkHandleV6,
-			Private:                adoptionPrivateNetworkFor(inst.Net),
-			StaticEgressExcluded:   inst.StaticEgressExcluded,
-			RehearsalRunID:         inst.Net.RehearsalRunID,
-			EgressCircuits:         inst.Net.EgressCircuitEnabled,
+			AllowlistHandleV4:          inst.AllowlistHandleV4,
+			AllowlistHandleV6:          inst.AllowlistHandleV6,
+			PrivateNetworkHandleV4:     inst.PrivateNetworkHandleV4,
+			PrivateNetworkHandleV6:     inst.PrivateNetworkHandleV6,
+			Private:                    adoptionPrivateNetworkFor(inst.Net),
+			StaticEgressExcluded:       inst.StaticEgressExcluded,
+			PrivateNetworkExcluded:     inst.PrivateNetworkExcluded,
+			RehearsalRunID:             inst.Net.RehearsalRunID,
+			EnvironmentBranchContained: inst.Net.EnvironmentBranchContained,
+			EgressCircuits:             inst.Net.EgressCircuitEnabled,
 		},
 		Lifecycle: resourceAdoptionLifecycle{State: adoptionStateReady},
 	}

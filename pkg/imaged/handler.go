@@ -262,6 +262,10 @@ type Handler struct {
 	// reuse, so every renewal scans.
 	scannerIdentityProbe func(context.Context) (installedScanner, error)
 	scannerIdentityCache scannerIdentityCache
+	// scannerInstallStamp describes the installed scanner binary and
+	// database files; while it is unchanged a probed identity is kept past
+	// api.ScannerIdentityCacheTTL. Nil keeps the one-minute cache.
+	scannerInstallStamp func() string
 	// scannerDBUpdater refreshes the vulnerability database outside any scan.
 	scannerDBUpdater func(context.Context) error
 	// Active entries live only for a job; restart reconstructs work from durable
@@ -3697,11 +3701,16 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		if ready.ExecutionMode != mode {
 			return fmt.Errorf("imaged: deployment_ready mode mismatch: payload=%q app=%q", ready.ExecutionMode, mode)
 		}
-		if ready.NoSnapshotReason == "rehearsal_cold_start" {
+		switch ready.NoSnapshotReason {
+		case "rehearsal_cold_start":
 			if err := h.validateColdStartActivation(ctx, app, dep, *ready); err != nil {
 				return err
 			}
-		} else {
+		case state.EnvironmentBranchActivationReason:
+			if err := h.validateEnvironmentBranchActivation(ctx, dep, *ready, mode); err != nil {
+				return err
+			}
+		default:
 			switch mode {
 			case api.ExecutionModeWorker:
 				if ready.NoSnapshotReason != "" {

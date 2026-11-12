@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // imageRunIdleJobsSQL selects live runner jobs without queued or claimed
@@ -61,6 +62,15 @@ func touchImageRunJob(ctx context.Context, tx pgx.Tx, job Job, in ImageRunEnsure
 		return ImageRunEnsureResult{}, fmt.Errorf("%w: job name %q is taken", ErrConflict, in.Name)
 	}
 	requeue := imageRunNeedsRequeue(job, in.PullAlways)
+	if requeue {
+		busy, err := sqlc.New().ImageRunHasActiveWork(ctx, tx, mustPgUUID(job.ID))
+		if err != nil {
+			return ImageRunEnsureResult{}, mapErr(err)
+		}
+		if busy.Bool {
+			return ImageRunEnsureResult{}, ErrImageRunBusy
+		}
+	}
 	updated, err := scanJob(tx.QueryRow(ctx, `update jobs set
 		   ram_mb = $2, task_timeout_s = $3, updated_at = now(),
 		   image_resolved_digest = case when $4 then null else image_resolved_digest end,
@@ -80,6 +90,10 @@ func touchImageRunJob(ctx context.Context, tx pgx.Tx, job Job, in ImageRunEnsure
 		return ImageRunEnsureResult{}, fmt.Errorf("state: touch image run job %s: %w", job.ID, err)
 	}
 	return ImageRunEnsureResult{Job: updated, Requeued: requeue}, nil
+}
+
+func (s *PgStore) JobGetByIDForRunHistory(ctx context.Context, id string) (Job, error) {
+	return s.jobByID(ctx, id, true)
 }
 
 func createImageRunJob(ctx context.Context, tx pgx.Tx, in ImageRunEnsure) (ImageRunEnsureResult, error) {

@@ -249,7 +249,6 @@ InstallationIDForRepo
 InstanceListByNodeForRecovery
 IsMailSuppressed
 JobConcurrentByAccount
-JobGetByName
 JobRunIncrementDeadLetter
 JobRunListByAccount
 JobRunReopenDeadLetter

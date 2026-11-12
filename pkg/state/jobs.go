@@ -212,13 +212,19 @@ type JobRunOptions struct {
 	ExclusiveOperationID string
 	ExclusiveGeneration  int64
 	CommandArgs          *[]string
-	Inputs               []JobInput
-	InputManifestURI     string
-	InputManifestSHA256  string
-	ExecutionClass       string
-	FailurePolicy        string
-	EligibleAt           *time.Time
-	LatestStartAt        *time.Time
+	// RAMMB is an admitted per-run image-run override. Nil snapshots the
+	// template's RAM; a value cannot be changed by another concurrent ensure.
+	RAMMB *int
+	// ExpectedImageStorageKey fences image-run command resolution against
+	// a refresh between template lookup and admission.
+	ExpectedImageStorageKey string
+	Inputs                  []JobInput
+	InputManifestURI        string
+	InputManifestSHA256     string
+	ExecutionClass          string
+	FailurePolicy           string
+	EligibleAt              *time.Time
+	LatestStartAt           *time.Time
 	// Attach admits the run as an interactive image run (ADR-1330). The
 	// session row is written in the run's transaction.
 	Attach *JobRunAttach
@@ -231,6 +237,9 @@ type JobRunOptions struct {
 // validateJobRunProcess mirrors the job_runs process CHECKs (ADR-1790) so
 // both stores reject the same overrides.
 func validateJobRunProcess(opts JobRunOptions) error {
+	if opts.RAMMB != nil && api.ValidateJobRAMMB(*opts.RAMMB) != nil {
+		return fmt.Errorf("%w: run RAM is invalid", ErrInvalidArgument)
+	}
 	if len(opts.ProcessUser) > api.ImageRunUserMaxBytes || strings.ContainsRune(opts.ProcessUser, 0) {
 		return fmt.Errorf("%w: process user is invalid", ErrInvalidArgument)
 	}

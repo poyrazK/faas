@@ -4,6 +4,11 @@
 SELECT COALESCE((SELECT o.enabled FROM managed_postgres_account_overage o
  WHERE o.subject_id=sqlc.arg(subject_id)::uuid), false)::boolean AS enabled;
 
+-- name: ManagedPostgresOverageSetting :one
+-- ADR-20261025094915 amendment 2026-11-11: the subject's stored choice; no
+-- row means it never chose and its plan's default applies.
+SELECT o.enabled FROM managed_postgres_account_overage o WHERE o.subject_id=sqlc.arg(subject_id)::uuid;
+
 -- name: SetManagedPostgresOverage :exec
 INSERT INTO managed_postgres_account_overage (subject_id, enabled, updated_at)
 VALUES (sqlc.arg(subject_id)::uuid, sqlc.arg(enabled)::boolean, sqlc.arg(updated_at)::timestamptz)

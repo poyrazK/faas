@@ -46,11 +46,13 @@ overage on ([Compute overage](#compute-overage)):
 - the pool doubles, and storage past the plan's pool, averaged over the
   month, costs $0.50 per GiB-month.
 
-Data your databases send counts toward your plan's monthly egress allowance
-together with your apps' egress (Free 10 GiB, Hobby 100 GiB, Pro 500 GiB,
-Scale 2,000 GiB; see [plans](plans.md)). Once the two together reach it, your
-databases stop and refuse connections until the month ends or the plan grows.
-Egress overage does not extend this for databases yet.
+Each database has its own monthly egress allowance of 500 GB (10^9 bytes), as
+Neon includes per project. It is separate from your apps' egress allowance
+(see [plans](plans.md)). A database that reaches it stops and refuses
+connections until the month ends; your other databases and your apps keep
+running. With egress overage on (`gregale billing egress-overage on`), a
+database's egress past its 500 GB is billed at $0.105 per GB, and it stops
+only at twice its allowance.
 
 All current plans use provider-managed compute suspension. Always-on database
 compute is not included in the bundled plans, and requests that disable
@@ -475,9 +477,9 @@ high-availability promise merely because Neon storage has internal redundancy.
 `scale_to_zero=true` uses a 300-second suspend timeout; false disables compute
 suspension. Customer requests cannot currently select `false`; the adapter
 retains the provider-neutral field for a future always-on entitlement.
-PostgreSQL majors 14 through 18 are enabled. New databases choose 15 through
-18: 14 is retiring (`Capabilities.RetiringMajors`) and stays available to the
-databases that already run it.
+PostgreSQL majors 15 through 18 are enabled. PostgreSQL 14 reached upstream
+end of life in November 2026 and is not supported (owner, 2026-11-12); Neon
+has no in-place major upgrade, and no upgrade path from 14 is offered.
 
 The mutating qualification run also proves the runtime behavior: it connects
 to the disposable database, closes the connection, waits for Neon to report
@@ -623,10 +625,11 @@ gregale postgres capabilities --region eu-central-1 --json
 
 The versioned response lists PostgreSQL versions, service classes, access modes,
 availability, pooling, scale-to-zero and restore/storage limits. PostgreSQL 14 is
-retiring: it reaches upstream end of life in November 2026 and Neon has no
-in-place major upgrade. Existing PostgreSQL 14 databases keep restore, resize
-and maintenance, but a new database is refused with `422 managed_postgres_unsupported`, naming the
-offered versions, and discovery no longer lists 14. It exposes no
+not supported: it reached upstream end of life in November 2026. A request for
+it is refused with `422 managed_postgres_unsupported`, naming the offered
+versions, and discovery does not list it. `Capabilities.RetiringMajors` stays
+for a later major that existing databases keep while new ones cannot pick it.
+It exposes no
 backend identity, credentials or provider costs. `provisioning_enabled` describes
 the qualification/canary gate separately from configured support; usage, budget
 and current quota admission are checked when reserving a resource. Discovery
@@ -850,8 +853,8 @@ The billing seam emits stable internal line-item codes
 `managed_postgres.restore_history`, and `managed_postgres.egress`) with
 normalized quantities and provider-cost millicents. They are COGS/invoice
 mapping inputs only: customers never see provider costs. The only customer
-charge is compute overage, which an account turns on itself
-([Compute overage](#compute-overage)).
+charge is compute overage, which an account turns on itself, or which is on
+by default on Scale ([Compute overage](#compute-overage)).
 
 Customers can inspect the current account snapshot with
 `GET /v1/account/managed-postgres-usage` (the `usage:read` scope) or
@@ -1069,7 +1072,10 @@ The state is judged from the ledger, which can trail Neon by up to two hours.
 `GET` and `PUT /v1/postgres/overage` read and set a paid account's overage
 choice, `{"enabled": true|false}`:
 
-- Off is the default, and the databases are suspended at the allowance.
+- Off is the default on Hobby and Pro, and the databases are suspended at the
+  allowance. On Scale it is on until the account turns it off
+  (`api.ManagedPostgresPlanLimits.OverageOnByDefault`), so a busy production
+  database does not stop mid-month. An explicit choice either way is kept.
 - On, they keep running until twice the allowance (the ceiling), then are
   suspended.
 - A suspended, abuse-held or pending-deletion account's databases are

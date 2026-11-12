@@ -2555,6 +2555,9 @@ type Deployment struct {
 	releaseWorkerAttempt    string
 	releaseConfigAttempt    string
 	retryDeploymentID       string
+	// branchInput copies a parent deployment's artifact into an environment
+	// branch (ADR-20261031193635). Creation-only, never persisted as such.
+	branchInput *projectEnvironmentBranchDeploymentInput
 	// BuildDependencies is trusted APID admission input, captured atomically in
 	// a separate durable gate before the build can enter the queue.
 	BuildDependencies []DeploymentDependencyPin `json:"-"`
@@ -3441,11 +3444,14 @@ type DomainDoctorObservation struct {
 // Cron is a recurring app schedule. Empty Command means an HTTP request cron;
 // a non-empty Command runs against the app's live deployment at fire time.
 type Cron struct {
-	SchedulePolicy        *workpolicy.SchedulePolicy
-	FailureRules          *workpolicy.FailureRules
-	ScheduleRevision      int64
-	ID                    string
-	AppID                 string
+	SchedulePolicy   *workpolicy.SchedulePolicy
+	FailureRules     *workpolicy.FailureRules
+	ScheduleRevision int64
+	ID               string
+	AppID            string
+	// DeploymentScope is the project environment the cron fires into; empty
+	// is the app's default (production) scope (ADR-20261104120000).
+	DeploymentScope       string
 	Schedule              string // cron expression
 	Path                  string
 	Command               []string
@@ -3496,6 +3502,9 @@ const CronSuspendedAppDeleted = "app_deleted"
 // advances the schedule without dispatching when a prior cron invocation is
 // still pending or dispatching.
 type CronOptions struct {
+	// DeploymentScope names the environment a new cron fires into; empty is
+	// the default (production) scope. It never changes on update.
+	DeploymentScope       string
 	SchedulePolicy        *workpolicy.SchedulePolicy
 	FailureRules          *workpolicy.FailureRules
 	ScheduleRevision      int64

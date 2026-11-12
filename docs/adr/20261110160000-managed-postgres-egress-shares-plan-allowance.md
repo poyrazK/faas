@@ -1,6 +1,6 @@
 # ADR-20261110160000: Managed PostgreSQL egress shares the plan's egress allowance
 
-- **Status:** accepted (owner, 2026-11-10: "Count it in app egress", on the billing launch review). Slices 1 and 3 built.
+- **Status:** accepted (owner, 2026-11-10: "Count it in app egress", on the billing launch review). Slices 1 and 3 built. Decisions 1 and 2 replaced on 2026-11-11 by a per-database allowance that matches Neon (owner: "yeah, lets update our pricing due to this"); see the last amendment.
 - **Date:** 2026-11-10
 - **Owner:** apid and managed PostgreSQL maintainers
 - **Amends:**
@@ -120,18 +120,81 @@ why. The sweep now mails the hold once per month:
   email. Until every apid runs this release, a held subject's compute email
   can be skipped. Roll apid out in one step.
 
+## Amendment 2026-11-11: only public transfer is egress
+
+Neon's usage reader summed `public_network_transfer_bytes` and
+`private_network_transfer_bytes` into the database egress meter. Private
+network transfer (Private Link, VPC) never leaves for the internet, yet it
+counted toward the shared allowance, could trip the egress hold, and since
+slice 3 would be billed at the public transfer price. The meter now counts
+public transfer only; the reader still requests private transfer so a later
+COGS report can read it. Readings collected before this change keep what they
+recorded. Gregale apps reach Neon over its public endpoints, so a database's
+replies to an app are still public transfer and still egress; that is a
+separate open item.
+
+## Amendment 2026-11-11: each database has its own allowance, as on Neon
+
+The owner asked to check Neon's egress pricing (neon.com/pricing,
+docs/introduction/plans and network-transfer, read 2026-11-11). It differs
+from what Context above says:
+
+- Neon's paid plans include **500 GB of public network transfer per project**
+  a month, then $0.10 per GB. "Public network transfer is counted per
+  project, not per account." Context's "past 500 GB across the whole
+  organization" was wrong.
+- Every Gregale database is its own Neon project (ADR-20261102072425), so
+  every database brings its own 500 GB that Gregale already pays for.
+  Counting database egress against the plan's app allowance (Free 10 GiB,
+  Hobby 100) held databases long before they cost Gregale anything.
+
+The owner chose to match Neon:
+
+1. **Per-database allowance.** Each managed PostgreSQL database has a monthly
+   egress allowance of 500 GB (10^9 bytes),
+   `api.ManagedPostgresDatabaseEgressAllowanceBytes`, on every plan that
+   includes databases. Database egress no longer counts toward the plan's
+   app egress allowance, and app egress no longer counts toward a
+   database's. Replaces decision 1.
+2. **The sweep holds one database.** Each sweep reads every database's egress
+   this month (`ManagedPostgresEgressByDatabase`, same waivers as the usage
+   snapshot). A database that reached its allowance is held with reason
+   `egress`; the subject's other databases keep running. Compute, inactive
+   and plan-excess holds keep their precedence. Replaces decision 2.
+3. **Overage.** With the subject's egress overage election lifted and
+   managed PostgreSQL charges live, a database is held at twice its
+   allowance, and each database's egress past its own allowance, at most one
+   more allowance, is billed at $0.105 per GB. A month's charge is the sum
+   over its databases (`managedpostgres.EgressOverageCharge`). Apps use their
+   own allowance and overage line; no byte is in both. `app_egress_bytes` on
+   the delivery step stays and is always zero.
+4. **Views.** `egress_allowance_bytes` is the per-database allowance and
+   `egress_state` is that of the database that sent the most. The
+   account-wide `hold` no longer reports `egress`; each held database does.
+   `app_egress_bytes` is deprecated and always omitted.
+5. **Email.** The `egress_held` event and email stay once per subject per
+   month, sent for the first database held. Its amounts are that database's
+   egress, its allowance and its hold ceiling, and it says the apps and other
+   databases are unaffected.
+
+A database's 500 GB is the same COGS Neon gives Gregale for that project, so
+the allowance costs nothing beyond Neon's plan fee; past it, Neon charges
+$0.10 per GB and Gregale bills $0.105. Without an elected overage a database
+stops at its allowance and never costs extra.
+
 ## Later slices
 
-- **Slice 2:** meterd's app egress stop counts the databases' egress too, so
-  apps also stop once databases spent the allowance.
-- **Slice 3:** built, see the amendment above.
-- **Slice 4:** a Neon per-project `data_transfer_bytes` quota as a backstop,
-  like the compute quota.
+- **Slice 2:** dropped by the per-database amendment: apps and databases no
+  longer share an allowance.
+- **Slice 3:** built, see the amendments above.
+- **Slice 4:** a Neon per-project `data_transfer_bytes` quota at the hold
+  ceiling as a backstop, like the compute quota.
 
 ## Consequences
 
-- A Free account's databases stop after 10 GiB of combined egress a month;
-  the sweep interval bounds the overshoot.
+- Before 2026-11-11, a Free account's databases stopped after 10 GiB of
+  combined egress a month. Since then each database stops at its own
+  500 GB; the sweep interval bounds the overshoot.
 - Egress counts and stops are visible as `managed postgres compute held`
   logs with reason `egress`, and the owner is mailed once per month (amendment
   2026-11-11).

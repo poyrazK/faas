@@ -13,14 +13,22 @@ import (
 // Outside a linked project a project app's bucket needs --env, and the CLI
 // says why (Snapbox SB-2). A standalone app reads the default scope, so the
 // CLI uses it instead of asking for --env default (Hunt 32 H32-23).
+//
+// add postgres printed only its usage without --env and now follows the same
+// rule (Hunt 33 H33-55).
 func TestAddBucketWithoutEnv(t *testing.T) {
+	bucket := func() int { return main.CmdAddBucket([]string{"files", "--app", "my-api"}) }
+	postgres := func() int { return main.CmdAddPostgres([]string{"--app", "my-api"}) }
 	for _, tc := range []struct {
 		name      string
 		app       string
+		run       func() int
 		wantAsked bool
 	}{
-		{"project app", `{"id":"a1","slug":"my-api","project_id":"p1"}`, true},
-		{"standalone app", `{"id":"a1","slug":"my-api"}`, false},
+		{"project app", `{"id":"a1","slug":"my-api","project_id":"p1"}`, bucket, true},
+		{"standalone app", `{"id":"a1","slug":"my-api"}`, bucket, false},
+		{"postgres project app", `{"id":"a1","slug":"my-api","project_id":"p1"}`, postgres, true},
+		{"postgres standalone app", `{"id":"a1","slug":"my-api"}`, postgres, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var beyondApp atomic.Bool
@@ -39,7 +47,7 @@ func TestAddBucketWithoutEnv(t *testing.T) {
 			t.Setenv("FAAS_TOKEN", "fp_test_x")
 			main.WithCwd(t, t.TempDir())
 			stderr, restore := main.CaptureStderr(t)
-			code := main.CmdAddBucket([]string{"files", "--app", "my-api"})
+			code := tc.run()
 			restore()
 			asked := strings.Contains(stderr.String(), "--env is required outside a linked project")
 			if asked != tc.wantAsked || code == 0 && tc.wantAsked {

@@ -3183,8 +3183,11 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 		// ADR-20261107160000: the serving instance's identity, which a
 		// restored process's environment cannot reflect.
 		Identity *resumeIdentityWire `json:"identity,omitempty"`
+		// ADR-20261031193635: reload the environment branch's identity
+		// through after_restore and echo its digest in the timing frame.
+		IdentityReload bool `json:"identityReload,omitempty"`
 	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy), Traceparent: traceparent, EventPublishVerdict: true,
-		QualificationReceipt: qualificationReceipt, Identity: resumeIdentityWireFromContext(ctx)})
+		QualificationReceipt: qualificationReceipt, Identity: resumeIdentityWireFromContext(ctx), IdentityReload: l.restoreIdentity.pending()})
 	if err != nil {
 		return fmt.Errorf("vmm: marshal resume body: %w", err)
 	}
@@ -3231,6 +3234,13 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 	}
 	guest, err := readResumeCapabilities(conn)
 	if err != nil {
+		return err
+	}
+	guestIdentity := ""
+	if guest != nil {
+		guestIdentity = guest.IdentityDigest
+	}
+	if err := checkRestoreIdentityAck(l.restoreIdentity, guestIdentity); err != nil {
 		return err
 	}
 	if validatePeer != nil {

@@ -6,7 +6,7 @@ import (
 )
 
 // Manager is the production Validator impl: it consults the Cache
-// keyed by Rule.SchemaDigest, compiles on miss, and forwards to the
+// keyed by Rule.SchemaDigest, recompiles the policy's source on miss, and forwards to the
 // cached *CompiledSchema. The cmd-side adapter
 // (cmd/gatewayd-internal/edge_validate.go) wires one of these per
 // daemon process.
@@ -40,6 +40,9 @@ func (m *Manager) Cache() Cache { return m.cache }
 // the cmd-side logs it as a 500 (broken schema is a deploy bug,
 // not a customer request failure).
 func (m *Manager) CompileSchema(schema []byte, rejectUnknownFields bool) (*CompiledSchema, error) {
+	if compiled, ok := m.cache.Get(schemaDigest(schema, rejectUnknownFields)); ok {
+		return compiled, nil
+	}
 	compiled, err := Compile(schema, rejectUnknownFields)
 	if err != nil {
 		return nil, err
@@ -52,11 +55,9 @@ func (m *Manager) CompileSchema(schema []byte, rejectUnknownFields bool) (*Compi
 //
 //  1. Cache hit on Rule.SchemaDigest → validate against the
 //     cached *CompiledSchema.
-//  2. Cache miss (the cmd-side pre-compiled at load time so this
-//     path is rare; defensive for forgotten loads or Reset
-//     races) → compile the body inline. This should not happen
-//     in production but is a safety net so a single bad edge
-//     rule doesn't 500 the gateway on first sight.
+//  2. Cache miss after eviction or Reset → verify and recompile the immutable
+//     source retained by the loaded policy. The compiled pointer stays live
+//     for this call even if another load immediately evicts its LRU entry.
 //
 // The body is read once and passed through; we don't re-buffer.
 func (m *Manager) Validate(ctx context.Context, req *In, rule *Rule) (*Result, error) {
@@ -68,12 +69,14 @@ func (m *Manager) Validate(ctx context.Context, req *In, rule *Rule) (*Result, e
 	}
 	compiled, ok := m.cache.Get(rule.SchemaDigest)
 	if !ok {
-		// Defensive miss. The cmd-side should have pre-compiled
-		// every rule; if it didn't, we surface a structured
-		// error so the handler can return 500 (broken schema
-		// is a deploy bug).
-		return nil, fmt.Errorf("%w: schema digest %x not in cache",
-			ErrSchemaInvalid, rule.SchemaDigest[:8])
+		if len(rule.Schema) == 0 || schemaDigest(rule.Schema, rule.RejectUnknownFields) != rule.SchemaDigest {
+			return nil, fmt.Errorf("%w: schema digest %x has no matching source", ErrSchemaInvalid, rule.SchemaDigest[:8])
+		}
+		var err error
+		compiled, err = m.CompileSchema(rule.Schema, rule.RejectUnknownFields)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	fe, err := compiled.Validate(req.Body)

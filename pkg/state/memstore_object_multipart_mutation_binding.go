@@ -32,6 +32,6 @@ func (m *MemStore) ReadObjectMultipartMutation(ctx context.Context, u ObjectMult
 
 func (m *MemStore) retireMultipartMutationLocked(id string) {
 	if receipt, ok := m.objectMutations[id]; ok && receipt.MultipartUploadID == id && !objectMultipartLive(m.objectMultipartUploads[id].State) {
-		delete(m.objectMutations, id)
+		m.dropObjectMutationLocked(id)
 	}
 }
