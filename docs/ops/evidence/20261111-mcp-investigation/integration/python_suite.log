@@ -1,0 +1,201 @@
+127.0.0.1 - - [11/Nov/2026 17:55:56] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/list","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.16063300063251518}
+127.0.0.1 - - [11/Nov/2026 17:55:56] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/list","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.10458799988555256}
+127.0.0.1 - - [11/Nov/2026 17:55:56] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/list","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.10293099967384478}
+127.0.0.1 - - [11/Nov/2026 17:55:56] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/list","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.10211800054094056}
+127.0.0.1 - - [11/Nov/2026 17:55:57] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:55:57] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:55:57] "POST /mcp HTTP/1.1" 413 -
+127.0.0.1 - - [11/Nov/2026 17:55:57] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:55:57] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"subscriptions/listen","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.3718329999173875,"stream_duration_ms":0.13923400001658592}
+127.0.0.1 - - [11/Nov/2026 17:55:58] "POST /mcp HTTP/1.1" 200 -
+127.0.0.1 - - [11/Nov/2026 17:55:59] "POST /mcp HTTP/1.1" 200 -
+127.0.0.1 - - [11/Nov/2026 17:55:59] "POST /mcp HTTP/1.1" 200 -
+127.0.0.1 - - [11/Nov/2026 17:55:59] "POST /mcp HTTP/1.1" 404 -
+127.0.0.1 - - [11/Nov/2026 17:55:59] "POST /mcp HTTP/1.1" 404 -
+127.0.0.1 - - [11/Nov/2026 17:55:59] "POST /mcp HTTP/1.1" 200 -
+127.0.0.1 - - [11/Nov/2026 17:55:59] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.07349400038947351}
+127.0.0.1 - - [11/Nov/2026 17:56:00] "GET /healthz HTTP/1.1" 200 -
+127.0.0.1 - - [11/Nov/2026 17:56:00] "OPTIONS /mcp HTTP/1.1" 204 -
+127.0.0.1 - - [11/Nov/2026 17:56:00] "OPTIONS /mcp HTTP/1.1" 403 -
+127.0.0.1 - - [11/Nov/2026 17:56:00] "OPTIONS /mcp HTTP/1.1" 405 -
+127.0.0.1 - - [11/Nov/2026 17:56:00] "OPTIONS /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:56:00] "OPTIONS /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:56:00] "OPTIONS /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:56:00] "OPTIONS /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:56:00] "OPTIONS /missing HTTP/1.1" 404 -
+127.0.0.1 - - [11/Nov/2026 17:56:01] "OPTIONS /mcp HTTP/1.1" 403 -
+127.0.0.1 - - [11/Nov/2026 17:56:01] "POST /mcp HTTP/1.1" 401 -
+127.0.0.1 - - [11/Nov/2026 17:56:01] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/list","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.10623300022416515}
+127.0.0.1 - - [11/Nov/2026 17:56:02] "POST /mcp HTTP/1.1" 415 -
+127.0.0.1 - - [11/Nov/2026 17:56:02] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/list","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.06597100036742631}
+127.0.0.1 - - [11/Nov/2026 17:56:02] "POST /mcp HTTP/1.1" 403 -
+127.0.0.1 - - [11/Nov/2026 17:56:02] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/list","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.10221499996987404}
+127.0.0.1 - - [11/Nov/2026 17:56:02] "POST /unknown HTTP/1.1" 404 -
+127.0.0.1 - - [11/Nov/2026 17:56:02] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/list","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.16808199961815262}
+127.0.0.1 - - [11/Nov/2026 17:56:02] "POST /mcp HTTP/1.1" 503 -
+127.0.0.1 - - [11/Nov/2026 17:56:02] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/list","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.0983950003501377}
+127.0.0.1 - - [11/Nov/2026 17:56:02] "POST /mcp HTTP/1.1" 503 -
+127.0.0.1 - - [11/Nov/2026 17:56:02] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/list","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.09039799988386221}
+127.0.0.1 - - [11/Nov/2026 17:56:03] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/list","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.10783800007629907}
+127.0.0.1 - - [11/Nov/2026 17:56:03] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/list","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.13446100001601735}
+127.0.0.1 - - [11/Nov/2026 17:56:03] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/list","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.1295570000365842}
+127.0.0.1 - - [11/Nov/2026 17:56:03] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.08828800037008477}
+127.0.0.1 - - [11/Nov/2026 17:56:03] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:56:03] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:56:03] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:56:03] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:56:03] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:56:03] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:56:03] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:56:03] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:56:03] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.08526100009476067}
+127.0.0.1 - - [11/Nov/2026 17:56:03] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:56:03] "POST /mcp HTTP/1.1" 202 -
+127.0.0.1 - - [11/Nov/2026 17:56:04] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"initialize","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.013748000128543936}
+127.0.0.1 - - [11/Nov/2026 17:56:04] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:56:04] "POST /mcp HTTP/1.1" 400 -
+{"event":"mcp_protocol_request","method":"initialize","tool":"none","outcome":"rpc_error","stream_outcome":"complete","execution_duration_ms":0.009469000360695645}
+127.0.0.1 - - [11/Nov/2026 17:56:04] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"server/discover","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.009122999472310767}
+127.0.0.1 - - [11/Nov/2026 17:56:04] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:56:04] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"initialize","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.009717000466480386}
+127.0.0.1 - - [11/Nov/2026 17:56:04] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"initialize","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.008322999747178983}
+127.0.0.1 - - [11/Nov/2026 17:56:04] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"initialize","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.009006000254885294}
+127.0.0.1 - - [11/Nov/2026 17:56:04] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"server/discover","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.009212999430019408}
+127.0.0.1 - - [11/Nov/2026 17:56:04] "POST /mcp HTTP/1.1" 202 -
+127.0.0.1 - - [11/Nov/2026 17:56:05] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"resources/read","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.11783299942180747}
+127.0.0.1 - - [11/Nov/2026 17:56:05] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/list","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.10296100026607746}
+127.0.0.1 - - [11/Nov/2026 17:56:05] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/list","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.09170499924948672}
+127.0.0.1 - - [11/Nov/2026 17:56:06] "GET /healthz HTTP/1.1" 503 -
+127.0.0.1 - - [11/Nov/2026 17:56:07] "GET /healthz HTTP/1.1" 200 -
+127.0.0.1 - - [11/Nov/2026 17:56:07] "GET /healthz HTTP/1.1" 200 -
+127.0.0.1 - - [11/Nov/2026 17:56:07] "GET /healthz HTTP/1.1" 200 -
+127.0.0.1 - - [11/Nov/2026 17:56:07] "GET /healthz HTTP/1.1" 403 -
+127.0.0.1 - - [11/Nov/2026 17:56:08] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"greet","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.06084100004954962}
+127.0.0.1 - - [11/Nov/2026 17:56:08] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"add","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.05603199952020077}
+/tmp/gregale-mcp-python-deps/psycopg_pool/pool.py:134: DeprecationWarning: the default for the ConnectionPool 'open' parameter will become 'False' in a future release. Please use open={True|False} explicitly, or use the pool as context manager using: `with ConnectionPool(...) as pool: ...`
+  warnings.warn(
+{"event": "mcp_task_drain", "state": "draining", "active_tasks": 0, "timeout_seconds": 10}
+{"event": "mcp_task_drain", "state": "completed", "unfinished_tasks": 0}
+{"event": "mcp_task_drain", "state": "draining", "active_tasks": 0, "timeout_seconds": 10}
+{"event": "mcp_task_drain", "state": "completed", "unfinished_tasks": 0}
+{"event": "mcp_task_drain", "state": "draining", "active_tasks": 0, "timeout_seconds": 10}
+{"event": "mcp_task_drain", "state": "completed", "unfinished_tasks": 0}
+127.0.0.1 - - [11/Nov/2026 17:56:15] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.0866089994815411}
+127.0.0.1 - - [11/Nov/2026 17:56:15] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.08954799977800576}
+127.0.0.1 - - [11/Nov/2026 17:56:15] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.09009499990497716}
+127.0.0.1 - - [11/Nov/2026 17:56:15] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.06659800055786036}
+127.0.0.1 - - [11/Nov/2026 17:56:15] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.07853700026316801}
+127.0.0.1 - - [11/Nov/2026 17:56:15] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.0474600001325598}
+127.0.0.1 - - [11/Nov/2026 17:56:15] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.05441899975267006}
+127.0.0.1 - - [11/Nov/2026 17:56:15] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.09189800039166585}
+127.0.0.1 - - [11/Nov/2026 17:56:15] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.05662299918185454}
+127.0.0.1 - - [11/Nov/2026 17:56:15] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.11835499935841653}
+127.0.0.1 - - [11/Nov/2026 17:56:15] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:56:15] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.10078300056193257}
+127.0.0.1 - - [11/Nov/2026 17:56:17] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.14043200008018175}
+127.0.0.1 - - [11/Nov/2026 17:56:17] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.09392699939780869}
+127.0.0.1 - - [11/Nov/2026 17:56:17] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.15580399940517964}
+127.0.0.1 - - [11/Nov/2026 17:56:17] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.14636899959441507}
+127.0.0.1 - - [11/Nov/2026 17:56:17] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.08334699941769941}
+127.0.0.1 - - [11/Nov/2026 17:56:17] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.2317219996257336}
+127.0.0.1 - - [11/Nov/2026 17:56:17] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.08661799984110985}
+127.0.0.1 - - [11/Nov/2026 17:56:17] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.14900299993314547}
+127.0.0.1 - - [11/Nov/2026 17:56:17] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.11790900043706642}
+127.0.0.1 - - [11/Nov/2026 17:56:17] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.059652999880199786}
+127.0.0.1 - - [11/Nov/2026 17:56:17] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.11030200039385818}
+127.0.0.1 - - [11/Nov/2026 17:56:17] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.16194799991353648}
+127.0.0.1 - - [11/Nov/2026 17:56:17] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.08005299969227053}
+127.0.0.1 - - [11/Nov/2026 17:56:17] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.34040500031551346}
+127.0.0.1 - - [11/Nov/2026 17:56:17] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.16105200029414846}
+127.0.0.1 - - [11/Nov/2026 17:56:17] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.19284599966340465}
+127.0.0.1 - - [11/Nov/2026 17:56:19] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.51852999968105}
+127.0.0.1 - - [11/Nov/2026 17:56:19] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.17530500008433592}
+127.0.0.1 - - [11/Nov/2026 17:56:19] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.4550809999273042}
+127.0.0.1 - - [11/Nov/2026 17:56:19] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.6891290004205075}
+127.0.0.1 - - [11/Nov/2026 17:56:19] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.3404199997021351}
+127.0.0.1 - - [11/Nov/2026 17:56:19] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.16921099995670374}
+127.0.0.1 - - [11/Nov/2026 17:56:19] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.07065200043143705}
+127.0.0.1 - - [11/Nov/2026 17:56:19] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.5959990003248095}
+127.0.0.1 - - [11/Nov/2026 17:56:19] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.08927399994718144}
+127.0.0.1 - - [11/Nov/2026 17:56:19] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.12142200012021931}
+127.0.0.1 - - [11/Nov/2026 17:56:19] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.06468499941547634}
+127.0.0.1 - - [11/Nov/2026 17:56:19] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.0853080000524642}
+127.0.0.1 - - [11/Nov/2026 17:56:19] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.15211899972200627}
+127.0.0.1 - - [11/Nov/2026 17:56:19] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.1399530001435778}
+127.0.0.1 - - [11/Nov/2026 17:56:19] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"tool_error","stream_outcome":"complete","execution_duration_ms":0.06795599983888678}
+127.0.0.1 - - [11/Nov/2026 17:56:19] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.14815399936196627}
+----------------------------------------------------------------------
+Ran 101 tests in 24.128s
+
+OK

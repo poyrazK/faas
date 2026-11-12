@@ -23,8 +23,8 @@ func TestDataAPIHooksSQLRendersTheSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"CREATE TABLE catalog.gregale_change_events", "ENABLE ROW LEVEL SECURITY", "CREATE OR REPLACE FUNCTION gregale_hooks.capture()", "CREATE TABLE IF NOT EXISTS catalog.gregale_change_drops", "CREATE OR REPLACE FUNCTION gregale_hooks.discard_waiting()", "SECURITY DEFINER",
-		"CREATE FUNCTION catalog.gregale_change_claim", "CREATE FUNCTION catalog.gregale_change_settle", "SELECT gregale_hooks.enable('catalog.orders')"} {
+	for _, want := range []string{"CREATE TABLE IF NOT EXISTS catalog.gregale_change_events", "ENABLE ROW LEVEL SECURITY", "CREATE OR REPLACE FUNCTION gregale_hooks.capture()", "CREATE TABLE IF NOT EXISTS catalog.gregale_change_drops", "CREATE OR REPLACE FUNCTION gregale_hooks.discard_waiting()", "SECURITY DEFINER",
+		"CREATE OR REPLACE FUNCTION catalog.gregale_change_claim", "CREATE OR REPLACE FUNCTION catalog.gregale_change_settle", "SELECT gregale_hooks.enable('catalog.orders')"} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("missing %q", want)
 		}
@@ -307,7 +307,8 @@ func TestDataAPIHooksBacklogBound(t *testing.T) {
 		"gregale:backlog-bound", "FROM catalog.gregale_change_events WHERE failed_at IS NULL", "REVOKE ALL ON FUNCTION gregale_hooks.capture() FROM PUBLIC;",
 		// Amendment 3: the drop note, retries under new identifiers and discard_waiting.
 		"gregale:drop-tracking", "CREATE TABLE IF NOT EXISTS catalog.gregale_change_drops", "CREATE OR REPLACE FUNCTION gregale_hooks.retry_failed()",
-		"CREATE OR REPLACE FUNCTION gregale_hooks.discard_waiting()", "-- gregale:upgrade-end"} {
+		"CREATE OR REPLACE FUNCTION gregale_hooks.discard_waiting()", "ADD COLUMN IF NOT EXISTS schema_version",
+		"CREATE TABLE IF NOT EXISTS gregale_hooks.schema_versions", "CREATE OR REPLACE FUNCTION gregale_hooks.set_schema_version", "-- gregale:upgrade-end"} {
 		if !strings.Contains(upgrade, want) {
 			t.Fatalf("upgrade lacks %q:\n%s", want, upgrade)
 		}

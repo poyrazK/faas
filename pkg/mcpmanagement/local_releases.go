@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -45,6 +46,7 @@ const (
 var envKey = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
 type localSourcePlan struct {
+	Uploaded    bool            `json:"uploaded,omitempty"`
 	Path        string          `json:"path"`
 	Fingerprint string          `json:"fingerprint"`
 	Files       int             `json:"files"`
@@ -63,6 +65,7 @@ type envChangePlan struct {
 }
 
 type planLocalDeployArgs struct {
+	uploaded   bool
 	Path       string `json:"path" jsonschema:"Absolute project directory"`
 	App        string `json:"app" jsonschema:"App slug; created on apply if missing"`
 	Reason     string `json:"reason" jsonschema:"Reviewable release reason; at most 280 characters"`
@@ -119,7 +122,7 @@ func (m *management) planDirDeploy(ctx context.Context, dir string, args planLoc
 	if len(shape) > maxLocalShapeBytes || !json.Valid(shape) || !bytes.HasPrefix(bytes.TrimSpace(shape), []byte("{")) {
 		return nil, invalid("invalid_response", "the CLI returned no app plan; run `gregale deploy --plan` in the directory")
 	}
-	source := &localSourcePlan{Path: dir, Fingerprint: fingerprint, Files: files, Bytes: size, CreateOnly: args.CreateOnly, Shape: json.RawMessage(bytes.TrimSpace(shape))}
+	source := &localSourcePlan{Uploaded: args.uploaded, Path: dir, Fingerprint: fingerprint, Files: files, Bytes: size, CreateOnly: args.CreateOnly, Shape: json.RawMessage(bytes.TrimSpace(shape))}
 	account, err := m.client.Whoami(ctx)
 	if err != nil {
 		return nil, err
@@ -445,13 +448,18 @@ func localProjectDir(path string) (string, error) {
 	}
 }
 
-// fingerprintTree hashes the path, size, mode and modification time of every
+// fingerprintTree hashes the path, contents, size, mode and modification time of every
 // regular file outside .git, in lexical order. Apply refuses a changed tree.
 func fingerprintTree(dir string) (string, int, int64, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return "", 0, 0, invalid("invalid_path", "could not open the project directory")
+	}
+	defer func() { _ = root.Close() }()
 	h := sha256.New()
 	files := 0
 	var size int64
-	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+	err = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -477,6 +485,15 @@ func fingerprintTree(dir string) (string, int, int64, error) {
 		}
 		size += info.Size()
 		_, err = fmt.Fprintf(h, "%s\x00%d\x00%o\x00%d\n", filepath.ToSlash(rel), info.Size(), info.Mode().Perm(), info.ModTime().UnixNano())
+		if err != nil {
+			return err
+		}
+		f, err := root.Open(rel)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		_, err = io.Copy(h, f)
 		return err
 	})
 	var local *inputError

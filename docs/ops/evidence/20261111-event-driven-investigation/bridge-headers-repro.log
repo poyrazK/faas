@@ -1,0 +1,13 @@
+=== RUN   TestAuditAcceptedEventIdentityCrossesBridge
+=== RUN   TestAuditAcceptedEventIdentityCrossesBridge/control
+=== RUN   TestAuditAcceptedEventIdentityCrossesBridge/id
+    zz_event_bridge_headers_audit_test.go:99: accepted event id cannot cross production bridge transport (handler hits=0): Post "http://unix/": http2: invalid HTTP header value for header "X-Gregale-Event-Id"
+=== RUN   TestAuditAcceptedEventIdentityCrossesBridge/type
+    zz_event_bridge_headers_audit_test.go:99: accepted event type cannot cross production bridge transport (handler hits=0): Post "http://unix/": http2: invalid HTTP header value for header "X-Gregale-Event-Type"
+--- FAIL: TestAuditAcceptedEventIdentityCrossesBridge (0.00s)
+    --- PASS: TestAuditAcceptedEventIdentityCrossesBridge/control (0.00s)
+    --- FAIL: TestAuditAcceptedEventIdentityCrossesBridge/id (0.00s)
+    --- FAIL: TestAuditAcceptedEventIdentityCrossesBridge/type (0.00s)
+FAIL
+FAIL	github.com/onebox-faas/faas/pkg/vmmdgrpc	0.068s
+FAIL

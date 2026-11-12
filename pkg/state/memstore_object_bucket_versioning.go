@@ -14,6 +14,7 @@ func (m *MemStore) saveObjectVersioningLocked(j ObjectBucketVersioning) {
 		m.objectBucketVersioning = map[string]ObjectBucketVersioning{}
 	}
 	m.objectBucketVersioning[j.BucketID] = cloneObjectVersioning(j)
+	m.markObjectBucketMutatedLocked(j.BucketID)
 }
 func (m *MemStore) ownedObjectVersioningLocked(account, app, bucket string) (ObjectBucketVersioning, error) {
 	b, ok := m.objectBuckets[bucket]
@@ -210,6 +211,7 @@ func (m *MemStore) AdvanceObjectBucketVersioning(ctx context.Context, bucket, to
 			m.objectCapacityJobs = map[string]ObjectCapacityReconciliation{}
 		}
 		m.objectCapacityJobs[c.ID] = c
+		m.markObjectBucketMutatedLocked(c.BucketID)
 		j.CapacityJobID = c.ID
 	}
 	m.saveObjectVersioningLocked(j)

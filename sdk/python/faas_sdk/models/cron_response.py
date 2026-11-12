@@ -51,6 +51,8 @@ class CronResponse:
     suspended_reason: CronResponseSuspendedReason | Unset = UNSET
     """Why an enabled schedule is paused. Redeploy the app successfully to clear no_live_deployment."""
     last_fired_at: datetime.datetime | None | Unset = UNSET
+    environment: str | Unset = UNSET
+    """Project environment the cron runs in; omitted for production."""
     schedule_policy: SchedulePolicy | Unset = UNSET
     """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
     a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
@@ -105,6 +107,8 @@ class CronResponse:
         else:
             last_fired_at = self.last_fired_at
 
+        environment = self.environment
+
         schedule_policy: dict[str, Any] | Unset = UNSET
         if not isinstance(self.schedule_policy, Unset):
             schedule_policy = self.schedule_policy.to_dict()
@@ -145,6 +149,8 @@ class CronResponse:
             field_dict["suspended_reason"] = suspended_reason
         if last_fired_at is not UNSET:
             field_dict["last_fired_at"] = last_fired_at
+        if environment is not UNSET:
+            field_dict["environment"] = environment
         if schedule_policy is not UNSET:
             field_dict["schedule_policy"] = schedule_policy
         if failure_rules is not UNSET:
@@ -212,6 +218,8 @@ class CronResponse:
 
         last_fired_at = _parse_last_fired_at(d.pop("last_fired_at", UNSET))
 
+        environment = d.pop("environment", UNSET)
+
         _schedule_policy = d.pop("schedule_policy", UNSET)
         schedule_policy: SchedulePolicy | Unset
         if isinstance(_schedule_policy, Unset):
@@ -244,6 +252,7 @@ class CronResponse:
             retry_backoff_seconds=retry_backoff_seconds,
             suspended_reason=suspended_reason,
             last_fired_at=last_fired_at,
+            environment=environment,
             schedule_policy=schedule_policy,
             failure_rules=failure_rules,
         )

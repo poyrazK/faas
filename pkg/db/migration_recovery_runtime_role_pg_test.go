@@ -43,8 +43,15 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$`); err != nil {
 		return valid.Valid && valid.Bool
 	}
 	exec("CREATE TABLE recovery_runtime_probe (id serial PRIMARY KEY, v text)")
+	exec("CREATE FUNCTION recovery_private_probe() RETURNS boolean LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS 'SELECT true'")
 	if !writersValid() {
 		t.Fatal("an owner-only schema is not valid")
+	}
+	// Private trigger functions retain an explicit owner-only ACL after
+	// revoking PostgreSQL's default PUBLIC execution permission.
+	exec("REVOKE ALL ON FUNCTION recovery_private_probe() FROM PUBLIC")
+	if !writersValid() {
+		t.Fatal("an explicit owner-only function ACL is rejected")
 	}
 	exec("GRANT USAGE ON SCHEMA " + schema + " TO faas_runtime")
 	exec("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA " + schema + " TO faas_runtime")
@@ -61,6 +68,9 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$`); err != nil {
 		{"GRANT CREATE ON SCHEMA " + schema + " TO faas_runtime", "REVOKE CREATE ON SCHEMA " + schema + " FROM faas_runtime"},
 		{"ALTER DEFAULT PRIVILEGES IN SCHEMA " + schema + " GRANT TRUNCATE ON TABLES TO faas_runtime", "ALTER DEFAULT PRIVILEGES IN SCHEMA " + schema + " REVOKE TRUNCATE ON TABLES FROM faas_runtime"},
 		{"GRANT INSERT ON recovery_runtime_probe TO PUBLIC", "REVOKE INSERT ON recovery_runtime_probe FROM PUBLIC"},
+		{"GRANT EXECUTE ON FUNCTION recovery_private_probe() TO PUBLIC", "REVOKE EXECUTE ON FUNCTION recovery_private_probe() FROM PUBLIC"},
+		{"GRANT EXECUTE ON FUNCTION recovery_private_probe() TO faas_runtime", "REVOKE EXECUTE ON FUNCTION recovery_private_probe() FROM faas_runtime"},
+		{"GRANT EXECUTE ON FUNCTION recovery_private_probe() TO faas_runtime WITH GRANT OPTION", "REVOKE EXECUTE ON FUNCTION recovery_private_probe() FROM faas_runtime"},
 	} {
 		exec(tc.grant)
 		if writersValid() {

@@ -192,6 +192,12 @@ func (s *MemoryStore) UsageSnapshot(_ context.Context, accountID string, periodS
 			snapshot.HistoryByteSeconds, err = addUsage(snapshot.HistoryByteSeconds, record.Quantity)
 		case MeterEgressBytes:
 			snapshot.EgressBytes, err = addUsage(snapshot.EgressBytes, record.Quantity)
+			if err == nil {
+				if snapshot.DatabaseEgress == nil {
+					snapshot.DatabaseEgress = map[string]int64{}
+				}
+				snapshot.DatabaseEgress[record.DatabaseID], err = addUsage(snapshot.DatabaseEgress[record.DatabaseID], record.Quantity)
+			}
 		}
 		if err != nil {
 			return UsageSnapshot{}, err

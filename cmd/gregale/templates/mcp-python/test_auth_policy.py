@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
-from auth import Authenticator
+from auth import AuthContext, Authenticator
 from server import CURRENT_PROTOCOL, MCPHandler, dispatch
 
 
@@ -40,7 +40,7 @@ class ScopePolicyTest(unittest.TestCase):
     def setUp(self):
         self.auth = authenticator()
         self.reader = {"mcp:catalog"}
-        self.writer = {"mcp:catalog", "records:read", "reports:read"}
+        self.writer = AuthContext({"mcp:catalog", "records:read", "reports:read"}, subject="demo-caller-a")
 
     def test_catalogs_filter_resources_templates_and_prompts_by_scopes(self):
         status, result = dispatch({"id": 1, "method": "resources/list"}, CURRENT_PROTOCOL, self.auth, self.reader)
@@ -137,9 +137,9 @@ class ScopePolicyTest(unittest.TestCase):
         }, CURRENT_PROTOCOL, self.auth, self.writer)
         self.assertEqual(status, 200)
         self.assertEqual(result["result"]["completion"]["values"], [
-            "example-1", "example-2", "example-3",
+            "example-1", "example-3",
         ])
-        self.assertEqual(result["result"]["completion"]["total"], 3)
+        self.assertEqual(result["result"]["completion"]["total"], 2)
         self.assertFalse(result["result"]["completion"]["hasMore"])
 
     def test_completion_rejects_unknown_reference_or_argument(self):

@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -81,6 +82,9 @@ type plannedFunction struct {
 	root    string // relative to cwd, as passed to --path
 	runtime string
 	handler string
+	// calls is what the function may call through its typed client
+	// (ADR-20261111150000).
+	calls gregalemanifest.FunctionCalls
 }
 
 // functionSetManifest returns the manifest's functions when this deploy is a
@@ -122,6 +126,16 @@ func (d functionSetDeploy) plan() ([]plannedFunction, error) {
 	if err != nil {
 		return nil, err
 	}
+	specs := make([]gregalemanifest.FunctionSpec, 0, len(resolved))
+	for _, p := range resolved {
+		specs = append(specs, p.Spec)
+	}
+	graph, err := gregalemanifest.FunctionCallGraph(specs, func(name string) string {
+		return gregalemanifest.FunctionSlug(d.projectSlug, name)
+	})
+	if err != nil {
+		return nil, err
+	}
 	planned := make([]plannedFunction, 0, len(resolved))
 	for _, p := range resolved {
 		absRoot := filepath.Join(d.projectDir, filepath.FromSlash(p.Root))
@@ -129,7 +143,7 @@ func (d functionSetDeploy) plan() ([]plannedFunction, error) {
 		if err != nil {
 			root = absRoot
 		}
-		planned = append(planned, plannedFunction{spec: p.Spec, slug: p.Slug, root: root, runtime: p.Runtime, handler: p.Handler})
+		planned = append(planned, plannedFunction{spec: p.Spec, slug: p.Slug, root: root, runtime: p.Runtime, handler: p.Handler, calls: graph[p.Spec.Name]})
 	}
 	return planned, nil
 }
@@ -463,7 +477,8 @@ func (d functionSetDeploy) lookupEnv() func(string) string {
 // env and secrets reach its first wake. A new function's app is created
 // first, without a deployment.
 func (d functionSetDeploy) applySettings(ctx context.Context, client functionSetClient, fn plannedFunction) error {
-	if !fn.spec.HasPreDeploySettings() {
+	callable := len(fn.calls.Names) > 0
+	if !fn.spec.HasPreDeploySettings() && !callable && len(fn.spec.InputSchema) == 0 {
 		return nil
 	}
 	app, err := client.GetApp(ctx, fn.slug)
@@ -485,6 +500,20 @@ func (d functionSetDeploy) applySettings(ctx context.Context, client functionSet
 	}
 	if hooksChanged {
 		update.AfterRestore, update.BeforeCheckpoint, changed = after, before, true
+	}
+	// Private bindings to the apps the function may call, and the name map
+	// its typed client reads (ADR-20261111150000 §2).
+	if callable {
+		if bindings, bound := fn.calls.BindingUpdate(app); bound {
+			update.ServiceBindingTargets, update.ServiceBindingPolicy, changed = bindings.ServiceBindingTargets, bindings.ServiceBindingPolicy, true
+		}
+		if !maps.Equal(app.FunctionCallables, fn.calls.Names) {
+			names := maps.Clone(fn.calls.Names)
+			update.FunctionCallables, changed = &names, true
+		}
+	}
+	if schema, set := functionInputSchemaUpdate(app.FunctionInputSchema, fn.spec.InputSchema); set {
+		update.FunctionInputSchema, changed = &schema, true
 	}
 	if changed {
 		if _, err := client.UpdateApp(ctx, fn.slug, update); err != nil {
@@ -913,4 +942,28 @@ func deployFunctionSet(ctx context.Context, d functionSetDeploy) int {
 		}
 	}
 	return d.run(ctx, client)
+}
+
+// functionInputSchemaUpdate is the function_input_schema PATCH for a
+// function's declared input schema: set when it differs, {} to clear one the
+// code no longer declares (ADR-20261111150000 §1).
+func functionInputSchemaUpdate(current, declared json.RawMessage) (json.RawMessage, bool) {
+	if len(declared) == 0 {
+		if len(current) == 0 {
+			return nil, false
+		}
+		return json.RawMessage(`{}`), true
+	}
+	if jsonEqual(current, declared) {
+		return nil, false
+	}
+	return declared, true
+}
+
+func jsonEqual(a, b json.RawMessage) bool {
+	var x, y any
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return false
+	}
+	return reflect.DeepEqual(x, y)
 }

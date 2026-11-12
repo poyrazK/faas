@@ -9,13 +9,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-type executionEventQuerier interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}
+type executionEventQuerier = sqlc.DBTX
 
 func (s *PgStore) AppendExecutionEvent(ctx context.Context, accountID, executionID string, eventType ExecutionEventType, payload json.RawMessage, at time.Time) (ExecutionEvent, error) {
 	if err := validateExecutionEvent(accountID, executionID, eventType, payload, at); err != nil {
@@ -40,15 +37,9 @@ func appendExecutionEvent(ctx context.Context, q executionEventQuerier, accountI
 		}
 		return ExecutionEvent{}, fmt.Errorf("state: append execution event: %w", err)
 	}
-	if _, err := q.Exec(ctx, `
-		delete from execution_events
-		 where execution_id = $1
-		   and id < coalesce((
-			 select id from execution_events
-			  where execution_id = $1
-			  order by id desc offset $2 limit 1
-		   ), 0)
-	`, mustPgUUID(executionID), executionEventReplayLimit-1); err != nil {
+	if err := sqlc.New().ExecutionPruneReplayEvents(ctx, q, sqlc.ExecutionPruneReplayEventsParams{
+		ExecutionID: mustPgUUID(executionID), KeepOffset: executionEventReplayLimit - 1, PrunedAt: executionTime(at),
+	}); err != nil {
 		return ExecutionEvent{}, fmt.Errorf("state: prune execution events: %w", err)
 	}
 	event.CreatedAt = createdAt.UTC()
@@ -62,29 +53,16 @@ func (s *PgStore) ListExecutionEvents(ctx context.Context, accountID, executionI
 	if limit <= 0 || limit > executionEventReplayLimit {
 		limit = executionEventReplayLimit
 	}
-	rows, err := s.pool.Query(ctx, `
-		select id, execution_id::text, account_id::text, event_type, payload, created_at
-		  from execution_events
-		 where account_id = $1 and execution_id = $2 and id > $3
-		 order by id
-		 limit $4
-	`, mustPgUUID(accountID), mustPgUUID(executionID), afterSequence, limit)
+	rows, err := sqlc.New().ExecutionReplayEvents(ctx, s.pool, sqlc.ExecutionReplayEventsParams{
+		AccountID: mustPgUUID(accountID), ExecutionID: mustPgUUID(executionID), AfterSequence: afterSequence, PageLimit: int32(limit),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("state: list execution events: %w", err)
 	}
-	defer rows.Close()
 	out := make([]ExecutionEvent, 0, limit)
-	for rows.Next() {
-		var event ExecutionEvent
-		var createdAt time.Time
-		if err := rows.Scan(&event.Sequence, &event.ExecutionID, &event.AccountID, &event.Type, &event.Payload, &createdAt); err != nil {
-			return nil, fmt.Errorf("state: scan execution event: %w", err)
-		}
-		event.CreatedAt = createdAt.UTC()
-		out = append(out, event)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("state: list execution events rows: %w", err)
+	for _, row := range rows {
+		out = append(out, ExecutionEvent{Sequence: row.ID, ExecutionID: row.ExecutionID, AccountID: row.AccountID,
+			Type: ExecutionEventType(row.EventType), Payload: append(json.RawMessage(nil), row.Payload...), CreatedAt: row.CreatedAt.Time.UTC()})
 	}
 	return out, nil
 }

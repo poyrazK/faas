@@ -293,7 +293,9 @@ schedd's config enables the scheduler and lists the database nodes.
 
 `pgproxyd` (`pkg/pgproxy`, `cmd/pgproxyd`) accepts PostgreSQL over TLS only
 (SSLRequest or PostgreSQL 17 direct TLS), routes by SNI
-`<database-id>.<host_suffix>` or an `endpoint=<id>` startup option, and runs
+`<database-id>.<host_suffix>` or an `endpoint=<id>` startup option (`-pooler`
+and `-ro` labels: transaction pooling below, read replicas in the
+amendment of 2026-11-11), and runs
 SCRAM-SHA-256 with the client against the role's verifier from
 `database_role_verifiers` before anything is woken. An unknown database or
 role gets a deterministic decoy verifier, so it fails exactly like a wrong
@@ -1233,6 +1235,24 @@ and flag it uses exists from 14 on.
   Provision took 9.5–15.5 s for 14–17 and 27.7 s for 18; the restores
   9.2–13.5 s.
 
+#### Amendment 2026-11-12: PostgreSQL 14 is dropped
+
+PostgreSQL 14 reached upstream end of life in November 2026. The owner chose
+not to support it at all ("drop 14 entirely"), on the native driver and on
+Neon alike, rather than offer an upgrade path out of it.
+
+- `dbguest.MinMajor` is 15, so guest-init, vmmd and schedd refuse a 14
+  boot, upgrade source or node major. `dbvm.PostgresImages` and the
+  `database_vmmd` role no longer pin a 14 image, so no node builds a 14
+  base. The native driver advertises 15–18 by default.
+- The Neon driver offers 15–18; 14 is no longer a retiring major.
+- A database still on 14 can no longer boot, restore or resize. None is
+  expected: Neon closed 14 to new databases first, and managed PostgreSQL
+  provisioning was not yet open in production. Check before deploying.
+- `database_nodes.postgres_majors`' CHECK still admits 14; narrowing it is a
+  later contract migration once no node row lists it.
+- The upgrade metal tests upgrade from 15 instead.
+
 ### In-place major upgrades
 
 PostgreSQL 14 reaches its end of life in November 2026, and a database
@@ -1554,8 +1574,8 @@ first copies the primary with `pg_basebackup -X stream` through the
 replication relay, holding the standby's slot. The standby streams on
 slot `gregale_standby` (bounded by `max_slot_wal_keep_size`, a quarter of
 the volume) and falls back to the archive. A hot standby reports `ready`
-in `postmaster.pid`; guest-init reports it as state `standby`, and it
-serves no client sessions. `OpPromote` promotes onto a new timeline, so a
+in `postmaster.pid`; guest-init reports it as state `standby`. It serves
+read sessions as the database's read replica (amendment 2026-11-11, below). `OpPromote` promotes onto a new timeline, so a
 promoted standby never writes archive files under the primary's names.
 `gregale.promote=1` promotes at boot (a failover while parked).
 
@@ -2248,6 +2268,69 @@ period kept serving.
   takes its counters as they are. Writes are read back from schedd's answer.
 - An older schedd answers the new RPCs `UNIMPLEMENTED` and reports neither
   field; the driver then fails the write, which the sweep retries.
+
+### Read replicas: the standby serves reads (amendment 2026-11-11)
+
+A production database's standby is a hot standby that holds every
+acknowledged commit, but it served nothing: every read went to the
+primary. Managed PostgreSQL services offer read replicas. This amendment
+lets the standby take the database's read sessions. Replicas beyond the
+standby come later.
+
+- **Endpoints.** `<id>-ro.<suffix>` is the database's direct read-only
+  endpoint and `<id>-ro-pooler.<suffix>` its pooled one. They take the same
+  credentials, certificate and DNS as `<id>` and `<id>-pooler`.
+- **Where reads go.** schedd's `DatabaseRuntime.replica_vmmd_target` names
+  the standby's node (`standby_node_id`) only while the database runs and
+  its standby runs, is synchronized (`standby_synced`) and sits on an
+  active node (`dbsched.VM.servesReads`). pgproxyd sends a read-only
+  endpoint's session there. It sends the session to the primary instead in
+  three cases:
+  - no standby serves reads, which includes every class but production;
+  - the replica does not log the session in within `ReplicaLoginTimeout`
+    (3 s);
+  - the replica login fails for any other reason. That includes a wrong
+    password, since a just-rotated password may not have replayed yet.
+
+  `pgproxyd_read_sessions_total{served_by}` counts where read-only server
+  sessions went.
+- **Read-only, as a guard.** Every read-only endpoint's session starts with
+  `default_transaction_read_only=on`, so a write fails on the primary as
+  it would on a standby. A client can turn this off, so it guards only
+  against mistakes. Read-only credentials remain the privilege boundary.
+- **Staleness.** "Synchronized" means flushed on the standby, not applied.
+  Replica reads trail the primary by the standby's replay, normally
+  milliseconds. A replica query that conflicts with replay can delay it by
+  up to `max_standby_streaming_delay` (30 s), and PostgreSQL then cancels
+  the query (40001).
+  - The standby monitor measures lag at flush, so replica queries never
+    make it drop the standby.
+  - `hot_standby_feedback` stays off. The standby's slot would otherwise
+    hold back the primary's vacuum while the standby is away.
+- **Bindings.** A read-only credential's URL is the pooled read-only
+  endpoint: the driver's `EndpointReadOnly`, which the credential sink
+  already prefers for `read_only` access.
+  - A read-only binding on a production database therefore reads from the
+    standby. It may not see a write made a moment earlier through a
+    read-write binding.
+  - Read-write, migration, Data API, auth and session credentials stay on
+    the primary.
+  - Qualification probes connect to the direct endpoint as before.
+- **Guest.** guest-init's data port also takes sessions in state
+  `standby`, and cancel requests reach a standby the same way.
+  - Before `OpPromote` it closes those sessions and refuses new ones, so a
+    read-only endpoint's session never ends up on a writable primary.
+  - If the promotion fails while PostgreSQL is still in recovery, the
+    standby takes sessions again.
+- **Billing.** No change. The standby's vCPU-seconds and volume already
+  count into the database's meters, and pgproxyd counts replica egress as
+  the database's.
+- **Version skew.** An older schedd names no replica. An older guest-init
+  refuses sessions on a standby, and pgproxyd answers that by using the
+  primary. No component needs to be deployed in any order.
+- **Later.** Asynchronous replicas beyond the HA standby, for more read
+  capacity and on other nodes. Metal evidence is still owed: a read on the
+  standby's node, a refused write, and sessions ended by a switchover.
 
 ## Phasing
 

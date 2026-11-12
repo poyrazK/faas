@@ -264,7 +264,7 @@ func (r *remoteServer) handler() http.Handler {
 		server, _ := req.Context().Value(grantServerKey{}).(*mcp.Server)
 		return server
 	}
-	mux.Handle("/mcp", r.authenticate(newWatchHTTPHandler(getServer)))
+	mux.Handle("/mcp", r.authenticate(newWatchHTTPHandler(getServer, r.opts.Timeout)))
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		setPrivateHeaders(w)
 		if req.Host != r.host {

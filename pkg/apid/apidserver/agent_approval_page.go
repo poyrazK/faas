@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -32,6 +33,7 @@ var approvalCategoryLabels = map[string]string{
 	api.AgentApprovalProduction:  "Change production",
 	api.AgentApprovalCredentials: "Mint or rotate credentials",
 	api.AgentApprovalBilling:     "Change billing",
+	api.AgentApprovalBudget:      "Go past the agent's monthly budget",
 }
 
 // decidableApproval loads a request the signed-in person may decide.
@@ -81,7 +83,7 @@ func (h *cliAuthHandlers) renderAgentApprovalPage(w http.ResponseWriter, r *http
 		"Agent": agentconnections.AgentName(r.Context(), h.srv.store, approval), "ConnectedBy": connectedBy,
 		"CategoryLabel": approvalCategoryLabels[approval.Category], "Method": approval.Method, "Path": approval.Path,
 		"BodyBound": approval.BodySHA256 != nil, "ExpiresAt": approval.ExpiresAt.UTC().Format(time.RFC1123),
-		"Reason": approval.Reason,
+		"Reason": approval.Reason, "BudgetCost": budgetCostText(approval),
 	})
 }
 
@@ -130,4 +132,14 @@ func (h *cliAuthHandlers) renderAgentApproval(w http.ResponseWriter, r *http.Req
 	if err := dashboard.Render(w, h.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, h.log, err)
 	}
+}
+
+// budgetCostText is a budget request's added cost for the review page
+// (ADR-20261111114059); empty for other requests.
+func budgetCostText(approval state.AgentApproval) string {
+	if approval.Category != api.AgentApprovalBudget {
+		return ""
+	}
+	cents := api.CentsCeil(approval.BudgetCostMillicents)
+	return fmt.Sprintf("about $%d.%02d a month of always-on capacity", cents/100, cents%100)
 }

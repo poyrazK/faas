@@ -372,3 +372,10 @@ test('only a platform cron drains, and only with hooks on', async t => {
   assert.equal(refused.status, 409)
   assert.equal(refused.body.code, 'data_api_change_hooks_off')
 })
+
+test('change relay preserves the captured schema version on every retry', () => {
+  const captured = row(27, { schema_version: 'v1' })
+  assert.equal(changeEvent(captured).schema_version, 'v1')
+  assert.deepEqual(changeEvent(captured), changeEvent({ ...captured, attempts: 8 }))
+  assert.equal(Object.hasOwn(changeEvent(row(28)), 'schema_version'), false)
+})

@@ -34,7 +34,7 @@ func (s *server) managedPostgresHoldInputs(ctx context.Context, acct state.Accou
 // summary already read.
 func (s *server) managedPostgresHoldInputsFrom(ctx context.Context, acct state.Account, subject string, summary managedpostgres.UsageSummary) (managedpostgres.HoldInputs, error) {
 	in := managedpostgres.HoldInputs{Mode: s.managedPostgresCapMode, Inactive: !acct.Active(),
-		ComputeUsed: summary.Snapshot.ComputeUnitSeconds, DatabaseEgress: summary.Snapshot.EgressBytes}
+		ComputeUsed: summary.Snapshot.ComputeUnitSeconds, DatabaseEgress: summary.Snapshot.DatabaseEgress}
 	if summary.PolicyEnabled {
 		in.ComputeCeiling = summary.EffectivePolicy.MaxMonthlyComputeUnitSeconds
 	}
@@ -42,7 +42,7 @@ func (s *server) managedPostgresHoldInputsFrom(ctx context.Context, acct state.A
 	if err != nil {
 		return managedpostgres.HoldInputs{}, err
 	}
-	in.EgressCeiling, in.AppEgress = egress.CeilingBytes, egress.AppEgressBytes
+	in.EgressAllowance = egress.CeilingBytes
 	in.EgressOverageBilled = egress.OverageLifted && managedPostgresChargesLive(s.managedPostgresChargeSink())
 	return in, nil
 }
@@ -55,11 +55,12 @@ func (s *server) withManagedPostgresHold(view *api.ManagedPostgresDatabase, data
 	}
 }
 
-// managedPostgresUsageHoldView adds the shared egress allowance and the
-// subject-wide hold to the usage view.
+// managedPostgresUsageHoldView adds each database's egress allowance, the
+// egress state of the database that sent the most, and the subject-wide hold
+// to the usage view.
 func managedPostgresUsageHoldView(view *api.ManagedPostgresUsageResponse, in managedpostgres.HoldInputs) {
-	if in.EgressCeiling > 0 {
-		view.EgressAllowanceBytes, view.AppEgressBytes = in.EgressCeiling, in.AppEgress
+	if in.EgressAllowance > 0 {
+		view.EgressAllowanceBytes = in.EgressAllowance
 		view.EgressState = managedpostgres.EgressState(in)
 	}
 	view.Hold = managedpostgres.SubjectHold(in)

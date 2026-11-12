@@ -53,6 +53,13 @@ type ObjectBucketUsage struct {
 	// such a bucket, and no admitted write can grow it, so its last
 	// inventory remains the bound for admission until the transition ends.
 	InventoryHeld bool
+	// MutatedAt is the last time an admitted mutation may have changed what
+	// the bucket holds, stamped by Postgres at most once per
+	// api.ObjectInventoryMutationStampGranularity. ActiveSince is the first
+	// such stamp after the bucket was last quiet. Both are zero for a bucket
+	// created after tracking began that has never been mutated
+	// (ADR-20261110151628 §2).
+	MutatedAt, ActiveSince time.Time
 }
 
 type ObjectUsageSnapshot struct {
@@ -64,6 +71,10 @@ type ObjectUsageSnapshot struct {
 	// operator policy by their ceilings (ADR-1320); zero, as for an unknown
 	// plan, keeps the operator policy.
 	PlanLimits api.ObjectStoragePlanLimits
+	// InventoryQuiet is the applied object_inventory_quiet mode when the
+	// snapshot was read (ADR-20261110151628 §2); gateway-safety admission
+	// keeps a quiet bucket's inventory for a day only when it is on.
+	InventoryQuiet string
 }
 
 // objectStoragePlanLimits returns the plan's object-storage limits with the
@@ -118,9 +129,12 @@ type ObjectInventoryDue struct {
 }
 
 // ObjectInventoryQueueStore lists due inventories in DueObjectInventories'
-// order, leaving out skip, the buckets the sweep already took.
+// order, leaving out skip, the buckets the sweep already took. quiet says the
+// deployment's accounting lets object_inventory_quiet apply (gateway safety):
+// with it on, a quiet bucket is due only for its daily verification
+// (ADR-20261110151628 §2).
 type ObjectInventoryQueueStore interface {
-	DueObjectInventoryQueue(ctx context.Context, limit int32, skip []string) ([]ObjectInventoryDue, error)
+	DueObjectInventoryQueue(ctx context.Context, limit int32, skip []string, quiet bool) ([]ObjectInventoryDue, error)
 }
 
 var (
@@ -137,12 +151,52 @@ var (
 type ObjectInventoryBacklog struct {
 	DueBuckets           int64
 	OldestObservationAge time.Duration
+	// OldestQuietObservationAge is the oldest observation of a quiet bucket,
+	// held to ObjectInventoryQuietMaxAge instead, with object_inventory_quiet
+	// on and quiet set (ADR-20261110151628 §2); zero otherwise.
+	OldestQuietObservationAge time.Duration
 }
 
-// ObjectInventoryBacklogStore reports the inventory sweep's backlog.
+// ObjectInventoryBacklogStore reports the inventory sweep's backlog; quiet
+// as for ObjectInventoryQueueStore.
 type ObjectInventoryBacklogStore interface {
-	ObjectInventoryBacklog(ctx context.Context) (ObjectInventoryBacklog, error)
+	ObjectInventoryBacklog(ctx context.Context, quiet bool) (ObjectInventoryBacklog, error)
 }
+
+// ObjectInventoryVerification compares a published listing with the one
+// before it (ADR-20261110151628 §2). Quiet is set when object_inventory_quiet
+// is shadow or on and nothing was admitted to the bucket since the previous
+// listing started: the two should then count the same.
+type ObjectInventoryVerification struct {
+	Quiet                       bool
+	PreviousBytes, PreviousKeys int64
+	Bytes, Keys                 int64
+}
+
+// Drift is "up" or "down" when a quiet bucket's listing counted more or less
+// than the one before it (bytes first, then keys), and "" otherwise.
+func (v ObjectInventoryVerification) Drift() string {
+	switch {
+	case !v.Quiet:
+		return ""
+	case v.Bytes > v.PreviousBytes || v.Bytes == v.PreviousBytes && v.Keys > v.PreviousKeys:
+		return "up"
+	case v.Bytes < v.PreviousBytes || v.Keys < v.PreviousKeys:
+		return "down"
+	}
+	return ""
+}
+
+// ObjectInventoryVerificationStore publishes a complete listing like
+// FinishObjectInventoryScan and reports how it compares with the last one.
+type ObjectInventoryVerificationStore interface {
+	FinishObjectInventoryScanVerified(ctx context.Context, bucket, token string, scan ObjectInventoryScan) (ObjectInventoryVerification, error)
+}
+
+var (
+	_ ObjectInventoryVerificationStore = (*PgStore)(nil)
+	_ ObjectInventoryVerificationStore = (*MemStore)(nil)
+)
 
 var (
 	_ ObjectInventoryBacklogStore = (*PgStore)(nil)
@@ -297,7 +351,8 @@ func summarizeGatewaySafety(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, no
 		u.CapacityBytes = boundedObjectAdd(u.CapacityBytes, capacityBytes)
 		u.CapacityKeys = boundedObjectAdd(u.CapacityKeys, capacityKeys)
 		maxAge := time.Duration(min(p.MaxReportAgeSeconds, int64(api.ObjectStorageInventoryMaxAgeSeconds))) * time.Second
-		if objectBucketInventoryStale(b, maxAge, now) {
+		if s.InventoryQuiet == api.ObjectInventoryQuietOn && objectBucketInventoryStaleQuiet(b, maxAge, now) ||
+			s.InventoryQuiet != api.ObjectInventoryQuietOn && objectBucketInventoryStale(b, maxAge, now) {
 			stale[b.Bucket.ID] = true
 		}
 	}

@@ -113,6 +113,7 @@ func init() {
 }
 
 func run(args []string) (status int) {
+	args = protectImageRunCommandArgs(args)
 	resetCapabilityView()
 	previousJSON, previousUsageHelp, previousPath := jsonOutput, jsonUsageHelp, invokedCommandPath
 	defer func() {
@@ -301,6 +302,10 @@ func run(args []string) (status int) {
 		}
 		PrintUsage(os.Stderr, message, "cli")
 		return 1
+	case "update":
+		// Updating the CLI must work when saved configuration is broken:
+		// a newer CLI may be the fix.
+		return cmdUpdate(args[1:])
 	case "completion":
 		// Tier A8 / ADR-083. Routes to one of bash|zsh|fish|powershell
 		// via cmdCompletion; the dispatcher is in completion.go. Like help,

@@ -279,22 +279,30 @@ type AgentApprovalNotification struct {
 
 // ADR-20261104140058 agent requests awaiting or holding a person's approval; apid is the only writer.
 type AgentApprovalRequest struct {
-	ID           pgtype.UUID
-	KeyID        pgtype.UUID
-	AccountID    pgtype.UUID
-	OrgID        pgtype.UUID
-	Category     string
-	Method       string
-	Path         string
-	BodySha256   []byte
-	Status       string
-	DecidedBy    pgtype.UUID
-	CreatedAt    pgtype.Timestamptz
-	DecidedAt    pgtype.Timestamptz
-	ConsumedAt   pgtype.Timestamptz
-	ExpiresAt    pgtype.Timestamptz
-	DecisionNote pgtype.Text
-	Reason       pgtype.Text
+	ID                   pgtype.UUID
+	KeyID                pgtype.UUID
+	AccountID            pgtype.UUID
+	OrgID                pgtype.UUID
+	Category             string
+	Method               string
+	Path                 string
+	BodySha256           []byte
+	Status               string
+	DecidedBy            pgtype.UUID
+	CreatedAt            pgtype.Timestamptz
+	DecidedAt            pgtype.Timestamptz
+	ConsumedAt           pgtype.Timestamptz
+	ExpiresAt            pgtype.Timestamptz
+	DecisionNote         pgtype.Text
+	Reason               pgtype.Text
+	BudgetCostMillicents pgtype.Int8
+}
+
+type AgentBudgetSpend struct {
+	KeyID           pgtype.UUID
+	Month           pgtype.Date
+	SpentMillicents int64
+	UpdatedAt       pgtype.Timestamptz
 }
 
 // ADR-20261030125501 agent callback revocations written by apid: a thread's latest revocation time.
@@ -355,6 +363,27 @@ type AgentExecutionWorkflow struct {
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
 	FinishedAt      pgtype.Timestamptz
+}
+
+// ADR-20261030125501 gregale_github_subscribe rows written by apid: a thread receives a repository's gregale.github events until expires_at.
+type AgentGithubSubscription struct {
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+	EndpointID pgtype.UUID
+	ThreadID   string
+	ToolCallID string
+	Repository string
+	EventTypes []string
+	IssuedAt   pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+}
+
+type AgentKeyBudget struct {
+	KeyID        pgtype.UUID
+	MonthlyCents pgtype.Int8
+	UpdatedAt    pgtype.Timestamptz
+	UpdatedBy    pgtype.UUID
 }
 
 // ADR-20261027090010 agent runs; apid inserts queued runs and cancels queued ones, agentd (ADR-20261027090014) owns every other transition.
@@ -1845,47 +1874,48 @@ type AppSlugHold struct {
 }
 
 type AppTask struct {
-	ID                   pgtype.UUID
-	AccountID            pgtype.UUID
-	AppID                pgtype.UUID
-	DeploymentID         pgtype.UUID
-	Kind                 string
-	Command              []string
-	CommandShell         bool
-	DeploymentScope      string
-	ArtifactKey          string
-	ImageDigest          string
-	Status               string
-	TimeoutSeconds       int32
-	MaxOutputBytes       int32
-	LeaseToken           pgtype.UUID
-	LeaseOwner           pgtype.Text
-	LeaseExpiresAt       pgtype.Timestamptz
-	CancelRequestedAt    pgtype.Timestamptz
-	StdoutTail           string
-	StderrTail           string
-	OutputTruncated      bool
-	ExitCode             pgtype.Int4
-	FailureCode          pgtype.Text
-	FailureMessage       pgtype.Text
-	StartedAt            pgtype.Timestamptz
-	FinishedAt           pgtype.Timestamptz
-	CreatedAt            pgtype.Timestamptz
-	UpdatedAt            pgtype.Timestamptz
-	CronID               pgtype.UUID
-	ScheduledFor         pgtype.Timestamptz
-	RetryMax             int32
-	RetryBackoffSeconds  int32
-	AttemptCount         int32
-	RetryAt              pgtype.Timestamptz
-	FailureRules         []byte
-	OccurrenceID         pgtype.UUID
-	StartDeadlineAt      pgtype.Timestamptz
-	WorkDecision         []byte
-	OutcomeCode          string
-	ExclusiveOperationID pgtype.UUID
-	ExclusiveGeneration  pgtype.Int8
-	BindingVerification  []byte
+	ID                    pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	DeploymentID          pgtype.UUID
+	Kind                  string
+	Command               []string
+	CommandShell          bool
+	DeploymentScope       string
+	ArtifactKey           string
+	ImageDigest           string
+	Status                string
+	TimeoutSeconds        int32
+	MaxOutputBytes        int32
+	LeaseToken            pgtype.UUID
+	LeaseOwner            pgtype.Text
+	LeaseExpiresAt        pgtype.Timestamptz
+	CancelRequestedAt     pgtype.Timestamptz
+	StdoutTail            string
+	StderrTail            string
+	OutputTruncated       bool
+	ExitCode              pgtype.Int4
+	FailureCode           pgtype.Text
+	FailureMessage        pgtype.Text
+	StartedAt             pgtype.Timestamptz
+	FinishedAt            pgtype.Timestamptz
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	CronID                pgtype.UUID
+	ScheduledFor          pgtype.Timestamptz
+	RetryMax              int32
+	RetryBackoffSeconds   int32
+	AttemptCount          int32
+	RetryAt               pgtype.Timestamptz
+	FailureRules          []byte
+	OccurrenceID          pgtype.UUID
+	StartDeadlineAt       pgtype.Timestamptz
+	WorkDecision          []byte
+	OutcomeCode           string
+	ExclusiveOperationID  pgtype.UUID
+	ExclusiveGeneration   pgtype.Int8
+	BindingVerification   []byte
+	CapacityWaitStartedAt pgtype.Timestamptz
 }
 
 type AppTaskAttachSession struct {
@@ -2420,6 +2450,14 @@ type BillingPaymentRecoveryReceipt struct {
 	ProcessedAt pgtype.Timestamptz
 }
 
+type BillingPlanActivation struct {
+	Sequence    int64
+	SubjectID   pgtype.UUID
+	FromPlan    string
+	ToPlan      string
+	EffectiveAt pgtype.Timestamptz
+}
+
 type BillingQuotaWarning struct {
 	AccountID           pgtype.UUID
 	WarningDay          pgtype.Timestamptz
@@ -2542,6 +2580,15 @@ type BillingUsageDelivery struct {
 	MbSeconds   int64
 	DeliveredAt pgtype.Timestamptz
 	UsageSource pgtype.Text
+}
+
+type BillingUsageIntent struct {
+	Provider    string
+	AccountID   pgtype.UUID
+	Meter       string
+	WindowStart pgtype.Timestamptz
+	Quantity    int64
+	CreatedAt   pgtype.Timestamptz
 }
 
 type BindingVerificationRun struct {
@@ -3291,6 +3338,8 @@ type Cron struct {
 	ScheduleRevision      int64
 	ScheduleAnchorAt      pgtype.Timestamptz
 	Labels                []byte
+	DeploymentScope       string
+	EnvironmentID         pgtype.UUID
 }
 
 type CronFireNowRequest struct {
@@ -4913,10 +4962,57 @@ type EnvironmentBindingRetirementReceipt struct {
 	RecordedAt    pgtype.Timestamptz
 }
 
+// ADR-20261031193635 credential-free captures of parent deployments; only environment branches restore them, production never does.
+type EnvironmentBranchCapture struct {
+	ID               pgtype.UUID
+	DeploymentID     pgtype.UUID
+	State            string
+	Attempts         int32
+	LeaseToken       pgtype.UUID
+	LeaseUntil       pgtype.Timestamptz
+	InstanceID       pgtype.UUID
+	Failure          string
+	FcVersion        string
+	StorageKey       string
+	BaseImageVersion string
+	CpuTemplate      string
+	CpuModel         string
+	MemBytes         int64
+	DiskBytes        int64
+	StoredBytes      int64
+	RequestedAt      pgtype.Timestamptz
+	ReadyAt          pgtype.Timestamptz
+}
+
+// ADR-20261031193635 objects written by credential-free capture attempts; imaged deletes those no ready capture references.
+type EnvironmentBranchCaptureObject struct {
+	StorageKey   string
+	DeploymentID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+}
+
 type EnvironmentBuildArtifactPin struct {
 	SourceID    pgtype.UUID
 	CandidateID pgtype.UUID
 	ArtifactID  pgtype.UUID
+}
+
+type EnvironmentDeploymentCronActivation struct {
+	AppID           pgtype.UUID
+	DeploymentScope string
+	UploadID        pgtype.Text
+	SessionID       string
+	Intent          []byte
+	Fingerprint     string
+	Revision        int64
+	Status          string
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type EnvironmentDeploymentCronState struct {
+	AppID           pgtype.UUID
+	DeploymentScope string
+	Revision        int64
 }
 
 type EnvironmentDesiredRevision struct {
@@ -6090,6 +6186,12 @@ type ExecutionEvent struct {
 	EventType   string
 	Payload     []byte
 	CreatedAt   pgtype.Timestamptz
+}
+
+type ExecutionEventReplayCursor struct {
+	ExecutionID   pgtype.UUID
+	PrunedThrough int64
+	UpdatedAt     pgtype.Timestamptz
 }
 
 type ExecutionOutboundIntegration struct {
@@ -8336,6 +8438,13 @@ type LogSavedSearch struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type LoginFailureBudget struct {
+	EmailHash       string
+	WindowStartedAt pgtype.Timestamptz
+	Failures        int32
+	NotifiedAt      pgtype.Timestamptz
+}
+
 type LoginToken struct {
 	TokenHash  []byte
 	AccountID  pgtype.UUID
@@ -10062,6 +10171,12 @@ type ObjectBucket struct {
 	OrgID                          pgtype.UUID
 }
 
+type ObjectBucketActivity struct {
+	BucketID    pgtype.UUID
+	MutatedAt   pgtype.Timestamptz
+	ActiveSince pgtype.Timestamptz
+}
+
 type ObjectBucketCor struct {
 	BucketID  pgtype.UUID
 	Rules     []byte
@@ -10131,6 +10246,24 @@ type ObjectBucketObjectLock struct {
 	UpdatedAt             pgtype.Timestamptz
 }
 
+// ADR-20261031193635 environment branch buckets that read through to their source bucket for keys they never wrote.
+type ObjectBucketOverlay struct {
+	BucketID       pgtype.UUID
+	AccountID      pgtype.UUID
+	SourceBucketID pgtype.UUID
+	SourceAppID    pgtype.UUID
+	Consistency    string
+	AsOf           pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+}
+
+// ADR-20261031193635 keys an environment branch deleted, hiding its source bucket's objects.
+type ObjectBucketOverlayTombstone struct {
+	BucketID  pgtype.UUID
+	Key       string
+	CreatedAt pgtype.Timestamptz
+}
+
 type ObjectBucketVersioning struct {
 	BucketID         pgtype.UUID
 	DesiredStatus    string
@@ -10183,6 +10316,14 @@ type ObjectDeletion struct {
 	ProtectionRequired      bool
 	ProtectionVerified      bool
 	DeletionVerified        bool
+}
+
+type ObjectInventorySchedule struct {
+	BucketID   pgtype.UUID
+	AttemptAt  pgtype.Timestamptz
+	ObservedAt pgtype.Timestamptz
+	QuietAfter pgtype.Timestamptz
+	MutatedAt  pgtype.Timestamptz
 }
 
 type ObjectLifecycleScan struct {
@@ -10486,6 +10627,17 @@ type ObjectStorageMultipartUpload struct {
 	ProtectionVerified         bool
 	ChecksumSnapshot           []byte
 	ChecksumVerified           bool
+}
+
+// ADR-20261111123000: billing subjects storing more object-storage bytes than their ceiling, with the date their excess is deleted; written only by apid.
+type ObjectStorageOverCeiling struct {
+	SubjectID           pgtype.UUID
+	OverCeilingSince    pgtype.Timestamptz
+	DeletionScheduledAt pgtype.Timestamptz
+	StoredBytes         int64
+	CeilingBytes        int64
+	ObservedAt          pgtype.Timestamptz
+	NoticesSent         int16
 }
 
 type ObjectStorageRequestMetric struct {
@@ -10896,12 +11048,13 @@ type OrgActivityOutbox struct {
 
 // ADR-20261101225122 whether agents may act in an organization and with which capabilities; apid is the only writer.
 type OrgAgentPolicy struct {
-	OrgID              pgtype.UUID
-	AgentsAllowed      bool
-	AllowedScopes      []string
-	UpdatedAt          pgtype.Timestamptz
-	UpdatedBy          pgtype.UUID
-	ApprovalCategories []string
+	OrgID               pgtype.UUID
+	AgentsAllowed       bool
+	AllowedScopes       []string
+	UpdatedAt           pgtype.Timestamptz
+	UpdatedBy           pgtype.UUID
+	ApprovalCategories  []string
+	MaxAgentBudgetCents pgtype.Int8
 }
 
 type OrgAppQuotaFence struct {
@@ -12569,6 +12722,66 @@ type ProjectEnvironmentApproval struct {
 	ConsumedAt          pgtype.Timestamptz
 	ApprovedByAccountID pgtype.UUID
 	ApprovedByPrincipal pgtype.Text
+}
+
+// ADR-20261031193635 environment branches: a lazy copy of a parent project environment as of branch_point, deleted at expires_at.
+type ProjectEnvironmentBranch struct {
+	EnvironmentID       pgtype.UUID
+	AccountID           pgtype.UUID
+	ProjectID           pgtype.UUID
+	ParentEnvironmentID pgtype.UUID
+	BranchPoint         pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	EgressMode          string
+	Depth               int16
+	DataState           string
+	DataError           string
+	DataAttempts        int32
+	DataNextAttemptAt   pgtype.Timestamptz
+	DataLeaseToken      pgtype.UUID
+	DataLeaseUntil      pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	PrivateNetworks     string
+}
+
+// ADR-20261031193635 overlay buckets owned by an environment branch; purged and deleted after the branch is gone.
+type ProjectEnvironmentBranchBucket struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentID   pgtype.UUID
+	EnvironmentSlug string
+	AppID           pgtype.UUID
+	SourceBucketID  pgtype.UUID
+	CopyBucketID    pgtype.UUID
+	LeaseToken      pgtype.UUID
+	LeaseUntil      pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+}
+
+// ADR-20261031193635 managed PostgreSQL copies owned by an environment branch; deleted with their bindings after the branch is gone.
+type ProjectEnvironmentBranchDatabase struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	ProjectID        pgtype.UUID
+	EnvironmentID    pgtype.UUID
+	EnvironmentSlug  string
+	SourceDatabaseID pgtype.UUID
+	CopyName         string
+	CopyDatabaseID   pgtype.UUID
+	PointInTime      pgtype.Timestamptz
+	LeaseToken       pgtype.UUID
+	LeaseUntil       pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+}
+
+// ADR-20261031193635 deployments an environment branch created from its parent's artifacts; they activate on first request.
+type ProjectEnvironmentBranchDeployment struct {
+	DeploymentID       pgtype.UUID
+	EnvironmentID      pgtype.UUID
+	AppID              pgtype.UUID
+	SourceDeploymentID pgtype.UUID
+	CreatedAt          pgtype.Timestamptz
 }
 
 type ProjectEnvironmentCleanupJob struct {
@@ -15514,6 +15727,19 @@ type SourceBuildRootfsCurrent struct {
 	ArtifactID   pgtype.UUID
 }
 
+type SpendCapNoticeOutbox struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	Month         pgtype.Timestamptz
+	CapCents      int64
+	ObservedCents int64
+	ReachedAt     pgtype.Timestamptz
+	State         string
+	LeaseToken    pgtype.UUID
+	NextAttemptAt pgtype.Timestamptz
+	DeliveredAt   pgtype.Timestamptz
+}
+
 type StaticEgressProvisioningGrant struct {
 	SourceID   string
 	AccountID  pgtype.UUID
@@ -15831,6 +16057,7 @@ type TriggerRecord struct {
 	WorkFairnessDigest   []byte
 	WorkFairnessLimit    pgtype.Int4
 	WorkExpiresAt        pgtype.Timestamptz
+	OperatorReplay       bool
 }
 
 type TriggerWorkBinding struct {

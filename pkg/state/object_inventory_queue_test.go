@@ -42,7 +42,7 @@ func objectInventoryQueueSuite(t *testing.T, st accountingStore) {
 	}
 	queue := func(skip []string) map[string]bool {
 		t.Helper()
-		rows, err := st.DueObjectInventoryQueue(ctx, 100, skip)
+		rows, err := st.DueObjectInventoryQueue(ctx, 100, skip, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,7 +67,7 @@ func objectInventoryQueueSuite(t *testing.T, st accountingStore) {
 	if err != nil || len(buckets) != 2 {
 		t.Fatal("DueObjectInventories lost a due bucket", buckets, err)
 	}
-	if _, err = st.DueObjectInventoryQueue(ctx, 0, nil); !errors.Is(err, state.ErrConflict) {
+	if _, err = st.DueObjectInventoryQueue(ctx, 0, nil, false); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("limit 0", err)
 	}
 }
@@ -94,7 +94,7 @@ func TestObjectInventoryQueueMarksLargeBucketsLongPG(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE object_storage_bucket_usage SET attempt_at = now() - interval '10 minutes' WHERE bucket_id = $1`, b.ID); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := st.DueObjectInventoryQueue(ctx, 100, nil)
+	rows, err := st.DueObjectInventoryQueue(ctx, 100, nil, false)
 	if err != nil || len(rows) != 1 || rows[0].Bucket.ID != b.ID || !rows[0].Long {
 		t.Fatal("large bucket not due as a long listing", rows, err)
 	}
@@ -114,7 +114,7 @@ func objectInventoryBacklogSuite(t *testing.T, st accountingStore) {
 	ctx := t.Context()
 	backlog := func(wantDue int64) state.ObjectInventoryBacklog {
 		t.Helper()
-		got, err := st.ObjectInventoryBacklog(ctx)
+		got, err := st.ObjectInventoryBacklog(ctx, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -160,7 +160,7 @@ func TestObjectInventoryBacklogAgesAndExemptsPG(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE object_storage_bucket_usage SET observed_at = now() - interval '20 minutes', attempt_at = now() - interval '20 minutes' WHERE bucket_id = $1`, b.ID); err != nil {
 		t.Fatal(err)
 	}
-	got, err := st.ObjectInventoryBacklog(ctx)
+	got, err := st.ObjectInventoryBacklog(ctx, false)
 	if err != nil || got.DueBuckets != 1 || got.OldestObservationAge < 19*time.Minute || got.OldestObservationAge > 22*time.Minute {
 		t.Fatal("a 20-minute-old observation", got, err)
 	}
@@ -173,7 +173,7 @@ func TestObjectInventoryBacklogAgesAndExemptsPG(t *testing.T) {
 	if err = st.CheckpointObjectInventoryScan(ctx, b.ID, token, scan); err != nil {
 		t.Fatal(err)
 	}
-	if got, err = st.ObjectInventoryBacklog(ctx); err != nil || got.DueBuckets != 1 || got.OldestObservationAge != 0 {
+	if got, err = st.ObjectInventoryBacklog(ctx, false); err != nil || got.DueBuckets != 1 || got.OldestObservationAge != 0 {
 		t.Fatal("a progressing listing still counted toward the age", got, err)
 	}
 }

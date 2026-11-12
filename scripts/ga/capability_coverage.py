@@ -210,7 +210,7 @@ RULES = [
     (r"openapi\.(json|yaml)|^/v1/openapi|capabilities|productcap|sdk-coverage|^meta$", "Public OpenAPI spec"),
     (r"^sdk|sdk$|webhook-receiver|idempotency|transport|^client|options$|dto$|codes$|errors$|scopes$|^doc$|streaming$|release-context|^context", "SDKs:"),
     (r"dashboard|templates?/|^index$|^app\.(css|js)|\.js$|^stateless$|email-verification-banner|email-verified|set-password|password-reset|^login$|^profile$", "Web dashboard"),
-    (r"^gregale$|^cli|cli-|completion|^man$|^menu$|^start$|^open$|^config$|^version$|doctor|^context|profiles?-config|^init$", "`gregale` CLI"),
+    (r"^gregale$|^cli|cli-|completion|^man$|^menu$|^start$|^open$|^config$|^version$|^update$|doctor|^context|profiles?-config|^init$", "`gregale` CLI"),
     # --- observability
     (r"status-page|^/status|public-status|^status$|status/slo", "Public status page"),
     (r"audit", "Audit log"),

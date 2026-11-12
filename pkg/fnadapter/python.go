@@ -255,7 +255,7 @@ def _gregale_context(request):
     if enter is None or not isinstance(headers, dict):
         return contextlib.nullcontext()
     return enter(headers)
-
+` + PythonInputSchema + `
 def _serve_lines():
     for line in sys.stdin:
         if not line.strip():
@@ -271,6 +271,11 @@ def _serve_lines():
             request = json.loads(line)
             if isinstance(request, dict) and request.get("function_hook"):
                 real_stdout.write(json.dumps(_run_hook_sync(request)) + "\n")
+                real_stdout.flush()
+                continue
+            problem = _input_problem(request)
+            if problem is not None:
+                real_stdout.write(json.dumps(problem) + "\n")
                 real_stdout.flush()
                 continue
             with _gregale_context(request):
@@ -315,6 +320,10 @@ async def _serve_one(request, rid, cancelled):
     def emit(frame):
         if not cancelled.is_set():
             _emit_tagged({"__faas_id": rid, **frame})
+    problem = _input_problem(request)
+    if problem is not None:
+        emit(problem)
+        return
     invocation_id = ""
     streaming = False
     try:
@@ -350,6 +359,10 @@ def _serve_sync(request, rid, cancelled):
     def emit(frame):
         if not cancelled.is_set():
             _emit_tagged({"__faas_id": rid, **frame})
+    problem = _input_problem(request)
+    if problem is not None:
+        emit(problem)
+        return
     invocation_id = ""
     streaming = False
     try:

@@ -3281,12 +3281,14 @@ var cliCommands = []cliCommand{
 		Examples: []string{"gregale dev --once", "gregale dev --path ./api --once", "gregale dev --all", "gregale dev --local"},
 		HelpNotes: []string{
 			"--local runs HTTP apps on this machine at http://localhost:<port>, using their development or start command and restarting on source edits. --watch-command overrides the app command. Functions use the production adapters and runner at http://<function>.localhost:<port>. Nothing is uploaded.",
+			"Remote development automatically selects hot reload for supported Node.js and Python apps. Explicit flags override dev.watch, and dev.watch overrides detection. Use --watch=false for production-shaped builds. Automatic selection falls back when the environment cannot support watch mode; explicit watch requests report the error.",
 		},
 		Flags: []cliFlag{
 			{Name: "path", Short: "source directory", Value: "DIR"},
 			{Name: "local", Short: "run HTTP apps or functions on this machine"},
 			{Name: "port", Short: "local port for --local (default 8787)", Value: "N"},
 			{Name: "no-reload", Short: "with --local, do not restart on source or env-file edits"},
+			{Name: "watch", Short: "remote hot reload (automatic for supported apps; false uses production builds)", Bool: true},
 			{Name: "watch-command", Short: "development server command (with --local: HTTP app command)", Value: "CMD"},
 			{Name: "no-remote", Short: "with --local, do not connect to the developer session's database and buckets"},
 			{Name: "offline", Short: "with --local, run Postgres and buckets in Docker instead (with --postgres, --bucket)"},
@@ -3366,7 +3368,9 @@ var cliCommands = []cliCommand{
 					{Name: "payload", Short: "JSON payload, @file, or - for stdin", Value: "JSON"},
 				}},
 			}},
-			{Name: "setup", Short: "preflight a project and prepare the first developer environment", Flags: []cliFlag{
+			{Name: "setup", Short: "preflight a project and prepare the first developer environment", Notes: []string{
+				"Setup checks required configuration offline against selected files and planned bindings. Unselected .env declarations do not prove delivery. --start verifies unresolved key names in the developer session before upload; values are never displayed.",
+			}, Flags: []cliFlag{
 				{Name: "path", Short: "source directory", Value: "DIR"},
 				{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
 				{Name: "env-file", Short: "validate and sync developer secrets", Value: "PATH"},
@@ -5079,6 +5083,7 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{
 			{Name: "token", Short: "use a pre-minted token (CI)", Value: "TOKEN"},
 			{Name: "token-stdin", Short: "read a pre-minted token from stdin (CI)"},
+			{Name: "insecure-storage", Short: "save the key to a plaintext file instead of the OS keychain (WSL, containers, SSH)", Bool: true},
 		},
 	},
 	{
@@ -5448,6 +5453,8 @@ var cliCommands = []cliCommand{
 					{Name: "capabilities", Short: "comma-separated capabilities agents may get: deploy:write, secrets:request, storage:manage, postgres:manage; empty for read-only", Value: "LIST"},
 					{Name: "approvals", Short: "kinds of action every agent must have a person approve: delete, production, credentials, billing, all or none", Value: "LIST"},
 					{Name: "approval-channels", Short: "comma-separated names of your notification channels that also get the org's agents' approval requests; empty for none", Value: "NAMES"},
+					{Name: "max-budget", Short: "ceiling on every agent's monthly budget for always-on capacity, in US dollars", Value: "USD"},
+					{Name: "clear-max-budget", Short: "remove the ceiling on agents' budgets", Bool: true},
 				}},
 			}},
 			{Name: "transfer-ownership", Short: "Transfer org ownership", Flags: []cliFlag{
@@ -6535,6 +6542,13 @@ var cliCommands = []cliCommand{
 					{Name: "share-resources", Short: "explicitly share managed database and object-storage data", Bool: true},
 				}},
 				{Name: "delete", Short: "Delete a non-production environment", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "yes", Bool: true, Req: true, Short: "confirm environment deletion"}}},
+				{Name: "branch", Short: "Branch an environment; workloads start on first request", Notes: []string{"Deleted at its TTL or with `environment delete`."}, Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{
+					{Name: "from", Value: "ENV", Short: "parent environment (default production)"},
+					{Name: "ttl", Value: "DURATION", Short: "time to live, 1h to 720h (default 168h)"},
+					{Name: "list", Bool: true, Short: "list the parent's branches"},
+					{Name: "egress", Value: "MODE", Short: "live (default), contained or simulated"},
+					{Name: "private-networks", Value: "MODE", Short: "off (default) or join"},
+				}},
 				{Name: "protect", Short: "Protect an environment"},
 				{Name: "unprotect", Short: "Remove environment protection"},
 				{Name: "inspect", Short: "Inspect the active graph and environment deployments"},
@@ -6871,6 +6885,21 @@ var cliCommands = []cliCommand{
 		Name:    "version",
 		DocSlug: "version",
 		Short:   "Print the CLI version",
+	},
+	{
+		Name:     "update",
+		DocSlug:  "update",
+		Short:    "Update the CLI to the newest release",
+		Examples: []string{"gregale update", "gregale update --check", "gregale update --version v0.1.18"},
+		HelpNotes: []string{
+			"Stable installs follow the newest stable release; prerelease installs follow the newest release.",
+			"The download is verified against the release's CLI-SHA256SUMS and must run before it replaces this binary.",
+			"An npm install prints the npm command instead of replacing files npm owns.",
+		},
+		Flags: []cliFlag{
+			{Name: "check", Bool: true, Short: "report whether a newer release exists without installing it"},
+			{Name: "version", Value: "TAG", Short: "install this exact release tag, including an older one"},
+		},
 	},
 	{
 		Name:     "config",

@@ -130,25 +130,15 @@ them, attach a read/write PostgreSQL binding to the app, keep a stable
 }
 ```
 
-The starter creates and migrates its namespaced task table, queue index,
-notification function, and update trigger in that database. The bound role
-must be able to create and alter the table, index, function, and trigger. The
-store hashes owner identity and encrypts arguments, results, and errors with
-AES-256-GCM before writing them.
-The default payload format preserves the current task encryption wire format.
-Configure the same active and previous keys on every serving replica and task
-worker that shares the PostgreSQL database.
-Startup, migration and Task doctor authenticate every retained encrypted field.
-This includes legacy payloads without a key ID; a readable sample cannot prove
-that all retained Tasks remain readable after removing a previous key.
-For rotation, first deploy a rotation-capable starter everywhere, distribute
-the next key as a previous key while the current key remains active, then
-switch the active key and keep the previous key configured. After that rollout
-completes, set `payload_encryption_version` to `2`; live payloads are rewrapped
-in bounded background batches. Keep the old owner key configured for at least
-30 days after the active-key rollout completes because existing caller
-ownership hashes cannot be recomputed. Tasks expire after the configured TTL
-(60 seconds to 30 days).
+Run the explicit schema migration with a separate schema-owner binding before
+starting the runtime. Application bindings require Task DML and metadata SELECT
+privileges; startup validates the schema and retained encryption keys without DDL.
+The store hashes caller identity and encrypts payloads with AES-256-GCM.
+Keep the Node queue's owner key stable. Use `tasks.encryption_keys_env` for
+independent payload-key rotation, as described below. `owner_key_id` and
+`previous_owner_keys` also retain native Go/Python payload readers during a
+handoff; `payload_encryption_version` does not select Node's writer format.
+Keep reader keys until all retained payloads using them have expired.
 `MCP_TASK_NAMESPACE` overrides
 
 Run `npm run tasks:migrate -- apply` with a separate schema-owner binding in
@@ -471,6 +461,12 @@ that caller's authorized catalog changed. In external OAuth mode, add every
 dynamic name or resource URI pattern to the matching scope allow-list; missing
 policy entries stay hidden and denied. The registry is local to one process, so
 every serving replica needs the same application registration code.
+
+Resource subscriptions require a synchronous `authorize(uri, {authInfo, config})`
+callback as the fifth argument to `registerResource`/`replaceResource`. Return
+`true` only for a verified caller allowed to read the resource. The same callback
+guards reads, subscription setup and every update. Omitting it preserves existing
+read-handler checks but denies subscriptions to custom resources.
 
 `gregale mcp server deploy` reads this digest from its zero-traffic candidate and pins
 the promoted deployment revision with `MCP_CATALOG_EXPECTED_SHA256`. For other

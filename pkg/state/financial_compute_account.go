@@ -109,7 +109,9 @@ func computeFundAccount(tx financialComputeTxn, b *financial.ComputeBook, l *fin
 	if err != nil {
 		return err
 	}
-	b.AllowanceGranted = max(b.AllowanceGranted, grant)
+	// A larger later allowance cannot refund already settled overage or
+	// create new authority for usage covered by an earlier smaller grant.
+	b.AllowanceGranted = min(b.AllowanceGranted, grant)
 	total, err := financial.ComputeQuantity(l.BillableMB, l.StartedAt, l.FundedUntil)
 	if err != nil {
 		return err
@@ -179,7 +181,7 @@ func computeProgressAccount(tx financialComputeTxn, l *financial.ComputeLease, u
 }
 
 func computeAllowance(prices []FinancialPriceSnapshot, month, now time.Time) (int64, error) {
-	var grant int64
+	var active []FinancialPriceSnapshot
 	found := false
 	for _, p := range prices {
 		if p.Price.Meter != "compute" || !p.PeriodStart.Equal(month) || p.EffectiveFrom.After(now) {
@@ -189,10 +191,18 @@ func computeAllowance(prices []FinancialPriceSnapshot, month, now time.Time) (in
 			return 0, financial.ErrComputeUnavailable
 		}
 		found = true
-		grant = max(grant, p.Price.IncludedQuantity)
+		active = append(active, p)
 	}
 	if !found {
 		return 0, financial.ErrComputeUnavailable
+	}
+	// Billing fixes each hour at that hour's time-weighted month allowance.
+	// Taking the smallest allowance across those segments bounds their sum:
+	// every billed unit lies above this same quantity threshold. Taking the
+	// historical maximum instead lets downgrades mint unfunded paid usage.
+	grant := MonthComputeIncludedMBSeconds("", active, now.Add(time.Nanosecond))
+	for _, p := range active {
+		grant = min(grant, MonthComputeIncludedMBSeconds("", active, p.EffectiveFrom.Add(time.Hour).Truncate(time.Hour)))
 	}
 	return grant, nil
 }
