@@ -84,6 +84,11 @@ func TestCmdDeployments_NonEmpty(t *testing.T) {
 func TestCmdDeployments_AppScoped(t *testing.T) {
 	var seenPath, seenQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A live row also reads the app, to mark a parked release.
+		if r.URL.Path == "/v1/apps/history-app" {
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "history-app", Status: "active"})
+			return
+		}
 		seenPath, seenQuery = r.URL.Path, r.URL.RawQuery
 		_ = json.NewEncoder(w).Encode(api.DeploymentListResponse{
 			Items: []api.DeploymentResponse{{ID: "d1", AppID: "a1", Status: "live", Kind: "app"}},

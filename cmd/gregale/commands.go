@@ -355,19 +355,20 @@ func cmdApps(args []string) int {
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "SLUG\tSTATUS\tDEPLOYMENT\tURL\tAUTH")
 	for _, a := range apps {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", a.Slug, formatAppListStatus(a.Status), formatAppDeploymentAvailability(a), canonicalAppURL(a), formatAppAuth(a))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", a.Slug, formatAppListStatus(a), formatAppDeploymentAvailability(a), canonicalAppURL(a), formatAppAuth(a))
 	}
 	_ = tw.Flush()
 	return 0
 }
 
 // formatAppListStatus names a parked app "parked", as ps, inspect and the
-// docs do; evicted_cold is the stored status and stays in --json.
-func formatAppListStatus(status string) string {
-	if status == "evicted_cold" {
-		return "parked"
+// docs do, with the reason when known ("parked: liveness failed");
+// evicted_cold is the stored status and stays in --json.
+func formatAppListStatus(a api.AppResponse) string {
+	if label := appParkedLabel(a); label != "" {
+		return label
 	}
-	return status
+	return a.Status
 }
 
 func formatAppDeploymentAvailability(a api.AppResponse) string {
