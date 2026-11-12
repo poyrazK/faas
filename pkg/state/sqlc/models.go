@@ -12770,6 +12770,7 @@ type ProjectEnvironmentBranch struct {
 	DataLeaseUntil      pgtype.Timestamptz
 	CreatedAt           pgtype.Timestamptz
 	PrivateNetworks     string
+	SlotID              pgtype.UUID
 }
 
 // ADR-20261031193635 overlay buckets owned by an environment branch; purged and deleted after the branch is gone.
