@@ -169,6 +169,7 @@ def _fixture_generator(tmp_path, monkeypatch):
         "faas_sdk/preview/operations_runtime.py": b"# uncommitted runtime authority\n",
         "faas_sdk/secret_reload_runtime.py": b"# uncommitted secret reload authority\n",
         "faas_sdk/lifecycle_runtime.py": b"# uncommitted lifecycle hooks\n",
+        "faas_sdk/functions_runtime.py": b"# uncommitted typed function calls\n",
         "faas_sdk/_binding_client_runtime.py": b"# shared owned-resource lifecycle\n",
         "faas_sdk/preview/postgres_pool_runtime.py": b"# PostgreSQL pool adoption\n",
         "faas_sdk/preview/async_postgres_pool_runtime.py": b"# async PostgreSQL pool adoption\n",

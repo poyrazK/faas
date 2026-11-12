@@ -69,6 +69,9 @@ from .admin_status_maintenance_create_request_impact import AdminStatusMaintenan
 from .admin_status_maintenance_create_request_kind import AdminStatusMaintenanceCreateRequestKind
 from .admin_status_maintenance_create_request_state import AdminStatusMaintenanceCreateRequestState
 from .admin_status_update_edit_request import AdminStatusUpdateEditRequest
+from .admit_data_api_shared_budget_body import AdmitDataAPISharedBudgetBody
+from .admit_data_api_shared_budget_body_version import AdmitDataAPISharedBudgetBodyVersion
+from .admit_data_api_shared_budget_response_200 import AdmitDataAPISharedBudgetResponse200
 from .adopt_environment_git_ops_request import AdoptEnvironmentGitOpsRequest
 from .adopt_environment_git_ops_response import AdoptEnvironmentGitOpsResponse
 from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsResponseStatus
@@ -2072,6 +2075,7 @@ from .export_app_debug_requests_format import ExportAppDebugRequestsFormat
 from .export_focus_invoices_format import ExportFOCUSInvoicesFormat
 from .export_outbound_ai_tag_usage_format import ExportOutboundAITagUsageFormat
 from .export_outbound_integration_ai_user_usage_format import ExportOutboundIntegrationAIUserUsageFormat
+from .extend_project_environment_branch_request import ExtendProjectEnvironmentBranchRequest
 from .failure_rule import FailureRule
 from .failure_rule_action import FailureRuleAction
 from .failure_rules import FailureRules
@@ -4585,6 +4589,7 @@ from .project_environment_binding_change_response_change import ProjectEnvironme
 from .project_environment_binding_change_response_kind import ProjectEnvironmentBindingChangeResponseKind
 from .project_environment_binding_response import ProjectEnvironmentBindingResponse
 from .project_environment_binding_response_kind import ProjectEnvironmentBindingResponseKind
+from .project_environment_branch_database import ProjectEnvironmentBranchDatabase
 from .project_environment_branch_list_response import ProjectEnvironmentBranchListResponse
 from .project_environment_branch_response import ProjectEnvironmentBranchResponse
 from .project_environment_branch_response_data import ProjectEnvironmentBranchResponseData
@@ -6519,6 +6524,9 @@ __all__ = (
     "AdminStatusMaintenanceCreateRequestKind",
     "AdminStatusMaintenanceCreateRequestState",
     "AdminStatusUpdateEditRequest",
+    "AdmitDataAPISharedBudgetBody",
+    "AdmitDataAPISharedBudgetBodyVersion",
+    "AdmitDataAPISharedBudgetResponse200",
     "AdoptEnvironmentGitOpsRequest",
     "AdoptEnvironmentGitOpsResponse",
     "AdoptEnvironmentGitOpsResponseStatus",
@@ -8450,6 +8458,7 @@ __all__ = (
     "ExportFOCUSInvoicesFormat",
     "ExportOutboundAITagUsageFormat",
     "ExportOutboundIntegrationAIUserUsageFormat",
+    "ExtendProjectEnvironmentBranchRequest",
     "FailureRule",
     "FailureRuleAction",
     "FailureRules",
@@ -10761,6 +10770,7 @@ __all__ = (
     "ProjectEnvironmentBindingChangeResponseKind",
     "ProjectEnvironmentBindingResponse",
     "ProjectEnvironmentBindingResponseKind",
+    "ProjectEnvironmentBranchDatabase",
     "ProjectEnvironmentBranchListResponse",
     "ProjectEnvironmentBranchResponse",
     "ProjectEnvironmentBranchResponseData",

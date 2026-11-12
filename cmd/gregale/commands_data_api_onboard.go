@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -32,34 +33,46 @@ func cmdDataAPIOnboard(args []string) int {
 	template := fs.String("template", "data-api-starter", "starter template (data-api-starter or data-api-teams)")
 	path := fs.String("path", "", "new starter project directory")
 	bundle := fs.String("bundle", "", "approved local data-api-bundle.json")
+	sdkVersion := fs.String("sdk-version", "", "exact public @gregale/data version (alternative to --bundle)")
+	start := fs.Bool("start", false, "start the verified API and browser example")
 	if parseInterspersed(fs, args) != nil {
 		return 1
 	}
-	if fs.NArg() != 0 || *path == "" || *bundle == "" || (*template != "data-api-starter" && *template != "data-api-teams") {
-		PrintUsage(os.Stderr, "usage: gregale data-api onboard --path DIR --bundle MANIFEST [--template data-api-starter|data-api-teams]", "data-api")
+	if fs.NArg() != 0 || *path == "" || (*bundle == "") == (*sdkVersion == "") || (*sdkVersion != "" && !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$`).MatchString(*sdkVersion)) || (*template != "data-api-starter" && *template != "data-api-teams") {
+		PrintUsage(os.Stderr, "usage: gregale data-api onboard --path DIR (--bundle MANIFEST | --sdk-version VERSION) [--start] [--template data-api-starter|data-api-teams]", "data-api")
 		return 1
 	}
 	root, err := filepath.Abs(*path)
 	if err != nil {
 		return printErr("Invalid project path", err)
 	}
-	manifest, err := filepath.Abs(*bundle)
-	if err != nil {
-		return printErr("Invalid bundle path", err)
-	}
 	if err := checkDestEmpty(root); err != nil {
 		return printErr("Choose a new or empty project directory", err)
 	}
-	info, err := os.Lstat(manifest)
-	if err != nil || !info.Mode().IsRegular() {
-		return printErr("Invalid bundle", errors.New("use an existing regular bundle manifest"))
+	manifest := ""
+	if *bundle != "" {
+		manifest, err = filepath.Abs(*bundle)
+		if err != nil {
+			return printErr("Invalid bundle path", err)
+		}
+		info, err := os.Lstat(manifest)
+		if err != nil || !info.Mode().IsRegular() {
+			return printErr("Invalid bundle", errors.New("use an existing regular bundle manifest"))
+		}
 	}
 	for _, tool := range []string{"node", "npm", "docker"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			return printErr("Missing onboarding prerequisite", fmt.Errorf("install %s before onboarding", tool))
 		}
 	}
-	return runDataAPIOnboarding(dataAPIOnboardingSteps(root, manifest, *template), func(step dataAPIOnboardingStep) int {
+	steps := dataAPIOnboardingSteps(root, manifest, *template)
+	if *sdkVersion != "" {
+		steps[1] = dataAPIOnboardingStep{"install", "npm", []string{"install", "--prefix", filepath.Join(root, "client"), "--save-exact", "--ignore-scripts", "--no-audit", "--no-fund", "@gregale/data@" + *sdkVersion}}
+	}
+	if *start {
+		steps = append(steps, dataAPIOnboardingStep{"start", "dev", []string{"--directory", root, "--port", "0", "--browser"}})
+	}
+	return runDataAPIOnboarding(steps, func(step dataAPIOnboardingStep) int {
 		if jsonOutput {
 			original := osStdout
 			osStdout = osStderr
@@ -67,6 +80,14 @@ func cmdDataAPIOnboard(args []string) int {
 		}
 		if step.Command == "init" {
 			return cmdInit(step.Args)
+		}
+		if step.Command == "npm" {
+			command := exec.Command("npm", step.Args...)
+			command.Stdout, command.Stderr = os.Stderr, os.Stderr
+			if err := command.Run(); err != nil {
+				return printErr("SDK installation failed", err)
+			}
+			return 0
 		}
 		return cmdDataAPI(append([]string{step.Command}, step.Args...))
 	}, func(name, status string, elapsed time.Duration) {
@@ -94,7 +115,11 @@ func runDataAPIOnboarding(steps []dataAPIOnboardingStep, run func(dataAPIOnboard
 				if remaining.Command == "init" {
 					continue
 				}
-				_, _ = fmt.Fprintf(os.Stderr, "Continue with: gregale data-api %s", remaining.Command)
+				prefix := "gregale data-api "
+				if remaining.Command == "npm" {
+					prefix = ""
+				}
+				_, _ = fmt.Fprintf(os.Stderr, "Continue with: %s%s", prefix, remaining.Command)
 				for _, arg := range remaining.Args {
 					_, _ = fmt.Fprintf(os.Stderr, " %s", dataAPIOnboardingQuote(arg))
 				}
