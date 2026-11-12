@@ -3324,6 +3324,8 @@ type Cron struct {
 	ScheduleRevision      int64
 	ScheduleAnchorAt      pgtype.Timestamptz
 	Labels                []byte
+	DeploymentScope       string
+	EnvironmentID         pgtype.UUID
 }
 
 type CronFireNowRequest struct {
@@ -4979,6 +4981,24 @@ type EnvironmentBuildArtifactPin struct {
 	SourceID    pgtype.UUID
 	CandidateID pgtype.UUID
 	ArtifactID  pgtype.UUID
+}
+
+type EnvironmentDeploymentCronActivation struct {
+	AppID           pgtype.UUID
+	DeploymentScope string
+	UploadID        pgtype.Text
+	SessionID       string
+	Intent          []byte
+	Fingerprint     string
+	Revision        int64
+	Status          string
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type EnvironmentDeploymentCronState struct {
+	AppID           pgtype.UUID
+	DeploymentScope string
+	Revision        int64
 }
 
 type EnvironmentDesiredRevision struct {
@@ -16023,6 +16043,7 @@ type TriggerRecord struct {
 	WorkFairnessDigest   []byte
 	WorkFairnessLimit    pgtype.Int4
 	WorkExpiresAt        pgtype.Timestamptz
+	OperatorReplay       bool
 }
 
 type TriggerWorkBinding struct {

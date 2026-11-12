@@ -82,7 +82,8 @@ export function changeEvent(row) {
     data.old = null
     data.truncated = true
   }
-  return { id: row.event_key, type: `${row.relation_schema}.${row.relation_name}.${operations[row.op]}`, time: row.captured_at, data }
+  return { id: row.event_key, type: `${row.relation_schema}.${row.relation_name}.${operations[row.op]}`, time: row.captured_at, data,
+    ...(row.schema_version ? { schema_version: row.schema_version } : {}) }
 }
 
 // pack takes leading events while the publication stays within its bounds.
