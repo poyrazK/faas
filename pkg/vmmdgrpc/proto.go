@@ -398,6 +398,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		EgressPorts:                 egressPortsFromWire(app.GetEgressPorts()),
 		EgressRevision:              app.GetEgressRevision(),
 		Quarantine:                  app.GetQuarantine(),
+		IdentityReload:              app.GetIdentityReload(),
 		PrivateNetworkCIDRs:         app.GetPrivateNetworkCidrs(),
 		PrivateNetworkAllowedCIDRs:  app.GetPrivateNetworkAllowedCidrs(),
 		PrivateNetworkFirewallRules: privateNetworkFirewallRulesFromProto(app.GetPrivateNetworkFirewallRules()),
@@ -410,8 +411,9 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// it was woken for. The scheduler already knows the app
 		// when it calls CreateFromSnapshot; passing it on the wire
 		// means vmmd doesn't have to round-trip back to apid.
-		AppID:          app.GetAppId(),
-		RehearsalRunID: app.GetRehearsalRunId(),
+		AppID:                      app.GetAppId(),
+		RehearsalRunID:             app.GetRehearsalRunId(),
+		EnvironmentBranchContained: app.GetEnvironmentBranchContained(),
 		// issue #301 / ADR-044 — Plan + AccountID thread the
 		// apps-row context onto the wire so vmmd can land the VM
 		// under the per-plan cgroup sub-slice
@@ -596,8 +598,9 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// the very first UpdateEgressAllowlist fan-out finds the
 		// instance via m.live[].AppID without a separate
 		// bootstrap path.
-		AppID:          app.GetAppId(),
-		RehearsalRunID: app.GetRehearsalRunId(),
+		AppID:                      app.GetAppId(),
+		RehearsalRunID:             app.GetRehearsalRunId(),
+		EnvironmentBranchContained: app.GetEnvironmentBranchContained(),
 		// issue #301 / ADR-044 — see toWakeRequest. Cold-boot
 		// mirrors Plan + AccountID so deploy's first boot on a
 		// fresh VM lands under the per-plan cgroup sub-slice
@@ -862,6 +865,7 @@ func workloadDependenciesFromProto(pbs []*vmmdpb.WorkloadDependency) []api.Workl
 func wakeResponseFromInstance(instance string, req fcvm.WakeRequest, inst *fcvm.Instance, requestMethod vmmdpb.WakeMethod) *vmmdpb.WakeResponse {
 	resp := &vmmdpb.WakeResponse{
 		RehearsalRunId:                     inst.Net.RehearsalRunID,
+		EnvironmentBranchContained:         inst.Net.EnvironmentBranchContained,
 		SupportsSecretAliases:              true,
 		SupportsImageHealthcheck:           true,
 		SupportsImageHealthcheckMonitoring: true,

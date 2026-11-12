@@ -224,12 +224,15 @@ func (m *Middleware) DecideAgentRequest(ctx context.Context, acct state.Account,
 	if decided {
 		return AgentGateDecision{Problem: m.approvalOutcomeProblem(acct, key, outcome)}, nil
 	}
-	return m.requestApproval(ctx, gate, acct, key, rule, binding, reason)
+	return m.requestApproval(ctx, gate, acct, key, rule, binding, reason, 0, "")
 }
 
 // requestApproval records a new request for a person to decide, or finds
 // the key's pending one, and answers 428 approval_required with its link.
-func (m *Middleware) requestApproval(ctx context.Context, gate AgentApprovalGate, acct state.Account, key state.APIKey, rule agentapproval.Rule, binding state.AgentApprovalBinding, reason string) (AgentGateDecision, error) {
+//
+// A budget request (ADR-20261111114059) records its added cost and says why
+// in why; other requests pass 0 and "".
+func (m *Middleware) requestApproval(ctx context.Context, gate AgentApprovalGate, acct state.Account, key state.APIKey, rule agentapproval.Rule, binding state.AgentApprovalBinding, reason string, cost int64, why string) (AgentGateDecision, error) {
 	// The id is chosen here so a new request's webhook event can carry its
 	// review link (ADR-20261107140000 §4).
 	id := uuid.NewString()
@@ -237,7 +240,7 @@ func (m *Middleware) requestApproval(ctx context.Context, gate AgentApprovalGate
 		ID: id, KeyID: key.ID, AccountID: key.AccountID, OrgID: key.OrgID, Category: rule.Category,
 		Method: binding.Method, Path: binding.Path, BodySHA256: binding.BodySHA256,
 		ExpiresAt: time.Now().Add(api.AgentApprovalTTL), ReviewURL: m.reviewURL(id), AgentName: key.Label,
-		Reason: reason,
+		Reason: reason, BudgetCostMillicents: cost,
 	})
 	if errors.Is(err, state.ErrTooManyAgentApprovals) {
 		limit, observed := int64(api.MaxPendingAgentApprovals), int64(api.MaxPendingAgentApprovals)
@@ -248,7 +251,10 @@ func (m *Middleware) requestApproval(ctx context.Context, gate AgentApprovalGate
 		return AgentGateDecision{}, gateUnavailable("could not record the approval request; retry shortly", err)
 	}
 	reviewURL := m.reviewURL(request.ID)
-	detail := "this " + rule.Category + " request needs a person's approval: ask them to open " + reviewURL + ", then repeat the same request"
+	if why == "" {
+		why = "this " + rule.Category + " request needs a person's approval"
+	}
+	detail := why + ": ask them to open " + reviewURL + ", then repeat the same request"
 	hint := "Show the person the review link and wait; after they approve, repeat exactly the same request once."
 	if rule.Window > 0 {
 		detail += "; the approval covers it for " + rule.Window.String() + " from its first use"

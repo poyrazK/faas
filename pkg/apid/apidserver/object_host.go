@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -53,6 +54,19 @@ func (h objectHost) ObjectStorage() *objectstorage.Registry { return h.s.objectS
 func (h objectHost) BillingProvider() billing.Provider { return h.s.billingProvider }
 
 func (h objectHost) S3RuntimeEnabled() bool { return h.s.runtimeBool(runtimeConfigS3, false) }
+
+// ObjectStorageOverCeilingMode reads the over-ceiling deletion rollout
+// (ADR-20261111123000 decision 9).
+func (h objectHost) ObjectStorageOverCeilingMode() string {
+	if h.s.runtimeConfig == nil {
+		return api.DefaultObjectStorageOverCeiling
+	}
+	mode, err := runtimeconfig.String(h.s.runtimeConfig.Value(runtimeConfigObjectStorageOverCeiling))
+	if err != nil || !api.ValidObjectStorageOverCeilingMode(mode) {
+		return api.DefaultObjectStorageOverCeiling
+	}
+	return mode
+}
 
 func (h objectHost) AdminAllows(acct state.Account) (bool, *api.Problem) {
 	return h.s.adminAllows(acct)

@@ -48,9 +48,21 @@ kernel_paths=(
   deploy/ansible/roles/firecracker/defaults/main.yml
   scripts/build-firecracker-kernel.sh
 )
-current_source=$(git -C "$repo_root" log --first-parent --format='%H' -n 1 \
-  "$git_sha" -- "${kernel_paths[@]}")
-[[ "$current_source" =~ ^[0-9a-f]{40}$ ]] || {
+# kernel_inputs prints the blob ids of the kernel build inputs at a commit, so
+# releases match on the inputs' content rather than on the last commit that
+# touched them. A revert that restores earlier inputs then reuses the kernel
+# built from them: the shared-storage key kernel/<firecracker_version> holds
+# one immutable kernel, and a rebuild that differs by a single byte cannot be
+# published (rc.338).
+kernel_inputs() {
+  local input_path blob inputs=""
+  for input_path in "${kernel_paths[@]}"; do
+    blob=$(git -C "$repo_root" rev-parse --verify --quiet "$1:$input_path") || return 1
+    inputs+="$input_path=$blob "
+  done
+  printf '%s' "$inputs"
+}
+current_source=$(kernel_inputs "$git_sha") || {
   echo "reuse-release-kernel: could not resolve current kernel source" >&2
   exit 2
 }
@@ -60,8 +72,7 @@ while IFS= read -r candidate; do
   [[ "$candidate" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || continue
   [[ "$candidate" != "${GITHUB_REF_NAME:-}" ]] || continue
   candidate_sha=$(git -C "$repo_root" rev-list -n 1 "$candidate")
-  candidate_source=$(git -C "$repo_root" log --first-parent --format='%H' -n 1 \
-    "$candidate_sha" -- "${kernel_paths[@]}")
+  candidate_source=$(kernel_inputs "$candidate_sha") || continue
   [[ "$candidate_source" == "$current_source" ]] || continue
   assets=$(gh release view "$candidate" --repo "$GITHUB_REPOSITORY" \
     --json assets --jq '[.assets[].name] | sort | join("\n")' 2>/dev/null || true)

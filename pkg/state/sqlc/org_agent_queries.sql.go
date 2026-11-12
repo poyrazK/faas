@@ -23,7 +23,7 @@ func (q *Queries) GetCliAuthCodeOrg(ctx context.Context, db DBTX, tokenHash []by
 }
 
 const getOrgAgentPolicy = `-- name: GetOrgAgentPolicy :one
-SELECT org_id, agents_allowed, allowed_scopes, updated_at, updated_by, approval_categories
+SELECT org_id, agents_allowed, allowed_scopes, updated_at, updated_by, approval_categories, max_agent_budget_cents
 FROM org_agent_policies
 WHERE org_id = $1::uuid
 `
@@ -39,6 +39,7 @@ func (q *Queries) GetOrgAgentPolicy(ctx context.Context, db DBTX, orgID pgtype.U
 		&i.UpdatedAt,
 		&i.UpdatedBy,
 		&i.ApprovalCategories,
+		&i.MaxAgentBudgetCents,
 	)
 	return i, err
 }
@@ -66,23 +67,26 @@ func (q *Queries) SetCliAuthCodeOrg(ctx context.Context, db DBTX, arg SetCliAuth
 }
 
 const upsertOrgAgentPolicy = `-- name: UpsertOrgAgentPolicy :one
-INSERT INTO org_agent_policies (org_id, agents_allowed, allowed_scopes, approval_categories, updated_at, updated_by)
-VALUES ($1::uuid, $2::boolean, $3::text[], $4::text[], now(), $5::uuid)
+INSERT INTO org_agent_policies (org_id, agents_allowed, allowed_scopes, approval_categories, max_agent_budget_cents, updated_at, updated_by)
+VALUES ($1::uuid, $2::boolean, $3::text[], $4::text[],
+        $5::bigint, now(), $6::uuid)
 ON CONFLICT (org_id) DO UPDATE
 SET agents_allowed = EXCLUDED.agents_allowed,
     allowed_scopes = EXCLUDED.allowed_scopes,
     approval_categories = EXCLUDED.approval_categories,
+    max_agent_budget_cents = EXCLUDED.max_agent_budget_cents,
     updated_at = now(),
     updated_by = EXCLUDED.updated_by
-RETURNING org_id, agents_allowed, allowed_scopes, updated_at, updated_by, approval_categories
+RETURNING org_id, agents_allowed, allowed_scopes, updated_at, updated_by, approval_categories, max_agent_budget_cents
 `
 
 type UpsertOrgAgentPolicyParams struct {
-	OrgID              pgtype.UUID
-	AgentsAllowed      bool
-	AllowedScopes      []string
-	ApprovalCategories []string
-	UpdatedBy          pgtype.UUID
+	OrgID               pgtype.UUID
+	AgentsAllowed       bool
+	AllowedScopes       []string
+	ApprovalCategories  []string
+	MaxAgentBudgetCents pgtype.Int8
+	UpdatedBy           pgtype.UUID
 }
 
 func (q *Queries) UpsertOrgAgentPolicy(ctx context.Context, db DBTX, arg UpsertOrgAgentPolicyParams) (OrgAgentPolicy, error) {
@@ -91,6 +95,7 @@ func (q *Queries) UpsertOrgAgentPolicy(ctx context.Context, db DBTX, arg UpsertO
 		arg.AgentsAllowed,
 		arg.AllowedScopes,
 		arg.ApprovalCategories,
+		arg.MaxAgentBudgetCents,
 		arg.UpdatedBy,
 	)
 	var i OrgAgentPolicy
@@ -101,6 +106,7 @@ func (q *Queries) UpsertOrgAgentPolicy(ctx context.Context, db DBTX, arg UpsertO
 		&i.UpdatedAt,
 		&i.UpdatedBy,
 		&i.ApprovalCategories,
+		&i.MaxAgentBudgetCents,
 	)
 	return i, err
 }

@@ -32,6 +32,11 @@ class OrgAgentPolicyRequest:
     approval_channels: list[str] | Unset = UNSET
     """Names of your own notification channels that get approval requests of agents acting in the organization;
     omit to keep them, send an empty list to remove them."""
+    max_agent_budget_cents: int | Unset = UNSET
+    """Ceiling, in cents a month, on the budget of every agent acting in the organization; omit to keep the current
+    ceiling."""
+    clear_max_agent_budget: bool | Unset = UNSET
+    """Remove the ceiling on agents' budgets."""
 
     def to_dict(self) -> dict[str, Any]:
         agents_allowed = self.agents_allowed
@@ -52,6 +57,10 @@ class OrgAgentPolicyRequest:
         if not isinstance(self.approval_channels, Unset):
             approval_channels = self.approval_channels
 
+        max_agent_budget_cents = self.max_agent_budget_cents
+
+        clear_max_agent_budget = self.clear_max_agent_budget
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -64,6 +73,10 @@ class OrgAgentPolicyRequest:
             field_dict["approval_categories"] = approval_categories
         if approval_channels is not UNSET:
             field_dict["approval_channels"] = approval_channels
+        if max_agent_budget_cents is not UNSET:
+            field_dict["max_agent_budget_cents"] = max_agent_budget_cents
+        if clear_max_agent_budget is not UNSET:
+            field_dict["clear_max_agent_budget"] = clear_max_agent_budget
 
         return field_dict
 
@@ -92,11 +105,17 @@ class OrgAgentPolicyRequest:
 
         approval_channels = cast(list[str], d.pop("approval_channels", UNSET))
 
+        max_agent_budget_cents = d.pop("max_agent_budget_cents", UNSET)
+
+        clear_max_agent_budget = d.pop("clear_max_agent_budget", UNSET)
+
         org_agent_policy_request = cls(
             agents_allowed=agents_allowed,
             allowed_scopes=allowed_scopes,
             approval_categories=approval_categories,
             approval_channels=approval_channels,
+            max_agent_budget_cents=max_agent_budget_cents,
+            clear_max_agent_budget=clear_max_agent_budget,
         )
 
         return org_agent_policy_request

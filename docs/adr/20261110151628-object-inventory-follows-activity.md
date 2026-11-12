@@ -150,6 +150,100 @@ in flight: "a held bucket cannot grow, so a past inventory holds"
   45 s listing takes a short worker. In production that happens only to a
   bucket that is new (and empty) or restored full.
 
+## Step 5 result (2026-11-11)
+
+`TestInventorySweepCapacity/quiet-200ms` ran with the switch on. It had
+22,000 one-page buckets at 200 ms per page: 20,000 quiet, 1,000 active and
+1,000 quiet ones due for verification
+([evidence](../ops/evidence/20261110-object-inventory-capacity/REPORT.md#after-step-4-2026-11-11)).
+
+- 2,000 buckets were due, and none of the 20,000 quiet ones was listed. Two
+  sweeps (55 s) listed every active bucket and every verification, the
+  active ones in the first sweep.
+- The sweep's rate is unchanged, about 37 one-page buckets a second. With
+  quiet on, the work per 900 s is the active buckets plus 1/92 of the quiet
+  ones. That is in line with the Consequences below: about 30,000 active
+  buckets, or a few million quiet ones verified daily.
+- Measuring found one fix. The due query first ordered verifications
+  (attempted 23 h before) ahead of active buckets. It now orders each bucket
+  by how close it is to its own limit.
+- The next limit is the due query itself. It reads every ready bucket: 96 ms
+  for 22,000 with quiet on, linear in the bucket count. A due-time column
+  with a partial index should come before a few hundred thousand buckets.
+  That is not part of this ADR.
+
+## Step 3 notes (2026-11-11)
+
+How §2's `mutated_at` is kept, refined during implementation. None of these
+choices changes what quiet means.
+
+- **One stamp site per journal, in Postgres.** `mutated_at` lives in its own
+  table, `object_bucket_activity`, and triggers stamp it. They fire on the
+  journals every content change already writes in its own transaction:
+  - `object_bucket_mutations`, insert and delete. Every provider write,
+    copy, multipart step, upload route and clone grant records a source
+    writer there before provider IO and clears it after a validated
+    acknowledgement (ADR-590).
+  - `object_deletions`, insert and state change.
+  - `object_bucket_versioning`, `object_bucket_object_lock` and
+    `object_storage_capacity_reconciliations`.
+
+  A writer that forgets to stamp would have to skip the journal, which
+  clones already depend on. Stamping in the database also covers the
+  previous release's daemons from the moment the migration runs. The contract
+  test (`TestObjectBucketActivityTriggersPG`) lists the stamped tables;
+  `TestObjectBucketActivityMemParity` holds the MemStore to the same writes.
+- **A write is covered from admission to acknowledgement.** The writer is
+  stamped when it begins and when it settles. A listing published while a
+  writer or deletion of its bucket is still outstanding also stamps the
+  bucket. Such a write may land after the listing started, or never settle
+  if its reply was lost.
+- **Coarse stamps.** A bucket's row is rewritten at most once per
+  `ObjectInventoryMutationStampGranularity` (30 s). A burst of PUTs costs one
+  row update, not two per request, and a stamp within the granularity
+  takes no row lock. A bucket is quiet only when `mutated_at` is older than
+  its listing's start by more than the granularity.
+- **`active_since`** records the first stamp after a bucket was last quiet.
+  Step 4 anchors an active bucket's 900 s window there. Otherwise a quiet
+  bucket observed hours ago would answer `503` from its second write until
+  the sweep listed it again.
+- **Rollout.** Every bucket that exists when the migration runs starts at the
+  migration's time. A bucket created later has no row until its first
+  mutation.
+
+## Step 4 notes (2026-11-11)
+
+- **Where the switch is read.** apid validates and applies
+  `object_inventory_quiet` like any hot runtime setting. Postgres reads the
+  applied value (`object_inventory_quiet_mode()`) in the same query that
+  loads bucket usage for admission and the sweep. Every daemon that admits
+  object storage traffic sees one mode without a watcher of its own. A
+  pending change, or a value apid refused, reads as `off`.
+- **Gateway safety only.** Admission applies the quiet window only under
+  gateway-safety accounting. The sweep passes its accounting into the due
+  and backlog queries, so a provider-report deployment keeps the 5-minute
+  cadence whatever the switch says. Owned storage nodes are not part of this
+  window: they audit their own inventory.
+- **Cadence.** A quiet bucket is due once its observation is
+  `ObjectInventoryQuietVerifyAfter` (23 h) old. That leaves an hour for a
+  long listing before the 24 h limit. A listing in progress stays due.
+- **An active bucket's window** starts at `active_since` when the bucket was
+  quiet on its observation and turned active within 24 h of it. Up to that
+  moment the observation was exact. Without this, a write to a bucket quiet
+  for hours would make its next request answer `503`. The backlog gauge's
+  `class="active"` counts from the same anchor; `class="quiet"` shows the
+  oldest quiet observation, and `FaasObjectStorageInventoryQuietBacklog`
+  warns past 23.5 h.
+- **Verification is every listing of a quiet bucket.** In `shadow` the
+  cadence is unchanged, so each 5-minute listing of a quiet bucket is a
+  verification: the shadow week measures drift at full rate. Publication
+  reports drift (`FinishObjectInventoryScanVerified`), apid counts it and
+  logs the bucket, and `FaasObjectStorageInventoryDrift` warns.
+- **Leaving `on` is not free.** Returning to `shadow` or `off` holds every
+  bucket to 900 s at once, so each quiet bucket listed longer ago refuses
+  transfers until the sweep reaches it. The runbook says when that is worth
+  it.
+
 ## Consequences
 
 - Listing work follows activity. Every 15 minutes, only buckets that changed

@@ -172,3 +172,46 @@ func TestPortRules(t *testing.T) {
 		t.Fatalf("previews off = %d %+v", code, prob)
 	}
 }
+
+// Ports at create are checked as the ports route checks them, each once and
+// within the plan's SandboxExposedPortsMax, and are exposed with the
+// session.
+func TestCreateExposesPorts(t *testing.T) {
+	f := newFixture(t)
+	f.h.PreviewDomain = previewDomain
+	hobby := state.Account{ID: account, Plan: api.PlanHobby}
+	for _, tc := range []struct {
+		name string
+		acct state.Account
+		body string
+		want int
+		code string
+	}{
+		{"a reserved port", pro(), `{"preset":"codex","ports":[{"port":0}]}`, http.StatusBadRequest, api.CodeValidation},
+		{"an unknown visibility", pro(), `{"preset":"codex","ports":[{"port":3000,"visibility":"open"}]}`, http.StatusBadRequest, api.CodeValidation},
+		{"a port twice", pro(), `{"preset":"codex","ports":[{"port":3000},{"port":3000,"visibility":"public"}]}`, http.StatusBadRequest, api.CodeValidation},
+		{"public on Hobby", hobby, `{"preset":"codex","ports":[{"port":3000,"visibility":"public"}]}`, http.StatusPaymentRequired, ""},
+		{"past the plan's ports", hobby, `{"preset":"codex","ports":[{"port":3000},{"port":3001},{"port":3002}]}`, http.StatusForbidden, api.CodeAgentLimit},
+	} {
+		var p api.Problem
+		if code := f.call(t, f.h.Create, tc.acct, http.MethodPost, "/v1/sandboxes", tc.body, "", &p); code != tc.want || (tc.code != "" && p.Code != tc.code) {
+			t.Errorf("%s: create = %d %q, want %d %q", tc.name, code, p.Code, tc.want, tc.code)
+		}
+	}
+	if len(f.store.sessions) != 0 {
+		t.Fatalf("a refused request created %d sessions", len(f.store.sessions))
+	}
+	sb, code := f.create(t, pro(), `{"preset":"codex","ports":[{"port":3000},{"port":8080,"visibility":"public"}]}`)
+	if code != http.StatusCreated {
+		t.Fatalf("create = %d", code)
+	}
+	got := f.store.admitted.Ports
+	if len(got) != 2 || got[0] != (agentstore.SandboxPort{Port: 3000, Visibility: api.SandboxPortPrivate}) ||
+		got[1] != (agentstore.SandboxPort{Port: 8080, Visibility: api.SandboxPortPublic}) {
+		t.Fatalf("admitted ports %+v", got)
+	}
+	var list api.SandboxPortList
+	if code := f.call(t, f.h.ListPorts, pro(), http.MethodGet, "/v1/sandboxes/"+sb.ID+"/ports", "", sb.ID, &list); code != http.StatusOK || len(list.Items) != 2 {
+		t.Fatalf("ports = %d %+v", code, list)
+	}
+}
