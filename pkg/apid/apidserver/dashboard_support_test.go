@@ -107,6 +107,9 @@ func TestCustomerSupportPortalBrowserRoutes(t *testing.T) {
 	if !strings.Contains(stale.Body.String(), "Verify your identity") || !strings.Contains(stale.Body.String(), note.Get("idempotency_key")) || !strings.Contains(stale.Body.String(), note.Get("body")) {
 		t.Fatal("step-up lost draft/request key")
 	}
+	// The error page refreshes the CSRF cookie and its matching hidden field.
+	note = supportPortalForm(t, stale, "note")
+	note.Set("body", "PRIVATE-NOTE-FOR-STAFF")
 	check(request("POST", staffPath, note, stale.Result().Cookies(), true, "https://evil.example"), 403)
 	check(request("POST", staffPath, note, stale.Result().Cookies(), true, ""), 303)
 	page = request("GET", path, nil, nil, false, "")
