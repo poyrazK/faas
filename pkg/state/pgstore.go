@@ -31870,6 +31870,31 @@ func (s *PgStore) RequestTelemetrySharedRouteLatency(ctx context.Context, appID,
 		BaselineRequests: row.BaselineRequests, BaselineP95LatencyMS: row.BaselineP95LatencyMs}, nil
 }
 
+// RequestTelemetryKnownServerErrors counts a release's 5xx responses on
+// method+route+status triples the baseline deployment also returned in its
+// window (Hunt 34 H34-17).
+func (s *PgStore) RequestTelemetryKnownServerErrors(ctx context.Context, appID, releaseID string, releaseSince, releaseUntil time.Time, baselineID string, baselineSince, baselineUntil time.Time) (int64, error) {
+	ids := make([]pgtype.UUID, 0, 3)
+	for _, id := range []string{appID, releaseID, baselineID} {
+		parsed, err := uuid.Parse(id)
+		if err != nil {
+			return 0, fmt.Errorf("state: known server errors parse id %q: %w", id, err)
+		}
+		ids = append(ids, pgtype.UUID{Bytes: parsed, Valid: true})
+	}
+	known, err := s.appErrorsQueries().RequestTelemetryKnownServerErrors(ctx, s.pool, sqlc.RequestTelemetryKnownServerErrorsParams{
+		AppID: ids[0], ReleaseID: ids[1], BaselineID: ids[2],
+		ReleaseSince:  pgtype.Timestamptz{Time: releaseSince, Valid: true},
+		ReleaseUntil:  pgtype.Timestamptz{Time: releaseUntil, Valid: true},
+		BaselineSince: pgtype.Timestamptz{Time: baselineSince, Valid: true},
+		BaselineUntil: pgtype.Timestamptz{Time: baselineUntil, Valid: true},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("state: known server errors app=%s release=%s baseline=%s: %w", appID, releaseID, baselineID, err)
+	}
+	return known, nil
+}
+
 // RequestTelemetryBaselineP95ByRoute backs the regression detector's
 // per-route p95 baseline lookup.
 func (s *PgStore) RequestTelemetryBaselineP95ByRoute(ctx context.Context, arg sqlc.RequestTelemetryBaselineP95ByRouteParams) ([]sqlc.RequestTelemetryBaselineP95ByRouteRow, error) {
