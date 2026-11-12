@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/big"
 	"time"
 
@@ -64,18 +65,22 @@ func StorageOverageCharge(usedByteSeconds, poolBytes int64, month time.Time) (bi
 }
 
 // EgressOverageCharge is the database egress a subject is charged for in a
-// month and its price (ADR-20261110160000 slice 3). Apps and databases share
-// the plan's egress allowance and apps use it first: databases are billed for
-// what the month's total sent past the allowance beyond what the apps alone
-// sent past it, at most one more allowance, as the 2x ceiling allows.
-func EgressOverageCharge(databaseBytes, appBytes, allowanceBytes int64) (billedBytes, millicents int64) {
-	databaseBytes, appBytes = max(databaseBytes, 0), max(appBytes, 0)
-	if databaseBytes == 0 || allowanceBytes <= 0 {
+// month and its price (ADR-20261110160000 slice 3, amendment 2026-11-11).
+// Each database has its own allowance, as Neon's is per project: a database
+// is billed for what it sent past its allowance, at most one more allowance,
+// as the 2x hold allows. The subject's charge is the sum over its databases.
+func EgressOverageCharge(databaseEgress map[string]int64, allowanceBytes int64) (billedBytes, millicents int64) {
+	if allowanceBytes <= 0 {
 		return 0, 0
 	}
-	// What the apps left of the allowance absorbs database egress first.
-	room := max(allowanceBytes-appBytes, 0)
-	billedBytes = min(max(databaseBytes-room, 0), allowanceBytes)
+	for _, egress := range databaseEgress {
+		over := min(max(egress-allowanceBytes, 0), allowanceBytes)
+		if over > math.MaxInt64-billedBytes {
+			billedBytes = math.MaxInt64
+			break
+		}
+		billedBytes += over
+	}
 	return billedBytes, egressOverageMillicents(billedBytes)
 }
 
@@ -194,8 +199,10 @@ type OverageChargeStep struct {
 	StoragePoolBytes         int64
 	BilledStorageByteSeconds int64
 
-	// Database egress past the shared egress allowance, apps first
-	// (ADR-20261110160000 slice 3).
+	// Database egress past each database's own egress allowance
+	// (ADR-20261110160000 slice 3, amendment 2026-11-11). AppEgressBytes is
+	// kept for the stored step's column and is always zero now: apps no
+	// longer share the databases' allowance.
 	UsedEgressBytes      int64
 	AppEgressBytes       int64
 	EgressAllowanceBytes int64
@@ -374,7 +381,7 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 	var egressBilled int64
 	if egressOn {
 		var egressMillicents int64
-		egressBilled, egressMillicents = EgressOverageCharge(snapshot.EgressBytes, egress.AppEgressBytes, egress.CeilingBytes)
+		egressBilled, egressMillicents = EgressOverageCharge(snapshot.DatabaseEgress, egress.CeilingBytes)
 		// A step never lowers what the month already billed for egress.
 		if egressBilled < delivered.BilledEgressBytes {
 			egressBilled, egressMillicents = delivered.BilledEgressBytes, egressOverageMillicents(delivered.BilledEgressBytes)
@@ -395,7 +402,7 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 		UsedUnitSeconds: snapshot.ComputeUnitSeconds, AllowanceSeconds: charge.allowance,
 		BilledUnitSeconds: billed, DeliveredMillicents: baseline, TargetMillicents: target,
 		UsedStorageByteSeconds: snapshot.StorageByteSeconds, StoragePoolBytes: charge.storageAllowance, BilledStorageByteSeconds: storageBilled,
-		UsedEgressBytes: max(snapshot.EgressBytes, 0), AppEgressBytes: max(egress.AppEgressBytes, 0), EgressAllowanceBytes: max(egress.CeilingBytes, 0),
+		UsedEgressBytes: max(snapshot.EgressBytes, 0), EgressAllowanceBytes: max(egress.CeilingBytes, 0),
 		BilledEgressBytes: egressBilled}}
 	reserved, err := b.billing.ReserveOverage(ctx, pending)
 	if err != nil || !reserved {

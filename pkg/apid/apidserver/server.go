@@ -127,59 +127,66 @@ type server struct {
 	domainChecks domainverify.Checker
 	// requestIDLookups resolves request IDs kept on compute nodes
 	// (ADR-20261101085552); nil in tests that do not wire it.
-	requestIDLookups                       *receivers.RequestIDLookupHub
-	dataRepair                             repairapi.Managed
-	rehearsalNetworkEnabled                bool
-	rehearsalSimulationEnabled             bool
-	rehearsalWorkersEnabled                bool
-	rehearsalWorkerFaultsEnabled           bool
-	rehearsalPostgresFaultsEnabled         bool
-	rehearsalColdStartEnabled              bool
-	rehearsalSuspendResumeEnabled          bool
-	rehearsalRunningSuspendEnabled         bool
-	rehearsalCommandsEnabled               bool
-	rehearsalObjectsEnabled                bool
-	rehearsalObjects                       *objruntime.Service
-	rehearsalPostgresEnabled               bool
-	rehearsalPostgres                      *pgruntime.Service
-	ciConfig                               ci.Config
-	ciBlobs                                *ci.ManagedBlobs
-	ciRuntimeOrigin                        string
-	ciHealthMetrics                        *ci.HealthMetrics
-	hostingConfig                          *hosting.Config
-	hostingMetrics                         *hostingapi.Metrics
-	hosting                                hostingapi.Service
-	issueSlackResponses                    *issueslack.Client
-	issueSlackOAuthConfig                  issueslack.OAuthConfig
-	issueSlackOAuthClient                  *issueslack.Client
-	linearOAuthConfig                      issuetracker.LinearOAuthConfig
-	linearOAuthProvider                    issuetracker.LinearOAuthProvider
-	nativeLinearVerifier                   issuetrackers.LinearConnectionVerifier
-	nativeTrackerProvider                  issuetracker.StatusProvider
-	nativeTicketProvider                   issuetracker.Provider
-	dataPipelines                          *pipelineapi.Handler
-	environmentGitOpsAcceptanceEnforcement atomic.Bool
-	profileBackend                         profiling.Backend
-	profileQuerySlots                      chan struct{}
-	guestTracingEnabled                    bool            // ADR-958 broker on (FAAS_GUEST_TRACING_ENABLED=1)
-	durable                                durable.Service // ADR-977; Host wired in newServer
-	object                                 object.Service  // ADR-977; Host wired in newServer
-	devBridgeEnabled                       bool
-	changeTimelineEnabled                  bool // ADR-751 (FAAS_CHANGE_TIMELINE_ENABLED=1)
-	anomalyAlertsEnabled                   bool // ADR-744 (FAAS_ANOMALY_ALERTS_ENABLED=1)
-	customMetricHistoryEnabled             bool // ADR-745 (FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1)
-	datadogIntegrationEnabled              bool // ADR-752 (FAAS_DATADOG_INTEGRATION_ENABLED=1)
-	devBridgeURL                           string
-	devBridgeObserver                      *devbridge.Observer
-	operation                              operation.Service // ADR-977; Host wired in newServer
-	productControl                         product.Service
-	appEvents                              appevents.Service     // ADR-977; Host wired in newServer
-	eventPublishLimiter                    events.PublishLimiter // ADR-20261026140000
-	serviceMap                             servicemap.Service    // ADR-1131; Host wired in newServer
-	logSearch                              logsearch.Service     // ADR-20261018083536; Host wired in newServer
-	logReads                               *logsearch.ReadLimiter
-	dashboards                             dashboards.Service // ADR-20261022173833; Host wired in newServer
-	incidents                              incidents.Service  // ADR-20261022193512; Host wired in newServer
+	requestIDLookups        *receivers.RequestIDLookupHub
+	dataRepair              repairapi.Managed
+	rehearsalNetworkEnabled bool
+	// environmentBranchContainmentEnabled admits contained environment
+	// branches (ADR-20261031193635 slice 6a).
+	environmentBranchContainmentEnabled bool
+	// environmentBranchContainedObjectsEnabled admits contained branches of
+	// environments with object storage through the bridge object relay
+	// (ADR-20261031193635 slice 6c).
+	environmentBranchContainedObjectsEnabled bool
+	rehearsalSimulationEnabled               bool
+	rehearsalWorkersEnabled                  bool
+	rehearsalWorkerFaultsEnabled             bool
+	rehearsalPostgresFaultsEnabled           bool
+	rehearsalColdStartEnabled                bool
+	rehearsalSuspendResumeEnabled            bool
+	rehearsalRunningSuspendEnabled           bool
+	rehearsalCommandsEnabled                 bool
+	rehearsalObjectsEnabled                  bool
+	rehearsalObjects                         *objruntime.Service
+	rehearsalPostgresEnabled                 bool
+	rehearsalPostgres                        *pgruntime.Service
+	ciConfig                                 ci.Config
+	ciBlobs                                  *ci.ManagedBlobs
+	ciRuntimeOrigin                          string
+	ciHealthMetrics                          *ci.HealthMetrics
+	hostingConfig                            *hosting.Config
+	hostingMetrics                           *hostingapi.Metrics
+	hosting                                  hostingapi.Service
+	issueSlackResponses                      *issueslack.Client
+	issueSlackOAuthConfig                    issueslack.OAuthConfig
+	issueSlackOAuthClient                    *issueslack.Client
+	linearOAuthConfig                        issuetracker.LinearOAuthConfig
+	linearOAuthProvider                      issuetracker.LinearOAuthProvider
+	nativeLinearVerifier                     issuetrackers.LinearConnectionVerifier
+	nativeTrackerProvider                    issuetracker.StatusProvider
+	nativeTicketProvider                     issuetracker.Provider
+	dataPipelines                            *pipelineapi.Handler
+	environmentGitOpsAcceptanceEnforcement   atomic.Bool
+	profileBackend                           profiling.Backend
+	profileQuerySlots                        chan struct{}
+	guestTracingEnabled                      bool            // ADR-958 broker on (FAAS_GUEST_TRACING_ENABLED=1)
+	durable                                  durable.Service // ADR-977; Host wired in newServer
+	object                                   object.Service  // ADR-977; Host wired in newServer
+	devBridgeEnabled                         bool
+	changeTimelineEnabled                    bool // ADR-751 (FAAS_CHANGE_TIMELINE_ENABLED=1)
+	anomalyAlertsEnabled                     bool // ADR-744 (FAAS_ANOMALY_ALERTS_ENABLED=1)
+	customMetricHistoryEnabled               bool // ADR-745 (FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1)
+	datadogIntegrationEnabled                bool // ADR-752 (FAAS_DATADOG_INTEGRATION_ENABLED=1)
+	devBridgeURL                             string
+	devBridgeObserver                        *devbridge.Observer
+	operation                                operation.Service // ADR-977; Host wired in newServer
+	productControl                           product.Service
+	appEvents                                appevents.Service     // ADR-977; Host wired in newServer
+	eventPublishLimiter                      events.PublishLimiter // ADR-20261026140000
+	serviceMap                               servicemap.Service    // ADR-1131; Host wired in newServer
+	logSearch                                logsearch.Service     // ADR-20261018083536; Host wired in newServer
+	logReads                                 *logsearch.ReadLimiter
+	dashboards                               dashboards.Service // ADR-20261022173833; Host wired in newServer
+	incidents                                incidents.Service  // ADR-20261022193512; Host wired in newServer
 	// configGuardTelemetry overrides the store's request telemetry for
 	// config guards (ADR-1451); nil reads it from the store.
 	configGuardTelemetry state.ConfigGuardTelemetryStore
@@ -2307,6 +2314,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/dev/test-runs/{run_id}/chaos/matches", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.getScenarioTestChaosMatches))))
 	mux.HandleFunc("DELETE /v1/dev/test-runs/{run_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteScenarioTest))))
 	mux.HandleFunc("POST /v1/dev/sessions/{project}/syncs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.recordDevSync)))))
+	mux.HandleFunc("POST /v1/dev/sessions/{project}/seed", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.seedDevSessionFromEnvironmentBranch)))))
 	mux.HandleFunc("GET /v1/dev/sessions/{project}/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDevSyncHistory))))
 	mux.HandleFunc("GET /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployTargetReadSurface...)(s.getApp))))
 	// App-owned raw TCP listeners. The public port is stable and the
@@ -3724,6 +3732,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{slug}/environment-clones", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createFullProjectEnvironmentClone))))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environment-clones/{clone}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentCloneOperation))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironment))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/branches", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createProjectEnvironmentBranch))))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/branches", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectEnvironmentBranches))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/releases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentReleases))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/qualifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentQualifySurface...)(s.idempotent(s.createProjectEnvironmentQualification)))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/release-sets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectReleaseSets))))
@@ -6317,7 +6327,7 @@ func (s *server) idempotentWithInEnvironment(environmentID string, next accountH
 		// Partition receipts by the actual caller and credential so another
 		// member cannot replay an earlier member's response under that account.
 		key = postgresaccess.IdempotencyKey(r, projectaccess.IdempotencyKey(r, appaccess.IdempotencyKey(r, key)))
-		if strings.HasPrefix(r.URL.Path, "/v1/executions") || strings.HasPrefix(r.URL.Path, "/v1/execution-artifact-grants/") {
+		if strings.HasPrefix(r.URL.Path, "/v1/executions") || strings.HasPrefix(r.URL.Path, "/v1/execution-workflows") || strings.HasPrefix(r.URL.Path, "/v1/execution-artifact-grants/") {
 			access, problem := executionAccessForRequest(r)
 			if problem != nil {
 				writeExecutionAccessError(w, problem)
@@ -6400,7 +6410,7 @@ func idempotencyResponseReplayable(status int, body []byte) bool {
 		return problem.Code != api.CodeReleasePhaseUnavailable
 	}
 	switch problem.Code {
-	case "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged, api.CodeRouteRemovalRequired, api.CodeRouteRemovalPolicyChanged,
+	case api.CodeImageRunCacheFull, "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged, api.CodeRouteRemovalRequired, api.CodeRouteRemovalPolicyChanged,
 		api.CodeFullEnvironmentCloneUnavailable:
 		return false
 	default:

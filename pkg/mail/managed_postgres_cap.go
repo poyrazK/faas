@@ -11,8 +11,8 @@ const (
 	ManagedPostgresCapAllowance      = "allowance"
 	ManagedPostgresCapCeilingWarning = "ceiling_warning"
 	ManagedPostgresCapSuspended      = "suspended"
-	// ManagedPostgresCapEgressHeld: the account's apps and databases sent
-	// the shared egress allowance (ADR-20261110160000). Its amounts are
+	// ManagedPostgresCapEgressHeld: a database sent its own monthly egress
+	// allowance (ADR-20261110160000 amendment 2026-11-11). Its amounts are
 	// bytes, not compute-unit seconds.
 	ManagedPostgresCapEgressHeld = "egress_held"
 )
@@ -58,15 +58,15 @@ func ManagedPostgresCapBodyV1(email string, n ManagedPostgresCapNotice) (subject
 		}
 		detail = fmt.Sprintf("They used this month's %s compute limit at %s, so they were suspended.\nTheir data, backups and connection settings are kept. They resume on %s.\n%s", ceiling, n.ReachedAt.UTC().Format("2006-01-02 15:04 UTC"), resume, next)
 	case ManagedPostgresCapEgressHeld:
-		subject = "Your managed PostgreSQL databases are paused until next month"
-		next := "Upgrade your plan, or turn on egress overage with gregale billing egress-overage on, to resume them sooner."
-		limit := fmt.Sprintf("the %s monthly egress allowance", egressGiB(n.Allowance))
+		subject = "A managed PostgreSQL database is paused until next month"
+		limit := fmt.Sprintf("Each database has its own %s monthly egress allowance.", egressGB(n.Allowance))
+		next := "\nTurn on egress overage with gregale billing egress-overage on to resume it sooner."
 		if n.Overage {
-			next = "Upgrade your plan to resume them sooner."
-			limit = fmt.Sprintf("%s, twice the %s monthly egress allowance (egress overage is on)", egressGiB(n.Ceiling), egressGiB(n.Allowance))
+			limit = fmt.Sprintf("Each database has its own %s monthly egress allowance. Egress overage is on, so egress past it is billed and a database is paused at %s.", egressGB(n.Allowance), egressGB(n.Ceiling))
+			next = ""
 		}
-		detail = fmt.Sprintf("Your apps and databases share %s. Together they sent %s by %s, so the databases now refuse connections.\nTheir data, backups and connection settings are kept. They resume on %s.\n%s",
-			limit, egressGiB(n.UsedSeconds), n.ReachedAt.UTC().Format("2006-01-02 15:04 UTC"), resume, next)
+		detail = fmt.Sprintf("%s A database sent %s by %s, so it now refuses connections. Your apps and other databases are not affected; any other database that reaches its own limit is paused the same way.\nIts data, backups and connection settings are kept. It resumes on %s.%s",
+			limit, egressGB(n.UsedSeconds), n.ReachedAt.UTC().Format("2006-01-02 15:04 UTC"), resume, next)
 	default:
 		return "", "", false
 	}
@@ -82,9 +82,10 @@ See usage with gregale postgres usage or on the PostgreSQL page of the dashboard
 	return subject, body, true
 }
 
-// egressGiB renders bytes of egress as GiB.
-func egressGiB(bytes int64) string {
-	return fmt.Sprintf("%.1f GiB", float64(bytes)/(1<<30))
+// egressGB renders bytes of egress as GB (10^9 bytes), the unit Neon prices
+// and the allowance is set in.
+func egressGB(bytes int64) string {
+	return fmt.Sprintf("%.1f GB", float64(bytes)/1e9)
 }
 
 func cuHours(seconds int64) string {

@@ -562,6 +562,7 @@ export type { OIDCExchangeRequest } from './OIDCExchangeRequest.js';
 export type { OIDCExchangeResponse } from './OIDCExchangeResponse.js';
 export type { ObjectSignedRequest } from './ObjectSignedRequest.js';
 export type { ObjectStorageCharge } from './ObjectStorageCharge.js';
+export type { ObjectStorageOverCeilingDeletion } from './ObjectStorageOverCeilingDeletion.js';
 export type { ObjectStoragePolicy } from './ObjectStoragePolicy.js';
 export type { ObjectStoragePricing } from './ObjectStoragePricing.js';
 export type { ObjectStorageReleaseRequirements } from './ObjectStorageReleaseRequirements.js';

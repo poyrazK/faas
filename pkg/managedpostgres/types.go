@@ -752,7 +752,12 @@ type UsageSnapshot struct {
 	StorageByteSeconds int64
 	HistoryByteSeconds int64
 	EgressBytes        int64
-	CostMillicents     int64
+	// DatabaseEgress is each database's egress this month, by database ID.
+	// Neon's transfer allowance is per project and every database is its own
+	// project, so a database's egress allowance is its own
+	// (ADR-20261110160000 amendment 2026-11-11).
+	DatabaseEgress map[string]int64
+	CostMillicents int64
 	// Databases carries completeness for ready databases and every known
 	// provider resource, including deletion tombstones. Restores whose
 	// usage is included in a source resolve to that source's coverage.

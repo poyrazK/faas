@@ -6231,6 +6231,30 @@
     "kind": "operational"
   },
   {
+    "table": "environment_branch_captures",
+    "columns": [
+      "attempts",
+      "base_image_version",
+      "cpu_model",
+      "cpu_template",
+      "deployment_id",
+      "disk_bytes",
+      "failure",
+      "fc_version",
+      "id",
+      "instance_id",
+      "lease_token",
+      "lease_until",
+      "mem_bytes",
+      "ready_at",
+      "requested_at",
+      "state",
+      "storage_key",
+      "stored_bytes"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "environment_build_artifact_pins",
     "columns": [
       "artifact_id",
@@ -7592,6 +7616,15 @@
     "kind": "operational"
   },
   {
+    "table": "execution_event_replay_cursors",
+    "columns": [
+      "execution_id",
+      "pruned_through",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "execution_events",
     "columns": [
       "account_id",
@@ -8465,6 +8498,19 @@
       "document",
       "method",
       "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "object_storage_over_ceiling",
+    "columns": [
+      "ceiling_bytes",
+      "deletion_scheduled_at",
+      "notices_sent",
+      "observed_at",
+      "over_ceiling_since",
+      "stored_bytes",
+      "subject_id"
     ],
     "kind": "account_identity"
   },
@@ -12647,6 +12693,26 @@
     "kind": "account_identity"
   },
   {
+    "table": "object_bucket_activity",
+    "columns": [
+      "active_since",
+      "bucket_id",
+      "mutated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "object_inventory_schedule",
+    "columns": [
+      "attempt_at",
+      "bucket_id",
+      "mutated_at",
+      "observed_at",
+      "quiet_after"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "object_bucket_cors",
     "columns": [
       "bucket_id",
@@ -12778,6 +12844,28 @@
       "owner": "app",
       "unavailable": "object_bucket_setting_unavailable"
     }
+  },
+  {
+    "table": "object_bucket_overlay_tombstones",
+    "columns": [
+      "bucket_id",
+      "created_at",
+      "key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "object_bucket_overlays",
+    "columns": [
+      "account_id",
+      "as_of",
+      "bucket_id",
+      "consistency",
+      "created_at",
+      "source_app_id",
+      "source_bucket_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "object_bucket_versioning",
@@ -15820,6 +15908,74 @@
       "plan_token_hash",
       "project_slug",
       "token_kind"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_branch_buckets",
+    "columns": [
+      "account_id",
+      "app_id",
+      "copy_bucket_id",
+      "created_at",
+      "environment_id",
+      "environment_slug",
+      "id",
+      "lease_token",
+      "lease_until",
+      "project_id",
+      "source_bucket_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_branch_databases",
+    "columns": [
+      "account_id",
+      "copy_database_id",
+      "copy_name",
+      "created_at",
+      "environment_id",
+      "environment_slug",
+      "id",
+      "lease_token",
+      "lease_until",
+      "point_in_time",
+      "project_id",
+      "source_database_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_branch_deployments",
+    "columns": [
+      "app_id",
+      "created_at",
+      "deployment_id",
+      "environment_id",
+      "source_deployment_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_branches",
+    "columns": [
+      "account_id",
+      "branch_point",
+      "created_at",
+      "data_attempts",
+      "data_error",
+      "data_lease_token",
+      "data_lease_until",
+      "data_next_attempt_at",
+      "data_state",
+      "depth",
+      "egress_mode",
+      "environment_id",
+      "expires_at",
+      "parent_environment_id",
+      "private_networks",
+      "project_id"
     ],
     "kind": "operational"
   },
@@ -20818,6 +20974,15 @@
       "upgrade_result",
       "vcpu_count",
       "volume_bytes"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_branch_capture_objects",
+    "columns": [
+      "created_at",
+      "deployment_id",
+      "storage_key"
     ],
     "kind": "operational"
   }
