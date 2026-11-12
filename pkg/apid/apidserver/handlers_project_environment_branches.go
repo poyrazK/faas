@@ -150,6 +150,7 @@ func (s *server) publishEnvironmentBranchWorkloads(ctx context.Context, store st
 		}
 		workloads = append(workloads, api.ProjectEnvironmentBranchWorkload{
 			Workload: parent.WorkloadSlug, DeploymentID: d.ID, SourceDeployment: parent.SourceDeploymentID, Status: string(d.Status),
+			URL: projectEnvironmentWorkloadURL(branch.EnvironmentID, parent.AppID),
 		})
 	}
 	return workloads, nil

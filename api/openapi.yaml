@@ -108365,6 +108365,7 @@ components:
         deployment_id: { type: string }
         source_deployment_id: { type: string, description: The parent deployment whose build the branch reuses. }
         status: { type: string }
+        url: { type: string, description: "The workload's address in the branch. Its first request starts it." }
 
     ProjectEnvironmentBranchListResponse:
       description: "The branches of one parent environment."

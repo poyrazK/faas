@@ -87,6 +87,11 @@ func TestEnvironmentBranchPublishesParentBuilds(t *testing.T) {
 	if workload.Workload != app.Slug || workload.SourceDeployment != parent.ID || workload.Status != string(state.DeploySnapshotting) {
 		t.Fatalf("workload = %+v", workload)
 	}
+	// The response names where the branch's workload answers.
+	if env, err := store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, "pr-7"); err != nil || workload.URL == "" ||
+		workload.URL != projectEnvironmentWorkloadURL(env.ID, app.ID) {
+		t.Fatalf("workload url = %q (environment %+v, %v); want the branch environment's workload URL", workload.URL, env, err)
+	}
 	branched, err := store.DeploymentByID(ctx, workload.DeploymentID)
 	if err != nil || branched.Scope != "pr-7" || branched.RootfsKey != "layers/shop.ext4" {
 		t.Fatalf("branch deployment = %+v, %v", branched, err)
