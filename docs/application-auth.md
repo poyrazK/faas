@@ -63,7 +63,7 @@ not woken by verification. Like edge rules, a verified token stays valid until
 it expires; `Authorize` asks the Auth app, which also checks that the session
 is still active.
 
-Go (`github.com/poyrazK/faas/sdk/go/auth`, standard library only):
+Go (`github.com/gregale-dev/gregale-go/auth`, standard library only):
 
 ```go
 client, err := auth.New("https://shop-auth.gregale.app")
