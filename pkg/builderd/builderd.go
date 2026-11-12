@@ -155,6 +155,10 @@ type Config struct {
 	// DeferCacheExport, from DeferCacheExportEnv, exports a build's
 	// dependency cache after the image handoff (ADR-20261029171525).
 	DeferCacheExport bool `toml:"-"`
+	// BuildKitSeed, from BuildKitSeedEnv, keeps a per-node BuildKit seed
+	// that Railpack builds start from (ADR-20261030122204). The VM driver
+	// must have it on too (VMMDriver.WithBuildKitSeed).
+	BuildKitSeed bool `toml:"-"`
 	// BuilderNodeID is the compute_node name stamped onto every
 	// provenance row this Builderd writes (ADR-038, Tier 3 / issue
 	// #197 B3.1). Defaulted to "default-local" on the one-box by
@@ -1377,6 +1381,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if line := guestTimingsLog(out.Timings); line != "" {
 		b.emitBuildLog(ctx, build.ID, line)
 	}
+	if out.BuildKitSeeded {
+		b.emitBuildLog(ctx, build.ID, "[build] BuildKit started from this node's seed of platform images\n")
+	}
 	if out.WarmSnapshotError != "" {
 		b.log.Warn("builderd: warm snapshot unavailable; build artifact preserved", "build", build.ID, "err", out.WarmSnapshotError)
 		b.emitBuildLog(ctx, build.ID, "warm builder cache unavailable — deployment completed from the built artifact\n")
@@ -1547,7 +1554,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return result, err
 	}
 	phases.completed = time.Now()
-	b.log.Info("builderd: build phases", append(append([]any{"build", build.ID, "deployment", build.DeploymentID}, phases.attrs()...), guestTimingAttrs(out.Timings)...)...)
+	b.log.Info("builderd: build phases", append(append([]any{"build", build.ID, "deployment", build.DeploymentID, "buildkit_seeded", out.BuildKitSeeded}, phases.attrs()...), guestTimingAttrs(out.Timings)...)...)
 	// Only cache a successfully committed build produced by the same builder
 	// environment observed before VM launch. A concurrent base restage leaves
 	// the successful deployment intact but deliberately skips cache publication.

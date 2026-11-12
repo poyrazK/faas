@@ -52012,6 +52012,42 @@ func (q *Queries) ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype
 	return items, nil
 }
 
+const listInvocationBacklogPendingBySource = `-- name: ListInvocationBacklogPendingBySource :many
+SELECT source, coalesce(sum(pending), 0)::bigint AS pending
+FROM invocation_backlog_counters
+WHERE app_id=$1::uuid
+GROUP BY source
+ORDER BY source
+`
+
+type ListInvocationBacklogPendingBySourceRow struct {
+	Source  string
+	Pending int64
+}
+
+// The app's pending and dispatching rows per source from the backlog
+// counters (ADR-20261022105723), so `queue status` shows async invocations,
+// inbound webhooks and event deliveries waiting beside queue messages.
+func (q *Queries) ListInvocationBacklogPendingBySource(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInvocationBacklogPendingBySourceRow, error) {
+	rows, err := db.Query(ctx, listInvocationBacklogPendingBySource, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListInvocationBacklogPendingBySourceRow{}
+	for rows.Next() {
+		var i ListInvocationBacklogPendingBySourceRow
+		if err := rows.Scan(&i.Source, &i.Pending); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listInvoiceSnapshots = `-- name: ListInvoiceSnapshots :many
 SELECT id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
        period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
@@ -65793,6 +65829,35 @@ func (q *Queries) ManagedPostgresFleetTotals(ctx context.Context, db DBTX, arg M
 	var i ManagedPostgresFleetTotalsRow
 	err := row.Scan(&i.Databases, &i.CostMillicents)
 	return i, err
+}
+
+const managedPostgresLiveResourcesInProject = `-- name: ManagedPostgresLiveResourcesInProject :many
+SELECT provider_resource_id::text AS provider_resource_id FROM managed_postgres_databases
+WHERE (provider_resource_id=$1::text OR provider_resource_id LIKE $1::text || '/%')
+    AND state NOT IN ('deleting','deleted') AND deleted_at IS NULL
+`
+
+// ADR-20261112160000: neond refuses deleting a Neon project or branch that a
+// live managed PostgreSQL database runs on. A provider resource is the
+// project ID, or "<project>/<branch>" for a database on a branch.
+func (q *Queries) ManagedPostgresLiveResourcesInProject(ctx context.Context, db DBTX, project string) ([]string, error) {
+	rows, err := db.Query(ctx, managedPostgresLiveResourcesInProject, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var provider_resource_id string
+		if err := rows.Scan(&provider_resource_id); err != nil {
+			return nil, err
+		}
+		items = append(items, provider_resource_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const managedPostgresPersonalBindingReference = `-- name: ManagedPostgresPersonalBindingReference :one

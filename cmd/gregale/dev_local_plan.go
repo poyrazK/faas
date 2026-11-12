@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -36,8 +37,17 @@ type localFunction struct {
 	Env         map[string]string
 	TimeoutS    int
 	Crons       []string
-	procMu      sync.RWMutex
-	proc        local.Function
+	// Calls maps each name the function may call to its target: a sibling's
+	// function name, or a calls: app slug (ADR-20261111150000).
+	Calls map[string]string
+	// InputSchema is checked by the local adapter on typed-client calls.
+	InputSchema json.RawMessage
+	// siblings names the project's local functions; devPort is the dev
+	// server's port, known before any function is prepared.
+	siblings map[string]bool
+	devPort  int
+	procMu   sync.RWMutex
+	proc     local.Function
 }
 
 func (fn *localFunction) process() local.Function {
@@ -105,6 +115,14 @@ func planLocalFunctions(projectDir string) ([]*localFunction, error) {
 		fn.ProjectRoot = projectDir
 		fns = append(fns, fn)
 	}
+	siblings := make(map[string]bool, len(fns))
+	for _, fn := range fns {
+		siblings[fn.Name] = true
+	}
+	for _, fn := range fns {
+		fn.siblings = siblings
+	}
+	wireLocalFunctionCalls(m, projectDir, fns)
 	return fns, nil
 }
 
@@ -230,7 +248,7 @@ func (fn *localFunction) environment(baseEnv []string) []string {
 	for _, k := range keys {
 		env = append(env, k+"="+fn.Env[k])
 	}
-	return env
+	return append(env, fn.callEnvironment(fn.siblings)...)
 }
 
 func (fn *localFunction) prepareAdapter(dir, name, interpreter string, env []string, adapterFor func(string) string) error {

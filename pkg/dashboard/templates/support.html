@@ -28,12 +28,15 @@
 {{template "email-verification-banner" .}}
 {{with .Data}}{{$d := .}}
 <p class="scope">{{.Scope}}</p>
+<p class="meta"><strong data-support-total>{{.Notifications.UnreadCount}}</strong> unread updates</p>
 {{if .Error}}<div class="notice error" role="alert"><strong>Could not submit.</strong> {{.Error}} Your form and request key have been kept. {{if .StepUp}}<a href="{{.StepUpURL}}" target="_blank" rel="noopener">Verify your identity</a>, then retry this form.{{else}}<a href="{{.URL}}">Reload the latest version</a> if the ticket changed; copy any draft first.{{end}}</div>{{end}}
 {{if and .Error (.Form.Get "body")}}<details class="panel"><summary>Your submitted message</summary><p class="message">{{.Form.Get "body"}}</p><p class="meta">Request key: <code>{{.Form.Get "idempotency_key"}}</code>{{with .Form.Get "expected_revision"}} · Revision: {{.}}{{end}}</p></details>{{end}}
 {{if .Updated}}<p class="notice" role="status">Your update has been saved.</p>{{end}}
 {{if .Ticket}}
   <p><a href="{{.Base}}">← {{if .StaffMode}}Back to inbox{{else}}All conversations{{end}}</a></p>
   <h1 class="ticket-subject">{{.Ticket.Subject}}</h1>
+  <p class="meta"><span data-support-ticket-unread>{{.Ticket.UnreadCount}}</span> unread updates in this conversation</p>
+  {{if and .ReadThrough (eq .Messages.NextCursor 0)}}<form method="post" action="{{.URL}}" data-support-read>{{template "support-form-fields" (.Fields "read")}}<input type="hidden" name="through_sequence" value="{{.ReadThrough}}"><button type="submit">Mark conversation read</button></form><p class="meta" role="status" data-support-read-status></p>{{end}}
   <p><span class="badge">{{.Ticket.Status}}</span> <span class="badge">{{.Ticket.Category}}</span> <span class="meta">Opened {{.Date .Ticket.CreatedAt}}</span></p>
   <div class="columns"><section aria-labelledby="conversation">
     <h2 id="conversation">Conversation</h2>
@@ -81,6 +84,8 @@
   </aside></div>
 {{else}}
   <h1>{{if .StaffMode}}Support inbox{{else}}Customer support{{end}}</h1>
+  <section class="panel" aria-labelledby="support-updates"><h2 id="support-updates">Updates</h2><p><a href="{{.Base}}?notifications_unread=true">Unread updates</a> · <a href="{{.Base}}">All updates</a></p>
+  <ul>{{range .Notifications.Items}}<li><a href="{{$d.Base}}/{{.TicketID}}">{{$d.NotificationLabel .Kind}} · ticket {{.TicketID}}</a> <span class="meta">{{$d.Date .CreatedAt}}</span> {{if not .ReadAt}}<span class="badge">Unread</span>{{end}}</li>{{else}}<li class="muted">No updates to show.</li>{{end}}</ul>{{if .NextNotifications}}<p><a href="{{.NextNotifications}}">Earlier updates →</a></p>{{end}}</section>
   <p class="muted">{{if .StaffMode}}Follow customer conversations, check saved service targets, and manage ownership.{{else}}Ask the Gregale team for help and keep track of your conversations.{{end}}</p>
   {{if not .StaffMode}}<p><a href="#new-ticket">Start a conversation ↓</a></p>{{end}}
   <form class="filters" method="get" action="{{.Base}}">
@@ -91,14 +96,41 @@
     <button type="submit">Filter</button><a href="{{.Base}}">Reset</a>
   </form>
   <div class="scroll"><table><caption class="meta">{{if .StaffMode}}Customer support queue{{else}}Your conversations in this scope{{end}}</caption><thead><tr><th scope="col">Conversation</th><th scope="col">Status</th>{{if .StaffMode}}<th scope="col">Ownership</th><th scope="col">Response target</th><th scope="col">Resolution target</th>{{else}}<th scope="col">Updated</th>{{end}}</tr></thead><tbody>
-  {{if .StaffMode}}{{range .Inbox.Items}}<tr><td><a class="ticket-subject" href="{{$d.Base}}/{{.Ticket.ID}}">{{.Ticket.Subject}}</a><small class="muted">{{.Ticket.Category}} · {{.Priority}}</small></td><td>{{.Ticket.Status}}</td><td>{{$d.TeamName .TeamID}}<small>{{$d.StaffName .AssigneeID}}</small></td><td>{{$d.ResponseTarget .Episode}}</td><td>{{$d.ResolutionTarget .Episode}}</td></tr>{{else}}<tr><td colspan="5">No conversations match these filters.</td></tr>{{end}}
-  {{else}}{{range .Tickets.Items}}<tr><td><a class="ticket-subject" href="{{$d.Base}}/{{.ID}}">{{.Subject}}</a><small class="muted">{{.Category}}</small></td><td>{{.Status}}</td><td>{{$d.Date .UpdatedAt}}</td></tr>{{else}}<tr><td colspan="3">No conversations match these filters. Start a conversation below if you need help.</td></tr>{{end}}{{end}}
+  {{if .StaffMode}}{{range .Inbox.Items}}<tr><td><a class="ticket-subject" href="{{$d.Base}}/{{.Ticket.ID}}">{{.Ticket.Subject}}</a>{{if .Ticket.UnreadCount}} <span class="badge">{{.Ticket.UnreadCount}} unread</span>{{end}}<small class="muted">{{.Ticket.Category}} · {{.Priority}}</small></td><td>{{.Ticket.Status}}</td><td>{{$d.TeamName .TeamID}}<small>{{$d.StaffName .AssigneeID}}</small></td><td>{{$d.ResponseTarget .Episode}}</td><td>{{$d.ResolutionTarget .Episode}}</td></tr>{{else}}<tr><td colspan="5">No conversations match these filters.</td></tr>{{end}}
+  {{else}}{{range .Tickets.Items}}<tr><td><a class="ticket-subject" href="{{$d.Base}}/{{.ID}}">{{.Subject}}</a>{{if .UnreadCount}} <span class="badge">{{.UnreadCount}} unread</span>{{end}}<small class="muted">{{.Category}}</small></td><td>{{.Status}}</td><td>{{$d.Date .UpdatedAt}}</td></tr>{{else}}<tr><td colspan="3">No conversations match these filters. Start a conversation below if you need help.</td></tr>{{end}}{{end}}
   </tbody></table></div>
   {{if .Next}}<p><a href="{{.Next}}">Next page →</a></p>{{end}}
   {{if not .StaffMode}}{{template "support-create" .}}{{end}}
 {{end}}
 {{end}}
-</main></body></html>
+</main>
+<script nonce="{{.Nonce}}">
+(() => {
+  const form = document.querySelector('[data-support-read]');
+  if (!form) return;
+  const status = document.querySelector('[data-support-read-status]');
+  const button = form.querySelector('button');
+  async function markRead() {
+    if (button.disabled) return;
+    button.disabled = true;
+    try {
+      const response = await fetch(form.getAttribute('action'), {method: 'POST', credentials: 'same-origin', headers: {'Accept': 'application/json'}, body: new URLSearchParams(new FormData(form))});
+      if (!response.ok) throw new Error('read failed');
+      const result = await response.json();
+      document.querySelectorAll('[data-support-total]').forEach(el => el.textContent = String(result.unread_total));
+      document.querySelectorAll('[data-support-ticket-unread]').forEach(el => el.textContent = String(result.unread_count));
+      form.hidden = true;
+      status.textContent = result.unread_count ? 'New updates arrived. Refresh the conversation to read them.' : 'Conversation marked read.';
+    } catch (_) {
+      status.textContent = 'Could not mark this conversation read. Try again.';
+      button.disabled = false;
+    }
+  }
+  form.addEventListener('submit', event => {event.preventDefault(); markRead();});
+  markRead();
+})();
+</script>
+</body></html>
 
 {{define "support-form-fields"}}
 <input type="hidden" name="csrf_token" value="{{.CSRF}}"><input type="hidden" name="idempotency_key" value="{{.Key}}"><input type="hidden" name="action" value="{{.Action}}">{{if .Revision}}<input type="hidden" name="expected_revision" value="{{.Revision}}">{{end}}

@@ -251,6 +251,10 @@ type Middleware struct {
 	// ActivityRecorder records agent activity when Authn cannot: a gateway
 	// sends the rows to apid (ADR-20261111150000).
 	ActivityRecorder AgentActivityRecorder
+	// UndoCapture, when set, records how to reverse each agent write
+	// (ADR-20261112080601): it is called before the handler, and the
+	// capture finished after it answered. apid sets it; a gateway does not.
+	UndoCapture func(r *http.Request, acct state.Account, key state.APIKey) AgentUndoPending
 
 	// CookieDomain is the cookie attribute on the session-cookie
 	// issued/cleared by RequireSession. Empty = omit Domain
@@ -671,6 +675,13 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				}
 				if activity != nil {
 					aw := &activityWriter{ResponseWriter: w}
+					activity.id = uuid.NewString()
+					// ADR-20261112080601: read what the write replaces.
+					var undo AgentUndoPending
+					if m.UndoCapture != nil && agentWrite(r.Method) {
+						undo = m.UndoCapture(r, acct, key)
+						aw.keepBody = undo != nil
+					}
 					recorded := false
 					//nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed
 					aw.onHijack = func() {
@@ -679,6 +690,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					}
 					next(aw, r, acct)
 					if !recorded {
+						m.finishAgentUndo(r, undo, aw, activity.id)
 						m.recordAgentActivity(r, acct, key, aw.status, activity) //nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed
 					}
 					return

@@ -48,6 +48,9 @@ const (
 // intentionally absent from OpenAPI also belong in
 // scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
 var routeExclude = map[string]bool{
+	// ADR-20261112134100: private staff inbox metadata, outside the customer SDK.
+	"GET /v1/admin/support/notifications":          true,
+	"POST /v1/admin/support/tickets/{ticket}/read": true,
 	// ADR-202610171453: default-off internal hosting is absent from public OpenAPI/SDK discovery.
 	"DELETE /v1/internal/hosting/sites/{site}":                                     true,
 	"DELETE /v1/internal/hosting/sites/{site}/automation-credentials/{credential}": true,
@@ -571,6 +574,10 @@ var sdkMethodExclude = map[string]bool{
 var methodRouteMap = map[string]string{
 	// Customer support uses typed personal and organization methods.
 	"GET /v1/support/tickets":                                   "ListSupportTickets",
+	"GET /v1/support/notifications":                             "ListSupportNotifications",
+	"POST /v1/support/tickets/{ticket}/read":                    "MarkSupportTicketRead",
+	"GET /v1/orgs/{org}/support/notifications":                  "ListOrgSupportNotifications",
+	"POST /v1/orgs/{org}/support/tickets/{ticket}/read":         "MarkOrgSupportTicketRead",
 	"POST /v1/support/tickets":                                  "CreateSupportTicket",
 	"GET /v1/support/tickets/{ticket}":                          "GetSupportTicket",
 	"GET /v1/support/tickets/{ticket}/messages":                 "ListSupportMessages",
@@ -1302,6 +1309,12 @@ var methodRouteMap = map[string]string{
 	"GET /v1/agent-connections/self/budget":                                                      "AgentConnectionSelfBudget",
 	"GET /v1/agent-connections/{id}/budget":                                                      "AgentConnectionBudget",
 	"PUT /v1/agent-connections/{id}/budget":                                                      "SetAgentConnectionBudget",
+	"POST /v1/agent-connections/self/undo/plan":                                                  "PlanSelfAgentUndo",
+	"POST /v1/agent-connections/self/undo":                                                       "ApplySelfAgentUndo",
+	"POST /v1/agent-connections/{id}/undo/plan":                                                  "PlanAgentUndo",
+	"POST /v1/agent-connections/{id}/undo":                                                       "ApplyAgentUndo",
+	"POST /v1/orgs/{slug}/agent-connections/{id}/undo/plan":                                      "PlanOrgAgentUndo",
+	"POST /v1/orgs/{slug}/agent-connections/{id}/undo":                                           "ApplyOrgAgentUndo",
 	"GET /v1/orgs/{slug}/agent-connections/{id}/activity":                                        "OrgAgentConnectionActivity",
 	"GET /v1/orgs/{slug}/agent-connections":                                                      "ListOrgAgentConnections",
 	"DELETE /v1/orgs/{slug}/agent-connections/{id}":                                              "RevokeOrgAgentConnection",

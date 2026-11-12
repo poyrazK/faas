@@ -101,6 +101,7 @@ touch them. The tables below map each earlier name.
 | `gregale events` | `gregale event` |
 | `gregale flags` | `gregale flag` |
 | `gregale freeze` | `gregale release freeze` |
+| `gregale functions` | `gregale function` |
 | `gregale incidents` | `gregale alert incident` |
 | `gregale inspect` | `gregale app health --explain` |
 | `gregale invitations` | `gregale org` |

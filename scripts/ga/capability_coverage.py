@@ -416,6 +416,8 @@ INFRA_RULES = [
     r"^edgednsd?(-.*)?$",
     # ADR-20261109170000: the control plane's artifact signer.
     r"^signd$",
+    # ADR-20261112160000: the control plane's holder of the Neon API keys.
+    r"^neond$",
     # ADR-20261103163954: what stands in front of a compute edge's TLS listener.
     r"^edge-public-front$",
     # ADR-20261103163954 §4: the compute edge's per-client-address limits.

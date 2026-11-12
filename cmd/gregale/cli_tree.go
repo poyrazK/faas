@@ -46,6 +46,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"app", "Inspect, change, scale and operate apps", "Run"},
 	{"sandbox", "Run code in disposable sandboxes and inspect past runs", "Run"},
 	{"invocation", "List, inspect, wait on and watch invocations", "Run"},
+	{"function", "Generate typed clients for calls between a project's functions", "Run"},
 	{"env", "Set, list and sync an app's sealed variables", "Configure"},
 	{"domain", "Manage custom domains", "Configure"},
 	{"edge", "Manage edge rules, rule lists, caching and CORS", "Configure"},
@@ -161,6 +162,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"sandbox", "runs"},
 	{"invocation watch", "tail"},
 	{"invocation", "invocations"},
+	{"function", "functions"},
 
 	// Configure.
 	{"env set", "secrets set"},

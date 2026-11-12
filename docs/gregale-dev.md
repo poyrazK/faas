@@ -60,9 +60,19 @@ gregale dev --local --offline --postgres --bucket uploads
 
 The CLI detects the development command, falling back to the ordinary start
 command. It runs the app behind `http://localhost:8787`, passes its listening
-port as `PORT` and loopback address as `HOST`, and restarts the process group
-after source edits settle. The public local URL stays the same across restarts.
-Detected FastAPI, Flask, and Django commands receive explicit host/port options.
+port as `PORT` and loopback address as `HOST`. Recognised Next.js, Vite,
+SvelteKit, Astro, Nuxt, React Router, and Remix development servers own source
+reload: ordinary edits keep the process and HMR WebSocket connections alive.
+Detection includes simple direct `dev` scripts with the matching framework
+dependency declared. Shell wrappers, chained scripts, custom commands, Python
+servers, and ordinary start commands use Gregale process restarts after edits
+settle. Detected framework commands receive explicit host/port options, forwarded
+through the package manager when using a recognised `dev` script.
+
+Gregale still restarts framework servers after selected env-file, Gregale
+manifest, `package.json`, package-manager configuration, or dependency lockfile
+changes, including ignored launch files. The public local URL stays the same
+across restarts. Framework config edits are handled by the framework's watcher.
 Project tools in `node_modules/.bin`, `.venv/bin`, and `venv/bin` are on PATH;
 install your application's dependencies before starting it.
 
@@ -76,6 +86,12 @@ selected environment. No packages are installed automatically. Yarn PnP package
 scripts work without `node_modules`; custom commands and scripts that prepare
 their own tools are validated when they run.
 
+Launch-input reloads repeat those tool checks before stopping the current app.
+An invalid env file or missing runtime, package manager, or detected framework
+tool leaves the healthy process and its WebSocket connections serving with the
+last accepted configuration. Repair the launch inputs and save again to retry;
+the local URL stays the same when the replacement starts.
+
 Override detection for a custom command (which must listen on `PORT`):
 
 ```sh
@@ -85,8 +101,8 @@ gregale dev --local --watch-command 'go run ./cmd/api' --port 9000
 
 The command precedence is `--watch-command`, `dev.watch.command` in
 `gregale.yaml`, the detected framework development command, then the inferred
-start command. `--no-reload` disables CLI restarts; an explicitly selected
-command can still run its own watcher. App logs stream to the terminal. A crash
+start command. `--no-reload` disables CLI restarts; a framework or custom command
+can still run its own watcher. App logs stream to the terminal. A crash
 keeps the proxy available with an unavailable response; fix the source and save
 to restart. Ctrl-C stops the app and its child processes before closing borrowed
 resources. Managed HTTP app processes currently require Linux or macOS.

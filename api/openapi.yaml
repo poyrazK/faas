@@ -340,6 +340,206 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/support/notifications:
+    get:
+      tags:
+      - support
+      operationId: personalSupportNotificationsFeed
+      summary: List personal support notifications
+      description: Personal support. Metadata-only updates for the current caller. Read state is personal to this account and support audience. Private notes never create customer notifications.
+      parameters:
+      - name: before
+        in: query
+        required: false
+        description: Sequence from the previous notification page. Applies to personalSupportNotificationsFeed.
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: unread
+        in: query
+        required: false
+        description: Return only unread updates. Applies to personalSupportNotificationsFeed.
+        schema:
+          type: boolean
+          default: false
+      responses:
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+        '200':
+          description: Current caller notification feed and scoped unread count. Applies to personalSupportNotificationsFeed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportNotificationPage'
+      security:
+      - bearerAuth: []
+  /v1/support/tickets/{ticket}/read:
+    post:
+      tags:
+      - support
+      operationId: personalSupportMarkNotificationsRead
+      summary: Mark personal support updates read
+      description: Personal support. Marks only this caller's existing ticket notifications through the observed sequence. Later updates stay unread. Repeating the request is intrinsically idempotent; no permanent receipt or expected ticket revision is required.
+      parameters:
+      - name: ticket
+        in: path
+        required: true
+        description: Support ticket UUID in this scope. Applies to personalSupportMarkNotificationsRead.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Read state committed without changing the ticket revision. Applies to personalSupportMarkNotificationsRead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportReadResult'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportReadRequest'
+  /v1/orgs/{org}/support/notifications:
+    get:
+      tags:
+      - support
+      operationId: organizationSupportNotificationsFeed
+      summary: List organization support notifications
+      description: Organization support. Metadata-only updates for the current caller. Read state is personal to this account and support audience. Private notes never create customer notifications.
+      parameters:
+      - name: org
+        in: path
+        required: true
+        description: Organization slug; current owner or administrator membership is required. Applies to organizationSupportNotificationsFeed.
+        schema:
+          type: string
+      - name: before
+        in: query
+        required: false
+        description: Sequence from the previous notification page. Applies to organizationSupportNotificationsFeed.
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: unread
+        in: query
+        required: false
+        description: Return only unread updates. Applies to organizationSupportNotificationsFeed.
+        schema:
+          type: boolean
+          default: false
+      responses:
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+        '200':
+          description: Current caller notification feed and scoped unread count. Applies to organizationSupportNotificationsFeed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportNotificationPage'
+      security:
+      - bearerAuth: []
+  /v1/orgs/{org}/support/tickets/{ticket}/read:
+    post:
+      tags:
+      - support
+      operationId: organizationSupportMarkNotificationsRead
+      summary: Mark organization support updates read
+      description: Organization support. Marks only this caller's existing ticket notifications through the observed sequence. Later updates stay unread. Repeating the request is intrinsically idempotent; no permanent receipt or expected ticket revision is required.
+      parameters:
+      - name: org
+        in: path
+        required: true
+        description: Organization slug; current owner or administrator membership is required. Applies to organizationSupportMarkNotificationsRead.
+        schema:
+          type: string
+      - name: ticket
+        in: path
+        required: true
+        description: Support ticket UUID in this scope. Applies to organizationSupportMarkNotificationsRead.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Read state committed without changing the ticket revision. Applies to organizationSupportMarkNotificationsRead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportReadResult'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportReadRequest'
   /v1/support/tickets:
     get:
       tags:
@@ -55444,6 +55644,132 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/agent-connections/self/undo/plan:
+    post:
+      tags: [keys]
+      operationId: planSelfAgentUndo
+      summary: Plan undoing the calling agent's own changes.
+      description: |
+        An agent key plans an undo of its own changes, like a person's plan.
+        Applying it needs a person's approval.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentUndoRequest' }
+      responses:
+        '200':
+          description: The undo plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentUndoPlan' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/agent-connections/self/undo:
+    post:
+      tags: [keys]
+      operationId: applySelfAgentUndo
+      summary: Undo the calling agent's own changes, once a person approves.
+      description: |
+        An agent key applies a reviewed undo of its own changes. It always
+        waits for a person's approval: the first call answers 428
+        approval_required with the request to wait on (category undo, bound
+        to this body and so to the plan digest); after the approval, the same
+        call applies it once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentUndoRequest' }
+      responses:
+        '200':
+          description: What the undo did to each change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentUndoResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/agent-connections/{id}/undo/plan:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: API key id of the connected agent whose changes to undo.
+        schema: { type: string }
+    post:
+      tags: [keys]
+      operationId: planAgentUndo
+      summary: Plan undoing a connected agent's changes.
+      description: |
+        Lists the agent's changes the request selects, newest first (by
+        default those of the last 24 hours; changes are kept 7 days), with
+        what undoing each will do: undo it, leave it because it cannot be
+        undone or because someone changed it again since, or nothing because
+        it was already undone. Apply the plan with its plan_digest. An agent
+        key cannot plan or apply an undo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentUndoRequest' }
+      responses:
+        '200':
+          description: The undo plan for the connected agent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentUndoPlan' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/agent-connections/{id}/undo:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: API key id of the connected agent whose changes are undone.
+        schema: { type: string }
+    post:
+      tags: [keys]
+      operationId: applyAgentUndo
+      summary: Undo a connected agent's changes.
+      description: |
+        Applies a reviewed plan: the same request with the plan's
+        plan_digest. Changes are undone newest first through the same API
+        the agent used, as the caller; a change that cannot be undone leaves
+        the older changes of its resource as they are. 409 when the changes
+        or their state differ from the plan. Needs an admin credential.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentUndoRequest' }
+      responses:
+        '200':
+          description: What the undo did to each of the connected agent's changes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentUndoResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/agent-connections/{id}/activity:
     parameters:
       - name: id
@@ -55599,6 +55925,73 @@ paths:
               schema: { $ref: '#/components/schemas/AgentConnectionsRevokeAllResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/agent-connections/{id}/undo/plan:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: API key id of the organization agent whose changes to undo.
+        schema: { type: string }
+    post:
+      tags: [orgs, keys]
+      operationId: planOrgAgentUndo
+      summary: Plan undoing the changes of an agent acting in an organization.
+      description: |
+        The organization's variant of planning an undo, for its owners and
+        admins.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentUndoRequest' }
+      responses:
+        '200':
+          description: The undo plan for the organization agent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentUndoPlan' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/agent-connections/{id}/undo:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: API key id of the organization agent whose changes are undone.
+        schema: { type: string }
+    post:
+      tags: [orgs, keys]
+      operationId: applyOrgAgentUndo
+      summary: Undo the changes of an agent acting in an organization.
+      description: |
+        The organization's variant of applying a reviewed undo plan, for its
+        owners and admins.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentUndoRequest' }
+      responses:
+        '200':
+          description: What the undo did to each of the organization agent's changes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentUndoResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/orgs/{slug}/agent-connections/{id}/activity:
@@ -71754,6 +72147,89 @@ components:
       - body
       description: Reopen within the saved policy window and count; starts a fresh episode using that policy
         snapshot.
+    SupportNotification:
+      type: object
+      additionalProperties: false
+      description: An actor-specific support update containing metadata only.
+      properties:
+        id:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          format: int64
+        ticket_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+          - staff_reply
+          - customer_reply
+          - ticket_created
+          - assigned
+        created_at:
+          type: string
+          format: date-time
+        read_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - sequence
+      - ticket_id
+      - kind
+      - created_at
+    SupportNotificationPage:
+      type: object
+      additionalProperties: false
+      description: Sequence-ordered page of at most fifty updates in the authorized scope.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SupportNotification'
+        next_cursor:
+          type: integer
+          format: int64
+        unread_count:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - items
+      - unread_count
+    SupportReadRequest:
+      type: object
+      additionalProperties: false
+      description: Observed notification boundary; future rows are never acknowledged.
+      properties:
+        through_sequence:
+          type: integer
+          format: int64
+          minimum: 1
+      required:
+      - through_sequence
+    SupportReadResult:
+      type: object
+      additionalProperties: false
+      description: Remaining unread counts for the ticket and current support scope.
+      properties:
+        ticket_id:
+          type: string
+          format: uuid
+        unread_count:
+          type: integer
+          format: int64
+          minimum: 0
+        unread_total:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - ticket_id
+      - unread_count
+      - unread_total
     SupportTicket:
       type: object
       additionalProperties: false
@@ -71785,6 +72261,11 @@ components:
         resolved_at:
           type: string
           format: date-time
+        unread_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Unread support updates for the current caller and audience.
         can_reopen:
           type: boolean
         reopen_until:
@@ -115385,6 +115866,60 @@ components:
         spent_cents: { type: integer, format: int64, minimum: 0, description: "Always-on capacity the agent added this UTC month, priced at the overage rate and rounded up to the cent." }
         month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "The UTC month spend counts in." }
 
+    AgentUndoRequest:
+      description: "Chooses an agent's changes to undo: those since a time (default the last 24 hours), or the activity entries named."
+      type: object
+      additionalProperties: false
+      properties:
+        since: { type: string, format: date-time, description: "Undo changes made at or after this time; at most 7 days ago." }
+        entries:
+          type: array
+          maxItems: 500
+          description: "Activity entry ids to undo; when given, only they are undone."
+          items: { type: string }
+        force: { type: boolean, description: "Also undo changes someone changed again since the agent did." }
+        plan_digest: { type: string, description: "On apply, the plan_digest of the reviewed plan." }
+
+    AgentUndoItem:
+      description: "One agent change in an undo plan or result."
+      type: object
+      required: [activity_id, method, path, kind, summary, created_at, status]
+      properties:
+        activity_id: { type: string, description: "The activity entry of the change." }
+        method: { type: string, description: "The HTTP method of the agent's request." }
+        path: { type: string, description: "The path of the agent's request." }
+        kind: { type: string, enum: [settings, deploy, create, delete, other], description: "What kind of change it was." }
+        summary: { type: string, description: "What the agent changed." }
+        created_at: { type: string, format: date-time, description: "When the agent made the change." }
+        status: { type: string, enum: [undoable, not_undoable, changed_since, undone], description: "What undoing it will do, or did." }
+        reason: { type: string, description: "Why it cannot be undone, or why it was left." }
+        result: { type: string, enum: [undone, changed_since, failed, skipped], description: "On apply, what happened to it." }
+        error_code: { type: string, description: "On a failed apply, the code of the refusal." }
+        error: { type: string, description: "On a failed apply, why it was refused." }
+
+    AgentUndoPlan:
+      description: "An agent's changes, newest first, and what undoing them will do."
+      type: object
+      required: [since, items, undoable, plan_digest]
+      properties:
+        since: { type: string, format: date-time, description: "The oldest change time the plan covers." }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AgentUndoItem' }
+        undoable: { type: integer, minimum: 0, description: "How many changes applying the plan will undo." }
+        plan_digest: { type: string, description: "Binds an apply to this plan." }
+
+    AgentUndoResult:
+      description: "What an applied undo did to each change, newest first."
+      type: object
+      required: [items, undone, failed]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AgentUndoItem' }
+        undone: { type: integer, minimum: 0, description: "Changes undone." }
+        failed: { type: integer, minimum: 0, description: "Changes whose undo was refused." }
+
     AgentBudgetRequest:
       description: "Sets an agent connection's budget: exactly one of monthly_cents, unlimited or default."
       type: object
@@ -115450,7 +115985,7 @@ components:
       required: [id, category, review_url, expires_at]
       properties:
         id: { type: string, format: uuid, description: The id of the approval request. }
-        category: { type: string, enum: [delete, production, credentials, billing, budget], description: "The kind of action that needs approval; budget when the change would take the agent past its monthly budget." }
+        category: { type: string, enum: [delete, production, credentials, billing, budget, undo], description: "The kind of action that needs approval; budget when the change would take the agent past its monthly budget, undo when the agent applies an undo of its own changes." }
         review_url: { type: string, format: uri, description: "The page where a signed-in member who may decide approves or denies the request." }
         expires_at: { type: string, format: date-time, description: When the request and any approval of it expire. }
         status: { type: string, enum: [denied, expired], description: "Set on approval_denied and approval_expired: what became of the request." }
@@ -115513,7 +116048,7 @@ components:
       required: [id, category, method, path, body_bound, status, created_at, expires_at]
       properties:
         id: { type: string, format: uuid, description: The request's id. }
-        category: { type: string, enum: [delete, production, credentials, billing, budget], description: "The kind of action; budget for a change past the agent's monthly budget." }
+        category: { type: string, enum: [delete, production, credentials, billing, budget, undo], description: "The kind of action; budget for a change past the agent's monthly budget, undo for an agent undoing its own changes." }
         method: { type: string, description: The HTTP method of the request the approval allows. }
         path: { type: string, description: The path and query of the request the approval allows. }
         body_bound: { type: boolean, description: "Whether the approval is tied to the request body; large and multipart bodies are not." }
@@ -120355,6 +120890,10 @@ components:
         oldest_pending_at: { type: [string, "null"], format: date-time, description: "Oldest pending row's created_at; null when the queue is empty." }
         oldest_pending_age_seconds: { type: [integer, "null"], description: "Convenience field — seconds since oldest_pending_at; null when the queue is empty." }
         generated_at: { type: string, format: date-time }
+        backlog_by_source:
+          type: object
+          additionalProperties: { type: integer, format: int64 }
+          description: "Every pending or in-delivery invocation of the app per source (async_invoke, inbound_webhook, queue, ...), so async work waiting for the scheduler is visible beside the queue's depth. Omitted when nothing waits."
 
     QueuePeekMessage:
       description: "One pending row. No lease was acquired and `attempts` was not incremented."
@@ -124254,7 +124793,7 @@ components:
         approval_id: { type: string, format: uuid, description: The approval request this event is about. }
         key_id: { type: string, format: uuid, description: The agent key that made the request. }
         org_id: { type: string, format: uuid, description: The organization the key acts in, when it acts in one. }
-        category: { type: string, enum: [delete, production, credentials, billing, budget], description: "Which kind of risky action the agent asked to take; budget when it would go past its monthly budget." }
+        category: { type: string, enum: [delete, production, credentials, billing, budget, undo], description: "Which kind of risky action the agent asked to take; budget when it would go past its monthly budget, undo when it undoes its own changes." }
         method: { type: string, description: HTTP method of the agent's request. }
         path: { type: string, description: Path and query of the agent's request. }
         status: { type: string, enum: [pending, approved, denied], description: The request's status when the event was recorded. }

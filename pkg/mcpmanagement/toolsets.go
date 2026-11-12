@@ -34,6 +34,8 @@ const (
 var toolsetOf = map[string]string{
 	"gregale_wait_for_approval":              ToolsetCore,
 	"gregale_agent_activity":                 ToolsetOperate,
+	"gregale_plan_undo":                      ToolsetOperate,
+	"gregale_apply_undo":                     ToolsetOperate,
 	"gregale_get_saved_plan":                 ToolsetOperate,
 	"gregale_check_plan":                     ToolsetOperate,
 	"gregale_list_actions":                   ToolsetOperate,

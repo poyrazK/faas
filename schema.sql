@@ -30427,7 +30427,7 @@ CREATE TABLE public.agent_approval_requests (
     reason text,
     budget_cost_millicents bigint,
     CONSTRAINT agent_approval_requests_body_sha256_check CHECK (((body_sha256 IS NULL) OR (length(body_sha256) = 32))),
-    CONSTRAINT agent_approval_requests_category_budget_check CHECK ((category = ANY (ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text, 'budget'::text]))),
+    CONSTRAINT agent_approval_requests_category_undo_check CHECK ((category = ANY (ARRAY['delete'::text, 'production'::text, 'credentials'::text, 'billing'::text, 'budget'::text, 'undo'::text]))),
     CONSTRAINT agent_approval_requests_check CHECK (((status = 'pending'::text) = (decided_at IS NULL))),
     CONSTRAINT agent_approval_requests_check1 CHECK (((status = 'consumed'::text) = (consumed_at IS NOT NULL))),
     CONSTRAINT agent_approval_requests_method_check CHECK ((method = ANY (ARRAY['POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text]))),
@@ -30834,6 +30834,37 @@ COMMENT ON TABLE public.agent_runs IS 'ADR-20261027090010 agent runs; apid inser
 --
 
 COMMENT ON COLUMN public.agent_runs.lease_owner IS 'ADR-20261027090014 agentd replica holding the lease; diagnostics only.';
+
+
+--
+-- Name: agent_undo_records; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_undo_records (
+    id uuid NOT NULL,
+    activity_id uuid NOT NULL,
+    key_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    org_id uuid,
+    method text NOT NULL,
+    path text NOT NULL,
+    kind text NOT NULL,
+    summary text NOT NULL,
+    inverse jsonb,
+    guard jsonb,
+    not_undoable_reason text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    undone_at timestamp with time zone,
+    undone_by uuid,
+    CONSTRAINT agent_undo_records_kind_check CHECK ((kind = ANY (ARRAY['settings'::text, 'deploy'::text, 'create'::text, 'delete'::text, 'other'::text]))),
+    CONSTRAINT agent_undo_records_method_check CHECK ((method = ANY (ARRAY['POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text]))),
+    CONSTRAINT agent_undo_records_not_undoable_reason_check CHECK (((not_undoable_reason IS NULL) OR ((char_length(not_undoable_reason) >= 1) AND (char_length(not_undoable_reason) <= 512)))),
+    CONSTRAINT agent_undo_records_path_check CHECK (((char_length(path) >= 1) AND (char_length(path) <= 512))),
+    CONSTRAINT agent_undo_records_summary_check CHECK (((char_length(summary) >= 1) AND (char_length(summary) <= 512))),
+    CONSTRAINT agent_undo_records_undoable_check CHECK (((inverse IS NULL) = (not_undoable_reason IS NOT NULL))),
+    CONSTRAINT agent_undo_records_undone_check CHECK (((undone_at IS NULL) = (undone_by IS NULL))),
+    CONSTRAINT agent_undo_records_undone_inverse_check CHECK (((undone_at IS NULL) OR (inverse IS NOT NULL)))
+);
 
 
 --
@@ -59386,6 +59417,52 @@ ALTER TABLE public.support_messages ALTER COLUMN sequence ADD GENERATED ALWAYS A
 
 
 --
+-- Name: support_notifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_notifications (
+    id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    event_id uuid NOT NULL,
+    ticket_id uuid NOT NULL,
+    recipient_id uuid NOT NULL,
+    audience text NOT NULL,
+    kind text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    read_at timestamp with time zone,
+    email_state text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    lease_id uuid,
+    lease_until timestamp with time zone,
+    available_at timestamp with time zone NOT NULL,
+    destination_hash bytea,
+    CONSTRAINT support_notifications_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT support_notifications_audience_check CHECK ((audience = ANY (ARRAY['customer'::text, 'staff'::text]))),
+    CONSTRAINT support_notifications_available_at_check CHECK (isfinite(available_at)),
+    CONSTRAINT support_notifications_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT support_notifications_destination_hash_check CHECK (((destination_hash IS NULL) OR (octet_length(destination_hash) = 32))),
+    CONSTRAINT support_notifications_email_state_check CHECK ((email_state = ANY (ARRAY['queued'::text, 'inflight'::text, 'accepted'::text, 'failed'::text, 'skipped'::text]))),
+    CONSTRAINT support_notifications_kind_check CHECK ((kind = ANY (ARRAY['staff_reply'::text, 'customer_reply'::text, 'ticket_created'::text, 'assigned'::text]))),
+    CONSTRAINT support_notifications_lease_until_check CHECK (((lease_until IS NULL) OR isfinite(lease_until))),
+    CONSTRAINT support_notifications_read_at_check CHECK (((read_at IS NULL) OR isfinite(read_at)))
+);
+
+
+--
+-- Name: support_notifications_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.support_notifications ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.support_notifications_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: support_outbox; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -61133,6 +61210,14 @@ ALTER TABLE ONLY public.agent_run_usage
 
 ALTER TABLE ONLY public.agent_runs
     ADD CONSTRAINT agent_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_undo_records agent_undo_records_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_undo_records
+    ADD CONSTRAINT agent_undo_records_pkey PRIMARY KEY (id);
 
 
 --
@@ -73840,6 +73925,30 @@ ALTER TABLE ONLY public.support_messages
 
 
 --
+-- Name: support_notifications support_notifications_event_id_recipient_id_audience_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_notifications
+    ADD CONSTRAINT support_notifications_event_id_recipient_id_audience_key UNIQUE (event_id, recipient_id, audience);
+
+
+--
+-- Name: support_notifications support_notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_notifications
+    ADD CONSTRAINT support_notifications_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_notifications support_notifications_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_notifications
+    ADD CONSTRAINT support_notifications_sequence_key UNIQUE (sequence);
+
+
+--
 -- Name: support_outbox support_outbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -74709,6 +74818,20 @@ CREATE INDEX agent_runs_queue_idx ON public.agent_runs USING btree (queued_at, i
 --
 
 CREATE INDEX agent_runs_workflow_finished_idx ON public.agent_runs USING btree (finished_at, id) WHERE ((workflow_run_id IS NOT NULL) AND (finished_at IS NOT NULL));
+
+
+--
+-- Name: agent_undo_records_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_undo_records_created_idx ON public.agent_undo_records USING btree (created_at);
+
+
+--
+-- Name: agent_undo_records_key_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_undo_records_key_created_idx ON public.agent_undo_records USING btree (key_id, created_at DESC, id DESC);
 
 
 --
@@ -84737,6 +84860,34 @@ CREATE INDEX support_messages_ticket_idx ON public.support_messages USING btree 
 
 
 --
+-- Name: support_notifications_age_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_notifications_age_idx ON public.support_notifications USING btree (created_at, id);
+
+
+--
+-- Name: support_notifications_ready_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_notifications_ready_idx ON public.support_notifications USING btree (available_at, id) WHERE (email_state = ANY (ARRAY['queued'::text, 'inflight'::text]));
+
+
+--
+-- Name: support_notifications_recipient_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_notifications_recipient_idx ON public.support_notifications USING btree (recipient_id, audience, ticket_id, sequence);
+
+
+--
+-- Name: support_notifications_unread_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_notifications_unread_idx ON public.support_notifications USING btree (recipient_id, audience, sequence) WHERE (read_at IS NULL);
+
+
+--
 -- Name: support_outbox_ready_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -93347,6 +93498,14 @@ ALTER TABLE ONLY public.agent_runs
 
 ALTER TABLE ONLY public.agent_runs
     ADD CONSTRAINT agent_runs_version_fkey FOREIGN KEY (agent_id, agent_version) REFERENCES public.agent_versions(agent_id, version) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_undo_records agent_undo_records_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_undo_records
+    ADD CONSTRAINT agent_undo_records_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
 
 
 --
@@ -108787,6 +108946,30 @@ ALTER TABLE ONLY public.support_messages
 
 ALTER TABLE ONLY public.support_messages
     ADD CONSTRAINT support_messages_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_notifications support_notifications_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_notifications
+    ADD CONSTRAINT support_notifications_event_id_fkey FOREIGN KEY (event_id) REFERENCES public.support_events(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_notifications support_notifications_recipient_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_notifications
+    ADD CONSTRAINT support_notifications_recipient_id_fkey FOREIGN KEY (recipient_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_notifications support_notifications_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_notifications
+    ADD CONSTRAINT support_notifications_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
 
 
 --

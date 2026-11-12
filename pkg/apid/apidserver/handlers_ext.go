@@ -2295,7 +2295,16 @@ func (s *server) updateDeploymentMinInstances(w http.ResponseWriter, r *http.Req
 		return
 	}
 	prev := d.MinInstances
+	// ADR-20261111114059: an agent's raise of a deployment's floor is
+	// charged to its budget before the write.
+	commitBudget, answered := s.chargeDeploymentFloor(w, r, acct, app, d, v)
+	if answered {
+		return
+	}
 	updated, err := s.store.UpdateDeploymentMinInstances(r.Context(), id, v)
+	if err == nil {
+		commitBudget()
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such deployment")

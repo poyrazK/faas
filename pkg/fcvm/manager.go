@@ -4044,6 +4044,10 @@ type WakeRequest struct {
 	// them into the builder's secrets.env as a Docker config. Ignored for
 	// every VM that is not a builder.
 	BuildRegistryCredentials []BuildRegistryCredential
+	// BuildKitSeedDrive is a builder VM's writable drive2: builderd's copy of
+	// the node's BuildKit seed, beside drive1 (ADR-20261030122204). Empty for
+	// a two-drive builder and for every VM that is not a builder.
+	BuildKitSeedDrive string
 	// Port (issue #460 / ADR-053, PR-C) is the per-deployment runtime
 	// port the customer's app binds inside the guest. 0 = legacy 8080
 	// (netns.AppPort default). The host's published and readiness port

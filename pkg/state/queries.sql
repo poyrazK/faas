@@ -8736,6 +8736,16 @@ SELECT count(*) FROM production_invocation_work WHERE app_id=$1 AND source=$2 AN
 SELECT coalesce(sum(pending), 0)::bigint FROM invocation_backlog_counters
 WHERE app_id=sqlc.arg(app_id)::uuid AND source=sqlc.arg(source)::text;
 
+-- name: ListInvocationBacklogPendingBySource :many
+-- The app's pending and dispatching rows per source from the backlog
+-- counters (ADR-20261022105723), so `queue status` shows async invocations,
+-- inbound webhooks and event deliveries waiting beside queue messages.
+SELECT source, coalesce(sum(pending), 0)::bigint AS pending
+FROM invocation_backlog_counters
+WHERE app_id=sqlc.arg(app_id)::uuid
+GROUP BY source
+ORDER BY source;
+
 -- name: SumAccountQueueBacklogBytes :one
 SELECT coalesce(sum(bytes), 0)::bigint FROM invocation_backlog_counters
 WHERE account_id=sqlc.arg(account_id)::uuid AND source='queue';
@@ -16214,6 +16224,14 @@ WHERE database_id=ANY(sqlc.arg(database_ids)::uuid[]);
 UPDATE managed_postgres_plan_excess_notices SET recorded_at=sqlc.arg(now)::timestamptz,mail_intent_id=NULL
 WHERE database_id=ANY(sqlc.arg(database_ids)::uuid[]) AND delete_at IS NULL
     AND (mail_intent_id IS NOT NULL OR recorded_at<=sqlc.arg(stale_before)::timestamptz);
+
+-- name: ManagedPostgresLiveResourcesInProject :many
+-- ADR-20261112160000: neond refuses deleting a Neon project or branch that a
+-- live managed PostgreSQL database runs on. A provider resource is the
+-- project ID, or "<project>/<branch>" for a database on a branch.
+SELECT provider_resource_id::text AS provider_resource_id FROM managed_postgres_databases
+WHERE (provider_resource_id=sqlc.arg(project)::text OR provider_resource_id LIKE sqlc.arg(project)::text || '/%')
+    AND state NOT IN ('deleting','deleted') AND deleted_at IS NULL;
 
 -- name: ListManagedPostgresPlanExcessRemindersDue :many
 -- ADR-20261110184700 amendment 2026-11-12: notices whose mailed deletion date

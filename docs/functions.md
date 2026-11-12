@@ -369,6 +369,74 @@ push's deploy activity lists each step left, and running `gregale deploy` from
 a checkout completes them; `gregale org activity` and the dashboard's
 activity feed show it.
 
+## Call another function
+
+Functions in one project can call each other by name. A deploy binds every
+function to its siblings, so the calls stay on the private network and never
+cross the public internet. The platform authorizes each call by the calling
+VM, wakes a parked callee, and passes along the request's deadline and
+release. To reach another app of your account, list its slug under `calls:`:
+
+```yaml
+functions:
+  - name: web
+    root: functions/web
+    runtime: node24
+    calls: [billing-api]
+  - name: users
+    root: functions/users
+    runtime: node24
+    input:
+      type: object
+      required: [email]
+      properties:
+        email: {type: string}
+    output: schemas/user.json   # a .json file inside the function's root
+```
+
+```js
+// functions/web/handler.js
+import { functions } from '@gregale/sdk-node/functions/runtime';
+
+export default async function handler(event) {
+  const user = await functions.users.call({ email: 'a@example.com' });
+  const sent = await functions['billing-api'].send({ user: user.id });
+  return { body: { user, invocation: sent.invocationId } };
+}
+```
+
+In Python, use `from faas_sdk.functions_runtime import functions` and
+`await functions.users.call(...)`, or `call_sync` and `send_sync` in a
+synchronous handler.
+
+- `call(input)` POSTs the input as JSON and returns the parsed output. If the
+  callee answers with an error status, it raises `FunctionCallError`, which
+  carries the problem's `code`.
+- `send(input)` enqueues a durable async invocation of the callee and returns
+  its id at once. The callee runs it with the same retries and dead letters as
+  any async invocation, and `gregale invocation get <id>` shows it. A send
+  from staging runs on the callee's staging release.
+- `input` and `output` are JSON Schema. The callee checks each call's body
+  against its own `input` before the handler runs, and answers 422
+  `function_input_invalid` naming the field at fault. Only calls from these
+  clients are checked; browsers, webhooks and other service calls never are.
+  A repository push keeps the schema set by the last `gregale deploy`.
+
+`gregale function types` writes each function's typed client into its root:
+`gregale-functions.d.ts` for a Node function and `gregale_functions.py` for a
+Python one. Each covers the functions that function may call, typed from their
+schemas. In Python, import `functions` from `gregale_functions` instead of the
+SDK to get the types. Siblings without a schema and `calls:` apps get unknown
+(`Any`) types. `gregale deploy` refreshes files that already exist when a
+schema changed. In CI, `gregale function types --check` fails without writing
+anything when a file is out of date.
+
+`gregale dev --local` runs the same calls between the functions it serves:
+`call()` reaches the local sibling, `send()` answers at once and runs the call
+in the background, and the callee checks its `input` schema as it does when
+deployed. It also refreshes generated type files that are out of date.
+`calls:` apps are not served locally.
+
 ## Snapshot hooks
 
 A parked function wakes from a snapshot of its workers, so anything they set

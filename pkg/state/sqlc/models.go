@@ -488,6 +488,24 @@ type AgentRunUsage struct {
 	RecordedAt          pgtype.Timestamptz
 }
 
+type AgentUndoRecord struct {
+	ID                pgtype.UUID
+	ActivityID        pgtype.UUID
+	KeyID             pgtype.UUID
+	AccountID         pgtype.UUID
+	OrgID             pgtype.UUID
+	Method            string
+	Path              string
+	Kind              string
+	Summary           string
+	Inverse           []byte
+	Guard             []byte
+	NotUndoableReason pgtype.Text
+	CreatedAt         pgtype.Timestamptz
+	UndoneAt          pgtype.Timestamptz
+	UndoneBy          pgtype.UUID
+}
+
 // ADR-20261027090010 immutable agent versions: harness descriptor, prompt template, size and timeout.
 type AgentVersion struct {
 	AgentID               pgtype.UUID
@@ -16017,6 +16035,24 @@ type SupportMessage struct {
 	Body      string
 	Redacted  bool
 	CreatedAt pgtype.Timestamptz
+}
+
+type SupportNotification struct {
+	ID              pgtype.UUID
+	Sequence        int64
+	EventID         pgtype.UUID
+	TicketID        pgtype.UUID
+	RecipientID     pgtype.UUID
+	Audience        string
+	Kind            string
+	CreatedAt       pgtype.Timestamptz
+	ReadAt          pgtype.Timestamptz
+	EmailState      string
+	Attempts        int32
+	LeaseID         pgtype.UUID
+	LeaseUntil      pgtype.Timestamptz
+	AvailableAt     pgtype.Timestamptz
+	DestinationHash []byte
 }
 
 type SupportOutbox struct {

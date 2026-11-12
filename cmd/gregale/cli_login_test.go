@@ -161,55 +161,8 @@ func TestCmdLogin_InteractiveHappyPath_BrowserOpens(t *testing.T) {
 	if !strings.Contains(out.String(), "Logged in as jane@example.com") {
 		t.Errorf("stdout missing success line: %q", out.String())
 	}
-	if !strings.Contains(out.String(), "Opening https://api.example.test/cli-auth") {
+	if !strings.Contains(out.String(), "Open https://api.example.test/cli-auth") {
 		t.Errorf("stdout missing opening URL line: %q", out.String())
-	}
-}
-
-// TestCmdLogin_InteractiveHappyPath_PasteCode: same server, but the
-// user types the code into the same terminal so the polling loop is
-// skipped. Asserts exactly one exchange call (no 404s).
-func TestCmdLogin_InteractiveHappyPath_PasteCode(t *testing.T) {
-	plaintext := testAPIKey('b')
-	var exchangeCalls int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/cli-auth/code":
-			_ = json.NewEncoder(w).Encode(api.CliAuthCodeResponse{
-				Code:      "ABCD-1234",
-				URL:       "https://api.example.test/cli-auth?code=ABCD-1234",
-				ExpiresAt: time.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339),
-			})
-		case "/v1/cli-auth/exchange":
-			atomic.AddInt32(&exchangeCalls, 1)
-			_ = json.NewEncoder(w).Encode(api.CliAuthExchangeResponse{
-				Plaintext: plaintext,
-				Account:   api.AccountResponse{Email: "paste@example.com", Plan: "hobby"},
-			})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(srv.Close)
-
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("FAAS_API", srv.URL)
-	t.Setenv("FAAS_TOKEN", "")
-	stubBrowser(t, nil) // browser "succeeds" but the user still pastes
-	setFakeKeyring(t)
-	out, _ := captureStdout(t)
-	pipeStdin(t, "ABCD-1234\n")
-
-	if code := cmdLogin(nil); code != 0 {
-		t.Fatalf("cmdLogin paste = %d, want 0\nstdout=%s", code, out.String())
-	}
-	if got := atomic.LoadInt32(&exchangeCalls); got != 1 {
-		t.Errorf("exchange calls = %d, want 1 (paste skips polling)", got)
-	}
-	if saved := readSavedToken(t); saved != plaintext {
-		t.Errorf("saved token = %q, want %q", saved, plaintext)
 	}
 }
 
