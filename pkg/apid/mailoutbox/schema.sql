@@ -1366,3 +1366,10 @@ SET lock_timeout = '5s';
 ALTER TABLE managed_postgres_cap_events DROP CONSTRAINT IF EXISTS managed_postgres_cap_events_threshold_check;
 -- +goose StatementEnd
 
+
+-- +goose StatementBegin
+SET LOCAL lock_timeout = '5s';
+ALTER TABLE managed_postgres_plan_excess_notices
+    ADD COLUMN IF NOT EXISTS reminder_mail_intent_id uuid;
+-- +goose StatementEnd
+

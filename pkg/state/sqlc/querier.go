@@ -4032,6 +4032,10 @@ type Querier interface {
 	// Reservations survive month close and are paged without starving later keys
 	// when an older provider delivery keeps failing.
 	ListManagedPostgresOveragePending(ctx context.Context, db DBTX, arg ListManagedPostgresOveragePendingParams) ([]ListManagedPostgresOveragePendingRow, error)
+	// ADR-20261110184700 amendment 2026-11-12: notices whose mailed deletion date
+	// is between now and remind_until and whose reminder no intent has claimed,
+	// for databases not being deleted.
+	ListManagedPostgresPlanExcessRemindersDue(ctx context.Context, db DBTX, arg ListManagedPostgresPlanExcessRemindersDueParams) ([]ListManagedPostgresPlanExcessRemindersDueRow, error)
 	// ADR-20261110184700: when each database was first suspended past its plan,
 	// and the deletion date its queued email named (NULL until one did). The
 	// deletion runs only on that date.
