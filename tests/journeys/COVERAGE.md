@@ -29,7 +29,7 @@ covered. Update this table when a journey or a GA row changes.
 | 46 | Instances: list, restart | `TestScaleToZero` (ps, fresh restart) | — |
 | 47 | Health probes and auto-restart | `TestHealthGate`, `TestDeployOverrides` (health path) | liveness restarts, restart policy, stop signal |
 | 49 | Resource sizing | `TestResourcesAndAutoscaling` (RAM, CPU, effective limits), `TestRecoverableScaling` (durable scaling receipts) | scratch disk, disk I/O profile, workload classes |
-| 60 | Env vars | `TestEnvLifecycle` (push, deliver, pull, diff, history, rollback), `TestSecrets/env_history` | environment clone (preview projects) |
+| 60 | Env vars | `TestEnvLifecycle` (push, deliver, pull preview with local content preserved, key-only pull, diff, history, rollback), `TestEnvPullPreview` (built CLI with isolated metadata API: preview/apply parity, CRLF and no-op identity), `TestSecrets/env_history` | environment clone (preview projects) |
 | 61 | Secrets | `TestSecrets`, `TestDockerfileTarballAndSecretReload` (hot reload without restart, ACK, revocation) | secret references (project environments) |
 | 63 | Custom domains with managed TLS | `TestCustomDomainBinding` (add, pending, records, remove) | DNS verification, TLS issuance, serving (no test DNS zone). On 2026-10-27 production refused `domains add` ("not available on this Gregale installation"), so the step is a known failure |
 | 64 | Streaming, SSE, WebSockets, gRPC | `TestServeAndObserve/server_sent_events`, `TestWebSockets` | gRPC |
