@@ -91,9 +91,9 @@ test('DAPI004 owner cleanup protects references, fences races and retries ambigu
  }finally{await owner.query('ROLLBACK');await retiring.catch(()=>{});await inserter.end()}
  // Even a mistakenly over-granted maintenance login cannot equate RLS-hidden
  // rows with unreferenced objects: row_security=off makes that query fail.
- await admin.query(`CREATE ROLE "${role}" LOGIN`)
+ await admin.query(`CREATE ROLE "${role}" LOGIN PASSWORD 'test-only'`)
  await owner.query(`GRANT USAGE ON SCHEMA api,gregale_storage_maintenance TO "${role}"; GRANT SELECT ON ALL TABLES IN SCHEMA api,gregale_storage_maintenance TO "${role}"`)
  await owner.query('DROP TABLE api.team_order_jobs')
- const restricted=new URL(url);restricted.username=role
+ const restricted=new URL(url);restricted.username=role;restricted.password='test-only'
  await assert.rejects(maintainData({...options,connectionString:restricted.toString()}),/row-level security/)
 })
