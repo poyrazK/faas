@@ -20,6 +20,41 @@ invalidate cached snapshots so old configuration cannot return through restore.
 A running process keeps its current environment unless `--restart` requests a
 fresh cold boot.
 
+## Preview and pull missing secret keys
+
+```bash
+gregale env pull --app my-api --env production --dry-run
+gregale env pull --app my-api --env production --dry-run --json
+gregale env pull --app my-api --env production -o .env.production
+```
+
+Pull reads sealed-secret **names**, never their values. `--dry-run` lists `add`
+for a missing empty assignment, `preserve` for a remote key already present
+locally, and `local_only` for a local key absent from the selected remote scope.
+Local-only keys are kept. Preview needs read access to the app's secret metadata;
+it creates neither the output file nor temporary output files.
+
+Preview and apply use the same planner. Existing comments, assignments and
+values remain byte-for-byte intact, including `export` lines and CRLF endings.
+Missing keys are appended in sorted order as empty assignments, using CRLF when
+the original uses it. A pull with no missing keys leaves an existing file
+unchanged, including its timestamp and permissions. A missing output is created
+even when the selected scope has no keys, preserving the empty-skeleton behavior.
+
+New and replacement files have mode `0600`. Apply writes and syncs a temporary
+file in the destination directory before publishing the complete file. Symlink
+and non-regular destinations are refused before the API read. Immediately before
+publication, the command rechecks the original file's identity, metadata and
+contents; edits detected since planning stop the write with a retry message.
+This check does not lock other editors. A new output is published without
+replacing a file another process just created. A failed or cancelled staged
+write leaves the original untouched.
+
+The JSON receipt keeps `app_slug`, `scope`, `output_path`, key counts and
+`key_only`, and adds `dry_run`, `write_required`, `written` and sorted `changes`
+with `key`/`action` pairs. Neither receipts nor previews include local values,
+remote hashes or secret values.
+
 ## Shared project configuration
 
 Every service of a project environment inherits the variables in that

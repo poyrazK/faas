@@ -3412,10 +3412,11 @@ Without one, completeness is unknown.
 
 Pull sealed-secret keys to a .env skeleton (values blank)
 
-`gregale env pull [--app <slug>] [--env <SCOPE>] [-o <PATH>]`
+`gregale env pull [--dry-run] [--app <slug>] [--env <SCOPE>] [-o <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--dry-run` | preview missing key skeletons and preserved local keys without writing files |  |
 | `--app <slug>` | app slug (defaults to linked context) |  |
 | `--env <SCOPE>` | env scope (defaults to linked project environment) (also --scope) |  |
 | `-o <PATH>` | output file (default .env) |  |
@@ -3425,6 +3426,7 @@ Examples:
 ```sh
 gregale env pull --app my-api
 gregale env pull --app my-api --env staging
+gregale env pull --app my-api --dry-run --json
 ```
 
 ### env push
