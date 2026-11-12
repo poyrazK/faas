@@ -152,7 +152,9 @@ func decode(t *testing.T, w *httptest.ResponseRecorder) api.DataAPIChangeEventBa
 
 func TestHandlerPublishesUnderTheAppsOwnSourceAndKeys(t *testing.T) {
 	f := newFixture(t)
-	w := f.serve(f.token(t, workloadidentity.DataAPIEventsAudience), batch(t, event(1), event(2)))
+	versioned := event(1)
+	versioned.SchemaVersion = "v1"
+	w := f.serve(f.token(t, workloadidentity.DataAPIEventsAudience), batch(t, versioned, event(2)))
 	if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
@@ -162,6 +164,9 @@ func TestHandlerPublishesUnderTheAppsOwnSourceAndKeys(t *testing.T) {
 	}
 	if got := f.publisher.events[0].Key; got != "data-api.change.00000000-0000-4000-8000-000000000001" {
 		t.Fatalf("key %q", got)
+	}
+	if f.publisher.events[0].SchemaVersion != "v1" || f.publisher.events[1].SchemaVersion != "" {
+		t.Fatalf("schema versions were changed: %+v", f.publisher.events)
 	}
 	if f.publisher.notified != 1 {
 		t.Fatalf("notified %d times", f.publisher.notified)

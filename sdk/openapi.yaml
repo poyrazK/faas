@@ -42,6 +42,8 @@ servers:
         default: api.gregale.dev
         description: API hostname.
 tags:
+  - name: support
+    description: Gregale customer assistance, public conversations and resolution episodes.
   - name: operations
     description: Staged customer-owned HTTP work, scoped status and durable progress; production admission is disabled.
   - name: flags
@@ -26545,6 +26547,8 @@ components:
         idle_timeout_s: {type: [integer, "null"]}
         request_timeout_s: {type: integer, minimum: 0, maximum: 30, description: "Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default."}
         function_concurrency: {type: integer, minimum: 0, maximum: 80, description: "Requests one Node or Python function worker serves at once. 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy."}
+        function_callables: {type: object, additionalProperties: {type: string}, description: "Names this function's typed client may call and their app slugs, set by functions-project deploys. Stamped into the guest as GREGALE_FUNCTIONS on the next deploy."}
+        function_input_schema: {type: object, additionalProperties: true, description: "JSON Schema an SDK functions client's calls to this function are checked against; a call whose body does not match is refused with 422 function_input_invalid. Set from the function's input in gregale.yaml by CLI deploys."}
         min_instances: {type: integer}
         status:
           type: string
@@ -27784,6 +27788,14 @@ components:
           minimum: 0
           maximum: 80
           description: "Changes how many requests one Node or Python function worker serves at once. 0 or 1 restores one request per worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next deploy."
+        function_callables:
+          type: [object, "null"]
+          additionalProperties: {type: string}
+          description: "Replaces the names a function's typed client may call and their app slugs; {} clears them. Takes effect on the next deploy as GREGALE_FUNCTIONS. Function apps only."
+        function_input_schema:
+          type: [object, "null"]
+          additionalProperties: true
+          description: "Replaces the JSON Schema an SDK functions client's calls to this function are checked against; {} clears it. Takes effect on the next deploy. Function apps only."
         request_rate_limit_rps:
           type: [integer, "null"]
           minimum: 0
@@ -33720,6 +33732,7 @@ components:
         skip_if_running: {type: boolean, description: "When true, consume a scheduled occurrence while a prior HTTP invocation or app command task is active."}
         created_at: {type: string, format: date-time}
         last_fired_at: {type: [string, "null"], format: date-time}
+        environment: {type: string, description: "Project environment the cron runs in; omitted for production.", example: "staging"}
         schedule_policy: {$ref: '#/components/schemas/SchedulePolicy'}
         failure_rules: {$ref: '#/components/schemas/FailureRules'}
     CronRun:
@@ -33834,6 +33847,7 @@ components:
         skip_if_running: {type: [boolean, "null"], description: "Skip a scheduled fire when an earlier cron invocation is still running."}
         retry_max: {type: integer, minimum: 0, maximum: 5, description: "Additional command attempts after failure or timeout; command crons only."}
         retry_backoff_seconds: {type: integer, minimum: 1, maximum: 3600, description: "Base retry delay in seconds; doubles per retry and is capped at 24 hours. Command crons only."}
+        environment: {type: string, description: "Project environment the cron runs in; omitted or production is the app's production environment. Immutable once created.", example: "staging"}
         schedule_policy: {$ref: '#/components/schemas/SchedulePolicy'}
         failure_rules: {$ref: '#/components/schemas/FailureRules'}
     UpdateCronRequest:

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	faas "github.com/gregale-dev/gregale-go"
 )
 
 type clientBinding[T any] struct {

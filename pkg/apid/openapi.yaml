@@ -45,6 +45,8 @@ servers:
         description: API hostname.
 
 tags:
+  - name: support
+    description: Gregale customer assistance, public conversations and resolution episodes.
   - name: operations
     description: Staged customer-owned HTTP work, scoped status and durable progress; production admission is disabled.
   - name: flags
@@ -338,6 +340,997 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/support/tickets:
+    get:
+      tags:
+      - support
+      operationId: personalSupportList
+      summary: List personal support cases
+      description: Personal support list operation. Responses omit private notes, staff queues and engineering
+        details. Writes require current verified access, the expected revision where applicable, and a UUID
+        idempotency key.
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: Last ticket UUID from the preceding page. This parameter belongs to personalSupportList.
+        schema:
+          type: string
+          format: uuid
+      - name: status
+        in: query
+        required: false
+        description: Filter case status. This parameter belongs to personalSupportList.
+        schema:
+          type: string
+          enum:
+          - open
+          - pending
+          - resolved
+      - name: search
+        in: query
+        required: false
+        description: Search subject and currently visible public conversation text. This parameter belongs
+          to personalSupportList.
+        schema:
+          type: string
+          maxLength: 200
+      responses:
+        '200':
+          description: Current scoped support records. Result of personalSupportList.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportTicketPage'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+    post:
+      tags:
+      - support
+      operationId: personalSupportCreate
+      summary: Create personal support case workflow
+      description: Personal support create operation. Responses omit private notes, staff queues and engineering
+        details. Writes require current verified access, the expected revision where applicable, and a UUID
+        idempotency key.
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
+          request. Reuse it for retries. This parameter belongs to personalSupportCreate.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Support transaction accepted. Result of personalSupportCreate.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSubmission'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSupportTicketRequest'
+  /v1/support/tickets/{ticket}:
+    get:
+      tags:
+      - support
+      operationId: personalSupportGet
+      summary: Get personal support case workflow
+      description: Personal support get operation. Responses omit private notes, staff queues and engineering
+        details. Writes require current verified access, the expected revision where applicable, and a UUID
+        idempotency key.
+      parameters:
+      - name: ticket
+        in: path
+        required: true
+        description: Support case UUID in this scope. This parameter belongs to personalSupportGet.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Current scoped support records. Result of personalSupportGet.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportTicket'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+  /v1/support/tickets/{ticket}/messages:
+    get:
+      tags:
+      - support
+      operationId: personalSupportMessages
+      summary: Messages personal support case workflow
+      description: Personal support messages operation. Responses omit private notes, staff queues and engineering
+        details. Writes require current verified access, the expected revision where applicable, and a UUID
+        idempotency key.
+      parameters:
+      - name: ticket
+        in: path
+        required: true
+        description: Support case UUID in this scope. This parameter belongs to personalSupportMessages.
+        schema:
+          type: string
+          format: uuid
+      - name: after
+        in: query
+        required: false
+        description: Return messages after this global message sequence. This parameter belongs to personalSupportMessages.
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      responses:
+        '200':
+          description: Current scoped support records. Result of personalSupportMessages.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportMessagePage'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+    post:
+      tags:
+      - support
+      operationId: personalSupportReply
+      summary: Reply personal support case workflow
+      description: Personal support reply operation. Responses omit private notes, staff queues and engineering
+        details. Writes require current verified access, the expected revision where applicable, and a UUID
+        idempotency key.
+      parameters:
+      - name: ticket
+        in: path
+        required: true
+        description: Support case UUID in this scope. This parameter belongs to personalSupportReply.
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
+          request. Reuse it for retries. This parameter belongs to personalSupportReply.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Support transaction accepted. Result of personalSupportReply.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSubmission'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportMessageRequest'
+  /v1/support/tickets/{ticket}/close:
+    post:
+      tags:
+      - support
+      operationId: personalSupportClose
+      summary: Close personal support case workflow
+      description: Personal support close operation. Responses omit private notes, staff queues and engineering
+        details. Writes require current verified access, the expected revision where applicable, and a UUID
+        idempotency key.
+      parameters:
+      - name: ticket
+        in: path
+        required: true
+        description: Support case UUID in this scope. This parameter belongs to personalSupportClose.
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
+          request. Reuse it for retries. This parameter belongs to personalSupportClose.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Support transaction accepted. Result of personalSupportClose.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSubmission'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloseSupportTicketRequest'
+  /v1/support/tickets/{ticket}/reopen:
+    post:
+      tags:
+      - support
+      operationId: personalSupportReopen
+      summary: Reopen personal support case workflow
+      description: Personal support reopen operation. Responses omit private notes, staff queues and engineering
+        details. Writes require current verified access, the expected revision where applicable, and a UUID
+        idempotency key.
+      parameters:
+      - name: ticket
+        in: path
+        required: true
+        description: Support case UUID in this scope. This parameter belongs to personalSupportReopen.
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
+          request. Reuse it for retries. This parameter belongs to personalSupportReopen.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Support transaction accepted. Result of personalSupportReopen.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSubmission'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReopenSupportTicketRequest'
+  /v1/support/tickets/{ticket}/satisfaction:
+    get:
+      tags:
+      - support
+      operationId: personalSupportSurvey
+      summary: Survey personal support case workflow
+      description: Personal support survey operation. Responses omit private notes, staff queues and engineering
+        details. Writes require current verified access, the expected revision where applicable, and a UUID
+        idempotency key.
+      parameters:
+      - name: ticket
+        in: path
+        required: true
+        description: Support case UUID in this scope. This parameter belongs to personalSupportSurvey.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Current scoped support records. Result of personalSupportSurvey.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSatisfaction'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+    post:
+      tags:
+      - support
+      operationId: personalSupportRate
+      summary: Rate personal support case workflow
+      description: Personal support rate operation. Responses omit private notes, staff queues and engineering
+        details. Writes require current verified access, the expected revision where applicable, and a UUID
+        idempotency key.
+      parameters:
+      - name: ticket
+        in: path
+        required: true
+        description: Support case UUID in this scope. This parameter belongs to personalSupportRate.
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
+          request. Reuse it for retries. This parameter belongs to personalSupportRate.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Support transaction accepted. Result of personalSupportRate.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSatisfactionSubmission'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportSatisfactionRequest'
+  /v1/orgs/{org}/support/tickets:
+    get:
+      tags:
+      - support
+      operationId: organizationSupportList
+      summary: List organization support cases
+      description: Organization support list operation. Responses omit private notes, staff queues and engineering
+        details. Writes require current verified access, the expected revision where applicable, and a UUID
+        idempotency key.
+      parameters:
+      - name: org
+        in: path
+        required: true
+        description: Organization slug; current owner or administrator membership is required. This parameter
+          belongs to organizationSupportList.
+        schema:
+          type: string
+      - name: cursor
+        in: query
+        required: false
+        description: Last ticket UUID from the preceding page. This parameter belongs to organizationSupportList.
+        schema:
+          type: string
+          format: uuid
+      - name: status
+        in: query
+        required: false
+        description: Filter case status. This parameter belongs to organizationSupportList.
+        schema:
+          type: string
+          enum:
+          - open
+          - pending
+          - resolved
+      - name: search
+        in: query
+        required: false
+        description: Search subject and currently visible public conversation text. This parameter belongs
+          to organizationSupportList.
+        schema:
+          type: string
+          maxLength: 200
+      responses:
+        '200':
+          description: Current scoped support records. Result of organizationSupportList.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportTicketPage'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+    post:
+      tags:
+      - support
+      operationId: organizationSupportCreate
+      summary: Create organization support case workflow
+      description: Organization support create operation. Responses omit private notes, staff queues and
+        engineering details. Writes require current verified access, the expected revision where applicable,
+        and a UUID idempotency key.
+      parameters:
+      - name: org
+        in: path
+        required: true
+        description: Organization slug; current owner or administrator membership is required. This parameter
+          belongs to organizationSupportCreate.
+        schema:
+          type: string
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
+          request. Reuse it for retries. This parameter belongs to organizationSupportCreate.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Support transaction accepted. Result of organizationSupportCreate.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSubmission'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSupportTicketRequest'
+  /v1/orgs/{org}/support/tickets/{ticket}:
+    get:
+      tags:
+      - support
+      operationId: organizationSupportGet
+      summary: Get organization support case workflow
+      description: Organization support get operation. Responses omit private notes, staff queues and engineering
+        details. Writes require current verified access, the expected revision where applicable, and a UUID
+        idempotency key.
+      parameters:
+      - name: org
+        in: path
+        required: true
+        description: Organization slug; current owner or administrator membership is required. This parameter
+          belongs to organizationSupportGet.
+        schema:
+          type: string
+      - name: ticket
+        in: path
+        required: true
+        description: Support case UUID in this scope. This parameter belongs to organizationSupportGet.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Current scoped support records. Result of organizationSupportGet.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportTicket'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+  /v1/orgs/{org}/support/tickets/{ticket}/messages:
+    get:
+      tags:
+      - support
+      operationId: organizationSupportMessages
+      summary: Messages organization support case workflow
+      description: Organization support messages operation. Responses omit private notes, staff queues and
+        engineering details. Writes require current verified access, the expected revision where applicable,
+        and a UUID idempotency key.
+      parameters:
+      - name: org
+        in: path
+        required: true
+        description: Organization slug; current owner or administrator membership is required. This parameter
+          belongs to organizationSupportMessages.
+        schema:
+          type: string
+      - name: ticket
+        in: path
+        required: true
+        description: Support case UUID in this scope. This parameter belongs to organizationSupportMessages.
+        schema:
+          type: string
+          format: uuid
+      - name: after
+        in: query
+        required: false
+        description: Return messages after this global message sequence. This parameter belongs to organizationSupportMessages.
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      responses:
+        '200':
+          description: Current scoped support records. Result of organizationSupportMessages.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportMessagePage'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+    post:
+      tags:
+      - support
+      operationId: organizationSupportReply
+      summary: Reply organization support case workflow
+      description: Organization support reply operation. Responses omit private notes, staff queues and
+        engineering details. Writes require current verified access, the expected revision where applicable,
+        and a UUID idempotency key.
+      parameters:
+      - name: org
+        in: path
+        required: true
+        description: Organization slug; current owner or administrator membership is required. This parameter
+          belongs to organizationSupportReply.
+        schema:
+          type: string
+      - name: ticket
+        in: path
+        required: true
+        description: Support case UUID in this scope. This parameter belongs to organizationSupportReply.
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
+          request. Reuse it for retries. This parameter belongs to organizationSupportReply.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Support transaction accepted. Result of organizationSupportReply.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSubmission'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportMessageRequest'
+  /v1/orgs/{org}/support/tickets/{ticket}/close:
+    post:
+      tags:
+      - support
+      operationId: organizationSupportClose
+      summary: Close organization support case workflow
+      description: Organization support close operation. Responses omit private notes, staff queues and
+        engineering details. Writes require current verified access, the expected revision where applicable,
+        and a UUID idempotency key.
+      parameters:
+      - name: org
+        in: path
+        required: true
+        description: Organization slug; current owner or administrator membership is required. This parameter
+          belongs to organizationSupportClose.
+        schema:
+          type: string
+      - name: ticket
+        in: path
+        required: true
+        description: Support case UUID in this scope. This parameter belongs to organizationSupportClose.
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
+          request. Reuse it for retries. This parameter belongs to organizationSupportClose.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Support transaction accepted. Result of organizationSupportClose.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSubmission'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloseSupportTicketRequest'
+  /v1/orgs/{org}/support/tickets/{ticket}/reopen:
+    post:
+      tags:
+      - support
+      operationId: organizationSupportReopen
+      summary: Reopen organization support case workflow
+      description: Organization support reopen operation. Responses omit private notes, staff queues and
+        engineering details. Writes require current verified access, the expected revision where applicable,
+        and a UUID idempotency key.
+      parameters:
+      - name: org
+        in: path
+        required: true
+        description: Organization slug; current owner or administrator membership is required. This parameter
+          belongs to organizationSupportReopen.
+        schema:
+          type: string
+      - name: ticket
+        in: path
+        required: true
+        description: Support case UUID in this scope. This parameter belongs to organizationSupportReopen.
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
+          request. Reuse it for retries. This parameter belongs to organizationSupportReopen.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Support transaction accepted. Result of organizationSupportReopen.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSubmission'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReopenSupportTicketRequest'
+  /v1/orgs/{org}/support/tickets/{ticket}/satisfaction:
+    get:
+      tags:
+      - support
+      operationId: organizationSupportSurvey
+      summary: Survey organization support case workflow
+      description: Organization support survey operation. Responses omit private notes, staff queues and
+        engineering details. Writes require current verified access, the expected revision where applicable,
+        and a UUID idempotency key.
+      parameters:
+      - name: org
+        in: path
+        required: true
+        description: Organization slug; current owner or administrator membership is required. This parameter
+          belongs to organizationSupportSurvey.
+        schema:
+          type: string
+      - name: ticket
+        in: path
+        required: true
+        description: Support case UUID in this scope. This parameter belongs to organizationSupportSurvey.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Current scoped support records. Result of organizationSupportSurvey.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSatisfaction'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+    post:
+      tags:
+      - support
+      operationId: organizationSupportRate
+      summary: Rate organization support case workflow
+      description: Organization support rate operation. Responses omit private notes, staff queues and engineering
+        details. Writes require current verified access, the expected revision where applicable, and a UUID
+        idempotency key.
+      parameters:
+      - name: org
+        in: path
+        required: true
+        description: Organization slug; current owner or administrator membership is required. This parameter
+          belongs to organizationSupportRate.
+        schema:
+          type: string
+      - name: ticket
+        in: path
+        required: true
+        description: Support case UUID in this scope. This parameter belongs to organizationSupportRate.
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Client-generated UUID bound permanently to the actor, operation, resource and JSON
+          request. Reuse it for retries. This parameter belongs to organizationSupportRate.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Support transaction accepted. Result of organizationSupportRate.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSatisfactionSubmission'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportSatisfactionRequest'
   /v1/project-migrations:
     post:
       operationId: createProjectMigration
@@ -26242,6 +27235,14 @@ paths:
       description: |
         Snapshots only HTTP scheduling intent for the owned app. Command crons,
         execution progress and server-held original rows are excluded.
+        `environment` reads one non-production environment's manifest crons
+        and its own revision and latest deployment.
+      parameters:
+        - name: environment
+          in: query
+          required: false
+          schema: { type: string }
+          description: A project environment of the app; omitted or `production` is production.
       responses:
         '200':
           description: The captured HTTP scheduling set.
@@ -70659,6 +71660,275 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    SupportContext:
+      type: object
+      additionalProperties: false
+      properties:
+        app_id:
+          type: string
+          format: uuid
+        deployment_id:
+          type: string
+          format: uuid
+        request_id:
+          type: string
+          maxLength: 200
+      description: Optional identifiers supplied by the customer; no automatic log, secret or source-code
+        collection.
+    CreateSupportTicketRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        subject:
+          type: string
+          minLength: 1
+          maxLength: 200
+        category:
+          type: string
+          enum:
+          - deployment
+          - billing
+          - account
+          - incident
+          - other
+        body:
+          type: string
+          minLength: 1
+          maxLength: 10000
+        priority:
+          type: string
+          enum:
+          - low
+          - normal
+          - high
+          - urgent
+          default: normal
+        context:
+          $ref: '#/components/schemas/SupportContext'
+      required:
+      - subject
+      - category
+      - body
+      description: Submit a support request within the authenticated personal or organization scope.
+    SupportMessageRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        body:
+          type: string
+          minLength: 1
+          maxLength: 10000
+      required:
+      - expected_revision
+      - body
+      description: Append one customer reply to an unresolved case at the expected revision.
+    CloseSupportTicketRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+      required:
+      - expected_revision
+      description: Close the current support resolution episode without extending a previous resolution timestamp.
+    ReopenSupportTicketRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        body:
+          type: string
+          minLength: 1
+          maxLength: 10000
+      required:
+      - expected_revision
+      - body
+      description: Reopen within the saved policy window and count; starts a fresh episode using that policy
+        snapshot.
+    SupportTicket:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        subject:
+          type: string
+        category:
+          type: string
+        status:
+          type: string
+          enum:
+          - open
+          - pending
+          - resolved
+        revision:
+          type: integer
+          format: int64
+        context:
+          $ref: '#/components/schemas/SupportContext'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: string
+          format: date-time
+        can_reopen:
+          type: boolean
+        reopen_until:
+          type: string
+          format: date-time
+      required:
+      - id
+      - subject
+      - category
+      - status
+      - revision
+      - context
+      - created_at
+      - updated_at
+      - can_reopen
+      description: Customer-visible case metadata; staff assignments, targets, notes and engineering records
+        stay private.
+    SupportTicketPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SupportTicket'
+        next_cursor:
+          type: string
+          format: uuid
+      required:
+      - items
+      description: Creation-ordered page of at most fifty cases; pass next_cursor as cursor.
+    SupportMessage:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          format: int64
+        author:
+          type: string
+          enum:
+          - customer
+          - staff
+        body:
+          type: string
+        redacted:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - sequence
+      - author
+      - body
+      - redacted
+      - created_at
+      description: One public conversation message, with a marker in place of redacted content.
+    SupportMessagePage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SupportMessage'
+        next_cursor:
+          type: integer
+          format: int64
+      required:
+      - items
+      description: Sequence-ordered page of at most fifty public messages; use next_cursor as after.
+    SupportSubmission:
+      type: object
+      additionalProperties: false
+      properties:
+        ticket_id:
+          type: string
+          format: uuid
+        submission_id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          format: int64
+      required:
+      - ticket_id
+      - submission_id
+      - revision
+      description: Durable transaction receipt; UUID idempotency keys replay indefinitely while current scope
+        access remains valid.
+    SupportSatisfactionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        episode_id:
+          type: string
+          format: uuid
+        rating:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 5
+      required:
+      - episode_id
+      - rating
+      description: One satisfaction rating for the currently resolved episode.
+    SupportSatisfactionSubmission:
+      type: object
+      additionalProperties: false
+      properties:
+        episode_id:
+          type: string
+          format: uuid
+        rating:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 5
+      required:
+      - episode_id
+      - rating
+      description: Recorded satisfaction score for a resolution episode; retries return the same result.
+    SupportSatisfaction:
+      type: object
+      additionalProperties: false
+      properties:
+        episode_id:
+          type: string
+          format: uuid
+        eligible:
+          type: boolean
+        rating:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 5
+      required:
+      - episode_id
+      - eligible
+      description: Current resolution survey eligibility and any previously submitted score.
     CreateProjectMigrationRequest:
       description: Start one durable migration of selected reviewed services with request-only configuration.
       type: object
@@ -86384,6 +87654,7 @@ components:
       additionalProperties: false
       required: [id, type, data]
       properties:
+        schema_version: { type: string, maxLength: 64, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$', description: Version captured with this row change; unchanged on retry. }
         id: { type: string, pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' }
         type: { type: string, maxLength: 256, pattern: '^[!-~]+\.(inserted|updated|deleted)$', description: SCHEMA.TABLE.inserted, .updated or .deleted. }
         time: { type: string, format: date-time, description: When the change was recorded. }
@@ -90776,6 +92047,8 @@ components:
         idle_timeout_s: { type: [integer, "null"] }
         request_timeout_s: { type: integer, minimum: 0, maximum: 30, description: "Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default." }
         function_concurrency: { type: integer, minimum: 0, maximum: 80, description: "Requests one Node or Python function worker serves at once. 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy." }
+        function_callables: { type: object, additionalProperties: { type: string }, description: "Names this function's typed client may call and their app slugs, set by functions-project deploys. Stamped into the guest as GREGALE_FUNCTIONS on the next deploy." }
+        function_input_schema: {type: object, additionalProperties: true, description: "JSON Schema an SDK functions client's calls to this function are checked against; a call whose body does not match is refused with 422 function_input_invalid. Set from the function's input in gregale.yaml by CLI deploys."}
         min_instances: { type: integer }
         status:
           type: string
@@ -94808,6 +96081,14 @@ components:
           minimum: 0
           maximum: 80
           description: "Changes how many requests one Node or Python function worker serves at once. 0 or 1 restores one request per worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next deploy."
+        function_callables:
+          type: [object, "null"]
+          additionalProperties: { type: string }
+          description: "Replaces the names a function's typed client may call and their app slugs; {} clears them. Takes effect on the next deploy as GREGALE_FUNCTIONS. Function apps only."
+        function_input_schema:
+          type: [object, "null"]
+          additionalProperties: true
+          description: "Replaces the JSON Schema an SDK functions client's calls to this function are checked against; {} clears it. Takes effect on the next deploy. Function apps only."
         request_rate_limit_rps:
           type: [integer, "null"]
           minimum: 0
@@ -96560,6 +97841,7 @@ components:
         crons:
           type: array
           items: { $ref: '#/components/schemas/DeploymentCronConfig' }
+        environment: { type: string, description: "The non-production environment read; omitted for production." }
     DeploymentCronStagingRequest:
       type: object
       description: Immutable HTTP cron intent. Prepare retains active schedules until the submitted production release owns all traffic; cancel fences an unsubmitted intent. Stage and restore support legacy recovery.
@@ -96578,6 +97860,7 @@ components:
         desired:
           type: array
           items: { $ref: '#/components/schemas/DeploymentCronConfig' }
+        environment: { type: string, description: "Stages the manifest's HTTP crons into this non-production environment of the app's project; it activates when the environment's deployment owns all of its traffic and replaces only its manifest crons. Only prepare, cancel and track_upload take one." }
     DeploymentStagingSnapshot:
       type: object
       description: An atomic snapshot for journaling selected deployment policies before staging.
@@ -106980,6 +108263,7 @@ components:
         skip_if_running: { type: boolean, description: "When true, consume a scheduled occurrence while a prior HTTP invocation or app command task is active." }
         created_at: { type: string, format: date-time }
         last_fired_at: { type: [string, "null"], format: date-time }
+        environment: { type: string, description: "Project environment the cron runs in; omitted for production.", example: "staging" }
         schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
 
@@ -107101,6 +108385,7 @@ components:
         skip_if_running: { type: [boolean, "null"], description: "Skip a scheduled fire when an earlier cron invocation is still running." }
         retry_max: { type: integer, minimum: 0, maximum: 5, description: "Additional command attempts after failure or timeout; command crons only." }
         retry_backoff_seconds: { type: integer, minimum: 1, maximum: 3600, description: "Base retry delay in seconds; doubles per retry and is capped at 24 hours. Command crons only." }
+        environment: { type: string, description: "Project environment the cron runs in; omitted or production is the app's production environment. Immutable once created.", example: "staging" }
         schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
 
@@ -108365,6 +109650,7 @@ components:
         deployment_id: { type: string }
         source_deployment_id: { type: string, description: The parent deployment whose build the branch reuses. }
         status: { type: string }
+        url: { type: string, description: "The workload's address in the branch. Its first request starts it." }
 
     ProjectEnvironmentBranchListResponse:
       description: "The branches of one parent environment."
@@ -136754,6 +138040,54 @@ components:
             $ref: '#/components/schemas/DataPipeline'
 
   responses:
+    SupportInvalid:
+      description: Support request fields do not satisfy the customer assistance contract.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SupportUnauthenticated:
+      description: Authentication is required to access customer assistance records.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SupportForbidden:
+      description: Current verified account or organization support access is required.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SupportMissing:
+      description: The requested assistance record is unavailable in the current scope.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SupportConflict:
+      description: The assistance revision, reopening allowance or request receipt conflicts with this command.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SupportTooLarge:
+      description: The customer assistance JSON request exceeds its byte limit.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SupportLimited:
+      description: The rolling assistance submission or mutation allowance is exhausted.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SupportUnavailable:
+      description: Customer assistance storage is temporarily unavailable; retry the same request key.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
     EdgeRulesVersionMismatch:
       description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
       content:

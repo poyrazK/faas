@@ -402,12 +402,26 @@ func (tg *target) execStdin(t *testing.T, stdin string, timeout time.Duration, a
 	return tg.execIn(t, tg.token, tg.home, stdin, timeout, args...)
 }
 
+// runWithEnv runs the CLI with the target's token and extra environment, for
+// a journey that turns on a CLI surface still hidden by default (such as
+// FAAS_ENVIRONMENT_BRANCHES_ENABLED). cliEnv drops the caller's FAAS_
+// variables, so the journey names each one it needs.
+func (tg *target) runWithEnv(t *testing.T, extra []string, timeout time.Duration, args ...string) cliResult {
+	t.Helper()
+	return tg.execInEnv(t, tg.token, tg.home, "", extra, timeout, args...)
+}
+
 func (tg *target) execIn(t *testing.T, token, dir, stdin string, timeout time.Duration, args ...string) cliResult {
+	t.Helper()
+	return tg.execInEnv(t, token, dir, stdin, nil, timeout, args...)
+}
+
+func (tg *target) execInEnv(t *testing.T, token, dir, stdin string, extra []string, timeout time.Duration, args ...string) cliResult {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, tg.cli, append([]string{"--non-interactive"}, args...)...)
-	cmd.Env = tg.cliEnv(token)
+	cmd.Env = append(tg.cliEnv(token), extra...)
 	cmd.Dir = dir
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)

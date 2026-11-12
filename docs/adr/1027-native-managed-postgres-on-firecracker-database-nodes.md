@@ -1235,6 +1235,24 @@ and flag it uses exists from 14 on.
   Provision took 9.5–15.5 s for 14–17 and 27.7 s for 18; the restores
   9.2–13.5 s.
 
+#### Amendment 2026-11-12: PostgreSQL 14 is dropped
+
+PostgreSQL 14 reached upstream end of life in November 2026. The owner chose
+not to support it at all ("drop 14 entirely"), on the native driver and on
+Neon alike, rather than offer an upgrade path out of it.
+
+- `dbguest.MinMajor` is 15, so guest-init, vmmd and schedd refuse a 14
+  boot, upgrade source or node major. `dbvm.PostgresImages` and the
+  `database_vmmd` role no longer pin a 14 image, so no node builds a 14
+  base. The native driver advertises 15–18 by default.
+- The Neon driver offers 15–18; 14 is no longer a retiring major.
+- A database still on 14 can no longer boot, restore or resize. None is
+  expected: Neon closed 14 to new databases first, and managed PostgreSQL
+  provisioning was not yet open in production. Check before deploying.
+- `database_nodes.postgres_majors`' CHECK still admits 14; narrowing it is a
+  later contract migration once no node row lists it.
+- The upgrade metal tests upgrade from 15 instead.
+
 ### In-place major upgrades
 
 PostgreSQL 14 reaches its end of life in November 2026, and a database

@@ -25,7 +25,7 @@ func (f *configurationFixture) GetDeployment(context.Context, string) (api.Deplo
 	f.reads++
 	return f.response, nil
 }
-func (f *configurationFixture) GetDeploymentCronStagingSnapshot(context.Context, string) (api.DeploymentCronStagingSnapshot, error) {
+func (f *configurationFixture) GetEnvironmentDeploymentCronStagingSnapshot(context.Context, string, string) (api.DeploymentCronStagingSnapshot, error) {
 	f.writes++
 	return api.DeploymentCronStagingSnapshot{}, errors.New("unexpected staging snapshot")
 }

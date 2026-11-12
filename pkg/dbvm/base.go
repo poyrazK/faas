@@ -24,7 +24,6 @@ import (
 // manifests. The database_vmmd Ansible role's defaults carry the same pins
 // (a test keeps them equal); guest-init runs every major the same way.
 var PostgresImages = map[int]string{
-	14: "docker.io/library/postgres@sha256:dc84be408a074d95deb782940fdf2509c423693614eea5b2f7d86452a3513f02",
 	15: "docker.io/library/postgres@sha256:bbbf67eadd2381a2738a4a2e36d4c3936c36edd82d80e7ef00411194385d3829",
 	16: "docker.io/library/postgres@sha256:ec9f656f17c8b4dfebf49e58cf5c46d493d4846d4ea6d8b85d0637f68ee33bfc",
 	17: "docker.io/library/postgres@sha256:66aafa11cf15800a3c94763f7e11d1e7b2e37e5e84bc4ce027cb6e1e4bfaf4df",

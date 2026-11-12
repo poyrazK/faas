@@ -14929,6 +14929,37 @@ END $$;
 
 
 --
+-- Name: guard_cron_environment_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_cron_environment_scope() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE environment uuid;
+BEGIN
+  IF TG_OP='UPDATE' THEN
+    IF NEW.environment_id IS DISTINCT FROM OLD.environment_id OR NEW.deployment_scope IS DISTINCT FROM OLD.deployment_scope
+      OR (OLD.deployment_scope<>'' AND NEW.app_id IS DISTINCT FROM OLD.app_id) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='cron_scope_identity',
+        MESSAGE='cron environment identity is immutable';
+    END IF;
+  ELSIF NEW.deployment_scope<>'' THEN
+    SELECT e.id INTO environment FROM apps a JOIN project_environments e ON e.project_id=a.project_id
+      AND e.account_id=a.account_id AND e.slug=NEW.deployment_scope
+      WHERE a.id=NEW.app_id AND a.status<>'deleted'
+      FOR SHARE OF a,e;
+    IF NOT FOUND OR (NEW.environment_id IS NOT NULL AND NEW.environment_id IS DISTINCT FROM environment) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='cron_environment_membership',
+        MESSAGE='an environment cron requires a project environment of its app';
+    END IF;
+    NEW.environment_id=environment;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_customer_operation_webhook_routing(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -30372,6 +30403,36 @@ CREATE TABLE public.agent_execution_workflows (
 
 
 --
+-- Name: agent_github_subscriptions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_github_subscriptions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    endpoint_id uuid NOT NULL,
+    thread_id text NOT NULL,
+    tool_call_id text NOT NULL,
+    repository text NOT NULL,
+    event_types text[] NOT NULL,
+    issued_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_github_subscriptions_check CHECK ((expires_at > created_at)),
+    CONSTRAINT agent_github_subscriptions_event_types_check CHECK (((cardinality(event_types) >= 1) AND (cardinality(event_types) <= 8))),
+    CONSTRAINT agent_github_subscriptions_repository_check CHECK ((((char_length(repository) >= 3) AND (char_length(repository) <= 201)) AND (repository = lower(repository)))),
+    CONSTRAINT agent_github_subscriptions_thread_id_check CHECK (((char_length(thread_id) >= 1) AND (char_length(thread_id) <= 64))),
+    CONSTRAINT agent_github_subscriptions_tool_call_id_check CHECK (((char_length(tool_call_id) >= 1) AND (char_length(tool_call_id) <= 512)))
+);
+
+
+--
+-- Name: TABLE agent_github_subscriptions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_github_subscriptions IS 'ADR-20261030125501 gregale_github_subscribe rows written by apid: a thread receives a repository''s gregale.github events until expires_at.';
+
+
+--
 -- Name: agent_key_budgets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -35648,6 +35709,8 @@ CREATE TABLE public.crons (
     schedule_revision bigint DEFAULT 1 NOT NULL,
     schedule_anchor_at timestamp with time zone,
     labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    deployment_scope text DEFAULT ''::text NOT NULL,
+    environment_id uuid,
     CONSTRAINT crons_command_output_check CHECK (((command_max_output_bytes >= 1024) AND (command_max_output_bytes <= 16777216))),
     CONSTRAINT crons_command_shape_check CHECK ((((cardinality(command) = 0) AND (NOT command_shell)) OR (((cardinality(command) >= 1) AND (cardinality(command) <= 64)) AND (array_position(command, NULL::text) IS NULL) AND ((octet_length(command[1]) >= 1) AND (octet_length(command[1]) <= 4096)) AND ((octet_length(array_to_string(command, ''::text)) >= 1) AND (octet_length(array_to_string(command, ''::text)) <= 16384)) AND ((NOT command_shell) OR (cardinality(command) = 1))))),
     CONSTRAINT crons_command_timeout_check CHECK (((command_timeout_seconds >= 1) AND (command_timeout_seconds <= 3600))),
@@ -38715,6 +38778,42 @@ CREATE TABLE public.environment_build_artifact_pins (
     candidate_id uuid,
     artifact_id uuid NOT NULL,
     CONSTRAINT environment_build_artifact_pins_check CHECK (((source_id IS NULL) <> (candidate_id IS NULL)))
+);
+
+
+--
+-- Name: environment_deployment_cron_activations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_deployment_cron_activations (
+    app_id uuid NOT NULL,
+    deployment_scope text NOT NULL,
+    upload_id text,
+    session_id text NOT NULL,
+    intent jsonb NOT NULL,
+    fingerprint text NOT NULL,
+    revision bigint NOT NULL,
+    status text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT environment_deployment_cron_activations_deployment_scope_check CHECK (((deployment_scope ~ '^[a-z][a-z0-9-]{0,62}$'::text) AND (deployment_scope <> ALL (ARRAY['default'::text, 'production'::text])))),
+    CONSTRAINT environment_deployment_cron_activations_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT environment_deployment_cron_activations_intent_check CHECK ((jsonb_typeof(intent) = 'object'::text)),
+    CONSTRAINT environment_deployment_cron_activations_revision_check CHECK ((revision > 0)),
+    CONSTRAINT environment_deployment_cron_activations_session_id_check CHECK ((session_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT environment_deployment_cron_activations_status_check CHECK ((status = ANY (ARRAY['prepared'::text, 'activated'::text, 'conflict'::text, 'discarded'::text, 'canceled'::text])))
+);
+
+
+--
+-- Name: environment_deployment_cron_states; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_deployment_cron_states (
+    app_id uuid NOT NULL,
+    deployment_scope text NOT NULL,
+    revision bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT environment_deployment_cron_states_deployment_scope_check CHECK (((deployment_scope ~ '^[a-z][a-z0-9-]{0,62}$'::text) AND (deployment_scope <> ALL (ARRAY['default'::text, 'production'::text])))),
+    CONSTRAINT environment_deployment_cron_states_revision_check CHECK ((revision >= 0))
 );
 
 
@@ -46017,6 +46116,7 @@ CREATE TABLE public.managed_postgres_plan_excess_notices (
     recorded_at timestamp with time zone NOT NULL,
     mail_intent_id uuid,
     delete_at timestamp with time zone,
+    reminder_mail_intent_id uuid,
     CONSTRAINT managed_postgres_plan_excess_notices_reason_check CHECK ((reason = ANY (ARRAY['database_limit'::text, 'service_class'::text]))),
     CONSTRAINT managed_postgres_plan_excess_notices_recorded_at_check CHECK (isfinite(recorded_at))
 );
@@ -58184,6 +58284,8 @@ CREATE TABLE public.scheduled_releases (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     started_at timestamp with time zone,
+    scheduled_by_account_id uuid,
+    scheduled_by_key_id uuid,
     CONSTRAINT scheduled_releases_canary_check CHECK (((canary IS NULL) OR ((jsonb_typeof(canary) = 'object'::text) AND (octet_length((canary)::text) <= 4096)))),
     CONSTRAINT scheduled_releases_check CHECK (((state = 'started'::text) = (started_at IS NOT NULL))),
     CONSTRAINT scheduled_releases_notify_channel_ids_check CHECK ((cardinality(notify_channel_ids) <= 5)),
@@ -58857,6 +58959,269 @@ CREATE TABLE public.stripe_push_dedupe (
 
 
 --
+-- Name: support_admin_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_admin_events (
+    id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    actor_id uuid,
+    kind text NOT NULL,
+    resource_id uuid NOT NULL,
+    data jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT support_admin_events_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT support_admin_events_data_check CHECK (((jsonb_typeof(data) = 'object'::text) AND (octet_length((data)::text) <= 65536))),
+    CONSTRAINT support_admin_events_kind_check CHECK ((kind = ANY (ARRAY['policy'::text, 'team'::text, 'staff'::text])))
+);
+
+
+--
+-- Name: support_admin_events_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.support_admin_events ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.support_admin_events_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: support_engineering; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_engineering (
+    ticket_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    data jsonb NOT NULL,
+    CONSTRAINT support_engineering_data_check CHECK (((jsonb_typeof(data) = 'object'::text) AND (octet_length((data)::text) <= 65536))),
+    CONSTRAINT support_engineering_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: support_episodes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_episodes (
+    id uuid NOT NULL,
+    ticket_id uuid NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    data jsonb NOT NULL,
+    CONSTRAINT support_episodes_data_check CHECK (((jsonb_typeof(data) = 'object'::text) AND (octet_length((data)::text) <= 32768))),
+    CONSTRAINT support_episodes_started_at_check CHECK (isfinite(started_at))
+);
+
+
+--
+-- Name: support_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_events (
+    id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    ticket_id uuid NOT NULL,
+    actor_id uuid,
+    kind text NOT NULL,
+    data jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT support_events_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT support_events_data_check CHECK (((jsonb_typeof(data) = 'object'::text) AND (octet_length((data)::text) <= 8192))),
+    CONSTRAINT support_events_kind_check CHECK ((kind = ANY (ARRAY['created'::text, 'reply'::text, 'note'::text, 'resolved'::text, 'reopened'::text, 'paused'::text, 'resumed'::text, 'triage'::text, 'handoff'::text, 'redacted'::text, 'engineering_saved'::text, 'engineering_published'::text])))
+);
+
+
+--
+-- Name: support_events_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.support_events ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.support_events_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: support_messages; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_messages (
+    id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    ticket_id uuid NOT NULL,
+    actor_id uuid,
+    author text NOT NULL,
+    body text NOT NULL,
+    redacted boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT support_messages_author_check CHECK ((author = ANY (ARRAY['customer'::text, 'staff'::text, 'note'::text]))),
+    CONSTRAINT support_messages_body_check CHECK (((octet_length(body) >= 1) AND (octet_length(body) <= 10000))),
+    CONSTRAINT support_messages_created_at_check CHECK (isfinite(created_at))
+);
+
+
+--
+-- Name: support_messages_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.support_messages ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.support_messages_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: support_outbox; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_outbox (
+    id uuid NOT NULL,
+    ticket_id uuid NOT NULL,
+    state text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    lease_id uuid,
+    available_at timestamp with time zone NOT NULL,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT support_outbox_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT support_outbox_available_at_check CHECK (isfinite(available_at)),
+    CONSTRAINT support_outbox_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT support_outbox_lease_until_check CHECK (((lease_until IS NULL) OR isfinite(lease_until))),
+    CONSTRAINT support_outbox_state_check CHECK ((state = ANY (ARRAY['queued'::text, 'inflight'::text, 'accepted'::text, 'failed'::text, 'skipped'::text])))
+);
+
+
+--
+-- Name: support_previews; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_previews (
+    id uuid NOT NULL,
+    ticket_id uuid NOT NULL,
+    actor_id uuid NOT NULL,
+    kind text NOT NULL,
+    snapshot jsonb NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT support_previews_expires_at_check CHECK (isfinite(expires_at)),
+    CONSTRAINT support_previews_kind_check CHECK ((kind = ANY (ARRAY['redaction'::text, 'engineering'::text]))),
+    CONSTRAINT support_previews_snapshot_check CHECK (((jsonb_typeof(snapshot) = 'object'::text) AND (octet_length((snapshot)::text) <= 65536)))
+);
+
+
+--
+-- Name: support_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_receipts (
+    id uuid NOT NULL,
+    actor_id uuid,
+    ticket_id uuid,
+    operation text NOT NULL,
+    resource_id uuid NOT NULL,
+    request_hash bytea NOT NULL,
+    result jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT support_receipts_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT support_receipts_operation_check CHECK (((octet_length(operation) >= 1) AND (octet_length(operation) <= 64))),
+    CONSTRAINT support_receipts_request_hash_check CHECK ((octet_length(request_hash) = 32)),
+    CONSTRAINT support_receipts_result_check CHECK (((jsonb_typeof(result) = 'object'::text) AND (octet_length((result)::text) <= 8192)))
+);
+
+
+--
+-- Name: support_resources; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_resources (
+    id uuid NOT NULL,
+    kind text NOT NULL,
+    revision bigint NOT NULL,
+    data jsonb NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT support_resources_data_check CHECK (((jsonb_typeof(data) = 'object'::text) AND (octet_length((data)::text) <= 65536))),
+    CONSTRAINT support_resources_kind_check CHECK ((kind = ANY (ARRAY['policy'::text, 'team'::text]))),
+    CONSTRAINT support_resources_revision_check CHECK ((revision > 0)),
+    CONSTRAINT support_resources_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: support_satisfaction; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_satisfaction (
+    episode_id uuid NOT NULL,
+    actor_id uuid,
+    rating integer NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT support_satisfaction_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT support_satisfaction_rating_check CHECK (((rating >= 1) AND (rating <= 5)))
+);
+
+
+--
+-- Name: support_staff; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_staff (
+    account_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    role text NOT NULL,
+    profile jsonb NOT NULL,
+    CONSTRAINT support_staff_profile_check CHECK (((jsonb_typeof(profile) = 'object'::text) AND (octet_length((profile)::text) <= 16384))),
+    CONSTRAINT support_staff_revision_check CHECK ((revision > 0)),
+    CONSTRAINT support_staff_role_check CHECK ((role = ANY (ARRAY['agent'::text, 'manager'::text, 'revoked'::text])))
+);
+
+
+--
+-- Name: support_tickets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_tickets (
+    id uuid NOT NULL,
+    scope_key text NOT NULL,
+    account_id uuid,
+    org_id uuid,
+    created_by uuid,
+    subject text NOT NULL,
+    category text NOT NULL,
+    status text NOT NULL,
+    revision bigint NOT NULL,
+    priority text NOT NULL,
+    team_id uuid,
+    assignee_id uuid,
+    state jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    resolved_at timestamp with time zone,
+    CONSTRAINT support_tickets_category_check CHECK ((category = ANY (ARRAY['deployment'::text, 'billing'::text, 'account'::text, 'incident'::text, 'other'::text]))),
+    CONSTRAINT support_tickets_check CHECK (((account_id IS NULL) <> (org_id IS NULL))),
+    CONSTRAINT support_tickets_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT support_tickets_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'high'::text, 'urgent'::text]))),
+    CONSTRAINT support_tickets_resolved_at_check CHECK (((resolved_at IS NULL) OR isfinite(resolved_at))),
+    CONSTRAINT support_tickets_revision_check CHECK ((revision > 0)),
+    CONSTRAINT support_tickets_scope_key_check CHECK ((octet_length(scope_key) <= 64)),
+    CONSTRAINT support_tickets_state_check CHECK (((jsonb_typeof(state) = 'object'::text) AND (octet_length((state)::text) <= 32768))),
+    CONSTRAINT support_tickets_status_check CHECK ((status = ANY (ARRAY['open'::text, 'pending'::text, 'resolved'::text]))),
+    CONSTRAINT support_tickets_subject_check CHECK (((octet_length(subject) >= 1) AND (octet_length(subject) <= 200))),
+    CONSTRAINT support_tickets_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
 -- Name: synthetic_check_runs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -59040,6 +59405,7 @@ CREATE TABLE public.trigger_records (
     work_fairness_digest bytea,
     work_fairness_limit integer,
     work_expires_at timestamp with time zone,
+    operator_replay boolean DEFAULT false NOT NULL,
     CONSTRAINT trigger_records_attempts_check CHECK (((attempts >= 0) AND (attempts <= 25))),
     CONSTRAINT trigger_records_claim_generation_check CHECK ((claim_generation >= 0)),
     CONSTRAINT trigger_records_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'claimed'::text, 'succeeded'::text, 'retry'::text, 'dead_letter'::text, 'superseded'::text, 'cancelled'::text, 'expired'::text]))),
@@ -60392,6 +60758,22 @@ ALTER TABLE ONLY public.agent_deliveries
 
 ALTER TABLE ONLY public.agent_execution_workflows
     ADD CONSTRAINT agent_execution_workflows_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_github_subscriptions agent_github_subscriptions_endpoint_id_thread_id_tool_call__key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_github_subscriptions
+    ADD CONSTRAINT agent_github_subscriptions_endpoint_id_thread_id_tool_call__key UNIQUE (endpoint_id, thread_id, tool_call_id);
+
+
+--
+-- Name: agent_github_subscriptions agent_github_subscriptions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_github_subscriptions
+    ADD CONSTRAINT agent_github_subscriptions_pkey PRIMARY KEY (id);
 
 
 --
@@ -62867,11 +63249,11 @@ ALTER TABLE ONLY public.cron_fire_now_requests
 
 
 --
--- Name: crons crons_app_schedule_path_command_unique; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: crons cron_scope_shape; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.crons
-    ADD CONSTRAINT crons_app_schedule_path_command_unique UNIQUE (app_id, schedule, path, command);
+ALTER TABLE public.crons
+    ADD CONSTRAINT cron_scope_shape CHECK ((((deployment_scope = ''::text) AND (environment_id IS NULL)) OR ((deployment_scope ~ '^[a-z][a-z0-9-]{0,62}$'::text) AND (environment_id IS NOT NULL)))) NOT VALID;
 
 
 --
@@ -64176,6 +64558,22 @@ ALTER TABLE ONLY public.environment_build_artifact_pins
 
 ALTER TABLE ONLY public.environment_build_artifact_pins
     ADD CONSTRAINT environment_build_artifact_pins_source_id_artifact_id_key UNIQUE (source_id, artifact_id);
+
+
+--
+-- Name: environment_deployment_cron_activations environment_deployment_cron_activations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_deployment_cron_activations
+    ADD CONSTRAINT environment_deployment_cron_activations_pkey PRIMARY KEY (app_id, deployment_scope);
+
+
+--
+-- Name: environment_deployment_cron_states environment_deployment_cron_states_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_deployment_cron_states
+    ADD CONSTRAINT environment_deployment_cron_states_pkey PRIMARY KEY (app_id, deployment_scope);
 
 
 --
@@ -73019,6 +73417,126 @@ ALTER TABLE ONLY public.stripe_push_dedupe
 
 
 --
+-- Name: support_admin_events support_admin_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_admin_events
+    ADD CONSTRAINT support_admin_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_admin_events support_admin_events_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_admin_events
+    ADD CONSTRAINT support_admin_events_sequence_key UNIQUE (sequence);
+
+
+--
+-- Name: support_engineering support_engineering_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_engineering
+    ADD CONSTRAINT support_engineering_pkey PRIMARY KEY (ticket_id);
+
+
+--
+-- Name: support_episodes support_episodes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_episodes
+    ADD CONSTRAINT support_episodes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_events support_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_events
+    ADD CONSTRAINT support_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_events support_events_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_events
+    ADD CONSTRAINT support_events_sequence_key UNIQUE (sequence);
+
+
+--
+-- Name: support_messages support_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_messages
+    ADD CONSTRAINT support_messages_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_messages support_messages_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_messages
+    ADD CONSTRAINT support_messages_sequence_key UNIQUE (sequence);
+
+
+--
+-- Name: support_outbox support_outbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_outbox
+    ADD CONSTRAINT support_outbox_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_previews support_previews_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_previews
+    ADD CONSTRAINT support_previews_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_receipts support_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_receipts
+    ADD CONSTRAINT support_receipts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_resources support_resources_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_resources
+    ADD CONSTRAINT support_resources_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: support_satisfaction support_satisfaction_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_satisfaction
+    ADD CONSTRAINT support_satisfaction_pkey PRIMARY KEY (episode_id);
+
+
+--
+-- Name: support_staff support_staff_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_staff
+    ADD CONSTRAINT support_staff_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: support_tickets support_tickets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_tickets
+    ADD CONSTRAINT support_tickets_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: synthetic_check_runs synthetic_check_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -73734,6 +74252,20 @@ CREATE INDEX agent_execution_workflows_claim_idx ON public.agent_execution_workf
 --
 
 CREATE UNIQUE INDEX agent_execution_workflows_principal_key ON public.agent_execution_workflows USING btree (account_id, runs_principal_id, workflow_id) WHERE (runs_principal_id IS NOT NULL);
+
+
+--
+-- Name: agent_github_subscriptions_endpoint_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_github_subscriptions_endpoint_idx ON public.agent_github_subscriptions USING btree (endpoint_id, expires_at);
+
+
+--
+-- Name: agent_github_subscriptions_repository_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_github_subscriptions_repository_idx ON public.agent_github_subscriptions USING btree (account_id, repository, expires_at);
 
 
 --
@@ -75848,6 +76380,20 @@ CREATE INDEX crons_app_idx ON public.crons USING btree (app_id) WHERE enabled;
 
 
 --
+-- Name: crons_app_scope_schedule_path_command_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX crons_app_scope_schedule_path_command_unique ON public.crons USING btree (app_id, deployment_scope, schedule, path, command);
+
+
+--
+-- Name: crons_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX crons_environment_idx ON public.crons USING btree (environment_id) WHERE (environment_id IS NOT NULL);
+
+
+--
 -- Name: crons_org_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -77070,6 +77616,13 @@ CREATE INDEX environment_branch_capture_objects_created_idx ON public.environmen
 --
 
 CREATE INDEX environment_branch_captures_requested_idx ON public.environment_branch_captures USING btree (requested_at) WHERE (state = 'requested'::text);
+
+
+--
+-- Name: environment_deployment_cron_activations_prepared_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_deployment_cron_activations_prepared_idx ON public.environment_deployment_cron_activations USING btree (updated_at, app_id) WHERE (status = 'prepared'::text);
 
 
 --
@@ -83748,6 +84301,69 @@ CREATE INDEX stripe_push_dedupe_org_id_idx ON public.stripe_push_dedupe USING bt
 
 
 --
+-- Name: support_episodes_started_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_episodes_started_idx ON public.support_episodes USING btree (started_at, id);
+
+
+--
+-- Name: support_events_ticket_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_events_ticket_idx ON public.support_events USING btree (ticket_id, sequence);
+
+
+--
+-- Name: support_messages_search_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_messages_search_idx ON public.support_messages USING gin (to_tsvector('simple'::regconfig, body));
+
+
+--
+-- Name: support_messages_ticket_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_messages_ticket_idx ON public.support_messages USING btree (ticket_id, sequence);
+
+
+--
+-- Name: support_outbox_ready_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_outbox_ready_idx ON public.support_outbox USING btree (available_at, id) WHERE (state = ANY (ARRAY['queued'::text, 'inflight'::text]));
+
+
+--
+-- Name: support_previews_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_previews_expiry_idx ON public.support_previews USING btree (expires_at);
+
+
+--
+-- Name: support_tickets_assignee_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_tickets_assignee_idx ON public.support_tickets USING btree (assignee_id, status);
+
+
+--
+-- Name: support_tickets_queue_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_tickets_queue_idx ON public.support_tickets USING btree (team_id, status, created_at DESC, id DESC);
+
+
+--
+-- Name: support_tickets_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX support_tickets_scope_idx ON public.support_tickets USING btree (scope_key, created_at DESC, id DESC);
+
+
+--
 -- Name: synthetic_check_runs_started_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -83836,6 +84452,13 @@ CREATE INDEX tenant_surfaces_platform_tenant_idx ON public.tenant_surfaces USING
 --
 
 CREATE INDEX trigger_dlq_trigger_reason_idx ON public.trigger_dead_letter USING btree (trigger_id, reason);
+
+
+--
+-- Name: trigger_operator_replay_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trigger_operator_replay_due_idx ON public.trigger_records USING btree (trigger_id, next_fire_at, id) WHERE (operator_replay AND (state = ANY (ARRAY['pending'::text, 'retry'::text])));
 
 
 --
@@ -88210,6 +88833,13 @@ CREATE TRIGGER github_webhook_secrets_notify_trg AFTER INSERT OR UPDATE ON publi
 
 
 --
+-- Name: crons guard_cron_environment_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_cron_environment_scope BEFORE INSERT OR UPDATE OF deployment_scope, environment_id, app_id ON public.crons FOR EACH ROW EXECUTE FUNCTION public.guard_cron_environment_scope();
+
+
+--
 -- Name: environment_workload_qualification_requests guard_environment_binding_context; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -92146,6 +92776,22 @@ ALTER TABLE ONLY public.agent_deliveries
 
 ALTER TABLE ONLY public.agent_execution_workflows
     ADD CONSTRAINT agent_execution_workflows_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_github_subscriptions agent_github_subscriptions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_github_subscriptions
+    ADD CONSTRAINT agent_github_subscriptions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_github_subscriptions agent_github_subscriptions_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_github_subscriptions
+    ADD CONSTRAINT agent_github_subscriptions_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
 
 
 --
@@ -97210,6 +97856,30 @@ ALTER TABLE ONLY public.environment_build_artifact_pins
 
 ALTER TABLE ONLY public.environment_build_artifact_pins
     ADD CONSTRAINT environment_build_artifact_pins_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_deployment_cron_activations environment_deployment_cron_activations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_deployment_cron_activations
+    ADD CONSTRAINT environment_deployment_cron_activations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_deployment_cron_activations environment_deployment_cron_activations_upload_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_deployment_cron_activations
+    ADD CONSTRAINT environment_deployment_cron_activations_upload_id_fkey FOREIGN KEY (upload_id) REFERENCES public.upload_sessions(id) ON DELETE SET NULL;
+
+
+--
+-- Name: environment_deployment_cron_states environment_deployment_cron_states_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_deployment_cron_states
+    ADD CONSTRAINT environment_deployment_cron_states_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -107594,6 +108264,174 @@ ALTER TABLE ONLY public.stripe_push_dedupe
 
 ALTER TABLE ONLY public.stripe_push_dedupe
     ADD CONSTRAINT stripe_push_dedupe_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: support_admin_events support_admin_events_actor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_admin_events
+    ADD CONSTRAINT support_admin_events_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_engineering support_engineering_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_engineering
+    ADD CONSTRAINT support_engineering_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_episodes support_episodes_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_episodes
+    ADD CONSTRAINT support_episodes_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_events support_events_actor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_events
+    ADD CONSTRAINT support_events_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_events support_events_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_events
+    ADD CONSTRAINT support_events_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_messages support_messages_actor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_messages
+    ADD CONSTRAINT support_messages_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_messages support_messages_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_messages
+    ADD CONSTRAINT support_messages_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_outbox support_outbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_outbox
+    ADD CONSTRAINT support_outbox_id_fkey FOREIGN KEY (id) REFERENCES public.support_events(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_outbox support_outbox_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_outbox
+    ADD CONSTRAINT support_outbox_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_previews support_previews_actor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_previews
+    ADD CONSTRAINT support_previews_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_previews support_previews_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_previews
+    ADD CONSTRAINT support_previews_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_receipts support_receipts_actor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_receipts
+    ADD CONSTRAINT support_receipts_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_receipts support_receipts_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_receipts
+    ADD CONSTRAINT support_receipts_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_satisfaction support_satisfaction_actor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_satisfaction
+    ADD CONSTRAINT support_satisfaction_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_satisfaction support_satisfaction_episode_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_satisfaction
+    ADD CONSTRAINT support_satisfaction_episode_id_fkey FOREIGN KEY (episode_id) REFERENCES public.support_episodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_staff support_staff_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_staff
+    ADD CONSTRAINT support_staff_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_tickets support_tickets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_tickets
+    ADD CONSTRAINT support_tickets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_tickets support_tickets_assignee_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_tickets
+    ADD CONSTRAINT support_tickets_assignee_id_fkey FOREIGN KEY (assignee_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_tickets support_tickets_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_tickets
+    ADD CONSTRAINT support_tickets_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: support_tickets support_tickets_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_tickets
+    ADD CONSTRAINT support_tickets_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_tickets support_tickets_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_tickets
+    ADD CONSTRAINT support_tickets_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.support_resources(id);
 
 
 --

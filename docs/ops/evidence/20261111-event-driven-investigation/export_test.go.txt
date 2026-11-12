@@ -1,0 +1,29 @@
+package sched
+
+import (
+	"github.com/nats-io/nats.go/jetstream"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
+)
+
+func AuditNATSPoller(js jetstream.JetStream, trigger sqlc.Trigger) (TriggerSource, error) {
+	return newNATSPoller(&natsBroker{js: js}, trigger)
+}
+
+// Audit-only seams, supplied through go test -overlay; the checkout is unchanged.
+func AuditWrapNATS(src TriggerSource) TriggerSource {
+	return &pooledNATSPoller{triggerSource: src, release: func() {}}
+}
+
+func AuditKafkaBuffered(src TriggerSource) (int, int) {
+	p := src.(*kafkaPoller)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var count, bytes int
+	for _, messages := range p.settled {
+		count += len(messages)
+		for _, message := range messages {
+			bytes += len(message.Value)
+		}
+	}
+	return count, bytes
+}

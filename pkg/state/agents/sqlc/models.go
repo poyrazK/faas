@@ -62,6 +62,19 @@ type AgentDelivery struct {
 	ObjectPrefix   pgtype.Text
 }
 
+type AgentGithubSubscription struct {
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+	EndpointID pgtype.UUID
+	ThreadID   string
+	ToolCallID string
+	Repository string
+	EventTypes []string
+	IssuedAt   pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+}
+
 type AgentRun struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID
