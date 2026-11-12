@@ -217,7 +217,7 @@ func (s *Service) reconcileObjectInventories(ctx context.Context, observe func(s
 			observe(outcome)
 		}
 	}
-	q := newInventoryQueue(inventoryDue(st), time.Now().Add(api.ObjectStorageInventorySweepBudget))
+	q := newInventoryQueue(inventoryDue(st, s.Host.ObjectStorage().Accounting.GatewaySafety()), time.Now().Add(api.ObjectStorageInventorySweepBudget))
 	stop := q.run(ctx)
 	defer stop()
 	var wg sync.WaitGroup
@@ -393,8 +393,10 @@ func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
 	accruals := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_gateway_storage_accruals_total", Help: "Gateway-metered stored byte-hour accruals (ADR-20261024132844)."}, []string{"outcome"})
 	placement := newPlacementMetrics()
 	backlog := newInventoryBacklogMetrics()
+	drift := newInventoryDriftCounter()
+	s.inventoryDrift.Store(drift)
 	if s.Host.Ops() != nil {
-		s.Host.Ops().Registry().MustRegister(counter, pages, swept, accruals)
+		s.Host.Ops().Registry().MustRegister(counter, pages, swept, accruals, drift)
 		s.Host.Ops().Registry().MustRegister(placement.collectors()...)
 		s.Host.Ops().Registry().MustRegister(backlog.collectors()...)
 	}

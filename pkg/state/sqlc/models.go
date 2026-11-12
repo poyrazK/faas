@@ -10131,6 +10131,12 @@ type ObjectBucket struct {
 	OrgID                          pgtype.UUID
 }
 
+type ObjectBucketActivity struct {
+	BucketID    pgtype.UUID
+	MutatedAt   pgtype.Timestamptz
+	ActiveSince pgtype.Timestamptz
+}
+
 type ObjectBucketCor struct {
 	BucketID  pgtype.UUID
 	Rules     []byte
@@ -10270,6 +10276,14 @@ type ObjectDeletion struct {
 	ProtectionRequired      bool
 	ProtectionVerified      bool
 	DeletionVerified        bool
+}
+
+type ObjectInventorySchedule struct {
+	BucketID   pgtype.UUID
+	AttemptAt  pgtype.Timestamptz
+	ObservedAt pgtype.Timestamptz
+	QuietAfter pgtype.Timestamptz
+	MutatedAt  pgtype.Timestamptz
 }
 
 type ObjectLifecycleScan struct {
