@@ -2858,3 +2858,5 @@ var PrintPublicURLs = printPublicURLs
 
 var InvocationSourceLabel = invocationSourceLabel
 var RenderDeploymentHostingReceiptFor = renderDeploymentHostingReceiptFor
+
+var ParseAppPortsFlag = parseAppPortsFlag
