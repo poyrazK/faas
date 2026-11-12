@@ -30,6 +30,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`whoami`](#whoami) | Show the authenticated account |
 | [`completion`](#completion) | Generate shell completion scripts or install them interactively |
 | [`version`](#version) | Print the CLI version |
+| [`update`](#update) | Update the CLI to the newest release |
 | [`man`](#man) | Print the CLI manual page, or one command&#39;s page |
 | [`release`](#release) | Inspect releases and control rollouts: canary, traffic, approvals |
 | [`preview`](#preview) | Manage pull-request preview environments |
@@ -39,6 +40,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`registry`](#registry) | Manage registry credentials, signing keys and published images |
 | [`app`](#app) | Inspect, change, scale and operate apps |
 | [`invocation`](#invocation) | List, inspect, wait on and watch invocations |
+| [`function`](#function) | Generate typed clients for calls between a project&#39;s functions |
 | [`env`](#env) | Set, list and sync an app&#39;s sealed variables |
 | [`domain`](#domain) | Manage custom domains |
 | [`edge`](#edge) | Manage edge rules, rule lists, caching and CORS |
@@ -451,7 +453,7 @@ Make a local view the project&#39;s default
 
 List or manage reusable local log filters
 
-`gregale logs views <copy|list|show|rename|update|delete|save> [--name <TEXT>] [--source <SOURCE>] [--details] [--app <SLUG>]`
+`gregale logs views [copy|list|show|rename|update|delete|save] [--name <TEXT>] [--source <SOURCE>] [--details] [--app <SLUG>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -931,13 +933,14 @@ Remove the linked project from this checkout
 
 Authenticate this machine
 
-`gregale login [--device] [--token <TOKEN>] [--token-stdin]`
+`gregale login [--device] [--token <TOKEN>] [--token-stdin] [--insecure-storage]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--device` | sign in with a code typed in a browser on another computer (SSH, headless) |  |
 | `--token <TOKEN>` | use a pre-minted token (CI) |  |
 | `--token-stdin` | read a pre-minted token from stdin (CI) |  |
+| `--insecure-storage` | save the key to a plaintext file instead of the OS keychain (WSL, containers, SSH) |  |
 
 Examples:
 
@@ -1018,6 +1021,32 @@ Print the powershell completion snippet
 Print the CLI version
 
 `gregale version`
+
+
+## update
+
+Update the CLI to the newest release
+
+`gregale update [--check] [--version <TAG>]`
+
+Stable installs follow the newest stable release; prerelease installs follow the newest release.
+
+The download is verified against the release&#39;s CLI-SHA256SUMS and must run before it replaces this binary.
+
+An npm install prints the npm command instead of replacing files npm owns.
+
+| Flag | Meaning | |
+|---|---|---|
+| `--check` | report whether a newer release exists without installing it |  |
+| `--version <TAG>` | install this exact release tag, including an older one |  |
+
+Examples:
+
+```sh
+gregale update
+gregale update --check
+gregale update --version v0.1.18
+```
 
 
 ## man
@@ -1723,7 +1752,7 @@ gregale preview review pr-42-api pr-42-worker --test-report pr-42-api=api-tests.
 
 Build customer impact rosters and track route migrations
 
-`gregale preview customers <track|progress|migration> --report <PATH> [--by <consumer|tenant>] [--format <FORMAT>] [--out <PATH>]`
+`gregale preview customers [track|progress|migration] --report <PATH> [--by <consumer|tenant>] [--format <FORMAT>] [--out <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2888,7 +2917,7 @@ gregale app rename my-api my-api-v2
 
 Restart from a snapshot or fresh configuration
 
-`gregale app restart <status> [--fresh] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--json]`
+`gregale app restart [status] [--fresh] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3042,6 +3071,35 @@ Wait for one invocation to finish (exit 124 on timeout, 130 on Ctrl-C)
 |---|---|---|
 | `--timeout <D>` | stop waiting without canceling the invocation (0 waits indefinitely) |  |
 | `--interval <D>` | time between status checks (default 1s) |  |
+
+
+## function
+
+Generate typed clients for calls between a project&#39;s functions
+
+`gregale function [<subcommand>]`
+
+### function types
+
+Write each function&#39;s typed client from its project&#39;s schemas
+
+`gregale function types [--path <DIR>] [--check]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--path <DIR>` | functions project directory (default: the current one) |  |
+| `--check` | write nothing; exit 1 when a generated file is missing or out of date |  |
+
+Examples:
+
+```sh
+gregale function types
+gregale function types --check
+```
+
+Node functions get gregale-functions.d.ts and Python functions get gregale_functions.py in their root, typed for the functions they may call.
+
+gregale deploy refreshes files that already exist when a schema changed; --check fails without writing, for CI.
 
 
 ## env
@@ -3642,7 +3700,7 @@ Manage edge rules, rule lists, caching and CORS
 
 Route, rewrite, protect or rate-limit an app&#39;s requests at the edge
 
-`gregale edge rule <waf|attack-mode|recipe|list|summary|trace|create|get|update|delete|history|recipes|suggest|stats|review|events|rollback> [--app <slug>] [--kind <value>]`
+`gregale edge rule [waf|attack-mode|recipe|list|summary|trace|create|get|update|delete|history|recipes|suggest|stats|review|events|rollback] [--app <slug>] [--kind <value>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4630,7 +4688,7 @@ Rotate a binding, optionally waiting for the old credential
 | Flag | Meaning | |
 |---|---|---|
 | `--wait` | wait for the previous credential to retire |  |
-| `--wait-timeout <DURATION>` | maximum time to wait for rotation (default 5m) |  |
+| `--wait-timeout <DURATION>` | maximum time to wait for rotation (default 15m) |  |
 | `--poll-interval <DURATION>` | status polling interval while waiting (default 1s) |  |
 
 Examples:
@@ -5747,7 +5805,7 @@ gregale workflow list --app billing --created-after 2026-10-01T00:00:00Z --creat
 
 Inspect recurring workflow schedules and preview their next fires
 
-`gregale workflow schedules <preview> --app <SLUG>`
+`gregale workflow schedules [preview] --app <SLUG>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6694,7 +6752,7 @@ Your current recovery codes stop working.
 
 Print the Data Processing Agreement template
 
-`gregale account dpa <get> [-o <PATH>]`
+`gregale account dpa [get] [-o <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6863,7 +6921,7 @@ Show the org&#39;s agent policy
 
 Allow or deny agents and cap their capabilities
 
-`gregale org agent policy set --org <SLUG> --agents <allow|deny> [--capabilities <LIST>] [--approvals <LIST>] [--approval-channels <NAMES>]`
+`gregale org agent policy set --org <SLUG> --agents <allow|deny> [--capabilities <LIST>] [--approvals <LIST>] [--approval-channels <NAMES>] [--max-budget <USD>] [--clear-max-budget]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6872,6 +6930,8 @@ Allow or deny agents and cap their capabilities
 | `--capabilities <LIST>` | comma-separated capabilities agents may get: deploy:write, secrets:request, storage:manage, postgres:manage; empty for read-only |  |
 | `--approvals <LIST>` | kinds of action every agent must have a person approve: delete, production, credentials, billing, all or none |  |
 | `--approval-channels <NAMES>` | comma-separated names of your notification channels that also get the org&#39;s agents&#39; approval requests; empty for none |  |
+| `--max-budget <USD>` | ceiling on every agent&#39;s monthly budget for always-on capacity, in US dollars |  |
+| `--clear-max-budget` | remove the ceiling on agents&#39; budgets |  |
 
 Examples:
 
@@ -7139,7 +7199,7 @@ Manage your account&#39;s API keys
 
 Read or update the rotation grace window
 
-`gregale key grace-window <set> [--reset] [--days <N>]`
+`gregale key grace-window [set] [--reset] [--days <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7235,7 +7295,7 @@ Plans: free, hobby, pro and scale. Paid upgrades open the billing provider&#39;s
 
 Show this month&#39;s usage, or daily, storage and summary views
 
-`gregale billing usage <daily|storage|summary> [--month <YYYY-MM>]`
+`gregale billing usage [daily|storage|summary] [--month <YYYY-MM>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7345,7 +7405,7 @@ gregale billing egress-overage set off --org acme
 
 Show the card on file
 
-`gregale billing payment-method <get> [--print] [--no-open]`
+`gregale billing payment-method [get] [--print] [--no-open]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7367,7 +7427,7 @@ Show the card on file
 
 Open the active billing provider&#39;s portal
 
-`gregale billing portal <open> [--print] [--no-open]`
+`gregale billing portal [open] [--print] [--no-open]`
 
 | Flag | Meaning | |
 |---|---|---|

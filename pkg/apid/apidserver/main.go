@@ -880,6 +880,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresBindingReconciler(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runPreviewDatabaseSweep(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runProjectEnvironmentCleanupReconciler(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runEnvironmentBranchSweeper(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runEnvironmentBranchDataReconciler(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runProjectEnvironmentCloneCoordinator(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresUsageCollector(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresHealthCollector(ctx) })
@@ -1650,7 +1652,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid: producer mail outbox: %w", err)
 	}
 
+	if err := srv.configureCustomerSupport(ctx, deps.pool, deps.getenv); err != nil {
+		return fmt.Errorf("apid: customer support: %w", err)
+	}
 	srv.rehearsalNetworkEnabled = deps.getenv("FAAS_REHEARSAL_NETWORK_CONTAINMENT") == "1"
+	srv.environmentBranchContainmentEnabled = deps.getenv(api.EnvironmentBranchContainmentEnv) == "1"
+	srv.environmentBranchContainedObjectsEnabled = deps.getenv(api.EnvironmentBranchContainedObjectsEnv) == "1"
 	srv.rehearsalSimulationEnabled = deps.getenv("FAAS_REHEARSAL_ACTION_SIMULATION") == "1"
 	srv.rehearsalWorkersEnabled = deps.getenv("FAAS_REHEARSAL_WORKERS") == "1"
 	srv.rehearsalWorkerFaultsEnabled = deps.getenv("FAAS_REHEARSAL_WORKER_FAULTS") == "1"
@@ -2633,7 +2640,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if deps.captureDialTLS != nil {
 			deps.captureDialTLS("bridge", bridgeTLS)
 		}
-		bridgeSrv, bridgeLis, err = runGithubdBridgeServer(ctx, sock, bridgeTLS, srv.store, srv.notif, log, srv.ops, spoolRoot(), resolveGithubdStagingRoot(deps.getenv), srv.agentStepsAllowed, srv.releasePhaseOff, srv.applyBridgeSourceSettings, srv.prepareBuildPreviewDatabases)
+		bridgeSrv, bridgeLis, err = runGithubdBridgeServer(ctx, sock, bridgeTLS, srv.store, srv.notif, log, srv.ops, spoolRoot(), resolveGithubdStagingRoot(deps.getenv), srv.agentStepsAllowed, srv.releasePhaseOff, srv.applyBridgeSourceSettings, srv.prepareBuildPreviewDatabases, srv.deliverGitHubSubscriptions)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: githubd bridge listen %q: %w", sock, err)
@@ -3343,7 +3350,7 @@ func runAdvisoryServer(ctx context.Context, target string, tlsCfg *tls.Config, s
 // here are fatal — without the bridge listener githubd has no
 // way to enqueue builds and the dispatch path is silently
 // degraded (every push hits the noopEnqueuer path).
-func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Config, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool, applySettings bridgeSettingsApplier, previewDatabases func(context.Context, state.Account, api.Plan, state.App) error) (*grpc.Server, net.Listener, error) {
+func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Config, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool, applySettings bridgeSettingsApplier, previewDatabases func(context.Context, state.Account, api.Plan, state.App) error, githubSubscriptions func(context.Context, string, string, api.GitHubPullRequestEvent) error) (*grpc.Server, net.Listener, error) {
 	// Same multi-box guard as runAdvisoryServer — a tcp/dns
 	// target without TLS would silently build an insecure server.
 	// ADR-052.
@@ -3370,7 +3377,7 @@ func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Conf
 	// apid_githubd_bridge_enqueued_total on each landed build.
 	// The accessor is nil-receiver safe so the metric stays zero
 	// when ops is nil (test path).
-	registerGithubdBridge(srv, store, notif, log, ops, spool, stagingRoot, agentSteps, releasePhaseOff, applySettings, previewDatabases)
+	registerGithubdBridge(srv, store, notif, log, ops, spool, stagingRoot, agentSteps, releasePhaseOff, applySettings, previewDatabases, githubSubscriptions)
 	return srv, lis, nil
 }
 

@@ -101,6 +101,7 @@ touch them. The tables below map each earlier name.
 | `gregale events` | `gregale event` |
 | `gregale flags` | `gregale flag` |
 | `gregale freeze` | `gregale release freeze` |
+| `gregale functions` | `gregale function` |
 | `gregale incidents` | `gregale alert incident` |
 | `gregale inspect` | `gregale app health --explain` |
 | `gregale invitations` | `gregale org` |
@@ -198,6 +199,7 @@ touch them. The tables below map each earlier name.
 | `gregale bucket protection legal-hold` | `gregale bucket protection legal-hold set` |
 | `gregale bucket reconcile status` | `gregale bucket inventory get` |
 | `gregale bucket reconcile` | `gregale bucket inventory` |
+| `gregale bucket uploads abort` | `gregale bucket multipart cancel` |
 | `gregale bucket uploads status` | `gregale bucket multipart get` |
 | `gregale bucket uploads` | `gregale bucket multipart` |
 | `gregale bucket version-delete` | `gregale bucket version delete` |

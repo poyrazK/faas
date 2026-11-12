@@ -341,11 +341,12 @@ type CapEnforcerOptions struct {
 	// DeletePlanExcess schedules one such database's delete with the grace
 	// period. Nil leaves `on` logging like shadow.
 	DeletePlanExcess PlanExcessDeleteFunc
-	// Egress returns a subject's plan egress allowance and what its apps
-	// already sent this UTC month (ADR-20261110160000). Database egress
-	// counts toward the same allowance: once the two reach it, the sweep
-	// holds every database of the subject until the month ends, the plan
-	// grows or egress overage lifts the ceiling. Nil leaves egress unchecked.
+	// Egress returns each database's monthly egress allowance and whether
+	// egress overage lifts it (ADR-20261110160000 amendment 2026-11-11):
+	// Neon's transfer allowance is per project and every database is its
+	// own project, so each database is held on its own once it sent its
+	// allowance, until the month ends or egress overage lifts it. Nil leaves
+	// egress unchecked.
 	Egress EgressAllowanceFunc
 	// EgressBillingLive is set while database egress past the allowance is
 	// billed (ADR-20261110160000 slice 3): the managed PostgreSQL overage
@@ -355,12 +356,13 @@ type CapEnforcerOptions struct {
 	EgressBillingLive bool
 }
 
-// EgressAllowance is a subject's monthly egress allowance shared by its apps
-// and databases (ADR-20261110160000). CeilingBytes zero means no ceiling: the
-// subject is gone or its plan has no egress allowance.
+// EgressAllowance is each of a subject's databases' own monthly egress
+// allowance (ADR-20261110160000 amendment 2026-11-11). CeilingBytes zero
+// means no ceiling: the subject is gone or its plan includes no database.
+// Apps keep their own egress allowance; database egress no longer counts
+// toward it.
 type EgressAllowance struct {
-	CeilingBytes   int64
-	AppEgressBytes int64
+	CeilingBytes int64
 	// OverageLifted is set while the subject's egress overage election lifts
 	// the allowance for its apps (billing.EgressOverageLifted): database
 	// egress past it is then billed at Neon's price plus 5%
@@ -371,34 +373,34 @@ type EgressAllowance struct {
 // EgressAllowanceFunc reads a subject's EgressAllowance at now.
 type EgressAllowanceFunc func(ctx context.Context, subjectID string, now time.Time) (EgressAllowance, error)
 
-// uncappedHold is the hold reason for a subject without a compute ceiling:
-// egress, once its databases and apps spent the egress allowance, else none.
-func (e *CapEnforcer) uncappedHold(ctx context.Context, subjectID string, now time.Time) (string, egressCheck, error) {
+// uncappedEgress reads the egress holds of a subject without a compute
+// ceiling: it has no compute to stop, but its databases' egress allowances
+// still bind.
+func (e *CapEnforcer) uncappedEgress(ctx context.Context, subjectID string, now time.Time) (egressCheck, error) {
 	if e.egress == nil {
-		return capHoldNone, egressCheck{}, nil
+		return egressCheck{}, nil
 	}
 	snapshot, err := e.store.UsageSnapshot(ctx, subjectID, now)
 	if err != nil {
-		return capHoldNone, egressCheck{}, err
+		return egressCheck{}, err
 	}
-	check, err := e.egressSpent(ctx, subjectID, snapshot, now)
-	if err != nil || !check.spent {
-		return capHoldNone, check, err
-	}
-	return capHoldEgress, check, nil
+	return e.egressSpent(ctx, subjectID, snapshot, now)
 }
 
-// egressCheck is one sweep's read of a subject's shared egress: whether it is
-// spent, and the numbers its hold email reports.
+// egressCheck is one sweep's read of a subject's databases' egress: the ones
+// that sent their allowance, and the numbers the hold email reports.
 type egressCheck struct {
-	spent                    bool
+	held                     map[string]bool
 	used, allowance, ceiling int64
 	billed                   bool
 }
 
-// egressSpent reports whether the subject's databases and apps together sent
-// its whole egress allowance this month. A read failure is the subject's
-// failure for this sweep; the previous hold stays as it is.
+// spent reports whether any database is held for egress.
+func (c egressCheck) spent() bool { return len(c.held) > 0 }
+
+// egressSpent reports which of the subject's databases sent their own egress
+// allowance this month. A read failure is the subject's failure for this
+// sweep; the previous holds stay as they are.
 func (e *CapEnforcer) egressSpent(ctx context.Context, subjectID string, snapshot UsageSnapshot, now time.Time) (egressCheck, error) {
 	if e.egress == nil {
 		return egressCheck{}, nil
@@ -408,13 +410,34 @@ func (e *CapEnforcer) egressSpent(ctx context.Context, subjectID string, snapsho
 		return egressCheck{}, err
 	}
 	billed := allowance.OverageLifted && e.egressBillingLive
-	ceiling := EgressHoldCeiling(allowance.CeilingBytes, billed)
-	used := max(snapshot.EgressBytes, 0) + max(allowance.AppEgressBytes, 0)
-	if used < 0 { // overflow
-		used = math.MaxInt64
+	check := egressCheck{allowance: allowance.CeilingBytes, ceiling: EgressHoldCeiling(allowance.CeilingBytes, billed), billed: billed}
+	for id, egress := range snapshot.DatabaseEgress {
+		if egressAllowanceReached(egress, check.ceiling) {
+			if check.held == nil {
+				check.held = map[string]bool{}
+			}
+			check.held[id] = true
+			check.used = max(check.used, egress)
+		}
 	}
-	return egressCheck{spent: egressAllowanceReached(snapshot.EgressBytes, allowance.AppEgressBytes, ceiling),
-		used: used, allowance: allowance.CeilingBytes, ceiling: ceiling, billed: billed}, nil
+	return check, nil
+}
+
+// withEgressHolds adds each database held for egress to reasons, after the
+// reasons it already has.
+func withEgressHolds(reasons map[string]string, check egressCheck) map[string]string {
+	if !check.spent() {
+		return reasons
+	}
+	if reasons == nil {
+		reasons = make(map[string]string, len(check.held))
+	}
+	for id := range check.held {
+		if _, ok := reasons[id]; !ok {
+			reasons[id] = capHoldEgress
+		}
+	}
+	return reasons
 }
 
 // noticeEgressHold records the month's egress hold the first time a sweep
@@ -424,7 +447,7 @@ func (e *CapEnforcer) egressSpent(ctx context.Context, subjectID string, snapsho
 // the next sweep retries it inside the mail window.
 func (e *CapEnforcer) noticeEgressHold(ctx context.Context, subjectID string, now time.Time, check egressCheck, summary *CapSweepSummary) {
 	store, ok := e.store.(CapEventStore)
-	if !ok || e.mode != CapEnforcementOn || !check.spent {
+	if !ok || e.mode != CapEnforcementOn || !check.spent() {
 		return
 	}
 	event := CapEvent{SubjectID: subjectID, PeriodStart: monthStart(now), Threshold: CapThresholdEgressHeld, ReachedAt: now,
@@ -510,6 +533,9 @@ type CapSweepSummary struct {
 	PlanExcessScopesShared    int
 	PlanExcessNoticed         int
 	PlanExcessNotifyFailed    int
+	// PlanExcessReminded counts deletion reminders queued
+	// (ADR-20261110184700 amendment 2026-11-12).
+	PlanExcessReminded int
 	// PlanExcessDelete* count the deletion pass (ADR-20261110184700): due
 	// databases, deletes scheduled, ones only logged in shadow, ones waiting
 	// for bindings to go, and failures.
@@ -530,6 +556,14 @@ type CapSweepSummary struct {
 	HoldsApplied  int
 	HoldsReleased int
 	HoldsShadowed int
+
+	// Egress quota backstop (ADR-20261110160000 slice 4): provider objects
+	// whose quota was set, only logged in shadow mode, already right, or
+	// not written.
+	EgressQuotasApplied   int
+	EgressQuotasShadowed  int
+	EgressQuotasUnchanged int
+	EgressQuotasFailed    int
 }
 
 // CapEnforcer applies compute ceilings to running databases.
@@ -778,15 +812,15 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 		// allowance still binds; otherwise a hold left from before is
 		// released.
 		now := e.now().UTC()
-		reason, check, err := e.uncappedHold(ctx, accountID, now)
+		check, err := e.uncappedEgress(ctx, accountID, now)
 		if err != nil {
 			return err
 		}
-		if err := e.holdDatabases(ctx, accountID, databases, reason, nil, summary); err != nil {
+		if err := e.holdDatabases(ctx, accountID, databases, capHoldNone, withEgressHolds(nil, check), summary); err != nil {
 			return err
 		}
 		e.noticeEgressHold(ctx, accountID, now, check, summary)
-		return nil
+		return e.applyEgressQuotas(ctx, accountID, databases, check, now, summary)
 	}
 	if policy := e.registry.UsagePolicy(); policy.Enabled && policy.MaxMonthlyComputeUnitSeconds > 0 {
 		ceiling = min(ceiling, policy.MaxMonthlyComputeUnitSeconds)
@@ -850,15 +884,18 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 		all = capHoldInactive
 	case plan.suspended():
 		all = capHoldCeiling
-	case egress.spent:
-		all = capHoldEgress
 	}
-	if err := e.holdDatabases(ctx, accountID, databases, all, capHeldDatabases(databases, plan, suspended), summary); err != nil {
+	reasons := withEgressHolds(capHeldDatabases(databases, plan, suspended), egress)
+	if err := e.holdDatabases(ctx, accountID, databases, all, reasons, summary); err != nil {
+		failures = append(failures, err)
+	}
+	// The egress quota is a backstop too: it never skips a hold.
+	if err := e.applyEgressQuotas(ctx, accountID, databases, egress, now, summary); err != nil {
 		failures = append(failures, err)
 	}
 	if e.mode == CapEnforcementOn && len(failures) == 0 && !limits.Inactive {
 		e.notifyCapEvent(ctx, accountID, now, summary)
-		if all == capHoldEgress {
+		if all == capHoldNone {
 			e.noticeEgressHold(ctx, accountID, now, egress, summary)
 		}
 	}

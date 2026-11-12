@@ -237,6 +237,21 @@ func TestBootArgsSkipUnusedGuestKernelWork(t *testing.T) {
 	}
 }
 
+// adr: 907 — every guest reports free blocks from 128 KiB (amendment
+// 2026-11-12), so a VM that has served traffic gives fragmented free memory
+// back to the host instead of keeping it resident and in its next capture.
+func TestBootArgsLowerPageReportingOrder(t *testing.T) {
+	for name, spec := range map[string]ColdBootSpec{
+		"cold boot": validColdSpec(),
+		"execution": func() ColdBootSpec { s := validColdSpec(); s.Networkless = true; return s }(),
+	} {
+		args := strings.Fields(BuildColdBootConfig(spec, 0).BootSource.BootArgs)
+		if !slices.Contains(args, "page_reporting.page_reporting_order=5") {
+			t.Errorf("%s boot args missing page_reporting.page_reporting_order=5: %q", name, args)
+		}
+	}
+}
+
 func TestColdBootBootArgsDisableConsole(t *testing.T) {
 	cfg := BuildColdBootConfig(validColdSpec(), 0)
 	if !strings.Contains(cfg.BootSource.BootArgs, "console=ttyS0,115200n8") {

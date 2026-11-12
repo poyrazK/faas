@@ -1,0 +1,35 @@
+=== RUN   TestAuditPermanentRoutingFailureStopsImmediately
+=== RUN   TestAuditPermanentRoutingFailureStopsImmediately/memory
+    zz_event_routing_controls_audit_test.go:75: permanent missing work key was scheduled for retry: state=pending retryable=false attempts=1 stop="" next=2026-11-11 13:37:40.511458454 +0000 UTC error="work key field \"order_id\" is missing"
+=== RUN   TestAuditPermanentRoutingFailureStopsImmediately/postgres
+    zz_event_routing_controls_audit_test.go:75: permanent missing work key was scheduled for retry: state=pending retryable=false attempts=1 stop="" next=2026-11-11 13:37:58.414556 +0000 UTC error="work key field \"order_id\" is missing"
+--- FAIL: TestAuditPermanentRoutingFailureStopsImmediately (19.06s)
+    --- FAIL: TestAuditPermanentRoutingFailureStopsImmediately/memory (0.00s)
+    --- FAIL: TestAuditPermanentRoutingFailureStopsImmediately/postgres (19.05s)
+=== RUN   TestAuditCircuitProbeTracksRenewedClaim
+=== RUN   TestAuditCircuitProbeTracksRenewedClaim/memory
+    zz_event_routing_controls_audit_test.go:194: renewed probe still owns its claim until 2026-11-11 13:39:34.567070468 +0000 UTC, but breaker state=open reason=probe_timeout contender=circuit_open
+=== RUN   TestAuditCircuitProbeTracksRenewedClaim/postgres
+    zz_event_routing_controls_audit_test.go:194: renewed probe still owns its claim until 2026-11-11 13:39:34.960194 +0000 UTC, but breaker state=open reason=probe_timeout contender=circuit_open
+--- FAIL: TestAuditCircuitProbeTracksRenewedClaim (0.52s)
+    --- FAIL: TestAuditCircuitProbeTracksRenewedClaim/memory (0.00s)
+    --- FAIL: TestAuditCircuitProbeTracksRenewedClaim/postgres (0.52s)
+=== RUN   TestAuditNATSTokenNeverEntersConsumerHealth
+=== RUN   TestAuditNATSTokenNeverEntersConsumerHealth/memory
+=== RUN   TestAuditNATSTokenNeverEntersConsumerHealth/memory/password_control
+=== RUN   TestAuditNATSTokenNeverEntersConsumerHealth/memory/token
+    zz_event_routing_controls_audit_test.go:249: sealed NATS token credential was exposed by connection failure: returned_error_leaked=true retained_health_leaked=true
+=== RUN   TestAuditNATSTokenNeverEntersConsumerHealth/postgres
+=== RUN   TestAuditNATSTokenNeverEntersConsumerHealth/postgres/password_control
+=== RUN   TestAuditNATSTokenNeverEntersConsumerHealth/postgres/token
+    zz_event_routing_controls_audit_test.go:249: sealed NATS token credential was exposed by connection failure: returned_error_leaked=true retained_health_leaked=true
+--- FAIL: TestAuditNATSTokenNeverEntersConsumerHealth (0.61s)
+    --- FAIL: TestAuditNATSTokenNeverEntersConsumerHealth/memory (0.00s)
+        --- PASS: TestAuditNATSTokenNeverEntersConsumerHealth/memory/password_control (0.00s)
+        --- FAIL: TestAuditNATSTokenNeverEntersConsumerHealth/memory/token (0.00s)
+    --- FAIL: TestAuditNATSTokenNeverEntersConsumerHealth/postgres (0.60s)
+        --- PASS: TestAuditNATSTokenNeverEntersConsumerHealth/postgres/password_control (0.06s)
+        --- FAIL: TestAuditNATSTokenNeverEntersConsumerHealth/postgres/token (0.02s)
+FAIL
+FAIL	github.com/onebox-faas/faas/pkg/sched	20.237s
+FAIL

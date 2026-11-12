@@ -252,7 +252,23 @@ func (s *PgStore) upsertAppPrivateNetworkAttachment(ctx context.Context, attachm
 	for _, prefix := range attachment.AllowedCIDRs {
 		allowedCIDRs = append(allowedCIDRs, prefix.String())
 	}
-	row := s.pool.QueryRow(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return AppPrivateNetworkAttachment{}, mapErr(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// The app row lock pairs with the one an environment branch's creation
+	// holds on every app of its project (ADR-20261031193635 section 6).
+	var projectID string
+	err = tx.QueryRow(ctx, `select coalesce(project_id::text, '') from apps where id = $1 and account_id = $2 for update`,
+		attachment.AppID, attachment.AccountID).Scan(&projectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AppPrivateNetworkAttachment{}, ErrNotFound
+	}
+	if err != nil {
+		return AppPrivateNetworkAttachment{}, mapErr(err)
+	}
+	row := tx.QueryRow(ctx, `
 		insert into app_private_network_attachments
 		       (account_id, app_id, network_id, region, cidrs, allowed_cidrs, status, status_detail)
 		values ($1, $2, $3, $4, $5::cidr[], $6::cidr[], $7, $8)
@@ -270,7 +286,14 @@ func (s *PgStore) upsertAppPrivateNetworkAttachment(ctx context.Context, attachm
 		          created_at, updated_at`,
 		attachment.AccountID, attachment.AppID, attachment.NetworkID, attachment.Region,
 		cidrs, allowedCIDRs, attachment.Status, attachment.StatusDetail)
-	return scanAppPrivateNetworkAttachment(row)
+	saved, err := scanAppPrivateNetworkAttachment(row)
+	if err != nil {
+		return AppPrivateNetworkAttachment{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AppPrivateNetworkAttachment{}, mapErr(err)
+	}
+	return saved, nil
 }
 
 func (s *PgStore) deleteAppPrivateNetworkAttachment(ctx context.Context, accountID, appID string) error {

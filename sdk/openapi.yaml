@@ -42,6 +42,8 @@ servers:
         default: api.gregale.dev
         description: API hostname.
 tags:
+  - name: support
+    description: Gregale customer assistance, public conversations and resolution episodes.
   - name: operations
     description: Staged customer-owned HTTP work, scoped status and durable progress; production admission is disabled.
   - name: flags
@@ -1467,7 +1469,7 @@ paths:
       tags: [account]
       operationId: restoreAccount
       summary: Restore a `deleted_pending` account.
-      description: Cancels a staged deletion. Returns 409 `account_not_restorable` if the 30-day grace has elapsed.
+      description: Cancels a staged deletion and emails the account. Needs a full-access (`admin`) key or a browser session, and two-factor authentication when it is required. Returns 409 `account_not_restorable` if the 30-day grace has elapsed.
       responses:
         '200':
           description: Restored.
@@ -15621,6 +15623,76 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-connections/self/budget:
+    get:
+      tags: [keys]
+      operationId: agentConnectionSelfBudget
+      summary: Read the calling agent's own budget.
+      description: |
+        The monthly budget for always-on capacity that applies to the
+        calling agent key and what it committed this month. Only an agent key
+        can call it.
+      responses:
+        '200':
+          description: The calling agent's budget and spend.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentBudgetResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/agent-connections/{id}/budget:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: API key id of the connected agent whose budget to read or set.
+        schema: {type: string}
+    get:
+      tags: [keys]
+      operationId: agentConnectionBudget
+      summary: Read a connected agent's budget.
+      description: |
+        The monthly budget for always-on capacity (warm instances, schedule
+        floors, prewarms) that applies to one of the account's agents, where
+        it comes from, and what the agent committed this month. Past the
+        budget, each change needs a person's approval. An agent key may read
+        only its own.
+      responses:
+        '200':
+          description: The agent's budget and spend.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentBudgetResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    put:
+      tags: [keys]
+      operationId: setAgentConnectionBudget
+      summary: Set a connected agent's budget.
+      description: |
+        Sets the agent's monthly budget, makes it unlimited (an organization's
+        ceiling still applies) or returns it to the plan's default: half the
+        plan's default spend cap. Needs an admin credential; an agent cannot
+        change its own budget.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentBudgetRequest'}
+      responses:
+        '200':
+          description: The agent's budget after the change.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentBudgetResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/agent-connections/{id}/activity:
     parameters:
       - name: id
@@ -24846,7 +24918,7 @@ components:
         hold:
           type: string
           enum: [compute_ceiling, egress, inactive, plan_excess, preview]
-          description: "Set while the platform stops this database's compute and refuses its connections although its state is ready: compute_ceiling once the account used its monthly compute ceiling; egress once its apps and databases sent the plan's monthly egress allowance; inactive while the account is suspended; plan_excess (see plan_excess); preview for a PR preview database once the account used 80% of its compute. Its data is kept. Omitted while nothing holds it; the platform applies a change within a few minutes."
+          description: "Set while the platform stops this database's compute and refuses its connections although its state is ready: compute_ceiling once the account used its monthly compute ceiling; egress once this database sent its own monthly egress allowance (500 GB); inactive while the account is suspended; plan_excess (see plan_excess); preview for a PR preview database once the account used 80% of its compute. Its data is kept. Omitted while nothing holds it; the platform applies a change within a few minutes."
         restore_range:
           $ref: '#/components/schemas/ManagedPostgresRestoreRange'
     ManagedPostgresRestoreRange:
@@ -24923,21 +24995,22 @@ components:
           type: string
           format: date-time
         egress_allowance_bytes:
-          description: The plan's monthly egress allowance, shared by the account's apps and databases. Absent on a plan without one.
+          description: Each database's own monthly egress allowance, 500 GB (10^9 bytes) as Neon includes per project. Database egress does not count toward the plan's app egress allowance. Absent on a plan without databases.
           type: integer
           format: int64
           minimum: 0
         app_egress_bytes:
-          description: What the account's apps sent this month toward the shared egress allowance; egress_bytes is the databases' part.
+          deprecated: true
+          description: Deprecated and always omitted. Apps no longer share the databases' egress allowance.
           type: integer
           format: int64
           minimum: 0
         egress_state:
-          description: "healthy; warning at 80% of the shared egress allowance; overage past it while the account's egress overage election bills database egress (at Neon's price plus 5%, up to twice the allowance); held once apps and databases together reach the allowance (twice it with overage billed) and the platform enforces caps, until the month ends or the plan grows."
+          description: "The state of the database that sent the most egress this month: healthy; warning at 80% of its hold; overage past its allowance while the account's egress overage election bills database egress (at Neon's price plus 5%, up to twice the allowance); held once it reaches its allowance (twice it with overage billed) and the platform enforces caps, until the month ends. Only that database is held."
           type: string
           enum: [healthy, warning, overage, held]
         hold:
-          description: Set while every database of the account is held, with the same reason each database reports.
+          description: Set while every database of the account is held, with the same reason each database reports. Egress holds one database at a time, so it is reported on that database, not here.
           type: string
           enum: [compute_ceiling, egress, inactive]
     CreateManagedPostgresDatabaseRequest:
@@ -25162,6 +25235,15 @@ components:
           type: string
           format: date-time
           description: UTC month boundary at which shadow/live handling starts. Periods before it are never charged.
+        over_ceiling: {$ref: '#/components/schemas/ObjectStorageOverCeilingDeletion'}
+    ObjectStorageOverCeilingDeletion:
+      description: Present while the account stores more than its object-storage ceiling. Unless the account gets back under the ceiling first, Gregale deletes the excess on deletion_scheduled_at.
+      type: object
+      required: [over_ceiling_since, deletion_scheduled_at, excess_bytes]
+      properties:
+        over_ceiling_since: {type: string, format: date-time}
+        deletion_scheduled_at: {type: string, format: date-time}
+        excess_bytes: {type: integer, format: int64, minimum: 1, description: Bytes stored above the ceiling at the last check.}
     ObjectSignedRequest:
       description: Temporary bearer capability. Bucket object GET/HEAD/PUT URLs use the branded S3 gateway; a PUT URL dispatches at most one write. Multipart part URLs retain their separate contract. Do not log or persist URLs.
       type: object
@@ -26465,6 +26547,8 @@ components:
         idle_timeout_s: {type: [integer, "null"]}
         request_timeout_s: {type: integer, minimum: 0, maximum: 30, description: "Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default."}
         function_concurrency: {type: integer, minimum: 0, maximum: 80, description: "Requests one Node or Python function worker serves at once. 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy."}
+        function_callables: {type: object, additionalProperties: {type: string}, description: "Names this function's typed client may call and their app slugs, set by functions-project deploys. Stamped into the guest as GREGALE_FUNCTIONS on the next deploy."}
+        function_input_schema: {type: object, additionalProperties: true, description: "JSON Schema an SDK functions client's calls to this function are checked against; a call whose body does not match is refused with 422 function_input_invalid. Set from the function's input in gregale.yaml by CLI deploys."}
         min_instances: {type: integer}
         status:
           type: string
@@ -27704,6 +27788,14 @@ components:
           minimum: 0
           maximum: 80
           description: "Changes how many requests one Node or Python function worker serves at once. 0 or 1 restores one request per worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next deploy."
+        function_callables:
+          type: [object, "null"]
+          additionalProperties: {type: string}
+          description: "Replaces the names a function's typed client may call and their app slugs; {} clears them. Takes effect on the next deploy as GREGALE_FUNCTIONS. Function apps only."
+        function_input_schema:
+          type: [object, "null"]
+          additionalProperties: true
+          description: "Replaces the JSON Schema an SDK functions client's calls to this function are checked against; {} clears it. Takes effect on the next deploy. Function apps only."
         request_rate_limit_rps:
           type: [integer, "null"]
           minimum: 0
@@ -28394,6 +28486,10 @@ components:
           maximum: 2000
           default: 500
           description: "Callback timeout in milliseconds; 0 uses the 500 ms default."
+        identity:
+          type: string
+          enum: [reload]
+          description: "reload lets an environment branch wake from the parent deployment's credential-free capture instead of a cold boot; the callback then re-reads config and reconnects under the branch's identity. Omit to cold-boot branches."
     BeforeCheckpointHook:
       description: "Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables warm snapshots; snapshot reuse skips the callback."
       type: object
@@ -33636,6 +33732,7 @@ components:
         skip_if_running: {type: boolean, description: "When true, consume a scheduled occurrence while a prior HTTP invocation or app command task is active."}
         created_at: {type: string, format: date-time}
         last_fired_at: {type: [string, "null"], format: date-time}
+        environment: {type: string, description: "Project environment the cron runs in; omitted for production.", example: "staging"}
         schedule_policy: {$ref: '#/components/schemas/SchedulePolicy'}
         failure_rules: {$ref: '#/components/schemas/FailureRules'}
     CronRun:
@@ -33750,6 +33847,7 @@ components:
         skip_if_running: {type: [boolean, "null"], description: "Skip a scheduled fire when an earlier cron invocation is still running."}
         retry_max: {type: integer, minimum: 0, maximum: 5, description: "Additional command attempts after failure or timeout; command crons only."}
         retry_backoff_seconds: {type: integer, minimum: 1, maximum: 3600, description: "Base retry delay in seconds; doubles per retry and is capped at 24 hours. Command crons only."}
+        environment: {type: string, description: "Project environment the cron runs in; omitted or production is the app's production environment. Immutable once created.", example: "staging"}
         schedule_policy: {$ref: '#/components/schemas/SchedulePolicy'}
         failure_rules: {$ref: '#/components/schemas/FailureRules'}
     UpdateCronRequest:
@@ -38298,6 +38396,26 @@ components:
       properties:
         client_name: {type: string, minLength: 1, maxLength: 80, description: "Printable client name, without control characters or surrounding spaces."}
         client_site: {type: string, maxLength: 253, description: Lower-case host name the client was verified at.}
+    AgentBudgetResponse:
+      description: "An agent connection's monthly budget for always-on capacity, and what it committed this month."
+      type: object
+      required: [source, spent_cents, month]
+      properties:
+        monthly_cents: {type: integer, format: int64, description: "The budget that applies, in cents a month; absent when unlimited."}
+        source: {type: string, enum: [key, plan_default, org_ceiling, unlimited], description: "Where the budget comes from."}
+        key_monthly_cents: {type: integer, format: int64, description: "The budget set for this agent, when one was."}
+        key_unlimited: {type: boolean, description: "The agent was set to have no budget of its own."}
+        org_max_cents: {type: integer, format: int64, description: "The organization's ceiling on agents' budgets, when it set one."}
+        spent_cents: {type: integer, format: int64, minimum: 0, description: "Always-on capacity the agent added this UTC month, priced at the overage rate and rounded up to the cent."}
+        month: {type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "The UTC month spend counts in."}
+    AgentBudgetRequest:
+      description: "Sets an agent connection's budget: exactly one of monthly_cents, unlimited or default."
+      type: object
+      additionalProperties: false
+      properties:
+        monthly_cents: {type: integer, format: int64, minimum: 0, maximum: 100000000, description: "A monthly budget in cents."}
+        unlimited: {type: boolean, description: "No budget of its own; the organization's ceiling still applies."}
+        default: {type: boolean, description: "Return to the plan's default budget."}
     OrgAgentPolicyRequest:
       description: Whether agents may act in the organization, and the capabilities they may get.
       type: object
@@ -38318,6 +38436,13 @@ components:
           maxItems: 5
           description: Names of your own notification channels that get approval requests of agents acting in the organization; omit to keep them, send an empty list to remove them.
           items: {type: string}
+        max_agent_budget_cents:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 100000000
+          description: "Ceiling, in cents a month, on the budget of every agent acting in the organization; omit to keep the current ceiling."
+        clear_max_agent_budget: {type: boolean, description: "Remove the ceiling on agents' budgets."}
     OrgAgentPolicyResponse:
       description: An organization's agent policy.
       type: object
@@ -38336,6 +38461,7 @@ components:
           type: array
           description: Your notification channels that get this organization's agents' approval requests.
           items: {type: string}
+        max_agent_budget_cents: {type: integer, format: int64, description: "The ceiling on every agent's monthly budget in cents, when the organization set one."}
         updated_at: {type: string, format: date-time, description: When the policy last changed; absent for an organization that never set one.}
         revoked: {type: integer, minimum: 0, description: Agent connections a change revoked because the new policy no longer allows them.}
     AgentApprovalPendingInfo:
@@ -38344,7 +38470,7 @@ components:
       required: [id, category, review_url, expires_at]
       properties:
         id: {type: string, format: uuid, description: The id of the approval request.}
-        category: {type: string, enum: [delete, production, credentials, billing], description: The kind of action that needs approval.}
+        category: {type: string, enum: [delete, production, credentials, billing, budget], description: "The kind of action that needs approval; budget when the change would take the agent past its monthly budget."}
         review_url: {type: string, format: uri, description: "The page where a signed-in member who may decide approves or denies the request."}
         expires_at: {type: string, format: date-time, description: When the request and any approval of it expire.}
         status: {type: string, enum: [denied, expired], description: "Set on approval_denied and approval_expired: what became of the request."}
@@ -38404,7 +38530,7 @@ components:
       required: [id, category, method, path, body_bound, status, created_at, expires_at]
       properties:
         id: {type: string, format: uuid, description: The request's id.}
-        category: {type: string, enum: [delete, production, credentials, billing], description: The kind of action.}
+        category: {type: string, enum: [delete, production, credentials, billing, budget], description: "The kind of action; budget for a change past the agent's monthly budget."}
         method: {type: string, description: The HTTP method of the request the approval allows.}
         path: {type: string, description: The path and query of the request the approval allows.}
         body_bound: {type: boolean, description: "Whether the approval is tied to the request body; large and multipart bodies are not."}
@@ -42789,7 +42915,7 @@ components:
         approval_id: {type: string, format: uuid, description: The approval request this event is about.}
         key_id: {type: string, format: uuid, description: The agent key that made the request.}
         org_id: {type: string, format: uuid, description: The organization the key acts in, when it acts in one.: null}
-        category: {type: string, enum: [delete, production, credentials, billing], description: Which kind of risky action the agent asked to take.}
+        category: {type: string, enum: [delete, production, credentials, billing, budget], description: "Which kind of risky action the agent asked to take; budget when it would go past its monthly budget."}
         method: {type: string, description: HTTP method of the agent's request.}
         path: {type: string, description: Path and query of the agent's request.}
         status: {type: string, enum: [pending, approved, denied], description: The request's status when the event was recorded.}

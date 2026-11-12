@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -183,7 +184,7 @@ func (s *PgStore) CreateWorkflowRunAdmitted(ctx context.Context, r *WorkflowRun,
 	return active + 1, nil
 }
 
-func (s *PgStore) GetWorkflowRunByIdempotencyKey(ctx context.Context, appID, workflowName, key string, requestFingerprint []byte) (*WorkflowRun, error) {
+func (s *PgStore) GetWorkflowRunByIdempotencyKey(ctx context.Context, appID, workflowName, key string, requestFingerprint []byte, tenantIDs ...string) (*WorkflowRun, error) {
 	if err := validateWorkflowRunCreateIdempotency(key, requestFingerprint); err != nil {
 		return nil, err
 	}
@@ -193,7 +194,8 @@ func (s *PgStore) GetWorkflowRunByIdempotencyKey(ctx context.Context, appID, wor
 		SELECT id::text, create_request_fingerprint
 		FROM workflow_runs
 		WHERE app_id = $1 AND workflow_name = $2 AND create_idempotency_key = $3
-	`, appID, workflowName, key).Scan(&runID, &storedFingerprint)
+          AND platform_tenant_id IS NOT DISTINCT FROM NULLIF($4, '')::uuid
+	`, appID, workflowName, key, workflowIdempotencyTenant(tenantIDs)).Scan(&runID, &storedFingerprint)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrWorkflowRunNotFound
 	}
@@ -228,7 +230,8 @@ func (s *PgStore) CreateWorkflowRunAdmittedWithIdempotencyKey(ctx context.Contex
 		SELECT id::text, create_request_fingerprint
 		FROM workflow_runs
 		WHERE app_id = $1 AND workflow_name = $2 AND create_idempotency_key = $3
-	`, r.AppID, r.WorkflowName, key).Scan(&existingID, &storedFingerprint)
+          AND platform_tenant_id IS NOT DISTINCT FROM NULLIF($4, '')::uuid
+	`, r.AppID, r.WorkflowName, key, r.PlatformTenantID).Scan(&existingID, &storedFingerprint)
 	if err == nil {
 		if !bytes.Equal(storedFingerprint, requestFingerprint) {
 			return 0, false, ErrWorkflowRunIdempotencyConflict
@@ -265,6 +268,10 @@ func (s *PgStore) CreateWorkflowRunAdmittedWithIdempotencyKey(ctx context.Contex
 		SET create_idempotency_key = $2, create_request_fingerprint = $3
 		WHERE id = $1
 	`, r.ID, key, requestFingerprint); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "workflow_runs_create_idempotency_idx" {
+			return active, false, ErrWorkflowRunIdempotencyConflict
+		}
 		return active, false, fmt.Errorf("pgstore: persist workflow run idempotency key: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1685,7 +1692,7 @@ func (s *PgStore) completeWorkflowCallback(ctx context.Context, tenantID, runID,
 	if _, err := uuid.Parse(eventID); err != nil {
 		return false, ErrWorkflowInvalidRecord
 	}
-	if err := validateWorkflowJSON(payload, false); err != nil {
+	if err := ValidateWorkflowEventPayload(payload); err != nil {
 		return false, err
 	}
 	if len(payload) == 0 {
@@ -1791,7 +1798,7 @@ func (s *PgStore) insertWorkflowEvent(ctx context.Context, tenantID string, e *W
 	if e.RunID == "" || e.EventName == "" {
 		return fmt.Errorf("%w: event run_id and event_name are required", ErrWorkflowInvalidRecord)
 	}
-	if err := validateWorkflowJSON(e.Payload, false); err != nil {
+	if err := ValidateWorkflowEventPayload(e.Payload); err != nil {
 		return err
 	}
 	if e.ID == "" {

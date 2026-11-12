@@ -1,6 +1,6 @@
 package faas
 
-import "github.com/poyrazK/faas/sdk/go/internal/api"
+import "github.com/gregale-dev/gregale-go/internal/api"
 
 type AppHealthResponse = api.AppHealthResponse
 type AppHealthCapacity = api.AppHealthCapacity

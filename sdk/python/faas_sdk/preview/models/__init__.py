@@ -75,6 +75,7 @@ from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsRes
 from .advance_canary_request import AdvanceCanaryRequest
 from .advance_stored_workflow_live_suite_request import AdvanceStoredWorkflowLiveSuiteRequest
 from .after_restore_hook import AfterRestoreHook
+from .after_restore_hook_identity import AfterRestoreHookIdentity
 from .agent_activity_entry import AgentActivityEntry
 from .agent_activity_entry_method import AgentActivityEntryMethod
 from .agent_activity_response import AgentActivityResponse
@@ -90,6 +91,9 @@ from .agent_approval_webhook_payload import AgentApprovalWebhookPayload
 from .agent_approval_webhook_payload_category import AgentApprovalWebhookPayloadCategory
 from .agent_approval_webhook_payload_status import AgentApprovalWebhookPayloadStatus
 from .agent_approvals_response import AgentApprovalsResponse
+from .agent_budget_request import AgentBudgetRequest
+from .agent_budget_response import AgentBudgetResponse
+from .agent_budget_response_source import AgentBudgetResponseSource
 from .agent_client_request import AgentClientRequest
 from .agent_connection_response import AgentConnectionResponse
 from .agent_connection_response_approvals_item import AgentConnectionResponseApprovalsItem
@@ -322,6 +326,8 @@ from .app_response_consumer_auth_mode import AppResponseConsumerAuthMode
 from .app_response_cpu_millicores import AppResponseCpuMillicores
 from .app_response_deployment_availability import AppResponseDeploymentAvailability
 from .app_response_eviction_priority import AppResponseEvictionPriority
+from .app_response_function_callables import AppResponseFunctionCallables
+from .app_response_function_input_schema import AppResponseFunctionInputSchema
 from .app_response_preview_pr_state import AppResponsePreviewPrState
 from .app_response_release_policy import AppResponseReleasePolicy
 from .app_response_runtime import AppResponseRuntime
@@ -692,6 +698,7 @@ from .checked_project_release_response_bindings_checks import CheckedProjectRele
 from .claim_api_consumer_usage_statement_request import ClaimAPIConsumerUsageStatementRequest
 from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
+from .close_support_ticket_request import CloseSupportTicketRequest
 from .commit_blocked_event_response import CommitBlockedEventResponse
 from .commit_blocked_events_response import CommitBlockedEventsResponse
 from .commit_event_publication import CommitEventPublication
@@ -979,6 +986,11 @@ from .create_project_binding_verification_run_request_review_digests import (
     CreateProjectBindingVerificationRunRequestReviewDigests,
 )
 from .create_project_environment_approval_request import CreateProjectEnvironmentApprovalRequest
+from .create_project_environment_branch_request import CreateProjectEnvironmentBranchRequest
+from .create_project_environment_branch_request_egress import CreateProjectEnvironmentBranchRequestEgress
+from .create_project_environment_branch_request_private_networks import (
+    CreateProjectEnvironmentBranchRequestPrivateNetworks,
+)
 from .create_project_environment_qualification_request import CreateProjectEnvironmentQualificationRequest
 from .create_project_environment_qualification_request_secret_revision_hashes import (
     CreateProjectEnvironmentQualificationRequestSecretRevisionHashes,
@@ -1006,6 +1018,9 @@ from .create_slo_request_latency_threshold_ms import CreateSLORequestLatencyThre
 from .create_slo_request_sli import CreateSLORequestSli
 from .create_slo_request_window_days import CreateSLORequestWindowDays
 from .create_statement_invoice_request import CreateStatementInvoiceRequest
+from .create_support_ticket_request import CreateSupportTicketRequest
+from .create_support_ticket_request_category import CreateSupportTicketRequestCategory
+from .create_support_ticket_request_priority import CreateSupportTicketRequestPriority
 from .create_synthetic_check_request import CreateSyntheticCheckRequest
 from .create_synthetic_check_request_interval_seconds import CreateSyntheticCheckRequestIntervalSeconds
 from .create_synthetic_check_request_method import CreateSyntheticCheckRequestMethod
@@ -3148,6 +3163,7 @@ from .object_storage_compute_binding_list import ObjectStorageComputeBindingList
 from .object_storage_compute_binding_secret_keys import ObjectStorageComputeBindingSecretKeys
 from .object_storage_compute_trigger import ObjectStorageComputeTrigger
 from .object_storage_compute_trigger_events_item import ObjectStorageComputeTriggerEventsItem
+from .object_storage_over_ceiling_deletion import ObjectStorageOverCeilingDeletion
 from .object_storage_policy import ObjectStoragePolicy
 from .object_storage_policy_accounting_mode import ObjectStoragePolicyAccountingMode
 from .object_storage_pricing import ObjectStoragePricing
@@ -4070,6 +4086,7 @@ from .org_response_plan import OrgResponsePlan
 from .org_response_status import OrgResponseStatus
 from .org_with_role import OrgWithRole
 from .org_with_role_role import OrgWithRoleRole
+from .organization_support_list_status import OrganizationSupportListStatus
 from .outbound_ai_access_token import OutboundAIAccessToken
 from .outbound_ai_access_token_list import OutboundAIAccessTokenList
 from .outbound_ai_budget_alert import OutboundAIBudgetAlert
@@ -4184,6 +4201,7 @@ from .patch_org_request import PatchOrgRequest
 from .patch_org_request_plan import PatchOrgRequestPlan
 from .payment_method_summary import PaymentMethodSummary
 from .periodic_profile_policy import PeriodicProfilePolicy
+from .personal_support_list_status import PersonalSupportListStatus
 from .plan_affected_app import PlanAffectedApp
 from .plan_affected_app_action import PlanAffectedAppAction
 from .plan_async_route import PlanAsyncRoute
@@ -4560,6 +4578,14 @@ from .project_environment_binding_change_response_change import ProjectEnvironme
 from .project_environment_binding_change_response_kind import ProjectEnvironmentBindingChangeResponseKind
 from .project_environment_binding_response import ProjectEnvironmentBindingResponse
 from .project_environment_binding_response_kind import ProjectEnvironmentBindingResponseKind
+from .project_environment_branch_list_response import ProjectEnvironmentBranchListResponse
+from .project_environment_branch_response import ProjectEnvironmentBranchResponse
+from .project_environment_branch_response_data import ProjectEnvironmentBranchResponseData
+from .project_environment_branch_response_private_networks import ProjectEnvironmentBranchResponsePrivateNetworks
+from .project_environment_branch_summary import ProjectEnvironmentBranchSummary
+from .project_environment_branch_summary_data import ProjectEnvironmentBranchSummaryData
+from .project_environment_branch_summary_private_networks import ProjectEnvironmentBranchSummaryPrivateNetworks
+from .project_environment_branch_workload import ProjectEnvironmentBranchWorkload
 from .project_environment_clone_operation_response import ProjectEnvironmentCloneOperationResponse
 from .project_environment_clone_operation_response_status import ProjectEnvironmentCloneOperationResponseStatus
 from .project_environment_clone_resource_response import ProjectEnvironmentCloneResourceResponse
@@ -5072,6 +5098,7 @@ from .release_timeline_event_kind import ReleaseTimelineEventKind
 from .release_timeline_phase import ReleaseTimelinePhase
 from .remove_environment_git_ops_override_request import RemoveEnvironmentGitOpsOverrideRequest
 from .rename_app_request import RenameAppRequest
+from .reopen_support_ticket_request import ReopenSupportTicketRequest
 from .reorder_deployment_body import ReorderDeploymentBody
 from .reorder_deployment_response_200 import ReorderDeploymentResponse200
 from .replace_project_environment_queue_bindings_request import ReplaceProjectEnvironmentQueueBindingsRequest
@@ -5626,6 +5653,8 @@ from .security_activity_response import SecurityActivityResponse
 from .security_quarantine_recovery_request import SecurityQuarantineRecoveryRequest
 from .security_quarantine_recovery_response import SecurityQuarantineRecoveryResponse
 from .security_quarantine_recovery_response_status import SecurityQuarantineRecoveryResponseStatus
+from .seed_dev_session_from_environment_branch_request import SeedDevSessionFromEnvironmentBranchRequest
+from .seed_dev_session_from_environment_branch_response import SeedDevSessionFromEnvironmentBranchResponse
 from .selected_trace_app import SelectedTraceApp
 from .selected_trace_invocation import SelectedTraceInvocation
 from .selected_trace_lookup_response import SelectedTraceLookupResponse
@@ -5903,6 +5932,18 @@ from .summarize_platform_tenant_self_workflow_attention_sort import SummarizePla
 from .summarize_platform_tenant_self_workflow_outcomes_group_by import (
     SummarizePlatformTenantSelfWorkflowOutcomesGroupBy,
 )
+from .support_context import SupportContext
+from .support_message import SupportMessage
+from .support_message_author import SupportMessageAuthor
+from .support_message_page import SupportMessagePage
+from .support_message_request import SupportMessageRequest
+from .support_satisfaction import SupportSatisfaction
+from .support_satisfaction_request import SupportSatisfactionRequest
+from .support_satisfaction_submission import SupportSatisfactionSubmission
+from .support_submission import SupportSubmission
+from .support_ticket import SupportTicket
+from .support_ticket_page import SupportTicketPage
+from .support_ticket_status import SupportTicketStatus
 from .suppress_workflow_recovery_automatic_action_request import SuppressWorkflowRecoveryAutomaticActionRequest
 from .sweep_stuck_builds_response import SweepStuckBuildsResponse
 from .synthetic_check_response import SyntheticCheckResponse
@@ -6002,6 +6043,8 @@ from .update_app_request_eviction_priority_type_3_type_1 import UpdateAppRequest
 from .update_app_request_execution_mode_type_1 import UpdateAppRequestExecutionModeType1
 from .update_app_request_execution_mode_type_2_type_1 import UpdateAppRequestExecutionModeType2Type1
 from .update_app_request_execution_mode_type_3_type_1 import UpdateAppRequestExecutionModeType3Type1
+from .update_app_request_function_callables_type_0 import UpdateAppRequestFunctionCallablesType0
+from .update_app_request_function_input_schema_type_0 import UpdateAppRequestFunctionInputSchemaType0
 from .update_app_request_pause import UpdateAppRequestPause
 from .update_app_request_release_policy_type_1 import UpdateAppRequestReleasePolicyType1
 from .update_app_request_release_policy_type_2_type_1 import UpdateAppRequestReleasePolicyType2Type1
@@ -6468,6 +6511,7 @@ __all__ = (
     "AdvanceCanaryRequest",
     "AdvanceStoredWorkflowLiveSuiteRequest",
     "AfterRestoreHook",
+    "AfterRestoreHookIdentity",
     "AgentActivityEntry",
     "AgentActivityEntryMethod",
     "AgentActivityResponse",
@@ -6483,6 +6527,9 @@ __all__ = (
     "AgentApprovalWebhookPayload",
     "AgentApprovalWebhookPayloadCategory",
     "AgentApprovalWebhookPayloadStatus",
+    "AgentBudgetRequest",
+    "AgentBudgetResponse",
+    "AgentBudgetResponseSource",
     "AgentClientRequest",
     "AgentConnectionResponse",
     "AgentConnectionResponseApprovalsItem",
@@ -6808,6 +6855,8 @@ __all__ = (
     "AppResponseCpuMillicores",
     "AppResponseDeploymentAvailability",
     "AppResponseEvictionPriority",
+    "AppResponseFunctionCallables",
+    "AppResponseFunctionInputSchema",
     "AppResponsePreviewPrState",
     "AppResponseReleasePolicy",
     "AppResponseRuntime",
@@ -7073,6 +7122,7 @@ __all__ = (
     "ClaimAPIConsumerUsageStatementRequest",
     "ClearObsoleteDeploymentsBody",
     "ClearObsoleteReport",
+    "CloseSupportTicketRequest",
     "CommitBlockedEventResponse",
     "CommitBlockedEventsResponse",
     "CommitEventPublication",
@@ -7349,6 +7399,9 @@ __all__ = (
     "CreateProjectBindingVerificationRunRequest",
     "CreateProjectBindingVerificationRunRequestReviewDigests",
     "CreateProjectEnvironmentApprovalRequest",
+    "CreateProjectEnvironmentBranchRequest",
+    "CreateProjectEnvironmentBranchRequestEgress",
+    "CreateProjectEnvironmentBranchRequestPrivateNetworks",
     "CreateProjectEnvironmentQualificationRequest",
     "CreateProjectEnvironmentQualificationRequestSecretRevisionHashes",
     "CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes",
@@ -7372,6 +7425,9 @@ __all__ = (
     "CreateSLORequestSli",
     "CreateSLORequestWindowDays",
     "CreateStatementInvoiceRequest",
+    "CreateSupportTicketRequest",
+    "CreateSupportTicketRequestCategory",
+    "CreateSupportTicketRequestPriority",
     "CreateSyntheticCheckRequest",
     "CreateSyntheticCheckRequestIntervalSeconds",
     "CreateSyntheticCheckRequestMethod",
@@ -9403,6 +9459,7 @@ __all__ = (
     "ObjectStorageComputeBindingSecretKeys",
     "ObjectStorageComputeTrigger",
     "ObjectStorageComputeTriggerEventsItem",
+    "ObjectStorageOverCeilingDeletion",
     "ObjectStoragePolicy",
     "ObjectStoragePolicyAccountingMode",
     "ObjectStoragePricing",
@@ -10191,6 +10248,7 @@ __all__ = (
     "OrgAgentPolicyRequestAllowedScopesItem",
     "OrgAgentPolicyRequestApprovalCategoriesItem",
     "OrgAgentPolicyResponse",
+    "OrganizationSupportListStatus",
     "OrgAppListResponse",
     "OrgAppSummary",
     "OrgAppSummaryType",
@@ -10327,6 +10385,7 @@ __all__ = (
     "PatchOrgRequestPlan",
     "PaymentMethodSummary",
     "PeriodicProfilePolicy",
+    "PersonalSupportListStatus",
     "PlanAffectedApp",
     "PlanAffectedAppAction",
     "PlanAsyncRoute",
@@ -10681,6 +10740,14 @@ __all__ = (
     "ProjectEnvironmentBindingChangeResponseKind",
     "ProjectEnvironmentBindingResponse",
     "ProjectEnvironmentBindingResponseKind",
+    "ProjectEnvironmentBranchListResponse",
+    "ProjectEnvironmentBranchResponse",
+    "ProjectEnvironmentBranchResponseData",
+    "ProjectEnvironmentBranchResponsePrivateNetworks",
+    "ProjectEnvironmentBranchSummary",
+    "ProjectEnvironmentBranchSummaryData",
+    "ProjectEnvironmentBranchSummaryPrivateNetworks",
+    "ProjectEnvironmentBranchWorkload",
     "ProjectEnvironmentCloneOperationResponse",
     "ProjectEnvironmentCloneOperationResponseStatus",
     "ProjectEnvironmentCloneResourceResponse",
@@ -11157,6 +11224,7 @@ __all__ = (
     "ReleaseTimelinePhase",
     "RemoveEnvironmentGitOpsOverrideRequest",
     "RenameAppRequest",
+    "ReopenSupportTicketRequest",
     "ReorderDeploymentBody",
     "ReorderDeploymentResponse200",
     "ReplaceProjectEnvironmentQueueBindingsRequest",
@@ -11701,6 +11769,8 @@ __all__ = (
     "SecurityQuarantineRecoveryRequest",
     "SecurityQuarantineRecoveryResponse",
     "SecurityQuarantineRecoveryResponseStatus",
+    "SeedDevSessionFromEnvironmentBranchRequest",
+    "SeedDevSessionFromEnvironmentBranchResponse",
     "SelectedTraceApp",
     "SelectedTraceInvocation",
     "SelectedTraceLookupResponse",
@@ -11962,6 +12032,18 @@ __all__ = (
     "SummarizePlatformTenantSelfWorkflowAttentionReason",
     "SummarizePlatformTenantSelfWorkflowAttentionSort",
     "SummarizePlatformTenantSelfWorkflowOutcomesGroupBy",
+    "SupportContext",
+    "SupportMessage",
+    "SupportMessageAuthor",
+    "SupportMessagePage",
+    "SupportMessageRequest",
+    "SupportSatisfaction",
+    "SupportSatisfactionRequest",
+    "SupportSatisfactionSubmission",
+    "SupportSubmission",
+    "SupportTicket",
+    "SupportTicketPage",
+    "SupportTicketStatus",
     "SuppressWorkflowRecoveryAutomaticActionRequest",
     "SweepStuckBuildsResponse",
     "SyntheticCheckResponse",
@@ -12061,6 +12143,8 @@ __all__ = (
     "UpdateAppRequestExecutionModeType1",
     "UpdateAppRequestExecutionModeType2Type1",
     "UpdateAppRequestExecutionModeType3Type1",
+    "UpdateAppRequestFunctionCallablesType0",
+    "UpdateAppRequestFunctionInputSchemaType0",
     "UpdateAppRequestPause",
     "UpdateAppRequestReleasePolicyType1",
     "UpdateAppRequestReleasePolicyType2Type1",

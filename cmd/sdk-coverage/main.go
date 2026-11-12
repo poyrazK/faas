@@ -569,6 +569,26 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	// Customer support uses typed personal and organization methods.
+	"GET /v1/support/tickets":                                   "ListSupportTickets",
+	"POST /v1/support/tickets":                                  "CreateSupportTicket",
+	"GET /v1/support/tickets/{ticket}":                          "GetSupportTicket",
+	"GET /v1/support/tickets/{ticket}/messages":                 "ListSupportMessages",
+	"POST /v1/support/tickets/{ticket}/messages":                "ReplySupportTicket",
+	"POST /v1/support/tickets/{ticket}/close":                   "CloseSupportTicket",
+	"POST /v1/support/tickets/{ticket}/reopen":                  "ReopenSupportTicket",
+	"GET /v1/support/tickets/{ticket}/satisfaction":             "GetSupportSatisfaction",
+	"POST /v1/support/tickets/{ticket}/satisfaction":            "SetSupportSatisfaction",
+	"GET /v1/orgs/{org}/support/tickets":                        "ListOrgSupportTickets",
+	"POST /v1/orgs/{org}/support/tickets":                       "CreateOrgSupportTicket",
+	"GET /v1/orgs/{org}/support/tickets/{ticket}":               "GetOrgSupportTicket",
+	"GET /v1/orgs/{org}/support/tickets/{ticket}/messages":      "ListOrgSupportMessages",
+	"POST /v1/orgs/{org}/support/tickets/{ticket}/messages":     "ReplyOrgSupportTicket",
+	"POST /v1/orgs/{org}/support/tickets/{ticket}/close":        "CloseOrgSupportTicket",
+	"POST /v1/orgs/{org}/support/tickets/{ticket}/reopen":       "ReopenOrgSupportTicket",
+	"GET /v1/orgs/{org}/support/tickets/{ticket}/satisfaction":  "GetOrgSupportSatisfaction",
+	"POST /v1/orgs/{org}/support/tickets/{ticket}/satisfaction": "SetOrgSupportSatisfaction",
+
 	"POST /v1/orgs/{organization}/projects":                             "ApplyOrgProjectPlan",
 	"DELETE /v1/orgs/{organization}/projects/{slug}/exclusions/{slug2}": "DeleteOrgProjectDeploymentScopeExclusion",
 
@@ -1279,6 +1299,9 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/agent-connections/self":                                                          "DisconnectAgent",
 	"GET /v1/agent-connections/self/activity":                                                    "AgentConnectionSelfActivity",
 	"GET /v1/agent-connections/{id}/activity":                                                    "AgentConnectionActivity",
+	"GET /v1/agent-connections/self/budget":                                                      "AgentConnectionSelfBudget",
+	"GET /v1/agent-connections/{id}/budget":                                                      "AgentConnectionBudget",
+	"PUT /v1/agent-connections/{id}/budget":                                                      "SetAgentConnectionBudget",
 	"GET /v1/orgs/{slug}/agent-connections/{id}/activity":                                        "OrgAgentConnectionActivity",
 	"GET /v1/orgs/{slug}/agent-connections":                                                      "ListOrgAgentConnections",
 	"DELETE /v1/orgs/{slug}/agent-connections/{id}":                                              "RevokeOrgAgentConnection",
@@ -1357,6 +1380,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/rollback":                                                              "Rollback",
 	"POST /v1/apps/{slug}/rollouts/recover":                                                      "RecoverRollout",
 	"POST /v1/dev/sessions/{project}/syncs":                                                      "RecordDevSync",
+	"POST /v1/dev/sessions/{project}/seed":                                                       "SeedDevSessionFromEnvironmentBranch",
 	"PUT /v1/dev/test-runs/{run_id}":                                                             "RegisterScenarioTest",
 	"POST /v1/dev/test-runs/{run_id}/actions/seal":                                               "SealScenarioTestActions",
 	"POST /v1/dev/test-runs/{run_id}/objects":                                                    "CreateScenarioObjects",
@@ -1393,6 +1417,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/projects/{slug}/environment-clones":                                                "CreateFullProjectEnvironmentClone",
 	"GET /v1/projects/{slug}/environment-clones/{clone}":                                         "GetProjectEnvironmentCloneOperation",
 	"GET /v1/projects/{slug}/environments/{environment}":                                         "GetProjectEnvironment",
+	"POST /v1/projects/{slug}/environments/{environment}/branches":                               "CreateProjectEnvironmentBranch",
+	"GET /v1/projects/{slug}/environments/{environment}/branches":                                "ListProjectEnvironmentBranches",
 	"PATCH /v1/projects/{slug}/environments/{environment}":                                       "UpdateProjectEnvironment",
 	"POST /v1/projects/{slug}/environments/{environment}/qualifications":                         "CreateProjectEnvironmentQualification",
 	"GET /v1/projects/{slug}/environments/{environment}/releases":                                "GetProjectEnvironmentReleases",

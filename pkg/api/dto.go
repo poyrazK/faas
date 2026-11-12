@@ -1053,6 +1053,14 @@ type UpdateAppRequest struct {
 	// worker serves at once (ADR-1342). It takes effect on the next deploy;
 	// an explicit 0 restores one request per worker.
 	FunctionConcurrency *int `json:"function_concurrency,omitempty"`
+	// FunctionCallables replaces the names a function's typed client may
+	// call and their app slugs (ADR-20261111150000); {} clears them. It takes
+	// effect on the next deploy, as GREGALE_FUNCTIONS.
+	FunctionCallables *map[string]string `json:"function_callables,omitempty"`
+	// FunctionInputSchema replaces the JSON Schema typed-client calls to
+	// the function are checked against; {} clears it. It takes effect on
+	// the next deploy.
+	FunctionInputSchema *json.RawMessage `json:"function_input_schema,omitempty"`
 	// RequestRateLimitRPS and RequestRateLimitBurst override the app-wide
 	// request token bucket without changing the deployment. Zero restores the
 	// plan default; positive values may lower, but never exceed, the plan cap.
@@ -2043,6 +2051,12 @@ type AppResponse struct {
 	// FunctionConcurrency is the requests one function worker serves at
 	// once (ADR-1342); omitted means one.
 	FunctionConcurrency int `json:"function_concurrency,omitempty"`
+	// FunctionCallables are the names the function's typed client may call
+	// and their app slugs (ADR-20261111150000).
+	FunctionCallables map[string]string `json:"function_callables,omitempty"`
+	// FunctionInputSchema is the JSON Schema typed-client calls to the
+	// function are checked against (ADR-20261111150000).
+	FunctionInputSchema json.RawMessage `json:"function_input_schema,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
 	MinInstances int    `json:"min_instances"`
@@ -4853,6 +4867,9 @@ type CronResponse struct {
 	SkipIfRunning       bool                       `json:"skip_if_running"`
 	CreatedAt           string                     `json:"created_at"`
 	LastFiredAt         string                     `json:"last_fired_at,omitempty"`
+	// Environment is the project environment the cron runs in; omitted for
+	// the app's production environment (ADR-20261104120000).
+	Environment string `json:"environment,omitempty"`
 	// Labels are the cron's key/value labels (ADR-20261031100025), on its
 	// list and read while the resource-labels capability is on for the
 	// caller. Labels are not secret.
@@ -4877,6 +4894,10 @@ type CreateCronRequest struct {
 	Enabled             *bool                      `json:"enabled,omitempty"`
 	Timezone            string                     `json:"timezone,omitempty"`
 	SkipIfRunning       *bool                      `json:"skip_if_running,omitempty"`
+	// Environment names the project environment the cron runs in; omitted
+	// or "production" is the app's production environment. A cron's
+	// environment never changes (ADR-20261104120000).
+	Environment string `json:"environment,omitempty"`
 }
 
 // UpdateCronRequest is a partial update.
@@ -14145,6 +14166,9 @@ type DeploymentCronStagingSnapshot struct {
 	Revision           int64                  `json:"revision"`
 	LatestDeploymentID string                 `json:"latest_deployment_id"`
 	Crons              []DeploymentCronConfig `json:"crons"`
+	// Environment is the non-production environment the snapshot reads;
+	// omitted for production (ADR-20261104120000).
+	Environment string `json:"environment,omitempty"`
 }
 
 type DeploymentCronStagingRequest struct {
@@ -14156,6 +14180,10 @@ type DeploymentCronStagingRequest struct {
 	ExpectedRevision     int64                  `json:"expected_revision"`
 	Before               []DeploymentCronConfig `json:"before"`
 	Desired              []DeploymentCronConfig `json:"desired"`
+	// Environment stages the manifest's HTTP crons into a non-production
+	// environment; omitted for production. Only the deferred operations
+	// (prepare, cancel, track_upload) take one (ADR-20261104120000).
+	Environment string `json:"environment,omitempty"`
 }
 
 // EventRoutingRecoveryExpectation pins a reviewed automation routing attempt.

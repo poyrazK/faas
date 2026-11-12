@@ -233,9 +233,23 @@ func (c *Client) CompletionCache() *CompletionCache {
 func NewClientWithDeployTimeout(baseURL, token string, deployTimeout time.Duration) *Client {
 	c := NewClient(baseURL, token)
 	if deployTimeout > 0 {
-		c.deployHTTP = &http.Client{Timeout: deployTimeout, Transport: newClientTransport()}
+		c.deployHTTP = &http.Client{Timeout: deployTimeout, Transport: newClientTransportWithHeaderTimeout(deployTimeout)}
 	}
 	return c
+}
+
+// newClientTransportWithHeaderTimeout is newClientTransport waiting up to d
+// for response headers. The upload client used the 30s header wait of JSON
+// requests, so a synchronous upload the server took longer to accept failed
+// with "timeout awaiting response headers" whatever deploy timeout the
+// caller chose (seen on a cold `gregale dev` first sync, 2026-11-11).
+func newClientTransportWithHeaderTimeout(d time.Duration) http.RoundTripper {
+	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+		clone := transport.Clone()
+		clone.ResponseHeaderTimeout = d
+		return agentReasonTransport{next: clone}
+	}
+	return agentReasonTransport{next: http.DefaultTransport}
 }
 
 // HTTPClient returns the underlying JSON HTTP client. Exposed so SDK

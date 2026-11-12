@@ -106,7 +106,7 @@ func cmdDevLocal(args []string) int {
 	if *port < 0 || *port > 65535 {
 		return printErr("Invalid port", errors.New("--port must be between 0 and 65535"))
 	}
-	projectDir, envPath, _, err := devLocalInputs(*sourcePath, *envFile, flagSetWasSet(fs)["env-file"])
+	projectDir, envPath, fileEnv, err := devLocalInputs(*sourcePath, *envFile, flagSetWasSet(fs)["env-file"])
 	if err != nil {
 		return printErr("Could not start locally", err)
 	}
@@ -114,12 +114,15 @@ func cmdDevLocal(args []string) int {
 	if err != nil {
 		return printErr("Could not start locally", err)
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := devLocalPreflight(ctx, projectDir, fns, app, devLocalEnv(os.Environ(), nil, fileEnv)); err != nil {
+		return printErr("Local preflight failed", err)
+	}
 	cacheDir, err := localCacheDir(projectDir)
 	if err != nil {
 		return printErr("Could not start local functions", err)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	remote := &devLocalRemote{Env: map[string]string{}}
 	switch {
 	case *offline:

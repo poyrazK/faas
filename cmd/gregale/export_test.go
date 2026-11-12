@@ -1874,6 +1874,7 @@ var RunBindingVerificationJobs = runBindingVerificationJobs
 var RunBucketCapacity = runBucketCapacity
 var RunBucketCopySources = runBucketCopySources
 var RunBucketDefaultEncryption = runBucketDefaultEncryption
+var BucketStatusAlias = bucketStatusAlias
 var RunBucketDelete = runBucketDelete
 var RunBucketLifecycle = runBucketLifecycle
 var RunBucketList = runBucketList
@@ -2724,6 +2725,10 @@ var WithEntry = withEntry
 var CmdGithub = cmdGithub
 var CmdGithubSetup = cmdGithubSetup
 
+// Manifest cron staging stays with production deploys (ADR-20261104120000).
+var DeployStagesManifestCrons = deployStagesManifestCrons
+var CronStagingEnvironment = cronStagingEnvironment
+
 // DebugWatchPoll runs one debug requests watch poll against baseURL and
 // returns the request IDs it read and whether it reported a gap.
 func DebugWatchPoll(baseURL, slug string, limit int, seen map[string]string, follow bool) ([]string, bool, error) {
@@ -2781,6 +2786,11 @@ var AddPostgresUnsupported = addPostgresUnsupported
 var PrintAddPostgresMigrationHint = printAddPostgresMigrationHint
 
 var DebugWatchNextWait = debugWatchNextWait
+
+var (
+	ProfileCapturesVerb     = profileCapturesVerb
+	RenderDebugCompareTable = renderDebugCompareTable
+)
 
 // ADR-20261107180000 `gregale config explain`.
 var (
@@ -2845,3 +2855,6 @@ var WorkerNoInstancesLine = workerNoInstancesLine
 
 // PrintPublicURLs exposes the plan's public URL list (H32-30).
 var PrintPublicURLs = printPublicURLs
+
+var InvocationSourceLabel = invocationSourceLabel
+var RenderDeploymentHostingReceiptFor = renderDeploymentHostingReceiptFor

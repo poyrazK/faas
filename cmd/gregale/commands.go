@@ -55,17 +55,22 @@ func cmdLogin(args []string) int {
 		if jsonOutput && !jsonUsageHelp {
 			return
 		}
-		PrintUsage(os.Stderr, "usage: gregale login [--device | --token T | --token-stdin]", "auth")
+		PrintUsage(os.Stderr, "usage: gregale login [--device | --token T | --token-stdin] [--insecure-storage]", "auth")
 		fs.PrintDefaults()
 	}
 	token := fs.String("token", "", "API token (CI/non-interactive)")
 	tokenStdin := fs.Bool("token-stdin", false, "read API token from stdin (CI/non-interactive)")
 	device := fs.Bool("device", false, "sign in with a code typed in a browser on another computer (SSH, headless)")
+	insecureStorage := fs.Bool("insecure-storage", false, "save the API key to a plaintext file readable only by you instead of the OS keychain (for WSL, containers and SSH hosts whose keyring is locked; same as GREGALE_KEYRING=off)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
+	}
+	if *insecureStorage {
+		loginInsecureStorage = true
+		defer func() { loginInsecureStorage = false }()
 	}
 	if *tokenStdin {
 		if *token != "" {
@@ -212,7 +217,8 @@ func finalizeLogin(ctx context.Context, c *Client, plaintext, managedKeyID strin
 	loginErrorCredential = plaintext
 	defer func() { loginErrorCredential = previousCredential }()
 	previous := currentManagedLogin()
-	if err := saveToken(plaintext); err != nil {
+	store, err := saveTokenStore(plaintext)
+	if err != nil {
 		return printErr("Could not save token", err)
 	}
 	if err := saveManagedSession(plaintext, managedKeyID, c.BaseURL()); err != nil {
@@ -236,6 +242,7 @@ func finalizeLogin(ctx context.Context, c *Client, plaintext, managedKeyID strin
 		return jsonOut(writeJSON(acct))
 	}
 	PrintOK(osStdout, "Logged in as %s (%s plan)", acct.Email, acct.Plan)
+	_, _ = fmt.Fprintf(osStdout, "  Credentials: %s\n", store.describe())
 
 	// First-run quickstart (UX §8, issue #65 D4). If the account has
 	// no apps yet, name the one next step: the guided start, which

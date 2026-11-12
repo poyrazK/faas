@@ -1436,6 +1436,7 @@ func testRoutesParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg/apid/apidserver", "org_object_routes.go"),
 		filepath.Join(root, "pkg/apid/apidserver", "org_queue_routes.go"),
 		filepath.Join(root, "pkg/apid/apidserver", "handlers_issues.go"),
+		filepath.Join(root, "pkg/apid/apidserver", "customer_support.go"),
 		filepath.Join(root, "cmd/gatewayd-internal", "run.go"),
 	}
 	var codeRoutes []string
@@ -1665,6 +1666,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "environment_gitops_notifications.go"),
 		filepath.Join(root, "pkg", "api", "environment_definition.go"),
 		filepath.Join(root, "pkg", "api", dtoFile),
+		filepath.Join(root, "pkg", "api", "support.go"),
 		filepath.Join(root, "pkg", "api", "deleted_apps.go"),
 		filepath.Join(root, "pkg", "api", "deployment_response_check.go"),
 		filepath.Join(root, "pkg", "api", devBucketsFile),
@@ -1942,7 +1944,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", appTasksFile),
 		filepath.Join(root, "pkg", "api", imageRunsFile),
 		filepath.Join(root, "pkg", "api", projectsFile),
-		filepath.Join(root, "pkg", "api", "project_environment_clones.go"), // ADR-590
+		filepath.Join(root, "pkg", "api", "project_environment_clones.go"),   // ADR-590
+		filepath.Join(root, "pkg", "api", "project_environment_branches.go"), // ADR-20261031193635
 		filepath.Join(root, "pkg", "api", "project_environment_queues.go"),
 		filepath.Join(root, "pkg", "api", "project_environment_secrets.go"), // ADR-1139
 		filepath.Join(root, "pkg", "api", "project_release_bindings.go"),
@@ -2087,6 +2090,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "agent_connections.go"), // ADR-20261030133644: connected agents
 		filepath.Join(root, "pkg", "api", "agent_approvals.go"),   // ADR-20261104140058: approvals for risky agent actions
 		filepath.Join(root, "pkg", "api", "agent_activity.go"),    // ADR-20261107220000: agent activity log
+		filepath.Join(root, "pkg", "api", "agent_budget.go"),      // ADR-20261111114059: agent budgets
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

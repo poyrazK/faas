@@ -61,18 +61,18 @@ class ManagedPostgresUsageResponse:
     """When the compute cap suspended the account's databases this month; present while compute_cap_state is
     suspended."""
     egress_allowance_bytes: int | Unset = UNSET
-    """The plan's monthly egress allowance, shared by the account's apps and databases. Absent on a plan without
-    one."""
+    """Each database's own monthly egress allowance, 500 GB (10^9 bytes) as Neon includes per project. Database
+    egress does not count toward the plan's app egress allowance. Absent on a plan without databases."""
     app_egress_bytes: int | Unset = UNSET
-    """What the account's apps sent this month toward the shared egress allowance; egress_bytes is the databases'
-    part."""
+    """Deprecated and always omitted. Apps no longer share the databases' egress allowance."""
     egress_state: ManagedPostgresUsageResponseEgressState | Unset = UNSET
-    """healthy; warning at 80% of the shared egress allowance; overage past it while the account's egress overage
-    election bills database egress (at Neon's price plus 5%, up to twice the allowance); held once apps and
-    databases together reach the allowance (twice it with overage billed) and the platform enforces caps, until the
-    month ends or the plan grows."""
+    """The state of the database that sent the most egress this month: healthy; warning at 80% of its hold; overage
+    past its allowance while the account's egress overage election bills database egress (at Neon's price plus 5%,
+    up to twice the allowance); held once it reaches its allowance (twice it with overage billed) and the platform
+    enforces caps, until the month ends. Only that database is held."""
     hold: ManagedPostgresUsageResponseHold | Unset = UNSET
-    """Set while every database of the account is held, with the same reason each database reports."""
+    """Set while every database of the account is held, with the same reason each database reports. Egress holds
+    one database at a time, so it is reported on that database, not here."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

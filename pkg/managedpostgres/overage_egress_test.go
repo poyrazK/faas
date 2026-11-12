@@ -1,6 +1,6 @@
-// adr: 20261110160000 — slice 3: database egress past the shared egress
-// allowance, apps first, is billed at Neon's price plus 5% while the subject's
-// egress overage election lifts the allowance.
+// adr: 20261110160000 — slice 3, amendment 2026-11-11: each database's egress
+// past its own allowance, as Neon's is per project, is billed at Neon's price
+// plus 5% while the subject's egress overage election lifts the allowance.
 package managedpostgres
 
 import (
@@ -20,25 +20,34 @@ func TestEgressOverageCharge(t *testing.T) {
 		t.Fatalf("egress overage price = %d millicents/GB, want Neon's 10000 plus 5%%", price)
 	}
 	for _, tc := range []struct {
-		name                 string
-		database, app, allow int64
-		billed               int64
+		name   string
+		egress map[string]int64
+		allow  int64
+		billed int64
 	}{
-		{name: "within the allowance", database: 4 * testGB, app: 6 * testGB, allow: 10 * testGB},
-		{name: "databases push the total past it", database: 6 * testGB, app: 7 * testGB, allow: 10 * testGB, billed: 3 * testGB},
-		{name: "apps already past it: databases pay only their own", database: 5 * testGB, app: 12 * testGB, allow: 10 * testGB, billed: 5 * testGB},
-		{name: "at most one more allowance", database: 25 * testGB, allow: 10 * testGB, billed: 10 * testGB},
-		{name: "no database egress", app: 30 * testGB, allow: 10 * testGB},
-		{name: "no allowance", database: 30 * testGB},
-		{name: "overflow", database: math.MaxInt64, app: math.MaxInt64, allow: 10 * testGB, billed: 10 * testGB},
+		{name: "each within its own allowance", egress: map[string]int64{"a": 9 * testGB, "b": 9 * testGB}, allow: 10 * testGB},
+		{name: "one database past its allowance", egress: map[string]int64{"a": 13 * testGB, "b": 9 * testGB}, allow: 10 * testGB, billed: 3 * testGB},
+		{name: "every database pays its own", egress: map[string]int64{"a": 13 * testGB, "b": 15 * testGB}, allow: 10 * testGB, billed: 8 * testGB},
+		{name: "at most one more allowance each", egress: map[string]int64{"a": 25 * testGB, "b": 21 * testGB}, allow: 10 * testGB, billed: 20 * testGB},
+		{name: "no database egress", allow: 10 * testGB},
+		{name: "no allowance", egress: map[string]int64{"a": 30 * testGB}},
+		{name: "negative egress", egress: map[string]int64{"a": -5}, allow: 10 * testGB},
+		{name: "overflow", egress: map[string]int64{"a": math.MaxInt64}, allow: math.MaxInt64 / 2, billed: math.MaxInt64 / 2},
 	} {
-		billed, millicents := EgressOverageCharge(tc.database, tc.app, tc.allow)
-		if billed != tc.billed || millicents != tc.billed/testGB*price {
+		billed, millicents := EgressOverageCharge(tc.egress, tc.allow)
+		if billed != tc.billed || millicents != egressOverageMillicents(tc.billed) {
 			t.Errorf("%s: EgressOverageCharge = %d bytes, %d millicents; want %d bytes", tc.name, billed, millicents, tc.billed)
 		}
 	}
-	if _, millicents := EgressOverageCharge(3_000_000, 0, 2_000_000); millicents != 10 {
+	if _, millicents := EgressOverageCharge(map[string]int64{"a": 3_000_000}, 1_000_000); millicents != 10 {
 		t.Fatalf("a fraction of a millicent = %d, want floored to 10", millicents)
+	}
+	many := map[string]int64{}
+	for _, id := range []string{"a", "b", "c"} {
+		many[id] = math.MaxInt64
+	}
+	if billed, _ := EgressOverageCharge(many, math.MaxInt64/2); billed != math.MaxInt64 {
+		t.Fatalf("summed overflow = %d, want capped at MaxInt64", billed)
 	}
 }
 
@@ -49,16 +58,16 @@ func TestOverageBillerChargesElectedDatabaseEgressOnly(t *testing.T) {
 	f := newOverageFixture(t, november.Add(10*24*time.Hour))
 	f.limits.Overage = false
 	f.store.SetEgressOverageElected("acct", true)
-	f.egress = EgressAllowance{CeilingBytes: 10 * testGB, AppEgressBytes: 7 * testGB, OverageLifted: true}
+	f.egress = EgressAllowance{CeilingBytes: 10 * testGB, OverageLifted: true}
 	// Compute past the allowance with managed PostgreSQL overage off is not
 	// charged because egress overage is elected.
 	f.store.used["acct2026-11"] = testAllowance + 3600
-	f.store.egress["acct2026-11"] = 6 * testGB
+	f.store.egress["acct2026-11"] = 13 * testGB
 	if summary, err := f.biller(t, true, november).Deliver(ctx); err != nil || summary.Delivered != 1 || len(f.published) != 1 {
 		t.Fatalf("egress step = %+v, %v, published %+v", summary, err, f.published)
 	}
-	if step := f.published[0]; step.BilledUnitSeconds != 0 || step.BilledEgressBytes != 3*testGB || step.UsedEgressBytes != 6*testGB ||
-		step.AppEgressBytes != 7*testGB || step.EgressAllowanceBytes != 10*testGB || step.TargetMillicents != 3*price {
+	if step := f.published[0]; step.BilledUnitSeconds != 0 || step.BilledEgressBytes != 3*testGB || step.UsedEgressBytes != 13*testGB ||
+		step.AppEgressBytes != 0 || step.EgressAllowanceBytes != 10*testGB || step.TargetMillicents != 3*price {
 		t.Fatalf("egress step %+v", step)
 	}
 	if delivery, _ := f.store.OverageDelivered(ctx, "polar", "acct", november); delivery.BilledEgressBytes != 3*testGB {
@@ -68,7 +77,7 @@ func TestOverageBillerChargesElectedDatabaseEgressOnly(t *testing.T) {
 	// The election ends: the month keeps billing database egress past the
 	// allowance, as storage overage does, and never charges a step twice.
 	f.egress.OverageLifted = false
-	f.store.egress["acct2026-11"] = 10 * testGB
+	f.store.egress["acct2026-11"] = 17 * testGB
 	if _, err := f.biller(t, true, november).Deliver(ctx); err != nil || len(f.published) != 2 ||
 		f.published[1].DeliveredMillicents != 3*price || f.published[1].TargetMillicents != 7*price {
 		t.Fatalf("later egress %+v, %v", f.published, err)
@@ -85,8 +94,8 @@ func TestOverageBillerSkipsEgressWithoutALiftedElection(t *testing.T) {
 	f.limits.Overage = false
 	f.store.SetEgressOverageElected("acct", true)
 	// Elected, but the provider does not bill egress live yet.
-	f.egress = EgressAllowance{CeilingBytes: 10 * testGB, AppEgressBytes: 7 * testGB}
-	f.store.egress["acct2026-11"] = 6 * testGB
+	f.egress = EgressAllowance{CeilingBytes: 10 * testGB}
+	f.store.egress["acct2026-11"] = 13 * testGB
 	if summary, err := f.biller(t, true, november).Deliver(ctx); err != nil || summary.Delivered != 0 || len(f.published) != 0 {
 		t.Fatalf("egress charged without a lifted election: %+v, %v, %+v", summary, err, f.published)
 	}

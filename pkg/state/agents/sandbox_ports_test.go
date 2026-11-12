@@ -62,3 +62,32 @@ func TestSandboxPorts(t *testing.T) {
 		t.Fatalf("bad id route: %v", err)
 	}
 }
+
+// Ports at create are exposed with the session, in its transaction: a
+// refused session leaves no port rows.
+func TestCreateSandboxExposesPorts(t *testing.T) {
+	_, s := agentdFixture(t)
+	ctx := context.Background()
+	sb := admitSandbox(t, s, agents.SandboxAdmission{Ports: []agents.SandboxPort{
+		{Port: 3000, Visibility: agents.SandboxPortPrivate}, {Port: 8080, Visibility: agents.SandboxPortPublic}}})
+	ports, err := s.SandboxPorts(ctx, account, sb.ID)
+	if err != nil || len(ports) != 2 {
+		t.Fatalf("ports = %+v, %v", ports, err)
+	}
+	route, err := s.PreviewRoute(ctx, sb.ID)
+	if err != nil || route.Ports[3000] != agents.SandboxPortPrivate || route.Ports[8080] != agents.SandboxPortPublic {
+		t.Fatalf("route = %+v, %v", route, err)
+	}
+	if _, err := s.CreateSandbox(ctx, sandboxAdmission(agents.SandboxAdmission{Ports: []agents.SandboxPort{{Port: 3000, Visibility: "open"}}})); err == nil {
+		t.Fatal("a session with an invalid port was created")
+	}
+	var refused *agents.LimitError
+	_, err = s.CreateSandbox(ctx, sandboxAdmission(agents.SandboxAdmission{QueuedMax: 1, Ports: []agents.SandboxPort{{Port: 4000, Visibility: agents.SandboxPortPrivate}}}))
+	if !errors.As(err, &refused) {
+		t.Fatalf("a session past the queue cap = %v", err)
+	}
+	list, err := s.Sandboxes(ctx, account, agents.SandboxFilter{Limit: 10})
+	if err != nil || len(list) != 1 {
+		t.Fatalf("sessions = %d, %v", len(list), err)
+	}
+}
