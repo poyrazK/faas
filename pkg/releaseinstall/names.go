@@ -25,6 +25,9 @@ var supportBinaryNames = []string{
 	// ADR-20261109170000: the control plane's artifact signer, started by
 	// the signd_service role from the active release.
 	"signd",
+	// ADR-20261112160000: the Neon key holder, started by the neond_service
+	// role from the active release.
+	"neond",
 	"schedd-brokerq-apply",
 	"s3-gatewayd",
 	"vmmd-jail-helper",

@@ -7,6 +7,9 @@ import type { CreateSupportTicketRequest } from '../models/CreateSupportTicketRe
 import type { ReopenSupportTicketRequest } from '../models/ReopenSupportTicketRequest.js';
 import type { SupportMessagePage } from '../models/SupportMessagePage.js';
 import type { SupportMessageRequest } from '../models/SupportMessageRequest.js';
+import type { SupportNotificationPage } from '../models/SupportNotificationPage.js';
+import type { SupportReadRequest } from '../models/SupportReadRequest.js';
+import type { SupportReadResult } from '../models/SupportReadResult.js';
 import type { SupportSatisfaction } from '../models/SupportSatisfaction.js';
 import type { SupportSatisfactionRequest } from '../models/SupportSatisfactionRequest.js';
 import type { SupportSatisfactionSubmission } from '../models/SupportSatisfactionSubmission.js';
@@ -17,6 +20,168 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class SupportService {
+  /**
+   * List personal support notifications
+   * Personal support. Metadata-only updates for the current caller. Read state is personal to this account and support audience. Private notes never create customer notifications.
+   * @returns SupportNotificationPage Current caller notification feed and scoped unread count. Applies to personalSupportNotificationsFeed.
+   * @throws ApiError
+   */
+  public static personalSupportNotificationsFeed({
+    before,
+    unread = false,
+  }: {
+    /**
+     * Sequence from the previous notification page. Applies to personalSupportNotificationsFeed.
+     */
+    before?: number,
+    /**
+     * Return only unread updates. Applies to personalSupportNotificationsFeed.
+     */
+    unread?: boolean,
+  }): CancelablePromise<SupportNotificationPage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/support/notifications',
+      query: {
+        'before': before,
+        'unread': unread,
+      },
+      errors: {
+        400: `Support request fields do not satisfy the customer assistance contract.`,
+        401: `Authentication is required to access customer assistance records.`,
+        403: `Current verified account or organization support access is required.`,
+        404: `The requested assistance record is unavailable in the current scope.`,
+        409: `The assistance revision, reopening allowance or request receipt conflicts with this command.`,
+        413: `The customer assistance JSON request exceeds its byte limit.`,
+        429: `The rolling assistance submission or mutation allowance is exhausted.`,
+        503: `Customer assistance storage is temporarily unavailable; retry the same request key.`,
+      },
+    });
+  }
+  /**
+   * Mark personal support updates read
+   * Personal support. Marks only this caller's existing ticket notifications through the observed sequence. Later updates stay unread. Repeating the request is intrinsically idempotent; no permanent receipt or expected ticket revision is required.
+   * @returns SupportReadResult Read state committed without changing the ticket revision. Applies to personalSupportMarkNotificationsRead.
+   * @throws ApiError
+   */
+  public static personalSupportMarkNotificationsRead({
+    ticket,
+    requestBody,
+  }: {
+    /**
+     * Support ticket UUID in this scope. Applies to personalSupportMarkNotificationsRead.
+     */
+    ticket: string,
+    requestBody: SupportReadRequest,
+  }): CancelablePromise<SupportReadResult> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/support/tickets/{ticket}/read',
+      path: {
+        'ticket': ticket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Support request fields do not satisfy the customer assistance contract.`,
+        401: `Authentication is required to access customer assistance records.`,
+        403: `Current verified account or organization support access is required.`,
+        404: `The requested assistance record is unavailable in the current scope.`,
+        409: `The assistance revision, reopening allowance or request receipt conflicts with this command.`,
+        413: `The customer assistance JSON request exceeds its byte limit.`,
+        429: `The rolling assistance submission or mutation allowance is exhausted.`,
+        503: `Customer assistance storage is temporarily unavailable; retry the same request key.`,
+      },
+    });
+  }
+  /**
+   * List organization support notifications
+   * Organization support. Metadata-only updates for the current caller. Read state is personal to this account and support audience. Private notes never create customer notifications.
+   * @returns SupportNotificationPage Current caller notification feed and scoped unread count. Applies to organizationSupportNotificationsFeed.
+   * @throws ApiError
+   */
+  public static organizationSupportNotificationsFeed({
+    org,
+    before,
+    unread = false,
+  }: {
+    /**
+     * Organization slug; current owner or administrator membership is required. Applies to organizationSupportNotificationsFeed.
+     */
+    org: string,
+    /**
+     * Sequence from the previous notification page. Applies to organizationSupportNotificationsFeed.
+     */
+    before?: number,
+    /**
+     * Return only unread updates. Applies to organizationSupportNotificationsFeed.
+     */
+    unread?: boolean,
+  }): CancelablePromise<SupportNotificationPage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{org}/support/notifications',
+      path: {
+        'org': org,
+      },
+      query: {
+        'before': before,
+        'unread': unread,
+      },
+      errors: {
+        400: `Support request fields do not satisfy the customer assistance contract.`,
+        401: `Authentication is required to access customer assistance records.`,
+        403: `Current verified account or organization support access is required.`,
+        404: `The requested assistance record is unavailable in the current scope.`,
+        409: `The assistance revision, reopening allowance or request receipt conflicts with this command.`,
+        413: `The customer assistance JSON request exceeds its byte limit.`,
+        429: `The rolling assistance submission or mutation allowance is exhausted.`,
+        503: `Customer assistance storage is temporarily unavailable; retry the same request key.`,
+      },
+    });
+  }
+  /**
+   * Mark organization support updates read
+   * Organization support. Marks only this caller's existing ticket notifications through the observed sequence. Later updates stay unread. Repeating the request is intrinsically idempotent; no permanent receipt or expected ticket revision is required.
+   * @returns SupportReadResult Read state committed without changing the ticket revision. Applies to organizationSupportMarkNotificationsRead.
+   * @throws ApiError
+   */
+  public static organizationSupportMarkNotificationsRead({
+    org,
+    ticket,
+    requestBody,
+  }: {
+    /**
+     * Organization slug; current owner or administrator membership is required. Applies to organizationSupportMarkNotificationsRead.
+     */
+    org: string,
+    /**
+     * Support ticket UUID in this scope. Applies to organizationSupportMarkNotificationsRead.
+     */
+    ticket: string,
+    requestBody: SupportReadRequest,
+  }): CancelablePromise<SupportReadResult> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{org}/support/tickets/{ticket}/read',
+      path: {
+        'org': org,
+        'ticket': ticket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Support request fields do not satisfy the customer assistance contract.`,
+        401: `Authentication is required to access customer assistance records.`,
+        403: `Current verified account or organization support access is required.`,
+        404: `The requested assistance record is unavailable in the current scope.`,
+        409: `The assistance revision, reopening allowance or request receipt conflicts with this command.`,
+        413: `The customer assistance JSON request exceeds its byte limit.`,
+        429: `The rolling assistance submission or mutation allowance is exhausted.`,
+        503: `Customer assistance storage is temporarily unavailable; retry the same request key.`,
+      },
+    });
+  }
   /**
    * List personal support cases
    * Personal support list operation. Responses omit private notes, staff queues and engineering details. Writes require current verified access, the expected revision where applicable, and a UUID idempotency key.

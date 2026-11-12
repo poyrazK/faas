@@ -4738,6 +4738,9 @@ var cliCommands = []cliCommand{
 				{Name: "wait", Short: "wait for the same durable clone operation to finish"},
 				{Name: "timeout", Value: "SECONDS", Short: "maximum local wait time"},
 			}},
+			{Name: "resume-automation", Short: "Enable the crons a full clone copied paused into a stage", Notes: []string{"Only crons the source ran are enabled; ones the source had disabled, or changed since, stay as they are."}, Positionals: []string{"<stage>"}, Examples: []string{"gregale env resume-automation staging --project shop"}, Flags: []cliFlag{
+				{Name: "project", Value: "SLUG", Short: "project slug (defaults to linked project)"},
+			}},
 			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Examples: []string{"gregale env pull --app my-api", "gregale env pull --app my-api --env staging"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"},
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},

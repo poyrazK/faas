@@ -3469,6 +3469,11 @@ type Cron struct {
 	RetryMax              int // additional attempts after the first failed/timed-out execution
 	RetryBackoffSeconds   int // base delay; later retries double it, capped at 24 hours
 	Enabled               bool
+	// ClonePaused marks a cron a full environment clone copied disabled
+	// although the source ran it; resuming the environment's automation
+	// enables it. Any explicit enable or disable clears it
+	// (ADR-20261104120000 amendment 2026-11-12).
+	ClonePaused bool
 	// SuspendedReason is set by the scheduler when customer intent remains
 	// enabled but the app has no live deployment (a later successful deploy
 	// clears it without re-enabling a cron the customer disabled
