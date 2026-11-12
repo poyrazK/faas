@@ -40896,6 +40896,19 @@ CREATE TABLE public.execution_artifact_grants (
 
 
 --
+-- Name: execution_event_replay_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.execution_event_replay_cursors (
+    execution_id uuid NOT NULL,
+    pruned_through bigint NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT execution_event_replay_cursors_pruned_through_check CHECK ((pruned_through > 0)),
+    CONSTRAINT execution_event_replay_cursors_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
 -- Name: execution_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -65083,6 +65096,14 @@ ALTER TABLE ONLY public.execution_artifact_grants
 
 ALTER TABLE ONLY public.execution_artifact_grants
     ADD CONSTRAINT execution_artifact_grants_token_hash_key UNIQUE (token_hash);
+
+
+--
+-- Name: execution_event_replay_cursors execution_event_replay_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.execution_event_replay_cursors
+    ADD CONSTRAINT execution_event_replay_cursors_pkey PRIMARY KEY (execution_id);
 
 
 --
@@ -98309,6 +98330,14 @@ ALTER TABLE ONLY public.execution_artifact_grants
 
 ALTER TABLE ONLY public.execution_artifact_grants
     ADD CONSTRAINT execution_artifact_grants_source_execution_id_fkey FOREIGN KEY (source_execution_id) REFERENCES public.executions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: execution_event_replay_cursors execution_event_replay_cursors_execution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.execution_event_replay_cursors
+    ADD CONSTRAINT execution_event_replay_cursors_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES public.executions(id) ON DELETE CASCADE;
 
 
 --

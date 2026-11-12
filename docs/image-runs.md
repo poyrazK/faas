@@ -20,6 +20,8 @@ gregale run --image my-registry.example/tool:1.4 --entrypoint /bin/sh -- -c 'too
 
 Arguments after the flags replace the image `CMD`; the image `ENTRYPOINT`
 stays unless `--entrypoint` overrides it, which also drops the image `CMD`.
+An explicit `--entrypoint ''` clears the image entrypoint. Arguments after
+the command are passed through unchanged, including `--help` and `--json`.
 The command waits for the run, prints its output, and exits with the
 command's exit code (124 after the deadline, 130 when cancelled). Ctrl-C
 cancels the run. `--detach` prints the run id instead of waiting.
@@ -32,6 +34,12 @@ do not count against your Job limit; inspect a run with
 `gregale job tasks ir-<hash> RUN_ID` and `gregale job logs ir-<hash> RUN_ID`
 (output is kept for your plan's [job log retention](jobs.md#log-retention)),
 or delete a cached image with `gregale job delete ir-<hash>`.
+
+`--pull always` returns a retryable 409 while that image has queued or running
+tasks, so their admitted image stays available. Retry the refresh after those
+tasks finish. Automatic cache eviction preserves completed run receipts,
+tasks, and logs for their normal retention period. Each run captures its own
+requested memory even when several callers use the same cached image.
 
 Image runs use your plan's Job limits for memory, deadline (by default the
 plan's maximum) and concurrent tasks. Plans cache a limited number of images

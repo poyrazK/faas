@@ -6154,6 +6154,12 @@ type ExecutionEvent struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type ExecutionEventReplayCursor struct {
+	ExecutionID   pgtype.UUID
+	PrunedThrough int64
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type ExecutionOutboundIntegration struct {
 	ExecutionID   pgtype.UUID
 	IntegrationID pgtype.UUID

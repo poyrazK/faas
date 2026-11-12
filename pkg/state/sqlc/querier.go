@@ -1812,9 +1812,11 @@ type Querier interface {
 	ExecutionPayloadForLease(ctx context.Context, db DBTX, arg ExecutionPayloadForLeaseParams) (ExecutionPayload, error)
 	ExecutionPayloadInsert(ctx context.Context, db DBTX, arg ExecutionPayloadInsertParams) error
 	ExecutionPinRuntime(ctx context.Context, db DBTX, arg ExecutionPinRuntimeParams) (Execution, error)
+	ExecutionPruneReplayEvents(ctx context.Context, db DBTX, arg ExecutionPruneReplayEventsParams) error
 	ExecutionQueueAccounts(ctx context.Context, db DBTX, arg ExecutionQueueAccountsParams) ([]ExecutionQueueAccountsRow, error)
 	ExecutionQueueStats(ctx context.Context, db DBTX, at pgtype.Timestamptz) (ExecutionQueueStatsRow, error)
 	ExecutionRenewLease(ctx context.Context, db DBTX, arg ExecutionRenewLeaseParams) (int64, error)
+	ExecutionReplayEvents(ctx context.Context, db DBTX, arg ExecutionReplayEventsParams) ([]ExecutionReplayEventsRow, error)
 	ExecutionRequestCancel(ctx context.Context, db DBTX, arg ExecutionRequestCancelParams) (Execution, error)
 	ExecutionRequeueExpiredRestores(ctx context.Context, db DBTX, arg ExecutionRequeueExpiredRestoresParams) ([]Execution, error)
 	ExecutionUsageByAccount(ctx context.Context, db DBTX, arg ExecutionUsageByAccountParams) (ExecutionUsageByAccountRow, error)
@@ -2641,6 +2643,7 @@ type Querier interface {
 	HostingSiteRetireReleases(ctx context.Context, db DBTX, arg HostingSiteRetireReleasesParams) error
 	HostingSiteSuspend(ctx context.Context, db DBTX, arg HostingSiteSuspendParams) (HostingSite, error)
 	IdempotencyReceipt(ctx context.Context, db DBTX, arg IdempotencyReceiptParams) (IdempotencyReceiptRow, error)
+	ImageRunHasActiveWork(ctx context.Context, db DBTX, jobID pgtype.UUID) (pgtype.Bool, error)
 	// ---------------------------------------------------------------------------
 	// ADR-096 customer-facing automatic error grouping.
 	// Tables live in migrations/00222_app_errors.sql. gatewayd-internal
