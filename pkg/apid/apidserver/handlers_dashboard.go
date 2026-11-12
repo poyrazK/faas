@@ -1851,6 +1851,8 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		appCount = 0
 	}
 	data := dashboard.AccountData{
+		ReferralsEnabled:          s.sales.Enabled(),
+		SalesEnabled:              s.isSalesMember(acct),
 		Keys:                      keyItems,
 		ShowDelete:                view.Status != state.AccountDeletedPending,
 		ShowDeleteManagedPostgres: api.AccountDeletionManagedPostgresEnabled(acct.ID),
