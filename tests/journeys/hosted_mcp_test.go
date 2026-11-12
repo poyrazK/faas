@@ -70,6 +70,7 @@ type hostedMCPJourney struct {
 	approvalKeyValue string
 	approvalKeyID    string
 	approvalID       string
+	reviewURL        string
 	ghost            string // an app that never exists
 }
 
