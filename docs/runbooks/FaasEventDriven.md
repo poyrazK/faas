@@ -177,6 +177,28 @@ More than 10,000 deliveries platform-wide wait for consumer capacity
 
 Resolution: clears below 10,000 waiting.
 
+## FaasInvocationDispatchSaturated
+
+One schedd's drain dispatch pool has stayed at least 90% full for fifteen
+minutes. Every tenant's async invocations, event deliveries and inbound
+webhooks on that node share the pool (`schedd_invocation_dispatch_slots`,
+default 8), so they now wait for a slot rather than for their apps. A
+2026-11-12 production test held delivery near 17/s at the default.
+
+1. Confirm it is the pool, not slow apps: `schedd_invocation_dispatch_slots_used`
+   at the size while customers' `gregale queue status` shows work under
+   `waiting:` (async_invoke, inbound_webhook) with no matching app errors.
+2. One app holding most slots is bounded by the drain's fair share (a quarter
+   of the pool each); several busy apps together fill it. Check
+   `pg_stat_statements` for slow claim and completion statements before
+   adding slots: a slow database makes every slot slow.
+3. Raise the pool with the manifest's `hot_path.invocation_dispatch_concurrency`
+   (up to 128) and run the compute role. Each dispatch takes one of schedd's
+   16 database connections only while it runs a statement; watch
+   `schedd_db_pool_canceled_acquires_total` (FaasDBPoolStarved) afterwards.
+
+Resolution: clears when the pool spends less than 90% of fifteen minutes full.
+
 ## FaasDeadLetterSpike
 
 More than 200 invocations, trigger records and event recipients whose

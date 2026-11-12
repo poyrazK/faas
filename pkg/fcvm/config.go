@@ -151,6 +151,10 @@ const (
 	// §3). It follows the base and the agent layer, so the guest sees it as
 	// drive 2.
 	DriveAgentInput = "agent-input"
+	// DriveBuildKitSeed is a builder's writable BuildKit seed copy
+	// (ADR-20261030122204). It follows the base and the scratch layer, so the
+	// guest sees it as drive 2.
+	DriveBuildKitSeed = "buildkit-seed"
 	// WorkloadNameMain is the reserved name on WorkloadSpec.Name / .Type
 	// for the main workload. Sidecar names must not collide with it
 	// (buildWorkloadsForColdBoot rejects "main" with a host-side
@@ -363,6 +367,10 @@ type ColdBootSpec struct {
 	// StorageBackend key of the image it holds; empty: zeros.
 	AgentInput bool
 	InputKey   string
+	// BuildKitSeedDrive attaches a builder's BuildKit seed copy as a writable
+	// drive2 after its scratch layer (ADR-20261030122204); the guest mounts it
+	// as BuildKit's root. Empty: no drive2. Only builder VMs take one.
+	BuildKitSeedDrive string
 	// Backing is the ADR-510 backing check that ran before this boot, when a
 	// restore was attempted first; it rides wake.cold_boot_breakdown.
 	Backing BackingCheckTimings
@@ -505,6 +513,9 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 			})
 		}
 	}
+	if s.BuildKitSeedDrive != "" {
+		drives = append(drives, Drive{DriveID: DriveBuildKitSeed, PathOnHost: s.BuildKitSeedDrive})
+	}
 	if s.AgentInput {
 		drives = append(drives, Drive{DriveID: DriveAgentInput, PathOnHost: s.InputKey, IsReadOnly: true})
 	}
@@ -588,6 +599,8 @@ func (s ColdBootSpec) Validate() error {
 		return fmt.Errorf("fcvm: cold boot: an input image needs the agent input drive")
 	case s.AgentInput && (!s.Networkless || len(s.Workloads) > 0):
 		return fmt.Errorf("fcvm: cold boot: an input drive needs a networkless single-layer guest")
+	case s.BuildKitSeedDrive != "" && (!s.SkipReady || s.AgentInput || s.AppTask || s.Networkless || len(s.Workloads) > 0):
+		return fmt.Errorf("fcvm: cold boot: a buildkit seed drive needs a single-layer builder guest")
 	}
 	return nil
 }
