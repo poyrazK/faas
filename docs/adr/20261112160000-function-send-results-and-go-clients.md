@@ -23,16 +23,17 @@ Owner decisions, 2026-11-12: both result paths, results readable only by the
 sender, a generic Go client with generated structs, and the Go runner checks
 input.
 
-1. **The sender is recorded.** The service proxy's send admitter stores the
-   calling app on the invocation (`invocations.sent_by_app_id`, an expand-only
-   column). The caller's identity comes from node-local instance identity,
+1. **The sender is recorded.** The service proxy's send admitter records the
+   calling app in `invocation_sends(invocation_id, sender_app_id,
+   on_complete_app_id)`, a new side table written in the same transaction as
+   the invocation, so no existing invocation query changes. The caller's identity comes from node-local instance identity,
    never from a guest header. Invocations created any other way have none.
 
 2. **`wait()` and `result()`: a VM-authorized read.** The guest-facing
    service proxy serves `GET http://api.svc.gregale:10081/v1/invocations/{id}`
    next to the rehearsal platform API. The caller is resolved from its
    address, as for every service call, and may read only invocations whose
-   `sent_by_app_id` is its own app; anything else is 404, so ids are not an
+   recorded sender is its own app; anything else is 404, so ids are not an
    oracle. The answer is the invocation's id, state, outcome, attempts,
    result and error. `?wait=<seconds>` (at most 30) holds the request until
    the invocation is terminal or the time passes, so the SDK long-polls
@@ -42,11 +43,13 @@ input.
 
 3. **Completion callback.** `send(input, { onComplete: "<name>" })` adds
    `X-Gregale-On-Complete: <name>`. The admitter resolves the name against the
-   caller's own `function_callables` (or `self`) and stores the target app on
-   the invocation (`invocations.on_complete_app_id`); an unknown name is 400.
+   caller's own `function_callables` (or `self`) and stores the target app in
+   the send's `invocation_sends.on_complete_app_id`; an unknown name is 400.
    When the invocation reaches a terminal state, the same transaction that
    records it enqueues an async invocation of the target app, `POST /` with
-   `{invocation_id, function, status, outcome, result | error, attempts}` and
+   `{invocation_id, app_id, status, outcome, result | error, attempts}`
+   (`app_id` is the callee's app; `status` is `succeeded` or the failure
+   outcome) and
    `X-Gregale-Invocation-Completion: <id>`, exactly as the job-finished
    destination outbox does today. A completion invocation never schedules a
    completion of its own. The target keeps its own retries and dead letters.
@@ -73,7 +76,8 @@ input.
    and `onComplete`.
 3. Go: the runner's input check, the `functions` package, Go output from
    `gregale function types`.
-4. Docs (functions.md) and tests at each layer.
+4. Docs (functions.md) and tests at each layer. `gregale dev --local` serves
+   the same read route and delivers completions between local functions.
 
 ## Consequences
 
