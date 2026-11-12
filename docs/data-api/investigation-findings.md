@@ -106,6 +106,13 @@ This is a local regression measurement, not a production capacity claim. The
 concurrency test also holds the capacity lock and a shared app-row lock while
 an existing subject proceeds. Atomic limit and key-cap checks remain covered.
 
+Full CLI integration verification also caught stale customer command examples,
+a missing normal-run synopsis for `data-api sync`, and the maintenance tool's
+implicit optional schema and standalone hook-worker settings. Command references and help are
+aligned with the current tree, and the template declares the schema knob as
+optional. Existing CLI documentation/help and fresh-template doctor contract
+tests cover these integration corrections.
+
 The sections below preserve the original observations and remediation ideas.
 They do not describe the fixed implementation.
 

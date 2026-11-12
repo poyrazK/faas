@@ -6042,7 +6042,7 @@ var cliCommands = []cliCommand{
 				{Name: "access-token-env", Value: "ENV", Short: "application JWT environment variable"},
 				{Name: "refresh-token-env", Value: "ENV", Short: "optional private refresh token environment variable"},
 			}, Examples: []string{"gregale --json data-api status notes-data"}},
-			{Name: "sync", Short: "Run migrations, refresh the API, export types and check the client", Positionals: []string{"<name>"}, Flags: []cliFlag{
+			{Name: "sync", Short: "Run migrations, refresh the API, export types and check the client", Notes: []string{"Run an existing workflow with gregale data-api sync --config <FILE> <name>. Use --init to generate its configuration first."}, Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "init", Short: "generate a coordinated workflow without executing it"},
 				{Name: "role", Value: "LOGIN", Short: "serving binding login for --init"},
 				{Name: "runtime-directory", Value: "DIR", Short: "owner tooling directory for --init"},
