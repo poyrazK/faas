@@ -5200,7 +5200,7 @@ var cliCommands = []cliCommand{
 			{Name: "service", Short: "with --project, only these services", Value: "NAME,..."},
 			{Name: "limit", Short: "HTTP request page size (1..200)", Value: "N"},
 			{Name: "all", Short: "read every retained HTTP request page"},
-			{Name: "explain", Short: "summarize the last failure and common error patterns"},
+			{Name: "explain", Short: "summarize failures and error patterns; --json requires an unfiltered --deployment snapshot", Bool: true},
 			{Name: "archive", Short: "read durable logs for one instance and UTC day"},
 			{Name: "instance", Short: "instance id for --archive (1..128 ASCII letters, numbers, dots, underscores, or hyphens)", Value: "ID"},
 			{Name: "date", Short: "UTC day for --archive: today, yesterday, or YYYY-MM-DD", Value: "DAY"},

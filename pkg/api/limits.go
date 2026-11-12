@@ -29,6 +29,14 @@ import (
 // `gregale logs` stream at the first long line (ADR-20261110090000).
 const SSEMaxLineBytes = 8 << 20
 
+// CLILogExplanation bounds a read-only CLI deployment-log snapshot. These
+// are client operation budgets, independent of plan retention and log quotas.
+const (
+	CLILogExplanationEntries      = 500
+	CLILogExplanationMessageBytes = 4096
+	CLILogExplanationTimeout      = 30 * time.Second
+)
+
 // Shared traffic counters bound each admission round trip and aggregate replay.
 const (
 	TrafficCounterOperationTimeout = 100 * time.Millisecond
