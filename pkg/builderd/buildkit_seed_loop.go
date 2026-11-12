@@ -32,52 +32,82 @@ func (b *Builderd) RunBuildKitSeedLoop(ctx context.Context) {
 	}
 	t := time.NewTicker(api.BuildKitSeedCheckEvery)
 	defer t.Stop()
-	var retryAt time.Time
+	var retry buildKitSeedRetry
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 		}
-		if time.Now().Before(retryAt) {
+		now := time.Now()
+		if !retry.due(now) {
 			continue
 		}
-		if err := b.createBuildKitSeed(ctx); err != nil {
-			retryAt = time.Now().Add(api.BuildKitSeedRetryAfter)
-			b.log.Warn("builderd: BuildKit seed run failed; builds run without a seed", "retry_after", api.BuildKitSeedRetryAfter, "err", err)
+		made, err := b.createBuildKitSeed(ctx)
+		switch {
+		case err != nil:
+			wait := retry.failed(now)
+			b.log.Warn("builderd: BuildKit seed run failed; builds run without a seed", "retry_after", wait, "err", err)
+		case made:
+			retry = buildKitSeedRetry{}
 		}
 	}
 }
 
+// buildKitSeedRetry spaces seed runs after failures: api.BuildKitSeedRetryMin
+// after the first, doubling up to api.BuildKitSeedRetryMax. A seed made
+// resets it.
+type buildKitSeedRetry struct {
+	at   time.Time
+	wait time.Duration
+}
+
+func (r *buildKitSeedRetry) due(now time.Time) bool { return !now.Before(r.at) }
+
+// failed records a failed run at now and returns the wait before the next.
+func (r *buildKitSeedRetry) failed(now time.Time) time.Duration {
+	switch {
+	case r.wait <= 0:
+		r.wait = api.BuildKitSeedRetryMin
+	case 2*r.wait > api.BuildKitSeedRetryMax:
+		r.wait = api.BuildKitSeedRetryMax
+	default:
+		r.wait *= 2
+	}
+	r.at = now.Add(r.wait)
+	return r.wait
+}
+
 // createBuildKitSeed runs one seed check in the builder slot, only when no
 // build holds it, so the seed run never takes a slot from a build. Drain
-// waits for the run and stops its VM as it does a build's.
-func (b *Builderd) createBuildKitSeed(ctx context.Context) error {
+// waits for the run and stops its VM as it does a build's. It reports
+// whether it made a seed.
+func (b *Builderd) createBuildKitSeed(ctx context.Context) (bool, error) {
 	seeder, ok := b.vm.(BuildKitSeeder)
 	if !ok || b.claimsPaused() {
-		return nil
+		return false, nil
 	}
 	release, ok := b.acquireIdleSlot()
 	if !ok {
-		return nil
+		return false, nil
 	}
 	defer release()
 	if err := b.beginProcess(); err != nil {
-		return nil
+		return false, nil
 	}
 	defer b.endProcess()
 	buildID := "seed-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
 	if !b.registerActiveVM(buildID, BuildHandle{BuildID: buildID}) {
-		return nil
+		return false, nil
 	}
 	defer b.unregisterActiveVM(buildID)
 	started := time.Now()
 	made, err := seeder.CreateBuildKitSeed(ctx, buildID, b.cfg.BuildKitSnapshotter)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if made {
 		b.log.Info("builderd: BuildKit seed created", "build", buildID, "seconds", time.Since(started).Seconds())
 	}
-	return nil
+	return made, nil
 }

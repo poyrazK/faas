@@ -8583,10 +8583,14 @@ const (
 	// node needs before builderd creates a seed. A seed holds about 1.5-2 GB
 	// of unpacked platform images; builds keep priority on the disk.
 	BuildKitSeedReserveBytes int64 = 4 << 30
-	// BuildKitSeedRetryAfter is how long builderd waits after a failed seed
-	// run before it boots another: each run takes the builder slot for a
-	// cold Railpack build.
-	BuildKitSeedRetryAfter = 30 * time.Minute
+	// BuildKitSeedRetryMin and BuildKitSeedRetryMax bound how long builderd
+	// waits after a failed seed run before it boots another. The wait starts
+	// short, because a seed is due right after a builder base change, when
+	// the new base's scan may still be pending, and doubles per failure up to
+	// the max, because each run takes the builder slot for a cold Railpack
+	// build.
+	BuildKitSeedRetryMin = 2 * time.Minute
+	BuildKitSeedRetryMax = 30 * time.Minute
 
 	// GatewayAwaitingResponseMax bounds the app requests one gatewayd-internal
 	// process holds before their response head is written: waiting for a

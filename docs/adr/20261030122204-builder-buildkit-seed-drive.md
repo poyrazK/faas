@@ -159,7 +159,9 @@ the 20 s gate.
   `api.BuildKitSeedCheckEvery` (1 min). It boots the seed run only when no
   build holds the builder slot and free space covers the build-drive floor
   plus `api.BuildKitSeedReserveBytes` (4 GiB). After a failed run it waits
-  `api.BuildKitSeedRetryAfter` (30 min). Drain stops a seed run's VM as it
+  `api.BuildKitSeedRetryMin` (2 min), doubling per failure up to
+  `api.BuildKitSeedRetryMax` (30 min): the metal run's first seed attempt
+  met the new builder base's scan still pending. Drain stops a seed run's VM as it
   does a build's.
 - **Reflink only.** A copy that cannot share the seed's blocks is not made:
   the seed is a 28 GiB sparse image, so a byte copy would cost more than the

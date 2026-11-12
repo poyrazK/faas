@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -257,8 +258,8 @@ func TestCreateBuildKitSeedRunsInTheIdleSlot(t *testing.T) {
 	}
 
 	b, vm := newBuilderd()
-	if err := b.createBuildKitSeed(context.Background()); err != nil {
-		t.Fatal(err)
+	if made, err := b.createBuildKitSeed(context.Background()); err != nil || !made {
+		t.Fatalf("seed run = made %v, err %v", made, err)
 	}
 	if vm.calls != 1 || !strings.HasPrefix(vm.buildID, "seed-") || vm.snapshot != api.BuildKitSnapshotterAuto {
 		t.Fatalf("seed run = %d calls, id %q, snapshotter %q", vm.calls, vm.buildID, vm.snapshot)
@@ -277,7 +278,7 @@ func TestCreateBuildKitSeedRunsInTheIdleSlot(t *testing.T) {
 
 	b, vm = newBuilderd()
 	_, release, _ := b.acquireSlot()
-	if err := b.createBuildKitSeed(context.Background()); err != nil || vm.calls != 0 {
+	if _, err := b.createBuildKitSeed(context.Background()); err != nil || vm.calls != 0 {
 		t.Fatalf("with a build in the slot: err %v, %d seed runs; want none", err, vm.calls)
 	}
 	release()
@@ -286,13 +287,13 @@ func TestCreateBuildKitSeedRunsInTheIdleSlot(t *testing.T) {
 	b.lifecycleMu.Lock()
 	b.draining = true
 	b.lifecycleMu.Unlock()
-	if err := b.createBuildKitSeed(context.Background()); err != nil || vm.calls != 0 {
+	if _, err := b.createBuildKitSeed(context.Background()); err != nil || vm.calls != 0 {
 		t.Fatalf("while draining: err %v, %d seed runs; want none", err, vm.calls)
 	}
 
 	b, vm = newBuilderd()
 	vm.err = errors.New("boom")
-	if err := b.createBuildKitSeed(context.Background()); err == nil || !strings.Contains(err.Error(), "boom") {
+	if _, err := b.createBuildKitSeed(context.Background()); err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("a failed seed run returned %v", err)
 	}
 }
@@ -307,5 +308,36 @@ func TestRunBuildKitSeedLoopIsOffByDefault(t *testing.T) {
 	b.RunBuildKitSeedLoop(ctx)
 	if vm.calls != 0 {
 		t.Fatalf("%d seed runs with the switch off", vm.calls)
+	}
+}
+
+func TestBuildKitSeedRetryBacksOff(t *testing.T) {
+	var r buildKitSeedRetry
+	now := time.Unix(1_700_000_000, 0)
+	if !r.due(now) {
+		t.Fatal("a fresh loop is not due")
+	}
+	var waits []time.Duration
+	for range 6 {
+		wait := r.failed(now)
+		waits = append(waits, wait)
+		if r.due(now.Add(wait - time.Second)) {
+			t.Fatalf("due before the %v wait ended", wait)
+		}
+		if !r.due(now.Add(wait)) {
+			t.Fatalf("not due once the %v wait ended", wait)
+		}
+	}
+	want := []time.Duration{2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 16 * time.Minute, 30 * time.Minute, 30 * time.Minute}
+	if len(waits) != len(want) {
+		t.Fatalf("waits = %v", waits)
+	}
+	for i := range want {
+		if waits[i] != want[i] {
+			t.Fatalf("waits = %v, want %v", waits, want)
+		}
+	}
+	if want[0] != api.BuildKitSeedRetryMin || want[len(want)-1] != api.BuildKitSeedRetryMax {
+		t.Fatal("the test's expected waits no longer follow the limits")
 	}
 }
