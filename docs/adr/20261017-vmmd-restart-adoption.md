@@ -1271,3 +1271,36 @@ The jail reaper uses the same ownership gate as the layer-clone sweep: the
 Manager, the resource journal, then durable state. An adopted guest whose row
 is no longer live is the live-VM reaper's, which tears it down through the
 Manager.
+
+### Adopted guests' jails could not be torn down (2026-11-12)
+
+On fsn-2, vmmd restarted onto rc.338 at 06:56 and adopted the live guests. One
+of them, a `compactor` instance created at 02:00, was thawed at 08:45 and
+withdrawn by the node drain at 08:46. vmmd's teardown then failed every two
+minutes with "check jail …: jail mount namespace context changed", so the row
+stayed `draining`. The drain never reached an empty maintenance hold, and
+cd-platform aborted the fsn-2 rollout at 04:45 and 08:24 without reaching
+fsn-3, which kept the previous release. A second adopted guest failed the
+same way.
+
+The cause: a jail asset records the mount namespace vmmd was in when it made
+the jail, and teardown (`checkJailAsset`) requires the current one to match.
+Under systemd `ProtectSystem=strict` every vmmd start has its own mount
+namespace (see "Mounts"), so the predecessor's namespace never matches, and
+every adopted guest became impossible to tear down after its first vmmd
+restart. The metal restart test did not see it because the harness vmmd
+shares the host's mount namespace.
+
+The fix: adoption re-anchors each jail to the successor's mount namespace
+(`anchorAdoptedJail`), as it already re-anchors the netns. It does so only in
+the same kernel boot and only while the jail directory still has its recorded
+device and inode; otherwise adoption is refused. The jail lives on the host
+tmpfs that every mount namespace sees, so that identity is what the recorded
+namespace stood for. The journal keeps the creator's record, and each later
+restart re-anchors again. ADR-475's "no remaining host-visible mount" check
+before jail removal is unchanged.
+
+Validation: `TestAnchorAdoptedJailAcceptsTheSuccessorMountNamespace`
+reproduces the refusal and checks the boot and identity guards. The restart
+metal test should run vmmd in its own mount namespace, as systemd does, before
+this is called done.
