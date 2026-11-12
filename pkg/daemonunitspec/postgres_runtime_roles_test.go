@@ -48,6 +48,11 @@ func peerRuntimeRoles(t *testing.T) (map[string]string, map[string]bool) {
 	for _, m := range regexp.MustCompile(`'([a-z_]+)'`).FindAllStringSubmatch(array[1], -1) {
 		created[m[1]] = true
 	}
+	// Peer logins outside faas_runtime (neond's faas_neond) are created one
+	// by one, each with its own narrow grants.
+	for _, m := range regexp.MustCompile(`(?m)^\s*CREATE ROLE (faas_[a-z_]+) LOGIN;`).FindAllStringSubmatch(runtimeRolesSQL(t), -1) {
+		created[m[1]] = true
+	}
 	return mapped, created
 }
 
