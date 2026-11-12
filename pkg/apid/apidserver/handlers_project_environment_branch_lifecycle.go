@@ -265,6 +265,12 @@ func (s *server) resetProjectEnvironmentBranch(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, problem)
 		return
 	}
+	// A reset makes a new branch, so an agent's budget pays for it as for a
+	// create; a refused charge leaves the old branch in place.
+	commitBudget, answered := s.chargeEnvironmentClone(w, r, acct, project, branch.ParentSlug, true)
+	if answered {
+		return
+	}
 	ctx := r.Context()
 	if err := store.DeleteProjectEnvironmentBranch(ctx, acct.ID, project.ID, branch.Slug); err != nil {
 		if errors.Is(err, state.ErrProjectEnvironmentBranchChildren) {
@@ -282,6 +288,7 @@ func (s *server) resetProjectEnvironmentBranch(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, problem)
 		return
 	}
+	commitBudget()
 	s.audit.Emit(ctx, "project.environment.branch_reset", &acct.ID, map[string]any{
 		"project_id": project.ID, "environment_slug": branch.Slug, "parent_slug": branch.ParentSlug,
 		"previous_environment_id": branch.EnvironmentID, "environment_id": response.ID,

@@ -71,6 +71,12 @@ func (s *server) createProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, problem)
 		return
 	}
+	// An agent's budget pays for the branch's warm instances; the charge
+	// stands only once the branch exists (#7140).
+	commitBudget, answered := s.chargeEnvironmentClone(w, r, acct, project, parent, true)
+	if answered {
+		return
+	}
 	response, problem := s.branchProjectEnvironment(r.Context(), store, acct, project, environmentBranchSpec{
 		parent: parent, slug: req.Slug, ttl: ttl, egress: egress, privateNetworks: req.PrivateNetworks,
 	})
@@ -78,6 +84,7 @@ func (s *server) createProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, problem)
 		return
 	}
+	commitBudget()
 	writeJSON(w, http.StatusCreated, response)
 }
 

@@ -45,7 +45,16 @@ func (s *server) createFullProjectEnvironmentClone(w http.ResponseWriter, r *htt
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid full clone", "a full clone creates an unprotected stage; protect it once it is ready"))
 		return
 	}
-	s.admitFullProjectEnvironmentClone(w, r, acct, project, req)
+	// ADR-20261111114059: priced at admission, which starts the clone.
+	commitBudget, answered := s.chargeEnvironmentClone(w, r, acct, project, req.FromEnvironment, false)
+	if answered {
+		return
+	}
+	rec := &statusRecorder{ResponseWriter: w}
+	s.admitFullProjectEnvironmentClone(rec, r, acct, project, req)
+	if rec.status/100 == 2 {
+		commitBudget()
+	}
 }
 
 // Admission needs the clone machinery switched on fleet-wide and admission
