@@ -26,6 +26,12 @@ func projectEnvironmentBranchSlot(t *testing.T, s contractTestStore) {
 		t.Fatal(err)
 	}
 	limits := api.MustLimitsFor(acct.Plan)
+	byID, ok := s.(interface {
+		ProjectEnvironmentByID(context.Context, string) (state.ProjectEnvironment, error)
+	})
+	if !ok {
+		t.Fatal("store does not read environments by ID")
+	}
 	branchOf := func(t *testing.T, project state.Project, slug string) (state.ProjectEnvironment, state.ProjectEnvironmentBranch) {
 		t.Helper()
 		env, branch, _, err := s.CreateProjectEnvironmentBranch(ctx, state.ProjectEnvironmentBranchCreate{
@@ -53,10 +59,10 @@ func projectEnvironmentBranchSlot(t *testing.T, s contractTestStore) {
 	if stored, err := s.ProjectEnvironmentBranchBySlug(ctx, acct.ID, project.ID, "pr-1"); err != nil || stored.SlotID != branch.SlotID {
 		t.Fatalf("stored branch = %+v, %v; want slot %s", stored, err, branch.SlotID)
 	}
-	if resolved, err := s.ProjectEnvironmentByID(ctx, branch.SlotID); err != nil || resolved.ID != env.ID || resolved.Slug != "pr-1" {
+	if resolved, err := byID.ProjectEnvironmentByID(ctx, branch.SlotID); err != nil || resolved.ID != env.ID || resolved.Slug != "pr-1" {
 		t.Fatalf("slot resolves to %+v, %v; want environment %s", resolved, err, env.ID)
 	}
-	if resolved, err := s.ProjectEnvironmentByID(ctx, env.ID); err != nil || resolved.ID != env.ID {
+	if resolved, err := byID.ProjectEnvironmentByID(ctx, env.ID); err != nil || resolved.ID != env.ID {
 		t.Fatalf("environment ID resolves to %+v, %v", resolved, err)
 	}
 
@@ -64,14 +70,14 @@ func projectEnvironmentBranchSlot(t *testing.T, s contractTestStore) {
 	if err := s.DeleteProjectEnvironmentBranch(ctx, acct.ID, project.ID, "pr-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ProjectEnvironmentByID(ctx, branch.SlotID); !errors.Is(err, state.ErrNotFound) {
+	if _, err := byID.ProjectEnvironmentByID(ctx, branch.SlotID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("slot of a deleted branch: %v; want ErrNotFound", err)
 	}
 	again, againBranch := branchOf(t, project, "pr-1")
 	if againBranch.SlotID != branch.SlotID || again.ID == env.ID {
 		t.Fatalf("made again: slot %s environment %s; want slot %s with a new environment", againBranch.SlotID, again.ID, branch.SlotID)
 	}
-	if resolved, err := s.ProjectEnvironmentByID(ctx, branch.SlotID); err != nil || resolved.ID != again.ID {
+	if resolved, err := byID.ProjectEnvironmentByID(ctx, branch.SlotID); err != nil || resolved.ID != again.ID {
 		t.Fatalf("slot after the reset resolves to %+v, %v; want %s", resolved, err, again.ID)
 	}
 
