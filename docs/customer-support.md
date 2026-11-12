@@ -54,6 +54,15 @@ the panel describes the member who opened it. The panel never shows an email and
 loads only after the roster check for the ticket; if it cannot be loaded the
 conversation still works.
 
+When the customer opened the ticket, apid saved a snapshot of their account
+health (ADR-20261112210000). The panel shows it under **At ticket creation**: plan,
+status, restrictions, failed deployments, and the refused request matching the
+request id the customer attached, if one was recorded for their account. The live
+view follows under **Now**, with restrictions lifted or added since the ticket was
+opened. Customers see their own view of the same checks at
+`/dashboard/account/health` and `GET /v1/account/health`, and "Contact support about
+this" links there prefill the ticket form.
+
 Operators get the same diagnosis with `gregalectl accounts 360 --account-id <id>`,
 and can find the account behind an email, app slug, app or custom-domain URL,
 account/app/deployment id, request id or trace id with

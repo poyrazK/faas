@@ -59481,6 +59481,19 @@ CREATE TABLE public.support_staff (
 
 
 --
+-- Name: support_ticket_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_ticket_snapshots (
+    ticket_id uuid NOT NULL,
+    captured_at timestamp with time zone NOT NULL,
+    snapshot jsonb NOT NULL,
+    CONSTRAINT support_ticket_snapshots_captured_at_check CHECK (isfinite(captured_at)),
+    CONSTRAINT support_ticket_snapshots_snapshot_check CHECK (((jsonb_typeof(snapshot) = 'object'::text) AND (octet_length((snapshot)::text) <= 32768)))
+);
+
+
+--
 -- Name: support_tickets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -73908,6 +73921,14 @@ ALTER TABLE ONLY public.support_satisfaction
 
 ALTER TABLE ONLY public.support_staff
     ADD CONSTRAINT support_staff_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: support_ticket_snapshots support_ticket_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_ticket_snapshots
+    ADD CONSTRAINT support_ticket_snapshots_pkey PRIMARY KEY (ticket_id);
 
 
 --
@@ -108986,6 +109007,14 @@ ALTER TABLE ONLY public.support_satisfaction
 
 ALTER TABLE ONLY public.support_staff
     ADD CONSTRAINT support_staff_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_ticket_snapshots support_ticket_snapshots_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_ticket_snapshots
+    ADD CONSTRAINT support_ticket_snapshots_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
 
 
 --

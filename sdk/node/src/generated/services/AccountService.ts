@@ -9,6 +9,7 @@ import type { AccountDeletionResponse } from '../models/AccountDeletionResponse.
 import type { AccountEgressAllowlistExtraResponse } from '../models/AccountEgressAllowlistExtraResponse.js';
 import type { AccountEmailChangeRequest } from '../models/AccountEmailChangeRequest.js';
 import type { AccountExportResponse } from '../models/AccountExportResponse.js';
+import type { AccountHealth } from '../models/AccountHealth.js';
 import type { AccountOverageCapResponse } from '../models/AccountOverageCapResponse.js';
 import type { AccountProfileUpdate } from '../models/AccountProfileUpdate.js';
 import type { AccountRateLimitsResponse } from '../models/AccountRateLimitsResponse.js';
@@ -772,6 +773,32 @@ export class AccountService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         402: `code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Account health.
+   * Returns what may stop the calling account from working: restrictions
+   * such as a suspension, failed payment or unverified email with the
+   * next step, failed deployments from the last 7 days, custom domains
+   * that are not serving, and API requests refused in the last 24 hours
+   * with their problem codes and request ids. Internal review details are
+   * never included. Available to suspended and past-due accounts.
+   *
+   * @returns AccountHealth The account health checks.
+   * @throws ApiError
+   */
+  public static getAccountHealth(): CancelablePromise<AccountHealth> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/health',
+      errors: {
+        401: `code: unauthorized`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

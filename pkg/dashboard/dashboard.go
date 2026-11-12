@@ -118,6 +118,10 @@ type IndexData struct {
 	DeveloperAppCount  int
 	DeveloperAppsLimit int
 	Plan               string
+	// Attention counts account restrictions that need the customer's
+	// action; the overview links to /dashboard/account/health when it is
+	// non-zero (ADR-20261112210000).
+	Attention int
 }
 
 // ProjectsData backs the durable project lifecycle list and detail pages.
