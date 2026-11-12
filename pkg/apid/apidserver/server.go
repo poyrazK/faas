@@ -103,6 +103,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
+	budgetstore "github.com/onebox-faas/faas/pkg/state/dataapibudget"
 	usagestore "github.com/onebox-faas/faas/pkg/state/dataapiusage"
 	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -226,7 +227,8 @@ type server struct {
 	postgresStorage managedpg.Rollout
 	liveQueries     *livequeries.Service // ADR-20261016151947 live queries per managed database
 	// dataAPIUsage stores ADR-20261019102108 Data API usage; nil without Postgres.
-	dataAPIUsage *usagestore.Store
+	dataAPIUsage  *usagestore.Store
+	dataAPIBudget *budgetstore.Store
 	// candidatePostgresVerifier checks one enforced candidate's sealed
 	// PostgreSQL credential (ADR-20261019072523); nil uses the host identities.
 	candidatePostgresVerifier func(context.Context, state.EnvironmentQualificationPostgresCheck) error
@@ -1933,6 +1935,7 @@ func (s *server) handler() http.Handler {
 	// Private workload reporting surface; customer API keys cannot publish evidence.
 	mux.HandleFunc("POST /v1/runtime/data-api/connection-observations", s.reportDataAPIRuntimeConnections)
 	mux.HandleFunc("POST /v1/runtime/data-api/usage", s.reportDataAPIUsage)
+	mux.HandleFunc("POST /v1/runtime/data-api/budget", s.admitDataAPIBudget)
 	mux.HandleFunc("POST /v1/runtime/data-api/events", s.reportDataAPIChangeEvents)
 	mux.HandleFunc("GET /v1/apps/{slug}/data-api/usage", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.appDataAPIUsage)))
 	mux.HandleFunc("GET /v1/apps/{slug}/data-api/connection-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.appDataAPIConnectionBudget))))

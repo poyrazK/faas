@@ -28,7 +28,7 @@ export function serverKeyAllows(req, permissions, config, rpc) {
   let url
   try { url = new URL(req.url, 'http://127.0.0.1') } catch { return false }
   if (url.pathname === '/__gregale/schema') return true
-  if (url.pathname === '/openapi.json') return !permissions.relations && !permissions.rpcs
+  if (['/openapi.json', '/openapi-3.1.json'].includes(url.pathname)) return !permissions.relations && !permissions.rpcs
   const listed = (list, schema, name) => list.some(entry => entry.schema === schema && entry.name === name)
   if (rpc) {
     if (permissions.rpcs) return listed(permissions.rpcs, rpc.schema, rpc.name)

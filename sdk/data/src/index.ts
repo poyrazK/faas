@@ -1,12 +1,13 @@
 import { PostgrestClient } from '@supabase/postgrest-js'
 
 import { authenticatedFetch, dataAPIBase, type DataClientOptions } from './client-fetch.js'
+import { numericFetch } from './numeric.js'
 
 export type { DataClientOptions, DataResponseInfo } from './client-fetch.js'
 
 /** Application tokens authenticate data access; account-management keys do not. */
 export function createDataClient<Database>(options: DataClientOptions): PostgrestClient<Database> {
-  const send = authenticatedFetch(options)
+  const send = numericFetch(authenticatedFetch(options), options.numericMode)
   const restEndpoint = `${dataAPIBase(options.url)}/rest/v1`
   const expectedFingerprint = options.expectedSchemaFingerprint
   if (expectedFingerprint !== undefined && (typeof expectedFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(expectedFingerprint))) throw new Error('Expected schema fingerprint must be 64 lowercase hexadecimal characters')
@@ -19,8 +20,11 @@ export function createDataClient<Database>(options: DataClientOptions): Postgres
 }
 
 export { PostgrestError } from '@supabase/postgrest-js'
+export { parseLosslessJSON } from './numeric.js'
+export type { NumericMode } from './numeric.js'
 export { createStorageClient, StorageError } from './storage.js'
 export type { StorageBucket, StorageClient, StorageObject, StorageUploadBody } from './storage.js'
+export type { UploadSession, ResumableUploadOptions, StorageUploads } from './storage-uploads.js'
 export { classifyDataError } from './errors.js'
 export type { ClassifiedDataError, DataErrorCategory, DataErrorRecovery } from './errors.js'
 export { validatedRpc, RpcValidationError } from './rpc.js'

@@ -55,9 +55,21 @@ func cmdDataAPISync(args []string) int {
 	checkOnly := fs.Bool("check", false, "check coordinated setup without pausing, migrating or restarting")
 	resumeOnly := fs.Bool("resume-only", false, "reverify an owned paused refresh without rerunning migrations")
 	configPath := fs.String("config", "", "JSON workflow file with output, migrate, optional permissions and check commands")
+	initialize := fs.Bool("init", false, "generate a coordinated workflow without executing it")
+	role := fs.String("role", "", "serving binding login for --init")
+	runtimeDir := fs.String("runtime-directory", "data-api-runtime", "owner tooling directory for --init")
 	timeout := fs.Duration("timeout", 20*time.Minute, "deadline for the entire workflow (maximum 1h)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
+	}
+	if *initialize {
+		if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *checkOnly || *resumeOnly {
+			return printErr("Invalid workflow generation", errors.New("use sync NAME --init --role LOGIN [--config FILE]"))
+		}
+		if *configPath == "" {
+			*configPath = "data-api.json"
+		}
+		return initDataAPISync(fs.Arg(0), *configPath, *role, *runtimeDir)
 	}
 	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *configPath == "" || *timeout <= 0 || *timeout > time.Hour {
 		PrintUsage(os.Stderr, "usage: gregale data-api sync NAME --config FILE [--timeout DURATION] [--resume-only] [--check]", "data-api")

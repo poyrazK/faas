@@ -52,12 +52,17 @@ func dataAPIHooksSQL(schema string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.ReplaceAll(string(content), "{{schema}}", schema), nil
+	status, err := templates.FS.ReadFile("data-api/change-hooks-status.sql")
+	if err != nil {
+		return "", err
+	}
+	return strings.ReplaceAll(string(content)+"\n"+string(status), "{{schema}}", schema), nil
 }
 
 func cmdDataAPIHooksSQL(args []string) int {
 	fs := newFlagSet("data-api hooks sql", flag.ContinueOnError)
 	schema := fs.String("schema", "api", "the Data API's first exposed schema")
+	upgrade := fs.Bool("upgrade", false, "print only the outbox observation function for existing installations")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 0 {
 		PrintUsage(os.Stderr, "usage: gregale data-api hooks export [--schema api]", "data-api")
 		return 1
@@ -65,6 +70,13 @@ func cmdDataAPIHooksSQL(args []string) int {
 	sql, err := dataAPIHooksSQL(*schema)
 	if err != nil {
 		return printErr("Invalid schema", err)
+	}
+	if *upgrade {
+		content, readErr := templates.FS.ReadFile("data-api/change-hooks-status.sql")
+		if readErr != nil {
+			return printErr("Could not read hook upgrade SQL", readErr)
+		}
+		sql = strings.ReplaceAll(string(content), "{{schema}}", *schema)
 	}
 	_, _ = fmt.Fprint(osStdout, sql)
 	return 0

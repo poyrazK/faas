@@ -627,3 +627,20 @@ sql:
         sql_package: "pgx/v5"
         emit_methods_with_db_argument: true
         emit_empty_slices: true
+
+  - engine: postgresql
+    queries: pkg/state/dataapibudget/queries.sql
+    schema: pkg/state/dataapibudget/schema.sql
+    gen:
+      go:
+        package: sqlc
+        out: pkg/state/dataapibudget/sqlc
+        sql_package: pgx/v5
+        emit_methods_with_db_argument: true
+        overrides:
+          - column: apps.id
+            go_type: string
+          - column: apps.account_id
+            go_type: string
+          - column: data_api_shared_budgets.app_id
+            go_type: string

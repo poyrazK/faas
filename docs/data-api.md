@@ -1,5 +1,11 @@
 # Schema-generated Data APIs
 
+Start with the [quickstart](data-api-onboarding.md), then use the focused guides
+for [queries](data-api/querying.md), [authorization](data-api/authorization.md),
+[schema deployment](data-api/migrations.md), [operations](data-api/operations.md),
+and [recovery/background workflows](data-api/workflows.md).
+This full reference preserves existing links and advanced workflows.
+
 Data APIs expose PostgreSQL relations as authenticated REST endpoints and
 generate TypeScript application types from the same schema. This is a managed
 PostgreSQL preview: your account and region must already be enabled for managed
@@ -60,17 +66,19 @@ stale node heartbeats, incomplete inventory and unverified pool versions remain
 explicit reasons. Counts and estimates are not live SQL sessions or available
 database capacity.
 
-Current adapters do not provide verified tenant-usable capacity after other
-reservations, so their reports remain `unknown`. A future qualified cached
-observation must match the database, backend placement and generation and be
-fresh before `within_budget` or `over_budget` can be reported. Compute class,
+An opt-in capacity observer can supply verified tenant-usable capacity after
+other reservations. Its cached observation must match the database, backend
+placement and generation and be fresh before `within_budget` or `over_budget`
+can be reported. Qualified placements may also report enforced admission;
+other reports remain planning observations. Compute class,
 `max_connections` alone and successful SQL readiness cannot supply that evidence.
 Reports expire within 30 seconds, cap database/binding inventory at 100/1,024,
 and omit credentials, provider identities, node addresses and consumer app names.
 
-Each Data API runtime admits at most two requests to authenticated endpoints
-at a time and queues at most eight more in arrival order. Coordinated refresh reserves one
-database connection for its control reader and admits one request at a time.
+Each Data API runtime admits requests up to its configured engine pool (two
+by default, configurable from one to eight) and queues at most eight more in
+arrival order. Coordinated refresh reserves one connection of that pool for
+its control reader and requires at least two configured connections.
 These bounds cover JWT verification, REST/RPC and authenticated schema/OpenAPI
 requests through response completion. Health checks and CORS preflight bypass
 the queue; a healthy engine does not imply spare request capacity.
@@ -1391,6 +1399,17 @@ they hear about it. `data-api diagnostics` counts requests refused by caps.
 Cap values are stored as app secrets and are not shown again; set them again
 to change them.
 
+## Shared request budgets
+
+Use `gregale data-api configure NAME --shared-budget requests=1000,window=60s,claim=tenant_id`
+to share a verified tenant's request credit across runtime replicas. Omit `claim`
+to use the verified subject instead. This optional mode uses atomic PostgreSQL
+admission through a dedicated workload-authenticated control-plane endpoint and
+fails closed before customer SQL if admission cannot be confirmed. Local burst
+protection remains enabled. It covers signed-in HTTP requests; anonymous reads,
+server keys, live reads and approximate monthly caps retain separate policies.
+See [shared-budget configuration and bounds](data-api/operations.md#shared-request-budgets).
+
 ## Live reads
 
 A live read keeps a Data API read current: the client receives the rows, then
@@ -1429,8 +1448,11 @@ Each read brings its own credential, checked like a REST request:
 - **A server key** stays within its [permissions](#restrict-what-a-server-key-can-do)
   and is refused on connections opened from a browser.
 
-Open reads check their credential again every hour, so a revoked key or a
-narrowed allowlist reaches them within the hour. Live connections count
+Anonymous and server-key reads renew their authorization every 30 seconds.
+Access reports resynchronize existing endpoints; a changed access fingerprint
+closes affected subscriptions before the proxy delivers another result. A
+delayed endpoint update remains bounded by credential renewal and route
+propagation. Signed-in reads also remain bounded by their JWT expiration. Live connections count
 against your realtime connection limits. If live queries are not yet
 available to your account, `enable` says so and changes nothing.
 

@@ -17,17 +17,20 @@ import { checkPublicRelations, checkPublicFunctions, loadRowSecurity } from './a
 import { inspect, inspectBundle, generate, fingerprint } from './types.mjs'
 import { generateValidators, inputModel } from './type-render.mjs'
 
-export function developmentTypes(snapshot, metadata, validators) {
-  return validators ? generateValidators(snapshot, metadata) : generate(snapshot)
+export function developmentTypes(snapshot, metadata, validators, numericMode = 'number') {
+  if (validators && numericMode !== 'number') throw new Error('Lossless types and runtime input validators are separate outputs')
+  return validators ? generateValidators(snapshot, metadata) : generate(snapshot, fingerprint(snapshot), { numericMode })
 }
 import { migrate } from './migrate.mjs'
 import { requestStore } from './dev-requests.mjs'
 import { replayRequest, collectionScenarios } from './request-replay.mjs'
 import { inspector } from './dev-inspector.mjs'
+import { browserExample } from './dev-browser.mjs'
 import { permissions } from './rpc-permissions.mjs'
 import { loadDevProject, verifyProject, readLocalFile } from './dev-project.mjs'
 import { prepareRehearsal, checkUpgradeData, parseDataChecks, fixtureBinding } from './dev-upgrade.mjs'
 import { prepareAccessChecks, runAccessChecks } from './dev-access.mjs'
+import { inspectBehavior, compareBehavior, requireBehaviorReplays } from './behavior-contract.mjs'
 import { prepareExplain, plannerMetadata, explainRequests, printExplain, checkQueryBudgets } from './dev-explain.mjs'
 
 const execute = promisify(execFile)
@@ -408,9 +411,10 @@ export async function run(options) {
     const inspectorRules=(snapshot,metadata)=>{try{return inputModel(snapshot,metadata)}catch{return {tables:[],revision:fingerprint(snapshot),unavailable:true}}}
     let inspectorModel=inspectorRules(config.snapshot,bundle.metadata)
     let inspectorState = { status: 'starting', ready: false }
+    let example
     const browser = await inspector(() => inspectorState, join(options.directory, 'data-api.requests.json'), Object.keys(project.identities))
     server = http.createServer((req, res) => {
-      if (browser.handle(req, res)) return
+      if (browser.handle(req, res) || example?.handle(req, res)) return
       if (gateway) return gateway(req, res)
       res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
       res.end(JSON.stringify({ ready: false, code: 'local_schema_refresh_pending' }))
@@ -427,6 +431,25 @@ export async function run(options) {
       .setProtectedHeader({ alg: 'ES256' }).setIssuer(config.auth.issuer).setAudience(config.auth.audience).setExpirationTime('24h').sign(privateKey) }
     phase = 'required project authorization verification'
     await verifyProject(url, identities, project, AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]))
+    if (options.behavior_baseline || options.behavior_output) {
+      phase = 'authorization and RPC behavior comparison'
+      const current = await inspectBehavior(ownerURL, config.schemas, config.role)
+      const changes = options.behavior_baseline ? compareBehavior(JSON.parse(await readLocalFile(options.behavior_baseline, limits.outputBytes)), current) : []
+      let covered = true
+      if (changes.length) {
+        try {
+          const coverage = options.behavior_replays ? JSON.parse(await readLocalFile(options.behavior_replays)) : null
+          requireBehaviorReplays(changes, coverage, project.verification.scenarios)
+        } catch { covered = false }
+      }
+      if (options.json) console.log(JSON.stringify({ status: 'behavior', digest: current.digest, changes, replay_coverage: covered ? 'passed' : 'required', authorization_scenarios: project.verification.scenarios }))
+      else {
+        console.log(`Authorization/RPC behavior: ${changes.length} changed objects; replay coverage ${covered ? 'passed' : 'required'}.`)
+        for (const change of changes) console.log(`${change.change} ${JSON.stringify(change.id)}`)
+      }
+      if (!covered) throw new DevFailure('Behavior changes require valid --behavior-replays mappings to required authorization scenarios that passed in this run. Review the changed object IDs above.')
+      if (options.behavior_output) await atomicFile(options.behavior_output, JSON.stringify(current) + '\n', 0o600)
+    }
     previewPassed('authorization')
     if (verification) {
       verification.authorization = 'passed'
@@ -457,7 +480,7 @@ export async function run(options) {
     }
     previewStep = 'types'
     phase = options.check_types ? 'checking committed types' : 'writing generated types'
-    const generatedTypes = developmentTypes(config.snapshot, bundle.metadata, options.validators)
+    const generatedTypes = developmentTypes(config.snapshot, bundle.metadata, options.validators, options.numeric_mode)
     try {
       if (options.check_types) {
         let committedTypes
@@ -522,14 +545,19 @@ export async function run(options) {
     }
     phase = 'writing the private identity file'
     const inspectorURL = browser.url(url)
+    if (options.browser) {
+      await execute('npm', ['run', 'build:browser'], {cwd: join(options.directory, 'client'), signal: controller.signal, maxBuffer: 2 << 20})
+      example = await browserExample(options.directory, () => inspectorState, inspectorURL)
+    }
     const writeReceipt = async (status = 'ready', clientChecked = options.check) => {
       inspectorState = { url, fingerprint: config.fingerprint, snapshot: config.snapshot, input_model: inspectorModel, identities, status, client_checked: clientChecked, ready: Boolean(gateway), compatibility }
       await atomicFile(receipt, JSON.stringify({ ...inspectorState, snapshot: undefined, input_model: undefined, output: options.output, inspector_url: inspectorURL }, null, 2) + '\n', 0o600)
     }
     await writeReceipt()
+    if (example && !options.json) console.log(`Browser application: ${example.url}`)
     receiptWritten = true
     clearTimeout(startup)
-    if (options.json) console.log(JSON.stringify({ status: options.once ? 'verified' : 'ready', inspector_url: options.once ? null : inspectorURL, url, fingerprint: config.fingerprint, output: options.output, identities_file: options.once ? null : receipt, rls_verified: true, verification_scenarios: project.verification.scenarios, client_checked: options.check, types_checked: Boolean(options.check_types) }))
+    if (options.json) console.log(JSON.stringify({ status: options.once ? 'verified' : 'ready', inspector_url: options.once ? null : inspectorURL, ...(example?{browser_url:example.url}:{}), url, fingerprint: config.fingerprint, output: options.output, identities_file: options.once ? null : receipt, rls_verified: true, verification_scenarios: project.verification.scenarios, client_checked: options.check, types_checked: Boolean(options.check_types) }))
     else console.log(`Local Data API ready: ${url}\n${options.once ? '' : `Inspector: ${inspectorURL}\n`}Types: ${options.output}\n${options.once ? 'Local verification complete; removing disposable services.' : `Test identities (private file): ${receipt}\nCtrl-C removes the disposable database and identities.`}\n${project.legacy ? 'Alice/Bob RLS isolation verified.' : 'Required project authorization scenarios passed.'}`)
     const event = (status, detail) => {
       inspectorState = { ...inspectorState, status, detail, ready: Boolean(gateway) }
@@ -574,7 +602,7 @@ export async function run(options) {
       } finally { candidate.closeAllConnections(); await new Promise(resolve => candidate.close(resolve)) }
       controller.signal.throwIfAborted()
       phase = 'writing generated types'
-      await atomicFile(options.output, developmentTypes(snapshot, metadata, options.validators), 0o644)
+      await atomicFile(options.output, developmentTypes(snapshot, metadata, options.validators, options.numeric_mode), 0o644)
       await acceptContract(snapshot)
       Object.assign(config, nextConfig)
       inspectorModel=inspectorRules(snapshot,metadata)

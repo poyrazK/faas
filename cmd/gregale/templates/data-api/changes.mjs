@@ -100,6 +100,7 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
   const key = new TextEncoder().encode(config.secret.toString('base64url'))
   let relay = `relay.${randomUUID()}`, offset = now() - monotonic()
   let timer = null, dueAt = Infinity, busy = false, again = false, stopped = false
+  let running = null
   let idle = limits.changeEventsIdleMinMs, retry = limits.changeEventsIdleMinMs
 
   // Snapshot restores copy this process; each copy takes a new identity so
@@ -185,7 +186,14 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
     } catch { return null /* Never log tokens or platform errors. */ }
   }
 
-  async function cycle() {
+  function cycle() {
+    if (stopped) return Promise.resolve()
+    if (running) { again = true; return running }
+    running = runCycle()
+    return running
+  }
+
+  async function runCycle() {
     if (stopped) return
     if (busy) { again = true; return }
     busy = true
@@ -211,6 +219,7 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
       if (outcome.retry) { next = retry; retry = Math.min(retry * 2, limits.changeEventsIdleMaxMs) } else { retry = limits.changeEventsIdleMinMs; next = 0 }
     } catch { next = retry } finally {
       busy = false
+      running = null
       if (again) { again = false; next = 0 }
       schedule(next)
     }
@@ -222,5 +231,12 @@ export function createChangeRelay(config, { upstreamPort, tryAcquire, fetchImpl 
     stop: () => { stopped = true; clearTimer(timer) },
     // Tests drive cycles directly.
     cycle,
+    drain: cycle,
+    status: async () => {
+      const result = await rpc('gregale_change_status', {})
+      const status = result.json
+      if (result.status !== 200 || !status || !['pending','failed','leased','lag_seconds'].every(key => typeof status[key] === 'number' && Number.isFinite(status[key]) && status[key] >= 0)) return null
+      return status
+    },
   })
 }

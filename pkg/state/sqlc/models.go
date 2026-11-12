@@ -3557,6 +3557,14 @@ type DataApiRuntimeConnectionObservation struct {
 	ExpiresAt            pgtype.Timestamptz
 }
 
+type DataApiSharedBudget struct {
+	AppID       pgtype.UUID
+	BudgetKey   string
+	WindowStart pgtype.Timestamptz
+	WindowEnd   pgtype.Timestamptz
+	Requests    int64
+}
+
 // ADR-20261019102108 Data API usage per app and UTC hour, from runtime deltas; owner telemetry, not billing.
 type DataApiUsageHourly struct {
 	AppID             pgtype.UUID

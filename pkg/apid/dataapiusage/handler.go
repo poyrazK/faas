@@ -38,6 +38,8 @@ type ReportHandler struct {
 	Store    Recorder
 	Verifier *workloadidentity.Verifier
 	Now      func() time.Time
+	// AccessChanged propagates reported access to existing live endpoints.
+	AccessChanged func(context.Context, string)
 }
 
 func (h ReportHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +74,9 @@ func (h ReportHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		unavailable(w)
 		return
+	}
+	if access != nil && h.AccessChanged != nil {
+		h.AccessChanged(r.Context(), claims.AppID)
 	}
 	writeJSON(w, api.DataAPIUsageReportResponse{MonthToDate: monthToDate(mtd)})
 }

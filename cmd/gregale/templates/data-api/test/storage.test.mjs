@@ -168,10 +168,15 @@ function fakePostgREST(state) {
         const existing = state.rows.get(key)
         const row = { ...body, owner: existing?.owner ?? claims.sub ?? null, created_at: 'now', updated_at: 'now' }
         if (body.bucket !== 'uploads' || !claims.sub || row.owner !== claims.sub || body.size > 64) return json(403, { code: '42501', message: 'new row violates row-level security policy' })
-        if (!rollback) state.rows.set(key, row)
+        if (!rollback) {
+          state.rows.set(key, row)
+          if (state.loseCommitResponse) return req.socket.destroy()
+        }
         return json(201, [row])
       }
       const [bucket, name] = filter(req.url)
+      if (req.method === 'GET' && state.failReadBack) return req.socket.destroy()
+      if (req.method === 'DELETE' && !rollback && state.failDeleteCommit) return req.socket.destroy()
       const row = state.rows.get(`${bucket}/${name}`)
       const found = row && visible(row, claims) && (req.method === 'GET' || row.owner === claims.sub) ? [row] : []
       if (req.method === 'DELETE' && found.length && !rollback) state.rows.delete(`${bucket}/${name}`)
@@ -218,11 +223,44 @@ async function fixture(t, { unavailable = false, ...env } = {}) {
 
 const as = user => ({ authorization: `Bearer ${user}` })
 
+test('a lost commit response is recovered without deleting committed bytes', async t => {
+  const { state, s3, send } = await fixture(t)
+  state.loseCommitResponse = true
+  const response = await send('/storage/v1/object/uploads/receipt.txt', { method: 'PUT', headers: as('alice'), body: 'hello' })
+  assert.equal(response.status, 200, response.body)
+  assert.equal(s3.objects.size, 1)
+  assert.equal(state.rows.size, 1)
+  assert.equal(s3.requests.filter(r => r.method === 'DELETE').length, 0)
+})
+
+test('an uncertain commit preserves bytes even when reconciliation is unavailable', async t => {
+  const { state, s3, send } = await fixture(t)
+  state.loseCommitResponse = true
+  state.failReadBack = true
+  const response = await send('/storage/v1/object/uploads/receipt.txt', { method: 'PUT', headers: as('alice'), body: 'hello' })
+  assert.equal(response.status, 503)
+  assert.equal(JSON.parse(response.body).code, 'storage_commit_unknown')
+  assert.equal(s3.objects.size, 1)
+  assert.equal(state.rows.size, 1)
+})
+
+test('a failed metadata deletion never deletes a referenced object', async t => {
+  const { state, s3, send } = await fixture(t)
+  await send('/storage/v1/object/uploads/receipt.txt', { method: 'PUT', headers: as('alice'), body: 'hello' })
+  state.failDeleteCommit = true
+  const response = await send('/storage/v1/object/uploads/receipt.txt', { method: 'DELETE', headers: as('alice') })
+  assert.equal(response.status, 503)
+  assert.equal(state.rows.size, 1)
+  assert.equal(s3.objects.size, 1)
+})
+
 test('an upload is authorized as the caller, streamed with its signed length, then committed', async t => {
   const { state, s3, send } = await fixture(t)
   const uploaded = await send('/storage/v1/object/uploads/alice/notes.txt', { method: 'PUT', headers: { ...as('alice'), 'content-type': 'text/plain' }, body: 'hello world' })
   assert.equal(uploaded.status, 200, uploaded.body)
-  assert.deepEqual(JSON.parse(uploaded.body), { bucket: 'uploads', name: 'alice/notes.txt', size: 11, content_type: 'text/plain', owner: 'alice', created_at: 'now', updated_at: 'now' })
+  const { version, ...uploadedRow } = JSON.parse(uploaded.body)
+  assert.match(version, /^[a-f0-9]{32}$/)
+  assert.deepEqual(uploadedRow, { bucket: 'uploads', name: 'alice/notes.txt', size: 11, content_type: 'text/plain', owner: 'alice', created_at: 'now', updated_at: 'now' })
   const [dry, current, commit] = state.calls
   assert.match(dry.prefer, /tx=rollback/)
   assert.equal(current.method, 'GET')
@@ -345,7 +383,7 @@ test('signed links and anonymous reads follow the public-read allowlist and RLS'
   assert.equal((await listed.send('/storage/v1/object/avatars/alice.png', { method: 'DELETE' })).status, 401)
 })
 
-test('removal checks the caller, deletes the object, then the row', async t => {
+test('removal checks the caller and commits metadata before deleting bytes', async t => {
   const { state, s3, send } = await fixture(t)
   await send('/storage/v1/object/uploads/alice/old.txt', { method: 'PUT', headers: as('alice'), body: 'old' })
   const stored = `/real-uploads/${state.rows.get('uploads/alice/old.txt').object_key}`

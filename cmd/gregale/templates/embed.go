@@ -396,7 +396,7 @@ func TarGz(name, dest string) error {
 		if err != nil {
 			return err
 		}
-		if p == "." || strings.HasPrefix(path.Base(p), ".") {
+		if p == "." || strings.HasPrefix(path.Base(p), ".") || path.Base(p) == "node_modules" {
 			if d.IsDir() && p != "." {
 				return fs.SkipDir
 			}

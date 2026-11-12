@@ -174,6 +174,7 @@ func cmdDataAPIConfigure(args []string) int {
 	publicReadCache := fs.String("public-read-cache", "", "edge freshness for public reads and RPC calls such as 30s, or off")
 	usageReporting := fs.String("usage-reporting", "", "on or off: report usage to the platform")
 	monthlyCaps := fs.String("monthly-caps", "", "requests=N[,anonymous=N] or off: monthly owner caps (turns usage reporting on)")
+	sharedBudget := fs.String("shared-budget", "", "shared requests=N,window=DURATION[,claim=JWT_CLAIM], or off")
 	noRestart := fs.Bool("no-restart", false, "store settings without requesting a fresh restart")
 	var scale dataAPIScaleSettings
 	fs.StringVar(&scale.Pool, "pool", "", "engine connections per instance, 1 to 8, or default")
@@ -185,7 +186,7 @@ func cmdDataAPIConfigure(args []string) int {
 	anonymousOff := *noPublicRead && *noPublicRPC
 	rowSecurityUnchanged := *allowWithoutRLS == "" && !*noAllowWithoutRLS
 	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || api.ValidateScope(*scope) != nil || (*publicRead != "" && *noPublicRead) || (*publicRPC != "" && *noPublicRPC) || (*allowWithoutRLS != "" && *noAllowWithoutRLS) ||
-		(*publicRead == "" && !*noPublicRead && *publicRPC == "" && !*noPublicRPC && rowSecurityUnchanged && *aggregates == "" && *publicReadCache == "" && *usageReporting == "" && *monthlyCaps == "" && scale.empty()) || !dataAPIDiagnosticAllowed(*aggregates, "", "on", "off") ||
+		(*publicRead == "" && !*noPublicRead && *publicRPC == "" && !*noPublicRPC && rowSecurityUnchanged && *aggregates == "" && *publicReadCache == "" && *usageReporting == "" && *monthlyCaps == "" && *sharedBudget == "" && scale.empty()) || !dataAPIDiagnosticAllowed(*aggregates, "", "on", "off") ||
 		(anonymousOff && *publicReadCache != "") || !dataAPIDiagnosticAllowed(*usageReporting, "", "on", "off") || (*usageReporting == "off" && *monthlyCaps != "" && *monthlyCaps != "off") {
 		PrintUsage(os.Stderr, "usage: gregale data-api configure NAME [--public-read SCHEMA.RELATION[,...] | --no-public-read] [--public-rpc SCHEMA.FUNCTION[,...] | --no-public-rpc] [--allow-without-rls SCHEMA.RELATION[,...] | --no-allow-without-rls] [--public-read-cache DURATION|off] [--aggregates on|off] [--usage-reporting on|off] [--monthly-caps requests=N[,anonymous=N]|off] [--pool N|default] [--server-key-concurrency N|default] [--server-key-rate-limit N[,burst=M]|off] [--scope SCOPE] [--no-restart]", "data-api")
 		return 1
@@ -193,6 +194,17 @@ func cmdDataAPIConfigure(args []string) int {
 	capacity, err := parseDataAPIScale(scale)
 	if err != nil {
 		return printErr("Invalid capacity setting", err)
+	}
+	sharedPolicy := ""
+	if *sharedBudget != "" && *sharedBudget != "off" {
+		if *usageReporting == "off" {
+			return printErr("Invalid shared budget", errors.New("shared budgets require usage reporting"))
+		}
+		sharedPolicy, err = parseDataAPISharedBudget(*sharedBudget)
+		if err != nil {
+			return printErr("Invalid shared budget", err)
+		}
+		*usageReporting = "on"
 	}
 	cacheSeconds := 0
 	if *publicReadCache != "" && *publicReadCache != "off" {
@@ -225,6 +237,25 @@ func cmdDataAPIConfigure(args []string) int {
 	}
 	ctx := context.Background()
 	app, receipt := fs.Arg(0), dataAPIConfigureReceipt{App: fs.Arg(0), Scope: *scope, Changed: []string{}}
+	if *usageReporting == "off" && *sharedBudget != "off" {
+		stored, readErr := client.ListSecretsWithScope(ctx, app, *scope)
+		if readErr != nil {
+			return printErr("Could not verify shared-budget dependency", readErr)
+		}
+		for _, secret := range stored.Secrets {
+			if secret.Key == "DATA_API_SHARED_BUDGET" {
+				return printErr("Shared request budget is still enabled", errors.New("use --shared-budget off before disabling usage reporting"))
+			}
+		}
+	}
+	// Remove the dependent policy before its reporting origin, including if a
+	// later settings write fails and the app restarts independently.
+	if *sharedBudget == "off" {
+		if err = unsetDataAPISetting(ctx, client, app, "DATA_API_SHARED_BUDGET", *scope); err != nil {
+			return printErr("Could not remove shared request budget", err)
+		}
+		receipt.Changed = append(receipt.Changed, "shared_budget")
+	}
 	if err = configureDataAPIAnonymous(ctx, client, app, *scope, []dataAPIAnonymousSetting{
 		{key: "DATA_API_PUBLIC_READ", value: *publicRead, remove: *noPublicRead},
 		{key: "DATA_API_PUBLIC_RPC", value: *publicRPC, remove: *noPublicRPC},
@@ -261,6 +292,13 @@ func cmdDataAPIConfigure(args []string) int {
 	}
 	if err = configureDataAPIUsage(ctx, client, app, *scope, *usageReporting, *monthlyCaps, &receipt); err != nil {
 		return printErr("Could not configure usage reporting", err)
+	}
+	if *sharedBudget != "" && *sharedBudget != "off" {
+		err = client.SetSecretWithScope(ctx, app, "DATA_API_SHARED_BUDGET", sharedPolicy, *scope)
+		if err != nil {
+			return printErr("Could not store shared request budget", err)
+		}
+		receipt.Changed = append(receipt.Changed, "shared_budget")
 	}
 	if err = configureDataAPIScale(ctx, client, app, *scope, capacity, &receipt); err != nil {
 		return printErr("Could not configure capacity", err)

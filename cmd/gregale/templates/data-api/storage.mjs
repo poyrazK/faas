@@ -5,6 +5,8 @@ import { createHash, createHmac, randomBytes } from 'node:crypto'
 import pg from 'pg'
 import { limits, UnsafeConfiguration } from './config.mjs'
 import { addResponseBytes } from './usage.mjs'
+import { handleUploadSession, uploadSessionRoute } from './storage-sessions.mjs'
+export { storageActor } from './storage-sessions.mjs'
 
 // File storage (ADR-20261021101510). Rows in <schema>.storage_objects record
 // files; the owner's RLS policies on that table decide every upload, download
@@ -44,7 +46,11 @@ export function storedKey(row) {
 }
 
 // Rows answer clients without their object key, which is storage-internal.
-const publicRow = ({ object_key: _key, ...row }) => row
+const publicRow = ({ object_key: key, ...row }) => ({ ...row, version: key?.slice('_gregale/objects/'.length) ?? null })
+
+function validateName(name) {
+  return typeof name === 'string' && Buffer.byteLength(name) <= 1024 && !/[\x00-\x1f\x7f\\]/.test(name) && name.split('/').every(s => s && s !== '.' && s !== '..')
+}
 
 const actions = { object: { PUT: 'upload', GET: 'download', HEAD: 'head', DELETE: 'remove' }, sign: { POST: 'sign' } }
 
@@ -52,6 +58,7 @@ const actions = { object: { PUT: 'upload', GET: 'download', HEAD: 'head', DELETE
 // percent-encoded path segments: 1–1024 bytes, no control characters,
 // backslashes, or empty, "." or ".." segments.
 export function storageRoute(req, storage) {
+  if (req.url.startsWith('/storage/v1/upload/')) return uploadSessionRoute(req, storage)
   const match = /^\/storage\/v1\/(object|sign)\/([^/?#]+)\/([^?#]+)$/.exec(req.url)
   if (!match) return { status: 404, code: 'not_found' }
   const action = actions[match[1]][req.method]
@@ -165,13 +172,13 @@ export async function checkStorageTable(connection, schema) {
 
 
 // rows asks PostgREST about storage_objects as the caller.
-function rows(ctx, { method, query, body, prefer, token, signal }) {
+function rows(ctx, { resource = storageTable, method, query = '', body, prefer, token, signal }) {
   const payload = body === undefined ? null : Buffer.from(JSON.stringify(body))
   const headers = { authorization: `Bearer ${token}`, accept: 'application/json', [method === 'GET' ? 'accept-profile' : 'content-profile']: ctx.config.storage.schema }
   if (prefer) headers.prefer = prefer
   if (payload) { headers['content-type'] = 'application/json'; headers['content-length'] = String(payload.length) }
   return new Promise(resolve => {
-    const request = http.request({ hostname: '127.0.0.1', port: ctx.upstreamPort, path: `/${storageTable}?${query}`, method, headers, signal }, response => {
+    const request = http.request({ hostname: '127.0.0.1', port: ctx.upstreamPort, path: `/${resource}?${query}`, method, headers, signal }, response => {
       const chunks = []
       let bytes = 0
       response.on('data', chunk => {
@@ -239,7 +246,11 @@ function objectRequest(binding, method, key, { headers = {}, signal, body } = {}
   return new Promise((resolve, reject) => {
     const request = client.request(url, { method, headers: signed, signal }, resolve)
     request.on('error', reject)
-    if (body) body.pipe(request)
+    if (body?.pipe) {
+      body.once('error', error => request.destroy(error))
+      request.once('error', () => body.destroy())
+      body.pipe(request)
+    } else if (body) request.end(body)
     else request.end()
   })
 }
@@ -279,12 +290,18 @@ async function upload(ctx) {
     } catch { await discard(binding, key); return ctx.problem(res, 502, 'storage_backend_unavailable') }
     await drain(stored)
     if (stored.statusCode < 200 || stored.statusCode > 299 || sent !== size) { await discard(binding, key); return ctx.problem(res, 502, 'storage_backend_unavailable') }
-    const committed = await rows(ctx, { ...upsert, prefer: 'resolution=merge-duplicates,return=representation', token: await ctx.token(true), signal })
+    let committed = await rows(ctx, { ...upsert, prefer: 'resolution=merge-duplicates,return=representation', token: await ctx.token(true), signal })
     if (committed.status < 200 || committed.status > 299 || !Array.isArray(committed.json) || committed.json.length !== 1) {
-      // A refused commit, such as a racing upload the policies reject, loses
-      // only its own bytes.
-      await discard(binding, key)
-      return committed.status === 401 || committed.status === 403 ? refused(ctx, committed) : ctx.problem(res, 503, 'storage_commit_failed')
+      // A connection failure can happen after COMMIT. Only a definitive SQL
+      // refusal proves these bytes are unreferenced. Even an empty read-back
+      // is inconclusive (RLS or a concurrent replacement may hide the row).
+      if (committed.status >= 400 && committed.status < 500) {
+        await discard(binding, key)
+        return refused(ctx, committed)
+      }
+      const recovered = await rows(ctx, { method: 'GET', query: `${rowFilter(route)}&${columns}`, token: await ctx.token(false), signal: AbortSignal.timeout(limits.queryMs) })
+      if (recovered.status !== 200 || !Array.isArray(recovered.json) || recovered.json.length !== 1 || recovered.json[0].object_key !== key) return ctx.problem(res, 503, 'storage_commit_unknown')
+      committed = recovered
     }
     if (previous !== null && previous !== key) await discard(binding, previous)
     sendJSON(res, 200, publicRow(committed.json[0]))
@@ -308,8 +325,9 @@ async function download(ctx) {
   const row = await readRow(ctx)
   if (!row) return
   const { req, res, route, config } = ctx
+  const versionHeaders = objectKeyPattern.test(row.object_key ?? '') ? { 'X-Gregale-Storage-Version': row.object_key.slice(17) } : {}
   if (route.action === 'head') {
-    res.writeHead(200, { ...servedHeaders, 'Content-Type': row.content_type, 'Content-Length': String(row.size), 'Accept-Ranges': 'bytes' })
+    res.writeHead(200, { ...servedHeaders, ...versionHeaders, 'Content-Type': row.content_type, 'Content-Length': String(row.size), 'Accept-Ranges': 'bytes' })
     return res.end()
   }
   const range = typeof req.headers.range === 'string' && /^bytes=\d*-\d*$/.test(req.headers.range) ? req.headers.range : null
@@ -320,7 +338,7 @@ async function download(ctx) {
     if (object.statusCode === 404) { await drain(object); return ctx.problem(res, 404, 'storage_not_found') }
     if (object.statusCode === 416) { await drain(object); return ctx.problem(res, 416, 'storage_range_not_satisfiable') }
     if (object.statusCode !== 200 && object.statusCode !== 206) { await drain(object); return ctx.problem(res, 502, 'storage_backend_unavailable') }
-    const headers = { ...servedHeaders, 'Content-Type': row.content_type, 'Accept-Ranges': 'bytes' }
+    const headers = { ...servedHeaders, ...versionHeaders, 'Content-Type': row.content_type, 'Accept-Ranges': 'bytes' }
     for (const [name, header] of [['content-length', 'Content-Length'], ['content-range', 'Content-Range'], ['etag', 'ETag'], ['last-modified', 'Last-Modified']]) {
       if (object.headers[name]) headers[header] = object.headers[name]
     }
@@ -351,16 +369,12 @@ async function remove(ctx) {
   if (dry.status !== 200 || !Array.isArray(dry.json)) return refused(ctx, dry)
   if (dry.json.length !== 1) return ctx.problem(res, 404, 'storage_not_found')
   const binding = config.storage.buckets.get(route.bucket)
-  const key = storedKey(dry.json[0])
   return transfer(ctx, async signal => {
-    let deleted
-    try { deleted = await objectRequest(binding, 'DELETE', key, { signal }) } catch { return ctx.problem(res, 502, 'storage_backend_unavailable') }
-    await drain(deleted)
-    if (deleted.statusCode !== 204 && deleted.statusCode !== 200 && deleted.statusCode !== 404) return ctx.problem(res, 502, 'storage_backend_unavailable')
     const committed = await rows(ctx, { method: 'DELETE', query, prefer: 'return=representation', token: await ctx.token(true), signal })
-    if (committed.status !== 200) return ctx.problem(res, 503, 'storage_commit_failed')
-    // An upload that committed after the dry run left a newer version.
-    for (const removed of Array.isArray(committed.json) ? committed.json : []) if (storedKey(removed) !== key) await discard(binding, storedKey(removed))
+    if (committed.status !== 200 || !Array.isArray(committed.json)) return ctx.problem(res, 503, 'storage_commit_unknown')
+    // Delete only keys returned by the committed DELETE. A failed cleanup
+    // leaves garbage, whereas deleting first can leave a live dangling row.
+    for (const removed of committed.json) await discard(binding, storedKey(removed))
     res.writeHead(204, { 'Cache-Control': 'no-store' })
     res.end()
   })
@@ -371,6 +385,7 @@ async function remove(ctx) {
 // token, the deadline, release() for the admission slot and the server's
 // transfer counter.
 export function handleStorage(ctx) {
+  if (ctx.route.action.startsWith('session')) return handleUploadSession(ctx, { rows, transfer, objectRequest, discard, drain, sendJSON, publicRow, newObjectKey, validateName, storageContentType })
   switch (ctx.route.action) {
     case 'upload': return upload(ctx)
     case 'download':
