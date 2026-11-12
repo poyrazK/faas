@@ -34,8 +34,7 @@ const (
 	// (amendment 3).
 	FoldedStatus = 0
 
-	dimensionMaxBytes = 512 // request_analytics_minutes.dimension CHECK
-	methodMaxBytes    = 16  // request_analytics_minutes.method CHECK
+	dimensionMaxBytes = api.RequestAnalyticsDimensionMaxBytes // request_analytics_minutes.dimension CHECK
 )
 
 // FoldedKinds are the non-route kinds, folded to the busiest values.
@@ -163,7 +162,7 @@ func (a *Aggregator) keysLocked(row Row, minute int64) []key {
 	keys := make([]key, 0, 1+len(FoldedKinds))
 	keys = append(keys, key{
 		app: row.AppID, minute: minute, kind: KindRoute,
-		dimension: Dimension(row.Route, "__unknown__"), method: Text(row.Method, methodMaxBytes),
+		dimension: Dimension(row.Route, "__unknown__"), method: api.NormalizeRequestAnalyticsMethod(row.Method),
 		status: int16(row.Status), deployment: row.DeploymentID,
 	})
 	for _, kind := range FoldedKinds {

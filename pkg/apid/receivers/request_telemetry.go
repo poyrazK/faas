@@ -46,9 +46,10 @@ import (
 // must stay aligned (goconst-flagged so drift breaks the lint
 // gate).
 const (
-	RtOutcomeInserted    = "inserted"
-	rtOutcomeRateLimited = "rate_limited"
-	rtOutcomeDBError     = "db_error"
+	rtOutcomeAnalyticsBackpressure = "analytics_backpressure"
+	RtOutcomeInserted              = "inserted"
+	rtOutcomeRateLimited           = "rate_limited"
+	rtOutcomeDBError               = "db_error"
 	// rtOutcomeNotRetained answers a row whose app's plan keeps no request
 	// telemetry. Its usage was recorded first, so the row is complete:
 	// gateways accept it instead of retrying it or journaling it as a loss.
@@ -364,6 +365,9 @@ func (r *requestTelemetryReceiver) handleGroup(stream apidpb.RequestTelemetry_In
 	r.insertGroup(ctx, pending, pendingOuts)
 	release()
 	for _, out := range outs {
+		if out.GetOutcome() == rtOutcomeAnalyticsBackpressure {
+			return status.Error(codes.Unavailable, "analytics ingestion pending; retry batch")
+		}
 		if err := stream.Send(out); err != nil {
 			return err
 		}
@@ -544,7 +548,18 @@ func (r *requestTelemetryReceiver) prepareOne(ctx context.Context, req *apidpb.I
 	// the debugger's ingest cap below turns away (ADR-20261103113952),
 	// unless its gateway counted it into its own rollups (amendment 5).
 	if !req.GetAnalyticsCounted() {
-		r.addRollup(req, accountID, appID, deploymentID, eventID, count, consumerID)
+		if err := r.addRollup(ctx, req, accountID, appID, deploymentID, eventID, count, consumerID); err != nil {
+			r.observe(rtOutcomeDBError)
+			out.Outcome = rtOutcomeAnalyticsBackpressure
+			return out, nil
+		}
+	}
+
+	// Custom methods are already counted; the raw debugger has a closed method CHECK.
+	if req.GetMethod() != "" && api.NormalizeRequestAnalyticsMethod(req.GetMethod()) == "OTHER" {
+		r.observe(rtOutcomeNotRetained)
+		out.Outcome = rtOutcomeNotRetained
+		return out, nil
 	}
 
 	// ---- 4. Per-account token bucket check ----
