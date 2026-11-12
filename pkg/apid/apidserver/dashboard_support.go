@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/support"
 	"github.com/onebox-faas/faas/pkg/apid/supportportal"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -48,9 +49,44 @@ func (s *server) supportPortal(staff bool) http.HandlerFunc {
 				}
 				s.renderCustomDashboardPage(w, r, acct, title, "support", data)
 			},
+			Customer: s.supportCustomerContext,
 		}
 		portal.Serve(w, r, support.Actor{ID: acct.ID, Session: true}, staff)
 	}
+}
+
+// supportCustomerContext loads the account panel for a staff ticket
+// (ADR-20261112170000): the customer's account, plan and status and the
+// tenant 360 diagnosis. Portal has already checked the staff roster and the
+// MFA-completed session. Any failure yields an Unavailable panel; the
+// ticket page itself still renders.
+func (s *server) supportCustomerContext(r *http.Request, ticket *support.StaffTicket) *supportportal.CustomerContext {
+	unavailable := &supportportal.CustomerContext{Unavailable: true}
+	accountID, orgID, err := s.customerSupport.TicketOwner(r.Context(), ticket.Ticket.ID)
+	if err != nil || accountID == "" {
+		return unavailable
+	}
+	target, err := s.store.AccountByID(r.Context(), accountID)
+	if err != nil {
+		return unavailable
+	}
+	panel := &supportportal.CustomerContext{AccountID: target.ID, Plan: string(target.Plan), Status: string(target.Status)}
+	if orgID != "" {
+		if org, err := s.store.OrgByID(r.Context(), orgID); err == nil {
+			panel.OrgSlug = org.Slug
+		}
+	}
+	if apps, err := s.store.ListApps(r.Context(), target.ID); err == nil {
+		panel.Apps = len(apps)
+	}
+	month := time.Now().UTC()
+	month = time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
+	billing, err := projectObsTenantBilling(r, s.store, s.billingProvider, target, month)
+	if err != nil {
+		billing = api.ObsTenantBilling{}
+	}
+	panel.Diagnosis = s.buildTenantDiagnosis(r.Context(), target, billing)
+	return panel
 }
 
 func (s *server) supportPortalToken(w http.ResponseWriter, account string) (string, error) {

@@ -35919,6 +35919,42 @@ CREATE TABLE public.custom_domains (
 
 
 --
+-- Name: customer_api_errors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_api_errors (
+    id bigint NOT NULL,
+    account_id uuid NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    route text NOT NULL,
+    code text NOT NULL,
+    app_slug text DEFAULT ''::text NOT NULL,
+    request_id text DEFAULT ''::text NOT NULL,
+    trace_id text DEFAULT ''::text NOT NULL,
+    CONSTRAINT customer_api_errors_app_slug_check CHECK ((octet_length(app_slug) <= 63)),
+    CONSTRAINT customer_api_errors_code_check CHECK (((octet_length(code) >= 1) AND (octet_length(code) <= 80))),
+    CONSTRAINT customer_api_errors_occurred_at_check CHECK (isfinite(occurred_at)),
+    CONSTRAINT customer_api_errors_request_id_check CHECK ((octet_length(request_id) <= 128)),
+    CONSTRAINT customer_api_errors_route_check CHECK (((octet_length(route) >= 1) AND (octet_length(route) <= 200))),
+    CONSTRAINT customer_api_errors_trace_id_check CHECK (((trace_id = ''::text) OR (trace_id ~ '^[0-9a-f]{32}$'::text)))
+);
+
+
+--
+-- Name: customer_api_errors_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.customer_api_errors ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.customer_api_errors_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: customer_operation_approval_forms; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -63563,6 +63599,14 @@ ALTER TABLE ONLY public.custom_domains
 
 
 --
+-- Name: customer_api_errors customer_api_errors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_api_errors
+    ADD CONSTRAINT customer_api_errors_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: customer_operation_approval_forms customer_operation_approval_for_app_id_scope_operation_step_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -76855,6 +76899,34 @@ CREATE INDEX custom_domains_unverified_idx ON public.custom_domains USING btree 
 --
 
 CREATE INDEX custom_domains_verification_due_idx ON public.custom_domains USING btree (verification_next_check_at, app_id) WHERE (verified_at IS NULL);
+
+
+--
+-- Name: customer_api_errors_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_api_errors_account_idx ON public.customer_api_errors USING btree (account_id, occurred_at DESC);
+
+
+--
+-- Name: customer_api_errors_age_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_api_errors_age_idx ON public.customer_api_errors USING btree (occurred_at);
+
+
+--
+-- Name: customer_api_errors_request_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_api_errors_request_idx ON public.customer_api_errors USING btree (request_id) WHERE (request_id <> ''::text);
+
+
+--
+-- Name: customer_api_errors_trace_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_api_errors_trace_idx ON public.customer_api_errors USING btree (trace_id) WHERE (trace_id <> ''::text);
 
 
 --
@@ -96538,6 +96610,14 @@ ALTER TABLE ONLY public.custom_domains
 
 ALTER TABLE ONLY public.custom_domains
     ADD CONSTRAINT custom_domains_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: customer_api_errors customer_api_errors_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_api_errors
+    ADD CONSTRAINT customer_api_errors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

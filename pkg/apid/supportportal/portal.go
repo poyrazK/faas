@@ -25,6 +25,21 @@ type Handler struct {
 	// Submit must preserve the API's session, origin and staff step-up gates.
 	Submit func(http.ResponseWriter, *http.Request, string, bool)
 	Render func(http.ResponseWriter, *http.Request, Data)
+	// Customer, when set, loads the account panel shown beside a staff
+	// ticket (ADR-20261112170000). It runs only after Portal authorized the
+	// staff actor for that ticket.
+	Customer func(*http.Request, *support.StaffTicket) *CustomerContext
+}
+
+// CustomerContext is the staff ticket's account panel: who the customer is
+// and why their account may not be working. It carries no email.
+type CustomerContext struct {
+	AccountID, OrgSlug, Plan, Status string
+	Apps                             int
+	Diagnosis                        api.ObsTenantDiagnosis
+	// Unavailable means the panel could not be loaded; the ticket page
+	// still renders.
+	Unavailable bool
 }
 
 type Data struct {
@@ -35,6 +50,7 @@ type Data struct {
 	NextNotifications                     string
 	Filters                               url.Values
 	Form                                  url.Values
+	Customer                              *CustomerContext
 	Keys                                  map[string]string
 	Updated, StepUp                       bool
 	SubjectMax, BodyMax, ReasonMax        int
@@ -55,6 +71,9 @@ func (h Handler) Serve(w http.ResponseWriter, r *http.Request, actor support.Act
 		return
 	}
 	d := newData(r, actor.ID, staff, view)
+	if staff && view.StaffTicket != nil && h.Customer != nil {
+		d.Customer = h.Customer(r, view.StaffTicket)
+	}
 	status := http.StatusOK
 	if r.Method == http.MethodPost {
 		var done bool

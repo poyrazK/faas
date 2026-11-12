@@ -1,3 +1,4 @@
+// adr: 079 — amendment 1: a raw TCP routed port also skips plan-default HTTP liveness (ADR-20261027090000).
 package sched_test
 
 import (
@@ -46,6 +47,11 @@ func TestRawTCPRoutedPortDropsTheDefaultHealthPath(t *testing.T) {
 			path, grpc, _ := sched.StartupProbeForApp(dep, app)
 			if path != tc.wantPath || grpc {
 				t.Fatalf("probe = (%q, grpc=%v), want %q", path, grpc, tc.wantPath)
+			}
+			// ADR-079 amendment 1: TCP readiness on the raw TCP listener
+			// also tells vmmd to skip the plan-default HTTP liveness probe.
+			if got, want := sched.RoutedPortRawTCPForApp(dep, app, path, grpc), tc.wantPath == ""; got != want {
+				t.Fatalf("routed port raw TCP = %v, want %v", got, want)
 			}
 		})
 	}

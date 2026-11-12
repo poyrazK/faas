@@ -42,6 +42,23 @@ Copy any draft before reloading. Pages use `Cache-Control: no-store`. The custom
 preview flag also gates the portal routes; staff access uses the independent live
 roster checks.
 
+### Customer account panel
+
+A staff ticket page shows a **Customer account** panel beside the conversation
+(ADR-20261112170000): the account id, organization, plan, status and app count,
+current restrictions (suspension, abuse holds, unverified email, overage cap,
+platform release pause), failed deployments from the last 7 days with their error,
+custom domain problems, enabled previews, and the API errors the customer was
+refused in the last 24 hours, counted by problem code. For an organization case
+the panel describes the member who opened it. The panel never shows an email and
+loads only after the roster check for the ticket; if it cannot be loaded the
+conversation still works.
+
+Operators get the same diagnosis with `gregalectl accounts 360 --account-id <id>`,
+and can find the account behind an email, app slug, app or custom-domain URL,
+account/app/deployment id, request id or trace id with
+`gregalectl accounts find <identifier>`.
+
 ### Notifications and unread updates
 
 Support pages show an Updates feed, a scoped unread total and per-conversation
