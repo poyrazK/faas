@@ -216,6 +216,18 @@ Each step is one PR behind the `agents` capability.
      - The publish is idempotent and the link is marked after it, so a run's end lands once.
      - A thread that can no longer receive it gets nothing: revoked since the call, its endpoint deleted, or its account without `agents`. The run itself still finishes; revoking a thread does not cancel its runs.
    - **Next.** The template sends the app's workload token with platform tool invocations, and its scripted model learns to call `gregale_run`.
+
+   **Step 5, part five (2026-11-12): `gregale_github_subscribe`.**
+   - **Arguments.** `repository` (`owner/name`), and optionally `events`, the `pull_request` actions githubd forwards (`opened`, `reopened`, `synchronize`, `ready_for_review`, `closed`; all of them by default), and `until`, an RFC 3339 time at most `AgentGitHubSubscriptionMaxSeconds` (30 days) ahead, which is also the default.
+   - **The app's credential.** A subscription reads the account's GitHub events, so the invocation needs the app's workload token or an API key with `deploy:write`, as `gregale_run` does. A callback URL alone gets a 401.
+   - **The subscription is a row.** `agent_github_subscriptions` (a new table, expand) records the call's endpoint, thread, call ID, repository, event types, the callback URL's issue time and the expiry. One row per call, so a retried invocation finds its subscription. An endpoint has at most `AgentGitHubSubscriptionsPerEndpoint` (64) live subscriptions in preview; past it, the refusal is the call's tool result. Rows are deleted a day after they expire.
+   - **The answer.** The call is answered at once with a RAP tool result marked `subscription: true`, naming the event types, repository and expiry.
+   - **Events.** When githubd forwards a `pull_request` delivery and apid publishes it as a `gregale.github` event (ADR-20261027090010 §9), apid also publishes it to every live subscription of the installation's account to that repository and event type.
+     - Each one gets a RAP `subscription_event` for its call, whose text is JSON: the event type, the delivery ID and the bounded event. The event has no pull request body or diff.
+     - The message ID derives from the delivery and the subscription. A failed publish fails the delivery, githubd retries it, and the event lands once per thread.
+     - A thread revoked since the call gets nothing, as does one whose endpoint is gone or whose account lost `agents`.
+     - Events reach an account only from its own installations, so a subscription to a repository the account cannot see never fires.
+   - **Not built.** No `final` event is sent when a subscription expires: it simply stops. Subscribing again extends the watch.
 6. Preview on the dogfood account, then the seller beta with harness runs (ADR-20261027090010 milestone B).
 
 ## Open questions
