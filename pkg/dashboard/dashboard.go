@@ -3442,7 +3442,9 @@ type UpgradeOption struct {
 // (mirrors the account delete confirmation) instead of sharing the
 // billing page with the spend-cap form.
 type UpgradeData struct {
-	CurrentPlan string
+	CurrentPlan              string
+	SalespersonCodeAvailable bool
+	ExistingReferralCode     string
 	// Target is nil when ?plan= is missing or not an eligible upgrade;
 	// the template then renders Options as a chooser.
 	Target  *UpgradeOption
@@ -3558,7 +3560,9 @@ type APIKeyItem struct {
 
 // AccountData is the /dashboard/account page payload.
 type AccountData struct {
-	Keys []APIKeyItem
+	ReferralsEnabled bool
+	SalesEnabled     bool
+	Keys             []APIKeyItem
 	// KeyDeleteConfirmToken is shared by the account page's key-revoke
 	// forms. Its sidecar uses a dedicated cookie name so it can coexist
 	// with the account-delete and GitHub-connect CSRF tokens rendered on

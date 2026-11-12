@@ -123,6 +123,27 @@ var previewFields = map[string]map[string]bool{
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	"GET /v1/referrals/checkout":                              true, // private browser checkout hint; mounted in sales.go
+	"GET /v1/sales/templates":                                 true, // private sales message tools; session authentication
+	"POST /v1/sales/templates":                                true,
+	"GET /v1/sales/templates/{template}":                      true,
+	"PUT /v1/sales/templates/{template}":                      true,
+	"GET /v1/sales/leads/{lead}/templates/{template}/preview": true,
+
+	"GET /v1/sales/qualification":              true, // private qualification and closing analysis
+	"GET /v1/sales/leads/{lead}/qualification": true,
+	"PUT /v1/sales/leads/{lead}/qualification": true,
+
+	"GET /v1/sales/alerts":                   true, // private sales attention and history
+	"GET /v1/sales/leads/{lead}/activities":  true,
+	"POST /v1/sales/leads/{lead}/activities": true,
+
+	"GET /v1/sales/inquiries/challenge":            true, // website intake; x-internal contract
+	"POST /v1/sales/inquiries":                     true,
+	"GET /v1/sales/inquiries":                      true, // private sales inbox
+	"PUT /v1/sales/inquiries/{inquiry}/assignment": true,
+	"PUT /v1/sales/inquiries/{inquiry}/close":      true,
+
 	// ADR-20261112134100: private staff inbox metadata; public customer counterparts remain documented.
 	"GET /v1/admin/support/notifications":                                         true,
 	"POST /v1/admin/support/tickets/{ticket}/read":                                true,

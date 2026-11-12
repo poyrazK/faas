@@ -650,6 +650,12 @@ export class AccountService {
    * pays for another account or organization answers 409
    * `billing_email_in_use`.
    *
+   * The optional `salesperson_code` requires a verified browser session and
+   * applies only before the first paid personal-account purchase. Invalid or
+   * unavailable codes return 400; an existing different referral or prior
+   * paid purchase returns 409. A saved referral survives checkout retries
+   * and provider failures. Only a confirmed invoice payment earns credit.
+   *
    * Asking for the plan the account already pays for keeps its
    * subscription: a scheduled cancellation or downgrade is undone and the
    * 200 carries `plan_change_status: scheduled_change_undone`. A

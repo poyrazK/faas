@@ -45,6 +45,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
+	"github.com/onebox-faas/faas/pkg/apid/sales"
 	"github.com/onebox-faas/faas/pkg/apid/support"
 
 	"github.com/onebox-faas/faas/pkg/apid/storedworkflowconsole"
@@ -129,6 +130,7 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
+	sales           sales.Service
 	customerSupport *support.Service
 	// customerErrors records API problems returned to customers
 	// (ADR-20261112170000); nil without PostgreSQL.
@@ -1822,6 +1824,7 @@ func (noopNotifier) WaitFor(_ context.Context, _ string, _ func(payload string) 
 // New routes append here; do not introduce per-feature sub-muxes.
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
+	s.salesRoutes(mux)
 	s.registerCustomerSupportRoutes(mux)
 
 	// Company project operations registered only under /v1/projects/{slug}
@@ -5254,7 +5257,7 @@ func (s *server) handler() http.Handler {
 	}, s.fromTrustedOrigin(browserAuthForm(http.HandlerFunc(s.postLoginEmail), auth.finishBrowserLogin))))
 	mux.Handle("POST /signup", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
-	}, s.fromTrustedOrigin(http.HandlerFunc(s.postSignup))))
+	}, s.fromTrustedOrigin(s.sales.WithSignupCode(http.HandlerFunc(s.postSignup)))))
 	// GET renders the form the sign-in page's "Forgot password?" link opens
 	// (it was 405, production hunt #8).
 	mux.Handle("GET "+forgotPasswordPath, s.dashboardAuthChain(middleware.AuthLimitConfig{
@@ -5319,16 +5322,17 @@ func (s *server) handler() http.Handler {
 	// bucket as /login.
 	mux.Handle("POST /v1/auth/signup", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
-	}, s.fromTrustedOrigin(http.HandlerFunc(s.postV1AuthSignup))))
+	}, s.fromTrustedOrigin(s.sales.WithSignupCode(http.HandlerFunc(s.postV1AuthSignup)))))
 	mux.Handle("POST /v1/auth/login", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, s.fromTrustedOrigin(http.HandlerFunc(s.postV1AuthLogin))))
+	mux.Handle("POST /v1/referrals/selection", s.dashboardAuthChain(middleware.AuthLimitConfig{CountStatuses: []int{middleware.CountEveryAttempt}}, s.fromTrustedOrigin(http.HandlerFunc(s.sales.SelectCode))))
 	mux.Handle("POST /login/magic-link", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
-	}, s.fromTrustedOrigin(browserAuthForm(http.HandlerFunc(s.postV1AuthSignupMagicLink), auth.finishBrowserMagicLink))))
+	}, s.fromTrustedOrigin(s.sales.WithSignupCode(browserAuthForm(http.HandlerFunc(s.postV1AuthSignupMagicLink), auth.finishBrowserMagicLink)))))
 	mux.Handle("POST /v1/auth/signup/magic-link", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
-	}, http.HandlerFunc(s.postV1AuthSignupMagicLink)))
+	}, s.sales.WithSignupCode(http.HandlerFunc(s.postV1AuthSignupMagicLink))))
 	// A logout must come from Gregale itself: a sibling app host could
 	// otherwise post it to drop the __Host- session and leave a legacy
 	// faas_sid it planted to be read next (security audit 2026-10-27).
@@ -5890,7 +5894,7 @@ func (s *server) handler() http.Handler {
 	orgProjectInner = inner
 	return middleware.RequestID(httpsec.Static(httpsec.Nonce(
 		func(*http.Request) bool { return true },
-		s.observeWrap(inner),
+		s.observeWrap(s.sales.HideDisabled(inner)),
 	)))
 }
 
