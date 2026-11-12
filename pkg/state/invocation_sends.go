@@ -141,9 +141,10 @@ func invocationCompletion(inv Invocation, send InvocationSend) (Invocation, bool
 // enqueueInvocationCompletionTx enqueues inv's completion invocation in its
 // terminal transition's transaction.
 func enqueueInvocationCompletionTx(ctx context.Context, tx pgx.Tx, inv Invocation) error {
-	id, err := operationUUID(inv.ID)
-	if err != nil {
-		return nil
+	id, idErr := operationUUID(inv.ID)
+	if idErr != nil {
+		// Only uuid-keyed invocations can have a send record.
+		return nil //nolint:nilerr // a non-uuid id has no invocation_sends row
 	}
 	row, err := sqlc.New().GetInvocationSend(ctx, tx, id)
 	if errors.Is(err, pgx.ErrNoRows) {

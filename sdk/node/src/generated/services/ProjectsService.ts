@@ -31,6 +31,7 @@ import type { EnvironmentGitSource } from '../models/EnvironmentGitSource.js';
 import type { EnvironmentGitSourceUpdate } from '../models/EnvironmentGitSourceUpdate.js';
 import type { EnvironmentPromotionReceipt } from '../models/EnvironmentPromotionReceipt.js';
 import type { EnvironmentRollbackReceipt } from '../models/EnvironmentRollbackReceipt.js';
+import type { ExtendProjectEnvironmentBranchRequest } from '../models/ExtendProjectEnvironmentBranchRequest.js';
 import type { ListEnvironmentGitReleasesResponse } from '../models/ListEnvironmentGitReleasesResponse.js';
 import type { PlanResponse } from '../models/PlanResponse.js';
 import type { PrepareProjectRollbackRequest } from '../models/PrepareProjectRollbackRequest.js';
@@ -1204,6 +1205,142 @@ export class ProjectsService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `Branches are unavailable.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Show an environment branch.
+   * Reports the branch's parent, branch point, expiry, data state, the
+   * managed PostgreSQL copies it owns, and each workload with its URL in
+   * the branch and its deployment there. A workload with no live
+   * deployment in the branch reports `starting`.
+   *
+   * @returns ProjectEnvironmentResponse The branch.
+   * @throws ApiError
+   */
+  public static getProjectEnvironmentBranch({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project that owns the branch to show.
+     */
+    slug: string,
+    /**
+     * The environment branch to show.
+     */
+    environment: string,
+  }): CancelablePromise<ProjectEnvironmentResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/branch',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `Branches are unavailable, so the branch cannot be shown.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Move an environment branch's expiry.
+   * Sets the branch's expiry to now plus `ttl`, earlier or later. A branch
+   * lives at most 30 days after its creation; a branch with managed
+   * PostgreSQL copies at most 7 days, so its copies stay in the plan's
+   * PostgreSQL branch allowance. The copies' expiry moves with the
+   * branch. A branch whose data is still being copied cannot be extended
+   * until its data is ready.
+   *
+   * @returns ProjectEnvironmentResponse The branch with its new expiry.
+   * @throws ApiError
+   */
+  public static extendProjectEnvironmentBranch({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project that owns the branch to extend.
+     */
+    slug: string,
+    /**
+     * The environment branch to extend.
+     */
+    environment: string,
+    requestBody: ExtendProjectEnvironmentBranchRequest,
+  }): CancelablePromise<ProjectEnvironmentResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/branch/extend',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `Branches are unavailable, the expiry is past the branch's longest lifetime, or its data is still being copied.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Make an environment branch again from its parent.
+   * Deletes the branch and creates it again from its parent with the same
+   * slug, egress, private-network mode and time to live. Its workloads
+   * are published from the parent's current builds and its data is copied
+   * again as of now. Work done in the branch is discarded, and its
+   * workloads get new URLs. A branch with branches of its own cannot be
+   * reset.
+   *
+   * @returns ProjectEnvironmentResponse The new branch and its workloads.
+   * @throws ApiError
+   */
+  public static resetProjectEnvironmentBranch({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project that owns the branch to reset.
+     */
+    slug: string,
+    /**
+     * The environment branch to reset.
+     */
+    environment: string,
+  }): CancelablePromise<ProjectEnvironmentResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/branch/reset',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `The caller may not branch the parent.`,
+        404: `code: not_found`,
+        409: `Branches are unavailable, or the branch has branches of its own.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
