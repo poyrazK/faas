@@ -290,6 +290,119 @@ func TestHandlers_AgentUndoScalingAndPrewarm(t *testing.T) {
 	}
 }
 
+// Undoing an agent's rollback rolls the app back to the deployment that
+// served before it, once the agent's has started serving; while it starts,
+// undo leaves it and says why.
+func TestHandlers_AgentUndoRollback(t *testing.T) {
+	srv, store := apidserver.NewCliAuthTestServer(t)
+	defer apidserver.WithTestRollbackArtifacts(t, srv)()
+	ctx := t.Context()
+	acct, err := store.CreateAccount(ctx, "undo-deploy@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "deploy-svc", Type: state.AppTypeApp, Status: state.AppActive, RAMMB: 512, MaxConcurrency: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := func(digit string, at time.Time) state.Deployment {
+		t.Helper()
+		d, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:" + strings.Repeat(digit, 64), Kind: state.DeploymentKindImage, Status: state.DeployBuilding, CreatedAt: at})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetDeploymentRootfs(ctx, d.ID, "/srv/fc/apps/deploy-svc/"+d.ID+".ext4", "apps/deploy-svc/"+d.ID+".ext4", 1); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	now := time.Now().UTC()
+	older, current := seed("a", now.Add(-time.Hour)), seed("b", now)
+	for _, step := range []func() error{
+		func() error { return store.MarkDeploymentLive(ctx, older.ID) },
+		func() error { return store.MarkDeploymentLive(ctx, current.ID) },
+		func() error { return store.MarkDeploymentSuperseded(ctx, older.ID) },
+	} {
+		if err := step(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mint := func(label string, scopes ...string) (string, state.APIKey) {
+		t.Helper()
+		plaintext, hash, err := api.GenerateAPIKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		key, err := store.CreateAPIKey(ctx, acct.ID, hash, label, scopes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return plaintext, key
+	}
+	agent, agentKey := mint("deploy-agent", api.ScopeAgent, api.ScopeAppsRead, api.ScopeDeployWrite)
+	if err := store.SetAPIKeyApprovalCategories(ctx, agentKey.ID, []string{}); err != nil {
+		t.Fatal(err)
+	}
+	owner, _ := mint("deploy-admin", api.ScopeAdmin)
+	call := func(key, method, path, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+key)
+		if body != "" {
+			r.Header.Set("Content-Type", "application/json")
+		}
+		srv.ServeHTTP(rec, r)
+		return rec
+	}
+	if rec := call(agent, http.MethodPost, "/v1/apps/deploy-svc/rollback", `{"target_deployment_id":"`+older.ID+`"}`); rec.Code != http.StatusAccepted {
+		t.Fatalf("agent rollback = %d %s", rec.Code, rec.Body)
+	}
+	undoPath := "/v1/agent-connections/" + agentKey.ID + "/undo"
+	plan := func() api.AgentUndoPlan {
+		t.Helper()
+		var out api.AgentUndoPlan
+		if rec := call(owner, http.MethodPost, undoPath+"/plan", `{}`); rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
+			t.Fatalf("plan = %d %s", rec.Code, rec.Body)
+		}
+		return out
+	}
+	apply := func(digest string) api.AgentUndoResult {
+		t.Helper()
+		var out api.AgentUndoResult
+		body, _ := json.Marshal(api.AgentUndoRequest{PlanDigest: digest})
+		if rec := call(owner, http.MethodPost, undoPath, string(body)); rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
+			t.Fatalf("apply = %d %s", rec.Code, rec.Body)
+		}
+		return out
+	}
+
+	// While the agent's rollback starts, undo leaves it.
+	starting := plan()
+	if len(starting.Items) != 1 || starting.Items[0].Kind != api.AgentUndoKindDeploy || !strings.Contains(starting.Items[0].Reason, "still starting") {
+		t.Fatalf("plan while starting = %+v", starting.Items)
+	}
+	if res := apply(starting.PlanDigest); res.Undone != 0 || res.Failed != 1 || !strings.Contains(res.Items[0].Error, "still starting") {
+		t.Fatalf("apply while starting = %+v", res.Items)
+	}
+
+	// Once it serves, undo rolls back to the deployment before it.
+	for _, step := range []func() error{
+		func() error { return store.MarkDeploymentLive(ctx, older.ID) },
+		func() error { return store.MarkDeploymentSuperseded(ctx, current.ID) },
+	} {
+		if err := step(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	served := plan()
+	if res := apply(served.PlanDigest); res.Undone != 1 || res.Failed != 0 {
+		t.Fatalf("apply once served = %+v", res.Items)
+	}
+	if d, err := store.DeploymentByID(ctx, current.ID); err != nil || d.Status == state.DeploySuperseded {
+		t.Fatalf("the earlier deployment after undo = %+v, %v; want it starting again", d.Status, err)
+	}
+}
+
 func newUUID(t *testing.T) string {
 	t.Helper()
 	return uuid.NewString()

@@ -83,6 +83,24 @@ Settings and capacity in detail (slice 1):
 - **Secrets:** not undoable. Gregale keeps no copy of a replaced secret; the
   plan says to set it again.
 
+Deploys and rollbacks in detail (slice 2): the capture records the
+deployment that served before the agent's deploy or rollback and the one the
+agent's request started (its answer). Undo then looks at the app as it is:
+
+- the agent's new deployment is still being built: cancel it;
+- it serves: roll back to the deployment that served before;
+- it never served and is over (failed, cancelled): nothing to do;
+- another deployment serves now: changed since, left unless forced (forced,
+  roll back to the one before the agent);
+- the agent's deployment shares traffic in a canary, or the agent's rollback
+  is still starting: left, with the reason; undo again later. A rollback
+  target is never cancelled.
+
+An app that served nothing before the agent's first deploy has nothing to
+return to; that deploy is not undoable (park or delete the app). Promotes,
+canary advances and traffic changes name only a deployment and are not
+undoable yet.
+
 Undo goes through apid's own handlers, as the person who undoes (§4), so
 ownership is unchanged: apid writes intent tables, schedd still owns
 instances, and a rollback is a normal rollback.

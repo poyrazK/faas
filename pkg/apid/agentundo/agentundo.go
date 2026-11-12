@@ -48,6 +48,9 @@ type Inverse struct {
 	NewRequestID bool `json:"new_request_id,omitempty"`
 	// GoneIsDone treats a 404 answer as nothing left to undo.
 	GoneIsDone bool `json:"gone_is_done,omitempty"`
+	// Deploy, when set, undoes a deploy or rollback by the app's state at
+	// apply time instead of sending Method and Path as they are.
+	Deploy *DeployUndo `json:"deploy,omitempty"`
 }
 
 // Check kinds.
@@ -89,7 +92,6 @@ const (
 	reasonNoRevision   = "there is no earlier configuration revision to return to"
 	reasonNothing      = "the request changed nothing"
 )
-
 
 func is2xx(status int) bool { return status >= 200 && status < 300 }
 

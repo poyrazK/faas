@@ -41,15 +41,19 @@ type beginFunc func(ctx context.Context, p *Pending, r *http.Request)
 // routes are the agent writes Gregale can undo, or knows it cannot, by
 // route pattern. A write on any other route is recorded as not undoable.
 var routes = map[string]beginFunc{
-	"PATCH /v1/apps/{slug}":                     beginAppSettings,
-	"POST /v1/apps/{slug}/scaling":              beginScaling,
-	"POST /v1/apps/{slug}/prewarm":              beginPrewarm,
-	"PUT /v1/apps/{slug}/env/{key}":             beginEnv,
-	"DELETE /v1/apps/{slug}/env/{key}":          beginEnv,
-	"POST /v1/apps/{slug}/env/batch":            beginEnv,
-	"PUT /v1/apps/{slug}/secrets/{key}":         beginSecret,
-	"DELETE /v1/apps/{slug}/secrets/{key}":      beginSecret,
-	"POST /v1/apps/{slug}/secrets/{key}/rotate": beginSecret,
+	"PATCH /v1/apps/{slug}":                       beginAppSettings,
+	"POST /v1/apps/{slug}/scaling":                beginScaling,
+	"POST /v1/apps/{slug}/prewarm":                beginPrewarm,
+	"PUT /v1/apps/{slug}/env/{key}":               beginEnv,
+	"DELETE /v1/apps/{slug}/env/{key}":            beginEnv,
+	"POST /v1/apps/{slug}/env/batch":              beginEnv,
+	"POST /v1/apps/{slug}/deployments":            beginDeploy,
+	"POST /v1/apps/{slug}/deployments/source-ref": beginDeploy,
+	"POST /v1/apps/{slug}/deployments/dev-source": beginDeploy,
+	"POST /v1/apps/{slug}/rollback":               beginDeploy,
+	"PUT /v1/apps/{slug}/secrets/{key}":           beginSecret,
+	"DELETE /v1/apps/{slug}/secrets/{key}":        beginSecret,
+	"POST /v1/apps/{slug}/secrets/{key}/rotate":   beginSecret,
 }
 
 // Routes lists the route patterns with a capture, for tests that check

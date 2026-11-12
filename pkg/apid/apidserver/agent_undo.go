@@ -28,6 +28,9 @@ func (s *server) agentUndoHandlers() map[string]accountHandler {
 		"DELETE /v1/apps/{slug}/prewarms/{id}":            s.cancelPrewarm,
 		"GET /v1/apps/{slug}/config/revisions":            s.listConfigRevisions,
 		"GET /v1/apps/{slug}/config/revisions/{revision}": s.getConfigRevision,
+		"GET /v1/apps/{slug}/deployments":                 s.listAppDeployments,
+		"POST /v1/apps/{slug}/deployments/{id}/cancel":    s.handleCancelDeployment,
+		"POST /v1/apps/{slug}/rollback":                   s.rollbackApp,
 		"POST /v1/apps/{slug}/config/rollback":            s.rollbackConfig,
 	}
 }

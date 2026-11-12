@@ -21,3 +21,16 @@ func AgentUndoHandlerPatternsForTest(t *testing.T, srv http.Handler) []string {
 	sort.Strings(out)
 	return out
 }
+
+// WithTestRollbackArtifacts lets rollbacks on the cli-auth test server find
+// their artifacts.
+func WithTestRollbackArtifacts(t *testing.T, srv http.Handler) func() {
+	t.Helper()
+	h, ok := srv.(*cliAuthTestServer)
+	if !ok {
+		t.Fatal("WithTestRollbackArtifacts: unexpected handler type")
+	}
+	previous := h.apid.rollbackArtifactVerifier
+	h.apid.WithRollbackArtifactVerifier(stubRollbackArtifactVerifier{})
+	return func() { h.apid.rollbackArtifactVerifier = previous }
+}

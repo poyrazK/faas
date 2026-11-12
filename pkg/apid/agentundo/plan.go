@@ -84,6 +84,9 @@ func (p planned) resourceKey() string {
 	if r := p.chk.resource(); r != "" {
 		return r
 	}
+	if p.inv != nil && p.inv.Deploy != nil {
+		return p.inv.Deploy.App + "#deployments"
+	}
 	if p.inv != nil {
 		return p.inv.Path
 	}
@@ -95,6 +98,10 @@ func (e *Engine) applyOne(ctx context.Context, base *http.Request, acct state.Ac
 	if blocked[resource] {
 		item.Result = api.AgentUndoResultSkipped
 		item.Reason = "a newer change to the same resource was not undone"
+		return
+	}
+	if p.inv.Deploy != nil {
+		e.applyDeployOne(ctx, base, acct, p, force, blocked, item)
 		return
 	}
 	same, revision := e.check(ctx, base, acct, p.chk)
@@ -114,6 +121,31 @@ func (e *Engine) applyOne(ctx context.Context, base *http.Request, acct state.Ac
 	gone := status == http.StatusNotFound && p.inv.GoneIsDone
 	if !is2xx(status) && !gone {
 		blocked[resource] = true
+		item.Result = api.AgentUndoResultFailed
+		item.ErrorCode, item.Error = problemOf(status, answer)
+		return
+	}
+	if _, err := e.Store.MarkAgentUndone(ctx, p.rec.ID, acct.ID); err != nil {
+		item.Result, item.ErrorCode, item.Error = api.AgentUndoResultFailed, "undo_not_recorded", "the change was undone but could not be marked undone"
+		return
+	}
+	item.Result, item.Status = api.AgentUndoResultUndone, api.AgentUndoUndone
+}
+
+func (e *Engine) applyDeployOne(ctx context.Context, base *http.Request, acct state.Account, p planned, force bool, blocked map[string]bool, item *api.AgentUndoItem) {
+	status, answer, why := e.applyDeploy(ctx, base, acct, p.inv.Deploy, force)
+	switch {
+	case why == "changed_since":
+		blocked[p.resourceKey()] = true
+		item.Result, item.Status = api.AgentUndoResultChangedSince, api.AgentUndoChangedSince
+		item.Reason = "another deployment serves now; undo with force to roll back anyway"
+		return
+	case why != "":
+		blocked[p.resourceKey()] = true
+		item.Result, item.ErrorCode, item.Error = api.AgentUndoResultFailed, "undo_failed", why
+		return
+	case !is2xx(status):
+		blocked[p.resourceKey()] = true
 		item.Result = api.AgentUndoResultFailed
 		item.ErrorCode, item.Error = problemOf(status, answer)
 		return
@@ -213,6 +245,22 @@ func (e *Engine) status(ctx context.Context, base *http.Request, acct state.Acco
 			p.item.Status, p.item.Reason = api.AgentUndoNotUndoable, "the stored undo could not be read"
 			return p
 		}
+	}
+	if p.inv.Deploy != nil {
+		key := p.resourceKey()
+		if checked[key] {
+			return p
+		}
+		checked[key] = true
+		switch e.deployState(ctx, base, acct, p.inv.Deploy) {
+		case deployChangedSince:
+			p.item.Status, p.item.Reason = api.AgentUndoChangedSince, "another deployment serves now"
+		case deployCanary:
+			p.item.Reason = reasonCanary
+		case deployStarting:
+			p.item.Reason = reasonStarting
+		}
+		return p
 	}
 	resource := p.chk.resource()
 	if resource == "" || checked[resource] {
