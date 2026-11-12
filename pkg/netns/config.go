@@ -115,6 +115,9 @@ func SetDefaultHostBridgeIP(addr netip.Addr) {
 //	netns fc-<instance>:  vethPeer(10.100.x.y/16) ── [route/DNAT] ── tap0(10.0.0.1) ── guest(10.0.0.2)
 type Config struct {
 	RehearsalRunID string // immutable, retained run-scoped outbound containment (ADR-20261017201005)
+	// EnvironmentBranchContained installs the contained branch profile
+	// (ADR-20261031193635 section 7): its own drop-policy forward hook.
+	EnvironmentBranchContained bool
 	// PublicForwarding installs the generation-owned host route used by
 	// native-recovery bridge sockets pinned to the original veth ifindex.
 	PublicForwarding bool
@@ -758,6 +761,11 @@ func (c Config) NftCommands() [][]string {
 		if c.RehearsalRunID != "" && !c.QualificationOnly {
 			proxyPorts = append(proxyPorts, rehearsalPostgresProxyPort, rehearsalObjectProxyPort)
 		}
+		// ADR-20261031193635 slice 6c: only a contained branch guest reaches
+		// the bridge object relay; nobody else has a use for it.
+		if c.EnvironmentBranchContained {
+			proxyPorts = append(proxyPorts, api.EnvironmentBranchObjectRelayPort)
+		}
 		for _, port := range proxyPorts {
 			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(port), "accept")
@@ -1022,6 +1030,7 @@ func (c Config) NftCommands() [][]string {
 	}
 	cmds = append(cmds, c.privateConntrackPolicyCommands(nft)...)
 	cmds = append(cmds, c.RehearsalNftCommands()...)
+	cmds = append(cmds, c.EnvironmentBranchNftCommands()...)
 	cmds = append(cmds, c.GuestGuardCommands()...)
 	return cmds
 }

@@ -21,6 +21,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -63,6 +64,11 @@ const (
 	// there. Defaults and bounds are in pkg/api/limits.go.
 	KeySnapshotRefresh            = "snapshot_refresh"
 	KeySnapshotRefreshWindowHours = "snapshot_refresh_window_hours"
+	// KeyObjectInventoryQuiet is object_inventory_quiet: off, shadow or on
+	// (ADR-20261110151628 §2). apid validates and applies it; Postgres reads
+	// the applied value (object_inventory_quiet_mode()), so every daemon that
+	// admits object storage requests sees the same mode without a watcher.
+	KeyObjectInventoryQuiet = api.ObjectInventoryQuietConfigKey
 )
 
 // ApplyFunc installs one durable value into a daemon's local runtime state.

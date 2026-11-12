@@ -25232,6 +25232,15 @@ components:
           type: string
           format: date-time
           description: UTC month boundary at which shadow/live handling starts. Periods before it are never charged.
+        over_ceiling: {$ref: '#/components/schemas/ObjectStorageOverCeilingDeletion'}
+    ObjectStorageOverCeilingDeletion:
+      description: Present while the account stores more than its object-storage ceiling. Unless the account gets back under the ceiling first, Gregale deletes the excess on deletion_scheduled_at.
+      type: object
+      required: [over_ceiling_since, deletion_scheduled_at, excess_bytes]
+      properties:
+        over_ceiling_since: {type: string, format: date-time}
+        deletion_scheduled_at: {type: string, format: date-time}
+        excess_bytes: {type: integer, format: int64, minimum: 1, description: Bytes stored above the ceiling at the last check.}
     ObjectSignedRequest:
       description: Temporary bearer capability. Bucket object GET/HEAD/PUT URLs use the branded S3 gateway; a PUT URL dispatches at most one write. Multipart part URLs retain their separate contract. Do not log or persist URLs.
       type: object
@@ -28464,6 +28473,10 @@ components:
           maximum: 2000
           default: 500
           description: "Callback timeout in milliseconds; 0 uses the 500 ms default."
+        identity:
+          type: string
+          enum: [reload]
+          description: "reload lets an environment branch wake from the parent deployment's credential-free capture instead of a cold boot; the callback then re-reads config and reconnects under the branch's identity. Omit to cold-boot branches."
     BeforeCheckpointHook:
       description: "Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables warm snapshots; snapshot reuse skips the callback."
       type: object

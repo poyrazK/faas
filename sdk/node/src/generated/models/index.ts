@@ -512,6 +512,7 @@ export type { CreatePrivateNetworkRequest } from './CreatePrivateNetworkRequest.
 export type { CreateProfileCaptureRequest } from './CreateProfileCaptureRequest.js';
 export type { CreateProjectBindingVerificationRunRequest } from './CreateProjectBindingVerificationRunRequest.js';
 export type { CreateProjectEnvironmentApprovalRequest } from './CreateProjectEnvironmentApprovalRequest.js';
+export type { CreateProjectEnvironmentBranchRequest } from './CreateProjectEnvironmentBranchRequest.js';
 export type { CreateProjectEnvironmentQualificationRequest } from './CreateProjectEnvironmentQualificationRequest.js';
 export type { CreateProjectEnvironmentRequest } from './CreateProjectEnvironmentRequest.js';
 export type { CreateProjectMigrationRequest } from './CreateProjectMigrationRequest.js';
@@ -1592,6 +1593,7 @@ export type { ObjectStorageComputeBinding } from './ObjectStorageComputeBinding.
 export type { ObjectStorageComputeBindingList } from './ObjectStorageComputeBindingList.js';
 export type { ObjectStorageComputeBindingSecretKeys } from './ObjectStorageComputeBindingSecretKeys.js';
 export type { ObjectStorageComputeTrigger } from './ObjectStorageComputeTrigger.js';
+export type { ObjectStorageOverCeilingDeletion } from './ObjectStorageOverCeilingDeletion.js';
 export type { ObjectStoragePolicy } from './ObjectStoragePolicy.js';
 export type { ObjectStoragePricing } from './ObjectStoragePricing.js';
 export type { ObjectStorageReleaseRequirements } from './ObjectStorageReleaseRequirements.js';
@@ -2389,6 +2391,10 @@ export type { ProjectEnvironmentApprovalResponse } from './ProjectEnvironmentApp
 export type { ProjectEnvironmentApprovalStatusResponse } from './ProjectEnvironmentApprovalStatusResponse.js';
 export type { ProjectEnvironmentBindingChangeResponse } from './ProjectEnvironmentBindingChangeResponse.js';
 export type { ProjectEnvironmentBindingResponse } from './ProjectEnvironmentBindingResponse.js';
+export type { ProjectEnvironmentBranchListResponse } from './ProjectEnvironmentBranchListResponse.js';
+export type { ProjectEnvironmentBranchResponse } from './ProjectEnvironmentBranchResponse.js';
+export type { ProjectEnvironmentBranchSummary } from './ProjectEnvironmentBranchSummary.js';
+export type { ProjectEnvironmentBranchWorkload } from './ProjectEnvironmentBranchWorkload.js';
 export type { ProjectEnvironmentCloneOperationResponse } from './ProjectEnvironmentCloneOperationResponse.js';
 export type { ProjectEnvironmentCloneResourceResponse } from './ProjectEnvironmentCloneResourceResponse.js';
 export type { ProjectEnvironmentCloneResponse } from './ProjectEnvironmentCloneResponse.js';
@@ -2950,6 +2956,8 @@ export type { SecurityActivityEvent } from './SecurityActivityEvent.js';
 export type { SecurityActivityResponse } from './SecurityActivityResponse.js';
 export type { SecurityQuarantineRecoveryRequest } from './SecurityQuarantineRecoveryRequest.js';
 export type { SecurityQuarantineRecoveryResponse } from './SecurityQuarantineRecoveryResponse.js';
+export type { SeedDevSessionFromEnvironmentBranchRequest } from './SeedDevSessionFromEnvironmentBranchRequest.js';
+export type { SeedDevSessionFromEnvironmentBranchResponse } from './SeedDevSessionFromEnvironmentBranchResponse.js';
 export type { SelectedTraceApp } from './SelectedTraceApp.js';
 export type { SelectedTraceInvocation } from './SelectedTraceInvocation.js';
 export type { SelectedTraceLookupResponse } from './SelectedTraceLookupResponse.js';

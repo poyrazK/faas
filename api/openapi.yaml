@@ -21335,6 +21335,35 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/dev/sessions/{project}/seed:
+    parameters:
+      - name: project
+        in: path
+        required: true
+        description: Local project label of the developer session to seed, as for PUT /v1/dev/sessions/{project}.
+        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
+    post:
+      tags: [dev]
+      operationId: seedDevSessionFromEnvironmentBranch
+      summary: Seed a rehearsal member from a simulated environment branch.
+      description: Deploys one workload of a simulated environment branch into the developer session of a rehearsal run. The member reuses the branch deployment's build and gets the branch's variables and secrets; managed PostgreSQL and object-storage bindings are not copied, so the rehearsal declares isolated fixtures. The deployment goes live after one boot. Repeating the request returns the deployment already seeded.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SeedDevSessionFromEnvironmentBranchRequest' }
+      responses:
+        '202':
+          description: The member's deployment, priming or already live.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeedDevSessionFromEnvironmentBranchResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/dev/sessions/{project}/history:
     parameters:
       - name: project
@@ -38972,6 +39001,75 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/branches:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project that owns the environment.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: Parent environment to branch from or list branches of.
+        schema: { type: string }
+    post:
+      tags: [projects]
+      operationId: createProjectEnvironmentBranch
+      summary: Branch a project environment.
+      description: |
+        Creates a new environment that copies the parent's configuration and
+        publishes each of the parent's live workloads from its existing build.
+        Nothing starts until a workload is called: its first request starts it
+        cold. Each managed PostgreSQL database the parent binds is copied as of
+        the branch point and bound to the branch with new credentials; while
+        `branch.data` is `pending`, the branch's workloads wait for the copies.
+        The branch is deleted when its time to live ends. Parents that bind
+        managed object storage cannot be branched yet.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectEnvironmentBranchRequest' }
+      responses:
+        '201':
+          description: The branch exists and its workloads are published.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The plan's environment branch limit is reached.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Branches are unavailable, the slug is taken, the branch would be too deep, or the parent binds managed object storage.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    get:
+      tags: [projects]
+      operationId: listProjectEnvironmentBranches
+      summary: List the branches of a project environment.
+      responses:
+        '200':
+          description: The environment's direct branches.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentBranchListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Branches are unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}/environments/{environment}/gitops:
@@ -86796,6 +86894,15 @@ components:
           type: string
           format: date-time
           description: UTC month boundary at which shadow/live handling starts. Periods before it are never charged.
+        over_ceiling: { $ref: '#/components/schemas/ObjectStorageOverCeilingDeletion' }
+    ObjectStorageOverCeilingDeletion:
+      description: Present while the account stores more than its object-storage ceiling. Unless the account gets back under the ceiling first, Gregale deletes the excess on deletion_scheduled_at.
+      type: object
+      required: [over_ceiling_since, deletion_scheduled_at, excess_bytes]
+      properties:
+        over_ceiling_since: { type: string, format: date-time }
+        deletion_scheduled_at: { type: string, format: date-time }
+        excess_bytes: { type: integer, format: int64, minimum: 1, description: Bytes stored above the ceiling at the last check. }
     ObjectStorageUsageReport:
       description: Authoritative cumulative provider usage for one account, backend and UTC month. Missing data is not zero; costs are EUR millicents.
       type: object
@@ -95656,6 +95763,10 @@ components:
           maximum: 2000
           default: 500
           description: "Callback timeout in milliseconds; 0 uses the 500 ms default."
+        identity:
+          type: string
+          enum: [reload]
+          description: "reload lets an environment branch wake from the parent deployment's credential-free capture instead of a cold boot; the callback then re-reads config and reconnects under the branch's identity. Omit to cold-boot branches."
     BeforeCheckpointHook:
       description: "Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables warm snapshots; snapshot reuse skips the callback."
       type: object
@@ -108180,6 +108291,104 @@ components:
         cloned_from: { type: string }
         clone: { $ref: '#/components/schemas/ProjectEnvironmentCloneResponse' }
         clone_operation: { $ref: '#/components/schemas/ProjectEnvironmentCloneOperationResponse' }
+        branch: { $ref: '#/components/schemas/ProjectEnvironmentBranchResponse' }
+
+    SeedDevSessionFromEnvironmentBranchRequest:
+      description: "Deploys one workload of a simulated environment branch into a rehearsal member's developer session, reusing the branch's build."
+      type: object
+      required: [workspace_id, project, environment, workload]
+      properties:
+        workspace_id:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+          description: The rehearsal run's workspace ID.
+        project: { type: string, description: Slug of the project that owns the branch. }
+        environment: { type: string, description: Slug of the simulated branch environment. }
+        workload: { type: string, description: Workload name in the project. }
+    SeedDevSessionFromEnvironmentBranchResponse:
+      description: "The member's deployment, which goes live after one boot."
+      type: object
+      required: [app_slug, deployment_id, status]
+      properties:
+        app_slug: { type: string }
+        deployment_id: { type: string }
+        status: { type: string }
+
+    CreateProjectEnvironmentBranchRequest:
+      description: A new branch of the environment named in the path.
+      type: object
+      required: [slug]
+      properties:
+        slug:
+          type: string
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
+          description: Slug of the new environment.
+        ttl:
+          type: string
+          description: Time to live, a duration such as 24h between 1h and 720h. Defaults to 168h.
+        egress:
+          type: string
+          enum: [live, contained, simulated]
+          description: Outbound traffic from the branch. live (the default) behaves like a stage. contained reaches only the branch's own platform services (service calls inside the branch, the branch's managed PostgreSQL copies and the platform resolver) and takes no host-mediated action; it reaches the branch's own buckets through the platform's object relay, and a parent with object storage is refused where the operator has not enabled the relay. contained is available only where the operator enabled it. simulated is contained, and the branch can seed rehearsal members (POST /v1/dev/sessions/{project}/seed) whose side effects are simulated and recorded.
+        private_networks:
+          type: string
+          enum: ['off', join]
+          description: Whether the branch's instances join the private networks their workloads are attached to. off (the default) keeps them off, so a call to a private peer fails rather than reaching production. join attaches them with addresses of their own, never a workload's service address, so they can reach the parent's private peers; only a live branch may join.
+
+    ProjectEnvironmentBranchResponse:
+      description: How an environment branches from its parent.
+      type: object
+      required: [parent, branch_point, expires_at, egress, private_networks, depth, data]
+      properties:
+        parent: { type: string, description: Slug of the parent environment. }
+        branch_point: { type: string, format: date-time, description: The moment the branch copied its parent. }
+        expires_at: { type: string, format: date-time, description: When the branch is deleted. }
+        egress: { type: string }
+        private_networks: { type: string, enum: ['off', join], description: Whether the branch's instances join their workloads' private networks. }
+        depth: { type: integer, minimum: 1, description: 1 for a branch of an ordinary environment, 2 for a branch of a branch. }
+        data:
+          type: string
+          enum: [ready, pending, failed]
+          description: Whether the copies of the parent's managed PostgreSQL databases exist. The branch's workloads start only when this is ready.
+        data_error: { type: string, description: Why copying the parent's data failed or is being retried. }
+        workloads:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentBranchWorkload' }
+
+    ProjectEnvironmentBranchWorkload:
+      description: One workload the branch published from its parent's build. It starts on its first request.
+      type: object
+      required: [workload, deployment_id, source_deployment_id, status]
+      properties:
+        workload: { type: string }
+        deployment_id: { type: string }
+        source_deployment_id: { type: string, description: The parent deployment whose build the branch reuses. }
+        status: { type: string }
+
+    ProjectEnvironmentBranchListResponse:
+      description: "The branches of one parent environment."
+      type: object
+      required: [branches]
+      properties:
+        branches:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentBranchSummary' }
+
+    ProjectEnvironmentBranchSummary:
+      description: "One environment branch in a list."
+      type: object
+      required: [slug, parent, branch_point, expires_at, egress, private_networks, depth, data, created_at]
+      properties:
+        slug: { type: string }
+        parent: { type: string }
+        branch_point: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        egress: { type: string }
+        private_networks: { type: string, enum: ['off', join] }
+        depth: { type: integer, minimum: 1 }
+        data: { type: string, enum: [ready, pending, failed] }
+        data_error: { type: string }
+        created_at: { type: string, format: date-time }
 
     PutAppSecretReferenceRequest:
       description: Named sealed source selected within the exact registered project environment; contains no secret value.
