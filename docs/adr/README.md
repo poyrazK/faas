@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261112160000: Results of sent function calls, and Go typed clients](20261112160000-function-send-results-and-go-clients.md) — accepted; the sender is recorded on a sent invocation, which only it can read from its VM at `api.svc.gregale` (`wait()`/`status()`, long-poll), `send(..., {onComplete})` enqueues a completion invocation atomically at the terminal transition; gregale-go gets a `functions` client and generated structs, and Go callees check input
 - [ADR-20261112100408: Let local framework servers own source reload](20261112100408-local-framework-hmr-ownership.md) — accepted; preserve HMR processes and WebSockets on source edits, restart for validated launch inputs, and forward local bind flags through recognised dev scripts
 
 - [ADR-20261112110000: The SDKs are published to public repositories in the gregale-dev org](20261112110000-sdk-public-repositories.md) — accepted; this repository stays the source of truth and `scripts/sdk_mirror.py` publishes `sdk/go`, `sdk/node` and `sdk/python` to `gregale-dev/gregale-go`, `gregale-js` and `gregale-python` on every merge; Go module path `github.com/gregale-dev/gregale-go`; dark-launched and preview packages (Auth, Swift, Kotlin, Data, sandboxes) join at launch
