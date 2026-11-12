@@ -81,6 +81,25 @@ Refusals throw `StorageError` with the Data API's `code`, such as
 `storage_objects` with `createDataClient`, or follow the list with a live
 read.
 
+With the optional upload-session SQL installed, use `uploadResumable` to retain
+checksummed progress and a durable completion receipt. Save the session ID from
+`onSession`, then pass `sessionId` with the same file after an interruption.
+`getUpload` reconciles completion; `abortUpload` cancels unfinished work.
+`expectedVersion` accepts the version from `head()` or a previous upload, `null`
+for create-only, or omission for unconditional replacement. A conflict returns
+412; an unknown commit sets `StorageError.uncertain` and requires reconciliation.
+See [setup, limits and examples](../../docs/data-api/workflows.md#resumable-storage-and-upload-receipts).
+
+### Lossless numeric reads
+
+Generate types with `--numeric-mode lossless`, then pass
+`numericMode: 'lossless'` to `createDataClient`. Every JSON number becomes its
+original decimal string, including nested JSON and array elements. `liveRead`
+inherits the same codec. The serving fingerprint stays unchanged; ordinary
+clients retain number decoding. This is a read codec: decoded JSON columns do
+not retain the number-versus-string token distinction for subsequent writes.
+See [numeric examples](../../docs/data-api/workflows.md#exact-numeric-decoding).
+
 ### Live reads
 
 A live read is a Data API read whose result stays current: it arrives once,
@@ -123,6 +142,22 @@ The connection reconnects with backoff and resumes each read, keeping the
 last rows meanwhile. `status` is `connecting` (also while reconnecting),
 `live`, `stale` (the result could not be kept current, for example after a
 credential expired) or `closed`.
+
+For signed-in React reads, pass an `identityScope` that changes on login,
+tenant switches or authorization changes. This closes the old subscription and
+clears its rows immediately, including the render before effects run. Pass null
+options on logout. Token refresh for the same identity does not need a new scope;
+the token provider is called again. Never put a JWT in the scope value.
+
+```tsx
+const options = session ? {
+  database: DATABASE_ID,
+  identityScope: session.scope,
+  token: () => session.accessToken,
+  ...liveRead(db.from('notes').select('id,body')),
+} : null
+const { rows } = useLiveRead(connection, options)
+```
 
 ### Pin requests to the generated contract
 
