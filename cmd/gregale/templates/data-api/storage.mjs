@@ -167,6 +167,11 @@ export async function checkStorageTable(connection, schema) {
     const { rows } = await client.query(storageTableQuery, [schema, storageTable])
     const unsafe = unsafeStorageTable(rows[0])
     if (unsafe) throw new UnsafeConfiguration(`File storage is not installed: ${unsafe}`)
+    const registration = (await client.query('SELECT to_regprocedure($1)::oid AS oid', [`${schema}.gregale_storage_register_key(text,text)`])).rows[0].oid
+    if (!registration) return false
+    const allowed = (await client.query("SELECT has_function_privilege(current_user,$1::oid,'EXECUTE') AS allowed",[registration])).rows[0].allowed
+    if (!allowed) throw new UnsafeConfiguration('Storage maintenance requires EXECUTE on gregale_storage_register_key(text,text)')
+    return true
   } finally { await client.end() }
 }
 
@@ -196,6 +201,13 @@ function rows(ctx, { resource = storageTable, method, query = '', body, prefer, 
     if (payload) request.end(payload)
     else request.end()
   })
+}
+
+// Persist ownership before bytes leave the process, including orphaned PUTs.
+async function registerObject(ctx, key, signal) {
+  if (!ctx.config.storage.maintenance) return true
+  const result = await rows(ctx, { resource: 'rpc/gregale_storage_register_key', method: 'POST', body: { p_bucket: ctx.route.bucket, p_key: key }, token: await ctx.token(true), signal })
+  return result.status >= 200 && result.status < 300
 }
 
 // An eq filter takes the rest of the parameter as its value, so a percent-
@@ -299,6 +311,7 @@ async function upload(ctx) {
   const previous = current.status === 200 && Array.isArray(current.json) && current.json.length === 1 ? storedKey(current.json[0]) : null
   const binding = config.storage.buckets.get(route.bucket)
   return transfer(ctx, async signal => {
+    if (!await registerObject(ctx,key,signal)) return ctx.problem(res,503,'storage_maintenance_unavailable')
     let sent = 0
     req.on('data', chunk => { sent += chunk.length })
     let stored
@@ -413,7 +426,7 @@ async function remove(ctx) {
 // token, the deadline, release() for the admission slot and the server's
 // transfer counter.
 export function handleStorage(ctx) {
-  if (ctx.route.action.startsWith('session')) return handleUploadSession(ctx, { rows, transfer, objectRequest, discard, drain, sendJSON, publicRow, newObjectKey, validateName, storageContentType })
+  if (ctx.route.action.startsWith('session')) return handleUploadSession(ctx, { rows, transfer, objectRequest, registerObject, discard, drain, sendJSON, publicRow, newObjectKey, validateName, storageContentType })
   switch (ctx.route.action) {
     case 'upload': return upload(ctx)
     case 'download':

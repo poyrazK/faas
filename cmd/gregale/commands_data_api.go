@@ -386,9 +386,10 @@ func cmdDataAPITypes(args []string) int {
 	if err != nil {
 		return printErr("Schema generation failed", err)
 	}
-	if *numericMode == "lossless" {
+	switch *numericMode {
+	case "lossless":
 		task.StdoutTail = dataAPILosslessTypes(task.StdoutTail)
-	} else if *numericMode == "exact" {
+	case "exact":
 		task.StdoutTail = dataAPIExactTypes(task.StdoutTail)
 	}
 	if err = writeDataAPITypes(*output, *check, task.StdoutTail); err != nil {

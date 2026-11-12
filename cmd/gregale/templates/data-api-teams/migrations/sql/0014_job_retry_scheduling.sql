@@ -103,4 +103,3 @@ BEGIN
   PERFORM set_config('gregale.order_job_write',coalesce(previous,''),true);
   RETURN NEXT j;
 END $$;
-

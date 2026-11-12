@@ -472,7 +472,7 @@ export async function main(env = process.env) {
     // the owner's migration adds or repairs storage_objects. An unreachable
     // database fails the boot instead, because a disabled storage would be
     // captured in the snapshot every wake restores.
-    try { await checkStorageTable(config.connection, config.storage.schema) } catch (error) {
+    try { config.storage = Object.freeze({ ...config.storage, maintenance: await checkStorageTable(config.connection, config.storage.schema) }) } catch (error) {
       if (!(error instanceof UnsafeConfiguration)) {
         runtimeFailure('data_api_database_unavailable')
         throw Object.assign(new Error('Database unavailable during startup'), { cause: error, reported: true })

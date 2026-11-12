@@ -235,7 +235,20 @@ gregale data-api storage sql --upgrade --maintenance > migrations/0016_storage_c
 # For a fresh installation: storage sql --sessions --maintenance
 ```
 
-Run the runtime's `data-maintenance.mjs` in a separate trusted owner environment
+Apply the migration with the owner login, then grant only the gateway function
+to the serving login (replace `data_api_login` with its actual role):
+
+```sql
+GRANT EXECUTE ON FUNCTION api.gregale_storage_register_key(text, text) TO data_api_login;
+NOTIFY pgrst, 'reload schema';
+```
+
+Refresh or restart the Data API runtime after installation. It checks this
+permission at startup and registers each new immutable key before uploading.
+The function requires gateway storage claims; the private tables remain owner-only.
+
+Run the runtime's `data-maintenance.mjs` in an owner release task or an
+operator-controlled environment
 with `MIGRATION_DATABASE_URL`, `DATA_API_SCHEMAS`, and the existing bound-bucket
 `GREGALE_S3_*` configuration. Never give the serving process owner credentials
 or grant its login access to the private maintenance schemas. The same worker
@@ -246,13 +259,19 @@ node data-api-runtime/data-maintenance.mjs --dry-run
 node data-api-runtime/data-maintenance.mjs --execute
 ```
 
-Dry-run is the default and changes no rows or objects. Schedule execution using
-your normal trusted Job workflow; run the preview when changing bindings or
-retention. The exported `maintainData` API accepts a longer grace period and
+Dry-run is the default and changes no rows or objects. Managed migration
+credentials remain release-only: ordinary serving processes and scheduled Jobs
+do not receive them. Invoke maintenance as part of an owner release command,
+or through owner-approved operations automation with explicit credentials. Run
+the preview when changing bindings or retention. The exported `maintainData` API accepts a longer grace period and
 retention, plus inventory/delete adapters for testing or compatible storage.
 
-Inventory covers immutable `_gregale/objects/` keys, including orphaned PUTs,
-replaced versions and abandoned parts. Legacy name-based keys are left alone.
+Inventory covers registered immutable `_gregale/objects/` keys, including
+orphaned PUTs, replaced versions and abandoned parts created after installation.
+Each key must have a matching ownership registration in this database. Unknown
+keys are reported as `foreign` and skipped, protecting other apps sharing the
+physical bucket. Historical unregistered and legacy name-based keys require an
+owner-verified inventory; absence from local metadata never proves ownership.
 Objects must be at least five minutes old, beyond the two-minute transfer
 bound. Metadata and active upload-session references are checked with owner
 visibility and `row_security=off`; inadequate visibility fails the run.
@@ -265,6 +284,6 @@ and handles at most 100 deletion candidates per schema. One database lease
 prevents overlapping maintenance runs. Expired upload-session history and
 completed/failed/cancelled job history have a default retention of 30 days;
 blocked jobs require review. Full exports disappear with retired jobs. Compact
-job IDs remain to prevent replay; storage delete receipts expire after the
-retention period, beyond every supported transfer/session lifetime. Use fresh
-upload IDs for new operations. Retention can be increased to 3,650 days.
+job and upload IDs remain to prevent replay; storage delete receipts expire after the
+retention period, beyond every supported transfer/session lifetime. A retired upload ID returns `410 storage_session_history_retired`; use fresh
+upload IDs only for new operations. Retention can be increased to 3,650 days.

@@ -3,7 +3,7 @@
 Investigated checkout: `2616a7170a80a08bb3b143535ec31b9939aaa5bb`
 (2026-11-12). The original observations below are retained as historical
 evidence. All 30 findings now have implementations and regression coverage on
-`codex/data-api-investigation-fixes`, based on main `5d606226d`. Stable IDs are
+`codex/data-api-investigation-fixes`, based on main `06fa38e06`. Stable IDs are
 unchanged. Original line locations refer to the investigated checkout; the
 resolution table describes current behavior.
 
@@ -72,9 +72,9 @@ Implemented 2026-11-12. Setup and compatibility details are in
 | DAPI001 | Terminal closure clears observable state, protocol rows, parsed caches and initial-row references. | [Test](../../sdk/data/test/live.test.mjs) |
 | DAPI002 | Persist an upload ID before dispatch; ambiguous creation exposes UploadSessionStartError.sessionId and supports explicit idempotent creation. | [Test](../../sdk/data/test/storage.test.mjs) |
 | DAPI003 | Migrations 0014/0015 add delayed claims, saved attempt diagnostics, eight-attempt quarantine, authorized resume/cancel and safe history retirement. Ambiguous progress is reconciled. | [Test](../../tests/data-api/data-workflows.test.mjs) |
-| DAPI004 | Owner maintenance provides dry-run inventory, reference checks, delete fences/leases, durable retries, session/history retention and retired-ID protection. | [Test](../../tests/data-api/data-maintenance.test.mjs) |
+| DAPI004 | Owner maintenance provides registered-key inventory, shared-bucket ownership checks, dry-run reports, delete fences/leases, retries, retention and retired-ID protection. | [Test](../../tests/data-api/data-maintenance.test.mjs) |
 | DAPI005 | Existing keys use shared ownership protection and per-counter locks. Only registration takes the capacity lock and prunes; strict limits and cardinality bounds remain. | [Test](../../pkg/state/dataapibudget/store_test.go) |
-| DAPI006 | Opt-in exact types and immutable ExactNumber values preserve number/string identity through REST, RPC, live reads and serialization. Legacy modes remain available. | [Test](../../sdk/data/test/numeric.test.mjs) |
+| DAPI006 | Opt-in exact types and immutable ExactNumber values preserve number/string identity through REST, RPC, live reads, cursor continuations and serialization. Legacy modes remain available. | [Test](../../sdk/data/test/numeric.test.mjs) |
 | DAPI007 | Plain numeric and nested JSON CSV cells use the precision-checking decoder before producing any import payload. | [Test](../../tests/data-api/csv-import.test.mjs) |
 | DAPI008 | Only successful safety reads renew a bounded lease; expired or restored leases fail closed and retry after a bounded interval. | [Test](../../cmd/gregale/templates/data-api/test/access.test.mjs) |
 | DAPI009 | Visibility waits honor pre-aborted signals and remove listeners on resolve, abort and terminal closure. | [Test](../../sdk/data/test/live.test.mjs) |

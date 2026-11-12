@@ -73,3 +73,18 @@ test('DAPI006 exact writes work without JSON.rawJSON and ordinary serialization 
   assert.equal(body,'{"value":9007199254740993}')
  }finally{if(descriptor)Object.defineProperty(JSON,'rawJSON',descriptor);else delete JSON.rawJSON}
 })
+
+test('DAPI006 exact numeric IDs survive direct and encrypted cursor pagination',async()=>{
+ const {cursorFrom,cursorPage,createCursorPager,ExactNumber}=await import('../dist/index.js')
+ const requests=[]
+ const db=createDataClient({url:'https://data.example',accessToken:'token',numericMode:'exact',fetch:async input=>{requests.push(new URL(input));return new Response('[{"id":9007199254740993},{"id":9007199254740995}]',{headers:{'content-type':'application/json'}})}})
+ const order=[{column:'id',unique:true}],scope={identity:'alice',schemaFingerprint:'a'.repeat(64)}
+ const after=cursorFrom({id:new ExactNumber('9007199254740993')},order)
+ await cursorPage(db.from('items').select(),{order,size:1,after})
+ assert.match(requests.at(-1).searchParams.get('or'),/id.gt.9007199254740993/)
+ const pager=await createCursorPager({key:new Uint8Array(32).fill(7)})
+ const first=await pager.page(db.from('items').select(),{order,size:1,scope})
+ assert.ok(first.nextCursor)
+ await pager.page(db.from('items').select(),{order,size:1,scope,after:first.nextCursor})
+ assert.match(requests.at(-1).searchParams.get('or'),/id.gt.9007199254740993/)
+})

@@ -1,3 +1,4 @@
+import { decodeJsonCell } from './csv-export.mjs'
 // Shared by the inspector, local CLI and hosted verification; no filesystem or authentication state.
 export function matchesJSON(actual, expected) {
   if (Object.is(actual, expected)) return true
@@ -85,4 +86,3 @@ export function collectionScenarios(collection, name = '') {
   if (!selected) throw new Error('Unknown replay scenario; select a name present in the collection.')
   return [selected]
 }
-import { decodeJsonCell } from './csv-export.mjs'

@@ -26,7 +26,8 @@ publication retries independently of HTTP traffic.
 Keep number and string-based lossless codecs. Add opt-in `exact` TypeScript
 contracts and immutable `ExactNumber` values, with exact JSON serialization.
 The PostgREST adapter preserves builder inference and reads original response
-bytes for REST/RPC results; live rows share the codec. Runtime input validators
+bytes for REST/RPC results; live rows share the codec. Cursor continuations retain tagged numeric values,
+and JSON projection inference follows exact JSON columns. Runtime input validators
 remain a separate number-based output. CSV and saved replay reject values
 whose numeric literals ordinary JSON would round.
 
@@ -50,8 +51,13 @@ without asserting rollback. Authorized owners/admins can resume or cancel it;
 quarantined jobs count toward the active-job cap.
 
 Add opt-in owner maintenance, installed separately from serving credentials.
-The worker defaults to dry-run and supports ordinary S3 inventory plus
-conditional deletes. It checks metadata and active sessions with owner
+Managed owner credentials remain release-only; maintenance runs in an owner
+release task or an explicit operator environment, never by expanding ordinary
+Job/serving credential delivery. The worker defaults to dry-run and supports ordinary S3 inventory plus
+conditional deletes. The gateway records key ownership before every PUT through
+a narrowly granted function. Inventory skips unregistered keys, so a shared
+physical bucket cannot expose another database's objects to cleanup. Historical
+unregistered objects require owner-verified inventory. It checks metadata and active sessions with owner
 visibility, a minimum five-minute grace period, per-key locks and durable
 reference fences. Ambiguous deletes retain a retryable lease/receipt. Inventory
 continuations, batches and run deadlines bound each invocation.
@@ -59,7 +65,7 @@ continuations, batches and run deadlines bound each invocation.
 Thirty-day default retention removes expired upload history and terminal job
 artifacts/history. Teams migration 0015 retains compact retired job IDs and
 serializes them with job creation, so an expired UUID returns 410 instead of
-creating new work. Blocked jobs require owner review. Storage deletion receipts
+creating new work. Blocked jobs require owner review. Compact upload IDs likewise fence retired session creation. Storage deletion receipts
 can expire after the retention window, beyond all supported transfer/session
 lifetimes. Legacy name-based objects are outside the inventory prefix.
 
