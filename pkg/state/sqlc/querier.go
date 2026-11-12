@@ -4006,6 +4006,10 @@ type Querier interface {
 	// deployment is in one of these states, whatever the file's age.
 	ListInFlightDeploymentSpoolPaths(ctx context.Context, db DBTX) ([]ListInFlightDeploymentSpoolPathsRow, error)
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)
+	// The app's pending and dispatching rows per source from the backlog
+	// counters (ADR-20261022105723), so `queue status` shows async invocations,
+	// inbound webhooks and event deliveries waiting beside queue messages.
+	ListInvocationBacklogPendingBySource(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInvocationBacklogPendingBySourceRow, error)
 	ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInvoiceSnapshotsParams) ([]ListInvoiceSnapshotsRow, error)
 	ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]Deployment, error)
 	// ADR-733 encryption at rest. imaged owns plaintext_state, sealed_key and
