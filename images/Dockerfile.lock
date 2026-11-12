@@ -66,8 +66,8 @@
       "resolved_repo": "mirror.gcr.io/library/debian",
       "resolved_tag": "13-slim",
       "platform": "linux/amd64",
-      "digest": "sha256:1e1a22175fbf1b32157ddaf0219e1db4e5401fab2b94ed285add64d18587cd2d",
-      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/debian:13-slim@sha256:1e1a22175fbf1b32157ddaf0219e1db4e5401fab2b94ed285add64d18587cd2d"
+      "digest": "sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392",
+      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/debian:13-slim@sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392"
     },
     {
       "dockerfile": "images/base-minimal.Dockerfile",
@@ -87,8 +87,8 @@
       "resolved_repo": "mirror.gcr.io/library/debian",
       "resolved_tag": "13-slim",
       "platform": "linux/amd64",
-      "digest": "sha256:1e1a22175fbf1b32157ddaf0219e1db4e5401fab2b94ed285add64d18587cd2d",
-      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/debian:13-slim@sha256:1e1a22175fbf1b32157ddaf0219e1db4e5401fab2b94ed285add64d18587cd2d AS build"
+      "digest": "sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392",
+      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/debian:13-slim@sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392 AS build"
     },
     {
       "dockerfile": "images/runner-node22.Dockerfile",
@@ -107,8 +107,8 @@
       "resolved_repo": "mirror.gcr.io/library/python",
       "resolved_tag": "3.12-slim-trixie",
       "platform": "linux/amd64",
-      "digest": "sha256:1148dbb014615300fa7e713b2f94f550c0d1c69780c0805f84f093ceee34dd0b",
-      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/python:3.12-slim-trixie@sha256:1148dbb014615300fa7e713b2f94f550c0d1c69780c0805f84f093ceee34dd0b"
+      "digest": "sha256:05a994d2344eb364cc186910f4fc8786a38215f39f00d0acc25bff33a08f4177",
+      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/python:3.12-slim-trixie@sha256:05a994d2344eb364cc186910f4fc8786a38215f39f00d0acc25bff33a08f4177"
     },
     {
       "dockerfile": "images/runner-go124.Dockerfile",
