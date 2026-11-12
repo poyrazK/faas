@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -67,6 +67,8 @@ class RequestAnalyticsResponse:
     """True when dependency span rows, route dependency groups, or route dependency outputs were capped."""
     as_of: datetime.datetime
     """RFC3339Nano UTC assembly timestamp."""
+    omitted: list[str] | Unset = UNSET
+    """Optional enrichment sections unavailable within their query budgets; traffic totals remain available."""
     compute_cost: RequestAnalyticsComputeCost | Unset = UNSET
     """Estimated app compute value over the analytics window, allocated by observed request share. This is not an
     invoice amount; it values raw RAM-hours before the account's included allowance and excludes egress."""
@@ -136,6 +138,10 @@ class RequestAnalyticsResponse:
 
         as_of = self.as_of.isoformat()
 
+        omitted: list[str] | Unset = UNSET
+        if not isinstance(self.omitted, Unset):
+            omitted = self.omitted
+
         compute_cost: dict[str, Any] | Unset = UNSET
         if not isinstance(self.compute_cost, Unset):
             compute_cost = self.compute_cost.to_dict()
@@ -184,6 +190,8 @@ class RequestAnalyticsResponse:
                 "as_of": as_of,
             }
         )
+        if omitted is not UNSET:
+            field_dict["omitted"] = omitted
         if compute_cost is not UNSET:
             field_dict["compute_cost"] = compute_cost
         if deployment_costs is not UNSET:
@@ -257,6 +265,8 @@ class RequestAnalyticsResponse:
 
         as_of = datetime.datetime.fromisoformat(d.pop("as_of"))
 
+        omitted = cast(list[str], d.pop("omitted", UNSET))
+
         _compute_cost = d.pop("compute_cost", UNSET)
         compute_cost: RequestAnalyticsComputeCost | Unset
         if isinstance(_compute_cost, Unset):
@@ -311,6 +321,7 @@ class RequestAnalyticsResponse:
             routes_truncated=routes_truncated,
             dependencies_truncated=dependencies_truncated,
             as_of=as_of,
+            omitted=omitted,
             compute_cost=compute_cost,
             deployment_costs=deployment_costs,
             telemetry_complete=telemetry_complete,

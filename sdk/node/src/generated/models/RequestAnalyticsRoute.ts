@@ -12,7 +12,7 @@ export type RequestAnalyticsRoute = {
    * Route template, not an expanded URL.
    */
   route: string;
-  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'OTHER';
   requests: number;
   error_requests: number;
   error_rate_pct: number;

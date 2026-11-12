@@ -792,6 +792,7 @@
             · {{if eq .Data.RequestAnalytics.GroupBy "consumer_id"}}<strong>consumer</strong>{{else}}<a href="?analytics_by=consumer_id">consumer</a>{{end}}
           </p>
           {{if .Data.RequestAnalytics.WindowClamped}}<p class="muted">The requested window was reduced to your plan's telemetry retention.</p>{{end}}
+          {{if .Data.RequestAnalytics.Omitted}}<p class="muted" role="status">Some details are unavailable: {{range $i, $item := .Data.RequestAnalytics.Omitted}}{{if $i}}, {{end}}{{$item}}{{end}}.</p>{{end}}
           {{if .Data.RequestAnalytics.TelemetryGaps}}<p class="muted" role="status">Some requests in this window may be missing from these totals ({{range $i, $gap := .Data.RequestAnalytics.TelemetryGaps}}{{if $i}}, {{end}}<code>{{$gap}}</code>{{end}}).</p>{{end}}
           <p class="muted">Cold-request p95 includes both wake and handler time. Wake boot p95 is schedd boot-start to instance-running time. Guest runtime percentiles are platform-runner wall time, not CPU time, and are unavailable for arbitrary HTTP containers.</p>
           <p class="muted">Dependency timings use retained, classified span samples. Exclusive p95 estimates time outside nested child spans; it is not a full request-call count or additive latency total.</p>
