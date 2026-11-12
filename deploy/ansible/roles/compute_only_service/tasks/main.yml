@@ -178,6 +178,17 @@
       (vmmd_service), which issues the node's secretd client leaf.
   when: faas_imaged_secretd_registry_pulls | default(false) | bool
 
+- name: compute_only_service — create the imaged drop-in directory (ADR-20261110210000)
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-imaged.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - faas_imaged_secretd_registry_pulls | default(false) | bool
+
 - name: compute_only_service — install imaged's secretd registry drop-in (ADR-20261110210000)
   notify: restart faas-imaged
   ansible.builtin.template:

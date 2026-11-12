@@ -1,6 +1,8 @@
 -- filename: 20261112093000417_compute_node_db_logins.sql
 -- migration-compat: expand
 -- ADR-20261110210000 §4, slice 1c-1: per-node database identity.
+
+-- +goose Up
 --
 -- Every compute node shares its database logins today, so the database
 -- cannot tell which node wrote a placement input. compute_node_db_logins
@@ -18,8 +20,6 @@
 --
 -- An unmapped login behaves exactly as before; nothing changes until a node
 -- logs in with a mapped login (slice 1c-2).
-
--- +goose Up
 SET LOCAL lock_timeout = '5s';
 
 CREATE TABLE IF NOT EXISTS compute_node_db_logins (
