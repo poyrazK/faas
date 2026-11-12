@@ -11,6 +11,11 @@ import (
 )
 
 type Querier interface {
+	// ADR 20261027132936 amendment 2: the AI budget threshold crossings (80% and
+	// 100%) at or after since of the integrations bound to an app, newest first,
+	// for the ai_budget_alerts alert metric. Another app's own budget is left
+	// out. total counts every match, not only the rows returned.
+	AIBudgetAlertsSince(ctx context.Context, db DBTX, arg AIBudgetAlertsSinceParams) ([]AIBudgetAlertsSinceRow, error)
 	// Used by handlers_auth.go so an operator investigating "who signed in
 	// as alice?" can identify the key that authenticated. See ADR-034 rev2.
 	APIKeyByHash(ctx context.Context, db DBTX, keySha256 []byte) (APIKeyByHashRow, error)
