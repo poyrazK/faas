@@ -886,7 +886,7 @@ export class ProjectsService {
     environment,
   }: {
     /**
-     * Project slug.
+     * Project whose stage automation is resumed.
      */
     slug: string,
     /**

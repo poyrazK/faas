@@ -11,6 +11,8 @@ T = TypeVar("T", bound="ResumeEnvironmentAutomationResponse")
 
 @_attrs_define
 class ResumeEnvironmentAutomationResponse:
+    """Crons enabled by resuming a stage's automation after a full environment clone."""
+
     environment: str
     """Stage whose paused automation was enabled."""
     crons_resumed: int

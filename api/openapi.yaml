@@ -39889,7 +39889,7 @@ paths:
       - name: slug
         in: path
         required: true
-        description: Project slug.
+        description: Project whose stage automation is resumed.
         schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
       - name: environment
         in: path
@@ -110686,6 +110686,7 @@ components:
 
     ResumeEnvironmentAutomationResponse:
       type: object
+      description: Crons enabled by resuming a stage's automation after a full environment clone.
       required: [environment, crons_resumed, cron_ids]
       properties:
         environment: { type: string, description: "Stage whose paused automation was enabled.", example: "staging" }

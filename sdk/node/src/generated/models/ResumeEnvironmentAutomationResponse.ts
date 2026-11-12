@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Crons enabled by resuming a stage's automation after a full environment clone.
+ */
 export type ResumeEnvironmentAutomationResponse = {
   /**
    * Stage whose paused automation was enabled.
