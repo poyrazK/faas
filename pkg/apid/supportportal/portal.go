@@ -32,6 +32,7 @@ type Data struct {
 	StaffMode                             bool
 	ActorID, Base, Scope, CSRF, Error     string
 	Failed, StepUpURL, Next, NextMessages string
+	NextNotifications                     string
 	Filters                               url.Values
 	Form                                  url.Values
 	Keys                                  map[string]string
@@ -86,7 +87,7 @@ func newData(r *http.Request, actor string, staff bool, view support.PortalView)
 	d := Data{PortalView: view, StaffMode: staff, ActorID: actor, Base: base, Scope: scope, Filters: r.URL.Query(),
 		Updated: r.URL.Query().Get("updated") == "1", Keys: map[string]string{}, SubjectMax: api.SupportSubjectMaxBytes,
 		BodyMax: api.SupportBodyMaxBytes, ReasonMax: api.SupportReasonMaxBytes}
-	for _, action := range []string{"create", "reply", "note", "close", "reopen", "pause", "resume", "triage", "claim", "satisfaction"} {
+	for _, action := range []string{"create", "reply", "note", "close", "reopen", "pause", "resume", "triage", "claim", "satisfaction", "read"} {
 		d.Keys[action] = uuid.NewString()
 	}
 	cursor := view.Tickets.NextCursor
@@ -100,6 +101,11 @@ func newData(r *http.Request, actor string, staff bool, view support.PortalView)
 	}
 	if view.Ticket != nil && view.Messages.NextCursor != 0 {
 		d.NextMessages = base + "/" + view.Ticket.ID + "?after=" + strconv.FormatInt(view.Messages.NextCursor, 10) + "#conversation"
+	}
+	if view.Notifications.NextCursor != 0 {
+		query := r.URL.Query()
+		query.Set("notifications_before", strconv.FormatInt(view.Notifications.NextCursor, 10))
+		d.NextNotifications = base + "?" + query.Encode()
 	}
 	// Verify in a separate tab, returning outside the portal so its CSRF cookie
 	// is not rotated underneath the draft in the original tab.
@@ -129,6 +135,12 @@ func (h Handler) submit(w http.ResponseWriter, r *http.Request, d *Data) (int, b
 	forward.Header.Set("Idempotency-Key", d.Keys[action])
 	response := &capture{header: http.Header{}, status: http.StatusOK}
 	h.Submit(response, forward, endpoint, d.StaffMode)
+	if action == "read" && r.Header.Get("Accept") == "application/json" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(response.status)
+		_, _ = w.Write(response.body.Bytes())
+		return response.status, true
+	}
 	if response.status >= 400 {
 		var problem api.Problem
 		_ = json.Unmarshal(response.body.Bytes(), &problem)
@@ -176,6 +188,13 @@ func formPayload(form url.Values, d *Data) (string, any, error) {
 	}
 	if d.Ticket == nil {
 		return bad()
+	}
+	if action == "read" {
+		through, err := strconv.ParseInt(form.Get("through_sequence"), 10, 64)
+		if err != nil || through < 1 {
+			return bad()
+		}
+		return "read", api.SupportReadRequest{ThroughSequence: through}, nil
 	}
 	if action == "satisfaction" && !d.StaffMode {
 		rating, err := strconv.ParseInt(form.Get("rating"), 10, 32)
@@ -258,7 +277,20 @@ func (d Data) Skills() string {
 	}
 	return strings.Join(d.StaffTicket.RequiredSkills, " ")
 }
-func (d Data) Priorities() []string    { return []string{"low", "normal", "high", "urgent"} }
+func (d Data) Priorities() []string { return []string{"low", "normal", "high", "urgent"} }
+func (d Data) NotificationLabel(kind string) string {
+	switch kind {
+	case "staff_reply":
+		return "Gregale replied"
+	case "customer_reply":
+		return "Customer replied"
+	case "assigned":
+		return "Assigned to you"
+	case "ticket_created":
+		return "New conversation"
+	}
+	return "Conversation updated"
+}
 func (d Data) Date(t time.Time) string { return t.UTC().Format("02 Jan 2006, 15:04 UTC") }
 
 type FormFields struct {

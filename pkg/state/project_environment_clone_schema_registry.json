@@ -21097,6 +21097,27 @@
     "kind": "operational"
   },
   {
+    "table": "support_notifications",
+    "columns": [
+      "id",
+      "sequence",
+      "event_id",
+      "ticket_id",
+      "recipient_id",
+      "audience",
+      "kind",
+      "created_at",
+      "read_at",
+      "email_state",
+      "attempts",
+      "lease_id",
+      "lease_until",
+      "available_at",
+      "destination_hash"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "support_outbox",
     "columns": [
       "id",

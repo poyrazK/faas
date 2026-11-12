@@ -154,6 +154,18 @@ type BuildManifest struct {
 	// only the dependency cache. It skips the source unpack and the image
 	// output, and it reuses the deferred run's plan and BuildKit state.
 	CacheExportOnly bool `json:"cache_export_only,omitempty"`
+	// BuildKitSeed puts BuildKit's root on the builder VM's drive2, a copy of
+	// the node's BuildKit seed holding the platform images Railpack builds
+	// start from, so the build does not pull and unpack them
+	// (ADR-20261030122204). Without a usable drive2 the guest keeps BuildKit
+	// on drive1 as before and does not report BuildDone.BuildKitSeeded. An
+	// older guest ignores the field.
+	BuildKitSeed bool `json:"buildkit_seed,omitempty"`
+	// BuildKitSeedOnly marks the run that creates a seed: a build of a
+	// platform-owned app with BuildKit's root on an empty drive2. drive2 is
+	// required; the guest stops BuildKit and unmounts drive2 cleanly before it
+	// powers off, and builderd keeps drive2 as the seed.
+	BuildKitSeedOnly bool `json:"buildkit_seed_only,omitempty"`
 	// KeepWarm leaves a successful builder guest alive in a host-controlled
 	// wait state so vmmd can capture a paused snapshot. Failed builds still
 	// power off immediately; the warm path is only a successful-build handoff.
@@ -227,6 +239,9 @@ type BuildDone struct {
 	// only its image and still owes its dependency cache. builderd keeps the
 	// drive for the CacheExportOnly run. Older guests omit it.
 	DependencyCacheDeferred bool `json:"dependency_cache_deferred,omitempty"`
+	// BuildKitSeeded reports that BuildKit ran on the seeded drive2
+	// (BuildManifest.BuildKitSeed or BuildKitSeedOnly). Older guests omit it.
+	BuildKitSeeded bool `json:"buildkit_seeded,omitempty"`
 	// SharedRuntime records, for a successful Node or Python source build of an app,
 	// whether its runtime artifact could run on the shared runner base
 	// (docs/adr/1500-shared-runtime-source-apps.md). It is informational

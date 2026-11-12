@@ -184,11 +184,13 @@ var billing = map[string]bool{
 var billingPath = regexp.MustCompile(`(^|/)(billing|consumer-billing)(/|$)|/billing-[a-z-]+(/|$)|^/v1/billing/`)
 
 // budgetRoutes change an app's standing capacity, so their handlers charge
-// the agent's budget (ADR-20261111114059 slice 1).
+// the agent's budget (ADR-20261111114059 slices 1 and 2).
 var budgetRoutes = map[string]bool{
 	"PATCH /v1/apps/{}":        true,
 	"POST /v1/apps/{}/scaling": true,
 	"POST /v1/apps/{}/prewarm": true,
+	"POST /v1/apps":            true,
+	"PATCH /v1/deployments/{}": true,
 }
 
 // ChargesBudget reports whether a route's handler charges the agent's

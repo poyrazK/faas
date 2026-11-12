@@ -6572,6 +6572,11 @@ type QueueStateResponse struct {
 	OldestPendingAt         *time.Time `json:"oldest_pending_at,omitempty"`
 	OldestPendingAgeSeconds *int64     `json:"oldest_pending_age_seconds,omitempty"`
 	GeneratedAt             time.Time  `json:"generated_at"`
+	// BacklogBySource is every pending or in-delivery invocation of the app
+	// per source (async_invoke, inbound_webhook, queue, ...), so async work
+	// waiting for the scheduler is visible beside the queue's depth. Omitted
+	// when nothing waits or the server cannot read it.
+	BacklogBySource map[string]int64 `json:"backlog_by_source,omitempty"`
 }
 
 // QueuePeekMessage is one pending row returned by GET .../queues/peek.

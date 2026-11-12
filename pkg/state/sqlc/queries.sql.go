@@ -52085,6 +52085,42 @@ func (q *Queries) ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype
 	return items, nil
 }
 
+const listInvocationBacklogPendingBySource = `-- name: ListInvocationBacklogPendingBySource :many
+SELECT source, coalesce(sum(pending), 0)::bigint AS pending
+FROM invocation_backlog_counters
+WHERE app_id=$1::uuid
+GROUP BY source
+ORDER BY source
+`
+
+type ListInvocationBacklogPendingBySourceRow struct {
+	Source  string
+	Pending int64
+}
+
+// The app's pending and dispatching rows per source from the backlog
+// counters (ADR-20261022105723), so `queue status` shows async invocations,
+// inbound webhooks and event deliveries waiting beside queue messages.
+func (q *Queries) ListInvocationBacklogPendingBySource(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInvocationBacklogPendingBySourceRow, error) {
+	rows, err := db.Query(ctx, listInvocationBacklogPendingBySource, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListInvocationBacklogPendingBySourceRow{}
+	for rows.Next() {
+		var i ListInvocationBacklogPendingBySourceRow
+		if err := rows.Scan(&i.Source, &i.Pending); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listInvoiceSnapshots = `-- name: ListInvoiceSnapshots :many
 SELECT id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
        period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
