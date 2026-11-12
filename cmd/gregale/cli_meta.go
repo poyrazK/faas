@@ -6889,7 +6889,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "functions",
 		Short:   "Generate typed clients for calls between a project's functions",
 		Subcommands: []cliSub{
-			{Name: "types", Short: "Write each Node and Python function's typed client from the schemas in gregale.yaml",
+			{Name: "types", Short: "Write each function's typed client from its project's schemas",
 				Examples: []string{"gregale function types", "gregale function types --check"},
 				Notes: []string{
 					"Node functions get gregale-functions.d.ts and Python functions get gregale_functions.py in their root, typed for the functions they may call.",

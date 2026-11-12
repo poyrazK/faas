@@ -3079,7 +3079,7 @@ Generate typed clients for calls between a project&#39;s functions
 
 ### function types
 
-Write each Node and Python function&#39;s typed client from the schemas in gregale.yaml
+Write each function&#39;s typed client from its project&#39;s schemas
 
 `gregale function types [--path <DIR>] [--check]`
 
