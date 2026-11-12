@@ -16251,16 +16251,20 @@ const (
 	DataAPIRuntimeConnectionReportInterval = 15 * time.Second
 	// Owner usage telemetry (ADR-20261019102108): the runtime reports hourly
 	// deltas under workload identity. Owner-facing counts, never billing records.
-	DataAPIUsageReportMaxBytes  = 64 << 10
-	DataAPIUsageReportTimeout   = 5 * time.Second
-	DataAPIUsageReportInterval  = 15 * time.Second
-	DataAPIUsageReportMaxHours  = 48
-	DataAPIUsageMaxDelta        = 1_000_000_000_000
-	DataAPIUsageDedupWindow     = 48 * time.Hour
-	DataAPIUsageRetentionDays   = 90
-	DataAPIUsageQueryMaxDays    = 90
-	DataAPIUsageMonthlyCapMax   = 1_000_000_000_000
-	DataAPIUsagePruneBatchLimit = 1000
+	DataAPIUsageReportMaxBytes          = 64 << 10
+	DataAPIUsageReportTimeout           = 5 * time.Second
+	DataAPIUsageReportInterval          = 15 * time.Second
+	DataAPISharedBudgetTimeout          = time.Second
+	DataAPISharedBudgetMaxKeys          = 4096
+	DataAPISharedBudgetMaxRequests      = 1_000_000
+	DataAPISharedBudgetMaxWindowSeconds = 3600
+	DataAPIUsageReportMaxHours          = 48
+	DataAPIUsageMaxDelta                = 1_000_000_000_000
+	DataAPIUsageDedupWindow             = 48 * time.Hour
+	DataAPIUsageRetentionDays           = 90
+	DataAPIUsageQueryMaxDays            = 90
+	DataAPIUsageMonthlyCapMax           = 1_000_000_000_000
+	DataAPIUsagePruneBatchLimit         = 1000
 	// A wall-clock jump this large against the monotonic clock means a
 	// snapshot restore: pending counts are dropped, not reported per instance.
 	DataAPIUsageRestoreJump = 5 * time.Second
@@ -16279,6 +16283,10 @@ const (
 	DataAPIStorageObjectDefaultBytes = 25 << 20
 	DataAPIStorageObjectMaxBytes     = 100 << 20
 	DataAPIStorageTransfers          = 4
+	DataAPIStorageChunkBytes         = 5 << 20
+	DataAPIStorageSessionMaxActive   = 16
+	DataAPIStorageSessionTTL         = 24 * time.Hour
+	DataAPIChangeEventsOwnerRequests = 1
 	DataAPIStorageTransferTimeout    = 120 * time.Second
 	DataAPIStorageSignedURLTTL       = 60 * time.Second
 	// One signed-in user or anonymous visitor holds at most this many of an
@@ -16339,7 +16347,7 @@ const (
 	DataAPIAccessRecheckInterval = time.Minute
 	// Anonymous and server-key live reads renew this often, so a revoked key
 	// or a narrowed allowlist reaches open subscriptions within it.
-	LiveQueryKeySessionMax = time.Hour
+	LiveQueryKeySessionMax = 30 * time.Second
 	// Operator capacity observations never run in customer request handling.
 	DataAPIConnectionCapacityTimeout     = 10 * time.Second
 	DataAPIConnectionCapacityLease       = 15 * time.Second

@@ -4821,6 +4821,17 @@
     "kind": "operational"
   },
   {
+    "table": "data_api_shared_budgets",
+    "columns": [
+      "app_id",
+      "budget_key",
+      "requests",
+      "window_end",
+      "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "data_api_change_hook_reports",
     "columns": [
       "app_id",
