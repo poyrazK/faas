@@ -50,8 +50,9 @@ Operators: see the [operator guide](managed-postgres.md).
   upgrade, delete a database, or resize it to an included class. The next
   usage sweep, within minutes, resumes it.
   - A database still suspended 30 days later is deleted. The email names the
-    date. Its app bindings are removed, and `gregale postgres recover` brings
-    it back for 7 days after that.
+    date, and a reminder follows a week before it. Its app bindings are
+    removed, and `gregale postgres recover` brings it back for 7 days after
+    that.
 - A subscription that ends drops the account to Free, which includes no
   databases, so every database it holds is suspended this way.
 

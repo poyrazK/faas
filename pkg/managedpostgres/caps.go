@@ -533,6 +533,9 @@ type CapSweepSummary struct {
 	PlanExcessScopesShared    int
 	PlanExcessNoticed         int
 	PlanExcessNotifyFailed    int
+	// PlanExcessReminded counts deletion reminders queued
+	// (ADR-20261110184700 amendment 2026-11-12).
+	PlanExcessReminded int
 	// PlanExcessDelete* count the deletion pass (ADR-20261110184700): due
 	// databases, deletes scheduled, ones only logged in shadow, ones waiting
 	// for bindings to go, and failures.
