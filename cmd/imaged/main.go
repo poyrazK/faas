@@ -592,6 +592,20 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// An absent tree (every node without native runtime capture) leaves
 		// collection exactly as before.
 		WithNativeRuntimeSnapshotRoot(envOr("FAAS_NATIVE_RUNTIME_SNAPSHOT_ROOT", "/srv/fc/native-snap"))
+	// ADR-20261112170911: reuse an app layer whose inputs are unchanged,
+	// off by default.
+	layerReuse, err := imaged.ParseLayerReuse(getenv(imaged.LayerReuseEnv))
+	if err != nil {
+		return fmt.Errorf("imaged: %w", err)
+	}
+	if layerReuse {
+		dir := filepath.Join(filepath.Dir(appsRoot), "layer-reuse")
+		if cache := storage.AsCacheBackend(storageBackend); cache != nil {
+			dir = imaged.LayerReuseDir(cache.Root())
+		}
+		h.WithLayerReuse(dir)
+		log.Info("imaged: app layer reuse on", "index", dir)
+	}
 	releasePhaseEnabled, err := parseBoolEnv("FAAS_RELEASE_PHASE_ENABLED", getenv("FAAS_RELEASE_PHASE_ENABLED"))
 	if err != nil {
 		return err
