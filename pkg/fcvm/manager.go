@@ -5760,7 +5760,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		needsPolicyApply := lease.CPUMillicores != policy.cpuMillicores || hasWorkloadName(inst.WorkloadNames, WorkloadNameMain)
 		if hasPolicy && !req.ExecutionOnly && needsPolicyApply {
 			if err := m.applyAppCPULimit(ctx, inst, policy.cpuMillicores); err != nil {
-				return nil, fmt.Errorf("wake %s: apply current app CPU policy: %w", req.Instance, err)
+				return nil, m.wakeStepError(req.Instance, "apply current app CPU policy", err)
 			}
 			lease.CPUMillicores = policy.cpuMillicores
 			inst.Lease.CPUMillicores = policy.cpuMillicores
@@ -7510,6 +7510,34 @@ func (m *Manager) applyAppCPULimit(ctx context.Context, inst *Instance, cpuMilli
 		return fmt.Errorf("VMM does not support live guest workload CPU policy")
 	}
 	return guestUpdater.UpdateAppWorkloadCPULimit(ctx, inst.Lease, cpuMillicores)
+}
+
+// wakeStepExitGrace bounds how long a failed post-boot wake step waits for
+// the process watcher to report a Firecracker exit. A VM that died fails the
+// step's vsock dial before the watcher has reaped it.
+var (
+	wakeStepExitGrace = time.Second
+	wakeStepExitPoll  = 20 * time.Millisecond
+)
+
+// wakeStepError reports a failed post-boot wake step. When Firecracker has
+// exited, the exit is the cause and the step's error (typically a refused
+// vsock dial) only a symptom, so the exit leads the message (Hunt 34 H34-35:
+// a guest that stopped during boot read as an app CPU policy fault).
+func (m *Manager) wakeStepError(instance, step string, err error) error {
+	deadline := time.Now().Add(wakeStepExitGrace)
+	for {
+		m.mu.Lock()
+		exitCode, exited := m.pendingProcessExits[instance]
+		m.mu.Unlock()
+		if exited {
+			return fmt.Errorf("wake %s: firecracker exited during boot (exit code %d); %s then failed: %w", instance, exitCode, step, err)
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("wake %s: %s: %w", instance, step, err)
+		}
+		time.Sleep(wakeStepExitPoll)
+	}
 }
 
 func hasWorkloadName(names []string, want string) bool {
