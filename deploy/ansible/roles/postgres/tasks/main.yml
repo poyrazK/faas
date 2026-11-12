@@ -365,6 +365,14 @@
       # ADR-20261023104734 step 2: the owner logs in only from root over the
       # socket (faas_map root faas); compute nodes use faas_compute below.
       {% endif %}
+      {% if faas_postgres_compute_cert_logins | default(false) | bool %}
+      # ADR-20261110210000 slice 1c-2: per-node compute logins, by fleet-CA
+      # client certificate only (CN = login). They have no password, so the
+      # faas_runtime lines below refuse them without TLS.
+      {% for cidr in (faas_postgres_allowed_cidrs | default([])) %}
+      hostssl faas            +faas_node_logins                       {{ cidr }}                cert
+      {% endfor %}
+      {% endif %}
       # ADR-20261023104734: daemons on their own faas_runtime member role.
       # Per-daemon roles have no password and log in over the socket only;
       # faas_compute authenticates over TCP.
@@ -752,6 +760,11 @@
     - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
+# Server TLS. ADR-20261110210000 slice 1c-2 serves the same certificate to
+# compute nodes' per-node logins (faas_postgres_compute_cert_logins), which
+# verify it (sslmode=verify-full against the copy node_join pins) and present
+# a fleet-CA client leaf that pg_hba checks (`cert`, ssl_ca_file below).
+#
 # Replication TLS. The standby connects with sslmode=verify-full against this
 # self-signed certificate, which postgres_standby copies from here over the
 # Ansible connection, and pg_hba admits the replicator over TLS only. WAL is
@@ -765,13 +778,16 @@
 - name: postgres — replication TLS names and paths — ADR-1344
   ansible.builtin.set_fact:
     postgres_replication_tls_dir: "{{ faas_postgres_replication_tls_dir | default('/etc/postgresql/faas-tls') }}"
-    # The names the standby dials: by default the address the discovery play
-    # published (postgres_standby's faas_postgres_primary_host) and the
-    # inventory name. Override when the standby uses another address.
+    # The names the standby and compute nodes dial: by default the address
+    # the discovery play published (postgres_standby's
+    # faas_postgres_primary_host), the inventory name and the non-loopback
+    # listen addresses. Override when they use another address.
     postgres_replication_tls_san: >-
-      {%- for name in (faas_postgres_replication_tls_names | default([faas_private_dns_address | default(''), inventory_hostname])) | select | unique -%}{{ 'IP:' if (name is match('^[0-9.]+$') or ':' in name) else 'DNS:' }}{{ name }}{{ '' if loop.last else ',' }}{%- endfor -%}
+      {%- for name in (faas_postgres_replication_tls_names | default([faas_private_dns_address | default(''), inventory_hostname]
+           + ((faas_postgres_listen_addresses | default('')) | string).split(',') | map('trim')
+             | reject('in', ['', '*', 'localhost', '127.0.0.1', '::1', '0.0.0.0', '::']) | list)) | select | unique -%}{{ 'IP:' if (name is match('^[0-9.]+$') or ':' in name) else 'DNS:' }}{{ name }}{{ '' if loop.last else ',' }}{%- endfor -%}
   when:
-    - (faas_postgres_standby_address | default('')) | length > 0
+    - (faas_postgres_standby_address | default('')) | length > 0 or (faas_postgres_compute_cert_logins | default(false) | bool)
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — replication TLS directory — ADR-1344
@@ -782,7 +798,7 @@
     group: postgres
     mode: "0700"
   when:
-    - (faas_postgres_standby_address | default('')) | length > 0
+    - (faas_postgres_standby_address | default('')) | length > 0 or (faas_postgres_compute_cert_logins | default(false) | bool)
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — read the names on the replication certificate — ADR-1344
@@ -791,7 +807,7 @@
   register: postgres_replication_tls_current_san
   failed_when: false
   when:
-    - (faas_postgres_standby_address | default('')) | length > 0
+    - (faas_postgres_standby_address | default('')) | length > 0 or (faas_postgres_compute_cert_logins | default(false) | bool)
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — check the replication certificate is valid for 30 more days — ADR-1344
@@ -801,7 +817,7 @@
   changed_when: false
   failed_when: false
   when:
-    - (faas_postgres_standby_address | default('')) | length > 0
+    - (faas_postgres_standby_address | default('')) | length > 0 or (faas_postgres_compute_cert_logins | default(false) | bool)
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 # Written beside the live pair and renamed over it, so a failed run never
@@ -828,7 +844,7 @@
   changed_when: true
   notify: reload postgresql
   when:
-    - (faas_postgres_standby_address | default('')) | length > 0
+    - (faas_postgres_standby_address | default('')) | length > 0 or (faas_postgres_compute_cert_logins | default(false) | bool)
     - not (faas_postgres_standby_mode | default(false) | bool)
     - >-
       postgres_replication_tls_checkend.rc != 0
@@ -842,7 +858,7 @@
     group: postgres
     mode: "0600"
   when:
-    - (faas_postgres_standby_address | default('')) | length > 0
+    - (faas_postgres_standby_address | default('')) | length > 0 or (faas_postgres_compute_cert_logins | default(false) | bool)
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 # PostgreSQL refuses a key that its group or others can read.
@@ -853,7 +869,7 @@
     group: postgres
     mode: "0600"
   when:
-    - (faas_postgres_standby_address | default('')) | length > 0
+    - (faas_postgres_standby_address | default('')) | length > 0 or (faas_postgres_compute_cert_logins | default(false) | bool)
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 # Ubuntu's postgresql.conf already ends with this include; the standby role
@@ -867,7 +883,23 @@
   failed_when: false  # chroot/CI may not have the conf file
   notify: reload postgresql
   when:
-    - (faas_postgres_standby_address | default('')) | length > 0
+    - (faas_postgres_standby_address | default('')) | length > 0 or (faas_postgres_compute_cert_logins | default(false) | bool)
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+# ADR-20261110210000 slice 1c-2: the fleet CA (the one gregalectl pki
+# issue-feature signs the db-login leaves with) verifies compute nodes' client
+# leaves. Copied beside the server key so the postgres user can read it.
+- name: postgres — trust the fleet CA for per-node compute logins — ADR-20261110210000
+  ansible.builtin.copy:
+    src: "{{ faas_postgres_client_ca_path | default('/etc/faas/tls/ca/ca.crt') }}"
+    dest: "{{ postgres_replication_tls_dir }}/client-ca.crt"
+    remote_src: true
+    owner: postgres
+    group: postgres
+    mode: "0644"
+  notify: reload postgresql
+  when:
+    - faas_postgres_compute_cert_logins | default(false) | bool
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 # ssl and the certificate paths are reload-only (PGC_SIGHUP). A reload that
@@ -884,10 +916,15 @@
       ssl = on
       ssl_cert_file = '{{ postgres_replication_tls_dir }}/server.crt'
       ssl_key_file = '{{ postgres_replication_tls_dir }}/server.key'
+      {% if faas_postgres_compute_cert_logins | default(false) | bool %}
+      # ADR-20261110210000 slice 1c-2: compute nodes' per-node logins present
+      # a client leaf from the fleet CA.
+      ssl_ca_file = '{{ postgres_replication_tls_dir }}/client-ca.crt'
+      {% endif %}
   failed_when: false  # chroot/CI may not have the conf directory
   notify: reload postgresql
   when:
-    - (faas_postgres_standby_address | default('')) | length > 0
+    - (faas_postgres_standby_address | default('')) | length > 0 or (faas_postgres_compute_cert_logins | default(false) | bool)
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — stop serving the replication certificate without a standby (reload-only) — ADR-1344
@@ -897,6 +934,7 @@
   notify: reload postgresql
   when:
     - not (faas_postgres_standby_address | default(''))
+    - not (faas_postgres_compute_cert_logins | default(false) | bool)
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 # Removing postgresql.standby from the manifest must also drop the slot: an

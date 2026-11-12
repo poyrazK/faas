@@ -23,7 +23,7 @@ func TestComputeNodeDBLoginsScopeWrites(t *testing.T) {
 	if _, err := owner.Exec(ctx, `update compute_nodes set region = 'eu-1' where id = $1`, a.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := owner.Exec(ctx, `insert into compute_node_db_logins (login, node_id) values ($1, $2)`, login, a.ID); err != nil {
+	if _, err := owner.Exec(ctx, `insert into compute_node_db_logins (login, node_name) values ($1, $2)`, login, a.Name); err != nil {
 		t.Fatal(err)
 	}
 	exec := func(sql string, args ...any) error {
@@ -46,6 +46,7 @@ func TestComputeNodeDBLoginsScopeWrites(t *testing.T) {
 		"another node's ceiling":  exec(`update compute_nodes set admission_ceiling_mb = 1 where id = $1`, b.ID),
 		"deleting its own row":    exec(`delete from compute_nodes where id = $1`, a.ID),
 		"renaming itself":         exec(`update compute_nodes set name = $2 where id = $1`, a.ID, b.Name+"-x"),
+		"changing its id":         exec(`update compute_nodes set id = gen_random_uuid() where id = $1`, a.ID),
 		"moving region":           exec(`update compute_nodes set region = 'us-1' where id = $1`, a.ID),
 		"redirecting its address": exec(`update compute_nodes set target_url = 'tcp://10.0.0.9:7000' where id = $1`, a.ID),
 		"registering another":     exec(`insert into compute_nodes (name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb) values ('rogue', 'tcp://10.0.0.9:7000', 1, 1, 1, 1)`),
@@ -92,6 +93,31 @@ func TestComputeNodeDBLoginsScopeWrites(t *testing.T) {
 	other.Name, other.TargetURL = b.Name, b.TargetURL
 	if _, err := reg.UpsertComputeNodeFromVmmd(ctx, other); sqlState(err) != "42501" {
 		t.Fatalf("registering as another node = %v, want SQLSTATE 42501", err)
+	}
+
+	// Slice 1c-2: the control plane enrolls a node at join, before vmmd has
+	// registered it. Until then the login can report for no node; its first
+	// registration is admitted under its own name only.
+	freshLogin, fresh := ownerAuthorityLogin(t, owner, false)
+	freshName := a.Name + "-fresh"
+	if _, err := owner.Exec(ctx, `insert into compute_node_db_logins (login, node_name) values ($1, $2)`, fresh, freshName); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := freshLogin.Exec(ctx, `insert into node_memory_reports (node_id, measured_mb, frozen_instances, measured_at) values ($1, 1, 0, now())`, b.ID); sqlState(err) != "42501" {
+		t.Fatalf("an unregistered node reporting for another = %v, want SQLSTATE 42501", err)
+	}
+	freshReg := state.NewPgStore(freshLogin)
+	if _, err := freshReg.UpsertComputeNodeFromVmmd(ctx, other); sqlState(err) != "42501" {
+		t.Fatalf("an unregistered node registering as another = %v, want SQLSTATE 42501", err)
+	}
+	first := self
+	first.Name, first.TargetURL = freshName, "tcp://10.0.0.77:7000"
+	registered, err := freshReg.UpsertComputeNodeFromVmmd(ctx, first)
+	if err != nil {
+		t.Fatalf("first registration under its own name refused: %v", err)
+	}
+	if _, err := freshLogin.Exec(ctx, `insert into node_memory_reports (node_id, measured_mb, frozen_instances, measured_at) values ($1, 1, 0, now())`, registered.ID); err != nil {
+		t.Fatalf("registered node's own report refused: %v", err)
 	}
 
 	// An unmapped login is unchanged, and the control plane raises capacity.

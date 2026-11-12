@@ -76,6 +76,13 @@
       host    faas            faas                                    {{ cidr }}                scram-sha-256
       {% endfor %}
       {% endif %}
+      {% if faas_postgres_compute_cert_logins | default(false) | bool %}
+      # ADR-20261110210000 slice 1c-2: per-node compute logins, by fleet-CA
+      # client certificate only (CN = login).
+      {% for cidr in faas_postgres_allowed_cidrs %}
+      hostssl faas            +faas_node_logins                       {{ cidr }}                cert
+      {% endfor %}
+      {% endif %}
       # ADR-20261023104734: daemons on their own faas_runtime member role.
       local   faas            +faas_runtime                           peer map=faas_map
       host    faas            +faas_runtime                           127.0.0.1/32            scram-sha-256

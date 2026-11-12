@@ -3193,7 +3193,7 @@ type ComputeNode struct {
 
 type ComputeNodeDbLogin struct {
 	Login     string
-	NodeID    pgtype.UUID
+	NodeName  string
 	CreatedAt pgtype.Timestamptz
 }
 

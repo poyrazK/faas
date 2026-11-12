@@ -836,6 +836,16 @@
       - faas-builderd
       - faas-gatewayd-internal
       - faas-gatewayd-public-edge
+    # ADR-20261110210000 slice 1c-2: each unit's role, which names its
+    # per-node login (pkg/pki DBLoginDaemonRoles, DBNodeLogin).
+    faas_join_db_unit_roles:
+      faas-vmmd: faas_vmmd
+      faas-schedd: faas_node_schedd
+      faas-imaged: faas_imaged
+      faas-builderd: faas_builderd
+      faas-gatewayd-internal: faas_gatewayd_internal
+      faas-gatewayd-public-edge: faas_gatewayd_edge
+    faas_join_db_cert_dir: /etc/faas/tls/db-client
   tasks:
     - name: Refuse activation when the OCI cache is outside fast storage
       ansible.builtin.shell: |
@@ -2073,16 +2083,152 @@
           {{ lookup('ansible.builtin.file', faas_join_compute_db_roles_source).splitlines()
              | map('trim') | select | list }}
       no_log: true
-      when: (faas_join_compute_db_roles_source | default('') | trim) != ''
+      when:
+        - (faas_join_compute_db_roles_source | default('') | trim) != ''
+        - not (faas_compute_db_cert_logins | default(false) | bool)
+
+    # ADR-20261110210000 slice 1c-2 (faas_compute_db_cert_logins): instead of
+    # the shared per-daemon passwords, each daemon logs in as its own login on
+    # this node, authenticated by a fleet-CA client leaf whose CN is the login.
+    # The control plane creates the logins and maps them to this node's name
+    # (compute-node-db-logins.sql), so the database confines their writes to
+    # this node's placement inputs (slice 1c-1). The DSNs then go through the
+    # same proof, install and drop-in steps as the password logins.
+    - name: Per-node database logins — ADR-20261110210000
+      when: faas_compute_db_cert_logins | default(false) | bool
+      block:
+        - name: Read the control plane's database address for per-node logins
+          ansible.builtin.slurp:
+            src: /etc/faas/compute-db.env
+          register: faas_join_compute_db_env
+          no_log: true
+
+        - name: Name this node's database logins
+          ansible.builtin.set_fact:
+            faas_join_db_cert_issuer: "{{ faas_compute_db_cert_issuer_host | default(groups['control_plane'] | default([]) | first | default('')) }}"
+            faas_join_db_cert_address: >-
+              {{ faas_join_compute_db_env.content | b64decode
+                 | regex_search('(?m)^(?:export\s+)?DATABASE_URL=\S*@([^/?\s@]+)/([A-Za-z0-9_]+)', '\1', '\2') | default([], true) }}
+            faas_join_db_cert_logins: >-
+              {{ dict(faas_join_db_role_units | zip(faas_join_db_role_units
+                 | map('extract', faas_join_db_unit_roles)
+                 | map('regex_replace', '$', '_' + (faas_join_database_node | hash('sha256'))[:12]))) }}
+          no_log: true
+
+        - name: Require an issuer, the node's name and the database address
+          ansible.builtin.assert:
+            that:
+              - faas_join_db_cert_issuer | length > 0
+              - faas_join_database_node is match('^[A-Za-z0-9._-]{1,253}$')
+              - faas_join_db_cert_address | length == 2
+              - faas_join_db_cert_logins.values() | map('regex_search', '^faas_[a-z0-9_]{1,58}$') | select | list | length
+                == faas_join_db_role_units | length
+            fail_msg: >-
+              faas_compute_db_cert_logins needs a control_plane host (the fleet CA's
+              and the database's), this node's compute_nodes.name and a
+              DATABASE_URL in /etc/faas/compute-db.env naming the database host.
+            quiet: true
+
+        - name: Create and map this node's logins on the control plane
+          ansible.builtin.command:
+            argv: [psql, -X, -q, -v, ON_ERROR_STOP=1, -d, faas,
+                   -v, "node={{ faas_join_database_node }}",
+                   -v, "logins={{ faas_join_db_cert_logins.values() | list | join(',') }}",
+                   -f, "-"]
+            stdin: "{{ lookup('ansible.builtin.file', playbook_dir + '/roles/postgres/files/compute-node-db-logins.sql') }}"
+          delegate_to: "{{ faas_join_db_cert_issuer }}"
+          become: true
+          become_user: postgres
+          changed_when: false
+
+        - name: Issue this node's database client leaves on the control plane
+          ansible.builtin.command:
+            argv: [/usr/local/bin/gregalectl, pki, issue-feature, --feature, db-login, --box-role, compute-only,
+                   --cn, "{{ faas_join_database_node }}", --ca-dir, /etc/faas/tls,
+                   --root-dir, "/var/lib/faas/pki-features/{{ faas_join_database_node }}"]
+          delegate_to: "{{ faas_join_db_cert_issuer }}"
+          register: faas_join_db_cert_issued
+          changed_when: (faas_join_db_cert_issued.stdout | from_json).issued | length > 0
+
+        - name: Read the staged database client leaves
+          ansible.builtin.slurp:
+            src: "/var/lib/faas/pki-features/{{ faas_join_database_node }}/db-client/{{ item }}"
+          delegate_to: "{{ faas_join_db_cert_issuer }}"
+          register: faas_join_db_cert_staged
+          loop: "{{ faas_join_db_role_units | product(['crt', 'key']) | map('join', '.') | list }}"
+          no_log: true
+
+        # The certificate the database serves; each DSN pins it
+        # (sslmode=verify-full), so its names must include the address above.
+        - name: Read the database's server certificate
+          ansible.builtin.slurp:
+            src: "{{ faas_postgres_replication_tls_dir | default('/etc/postgresql/faas-tls') }}/server.crt"
+          delegate_to: "{{ faas_join_db_cert_issuer }}"
+          register: faas_join_db_server_cert
+
+        - name: Read each daemon's service user
+          ansible.builtin.command:
+            argv: [systemctl, show, -p, User, --value, "{{ item }}.service"]
+          register: faas_join_db_unit_users
+          changed_when: false
+          loop: "{{ faas_join_db_role_units }}"
+
+        - name: Create the database client leaf directory
+          ansible.builtin.file:
+            path: "{{ faas_join_db_cert_dir }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Pin the database's server certificate
+          ansible.builtin.copy:
+            content: "{{ faas_join_db_server_cert.content | b64decode }}"
+            dest: "{{ faas_join_db_cert_dir }}/server.crt"
+            owner: root
+            group: root
+            mode: "0444"
+
+        # Each key belongs to its daemon's service user alone; vmmd's (root)
+        # stays root's.
+        - name: Install each daemon's database client leaf
+          ansible.builtin.copy:
+            content: "{{ item.content | b64decode }}"
+            dest: "{{ faas_join_db_cert_dir }}/{{ item.item }}"
+            owner: >-
+              {{ (faas_join_db_unit_users.results
+                  | selectattr('item', 'equalto', item.item | regex_replace('\.(crt|key)$', ''))
+                  | map(attribute='stdout') | first | default('', true)) or 'root' }}
+            group: root
+            mode: "{{ '0400' if item.item.endswith('.key') else '0444' }}"
+          loop: "{{ faas_join_db_cert_staged.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+          no_log: true
+
+        - name: Point each daemon's candidate login at its certificate
+          ansible.builtin.set_fact:
+            faas_join_db_role_lines: >-
+              {{ (faas_join_db_role_lines | default([])) + [item ~ '=postgresql://' ~ faas_join_db_cert_logins[item]
+                 ~ '@' ~ faas_join_db_cert_address[0] ~ '/' ~ faas_join_db_cert_address[1]
+                 ~ '?sslmode=verify-full&sslrootcert=' ~ faas_join_db_cert_dir ~ '/server.crt'
+                 ~ '&sslcert=' ~ faas_join_db_cert_dir ~ '/' ~ item ~ '.crt'
+                 ~ '&sslkey=' ~ faas_join_db_cert_dir ~ '/' ~ item ~ '.key'] }}
+          loop: "{{ faas_join_db_role_units }}"
+          no_log: true
 
     - name: Refuse per-daemon logins for unknown units
       ansible.builtin.assert:
         that:
           - (faas_join_db_role_lines | map('regex_replace', '=.*$', '') | sort | list)
             == (faas_join_db_role_units | sort | list)
-          - faas_join_db_role_lines | map('regex_search', '^[a-z-]+=postgres(ql)?://faas_[a-z_]+:[0-9a-f]{64}@') | select | list | length
-            == faas_join_db_role_units | length
-        fail_msg: compute-db-roles.env must name exactly {{ faas_join_db_role_units | join(', ') }}, each with a faas_<role> password DSN.
+          - (faas_join_db_role_lines | map('regex_search', '^[a-z-]+=postgres(ql)?://faas_[a-z_]+:[0-9a-f]{64}@') | select | list | length
+            == faas_join_db_role_units | length)
+            or (faas_join_db_role_lines | map('regex_search', '^[a-z-]+=postgresql://faas_[a-z0-9_]+@[^/?]+/[A-Za-z0-9_]+\?sslmode=verify-full&') | select | list | length
+            == faas_join_db_role_units | length)
+        fail_msg: >-
+          compute-db-roles.env must name exactly {{ faas_join_db_role_units | join(', ') }}, each with a faas_<role>
+          password DSN (or, with faas_compute_db_cert_logins, a certificate DSN).
         quiet: true
       no_log: true
       when: faas_join_db_role_lines is defined
@@ -2100,9 +2246,9 @@
       ansible.builtin.copy:
         dest: "/etc/faas/secrets/db/{{ item.split('=', 1)[0] }}.env.candidate"
         content: |
-          DATABASE_URL={{ item.split('=', 1)[1] }}
+          DATABASE_URL="{{ item.split('=', 1)[1] }}"
           {% if item.split('=', 1)[0] == 'faas-vmmd' %}
-          FAAS_VMMD_DBURL={{ item.split('=', 1)[1] }}
+          FAAS_VMMD_DBURL="{{ item.split('=', 1)[1] }}"
           {% endif %}
         owner: root
         group: root

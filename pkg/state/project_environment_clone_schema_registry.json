@@ -3987,7 +3987,7 @@
     "columns": [
       "created_at",
       "login",
-      "node_id"
+      "node_name"
     ],
     "kind": "operational"
   },

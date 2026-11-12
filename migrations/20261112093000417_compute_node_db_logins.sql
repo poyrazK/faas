@@ -6,8 +6,10 @@
 --
 -- Every compute node shares its database logins today, so the database
 -- cannot tell which node wrote a placement input. compute_node_db_logins
--- maps a login to the one node it belongs to; only the schema owner writes
--- it (runtime-roles.sql revokes faas_runtime's DML). For a mapped login:
+-- maps a login to the one node name it belongs to; only the schema owner
+-- writes it (runtime-roles.sql revokes faas_runtime's DML). It names the node
+-- rather than its row so the control plane can enroll a node at join, before
+-- vmmd has registered it. For a mapped login:
 --
 --   * compute_nodes: only its own row. id, name, region, zone, role, the
 --     dial addresses and the certificate binding keep their values once set;
@@ -24,10 +26,10 @@ SET LOCAL lock_timeout = '5s';
 
 CREATE TABLE IF NOT EXISTS compute_node_db_logins (
     login text PRIMARY KEY CHECK (login ~ '^faas_[a-z0-9_]{1,58}$'),
-    node_id uuid NOT NULL REFERENCES compute_nodes(id) ON DELETE CASCADE,
+    node_name text NOT NULL CHECK (node_name ~ '^[A-Za-z0-9._-]{1,253}$'),
     created_at timestamp with time zone NOT NULL DEFAULT now() CHECK (isfinite(created_at))
 );
-CREATE INDEX IF NOT EXISTS compute_node_db_logins_node_idx ON compute_node_db_logins (node_id);
+CREATE INDEX IF NOT EXISTS compute_node_db_logins_node_idx ON compute_node_db_logins (node_name);
 
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION compute_node_row_scope() RETURNS trigger
@@ -35,10 +37,9 @@ CREATE OR REPLACE FUNCTION compute_node_row_scope() RETURNS trigger
     SET search_path = pg_catalog, pg_temp
     AS $function$
 DECLARE
-    node uuid;
-    own_name text;
+    node text;
 BEGIN
-    EXECUTE format('SELECT node_id FROM %I.compute_node_db_logins WHERE login = $1', TG_TABLE_SCHEMA)
+    EXECUTE format('SELECT node_name FROM %I.compute_node_db_logins WHERE login = $1', TG_TABLE_SCHEMA)
         INTO node USING session_user::text;
     IF node IS NULL THEN
         IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
@@ -51,20 +52,18 @@ BEGIN
     IF TG_OP = 'INSERT' THEN
         -- vmmd registers with INSERT ... ON CONFLICT (name) DO UPDATE: the
         -- insert is admitted only under the node's own name, where it
-        -- becomes an update of its own row.
-        EXECUTE format('SELECT name FROM %I.compute_nodes WHERE id = $1', TG_TABLE_SCHEMA)
-            INTO own_name USING node;
-        IF NEW.name IS DISTINCT FROM own_name THEN
+        -- becomes an update of its own row (or its first registration).
+        IF NEW.name IS DISTINCT FROM node THEN
             RAISE EXCEPTION 'a compute node login writes only its own compute node row'
                 USING ERRCODE = '42501', DETAIL = format('login=%s node=%s name=%s', session_user, node, NEW.name);
         END IF;
         RETURN NEW;
     END IF;
-    IF OLD.id IS DISTINCT FROM node OR NEW.id IS DISTINCT FROM node THEN
+    IF OLD.name IS DISTINCT FROM node THEN
         RAISE EXCEPTION 'a compute node login writes only its own compute node row'
-            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s row=%s', session_user, node, OLD.id);
+            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s row=%s', session_user, node, OLD.name);
     END IF;
-    IF NEW.name IS DISTINCT FROM OLD.name
+    IF NEW.id IS DISTINCT FROM OLD.id OR NEW.name IS DISTINCT FROM OLD.name
         OR (OLD.region IS NOT NULL AND NEW.region IS DISTINCT FROM OLD.region)
         OR (OLD.zone IS NOT NULL AND NEW.zone IS DISTINCT FROM OLD.zone)
         OR (OLD.role IS NOT NULL AND NEW.role IS DISTINCT FROM OLD.role)
@@ -98,15 +97,22 @@ CREATE OR REPLACE FUNCTION compute_node_report_scope() RETURNS trigger
     SET search_path = pg_catalog, pg_temp
     AS $function$
 DECLARE
+    node_name text;
     node uuid;
 BEGIN
-    EXECUTE format('SELECT node_id FROM %I.compute_node_db_logins WHERE login = $1', TG_TABLE_SCHEMA)
-        INTO node USING session_user::text;
-    IF node IS NOT NULL AND (
+    EXECUTE format('SELECT node_name FROM %I.compute_node_db_logins WHERE login = $1', TG_TABLE_SCHEMA)
+        INTO node_name USING session_user::text;
+    IF node_name IS NOT NULL THEN
+        -- A node that has not registered yet has no row, so no report of
+        -- any node can match: NULL is distinct from every node_id.
+        EXECUTE format('SELECT id FROM %I.compute_nodes WHERE name = $1', TG_TABLE_SCHEMA)
+            INTO node USING node_name;
+    END IF;
+    IF node_name IS NOT NULL AND (
         (TG_OP IN ('UPDATE', 'DELETE') AND OLD.node_id IS DISTINCT FROM node)
         OR (TG_OP IN ('INSERT', 'UPDATE') AND NEW.node_id IS DISTINCT FROM node)) THEN
         RAISE EXCEPTION 'a compute node login writes only its own node''s reports'
-            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s table=%s', session_user, node, TG_TABLE_NAME);
+            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s table=%s', session_user, node_name, TG_TABLE_NAME);
     END IF;
     IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
     RETURN NEW;

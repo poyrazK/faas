@@ -138,6 +138,20 @@ BEGIN
 END
 $$;
 
+-- ADR-20261110210000 slice 1c-2: faas_node_logins (NOLOGIN) groups the
+-- per-node compute logins node_join creates (compute-node-db-logins.sql).
+-- pg_hba admits its members only by a fleet-CA client certificate whose CN is
+-- the login; compute_node_db_logins maps each to its node. The group itself
+-- holds no privilege: a login's row DML comes from faas_runtime.
+DO $$
+BEGIN
+	IF to_regrole('faas_node_logins') IS NULL THEN
+		CREATE ROLE faas_node_logins NOLOGIN;
+	END IF;
+	ALTER ROLE faas_node_logins NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+END
+$$;
+
 -- ADR-20261110210000 §4: faas_owner_authority (NOLOGIN) names the logins
 -- that may set an app's owner node once app_owner_authority.mode is enforce:
 -- the control plane's schedd (peer-authenticated, so it cannot log in from a
@@ -155,9 +169,12 @@ BEGIN
 			EXECUTE format('GRANT faas_owner_authority TO %I', r);
 		END IF;
 	END LOOP;
-	-- A compute login that became a member by mistake is removed.
+	-- A compute login that became a member by mistake is removed, per-node
+	-- logins (faas_node_logins, slice 1c-2) included.
 	FOREACH r IN ARRAY ARRAY['faas_compute', 'faas_vmmd', 'faas_node_schedd', 'faas_imaged',
-		'faas_builderd', 'faas_gatewayd_internal', 'faas_gatewayd_edge', 'faas_runtime'] LOOP
+		'faas_builderd', 'faas_gatewayd_internal', 'faas_gatewayd_edge', 'faas_runtime']
+		|| ARRAY(SELECT m.member::regrole::text FROM pg_catalog.pg_auth_members m
+		          WHERE m.roleid = to_regrole('faas_node_logins')) LOOP
 		IF to_regrole(r) IS NOT NULL AND EXISTS (
 			SELECT 1 FROM pg_catalog.pg_auth_members
 			 WHERE roleid = to_regrole('faas_owner_authority') AND member = to_regrole(r)) THEN

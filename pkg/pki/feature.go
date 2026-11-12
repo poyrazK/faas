@@ -1,9 +1,12 @@
 package pki
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 )
 
 // Feature leaves are certificates a host carries only once an operator turns
@@ -95,6 +98,46 @@ const (
 	SecretdClientDirectory = "secretd-client"
 )
 
+// FeatureDBLogin is the per-node database logins of ADR-20261110210000
+// slice 1c-2: one client leaf per compute daemon, whose CN is that daemon's
+// login on this node (DBNodeLogin). PostgreSQL authenticates the login by the
+// leaf (pg_hba `cert`, which requires the CN to equal the user name), and
+// compute_node_db_logins maps the login to the node, so a node's daemons can
+// write only their own node's placement inputs. The control plane holds no
+// such leaf.
+const FeatureDBLogin = "db-login"
+
+// DBClientDirectory holds a compute node's database client leaves, one file
+// per daemon unit.
+const DBClientDirectory = "db-client"
+
+// DBLoginDaemonRoles maps each compute daemon unit to its database role
+// (scripts/ci/compute_db_roles.py UNIT_ROLES); a per-node login is named
+// after the role.
+var DBLoginDaemonRoles = map[string]string{
+	"faas-vmmd":                 "faas_vmmd",
+	"faas-schedd":               "faas_node_schedd",
+	"faas-imaged":               "faas_imaged",
+	"faas-builderd":             "faas_builderd",
+	"faas-gatewayd-internal":    "faas_gatewayd_internal",
+	"faas-gatewayd-public-edge": "faas_gatewayd_edge",
+}
+
+// DBNodeLogin names a daemon's login on one compute node: its role and the
+// first 12 hex digits of SHA-256(node name). node_join.yml derives the same
+// name with Ansible's hash('sha256') filter, and compute_node_db_logins
+// checks the shape (^faas_[a-z0-9_]{1,58}$).
+func DBNodeLogin(daemonRole, nodeName string) string {
+	sum := sha256.Sum256([]byte(nodeName))
+	return daemonRole + "_" + hex.EncodeToString(sum[:])[:12]
+}
+
+// FeatureComputeOnly reports whether feature has leaves on compute hosts
+// only.
+func FeatureComputeOnly(feature string) bool {
+	return feature == FeatureDBLogin
+}
+
 // SharedDirectoryFeatureLeaf reports whether a feature leaf may sit in a
 // required leaf's directory: only vmmd's relay client leaf does.
 func SharedDirectoryFeatureLeaf(role Role) bool {
@@ -103,7 +146,7 @@ func SharedDirectoryFeatureLeaf(role Role) bool {
 
 // Features lists the known feature-leaf sets.
 func Features() []string {
-	return []string{FeatureLiveQueries, FeaturePlatformLogs, FeatureOutboundRelay, FeatureArtifactSigner, FeatureSecretOpener}
+	return []string{FeatureLiveQueries, FeaturePlatformLogs, FeatureOutboundRelay, FeatureArtifactSigner, FeatureSecretOpener, FeatureDBLogin}
 }
 
 // FeatureRoles returns the leaves a host of boxRole carries for feature, or
@@ -132,6 +175,17 @@ func FeatureRoles(feature, boxRole string) []Role {
 	case FeatureSecretOpener:
 		controlPlane = []Role{{CommonName: SecretdServerName, Kind: KindServer, Directory: "secretd", Filename: "server", AltNames: ProductionSANs(SecretdServerName)}}
 		compute = []Role{{CommonName: VmmdSecretdClient, Kind: KindClient, Directory: SecretdClientDirectory, Filename: "vmmd", AltNames: ProductionSANs(VmmdSecretdClient)}}
+	case FeatureDBLogin:
+		units := make([]string, 0, len(DBLoginDaemonRoles))
+		for unit := range DBLoginDaemonRoles {
+			units = append(units, unit)
+		}
+		slices.Sort(units)
+		for _, unit := range units {
+			// The CN is a placeholder: EnsureFeatureLeavesForNode names each
+			// leaf after the daemon's login on the node.
+			compute = append(compute, Role{CommonName: DBLoginDaemonRoles[unit], Kind: KindClient, Directory: DBClientDirectory, Filename: unit})
+		}
 	default:
 		return nil
 	}
@@ -193,6 +247,9 @@ func EnsureFeatureLeavesForNode(caRoot, rootDir, feature, boxRole, nodeCN string
 				return issued, fmt.Errorf("pki: feature leaf %s/%s carries the compute node's identity: pass its node name", role.Directory, role.Filename)
 			}
 			commonName = nodeCN
+			if feature == FeatureDBLogin {
+				commonName = DBNodeLogin(role.CommonName, strings.TrimSuffix(nodeCN, ".faas"))
+			}
 		}
 		err := ensureLeafWithIdentity(rootDir, role, commonName, caCert, caKey, false, AltNames{})
 		if errors.Is(err, ErrLeafNotExpiringSoon) {
