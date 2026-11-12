@@ -307,7 +307,7 @@ Search an app&#39;s runtime logs and HTTP requests, or follow them
 | `--service <NAME,...>` | with --project, only these services |  |
 | `--limit <N>` | HTTP request page size (1..200) |  |
 | `--all` | read every retained HTTP request page |  |
-| `--explain` | summarize the last failure and common error patterns |  |
+| `--explain` | summarize failures and error patterns; --json requires an unfiltered --deployment snapshot |  |
 | `--archive` | read durable logs for one instance and UTC day |  |
 | `--instance <ID>` | instance id for --archive (1..128 ASCII letters, numbers, dots, underscores, or hyphens) |  |
 | `--date <DAY>` | UTC day for --archive: today, yesterday, or YYYY-MM-DD |  |
