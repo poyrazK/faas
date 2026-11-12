@@ -292,6 +292,28 @@ copy-paste command for the next step. `--start` hands the validated plan to
 `gregale dev`, which provisions the stable URL, waits for the first sync to
 become live, and watches for changes unless `--once` is supplied.
 
+Setup checks required runtime keys against the selected env and service-override
+files and planned database/bucket bindings. An unselected `.env` or a local
+declaration does not prove that a remote app will receive its values. Optional
+references and platform-provided settings retain their existing exemptions.
+
+The receipt's `configuration` object lists `required`, `provided`, `planned`,
+`empty`, `missing`, `unverified`, and `existing_values_unverified` names.
+Setup stays offline: unresolved keys are `unverified`, and `ready` is false.
+`--start` can still hand that plan to `dev` for verification. Known empty
+required values block the handoff until fixed.
+
+Before each source upload, `dev` checks unresolved names in the isolated
+developer app's default scope. Missing keys or failed metadata reads block
+upload/build; a linked production app cannot satisfy the check. Existing names
+do not verify their values, and planned bindings do not prove delivery or
+resource readiness. The selected-file values checked are the same snapshot
+used for that sync. Only key names appear in reports.
+
+With `--json`, each attempt emits a `developer_configuration` NDJSON record
+before config/source sync. Setup includes the same fields under
+`configuration`; human output shows the names grouped by their source.
+
 `--open` launches the stable developer URL in the default browser after the
 first successful sync. It opens at most once per session, including with
 `--once`; a browser-launch failure is non-fatal and leaves a copyable URL in
@@ -480,8 +502,11 @@ address, for example a VS Code configuration:
 or open `chrome://inspect` and add `127.0.0.1:9229`. Each debugger connection
 is its own tunnel through the API (`GET /v1/apps/{slug}/debug`, a WebSocket
 served by the gateway, not apid), authenticated with your CLI credentials; the
-inspector port is never published on the app's URL. Attaches and detaches are
-recorded in the audit log (`dev.debugger.attached` / `dev.debugger.detached`).
+inspector port is never published on the app's URL. Each debugging session is
+recorded in the audit log: `dev.debugger.attached` when the first connection
+opens and `dev.debugger.detached`, with the session's duration and connection
+count, a minute after the last one closes. The many short connections a
+debugger's target discovery opens belong to the same session.
 Only `gregale dev` environments accept a debugger: the platform marks them
 with `FAAS_DEVELOPER_ENVIRONMENT=1`, and the inspector switch is ignored on any
 other app.
