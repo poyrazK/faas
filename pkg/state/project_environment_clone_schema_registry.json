@@ -16007,7 +16007,8 @@
       "expires_at",
       "parent_environment_id",
       "private_networks",
-      "project_id"
+      "project_id",
+      "slot_id"
     ],
     "kind": "operational"
   },

@@ -199,8 +199,11 @@ type ProjectEnvironmentBranchWorkload struct {
 	SourceDeployment string `json:"source_deployment_id"`
 	Status           string `json:"status"`
 	// URL is the workload's address in the branch; its first request
-	// starts it.
+	// starts it. It is the branch's stable URL, which a reset keeps.
 	URL string `json:"url,omitempty"`
+	// EnvironmentURL is the address of this incarnation of the branch: a
+	// reset gives it a new one. Empty when it is the same as URL.
+	EnvironmentURL string `json:"environment_url,omitempty"`
 }
 
 // ProjectEnvironmentBranchListResponse lists a project's branches.

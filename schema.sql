@@ -53070,6 +53070,7 @@ CREATE TABLE public.project_environment_branches (
     data_lease_until timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     private_networks text DEFAULT 'off'::text NOT NULL,
+    slot_id uuid,
     CONSTRAINT project_environment_branches_data_attempts CHECK ((data_attempts >= 0)),
     CONSTRAINT project_environment_branches_data_state CHECK ((data_state = ANY (ARRAY['pending'::text, 'ready'::text, 'failed'::text]))),
     CONSTRAINT project_environment_branches_depth CHECK (((depth >= 1) AND (depth <= 8))),
@@ -82853,6 +82854,13 @@ CREATE INDEX project_environment_branches_parent_idx ON public.project_environme
 --
 
 CREATE INDEX project_environment_branches_project_idx ON public.project_environment_branches USING btree (account_id, project_id);
+
+
+--
+-- Name: project_environment_branches_slot_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX project_environment_branches_slot_unique ON public.project_environment_branches USING btree (slot_id) WHERE (slot_id IS NOT NULL);
 
 
 --

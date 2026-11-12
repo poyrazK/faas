@@ -6572,6 +6572,8 @@ type Querier interface {
 	// left out and, with an app_id, so are rules of apps outside its edge-rule
 	// scope: the owning company organization, or none for a personal app.
 	ReadPublicHostEdgeRules(ctx context.Context, db DBTX, arg ReadPublicHostEdgeRulesParams) (ReadPublicHostEdgeRulesRow, error)
+	// A branch's slot names the environment of the branch holding it
+	// (ADR-20261031193635 stable branch URLs).
 	ReadPublicHostEnvironment(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]byte, error)
 	ReadPublicHostEnvironmentPolicy(ctx context.Context, db DBTX, arg ReadPublicHostEnvironmentPolicyParams) (ReadPublicHostEnvironmentPolicyRow, error)
 	ReadPublicHostOpenAPIDoc(ctx context.Context, db DBTX, arg ReadPublicHostOpenAPIDocParams) (ReadPublicHostOpenAPIDocRow, error)
