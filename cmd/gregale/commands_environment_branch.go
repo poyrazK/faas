@@ -30,6 +30,9 @@ func cmdProjectsEnvironmentBranch(args []string) int {
 		PrintUsage(os.Stderr, environmentBranchUsage, "projects environments")
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) {
 		return printErr("Invalid environment", fmt.Errorf("project and environment slugs must use lowercase letters, numbers, and internal hyphens"))
 	}
@@ -43,6 +46,10 @@ func cmdProjectsEnvironmentBranch(args []string) int {
 			return printErr("Could not list environment branches", err)
 		}
 		return renderProjectEnvironmentBranches(branches)
+	}
+	if len(positional) != 2 {
+		PrintUsage(os.Stderr, environmentBranchUsage, "projects environments")
+		return 1
 	}
 	if !api.ValidProjectEnvironmentSlug(positional[1]) || positional[1] == *from {
 		return printErr("Invalid environment", fmt.Errorf("the branch slug must be a valid environment slug that differs from --from"))

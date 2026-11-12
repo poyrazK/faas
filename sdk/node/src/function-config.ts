@@ -74,6 +74,15 @@ export interface FunctionConfig {
   beforeSnapshotTimeoutMs?: number;
   /** Milliseconds afterRestore may take (default 500, at most 2000). */
   afterRestoreTimeoutMs?: number;
+  /**
+   * JSON Schema of the request body, or a path to a .json file in the
+   * function's root; typed clients are generated from it.
+   */
+  input?: Record<string, unknown> | string;
+  /** JSON Schema of the response body, or a path to a .json file. */
+  output?: Record<string, unknown> | string;
+  /** Other apps of the account, by slug, the typed client may call. */
+  calls?: string[];
 }
 
 /**

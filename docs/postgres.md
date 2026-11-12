@@ -67,8 +67,8 @@ The database starts in `provisioning` and moves to `ready`. Options:
 - `--class development|burstable|production`: the compute class your plan
   allows. The default is `development`.
 - `--postgres-major N`: the PostgreSQL major version, 15 to 18. The default is
-  16. PostgreSQL 14 reaches its end of life in November 2026, so new databases
-  cannot choose it.
+  16. PostgreSQL 14 reached its end of life in November 2026 and is not
+  supported.
 - `--storage-bytes N` and `--restore-window-seconds N`: default to your plan's
   allowance.
 

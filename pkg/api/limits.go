@@ -10842,6 +10842,14 @@ const (
 	// at most 30 days ahead. A sleep also counts against the endpoint's
 	// realtime schedules (state.ManagedRealtimeScheduleLimit).
 	AgentSleepMaxSeconds = 2_592_000
+	// AgentGitHubSubscriptionMaxSeconds bounds a gregale_github_subscribe
+	// (ADR-20261030125501 §4): a thread receives a repository's events for
+	// at most 30 days, and subscribes again to keep them.
+	AgentGitHubSubscriptionMaxSeconds = 2_592_000
+	// AgentGitHubSubscriptionsPerEndpoint bounds the live subscriptions of one
+	// agent inbox endpoint in preview, as the realtime schedule limit bounds
+	// its sleeps; each forwarded event is published to every matching one.
+	AgentGitHubSubscriptionsPerEndpoint = 64
 	// SandboxIdleFreezeSec freezes a sandbox session with no calls, and
 	// SandboxIdleExpirySec ends it (ADR-20261027090013 §5). The expiry equals
 	// FrozenTTLSeconds and bounds a session's idle timeout.

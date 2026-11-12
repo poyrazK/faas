@@ -238,7 +238,7 @@ for (const failure of ['setup', 'disposal', 'async disposal']) {
         };
       },
     } });
-    app.api.registerResource('second', 'second://item', {}, async () => ({ contents: [] }));
+    app.api.registerResource('second', 'second://item', {}, async () => ({ contents: [] }), () => true);
     const response = await app.send({ resourceSubscriptions: failure === 'setup'
       ? ['greeting://welcome', 'second://item'] : ['greeting://welcome'] }).promise;
     if (failure === 'setup') assert.equal((await response.json()).error.code, -32603);

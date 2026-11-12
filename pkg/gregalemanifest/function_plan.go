@@ -73,6 +73,9 @@ func (m *Manifest) PlanFunctionsFS(fsys fs.FS, projectSlug string) ([]FunctionPl
 		if err := fn.validateHookTimeouts(); err != nil {
 			return nil, err
 		}
+		if err := fn.resolveSchemas(fsys, root); err != nil {
+			return nil, err
+		}
 		planned = append(planned, FunctionPlan{Spec: fn, Slug: slug, Root: root, Runtime: runtime, Handler: handler})
 	}
 	return planned, nil
@@ -254,6 +257,9 @@ func (m *Manifest) FunctionAppManifest(p FunctionPlan) *Manifest {
 		QueueBindings: p.Spec.QueueBindings,
 	}
 	spec := p.Spec
+	for _, fn := range m.Functions {
+		spec.ProjectFunctions = append(spec.ProjectFunctions, fn.Name)
+	}
 	out.FunctionSettings = &spec
 	for _, trigger := range p.Spec.EventTriggers {
 		trigger.App = p.Slug
