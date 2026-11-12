@@ -129,6 +129,12 @@ BEGIN
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.app_basic_auth_verifiers FROM faas_runtime;
 		GRANT SELECT, INSERT, DELETE ON public.app_basic_auth_verifiers TO faas_apid;
 	END IF;
+	-- ADR-20261110210000 slice 1c: which node a login belongs to decides
+	-- which compute rows it may write. A login that could write the map
+	-- could claim another node's rows; only the schema owner writes it.
+	IF to_regclass('public.compute_node_db_logins') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.compute_node_db_logins FROM faas_runtime;
+	END IF;
 END
 $$;
 

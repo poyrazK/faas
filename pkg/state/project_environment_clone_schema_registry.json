@@ -3983,6 +3983,15 @@
     }
   },
   {
+    "table": "compute_node_db_logins",
+    "columns": [
+      "created_at",
+      "login",
+      "node_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "compute_node_heartbeat_hourly",
     "columns": [
       "bucket_at",
