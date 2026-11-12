@@ -82,11 +82,10 @@ func customerAccountHealth(d api.ObsTenantDiagnosis) api.AccountHealth {
 			Domain: issue.Domain, AppSlug: issue.AppSlug, Problem: issue.Problem, CertError: issue.CertLastError})
 	}
 	for _, c := range d.CustomerErrors.ByCode {
-		h.RefusedRequests.ByCode = append(h.RefusedRequests.ByCode, api.AccountHealthCode{Code: c.Code, Count: c.Count, LastAt: c.LastAt})
+		h.RefusedRequests.ByCode = append(h.RefusedRequests.ByCode, api.AccountHealthCode(c))
 	}
 	for _, e := range d.CustomerErrors.Recent {
-		h.RefusedRequests.Recent = append(h.RefusedRequests.Recent, api.AccountHealthRequest{
-			OccurredAt: e.OccurredAt, Route: e.Route, Code: e.Code, AppSlug: e.AppSlug, RequestID: e.RequestID, TraceID: e.TraceID})
+		h.RefusedRequests.Recent = append(h.RefusedRequests.Recent, api.AccountHealthRequest(e))
 	}
 	h.Attention = len(h.Restrictions) + len(h.FailedDeployments) + len(h.DomainIssues)
 	return h
