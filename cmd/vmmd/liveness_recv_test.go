@@ -719,25 +719,31 @@ func TestLivenessRecv_FirecrackerVsockHandshake(t *testing.T) {
 	}
 }
 
-// H10-23: 404 counts as alive only for a TCP-readiness image probed on the
-// plan-default path; every other status keeps its outcome.
+// ADR-079 amendment 1 (H10-23): on a path the app never promised, any answer
+// below 500 proves the server is alive; a path startup proved stays strict.
 func TestClassifyLivenessStatus(t *testing.T) {
 	for _, tc := range []struct {
-		status          int
-		notFoundIsAlive bool
-		want            string
+		status     int
+		unpromised bool
+		want       string
 	}{
 		{200, false, livenessOutcomeOK},
 		{204, true, livenessOutcomeOK},
 		{404, true, livenessOutcomeOK},
+		{401, true, livenessOutcomeOK},
+		{403, true, livenessOutcomeOK},
+		{400, true, livenessOutcomeOK},
+		{302, true, livenessOutcomeOK},
 		{404, false, livenessOutcomeNon200},
+		{302, false, livenessOutcomeNon200},
 		{500, true, livenessOutcomeNon200},
 		{503, true, livenessOutcomeNon200},
-		{401, true, livenessOutcomeUnauthorized},
+		{0, true, livenessOutcomeNon200},
+		{401, false, livenessOutcomeUnauthorized},
 		{403, false, livenessOutcomeUnauthorized},
 	} {
-		if got := classifyLivenessStatus(tc.status, tc.notFoundIsAlive); got != tc.want {
-			t.Errorf("classifyLivenessStatus(%d, %v) = %s, want %s", tc.status, tc.notFoundIsAlive, got, tc.want)
+		if got := classifyLivenessStatus(tc.status, tc.unpromised); got != tc.want {
+			t.Errorf("classifyLivenessStatus(%d, %v) = %s, want %s", tc.status, tc.unpromised, got, tc.want)
 		}
 	}
 }

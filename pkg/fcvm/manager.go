@@ -645,8 +645,14 @@ type Instance struct {
 	// WakeRequest. It remains empty for either gRPC readiness or legacy
 	// TCP readiness. Stamped on Instance for readers that resolve it
 	// without a second request lookup (PR-C mirror).
-	HealthcheckPath          string
-	HealthcheckGRPC          bool
+	HealthcheckPath string
+	HealthcheckGRPC bool
+	// HealthcheckGRPCService is the health.v1 service gRPC readiness checked;
+	// plan-default liveness checks the same service.
+	HealthcheckGRPCService string
+	// RoutedPortRawTCP is WakeRequest.RoutedPortRawTCP: a raw TCP server
+	// gets no plan-default HTTP liveness probe.
+	RoutedPortRawTCP         bool
 	ImageHealthcheckRequired bool
 	// StartupDeadlineS is the per-app readiness budget from the lifecycle
 	// contract. 0 preserves the vmmd default for legacy callers.
@@ -2337,12 +2343,13 @@ type LivenessProbeConfig struct {
 	ConsecutiveFailures      int
 	CooldownSeconds          int
 	IdleResetOnDestroy       bool
-	// NotFoundIsAlive accepts a 404 from the plan-default probe path. It is
-	// set for an instance whose readiness contract is its TCP listener (a
-	// direct OCI image with no health path) and no liveness override: such
-	// an image never promised /healthz, and a 404 proves it serves HTTP, as
-	// deploy verification already accepts (H10-23).
-	NotFoundIsAlive bool
+	// UnpromisedPath marks an HTTP probe of the plan-default path on an app
+	// whose startup contract never proved that path: its readiness was a
+	// declared path such as /actuator/health, or its TCP listener (a direct
+	// OCI image with no health path, H10-23). Any answer below 500 (404,
+	// 401, 400, ...) then proves the server is alive; a timeout, a refused
+	// connection or a 5xx still fails (ADR-079 amendment 1).
+	UnpromisedPath bool
 }
 
 // LivenessRegistry owns the per-instance liveness-probe poll
@@ -2563,11 +2570,64 @@ func instanceHasNoHTTPContract(inst *Instance) bool {
 	return false
 }
 
+// livenessReadiness is the startup probe an instance passed: an HTTP path,
+// gRPC health, or (neither) its TCP listener, which rawTCP marks as a
+// declared raw TCP listener rather than an HTTP image.
+type livenessReadiness struct {
+	path        string
+	grpc        bool
+	grpcService string
+	rawTCP      bool
+	plan        api.Plan
+}
+
+// planDefaultLivenessAction picks what the plan-default liveness probe checks
+// when the deployment declares no liveness path or gRPC action (ADR-079
+// amendment 1). Liveness asks whether the server still answers, never whether
+// its dependencies are healthy, so a database outage cannot restart or park
+// an app:
+//   - gRPC readiness: the same health.v1 Check readiness proved. A gRPC
+//     server cannot answer an HTTP/1.1 GET, so the HTTP default killed every
+//     gRPC app ~10 s after boot (pulsewatch-grpc, liveness_conn_err). gRPC
+//     liveness is a Pro/Scale capability (api.Plan.GRPCLivenessAllowed), so
+//     on other plans the app gets no default probe; process exit still
+//     reports through ProcessExited, as for a worker.
+//   - TCP readiness on a declared raw TCP listener (a database, a game
+//     server): no default probe. Such a server answers an HTTP GET in its
+//     own protocol, or waits silently for a frame, so HTTP cannot judge it;
+//     process exit still reports through ProcessExited.
+//   - HTTP readiness on the plan-default path: strict, startup proved it.
+//   - any other readiness (a declared path such as /actuator/health, or the
+//     TCP listener of an HTTP image): the plan-default path is one the app
+//     never promised. Spring answered /healthz with 404 and every retail-*
+//     app was destroyed ~10 s after each boot, so every request paid a 12 s
+//     cold boot.
+func planDefaultLivenessAction(cfg LivenessProbeConfig, readiness livenessReadiness) LivenessProbeConfig {
+	if cfg.GRPC {
+		return cfg
+	}
+	if readiness.rawTCP && readiness.path == "" && !readiness.grpc {
+		cfg.PeriodSeconds = 0
+		return cfg
+	}
+	if readiness.grpc {
+		if !readiness.plan.GRPCLivenessAllowed() {
+			cfg.PeriodSeconds = 0
+			return cfg
+		}
+		cfg.Path, cfg.GRPC, cfg.GRPCService = "", true, readiness.grpcService
+		return cfg
+	}
+	cfg.UnpromisedPath = readiness.path != cfg.Path
+	return cfg
+}
+
 func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot int, override json.RawMessage) {
 	if m.livenessRegistry == nil {
 		return
 	}
 	cfg := m.livenessDefaultCfg
+	overrideAction := false
 	// Per-deployment override (api.DeploymentLivenessProbe) merges
 	// over the plan defaults. Same fail-soft shape as
 	// healthcheckPathFromDep (engine.go:3360): a malformed override
@@ -2585,10 +2645,12 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 				cfg.Path = ""
 				cfg.GRPC = true
 				cfg.GRPCService = ov.GRPC.Service
+				overrideAction = true
 			} else if ov.Path != "" {
 				cfg.Path = ov.Path
 				cfg.GRPC = false
 				cfg.GRPCService = ""
+				overrideAction = true
 			}
 			if ov.IntervalS > 0 {
 				cfg.PeriodSeconds = ov.IntervalS
@@ -2616,19 +2678,17 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 		}
 	}
 	noHTTPContract := false
-	tcpReadiness := false
+	var readiness *livenessReadiness
 	m.mu.Lock()
 	if inst := m.live[instance]; inst != nil {
 		cfg.ImageHealthcheckRequired = inst.ImageHealthcheckRequired
 		noHTTPContract = instanceHasNoHTTPContract(inst)
-		tcpReadiness = inst.HealthcheckPath == ""
+		readiness = &livenessReadiness{path: inst.HealthcheckPath, grpc: inst.HealthcheckGRPC, grpcService: inst.HealthcheckGRPCService,
+			rawTCP: inst.RoutedPortRawTCP, plan: inst.Plan}
 	}
 	m.mu.Unlock()
-	// On prod the default /healthz probe got 404 from nginx-unprivileged,
-	// parked its stable release as liveness_exhausted mid-canary and served
-	// 503s; a hang still fails the probe by timeout or refused connection.
-	if tcpReadiness && len(override) == 0 && !cfg.GRPC {
-		cfg.NotFoundIsAlive = true
+	if !overrideAction && readiness != nil {
+		cfg = planDefaultLivenessAction(cfg, *readiness)
 	}
 	// A declared image command is its liveness contract. Do not invent the
 	// plan-default /healthz endpoint for that image; explicit HTTP/gRPC
@@ -2649,7 +2709,8 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 	m.log.Debug("liveness: starting probe loop",
 		"instance", instance, "slot", slot,
 		"period_s", cfg.PeriodSeconds,
-		"consecutive", cfg.ConsecutiveFailures)
+		"consecutive", cfg.ConsecutiveFailures,
+		"path", cfg.Path, "grpc", cfg.GRPC, "unpromised_path", cfg.UnpromisedPath)
 	// The actual goroutine spawn + vsock dial logic lives in
 	// cmd/vmmd/liveness_recv.go (cmd-level binding). We hand the
 	// cmd helper a closure that knows how to launch the loop and
@@ -3957,6 +4018,10 @@ type WakeRequest struct {
 	HealthcheckGRPCService string
 	// ImageHealthcheckRequired requires a fresh guest command check before readiness (ADR-683).
 	ImageHealthcheckRequired bool
+	// RoutedPortRawTCP marks TCP readiness on a port the app declares as a
+	// public raw TCP listener (ADR-20261027090000). It gets no plan-default
+	// HTTP liveness probe (ADR-079 amendment 1).
+	RoutedPortRawTCP bool
 	// StartupDeadlineS is the per-app readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int
@@ -5578,6 +5643,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		PrivateNetworkExcluded: req.privateNetworkExcluded,
 		WakeID:                 wakeID, NodeID: fields.NodeID,
 		Plan: req.Plan, RequestConcurrency: req.RequestConcurrency, Port: req.Port, HealthcheckPath: req.HealthcheckPath, HealthcheckGRPC: req.HealthcheckGRPC,
+		HealthcheckGRPCService:   req.HealthcheckGRPCService,
+		RoutedPortRawTCP:         req.RoutedPortRawTCP,
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:           append(json.RawMessage(nil), req.ReadinessProbe...),
