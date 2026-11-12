@@ -16,6 +16,7 @@ import (
 )
 
 type dataAPIDevOptions struct {
+	Browser           bool   `json:"browser,omitempty"`
 	AccessChecks      string `json:"access_checks,omitempty"`
 	Verify            bool   `json:"verify,omitempty"`
 	PlanCheck         bool   `json:"plan_check,omitempty"`
@@ -47,6 +48,10 @@ type dataAPIDevOptions struct {
 	CLI               string `json:"cli"`
 	Config            string `json:"config"`
 	OutputSet         bool   `json:"output_set"`
+	BehaviorBaseline  string `json:"behavior_baseline,omitempty"`
+	BehaviorOutput    string `json:"behavior_output,omitempty"`
+	BehaviorReplays   string `json:"behavior_replays,omitempty"`
+	NumericMode       string `json:"numeric_mode,omitempty"`
 }
 
 func cmdDataAPIDev(args []string) int { return runDataAPIDev(args, nil) }
@@ -64,8 +69,10 @@ func runDataAPIDev(args []string, rehearsal *dataAPIMigrationOptions) int {
 	port := fs.Int("port", 8080, "loopback gateway port (0 selects a free port)")
 	check := fs.Bool("check", false, "run configured client checks")
 	validators := fs.Bool("validators", false, "generate runtime table and RPC argument validators alongside types")
+	numericMode := fs.String("numeric-mode", "number", "TypeScript JSON numbers: number or lossless (decimal strings)")
 	checkTypes := fs.Bool("check-types", false, "compare committed types without rewriting them (requires --once)")
 	once := fs.Bool("once", false, "verify the local workflow and exit, removing containers")
+	browser := fs.Bool("browser", false, "build and serve the starter browser with local test identities")
 	watch := fs.Bool("watch", true, "watch migrations and refresh the local API and types (disabled by --once)")
 	baseline := fs.String("baseline", "", "read-only contract baseline (default: last successful local contract)")
 	scenario := fs.String("scenario", "", "select one named replay scenario (requires --replay)")
@@ -73,8 +80,20 @@ func runDataAPIDev(args []string, rehearsal *dataAPIMigrationOptions) int {
 	checkBreaking := fs.Bool("check-breaking", false, "reject breaking schema changes; requires an existing baseline")
 	acceptedContracts := fs.String("accepted-contracts", "", "project-relative reviewed runtime contract policy")
 	approval := fs.String("approval", "", "reviewed compatibility approvals (requires --baseline and --check-breaking)")
+	behaviorBaseline := fs.String("behavior-baseline", "", "compare owner-only policy, RPC body, grant and default digests (requires --once)")
+	behaviorOutput := fs.String("behavior-output", "", "write owner-only behavior digests after authorization checks (requires --once)")
+	behaviorReplays := fs.String("behavior-replays", "", "map changed behavior objects to required authorization scenarios")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
+	}
+	if *browser && (*once || rehearsal.Explain || rehearsal.Verify || preview) {
+		return printErr("Invalid browser launch", errors.New("--browser requires an interactive development session"))
+	}
+	if !dataAPIDiagnosticAllowed(*numericMode, "number", "lossless") || (*numericMode == "lossless" && *validators) {
+		return printErr("Invalid numeric mode", errors.New("use number or lossless; lossless mode requires types without validators"))
+	}
+	if ((*behaviorBaseline != "" || *behaviorOutput != "" || *behaviorReplays != "") && !*once) || (*behaviorReplays != "" && *behaviorBaseline == "") {
+		return printErr("Invalid behavior comparison", errors.New("use --once and a behavior baseline for replay coverage"))
 	}
 	if (*approval != "" && (*baseline == "" || !*checkBreaking)) || (*checkTypes && !*once) || fs.NArg() != 0 || *port < 0 || *port > 65535 || *directory == "" || *output == "" || (*replay != "" && !*once) || (*scenario != "" && *replay == "") {
 		PrintUsage(os.Stderr, "usage: gregale data-api serve [--directory DIR] [--config FILE] [--output FILE] [--port PORT] [--check] [--validators] [--check-types --once] [--once] [--follow=false] [--baseline FILE] [--check-breaking] [--approval FILE] [--accepted-contracts FILE] [--replay FILE --once] [--scenario NAME]", "data-api")
@@ -117,6 +136,18 @@ func runDataAPIDev(args []string, rehearsal *dataAPIMigrationOptions) int {
 		}
 	}
 	target := dataAPISyncPath(base, *output)
+	for _, path := range []*string{behaviorBaseline, behaviorOutput, behaviorReplays} {
+		if *path != "" {
+			*path = dataAPISyncPath(base, *path)
+		}
+	}
+	if *behaviorOutput != "" {
+		for _, input := range []string{target, configPath, *behaviorBaseline, *behaviorReplays, *replay, *baseline, *approval, *acceptedContracts} {
+			if input != "" && dataAPIContractOutputAliases(*behaviorOutput, input) {
+				return printErr("Invalid behavior output", errors.New("output must differ from types, configuration, replay and baseline files"))
+			}
+		}
+	}
 	if *replay != "" {
 		replayInfo, replayErr := os.Stat(*replay)
 		outputInfo, outputErr := os.Stat(target)
@@ -212,7 +243,7 @@ func runDataAPIDev(args []string, rehearsal *dataAPIMigrationOptions) int {
 			outputSet = true
 		}
 	})
-	options, err := json.Marshal(dataAPIDevOptions{Explain: rehearsal.Explain, Verify: rehearsal.Verify, AccessChecks: rehearsal.AccessChecks, PlanCheck: rehearsal.PlanCheck, PlanBudget: rehearsal.PlanBudget, Collection: rehearsal.Collection, PlanBaseline: rehearsal.PlanBaseline, PlanScenario: rehearsal.PlanScenario, Preview: preview, Dependencies: dependencies, FromVersion: rehearsal.FromVersion, Fixture: rehearsal.Fixture, DataCheck: rehearsal.DataCheck, Directory: base, Output: target, Port: *port, Check: *check, CheckTypes: *checkTypes, Validators: *validators, Once: *once, JSON: jsonOutput, Watch: *watch, Baseline: *baseline, CheckBreaking: *checkBreaking, Approval: *approval, AcceptedContracts: *acceptedContracts, CLI: cli, Replay: *replay, Scenario: *scenario, Config: *config, OutputSet: outputSet})
+	options, err := json.Marshal(dataAPIDevOptions{NumericMode: *numericMode, BehaviorBaseline: *behaviorBaseline, BehaviorOutput: *behaviorOutput, BehaviorReplays: *behaviorReplays, Browser: *browser, Explain: rehearsal.Explain, Verify: rehearsal.Verify, AccessChecks: rehearsal.AccessChecks, PlanCheck: rehearsal.PlanCheck, PlanBudget: rehearsal.PlanBudget, Collection: rehearsal.Collection, PlanBaseline: rehearsal.PlanBaseline, PlanScenario: rehearsal.PlanScenario, Preview: preview, Dependencies: dependencies, FromVersion: rehearsal.FromVersion, Fixture: rehearsal.Fixture, DataCheck: rehearsal.DataCheck, Directory: base, Output: target, Port: *port, Check: *check, CheckTypes: *checkTypes, Validators: *validators, Once: *once, JSON: jsonOutput, Watch: *watch, Baseline: *baseline, CheckBreaking: *checkBreaking, Approval: *approval, AcceptedContracts: *acceptedContracts, CLI: cli, Replay: *replay, Scenario: *scenario, Config: *config, OutputSet: outputSet})
 	if err != nil {
 		return printErr("Could not prepare local options", err)
 	}

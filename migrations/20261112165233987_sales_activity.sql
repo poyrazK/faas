@@ -1,7 +1,7 @@
 -- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
-CREATE TABLE sales_activities (
+CREATE TABLE IF NOT EXISTS sales_activities (
  id uuid PRIMARY KEY CHECK (id <> '00000000-0000-0000-0000-000000000000'),
  lead_id uuid NOT NULL REFERENCES sales_leads(id) ON DELETE CASCADE,
  actor_id uuid REFERENCES accounts(id) ON DELETE SET NULL,
@@ -17,7 +17,8 @@ CREATE TABLE sales_activities (
  CHECK (occurred_at<=recorded_at),
  CHECK ((follow_up_title='')=(follow_up_on IS NULL))
 );
-CREATE INDEX sales_activities_page ON sales_activities(lead_id,occurred_at DESC,id DESC);
-CREATE INDEX sales_activities_contact ON sales_activities(lead_id,occurred_at DESC) WHERE kind IN ('call','email','demo');
+CREATE INDEX IF NOT EXISTS sales_activities_page ON sales_activities(lead_id,occurred_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS sales_activities_contact ON sales_activities(lead_id,occurred_at DESC) WHERE kind IN ('call','email','demo');
 -- +goose Down
-DROP TABLE sales_activities;
+SET LOCAL lock_timeout = '5s';
+DROP TABLE IF EXISTS sales_activities;

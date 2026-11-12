@@ -150,7 +150,12 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 
 	raw := r.Header.Get("Authorization")
 	if strings.TrimSpace(raw) == "" {
-		if mode == api.ConsumerAuthModeOptional {
+		// A browser never sends credentials on a CORS preflight, so
+		// required mode would refuse every cross-origin call before the
+		// edge CORS rule or the app could answer it (Hunt 34 H34-36). The
+		// preflight carries no consumer and the real request is still
+		// checked.
+		if mode == api.ConsumerAuthModeOptional || isCORSPreflight(r) {
 			return true
 		}
 		api.WriteProblem(w, api.ErrConsumerKeyRequired())
@@ -314,8 +319,19 @@ func consumerKeyPrefixFromPlaintext(token string) string {
 	return ""
 }
 
+// isCORSPreflight reports a browser CORS preflight: OPTIONS with an Origin
+// and the method the page wants to send.
+func isCORSPreflight(r *http.Request) bool {
+	return r.Method == http.MethodOptions && r.Header.Get("Origin") != "" &&
+		strings.TrimSpace(r.Header.Get("Access-Control-Request-Method")) != ""
+}
+
+// consumerScopeAllows maps a key's scopes to the request method. read covers
+// the safe methods GET, HEAD and OPTIONS: HEAD is GET without a body (edge
+// rules treat it the same way) and OPTIONS reads capabilities (Hunt 34
+// H34-37, ADR-120 amendment 2026-11-12).
 func consumerScopeAllows(scopes []string, method string) bool {
-	readOnly := method == http.MethodGet
+	readOnly := method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
 	for _, scope := range scopes {
 		switch scope {
 		case "admin":

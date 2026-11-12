@@ -252,6 +252,7 @@ var routeExclude = map[string]bool{
 	// workload assertion. Owner API keys cannot publish these observations.
 	"POST /v1/runtime/data-api/connection-observations": true,
 	"POST /v1/runtime/data-api/usage":                   true,
+	"POST /v1/runtime/data-api/budget":                  true, // Dedicated workload identity; owner API keys cannot spend credits.
 	"POST /v1/runtime/data-api/events":                  true,
 	"POST /v1/runtime/data-api/change-status":           true,
 

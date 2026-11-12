@@ -1,7 +1,7 @@
 -- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
-CREATE TABLE sales_message_templates (
+CREATE TABLE IF NOT EXISTS sales_message_templates (
  id uuid PRIMARY KEY CHECK (id <> '00000000-0000-0000-0000-000000000000'),
  title text NOT NULL CHECK (octet_length(title) BETWEEN 1 AND 120 AND btrim(title)<>''),
  category text NOT NULL CHECK (category IN ('intro','demo','follow_up','stalled')),
@@ -13,6 +13,7 @@ CREATE TABLE sales_message_templates (
  updated_by uuid REFERENCES accounts(id) ON DELETE SET NULL,
  updated_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(updated_at))
 );
-CREATE INDEX sales_message_templates_page ON sales_message_templates(status,id);
+CREATE INDEX IF NOT EXISTS sales_message_templates_page ON sales_message_templates(status,id);
 -- +goose Down
-DROP TABLE sales_message_templates;
+SET LOCAL lock_timeout = '5s';
+DROP TABLE IF EXISTS sales_message_templates;

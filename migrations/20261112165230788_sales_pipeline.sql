@@ -2,7 +2,7 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 
-CREATE TABLE sales_leads (
+CREATE TABLE IF NOT EXISTS sales_leads (
  id uuid PRIMARY KEY CHECK (id <> '00000000-0000-0000-0000-000000000000'),
  owner_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  name text NOT NULL CHECK (name=btrim(name) AND octet_length(name) BETWEEN 1 AND 120),
@@ -17,9 +17,9 @@ CREATE TABLE sales_leads (
  updated_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(updated_at)),
  UNIQUE(owner_id,email)
 );
-CREATE INDEX sales_leads_owner_page ON sales_leads(owner_id,id);
+CREATE INDEX IF NOT EXISTS sales_leads_owner_page ON sales_leads(owner_id,id);
 
-CREATE TABLE sales_tasks (
+CREATE TABLE IF NOT EXISTS sales_tasks (
  id uuid PRIMARY KEY CHECK (id <> '00000000-0000-0000-0000-000000000000'),
  lead_id uuid NOT NULL REFERENCES sales_leads(id) ON DELETE CASCADE,
  title text NOT NULL CHECK (title=btrim(title) AND octet_length(title) BETWEEN 1 AND 200),
@@ -31,8 +31,8 @@ CREATE TABLE sales_tasks (
  created_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(created_at)),
  updated_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(updated_at))
 );
-CREATE INDEX sales_tasks_lead ON sales_tasks(lead_id);
-CREATE INDEX sales_tasks_due_page ON sales_tasks(due_on,id);
+CREATE INDEX IF NOT EXISTS sales_tasks_lead ON sales_tasks(lead_id);
+CREATE INDEX IF NOT EXISTS sales_tasks_due_page ON sales_tasks(due_on,id);
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';

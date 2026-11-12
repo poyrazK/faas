@@ -67,13 +67,22 @@ export async function loadDevProject(options) {
   const check = config.check ?? { directory: 'client', commands: [['npm', 'run', 'typecheck'], ['npm', 'test']] }
   if (!fields(check, ['directory', 'commands']) || typeof check.directory !== 'string' || !check.directory || !Array.isArray(check.commands) || !check.commands.length || check.commands.length > 10 || check.commands.some(command => !Array.isArray(command) || !command.length || command.length > 100 || command.some(arg => typeof arg !== 'string' || !arg || arg.includes('\0')))) throw new Error('Use explicit argument arrays for client checks.')
   const checkDirectory = options.check ? await projectPath(base, check.directory, true) : resolve(base, check.directory)
-  const protectedPaths = [configPath, verification.collection, seed, options.baseline || resolve(base, '.gregale/data-api-contract.json'), options.replay, options.fixture, options.data_check].filter(Boolean)
+  const protectedPaths = [configPath, verification.collection, seed, options.baseline || resolve(base, '.gregale/data-api-contract.json'), options.replay, options.fixture, options.data_check, options.behavior_baseline, options.behavior_output, options.behavior_replays].filter(Boolean)
   let outputInfo
   try { outputInfo = await stat(output) } catch (error) { if (error.code !== 'ENOENT') throw error }
   for (const path of protectedPaths) {
     let info
     try { info = await stat(path) } catch (error) { if (error.code !== 'ENOENT') throw error }
     if (resolve(output) === resolve(path) || (outputInfo && info && outputInfo.dev === info.dev && outputInfo.ino === info.ino)) throw new Error('Types output must not replace configuration, seeds, requests or the baseline.')
+  }
+  if (options.behavior_output) {
+    const destination = resolve(options.behavior_output), within = relative(migrations, destination)
+    if (within === '' || (within !== '..' && !within.startsWith('..' + sep) && !isAbsolute(within))) throw new Error('Behavior output must not replace a migration.')
+    const destinationInfo = await stat(destination).catch(error => { if (error.code !== 'ENOENT') throw error; return null })
+    for (const path of [...protectedPaths.filter(path => path !== options.behavior_output), output]) {
+      const info = await stat(path).catch(error => { if (error.code !== 'ENOENT') throw error; return null })
+      if (destination === resolve(path) || (destinationInfo && info && destinationInfo.dev === info.dev && destinationInfo.ino === info.ino)) throw new Error('Behavior output must differ from project inputs and types.')
+    }
   }
   // Anonymous reads use the hosted allowlist format; runtimeConfig validates entries.
   if (config.public_read !== undefined && (!Array.isArray(config.public_read) || !config.public_read.length || config.public_read.some(name => typeof name !== 'string'))) throw new Error('Use public_read as a list of schema.relation names.')

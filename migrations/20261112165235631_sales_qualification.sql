@@ -1,7 +1,7 @@
 -- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
-CREATE TABLE sales_qualifications (
+CREATE TABLE IF NOT EXISTS sales_qualifications (
  lead_id uuid PRIMARY KEY REFERENCES sales_leads(id) ON DELETE CASCADE,
  use_case text NOT NULL DEFAULT '' CHECK (octet_length(use_case)<=1000),
  workload text NOT NULL DEFAULT '' CHECK (octet_length(workload)<=1000),
@@ -16,7 +16,7 @@ CREATE TABLE sales_qualifications (
  updated_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(updated_at)),
  CHECK ((buying_timeline='date')=(decision_on IS NOT NULL))
 );
-CREATE TABLE sales_outcomes (
+CREATE TABLE IF NOT EXISTS sales_outcomes (
  id uuid PRIMARY KEY CHECK (id <> '00000000-0000-0000-0000-000000000000'),
  lead_id uuid NOT NULL REFERENCES sales_leads(id) ON DELETE CASCADE,
  lead_version bigint NOT NULL CHECK (lead_version>0),
@@ -31,7 +31,8 @@ CREATE TABLE sales_outcomes (
  CHECK (reason<>'other' OR btrim(note)<>''),
  UNIQUE(lead_id,lead_version)
 );
-CREATE INDEX sales_outcomes_latest ON sales_outcomes(lead_id,lead_version DESC);
+CREATE INDEX IF NOT EXISTS sales_outcomes_latest ON sales_outcomes(lead_id,lead_version DESC);
 -- +goose Down
-DROP TABLE sales_outcomes;
-DROP TABLE sales_qualifications;
+SET LOCAL lock_timeout = '5s';
+DROP TABLE IF EXISTS sales_outcomes;
+DROP TABLE IF EXISTS sales_qualifications;

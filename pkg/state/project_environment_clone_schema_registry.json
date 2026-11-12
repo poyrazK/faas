@@ -4821,6 +4821,17 @@
     "kind": "operational"
   },
   {
+    "table": "data_api_shared_budgets",
+    "columns": [
+      "app_id",
+      "budget_key",
+      "requests",
+      "window_end",
+      "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "data_api_change_hook_reports",
     "columns": [
       "app_id",
@@ -21044,6 +21055,7 @@
     "table": "referral_attributions",
     "columns": [
       "account_id",
+      "attribution_source",
       "code",
       "commission_bps",
       "conversion_days",

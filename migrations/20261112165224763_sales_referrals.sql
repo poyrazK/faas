@@ -2,7 +2,7 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 
-CREATE TABLE referral_links (
+CREATE TABLE IF NOT EXISTS referral_links (
  code text PRIMARY KEY CHECK (code ~ '^[A-Za-z0-9_-]{22}$'),
  owner_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  kind text NOT NULL CHECK (kind IN ('customer','sales')),
@@ -11,7 +11,7 @@ CREATE TABLE referral_links (
  UNIQUE (owner_id,kind)
 );
 
-CREATE TABLE referral_attributions (
+CREATE TABLE IF NOT EXISTS referral_attributions (
  account_id uuid PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
  code text NOT NULL REFERENCES referral_links(code) ON DELETE CASCADE,
  currency text NOT NULL CHECK (currency IN ('usd','eur')),
@@ -30,11 +30,11 @@ CREATE TABLE referral_attributions (
  created_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(created_at)),
  updated_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(updated_at))
 );
-CREATE INDEX referral_attributions_link ON referral_attributions(code,account_id);
+CREATE INDEX IF NOT EXISTS referral_attributions_link ON referral_attributions(code,account_id);
 
 -- The first observed paid invoice is retained by the invoice writer in the
 -- same transaction. Refunds never advance attribution to a later invoice.
-CREATE VIEW sales_referral_overview AS
+CREATE OR REPLACE VIEW sales_referral_overview AS
 SELECT r.account_id,l.owner_id,l.kind,a.email,a.plan,a.status AS account_status,
  r.created_at,r.stage,r.note,r.follow_up,r.currency,
  (SELECT count(*) FROM apps ap WHERE ap.account_id=a.id) AS apps,

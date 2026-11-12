@@ -46,6 +46,8 @@ func TestCheckoutReferralFirstPurchaseAndImmutableTerms(t *testing.T) {
 	if err != nil || !created {
 		t.Fatal(created, err)
 	}
+	// A replay must preserve the saved source and captured terms.
+	applyCheckoutMigration(t, pool)
 	retry := checkoutTerms(link.Code)
 	retry.Policy.Currency, retry.Policy.CommissionBPS = "eur", 9000
 	created, err = store.AttributeCheckout(ctx, account, retry, []string{"rep@example.com"})

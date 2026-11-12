@@ -270,11 +270,8 @@ func applyCheckoutMigration(t *testing.T, pool *pgxpool.Pool) {
 		t.Fatal(err)
 	}
 	up, _, _ := strings.Cut(string(raw), "-- +goose Down")
-	for _, statement := range strings.Split(up, ";") {
-		if strings.TrimSpace(statement) != "" {
-			if _, err := pool.Exec(t.Context(), statement); err != nil {
-				t.Fatal(err)
-			}
-		}
+	// Keep the DO guard intact; this migration has no concurrent index build.
+	if _, err := pool.Exec(t.Context(), up); err != nil {
+		t.Fatal(err)
 	}
 }

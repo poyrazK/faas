@@ -18341,6 +18341,42 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/runtime/data-api/budget:
+    post:
+      tags: [managed_postgres]
+      operationId: admitDataAPISharedBudget
+      summary: Spend shared Data API request credit
+      description: Private runtime surface. Requires a dedicated gregale:data-api:budget workload assertion. Account and app come from the assertion. The body contains a digest of a verified subject or tenant and owner deployment policy. Admission spends one credit atomically across replicas; a lost reply may spend credit without customer SQL. No automatic replay is permitted.
+      x-internal: true
+      security:
+        - dataAPIBudgetWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version, key, requests, window_seconds]
+              properties:
+                version: { type: integer, enum: [1] }
+                key: { type: string, pattern: '^[a-f0-9]{64}$' }
+                requests: { type: integer, minimum: 1, maximum: 1000000 }
+                window_seconds: { type: integer, minimum: 1, maximum: 3600 }
+      responses:
+        '200':
+          description: Admission decision; a refusal does not dispatch customer SQL.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [allowed, retry_after_seconds]
+                properties:
+                  allowed: { type: boolean }
+                  retry_after_seconds: { type: integer, minimum: 1, maximum: 3600 }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/runtime/data-api/events:
     post:
       tags: [managed_postgres]
@@ -71524,6 +71560,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Short-lived Gregale workload identity for audience gregale:data-api:usage, naming the reporting app and instance. Customer API keys cannot publish usage.
+    dataAPIBudgetWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: A short-lived workload assertion with audience gregale:data-api:budget.
     dataAPIEventsWorkloadIdentity:
       type: http
       scheme: bearer

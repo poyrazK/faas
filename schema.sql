@@ -36668,6 +36668,22 @@ CREATE TABLE public.data_api_runtime_connection_observations (
 
 
 --
+-- Name: data_api_shared_budgets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_api_shared_budgets (
+    app_id uuid NOT NULL,
+    budget_key text NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    window_end timestamp with time zone NOT NULL,
+    requests bigint NOT NULL,
+    CONSTRAINT data_api_shared_budgets_budget_key_check CHECK ((budget_key ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT data_api_shared_budgets_check CHECK ((window_end > window_start)),
+    CONSTRAINT data_api_shared_budgets_requests_check CHECK ((requests > 0))
+);
+
+
+--
 -- Name: data_api_usage_hourly; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -64084,6 +64100,14 @@ ALTER TABLE ONLY public.data_api_change_hook_reports
 
 ALTER TABLE ONLY public.data_api_runtime_connection_observations
     ADD CONSTRAINT data_api_runtime_connection_observations_pkey PRIMARY KEY (binding_id, instance_id);
+
+
+--
+-- Name: data_api_shared_budgets data_api_shared_budgets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_shared_budgets
+    ADD CONSTRAINT data_api_shared_budgets_pkey PRIMARY KEY (app_id, budget_key);
 
 
 --
@@ -97434,6 +97458,14 @@ ALTER TABLE ONLY public.data_api_runtime_connection_observations
 
 ALTER TABLE ONLY public.data_api_runtime_connection_observations
     ADD CONSTRAINT data_api_runtime_connection_observations_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_shared_budgets data_api_shared_budgets_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_shared_budgets
+    ADD CONSTRAINT data_api_shared_budgets_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
