@@ -3103,6 +3103,19 @@ const (
 	// longer ago than that starts again.
 	ObjectInventoryScanMaxAge         = time.Hour
 	ObjectInventoryScanProgressWindow = 5 * time.Minute
+	// Postgres stamps a bucket's mutated_at at most once per
+	// ObjectInventoryMutationStampGranularity (object_bucket_mark_mutated, a
+	// literal there), so a burst of writes rewrites its activity row once. A
+	// bucket is quiet only when mutated_at is older than its listing's start by
+	// more than this (ADR-20261110151628 §2); object_inventory_schedule's
+	// quiet_after holds the same literal (ADR-20261111152144).
+	ObjectInventoryMutationStampGranularity = 30 * time.Second
+	// Under gateway-safety accounting with object_inventory_quiet on, a quiet
+	// bucket's inventory stays fresh for ObjectInventoryQuietMaxAge, and the
+	// sweep verifies it once its observation is ObjectInventoryQuietVerifyAfter
+	// old, leaving an hour for a long listing (ADR-20261110151628 §2).
+	ObjectInventoryQuietMaxAge      = 24 * time.Hour
+	ObjectInventoryQuietVerifyAfter = 23 * time.Hour
 	// Read-only owned-node audits retain bounded diagnostics and publish cached
 	// metrics. These are operator work bounds, not customer allowances.
 	ObjectNodeInventoryInterval         = time.Minute
@@ -3755,6 +3768,24 @@ func ValidSnapshotRefresh(v string) bool {
 // `gateway_awaiting_response_max`.
 func ValidGatewayAwaitingResponseMax(v int) bool {
 	return v >= GatewayAwaitingResponseMaxMin && v <= GatewayAwaitingResponseMaxMax
+}
+
+// object_inventory_quiet (ADR-20261110151628 §2): off changes nothing;
+// shadow classifies quiet buckets and verifies their listings but still holds
+// every bucket to 900 s; on keeps a quiet bucket's inventory for
+// ObjectInventoryQuietMaxAge. Only gateway-safety accounting uses it.
+const (
+	// ObjectInventoryQuietConfigKey is the runtime config key
+	// (runtimeconfig.KeyObjectInventoryQuiet).
+	ObjectInventoryQuietConfigKey = "object_inventory_quiet"
+	ObjectInventoryQuietOff       = "off"
+	ObjectInventoryQuietShadow    = "shadow"
+	ObjectInventoryQuietOn        = "on"
+	DefaultObjectInventoryQuiet   = ObjectInventoryQuietOff
+)
+
+func ValidObjectInventoryQuiet(v string) bool {
+	return v == ObjectInventoryQuietOff || v == ObjectInventoryQuietShadow || v == ObjectInventoryQuietOn
 }
 
 // ValidSnapshotRefreshWindowHours reports whether v is a valid
