@@ -477,9 +477,9 @@ high-availability promise merely because Neon storage has internal redundancy.
 `scale_to_zero=true` uses a 300-second suspend timeout; false disables compute
 suspension. Customer requests cannot currently select `false`; the adapter
 retains the provider-neutral field for a future always-on entitlement.
-PostgreSQL majors 14 through 18 are enabled. New databases choose 15 through
-18: 14 is retiring (`Capabilities.RetiringMajors`) and stays available to the
-databases that already run it.
+PostgreSQL majors 15 through 18 are enabled. PostgreSQL 14 reached upstream
+end of life in November 2026 and is not supported (owner, 2026-11-12); Neon
+has no in-place major upgrade, and no upgrade path from 14 is offered.
 
 The mutating qualification run also proves the runtime behavior: it connects
 to the disposable database, closes the connection, waits for Neon to report
@@ -625,10 +625,11 @@ gregale postgres capabilities --region eu-central-1 --json
 
 The versioned response lists PostgreSQL versions, service classes, access modes,
 availability, pooling, scale-to-zero and restore/storage limits. PostgreSQL 14 is
-retiring: it reaches upstream end of life in November 2026 and Neon has no
-in-place major upgrade. Existing PostgreSQL 14 databases keep restore, resize
-and maintenance, but a new database is refused with `422 managed_postgres_unsupported`, naming the
-offered versions, and discovery no longer lists 14. It exposes no
+not supported: it reached upstream end of life in November 2026. A request for
+it is refused with `422 managed_postgres_unsupported`, naming the offered
+versions, and discovery does not list it. `Capabilities.RetiringMajors` stays
+for a later major that existing databases keep while new ones cannot pick it.
+It exposes no
 backend identity, credentials or provider costs. `provisioning_enabled` describes
 the qualification/canary gate separately from configured support; usage, budget
 and current quota admission are checked when reserving a resource. Discovery

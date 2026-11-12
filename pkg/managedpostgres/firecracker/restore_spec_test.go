@@ -16,13 +16,13 @@ func TestHistoricalRestoreMajorUsesCompleteHistory(t *testing.T) {
 	source.Spec.PostgresMajor = 18
 	t0 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 	rt := &scheddpb.DatabaseRuntime{DatabaseId: testDatabaseID, PostgresMajor: 18, State: "parked", MajorHistoryComplete: true, MajorHistory: []*scheddpb.DatabaseMajorSpan{
-		{PostgresMajor: 14, Until: timestamppb.New(t0)}, {PostgresMajor: 16, Until: timestamppb.New(t0.Add(time.Hour))}, {PostgresMajor: 17, Until: timestamppb.New(t0.Add(2 * time.Hour))},
+		{PostgresMajor: 15, Until: timestamppb.New(t0)}, {PostgresMajor: 16, Until: timestamppb.New(t0.Add(time.Hour))}, {PostgresMajor: 17, Until: timestamppb.New(t0.Add(2 * time.Hour))},
 	}}
 	scheduler.vms[testDatabaseID] = rt
 	for _, tc := range []struct {
 		point time.Time
 		major int
-	}{{t0.Add(-time.Hour), 14}, {t0, 16}, {t0.Add(time.Hour), 17}, {t0.Add(2 * time.Hour), 18}} {
+	}{{t0.Add(-time.Hour), 15}, {t0, 16}, {t0.Add(time.Hour), 17}, {t0.Add(2 * time.Hour), 18}} {
 		spec, err := p.ResolveRestoreSpec(t.Context(), source, tc.point)
 		if err != nil || spec.PostgresMajor != tc.major {
 			t.Fatalf("major at %v: %+v %v", tc.point, spec, err)

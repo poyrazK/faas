@@ -415,7 +415,8 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
       if (workerEnabled) {
         timer = setInterval(() => { void drain(); }, pollIntervalMs);
         if (!keepAlive) timer.unref?.();
-        await drain();
+        await refreshWorkerHeartbeat();
+        void drain();
       }
     },
     stop() {

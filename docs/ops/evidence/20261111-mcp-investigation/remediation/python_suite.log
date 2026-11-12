@@ -1,0 +1,78 @@
+127.0.0.1 - - [11/Nov/2026 17:36:09] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"subscriptions/listen","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.8119699996314012,"stream_duration_ms":0.4603460001817439}
+127.0.0.1 - - [11/Nov/2026 17:36:09] "POST /mcp HTTP/1.1" 200 -
+127.0.0.1 - - [11/Nov/2026 17:36:10] "POST /mcp HTTP/1.1" 200 -
+127.0.0.1 - - [11/Nov/2026 17:36:10] "POST /mcp HTTP/1.1" 200 -
+127.0.0.1 - - [11/Nov/2026 17:36:10] "POST /mcp HTTP/1.1" 404 -
+127.0.0.1 - - [11/Nov/2026 17:36:10] "POST /mcp HTTP/1.1" 404 -
+127.0.0.1 - - [11/Nov/2026 17:36:10] "POST /mcp HTTP/1.1" 200 -
+127.0.0.1 - - [11/Nov/2026 17:36:11] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.18541400004323805}
+127.0.0.1 - - [11/Nov/2026 17:36:11] "GET /healthz HTTP/1.1" 200 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "OPTIONS /mcp HTTP/1.1" 204 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "OPTIONS /mcp HTTP/1.1" 403 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "OPTIONS /mcp HTTP/1.1" 405 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "OPTIONS /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "OPTIONS /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "OPTIONS /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "OPTIONS /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "OPTIONS /missing HTTP/1.1" 404 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "OPTIONS /mcp HTTP/1.1" 403 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.04562599951896118}
+127.0.0.1 - - [11/Nov/2026 17:36:12] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"other","outcome":"success","stream_outcome":"complete","execution_duration_ms":3.7159200001042336}
+127.0.0.1 - - [11/Nov/2026 17:36:12] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:36:12] "POST /mcp HTTP/1.1" 202 -
+127.0.0.1 - - [11/Nov/2026 17:36:13] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"initialize","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.018057999113807455}
+127.0.0.1 - - [11/Nov/2026 17:36:13] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:36:13] "POST /mcp HTTP/1.1" 400 -
+{"event":"mcp_protocol_request","method":"initialize","tool":"none","outcome":"rpc_error","stream_outcome":"complete","execution_duration_ms":0.08426600015809527}
+127.0.0.1 - - [11/Nov/2026 17:36:13] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"server/discover","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.014043999726709444}
+127.0.0.1 - - [11/Nov/2026 17:36:13] "POST /mcp HTTP/1.1" 400 -
+127.0.0.1 - - [11/Nov/2026 17:36:13] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"initialize","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.013814999874739442}
+127.0.0.1 - - [11/Nov/2026 17:36:13] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"initialize","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.011631000234046951}
+127.0.0.1 - - [11/Nov/2026 17:36:13] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"initialize","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.008951999916462228}
+127.0.0.1 - - [11/Nov/2026 17:36:13] "POST /mcp HTTP/1.1" 200 -
+127.0.0.1 - - [11/Nov/2026 17:36:13] "POST /mcp HTTP/1.1" 202 -
+{"event":"mcp_protocol_request","method":"server/discover","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.012436000361049082}
+127.0.0.1 - - [11/Nov/2026 17:36:13] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"resources/read","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.0652190001346753}
+127.0.0.1 - - [11/Nov/2026 17:36:14] "POST /mcp HTTP/1.1" 200 -
+127.0.0.1 - - [11/Nov/2026 17:36:14] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/list","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.09857199984253384}
+{"event":"mcp_protocol_request","method":"tools/list","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.10360099986428395}
+127.0.0.1 - - [11/Nov/2026 17:36:15] "GET /healthz HTTP/1.1" 503 -
+127.0.0.1 - - [11/Nov/2026 17:36:16] "GET /healthz HTTP/1.1" 200 -
+127.0.0.1 - - [11/Nov/2026 17:36:16] "GET /healthz HTTP/1.1" 200 -
+127.0.0.1 - - [11/Nov/2026 17:36:16] "GET /healthz HTTP/1.1" 200 -
+127.0.0.1 - - [11/Nov/2026 17:36:16] "GET /healthz HTTP/1.1" 403 -
+127.0.0.1 - - [11/Nov/2026 17:36:16] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"greet","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.03196700072294334}
+127.0.0.1 - - [11/Nov/2026 17:36:16] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"tools/call","tool":"add","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.03954299972974695}
+/tmp/gregale-mcp-python-deps/psycopg_pool/pool.py:134: DeprecationWarning: the default for the ConnectionPool 'open' parameter will become 'False' in a future release. Please use open={True|False} explicitly, or use the pool as context manager using: `with ConnectionPool(...) as pool: ...`
+  warnings.warn(
+{"event": "mcp_task_drain", "state": "draining", "active_tasks": 0, "timeout_seconds": 10}
+{"event": "mcp_task_drain", "state": "completed", "unfinished_tasks": 0}
+{"event": "mcp_task_drain", "state": "draining", "active_tasks": 0, "timeout_seconds": 10}
+{"event": "mcp_task_drain", "state": "completed", "unfinished_tasks": 0}
+{"event": "mcp_task_drain", "state": "draining", "active_tasks": 0, "timeout_seconds": 10}
+{"event": "mcp_task_drain", "state": "completed", "unfinished_tasks": 0}
+----------------------------------------------------------------------
+Ran 52 tests in 16.132s
+
+OK

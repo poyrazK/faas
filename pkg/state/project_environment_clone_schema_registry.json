@@ -20861,6 +20861,22 @@
     "kind": "operational"
   },
   {
+    "table": "agent_github_subscriptions",
+    "columns": [
+      "account_id",
+      "created_at",
+      "endpoint_id",
+      "event_types",
+      "expires_at",
+      "id",
+      "issued_at",
+      "repository",
+      "thread_id",
+      "tool_call_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "agent_run_callbacks",
     "columns": [
       "account_id",

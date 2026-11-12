@@ -122,6 +122,9 @@ func (in *WorkflowAgentRunInput) Validate() error {
 	return nil
 }
 
+// ValidAgentRepository reports an owner/name GitHub repository.
+func ValidAgentRepository(repository string) bool { return validAgentRepository(repository) }
+
 func validAgentRepository(repository string) bool {
 	owner, name, _ := strings.Cut(repository, "/")
 	return agentRepository.MatchString(repository) && owner != "." && owner != ".." && name != "." && name != ".."

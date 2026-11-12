@@ -1901,6 +1901,10 @@ const (
 	// FunctionInitFailedMarker line in the workload output names it; it is
 	// otherwise an app_startup_crash, and customer-caused like one.
 	CodeFunctionInitFailed = "function_init_failed"
+	// CodeFunctionInputInvalid is a function adapter's 422 for a typed-client
+	// call whose body does not match the function's input schema
+	// (ADR-20261111150000); the detail names the failing path.
+	CodeFunctionInputInvalid = "function_input_invalid"
 	// FunctionInitFailedMarker begins the line the Node and Python function
 	// adapters print to stderr when init fails (pkg/fnadapter).
 	FunctionInitFailedMarker = "gregale: function init failed:"

@@ -1,0 +1,38 @@
+=== RUN   TestInvestigationCronUpdateLostResponse
+    zz_investigation_round2_test.go:71: committed cron update cannot recover its receipt through prescribed replay: map[code:plan_stale message:cron changed since review; inspect its current configuration outcome:outcome_unknown recovery:map[action:replan reuse_original_inputs:true tool:gregale_plan_cron_change] schema_version:1]
+--- FAIL: TestInvestigationCronUpdateLostResponse (0.12s)
+=== RUN   TestInvestigationInlineSourceFitsAdvertisedLimit
+    zz_investigation_round2_test.go:108: valid 81938-byte inline source rejected by HTTP transport: calling "tools/call": sending "tools/call": Request Entity Too Large
+--- FAIL: TestInvestigationInlineSourceFitsAdvertisedLimit (0.23s)
+=== RUN   TestInvestigationReviewedSourceContentChange
+    zz_investigation_test.go:39: changed source was deployed under the original plan; CLI deploy calls=1
+--- FAIL: TestInvestigationReviewedSourceContentChange (0.09s)
+=== RUN   TestInvestigationUploadRecoveryRouting
+    zz_investigation_test.go:77: receipt recommends gregale_apply_deploy but it refuses the upload plan: map[code:invalid_plan message:local source plans apply with gregale_apply_local_deploy recovery:map[action:replan reuse_original_inputs:true tool:gregale_plan_deploy] schema_version:1]
+--- FAIL: TestInvestigationUploadRecoveryRouting (0.09s)
+=== RUN   TestInvestigationDurableProgressStreaming
+    zz_investigation_test.go:109: no progress reaches the client during the watch with durable state enabled
+--- FAIL: TestInvestigationDurableProgressStreaming (0.48s)
+=== RUN   TestInvestigationDurableUploadReadDeadline
+=== RUN   TestInvestigationDurableUploadReadDeadline/without_state
+=== RUN   TestInvestigationDurableUploadReadDeadline/with_state
+    zz_investigation_test.go:151: slow upload failed with status 400: {"error":"upload_failed","error_description":"the upload did not complete; retry with the same URL"}
+--- FAIL: TestInvestigationDurableUploadReadDeadline (0.18s)
+    --- PASS: TestInvestigationDurableUploadReadDeadline/without_state (0.12s)
+    --- FAIL: TestInvestigationDurableUploadReadDeadline/with_state (0.05s)
+=== RUN   TestInvestigationLongHTTPApplyReceipt
+    zz_investigation_test.go:194: apply ran 1 CLI write(s) but no receipt reached the client: calling "tools/call": sending "tools/call": rejected by transport: Post "http://127.0.0.1:42535": EOF
+--- FAIL: TestInvestigationLongHTTPApplyReceipt (0.25s)
+FAIL
+FAIL	github.com/onebox-faas/faas/pkg/mcpmanagement	1.513s
+=== RUN   TestInvestigationReadRejectsMissingRequiredResultFields
+=== RUN   TestInvestigationReadRejectsMissingRequiredResultFields/resource
+    zz_investigation_test.go:31: resource result without its required contents was accepted as successful
+=== RUN   TestInvestigationReadRejectsMissingRequiredResultFields/prompt
+    zz_investigation_test.go:31: prompt result without its required messages was accepted as successful
+--- FAIL: TestInvestigationReadRejectsMissingRequiredResultFields (0.00s)
+    --- FAIL: TestInvestigationReadRejectsMissingRequiredResultFields/resource (0.00s)
+    --- FAIL: TestInvestigationReadRejectsMissingRequiredResultFields/prompt (0.00s)
+FAIL
+FAIL	github.com/onebox-faas/faas/pkg/mcphosting	0.048s
+FAIL
