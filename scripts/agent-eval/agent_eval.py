@@ -412,6 +412,76 @@ class Gregale:
         return {"apps": slugs("/v1/apps"), "projects": slugs("/v1/projects")}
 
 
+    def touched_since(self, before: dict, started_at: str) -> dict:
+        """Apps and projects the run created. A dedicated account holds nothing else."""
+        return created_since(before, self.inventory())
+
+
+def _json_output(text: str):
+    """One JSON document, or JSON lines (list output) as a list."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return [json.loads(line) for line in text.splitlines() if line.strip().startswith("{")]
+
+
+def _rows(value) -> list:
+    """List output as rows: a JSON array, an {"items": [...]} page, or one object."""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        return value["items"] if isinstance(value.get("items"), list) else [value]
+    return []
+
+
+class CliGregale(Gregale):
+    """The caller's own logged-in CLI profile (`--cli-login`).
+
+    Reads go through `gregale --json` with the caller's credentials; nothing is
+    deleted. The account may hold other apps, so an app is the run's when it is
+    new or got a release after the run started. Apps another session deploys at
+    the same time are attributed to the run too; run when the account is quiet."""
+
+    ROUTES = (
+        (re.compile(r"^/v1/apps$"), lambda m: ["app", "list"]),
+        (re.compile(r"^/v1/projects$"), lambda m: ["project", "list"]),
+        (re.compile(r"^/v1/apps/([a-z0-9-]+)$"), lambda m: ["app", "get", m[1]]),
+        (re.compile(r"^/v1/apps/([a-z0-9-]+)/health$"), lambda m: ["app", "health", m[1]]),
+        (re.compile(r"^/v1/apps/([a-z0-9-]+)/deployments(\?.*)?$"), lambda m: ["release", "list", "--app", m[1], "--limit", "20"]),
+    )
+
+    def __init__(self, binary: str):
+        super().__init__(binary, "", "")
+
+    def env(self) -> dict:
+        return {k: v for k, v in os.environ.items() if k not in AGENT_MARKERS}
+
+    def get(self, path: str):
+        for pattern, args in self.ROUTES:
+            match = pattern.match(path)
+            if match:
+                done = self.cli(*args(match), timeout=120)
+                if done.returncode != 0:
+                    raise ValueError(f"gregale {' '.join(args(match))}: {done.stderr.strip()[-300:] or done.stdout.strip()[-300:]}")
+                return _json_output(done.stdout)
+        raise ValueError(f"no CLI read for {path}")
+
+    def inventory(self) -> dict:
+        apps = _rows(self.get("/v1/apps"))
+        projects = _rows(self.get("/v1/projects"))
+        return {"apps": {a["slug"] for a in apps if a.get("slug")}, "projects": {p["slug"] for p in projects if p.get("slug")},
+                "app_ids": {a["id"]: a["slug"] for a in apps if a.get("id") and a.get("slug")}}
+
+    def touched_since(self, before: dict, started_at: str) -> dict:
+        after = self.inventory()
+        touched = created_since(before, after)
+        done = self.cli("release", "list", "--all", "--limit", "200", timeout=120)
+        releases = _rows(_json_output(done.stdout)) if done.returncode == 0 else []
+        redeployed = {after["app_ids"].get(r.get("app_id")) for r in releases if (r.get("created_at") or "") >= started_at}
+        touched["apps"] = sorted(set(touched["apps"]) | {slug for slug in redeployed if slug})
+        return touched
+
+
 def created_since(before: dict, after: dict) -> dict:
     return {kind: sorted(after.get(kind, set()) - before.get(kind, set())) for kind in ("apps", "projects")}
 
@@ -444,18 +514,24 @@ def _app_url(app: dict) -> str:
     return (app.get("canonical_url") or app.get("url") or "").rstrip("/")
 
 
-def _app_evidence(gregale, slug: str) -> str:
-    """Health and recent deployments of one app as text, for trap codes."""
+def _app_evidence(gregale, slug: str, since: str = "") -> str:
+    """The app's park and its deployments since the run started, as text for
+    trap codes. Older parks and deployments belong to someone else's run."""
     parts = []
-    for path in (f"/v1/apps/{slug}/health", f"/v1/apps/{slug}/deployments?limit=20"):
-        try:
-            parts.append(json.dumps(gregale.get(path)))
-        except (OSError, ValueError, urllib.error.URLError) as error:
-            parts.append(f"unreadable {path}: {error}")
+    try:
+        parked = gregale.get(f"/v1/apps/{slug}").get("parked_deployment") or {}
+        if (parked.get("parked_at") or "") >= since:
+            parts.append(json.dumps(parked))
+        for deployment in _rows(gregale.get(f"/v1/apps/{slug}/deployments?limit=20")):
+            if (deployment.get("created_at") or "") >= since:
+                parts.append(json.dumps(deployment))
+    except (OSError, ValueError, AttributeError, urllib.error.URLError) as error:
+        parts.append(f"unreadable {slug}: {error}")
     return "\n".join(parts)
 
 
-def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch=None, http_deadline_s: float = 120, created: dict | None = None) -> list[dict]:
+def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch=None, http_deadline_s: float = 120, created: dict | None = None,
+               since: str = "") -> list[dict]:
     created_apps = (created or {}).get("apps", [])
     results = []
     for check in task["checks"]:
@@ -490,7 +566,7 @@ def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch
                     ok, detail = http_check(urls[0] + check.get("path", "/"), check, deadline_s=http_deadline_s, fetch=fetch)
             elif kind == "no_traps":
                 codes = check.get("codes") or list(DEFAULT_TRAPS)
-                hit = sorted({f"{app}:{code}" for app in created_apps for code in codes if code in _app_evidence(gregale, app)})
+                hit = sorted({f"{app}:{code}" for app in created_apps for code in codes if code in _app_evidence(gregale, app, since)})
                 ok, detail = not hit, ",".join(hit)
         except (OSError, KeyError, ValueError, urllib.error.URLError) as error:
             detail = f"check error: {error}"
@@ -613,9 +689,9 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
         (run_dir / f"{agent}.jsonl").write_text("\n".join(lines))
         metrics = PARSERS[agent](lines)
         record.update(metrics)
-        created = created_since(before, gregale.inventory())
+        created = gregale.touched_since(before, record["started_at"])
         record["created"] = created
-        record["checks"] = run_checks(task, slug, project, metrics["answer"], gregale, created=created)
+        record["checks"] = run_checks(task, slug, project, metrics["answer"], gregale, created=created, since=record["started_at"])
         record["success"] = all(check["ok"] for check in record["checks"])
         record.update(grade_features(task, metrics["commands"], project, created))
         record["anti_patterns"] = grade_anti_patterns(metrics["commands"])
@@ -626,7 +702,7 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
         if not options.keep_apps:
             if before is not None and not created.get("apps") and not created.get("projects"):
                 try:
-                    created = created_since(before, gregale.inventory())
+                    created = gregale.touched_since(before, record["started_at"])
                 except (OSError, ValueError, urllib.error.URLError):
                     pass
             record["left_behind"] = cleanup(gregale, created, slug)
@@ -692,6 +768,7 @@ def main(argv=None) -> int:
     run.add_argument("--no-mcp-writes", dest="mcp_writes", action="store_false", help="serve MCP without --allow-writes")
     run.add_argument("--keep-apps", action="store_true", help="do not delete the apps and projects the run created")
     run.add_argument("--keep-dirs", action="store_true", help="keep run directories and transcripts")
+    run.add_argument("--cli-login", action="store_true", help="use your own logged-in gregale CLI instead of GREGALE_EVAL_TOKEN; implies --keep-apps")
     summary = sub.add_parser("summarize", help="print a Markdown summary of a results file")
     summary.add_argument("results")
     options = parser.parse_args(argv)
@@ -706,8 +783,9 @@ def main(argv=None) -> int:
             print(summarize(records))
             return 0
         token = os.environ.get("GREGALE_EVAL_TOKEN", "")
-        if not token:
-            raise EvalError("set GREGALE_EVAL_TOKEN to an API key of a dedicated evaluation account; runs deploy and delete real apps")
+        if not token and not options.cli_login:
+            raise EvalError("set GREGALE_EVAL_TOKEN to an API key of a dedicated evaluation account; runs deploy and delete real apps "
+                            "(or pass --cli-login to use your own logged-in CLI, which never deletes)")
         agents = _csv(options.agents, AGENTS, "agents")
         toolsets = _csv(options.toolsets, TOOLSETS, "toolsets")
         selected = [t for t in tasks if not options.tasks or t["id"] in options.tasks.split(",")]
@@ -719,7 +797,11 @@ def main(argv=None) -> int:
             problem = agent_ready(agent)
             if problem:
                 raise EvalError(problem)
-        gregale = Gregale(options.gregale, os.environ.get("GREGALE_EVAL_API", DEFAULT_API), token)
+        if options.cli_login:
+            gregale: Gregale = CliGregale(options.gregale)
+            options.keep_apps = True
+        else:
+            gregale = Gregale(options.gregale, os.environ.get("GREGALE_EVAL_API", DEFAULT_API), token)
         with open(options.out, "a") as out:
             for task in selected:
                 for agent in agents:

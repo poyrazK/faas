@@ -363,17 +363,23 @@ class RepoTaskTests(unittest.TestCase):
 
 
 class ProjectGregale:
-    """Two created apps: ui (public, serving) and orders (internal, parked)."""
+    """Two created apps: ui (public, serving, with a park older than the run)
+    and orders (internal, parked during the run, one failed deployment)."""
 
     def get(self, path):
         if path == "/v1/apps/ui":
-            return {"canonical_url": "https://ui.gregale.dev/"}
+            return {"canonical_url": "https://ui.gregale.dev/", "parked_deployment": {"parked_reason": "liveness_exhausted", "parked_at": "2026-11-12T16:59:17Z"}}
         if path == "/v1/apps/orders":
-            return {"canonical_url": ""}
+            return {"canonical_url": "", "parked_deployment": {"parked_reason": "liveness_exhausted", "parked_at": "2026-11-12T20:10:00Z"}}
         if path == "/v1/apps/ui/health":
             return {"serving_deployment_ids": ["d1"]}
         if path == "/v1/apps/orders/health":
-            return {"serving_deployment_ids": [], "checks": [{"code": "liveness", "reason": "liveness_exhausted"}]}
+            return {"serving_deployment_ids": []}
+        if path.startswith("/v1/apps/orders/deployments"):
+            return {"items": [{"created_at": "2026-11-12T20:05:00Z", "status": "failed", "error_code": "app_startup_timeout"},
+                              {"created_at": "2026-11-11T10:00:00Z", "status": "failed", "error_code": "image_not_found"}]}
+        if path.startswith("/v1/apps/ui/deployments"):
+            return {"items": [{"created_at": "2026-11-12T16:00:00Z", "status": "failed", "error_code": "app_startup_timeout"}]}
         return []
 
 
@@ -388,11 +394,44 @@ class ProjectCheckTests(unittest.TestCase):
             return 200, "<html>Retail Store</html>"
 
         with tempfile.TemporaryDirectory() as d:
-            results = ev.run_checks(task, None, Path(d), "", ProjectGregale(), fetch=fetch, created={"apps": ["orders", "ui"], "projects": ["shop"]})
+            results = ev.run_checks(task, None, Path(d), "", ProjectGregale(), fetch=fetch, created={"apps": ["orders", "ui"], "projects": ["shop"]},
+                                   since="2026-11-12T20:00:00Z")
         self.assertEqual([r["ok"] for r in results], [True, False, True, False, False])
         self.assertEqual(urls, ["https://ui.gregale.dev/catalog"])
         self.assertEqual(results[1]["detail"], "not serving: orders")
-        self.assertEqual(results[4]["detail"], "orders:liveness_exhausted")
+        # ui's park and failed deployment predate the run, so only orders counts.
+        self.assertEqual(results[4]["detail"], "orders:app_startup_timeout,orders:liveness_exhausted")
+
+
+class CliLoginTests(unittest.TestCase):
+    def test_reads_and_touched_apps_go_through_the_cli(self):
+        outputs = {
+            ("app", "list"): '{"slug":"old","id":"i-old"}\n{"slug":"retail-ui","id":"i-ui"}\n{"slug":"new","id":"i-new"}\n',
+            ("project", "list"): '{"slug":"shop"}\n',
+            ("release", "list", "--all", "--limit", "200"): '{"app_id":"i-ui","created_at":"2026-11-12T20:00:05Z"}\n{"app_id":"i-old","created_at":"2026-11-12T19:00:00Z"}\n',
+            ("app", "health", "retail-ui"): '{\n  "serving_deployment_ids": ["d1"]\n}\n',
+        }
+        calls = []
+
+        def cli(*args, **kwargs):
+            calls.append(args)
+            return mock.Mock(returncode=0, stdout=outputs[args], stderr="")
+
+        g = ev.CliGregale("/bin/gregale")
+        with mock.patch.object(g, "cli", side_effect=cli):
+            self.assertEqual(g.get("/v1/apps/retail-ui/health"), {"serving_deployment_ids": ["d1"]})
+            before = {"apps": {"old", "retail-ui"}, "projects": {"shop"}}
+            touched = g.touched_since(before, "2026-11-12T20:00:00Z")
+        self.assertEqual(touched, {"apps": ["new", "retail-ui"], "projects": []})
+        with self.assertRaises(ValueError):
+            g.get("/v1/billing")
+
+    def test_cli_login_keeps_the_callers_profile_and_never_deletes(self):
+        with mock.patch.dict(os.environ, {"FAAS_PROFILE": "default", "CLAUDECODE": "1"}):
+            env = ev.CliGregale("/bin/gregale").env()
+        self.assertEqual(env.get("FAAS_PROFILE"), "default")
+        self.assertNotIn("CLAUDECODE", env)
+        self.assertNotIn("FAAS_TOKEN", env)
 
 
 class GradeTests(unittest.TestCase):
