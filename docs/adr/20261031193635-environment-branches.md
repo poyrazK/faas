@@ -518,9 +518,18 @@ or `production` (refused for branches).
   - `EnvironmentBranchDefaultTTL` 7 days, `EnvironmentBranchMinTTL` 1 hour,
     `EnvironmentBranchMaxTTL` 30 days;
   - copies use the PostgreSQL branch allowance (`ManagedPostgresBranchesMax`), see Accounting.
-- **Organizations.** The branch routes are not yet in the reviewed project-access table
-  (`pkg/apid/projectaccess/routes.go`), so shared organization projects cannot branch, the
-  same as full clones today. Adding them is a follow-up once the routes are reviewed.
+- **Organizations** (amended 2026-11-12, owner decision). Company projects branch through
+  the reviewed project-access table (`pkg/apid/projectaccess/routes.go`):
+  - listing branches needs the read action; creating one needs the configure action
+    (Owner, Admin, Developer);
+  - a branch copies its parent's configuration and secrets into an unprotected environment
+    a developer may deploy to, so branching a protected environment other than production
+    also needs the approve action (Owner, Admin). Production is exempt, as it is for
+    releases (ADR-20261019071733 amendment 9): a developer already deploys to it;
+  - deleting a branch needs the configure action; deleting any other environment still
+    needs the delete action;
+  - the branch data reconciler resolves the project's resource owner, so a company that
+    owns its resources gets its copies under the organization's account and ownership.
 - **Billing.** Instance-seconds bill as usual. Branch databases are metered by managed
   PostgreSQL and overlay bytes by the S3 gateway. Data inherited from the parent is never
   billed twice.

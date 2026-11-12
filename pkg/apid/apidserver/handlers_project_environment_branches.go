@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -43,6 +44,10 @@ func (s *server) createProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 		return
 	}
 	parent := r.PathValue("environment")
+	if problem := s.environmentBranchParentProblem(r, acct, project, parent); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	var req api.CreateProjectEnvironmentBranchRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid request body", "the body must be a JSON environment branch request"))
@@ -97,6 +102,24 @@ func (s *server) createProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 	response.Branch = environmentBranchResponse(branch)
 	response.Branch.Workloads = workloads
 	writeJSON(w, http.StatusCreated, response)
+}
+
+// environmentBranchParentProblem refuses a company-project member who may
+// not branch the parent: a protected parent needs the approve action
+// (projectaccess.BranchParent). A missing parent is left to the create, which
+// reports it.
+func (s *server) environmentBranchParentProblem(r *http.Request, acct state.Account, project state.Project, parent string) *api.Problem {
+	if _, shared := projectaccess.From(r.Context()); !shared {
+		return nil
+	}
+	env, err := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, project.ID, parent)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return api.ErrCapacity("could not load project environment")
+	}
+	return projectaccess.BranchParent(r, env)
 }
 
 // publishEnvironmentBranchWorkloads creates one branch deployment per parent

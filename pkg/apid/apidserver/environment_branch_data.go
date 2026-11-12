@@ -197,16 +197,9 @@ func environmentBranchDatabaseName(branch state.ProjectEnvironmentBranch, source
 // the branch's scope once per parent binding. Every step is idempotent, so a
 // retry resumes.
 func (s *server) copyEnvironmentBranchData(ctx context.Context, store state.ProjectEnvironmentBranchDataStore, branch state.ProjectEnvironmentBranch) error {
-	acct, err := s.store.AccountByID(ctx, branch.AccountID)
+	ctx, acct, project, err := s.environmentBranchOwner(ctx, branch)
 	if err != nil {
 		return err
-	}
-	project, err := s.store.ProjectByID(ctx, branch.ProjectID)
-	if err != nil {
-		return err
-	}
-	if project.AccountID != acct.ID {
-		return state.ErrConflict
 	}
 	apps, snapshot, err := s.captureProjectEnvironmentValues(ctx, acct, project, branch.ParentSlug)
 	if err != nil {
@@ -220,6 +213,35 @@ func (s *server) copyEnvironmentBranchData(ctx context.Context, store state.Proj
 		return err
 	}
 	return s.overlayEnvironmentBranchBuckets(ctx, acct, branch, plans)
+}
+
+// environmentBranchOwner resolves the account a branch's data belongs to the
+// way a request does: the project's resource owner, which is the
+// organization's account for a company project that owns its resources. A
+// company project's managed PostgreSQL work carries the organization's
+// ownership, as projectaccess sets it on a request.
+func (s *server) environmentBranchOwner(ctx context.Context, branch state.ProjectEnvironmentBranch) (context.Context, state.Account, state.Project, error) {
+	project, err := s.store.ProjectByID(ctx, branch.ProjectID)
+	if err != nil {
+		return ctx, state.Account{}, state.Project{}, err
+	}
+	acct, err := state.ProjectResourceAccount(ctx, s.store, project)
+	if err != nil {
+		return ctx, state.Account{}, state.Project{}, err
+	}
+	if acct.ID != branch.AccountID {
+		return ctx, state.Account{}, state.Project{}, state.ErrConflict
+	}
+	if project.OrgID != "" {
+		org, err := s.store.OrgByID(ctx, project.OrgID)
+		if err != nil {
+			return ctx, state.Account{}, state.Project{}, err
+		}
+		if !org.Personal {
+			ctx = managedpostgres.WithOwnership(ctx, org.ID, acct.ResourceOwnerID())
+		}
+	}
+	return ctx, acct, project, nil
 }
 
 // copyEnvironmentBranchDatabases restores each database the parent binds as
