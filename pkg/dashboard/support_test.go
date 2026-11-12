@@ -79,3 +79,19 @@ func TestSupportResolvedEpisodeAndPausedClock(t *testing.T) {
 		t.Fatal("paused clocks shown as live deadlines")
 	}
 }
+
+func TestSupportKeepsDraftWhenConcurrentResolutionHidesReplyForm(t *testing.T) {
+	ticket := api.SupportTicket{ID: "case-id", Status: "resolved", Revision: 2}
+	d := supportportal.Data{Base: "/dashboard/support", Filters: url.Values{}, Keys: map[string]string{},
+		PortalView: support.PortalView{Ticket: &ticket}, Failed: "reply", Error: "Ticket revision changed",
+		Form: url.Values{"body": {"Unsent <script>draft</script>"}, "idempotency_key": {"original-request-key"}, "expected_revision": {"1"}}}
+	w := httptest.NewRecorder()
+	if err := dashboard.Render(w, slog.Default(), "", dashboard.Page{Body: "support", Data: d}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Your submitted message", "Unsent &lt;script&gt;draft&lt;/script&gt;", "original-request-key", "Revision: 1"} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Errorf("lost submitted draft field %q", want)
+		}
+	}
+}

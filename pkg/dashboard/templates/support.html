@@ -29,6 +29,7 @@
 {{with .Data}}{{$d := .}}
 <p class="scope">{{.Scope}}</p>
 {{if .Error}}<div class="notice error" role="alert"><strong>Could not submit.</strong> {{.Error}} Your form and request key have been kept. {{if .StepUp}}<a href="{{.StepUpURL}}" target="_blank" rel="noopener">Verify your identity</a>, then retry this form.{{else}}<a href="{{.URL}}">Reload the latest version</a> if the ticket changed; copy any draft first.{{end}}</div>{{end}}
+{{if and .Error (.Form.Get "body")}}<details class="panel"><summary>Your submitted message</summary><p class="message">{{.Form.Get "body"}}</p><p class="meta">Request key: <code>{{.Form.Get "idempotency_key"}}</code>{{with .Form.Get "expected_revision"}} · Revision: {{.}}{{end}}</p></details>{{end}}
 {{if .Updated}}<p class="notice" role="status">Your update has been saved.</p>{{end}}
 {{if .Ticket}}
   <p><a href="{{.Base}}">← {{if .StaffMode}}Back to inbox{{else}}All conversations{{end}}</a></p>
