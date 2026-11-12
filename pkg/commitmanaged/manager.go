@@ -36,6 +36,10 @@ type Manager struct {
 	Policy            commitwork.NetworkPolicy
 	AcceptedRetention time.Duration
 	RealtimeEnabled   bool
+	// PublicDatabases lets changes sources reach customer databases at any
+	// globally reachable address (FAAS_COMMIT_PUBLIC_DATABASES,
+	// ADR-20261112140000 §6). Other sources keep the operator allowlist.
+	PublicDatabases bool
 	// Open is injectable for isolated acceptance environments. Production uses
 	// the policy-enforcing TLS dialer. Each pool is closed after its bounded tick.
 	Open   func(context.Context, string, commitwork.NetworkPolicy) (*pgxpool.Pool, error)
@@ -110,7 +114,9 @@ func (m *Manager) tickSource(ctx context.Context, src state.CommitRelaySource) (
 	if open == nil {
 		open = commitwork.OpenPool
 	}
-	pool, err := open(ctx, raw, m.Policy)
+	policy := m.Policy
+	policy.PublicInternet = m.PublicDatabases && src.Changes.IsChanges()
+	pool, err := open(ctx, raw, policy)
 	if err != nil {
 		return 0, "database_unavailable", nil
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/publicdest"
 )
 
 // ErrConnectionAuthentication preserves a useful classification without
@@ -29,9 +30,23 @@ func connectionFailure(err error) error {
 type NetworkPolicy struct {
 	Hosts    map[string]bool
 	Prefixes []netip.Prefix
+	// PublicInternet additionally admits any host name that is not in Hosts
+	// when every address it resolves to is globally reachable
+	// (ADR-20261112140000 §6). The relay sets it only for changes sources,
+	// and only when the operator enables FAAS_COMMIT_PUBLIC_DATABASES.
+	PublicInternet bool
+}
+
+// publicHost reports whether host is governed by the public-internet rule
+// rather than the operator allowlist.
+func (p NetworkPolicy) publicHost(host string) bool {
+	return p.PublicInternet && !p.Hosts[host] && host != ""
 }
 
 func (p NetworkPolicy) permits(host string, ip netip.Addr) bool {
+	if p.publicHost(host) {
+		return publicdest.IsPublic(ip)
+	}
 	if !p.Hosts[host] {
 		return false
 	}
@@ -57,8 +72,14 @@ func OpenPool(ctx context.Context, raw string, policy NetworkPolicy) (*pgxpool.P
 	if err != nil {
 		return nil, errors.New("commit: invalid database connection")
 	}
-	if !policy.Hosts[cfg.ConnConfig.Host] || len(policy.Prefixes) == 0 {
+	public := policy.publicHost(cfg.ConnConfig.Host)
+	if !public && (!policy.Hosts[cfg.ConnConfig.Host] || len(policy.Prefixes) == 0) {
 		return nil, errors.New("commit: database destination not qualified")
+	}
+	// A literal address bypasses no checks, but a customer database must be
+	// named: TLS verifies the host name.
+	if _, err := netip.ParseAddr(cfg.ConnConfig.Host); public && err == nil {
+		return nil, errors.New("commit: database destination must be a host name")
 	}
 	cfg.MaxConns = 2
 	cfg.MinConns = 0
@@ -76,7 +97,7 @@ func OpenPool(ctx context.Context, raw string, policy NetworkPolicy) (*pgxpool.P
 	// hostname here and re-resolve it on every connection, without replacing
 	// TLS's original ServerName with an IP address.
 	cfg.ConnConfig.LookupFunc = func(ctx context.Context, host string) ([]string, error) {
-		if host != qualifiedHost || !policy.Hosts[host] {
+		if host != qualifiedHost || (!policy.Hosts[host] && !policy.publicHost(host)) {
 			return nil, errors.New("commit: database destination not qualified")
 		}
 		addresses, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
@@ -87,6 +108,10 @@ func OpenPool(ctx context.Context, raw string, policy NetworkPolicy) (*pgxpool.P
 		for _, ip := range addresses {
 			if policy.permits(host, ip) {
 				allowed = append(allowed, ip.Unmap().String())
+			} else if policy.publicHost(host) {
+				// A public name must resolve only to public addresses: a mixed
+				// answer is how DNS rebinding reaches a private network.
+				return nil, errors.New("commit: database destination not qualified")
 			}
 		}
 		if len(allowed) == 0 {
