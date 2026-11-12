@@ -2646,6 +2646,8 @@
       "docs_url": "/docs/functions",
       "acceptance_test": "pkg/builderd/profile_test.go::TestFunctionRuntimeFramework",
       "settings": [
+        "app.function_callables",
+        "app.function_input_schema",
         "manifest.function",
         "manifest.functions",
         "runtime.node22",

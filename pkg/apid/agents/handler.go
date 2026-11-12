@@ -70,8 +70,11 @@ type Handler struct {
 	Sleeps SleepSchedules
 	// RunCallbacks lists and settles finished gregale_run runs (run_tool.go);
 	// without it no apid delivers them.
-	RunCallbacks   RunCallbackStore
-	callbackLimits callbackLimiter
+	RunCallbacks RunCallbackStore
+	// GitHubSubscriptions holds gregale_github_subscribe's subscriptions
+	// (github_subscribe_tool.go); nil leaves the tool unavailable.
+	GitHubSubscriptions GitHubSubscriptionStore
+	callbackLimits      callbackLimiter
 }
 
 // CreateAgent handles POST /v1/agents.

@@ -1,0 +1,4 @@
+ok  	github.com/onebox-faas/faas/pkg/mcpmanagement	12.005s
+ok  	github.com/onebox-faas/faas/pkg/mcphosting	0.141s
+ok  	github.com/onebox-faas/faas/cmd/gregale/templates/mcp-go	47.781s
+ok  	github.com/onebox-faas/faas/cmd/mcp-bridged	0.077s [no tests to run]

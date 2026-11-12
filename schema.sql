@@ -30403,6 +30403,36 @@ CREATE TABLE public.agent_execution_workflows (
 
 
 --
+-- Name: agent_github_subscriptions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_github_subscriptions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    endpoint_id uuid NOT NULL,
+    thread_id text NOT NULL,
+    tool_call_id text NOT NULL,
+    repository text NOT NULL,
+    event_types text[] NOT NULL,
+    issued_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_github_subscriptions_check CHECK ((expires_at > created_at)),
+    CONSTRAINT agent_github_subscriptions_event_types_check CHECK (((cardinality(event_types) >= 1) AND (cardinality(event_types) <= 8))),
+    CONSTRAINT agent_github_subscriptions_repository_check CHECK ((((char_length(repository) >= 3) AND (char_length(repository) <= 201)) AND (repository = lower(repository)))),
+    CONSTRAINT agent_github_subscriptions_thread_id_check CHECK (((char_length(thread_id) >= 1) AND (char_length(thread_id) <= 64))),
+    CONSTRAINT agent_github_subscriptions_tool_call_id_check CHECK (((char_length(tool_call_id) >= 1) AND (char_length(tool_call_id) <= 512)))
+);
+
+
+--
+-- Name: TABLE agent_github_subscriptions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_github_subscriptions IS 'ADR-20261030125501 gregale_github_subscribe rows written by apid: a thread receives a repository''s gregale.github events until expires_at.';
+
+
+--
 -- Name: agent_key_budgets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -60728,6 +60758,22 @@ ALTER TABLE ONLY public.agent_execution_workflows
 
 
 --
+-- Name: agent_github_subscriptions agent_github_subscriptions_endpoint_id_thread_id_tool_call__key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_github_subscriptions
+    ADD CONSTRAINT agent_github_subscriptions_endpoint_id_thread_id_tool_call__key UNIQUE (endpoint_id, thread_id, tool_call_id);
+
+
+--
+-- Name: agent_github_subscriptions agent_github_subscriptions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_github_subscriptions
+    ADD CONSTRAINT agent_github_subscriptions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: agent_key_budgets agent_key_budgets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -74203,6 +74249,20 @@ CREATE INDEX agent_execution_workflows_claim_idx ON public.agent_execution_workf
 --
 
 CREATE UNIQUE INDEX agent_execution_workflows_principal_key ON public.agent_execution_workflows USING btree (account_id, runs_principal_id, workflow_id) WHERE (runs_principal_id IS NOT NULL);
+
+
+--
+-- Name: agent_github_subscriptions_endpoint_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_github_subscriptions_endpoint_idx ON public.agent_github_subscriptions USING btree (endpoint_id, expires_at);
+
+
+--
+-- Name: agent_github_subscriptions_repository_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_github_subscriptions_repository_idx ON public.agent_github_subscriptions USING btree (account_id, repository, expires_at);
 
 
 --
@@ -92713,6 +92773,22 @@ ALTER TABLE ONLY public.agent_deliveries
 
 ALTER TABLE ONLY public.agent_execution_workflows
     ADD CONSTRAINT agent_execution_workflows_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_github_subscriptions agent_github_subscriptions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_github_subscriptions
+    ADD CONSTRAINT agent_github_subscriptions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_github_subscriptions agent_github_subscriptions_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_github_subscriptions
+    ADD CONSTRAINT agent_github_subscriptions_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
 
 
 --
