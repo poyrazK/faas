@@ -1,4 +1,4 @@
--- filename: 20261112122644000_ai_budget_alert_metric.sql
+-- filename: 20261112122644583_ai_budget_alert_metric.sql
 -- migration-compat: expand
 -- ADR 20261027132936 amendment 2: AI budget threshold crossings reach alert
 -- rules and notification channels, not only the outbound.ai_budget.threshold
