@@ -14,15 +14,12 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"regexp"
-	"slices"
 	"strconv"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // ChangesSchema installs row-change capture for changes sources
@@ -33,9 +30,9 @@ var ChangesSchema string
 
 const (
 	// MaxChangeFeeds bounds the feeds of one changes source.
-	MaxChangeFeeds = 20
+	MaxChangeFeeds = api.PostgresChangeFeedsMax
 	// MaxChangeFeedColumns bounds the allowlisted columns of one feed.
-	MaxChangeFeedColumns = 100
+	MaxChangeFeedColumns = api.PostgresChangeFeedColumnsMax
 	// ChangesRelayRolePrefix names the relay's dedicated login.
 	ChangesRelayRolePrefix = "gregale_changes_"
 	// ChangesTriggerPrefix names each feed's row trigger.
@@ -45,7 +42,6 @@ const (
 )
 
 var (
-	changeFeedName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,39}$`)
 	// ErrDatabaseBound means the database's outbox already belongs to another
 	// Commit source: one database feeds exactly one source.
 	ErrDatabaseBound = errors.New("commit: database outbox is bound to another source")
@@ -55,69 +51,14 @@ var (
 )
 
 // ChangeOperations is the capturable operation vocabulary.
-var ChangeOperations = []string{"insert", "update", "delete"}
+var ChangeOperations = api.PostgresChangeOperations
 
-// ChangeFeed captures allowlisted columns of one table.
-type ChangeFeed struct {
-	Name       string   `json:"name" yaml:"name"`
-	Table      string   `json:"table" yaml:"table"`
-	Columns    []string `json:"columns" yaml:"columns"`
-	Operations []string `json:"operations,omitempty" yaml:"operations,omitempty"`
-}
-
-// Validate checks the feed's shape. The database checks the table, its
-// primary key and that every key column is allowlisted.
-func (f ChangeFeed) Validate() error {
-	if !changeFeedName.MatchString(f.Name) {
-		return fmt.Errorf("feed name %q must match %s", f.Name, changeFeedName.String())
-	}
-	if f.Table == "" || len(f.Table) > 256 || !utf8.ValidString(f.Table) || strings.IndexFunc(f.Table, unicode.IsControl) >= 0 {
-		return fmt.Errorf("feed %s: table must be 1-256 printable characters", f.Name)
-	}
-	if len(f.Columns) == 0 || len(f.Columns) > MaxChangeFeedColumns {
-		return fmt.Errorf("feed %s: columns must list 1-%d columns", f.Name, MaxChangeFeedColumns)
-	}
-	seen := map[string]bool{}
-	for _, c := range f.Columns {
-		// NAMEDATALEN-1 bytes is PostgreSQL's identifier ceiling.
-		if c == "" || len(c) > 63 || !utf8.ValidString(c) || strings.IndexFunc(c, unicode.IsControl) >= 0 {
-			return fmt.Errorf("feed %s: column %q is not a valid column name", f.Name, c)
-		}
-		if seen[c] {
-			return fmt.Errorf("feed %s: column %q is listed twice", f.Name, c)
-		}
-		seen[c] = true
-	}
-	ops := map[string]bool{}
-	for _, op := range f.Operations {
-		if !slices.Contains(ChangeOperations, op) {
-			return fmt.Errorf("feed %s: operation %q must be one of insert, update, delete", f.Name, op)
-		}
-		if ops[op] {
-			return fmt.Errorf("feed %s: operation %q is listed twice", f.Name, op)
-		}
-		ops[op] = true
-	}
-	return nil
-}
+// ChangeFeed captures allowlisted columns of one table. It lives in pkg/api
+// so the manifest parser can validate feeds without linking database code.
+type ChangeFeed = api.PostgresChangeFeed
 
 // ValidateChangeFeeds checks a source's feed list.
-func ValidateChangeFeeds(feeds []ChangeFeed) error {
-	if len(feeds) == 0 || len(feeds) > MaxChangeFeeds {
-		return fmt.Errorf("feeds must list 1-%d feeds", MaxChangeFeeds)
-	}
-	names := map[string]bool{}
-	for _, f := range feeds {
-		if err := f.Validate(); err != nil {
-			return err
-		}
-		if names[f.Name] {
-			return fmt.Errorf("feed name %q is used twice", f.Name)
-		}
-		names[f.Name] = true
-	}
-	return nil
-}
+func ValidateChangeFeeds(feeds []ChangeFeed) error { return api.ValidatePostgresChangeFeeds(feeds) }
 
 // ChangesRelayRole is the relay login's role name for a source.
 func ChangesRelayRole(sourceID string) (string, error) {
@@ -238,7 +179,7 @@ func InstallChanges(ctx context.Context, tx pgx.Tx, in ChangesInstall) (ChangesI
 		return ChangesInstallResult{}, err
 	}
 	for _, f := range in.Feeds {
-		cfg, err := json.Marshal(map[string]any{"name": f.Name, "columns": f.Columns, "operations": feedOperations(f)})
+		cfg, err := json.Marshal(map[string]any{"name": f.Name, "columns": f.Columns, "operations": f.EffectiveOperations()})
 		if err != nil {
 			return ChangesInstallResult{}, err
 		}
@@ -250,13 +191,6 @@ func InstallChanges(ctx context.Context, tx pgx.Tx, in ChangesInstall) (ChangesI
 		return ChangesInstallResult{}, err
 	}
 	return ChangesInstallResult{RelayRole: role, Removed: removed}, nil
-}
-
-func feedOperations(f ChangeFeed) []string {
-	if len(f.Operations) == 0 {
-		return ChangeOperations
-	}
-	return f.Operations
 }
 
 func ensureRelayRole(ctx context.Context, tx pgx.Tx, role, password string) error {

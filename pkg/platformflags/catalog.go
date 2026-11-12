@@ -61,6 +61,10 @@ const (
 	// AppHealthMemory warns in app health when an app's guests ran short of
 	// memory (ADR-20261102124306) for the accounts it releases.
 	AppHealthMemory = "app_health_memory"
+	// PostgresChanges releases database-change workers (ADR-20261112140000):
+	// the postgres-changes API and the manifest block that captures Postgres
+	// row changes into a worker's queue.
+	PostgresChanges = "postgres_changes"
 	// PostgresPoolSizing stamps GREGALE_POSTGRES_POOL_MAX, the pool size an
 	// instance can use, on the deployments imaged builds for the accounts it
 	// releases (ADR-20261104141122).
@@ -343,6 +347,15 @@ var catalog = []Spec{
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan, AttributeOrg},
 		RetireBy:    "2027-03-31",
+	},
+	{
+		Key:         PostgresChanges,
+		Label:       "Postgres change workers",
+		Description: "Capture Postgres row changes into a worker's queue: the postgres-changes API, CLI and gregale.yaml block, with Gregale installing capture on managed databases. Off, the API refuses and deploys skip the block, as before. schedd also needs FAAS_COMMIT_RELAY_ENABLED.",
+		ADR:         "ADR-20261112140000",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
+		RetireBy:    "2027-06-30",
 	},
 	{
 		Key:         AppHealthMemory,
