@@ -179,6 +179,8 @@ from .app_response_consumer_auth_mode import AppResponseConsumerAuthMode
 from .app_response_cpu_millicores import AppResponseCpuMillicores
 from .app_response_deployment_availability import AppResponseDeploymentAvailability
 from .app_response_eviction_priority import AppResponseEvictionPriority
+from .app_response_function_callables import AppResponseFunctionCallables
+from .app_response_function_input_schema import AppResponseFunctionInputSchema
 from .app_response_preview_pr_state import AppResponsePreviewPrState
 from .app_response_release_policy import AppResponseReleasePolicy
 from .app_response_runtime import AppResponseRuntime
@@ -2385,6 +2387,8 @@ from .update_app_request_eviction_priority_type_3_type_1 import UpdateAppRequest
 from .update_app_request_execution_mode_type_1 import UpdateAppRequestExecutionModeType1
 from .update_app_request_execution_mode_type_2_type_1 import UpdateAppRequestExecutionModeType2Type1
 from .update_app_request_execution_mode_type_3_type_1 import UpdateAppRequestExecutionModeType3Type1
+from .update_app_request_function_callables_type_0 import UpdateAppRequestFunctionCallablesType0
+from .update_app_request_function_input_schema_type_0 import UpdateAppRequestFunctionInputSchemaType0
 from .update_app_request_pause import UpdateAppRequestPause
 from .update_app_request_release_policy_type_1 import UpdateAppRequestReleasePolicyType1
 from .update_app_request_release_policy_type_2_type_1 import UpdateAppRequestReleasePolicyType2Type1
@@ -2874,6 +2878,8 @@ __all__ = (
     "AppResponseCpuMillicores",
     "AppResponseDeploymentAvailability",
     "AppResponseEvictionPriority",
+    "AppResponseFunctionCallables",
+    "AppResponseFunctionInputSchema",
     "AppResponsePreviewPrState",
     "AppResponseReleasePolicy",
     "AppResponseRuntime",
@@ -4921,6 +4927,8 @@ __all__ = (
     "UpdateAppRequestExecutionModeType1",
     "UpdateAppRequestExecutionModeType2Type1",
     "UpdateAppRequestExecutionModeType3Type1",
+    "UpdateAppRequestFunctionCallablesType0",
+    "UpdateAppRequestFunctionInputSchemaType0",
     "UpdateAppRequestPause",
     "UpdateAppRequestReleasePolicyType1",
     "UpdateAppRequestReleasePolicyType2Type1",
