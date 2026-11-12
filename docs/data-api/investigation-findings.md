@@ -8,6 +8,8 @@ checkout.
 
 The third review also compared these Data API source paths with upstream main
 `10034cea1` (2026-11-12); the reviewed implementation paths were unchanged.
+The fourth review checked main `f58166604` with the same result for the runtime,
+usage-report, and starter migration paths examined in that pass.
 
 P1 means prioritize correctness or recovery work. P2 means a bounded correctness
 gap, operational improvement, or scalability work. An enhancement or a suspected
@@ -30,7 +32,7 @@ performance bottleneck is not a confirmed production defect.
 | DAPI011 | P2 | Reproduced + server expiry review | Temporary credential failures can leave live reads stale indefinitely | Open |
 | DAPI012 | P2 | Reproduced with a supported serving snapshot | Cross-schema RPC results produce dangling OpenAPI references | Open |
 | DAPI013 | P2 | Reproduced | OpenAPI conversion treats field names as schema keywords | Open |
-| DAPI014 | P2 | Normalizer/codec reproduced; database integration pending | Arrays of PostgreSQL domains decode differently from generated types | Open |
+| DAPI014 | P2 | Real PostgreSQL descriptor and SDK codec reproduced | Arrays of PostgreSQL domains decode differently from generated types | Open |
 | DAPI015 | P1 | Reproduced through the HTTP gateway | Requests pass the old RLS gate before a successful restore safety refresh | Open |
 | DAPI016 | P1 | Reproduced in generated Go and Python clients | Keyset pagination removes the caller's existing OR filters | Open |
 | DAPI017 | P1 | Reproduced with loopback HTTP redirects | Generated clients follow redirects with credentials or resubmit mutations | Open |
@@ -41,14 +43,23 @@ performance bottleneck is not a confirmed production defect.
 | DAPI022 | P2 | Reproduced in generated Python client | Generated table accessors are shadowed by client configuration attributes | Open |
 | DAPI023 | P2 | Loader reproduction + write-path review | Local types output can overwrite a migration source file | Open |
 | DAPI024 | P1 | Reproduced in authorization replay | Replay assertions and captures silently round large numeric IDs | Open |
+| DAPI025 | P2 | Reproduced with controlled timers/transport | Initial live-access publication is not retried after identity lookup failure | Open |
+| DAPI026 | P2 | Reproduced with delayed loopback HTTP | Health invalidation reuses an old in-flight readiness probe | Open |
+| DAPI027 | P1 | Reproduced on PostgreSQL 16 | Keys-only change events include non-key covering-index columns | Open |
+| DAPI028 | P1 | Reproduced on PostgreSQL 16 | Renaming a primary-key column makes change hooks emit a null key | Open |
+| DAPI029 | P2 | Reproduced on PostgreSQL 16 | Migration transaction statements can commit schema without ledger entries | Open |
+| DAPI030 | P2 | Reproduced in an isolated child process | A named-pipe migration file blocks file loading indefinitely | Open |
 
 Recommended first fixes: DAPI015, DAPI008, DAPI001, DAPI002, and DAPI007. DAPI003
 should follow with recovery-aware queue scheduling. Treat DAPI005 as a benchmark-led
-performance task, DAPI004/DAPI006 as operational/codec enhancements, and validate
-DAPI014 against PostgreSQL before choosing its wire-contract change.
+performance task and DAPI004/DAPI006 as operational/codec enhancements. DAPI014
+now has a real PostgreSQL reproduction; extend it to REST/live integration when
+choosing its wire-contract change.
 Include DAPI016/DAPI017/DAPI024 in the first correctness/security batch. Each ID
 is independent; fixes should retain the original evidence and add a regression
 assertion for the intended behavior.
+Prioritize DAPI027/DAPI028 with the change-hook correctness work; neither is a
+general event-retention or global-commit-order complaint.
 
 ## DAPI001 Terminal authorization errors retain live-query rows
 
@@ -307,9 +318,12 @@ to parse `cents`, which falls through to the raw string at line 200.
 Evidence: normalize an `int4` domain `api.cents` and its array column: the
 generated column type is `(number | null)[]`. Decode `{1,2}` with the corresponding
 wire type `_cents`: the live values are `["1","2"]`, unlike REST JSON's numbers.
-This was reproduced at the normalizer/codec boundary. PostgreSQL integration
-was not run because the local test database was unavailable; verify the real
-column descriptor and end-to-end behavior before changing the protocol.
+This was initially reproduced at the normalizer/codec boundary. The fourth pass
+also created a real PostgreSQL 16 `api.cents AS integer` domain and an array
+column. The actual query field descriptor resolves to `_cents` using the live
+server's catalog query. PostgreSQL `to_jsonb(amounts)` yields `[1,2]`, while the
+current SDK decoder yields `["1","2"]`. This verifies the database descriptor
+and codec mismatch; a full hosted realtime session was not run.
 
 Remediation direction: carry normalized array-element/base-type metadata or
 normalize the selected wire expression to a documented built-in representation.
@@ -554,6 +568,154 @@ unrepresentable numeric values explicitly before running requests. Do not
 convert numeric-looking strings heuristically. Cover int8 IDs, decimal values,
 exponents, nested objects, and capture-to-path/body round trips.
 
+## DAPI025 Initial access publication is not retried after identity lookup failure
+
+`cmd/gregale/templates/data-api/usage.mjs:187` schedules the initial report when
+access settings must be published. If the identity request at line 145 fails
+before `inflight` is created, the `finally` block at line 175 reschedules only
+when an in-flight report or request counts exist. It does not include
+`accessDue()` in that decision. A quiet process then has no retry scheduled.
+
+Evidence: create usage reporting with an access configuration, let the initial
+scheduled identity lookup fail, and then restore the fake identity service.
+There is one identity call, no access publication, and zero retry timers. An
+explicit `report()` succeeds afterwards, proving that the remaining problem
+is scheduling rather than continuing service failure.
+
+Impact: reporting-based live configuration can remain missing or outdated until
+ordinary HTTP traffic or another explicit flush/report triggers publication.
+A client contacting the separate realtime service does not itself provide that
+ordinary Data API HTTP traffic. Caps' initial totals lookup has the same
+pre-report retry gap, although a later HTTP request also triggers recovery.
+
+Remediation direction: keep a bounded retry scheduled while initial access or
+cap-total synchronization is still due, including failures before report IDs
+are assigned. Preserve the permanent-production-refusal behavior and avoid a
+busy loop or duplicate usage deltas.
+
+## DAPI026 Health invalidation reuses an old in-flight readiness probe
+
+`cmd/gregale/templates/data-api/health.mjs:119` clears only the combined cached
+check set. `probe` at line 35 retains its per-path pending promise, and the
+refresh reader at line 79 similarly retains its pending read. A fresh check set
+started after invalidation can therefore consume the pre-invalidation result.
+This conflicts with the comment that both running and completed checks are
+forgotten when the engine stops, starts, reloads, or restores.
+
+Evidence: start `/ready` against a loopback admin server and hold its response.
+Invalidate health and start another snapshot; then complete the old response
+with HTTP 200 while new requests would receive 503. Both snapshots report ready,
+and only one `/ready` request occurred. Invalidating again after that work
+finishes produces a new probe and correctly reports unready.
+
+Impact: a health answer for the previous engine/connection generation can be
+reused and cached as if it described the new one. The reproduction covers the
+health component with delayed HTTP, not a native VM snapshot. It does not claim
+that the separate request lifecycle gate is bypassed.
+
+Remediation direction: associate pending probe/refresh/pool work with an engine
+generation, invalidate or cancel that work on lifecycle changes, and prevent
+late completions from populating the new generation's readiness cache. Preserve
+bounded concurrent probing within each generation.
+
+## DAPI027 Keys-only change events include non-key covering-index columns
+
+`cmd/gregale/templates/data-api/change-hooks.sql:62` constructs `key_columns`
+from every attribute in the primary index's `indkey`. PostgreSQL primary keys
+can have `INCLUDE` columns after the actual key attributes. The query does not
+restrict positions to `pg_index.indnkeyatts`, so those non-key values enter
+`row_key` and are treated as primary-key columns by the exclusion check.
+
+Evidence: on PostgreSQL 16 create a table with
+`PRIMARY KEY(id) INCLUDE(included_secret)`, enable hooks with `payload => 'keys'`,
+and insert a row. The emitted key is
+`{"id":1,"included_secret":"not-a-primary-key"}` although only `id` belongs to
+the key constraint. Trying to exclude `included_secret` is rejected with
+`22023`, claiming that primary-key columns cannot be excluded.
+
+Impact: keys-only delivery includes unexpected application values and mutable
+non-key values become part of the apparent event identity. Sensitive covering
+columns cannot be excluded through the documented hook options.
+
+Remediation direction: use only the actual ordered key attributes, validate
+the extracted key against the primary-key constraint, and keep INCLUDE columns
+eligible for ordinary payload exclusion. Cover composite keys and covering
+columns whose values change while the row's identity remains the same.
+
+## DAPI028 Renaming a primary-key column makes hooks emit a null key
+
+`cmd/gregale/templates/data-api/change-hooks.sql:77` copies key column names into
+trigger arguments at enable time. Capture reads those frozen names at line 158
+and extracts their values from current row JSON at line 186. PostgreSQL column
+renames update the table/key metadata but do not rewrite those text arguments.
+A missing key field becomes JSON null without any configuration error.
+
+Evidence: enable keys-only hooks on table `api.renamed(id PRIMARY KEY, body)`,
+rename `id` to `item_id`, and insert primary key 7. The write succeeds and its
+outbox event contains `{"id":null}` instead of `{"item_id":7}`. This was run on
+PostgreSQL 16. A fresh hook enable reads the new metadata, but normal DDL does
+not automatically perform that refresh.
+
+Impact: consumers cannot identify or reconcile the affected row from the
+event's documented key. Other primary-key definition changes can similarly
+leave the frozen names inconsistent. Source table/schema names are also frozen
+for parent-partition identity; their rename semantics should be made explicit
+when fixing metadata refresh.
+
+Remediation direction: validate or refresh hook metadata when key definitions
+change, or stop publication with an actionable configuration error until hooks
+are re-enabled. Do not silently publish a null/incomplete primary key. Include
+rename, compound-key replacement, and partition-parent cases in SQL tests.
+
+## DAPI029 Migration transaction statements can commit schema without ledger entries
+
+`cmd/gregale/templates/data-api-starter/migrations/migrate.mjs:29` starts the
+transaction that holds the advisory lock and migration ledger. Each SQL file
+is then sent unchanged at line 52. An explicit `COMMIT` or `ROLLBACK` in a file
+can end that outer transaction before the runner records the migration. The
+catch block's later rollback cannot undo an already committed schema change.
+
+Evidence: an ordinary failing file `CREATE TABLE ...; SELECT 1/0;` leaves no
+table, as expected. Change the file to
+`CREATE TABLE ...; COMMIT; SELECT 1/0;`: `migrate()` still rejects with `22012`,
+but the table remains and `gregale_migrations.applied` contains zero entries.
+The experiment used only a uniquely named database on disposable PostgreSQL 16.
+
+Impact requires a migration file containing transaction-control statements,
+for example SQL copied from a script that manages its own transactions. Such
+a file can also release the runner's advisory lock early. This is not a claim
+that ordinary transaction-free migration files lose their rollback behavior.
+
+Remediation direction: explicitly define and enforce the supported SQL contract
+for runner-managed transactions. Reject conflicting transaction control before
+executing any migration content, with statement-aware validation, a stable
+diagnostic, and tests preserving schema/ledger atomicity. Account for comments
+and function/procedure bodies. Do not infer rollback merely from the final
+request error after a transaction has already committed.
+
+## DAPI030 A named-pipe migration file blocks file loading indefinitely
+
+`cmd/gregale/templates/data-api-starter/migrations/migrate.mjs:15` passes every
+matching directory entry directly to `readFile`. It does not check file kind,
+use nonblocking/no-follow open flags, impose a byte limit, or accept an abort
+signal. A FIFO with a valid numbered SQL filename therefore blocks before any
+SQL or ledger logic runs. Other local inputs use explicit regular-file checks.
+
+Evidence: a regular `0001_example.sql` loads successfully. In an isolated child
+process, load a directory containing only FIFO `0001_blocked.sql` with no writer:
+the loader stays pending. A timer records that state and the parent must
+terminate the timeboxed child. Temporary fixture files are then removed.
+
+Impact: an accidental non-regular migration entry can stall local development
+or release startup and prevent normal cleanup/cancellation from advancing.
+Symlink targets and unbounded files are also not qualified by this reader;
+the retained reproduction demonstrates the FIFO case specifically.
+
+Remediation direction: open migration inputs without following links or
+blocking on special files, require bounded regular files, and propagate the
+workflow's cancellation/deadline into reading. Keep the content checksum over
+exact accepted bytes and avoid changing valid migration ordering semantics.
+
 ## Reproduction and validation
 
 The initial investigation ran 14 focused runtime/worker tests successfully;
@@ -578,6 +740,15 @@ loopback redirect fixtures, and exercises the actual local-project and replay
 parsers. DAPI023 covers path validation and subsequent write-path inspection;
 it does not run the full Docker-backed development workflow.
 
+The fourth pass added [runtime/resource reproductions](investigation-runtime-repros.mjs)
+for DAPI025/DAPI026/DAPI030 and [isolated PostgreSQL reproductions](investigation-postgres-repros.mjs)
+for DAPI027–DAPI029 plus the real descriptor/codec verification for DAPI014.
+All six new finding reproductions ran successfully. The existing usage, health,
+relay, engine, migration, and real change-hook SQL selection passed all 63 tests,
+with zero skips. PostgreSQL 16 ran in a dedicated disposable local container;
+the scripts removed their own temporary databases and files. No shared/customer
+database or deployed application was changed.
+
 From the repository root, with Node 24+ and the existing SDK/runtime development
 dependencies installed, run:
 
@@ -596,6 +767,27 @@ Set `GREGALE_GO` to the Go compiler's absolute path if it is not the `go` on
 `PATH`. Normal Go cache/dependency settings are inherited. The script creates
 and removes its own temporary generated clients and fixtures; the deliberate
 `NotesRow redeclared` compilation failure is expected evidence for DAPI018.
+
+Run the fourth-pass runtime evidence with Node 22+ and a POSIX `mkfifo`:
+
+```sh
+node docs/data-api/investigation-runtime-repros.mjs
+```
+
+The FIFO reader runs in its own timeboxed child; terminating that deliberately
+blocked child is expected. For the SQL evidence, use Node 24+, the runtime/SDK
+development dependencies, and `DATA_API_INVESTIGATION_PG_URL` pointing to the
+`postgres` database of a disposable loopback PostgreSQL 16+ server:
+
+```sh
+node docs/data-api/investigation-postgres-repros.mjs
+```
+
+The SQL script accepts only a loopback endpoint, creates a uniquely named test
+database, and drops that database after the probes. `GREGALE_DATA_API_REVIEW_DEPS`
+can reuse already installed development dependencies from another checkout,
+as with the initial reproduction script. Migration failures and inconsistent
+event keys in this script are deliberately asserted observations.
 
 To reuse dependencies already installed in another checkout, set
 `GREGALE_DATA_API_REVIEW_DEPS` to that checkout's absolute path. This environment
