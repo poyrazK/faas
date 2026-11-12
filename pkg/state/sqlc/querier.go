@@ -1100,6 +1100,7 @@ type Querier interface {
 	// ADR-20261107140000 §3: clear one scope's bindings before setting them.
 	DeleteAgentApprovalChannelBindings(ctx context.Context, db DBTX, arg DeleteAgentApprovalChannelBindingsParams) error
 	DeleteAgentKeyBudget(ctx context.Context, db DBTX, keyID pgtype.UUID) error
+	DeleteAgentUndoRecordsBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error)
 	DeleteAlertChannelResolveRetry(ctx context.Context, db DBTX, arg DeleteAlertChannelResolveRetryParams) error
 	DeleteAlertChannelStandDown(ctx context.Context, db DBTX, arg DeleteAlertChannelStandDownParams) error
 	// ADR-749 slice 2: alert rule -> notification channel bindings.
@@ -2700,6 +2701,8 @@ type Querier interface {
 	// dispatcher signs, sends and retries it. source_event_id is unique per
 	// receiver, so each event of a request is enqueued once.
 	InsertAgentApprovalWebhookDeliveries(ctx context.Context, db DBTX, arg InsertAgentApprovalWebhookDeliveriesParams) (int64, error)
+	// ADR-20261112080601: written next to the agent's activity row.
+	InsertAgentUndoRecord(ctx context.Context, db DBTX, arg InsertAgentUndoRecordParams) error
 	InsertAlertRollback(ctx context.Context, db DBTX, arg InsertAlertRollbackParams) error
 	// Only channels owned by the rule's account are bound.
 	InsertAlertRuleChannels(ctx context.Context, db DBTX, arg InsertAlertRuleChannelsParams) error
@@ -3597,6 +3600,8 @@ type Querier interface {
 	// One scope's bound channels, by name.
 	ListAgentApprovalChannelBindings(ctx context.Context, db DBTX, arg ListAgentApprovalChannelBindingsParams) ([]NotificationChannel, error)
 	ListAgentApprovalsForKey(ctx context.Context, db DBTX, arg ListAgentApprovalsForKeyParams) ([]AgentApprovalRequest, error)
+	// A key's records since a time, newest first.
+	ListAgentUndoRecords(ctx context.Context, db DBTX, arg ListAgentUndoRecordsParams) ([]AgentUndoRecord, error)
 	ListAlertRollbacks(ctx context.Context, db DBTX, arg ListAlertRollbacksParams) ([][]byte, error)
 	ListAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]NotificationChannel, error)
 	// ADR-747 slice 2: hourly SLO budget rows (meterd is the only writer).
@@ -3996,6 +4001,10 @@ type Querier interface {
 	// deployment is in one of these states, whatever the file's age.
 	ListInFlightDeploymentSpoolPaths(ctx context.Context, db DBTX) ([]ListInFlightDeploymentSpoolPathsRow, error)
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)
+	// The app's pending and dispatching rows per source from the backlog
+	// counters (ADR-20261022105723), so `queue status` shows async invocations,
+	// inbound webhooks and event deliveries waiting beside queue messages.
+	ListInvocationBacklogPendingBySource(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInvocationBacklogPendingBySourceRow, error)
 	ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInvoiceSnapshotsParams) ([]ListInvoiceSnapshotsRow, error)
 	ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]Deployment, error)
 	// ADR-733 encryption at rest. imaged owns plaintext_state, sealed_key and
@@ -4929,6 +4938,8 @@ type Querier interface {
 	ManagedPostgresUsageSubjects(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]ManagedPostgresUsageSubjectsRow, error)
 	ManagedWorkflowEffectAppScope(ctx context.Context, db DBTX, appID string) (ManagedWorkflowEffectAppScopeRow, error)
 	MarkAgentApprovalChannelsNotified(ctx context.Context, db DBTX, approvalID pgtype.UUID) error
+	// Only once: a record already undone is left as it is.
+	MarkAgentUndoRecordUndone(ctx context.Context, db DBTX, arg MarkAgentUndoRecordUndoneParams) (int64, error)
 	MarkAppForkRunning(ctx context.Context, db DBTX, arg MarkAppForkRunningParams) (AppFork, error)
 	MarkCheckedRollbackReady(ctx context.Context, db DBTX, targetID pgtype.UUID) error
 	MarkClaimedTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordDeadLetterParams) (int64, error)

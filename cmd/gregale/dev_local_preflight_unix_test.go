@@ -4,6 +4,7 @@ package main_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -125,17 +126,17 @@ func TestDevLocalPreflightPackageTools(t *testing.T) {
 			writePreflightTool(t, bin, "node", "#!/bin/sh\nexit 97\n")
 			env := []string{"PATH=" + bin}
 			// Check the manager before its script. No probe may execute it.
-			err := main.DevLocalPreflightForTest(dir, "", env)
+			err := main.DevLocalPreflightForTest(t.Context(), dir, "", env)
 			if err == nil || !strings.Contains(err.Error(), "install the project's "+tc.manager) {
 				t.Fatalf("missing package manager: %v", err)
 			}
 			writePreflightTool(t, bin, tc.manager, "#!/bin/sh\nexit 97\n")
-			err = main.DevLocalPreflightForTest(dir, "", env)
+			err = main.DevLocalPreflightForTest(t.Context(), dir, "", env)
 			if err == nil || !strings.Contains(err.Error(), "vite") || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("missing framework repair: %v", err)
 			}
 			writePreflightTool(t, filepath.Join(dir, "node_modules", ".bin"), "vite", "#!/bin/sh\nexit 97\n")
-			if err := main.DevLocalPreflightForTest(dir, "", env); err != nil {
+			if err := main.DevLocalPreflightForTest(t.Context(), dir, "", env); err != nil {
 				t.Fatalf("installed framework rejected: %v", err)
 			}
 		})
@@ -164,7 +165,7 @@ func TestDevLocalPreflightPnPAndOpaqueCommands(t *testing.T) {
 				files[tc.extraFile] = ""
 			}
 			dir := writeDevLocalProject(t, files)
-			if err := main.DevLocalPreflightForTest(dir, tc.command, []string{"PATH=" + bin}); err != nil {
+			if err := main.DevLocalPreflightForTest(t.Context(), dir, tc.command, []string{"PATH=" + bin}); err != nil {
 				t.Fatalf("valid conservative case rejected: %v", err)
 			}
 		})
@@ -179,13 +180,13 @@ func TestDevLocalPreflightAllFunctionEnvironments(t *testing.T) {
 		"first/handler.js":  "export default () => new Response('ok')",
 		"second/handler.js": "export default () => new Response('ok')",
 	})
-	err := main.DevLocalPreflightForTest(dir, "", []string{"PATH=" + bin})
+	err := main.DevLocalPreflightForTest(t.Context(), dir, "", []string{"PATH=" + bin})
 	if err == nil || !strings.Contains(err.Error(), "function second") || strings.Contains(err.Error(), "function first") {
 		t.Fatalf("function PATH overrides not respected: %v", err)
 	}
 	py := writeDevLocalProject(t, map[string]string{"handler.py": "def handler(event, ctx): return {'status': 200}"})
 	writePreflightTool(t, filepath.Join(py, ".venv", "bin"), "python3", "#!/bin/sh\nexit 97\n")
-	if err := main.DevLocalPreflightForTest(py, "", []string{"PATH="}); err != nil {
+	if err := main.DevLocalPreflightForTest(t.Context(), py, "", []string{"PATH="}); err != nil {
 		t.Fatalf("project virtualenv rejected: %v", err)
 	}
 }
@@ -232,7 +233,7 @@ func TestDevLocalPreflightPythonAppModules(t *testing.T) {
 		"main.py":        "from fastapi import FastAPI\napp = FastAPI()\n",
 	})
 	python := createLocalPythonVenv(t, filepath.Join(dir, ".venv"), "unused")
-	err := main.DevLocalPreflightForTest(dir, "", os.Environ())
+	err := main.DevLocalPreflightForTest(t.Context(), dir, "", os.Environ())
 	if err == nil || !strings.Contains(err.Error(), "module uvicorn") || !strings.Contains(err.Error(), "uv sync") {
 		t.Fatalf("missing selected-environment dependency: %v", err)
 	}
@@ -247,7 +248,27 @@ func TestDevLocalPreflightPythonAppModules(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := main.DevLocalPreflightForTest(dir, "", os.Environ()); err != nil {
+	if err := main.DevLocalPreflightForTest(t.Context(), dir, "", os.Environ()); err != nil {
 		t.Fatalf("installed modules rejected: %v", err)
+	}
+}
+
+func TestDevLocalPreflightHonorsCancellation(t *testing.T) {
+	dir := writeDevLocalProject(t, map[string]string{
+		"requirements.txt": "fastapi\nuvicorn\n",
+		"main.py":          "from fastapi import FastAPI\napp = FastAPI()\n",
+	})
+	log := filepath.Join(t.TempDir(), "probe-started")
+	writePreflightTool(t, filepath.Join(dir, ".venv", "bin"), "python3", `#!/bin/sh
+printf started > "$GREGALE_PREFLIGHT_PROBE_LOG"
+`)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err := main.DevLocalPreflightForTest(ctx, dir, "", append(os.Environ(), "GREGALE_PREFLIGHT_PROBE_LOG="+log))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("preflight discarded caller cancellation: %v", err)
+	}
+	if _, err := os.Stat(log); !os.IsNotExist(err) {
+		t.Fatalf("cancelled preflight started a runtime probe: %v", err)
 	}
 }

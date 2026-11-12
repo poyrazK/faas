@@ -10,7 +10,7 @@
 // Calls go over the private binding (`http://<slug>.internal:10081`), never
 // the public internet; the platform authorizes them by the calling VM, wakes
 // a parked callee, and the request's deadline and release travel with them.
-// `gregale functions types` declares each function's input and output in
+// `gregale function types` declares each function's input and output in
 // GregaleFunctions, so `functions.users.call` is typed.
 
 import { createGregaleFetch } from './release-context.js';
@@ -23,7 +23,7 @@ export const GREGALE_FUNCTION_CALL_HEADER = 'X-Gregale-Function-Call';
 export const GREGALE_FUNCTIONS_ENV = 'GREGALE_FUNCTIONS';
 
 /**
- * The functions this function may call, by name. `gregale functions types`
+ * The functions this function may call, by name. `gregale function types`
  * augments it from each function's input and output schema; without it every
  * name is callable with unknown input and output.
  */

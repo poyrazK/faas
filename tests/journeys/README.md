@@ -28,6 +28,10 @@ make e2e-journeys TIER=full RUN=TestTemplateDeploys
 - **Account**: by default the CLI's own `gregale login` (kept in the OS
   keychain; the suite never reads it). `GREGALE_E2E_TOKEN` or `--token-file`
   use an API key instead, with the CLI isolated in a private `HOME`.
+- **Session** (optional): steps only a person may take, such as approving an
+  agent's request, need a signed-in dashboard session. Set
+  `GREGALE_E2E_SESSION` to the value of the browser's `__Host-faas_sid`
+  cookie for the same account; without it those steps skip.
 - **Output**: live PASS/FAIL/SKIP lines, then a summary, every failure with
   its log, and `metric` lines (e.g. cold-wake time). The raw `go test -json`
   stream and `report.md` land in `.e2e-journeys/<timestamp>/` (gitignored).

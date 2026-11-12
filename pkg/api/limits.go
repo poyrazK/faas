@@ -287,6 +287,15 @@ const (
 	MaxAgentActivityPage     = 200
 )
 
+// Agent undo (ADR-20261112080601): an undo covers DefaultAgentUndoWindow of a
+// key's changes unless it names a window or entries; records are kept as
+// long as activity (AgentActivityRetention), and one plan holds at most
+// MaxAgentUndoRecords of them.
+const (
+	DefaultAgentUndoWindow = 24 * time.Hour
+	MaxAgentUndoRecords    = 500
+)
+
 // Agent approval outcomes (ADR-20261107140000 §6): an agent repeating a
 // request denied, or expired, within AgentApprovalOutcomeWindow is told so
 // instead of asking again; a denial note holds at most

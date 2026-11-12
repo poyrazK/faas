@@ -298,10 +298,10 @@ type bindSourceMode struct {
 	// handle pins the original inode so teardown can restore its mode even
 	// when a snapshot writer atomically replaces the source pathname.
 	handle *os.File
-	// viaGuest: an adopted guest's source the cache had already re-staged,
-	// so the handle came through the guest's own read-only bind mount
-	// (adoptGuestBinds). It cannot change the mode, and the source path no
-	// longer names this inode, so a failed restoration does not hold the
+	// viaGuest: an adopted guest's source the cache had already re-staged or
+	// evicted, so the handle came through the guest's own read-only bind
+	// mount (adoptGuestBinds). It cannot change the mode, and the source path
+	// no longer names this inode, so a failed restoration does not hold the
 	// guest's teardown.
 	viaGuest bool
 }
@@ -1244,6 +1244,16 @@ func (v *JailerVMM) JailRoot() string {
 	return filepath.Join(v.chrootBase, v.fcName)
 }
 
+// writableDriveImageName is the jail name of a writable drive: the scratch
+// or app layer is layer.ext4, and a builder's BuildKit seed copy has its own
+// name so the two never overwrite each other.
+func writableDriveImageName(d Drive) string {
+	if d.DriveID == DriveBuildKitSeed {
+		return buildkitSeedImageName
+	}
+	return layerImageName
+}
+
 // resolveDriveImage finds the writable drive inside Jailer’s chroot. The
 // canonical layer name is used when present; builderd and older callers may
 // preserve the source basename, so accept a single ext4 fallback as well.
@@ -1259,7 +1269,7 @@ func (v *JailerVMM) resolveDriveImage(instance string) (string, error) {
 	}
 	var found string
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".ext4") {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".ext4") || entry.Name() == buildkitSeedImageName {
 			continue
 		}
 		if found != "" {
@@ -4894,6 +4904,10 @@ func handoffBuildExportOwnership(exportDir string) error {
 // sees "layer.ext4").
 const layerImageName = "layer.ext4"
 
+// buildkitSeedImageName is a builder's BuildKit seed copy inside its chroot
+// (ADR-20261030122204), beside its scratch layer.
+const buildkitSeedImageName = "buildkit-seed.ext4"
+
 // Firecracker records chroot-relative backing-file names in vmstate. Keep
 // temporary storage materializations out of that snapshot contract.
 const (
@@ -5886,9 +5900,9 @@ func (v *JailerVMM) provisionForOwner(ctx context.Context, owner nativeLaunchRec
 		} else if d.IsReadOnly {
 			name, err = v.stageReadOnlyAsForOwner(ctx, owner, root, d.PathOnHost, coldBootReadOnlyDriveName(i, d), instanceID)
 		} else if cfg.EphemeralWritable {
-			name, err = v.stageEphemeralWritableAsForOwner(ctx, owner, root, d.PathOnHost, layerImageName, uid, gid, instanceID)
+			name, err = v.stageEphemeralWritableAsForOwner(ctx, owner, root, d.PathOnHost, writableDriveImageName(d), uid, gid, instanceID)
 		} else {
-			name, err = v.stageWritableAsForOwner(ctx, owner, root, d.PathOnHost, layerImageName, uid, gid, instanceID)
+			name, err = v.stageWritableAsForOwner(ctx, owner, root, d.PathOnHost, writableDriveImageName(d), uid, gid, instanceID)
 		}
 		if err != nil {
 			return out, err

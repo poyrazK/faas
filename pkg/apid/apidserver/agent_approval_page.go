@@ -34,6 +34,7 @@ var approvalCategoryLabels = map[string]string{
 	api.AgentApprovalCredentials: "Mint or rotate credentials",
 	api.AgentApprovalBilling:     "Change billing",
 	api.AgentApprovalBudget:      "Go past the agent's monthly budget",
+	api.AgentApprovalUndo:        "Undo the agent's own changes",
 }
 
 // decidableApproval loads a request the signed-in person may decide.
