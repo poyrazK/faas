@@ -32,6 +32,21 @@ import { gzipped, tar, type TarEntry } from './tar.js';
 /** The workspace every Gregale session has. */
 export const WORKSPACE_ROOT = '/workspace';
 
+/** The guest port the sandbox browser serves its DevTools protocol on. */
+export const BROWSER_CDP_PORT = 9222;
+
+/**
+ * A running sandbox browser (ADR-20261112121456 phase 2). Connect with
+ * Playwright's `chromium.connectOverCDP(cdpUrl, { headers })` or Puppeteer's
+ * `connect({ browserURL: cdpUrl, headers })`. The headers carry the private
+ * preview token; it is not kept in the session's state.
+ */
+export type GregaleBrowser = {
+  cdpUrl: string;
+  headers: Record<string, string>;
+  tokenExpiresAt?: string;
+};
+
 /** What a Gregale session's state holds besides the SDK's own fields. */
 export interface GregaleSandboxSessionState extends SandboxSessionState {
   backendId: 'gregale';
@@ -581,6 +596,31 @@ export class GregaleSandboxSession implements SandboxSession<GregaleSandboxSessi
   }
 
   // ---- ports -----------------------------------------------------------
+
+  /**
+   * Starts the sandbox's headless Chromium, if it is not running, and
+   * exposes its DevTools protocol privately at a preview URL. Pages reach the
+   * web only in a session created with `network: { mode: 'web' }`.
+   */
+  async startBrowser(options: { timeoutSeconds?: number } = {}): Promise<GregaleBrowser> {
+    const wait = Math.max(1, Math.min(options.timeoutSeconds ?? 30, 120));
+    const running = await this.exec({ cmd: 'gregale-browser --wait 1' });
+    if (running.exitCode !== 0) {
+      await this.#json('POST', '/exec', { json: this.#execBody({ cmd: 'gregale-browser' }, true) });
+      const ready = await this.exec({ cmd: `gregale-browser --wait ${wait}` });
+      if (ready.exitCode !== 0) {
+        throw new SandboxError(`the sandbox browser did not start within ${wait} s`, 'exposed_port_unavailable', { output: ready.output });
+      }
+    }
+    const view = await this.#api.control<SandboxPortView>('POST', `/v1/sandboxes/${this.sandboxId}/ports`, {
+      json: { port: BROWSER_CDP_PORT, visibility: 'private' },
+    });
+    return {
+      cdpUrl: view.url,
+      headers: view.preview_token ? { Authorization: `Bearer ${view.preview_token}` } : {},
+      ...(view.preview_token_expires_at ? { tokenExpiresAt: view.preview_token_expires_at } : {}),
+    };
+  }
 
   /**
    * Exposes a guest port at its preview URL. A private port's endpoint

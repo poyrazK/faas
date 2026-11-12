@@ -17,6 +17,14 @@
 # No managed settings pin providers or disable sign-in methods (ADR-20261027090010 §2
 # and §7 set out the hosting terms).
 #
+# The sandbox browser (ADR-20261112121456 phase 2, ADR-20261027090014 §4.3)
+# lives here too, so every session and run can start one without an image of
+# its own: Alpine's Chromium (about 300 MB, counted once per node like the
+# harnesses), playwright-core for scripts inside the VM, Playwright MCP for
+# MCP-speaking harnesses, and gregale-browser, which starts Chromium and
+# serves its DevTools protocol on 127.0.0.1:9222 for the session's preview
+# URL.
+#
 # Node 22 on Alpine (musl), the same digest as runner-node22: every harness
 # ships a musl build, and the memory experiment measured this base.
 FROM mirror.gcr.io/library/node:22-alpine@sha256:025b8e975a61d94e33abeafaad1255ef44e4898cf1a1b6446860009c72e6d284
@@ -25,17 +33,20 @@ FROM mirror.gcr.io/library/node:22-alpine@sha256:025b8e975a61d94e33abeafaad1255e
 COPY --chmod=0644 images/agent-base/package.json images/agent-base/package-lock.json /opt/gregale/agents/
 COPY --chmod=0644 pkg/agentpresets/presets.json /usr/share/faas/agent-presets.json
 COPY --chmod=0755 images/agent-base/finish-install.sh /tmp/finish-install.sh
+COPY --chmod=0755 images/agent-base/gregale-browser.mjs /opt/gregale/browser/gregale-browser.mjs
 
 # git: checkouts and the harnesses' git tools. python3: common agent tooling.
 # ripgrep: Claude Code's search on musl (USE_BUILTIN_RIPGREP=0).
 # libstdc++, libgcc: the musl harness builds. bash: harness shell tools.
+# chromium and its fonts: the sandbox browser (fonts so pages render text).
 # npm stays, unlike in the runner bases: agents install and test projects.
 # Both install scripts that run here (opencode-ai, claude-code) only link
 # their locked platform binary into place; finish-install.sh checks that.
 RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt \
     apk upgrade --no-cache && \
-    apk add --no-cache bash git python3 ripgrep libstdc++ libgcc && \
-    chmod 0755 /opt/gregale /opt/gregale/agents /usr/share/faas && \
+    apk add --no-cache bash git python3 ripgrep libstdc++ libgcc \
+      chromium nss freetype harfbuzz ttf-freefont font-noto-emoji && \
+    chmod 0755 /opt/gregale /opt/gregale/agents /opt/gregale/browser /usr/share/faas && \
     cd /opt/gregale/agents && \
     NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt npm ci --omit=dev --no-audit --no-fund && \
     /tmp/finish-install.sh && \
