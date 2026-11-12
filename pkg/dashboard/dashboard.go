@@ -3992,7 +3992,7 @@ type StatelessDenylistEntry struct {
 	Hint string
 }
 
-// StatelessClosedPath is one path the guest-init fanotify advisory
+// StatelessClosedPath is one path the guest-init stateless advisory
 // watches. Severity is "high" for /data, /db, and the well-known
 // stateful daemon data dirs the customer is most likely to trip
 // (postgres, mysql); "warn" for the rest. Mirrors
