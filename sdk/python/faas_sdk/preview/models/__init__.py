@@ -100,6 +100,13 @@ from .agent_connection_response_approvals_item import AgentConnectionResponseApp
 from .agent_connection_response_kind import AgentConnectionResponseKind
 from .agent_connections_response import AgentConnectionsResponse
 from .agent_connections_revoke_all_response import AgentConnectionsRevokeAllResponse
+from .agent_undo_item import AgentUndoItem
+from .agent_undo_item_kind import AgentUndoItemKind
+from .agent_undo_item_result import AgentUndoItemResult
+from .agent_undo_item_status import AgentUndoItemStatus
+from .agent_undo_plan import AgentUndoPlan
+from .agent_undo_request import AgentUndoRequest
+from .agent_undo_result import AgentUndoResult
 from .ai_deployment_usage import AIDeploymentUsage
 from .ai_deployment_usage_list import AIDeploymentUsageList
 from .alert_delivery_response import AlertDeliveryResponse
@@ -6513,6 +6520,13 @@ __all__ = (
     "AgentConnectionResponseKind",
     "AgentConnectionsResponse",
     "AgentConnectionsRevokeAllResponse",
+    "AgentUndoItem",
+    "AgentUndoItemKind",
+    "AgentUndoItemResult",
+    "AgentUndoItemStatus",
+    "AgentUndoPlan",
+    "AgentUndoRequest",
+    "AgentUndoResult",
     "AIDeploymentUsage",
     "AIDeploymentUsageList",
     "AlertDeliveryResponse",

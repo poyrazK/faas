@@ -270,6 +270,43 @@ its own with `gregale mcp connection activity --self`, for example to check
 what it already did before repeating work. Pages hold 50 rows; pass the
 printed `--cursor` value for older ones.
 
+## Undo what an agent changed
+
+`gregale mcp connection undo` reverses an agent's changes. It first prints
+them, newest first, with what undoing each will do, and undoes them once you
+confirm:
+
+```sh
+gregale mcp connection undo <id>                  # the last 24 hours
+gregale mcp connection undo <id> --since 2h
+gregale mcp connection undo <id> --entry <activity-id> --entry <activity-id>
+gregale mcp connection undo <id> --plan           # only show what it would do
+gregale mcp connection undo <id> --org acme       # an agent acting in an organization
+```
+
+Undo restores:
+
+- app settings the agent changed, such as `min_instances`, `ram_mb`,
+  `idle_timeout_s`, egress and CORS settings,
+- scaling changes,
+- env vars of the app (not yet those of a named environment),
+
+and cancels prewarms the agent asked for. Undo runs through the same API as
+any other change, with your access, so it is validated and applied the same
+way.
+
+Some changes cannot be undone, and the plan says so and why: a secret the
+agent set or removed (Gregale keeps no copy of a replaced secret, so set it
+again), a few settings that cannot be set back to empty, and kinds of change
+Gregale cannot undo yet, such as deploys, and what an agent created or
+deleted. If someone changed a resource again after the agent did, undo leaves
+it, and the agent's older changes to it, as they are; pass `--force` to undo
+them anyway. Each change is undone once, and changes are kept 7 days.
+
+You can undo the agents you connected; owners and admins can undo every agent
+acting in their organization. Undoing needs an admin credential. An agent
+cannot undo, its own changes or anyone else's.
+
 ## Run the CLI non-interactively
 
 Put the global `--non-interactive` and `--json` options before the command:

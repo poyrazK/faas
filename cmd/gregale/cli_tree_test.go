@@ -37,6 +37,8 @@ var cliTreeVerbs = []string{
 	// branch: a lazy copy of a project environment (ADR-20261031193635 and the
 	// ADR-20261026145832 glossary); a --branch flag still names a Git branch.
 	"branch",
+	// undo: reverse what an agent changed (ADR-20261112080601).
+	"undo",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).

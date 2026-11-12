@@ -1438,6 +1438,8 @@ type MemStore struct {
 	// ADR-20261111114059: agent keys' budgets and monthly spend.
 	agentKeyBudgets  map[string]AgentKeyBudget
 	agentBudgetSpend map[agentBudgetSpendKey]int64
+	// agentUndoRecords: ADR-20261112080601.
+	agentUndoRecords []AgentUndoRecord
 	orgsBySlug       map[string]string // lower(slug) -> id
 	memberships      map[orgAccountKey]OrgMembership
 	invitations      map[string]OrgInvitation // hex(hash) -> OrgInvitation

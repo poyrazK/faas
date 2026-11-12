@@ -6,6 +6,9 @@ import type { AccountOverageCapResponse } from '../models/AccountOverageCapRespo
 import type { AgentActivityResponse } from '../models/AgentActivityResponse.js';
 import type { AgentConnectionsResponse } from '../models/AgentConnectionsResponse.js';
 import type { AgentConnectionsRevokeAllResponse } from '../models/AgentConnectionsRevokeAllResponse.js';
+import type { AgentUndoPlan } from '../models/AgentUndoPlan.js';
+import type { AgentUndoRequest } from '../models/AgentUndoRequest.js';
+import type { AgentUndoResult } from '../models/AgentUndoResult.js';
 import type { APIKeyResponse } from '../models/APIKeyResponse.js';
 import type { ApplicationStandardAssignment } from '../models/ApplicationStandardAssignment.js';
 import type { ApplicationStandardAssignmentList } from '../models/ApplicationStandardAssignmentList.js';
@@ -260,6 +263,99 @@ export class OrgsService {
       errors: {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Plan undoing the changes of an agent acting in an organization.
+   * The organization's variant of planning an undo, for its owners and
+   * admins.
+   *
+   * @returns AgentUndoPlan The undo plan.
+   * @throws ApiError
+   */
+  public static planOrgAgentUndo({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * API key id of the organization agent whose changes to undo.
+     */
+    id: string,
+    requestBody: AgentUndoRequest,
+  }): CancelablePromise<AgentUndoPlan> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/agent-connections/{id}/undo/plan',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Undo the changes of an agent acting in an organization.
+   * The organization's variant of applying a reviewed undo plan, for its
+   * owners and admins.
+   *
+   * @returns AgentUndoResult What the undo did to each change.
+   * @throws ApiError
+   */
+  public static applyOrgAgentUndo({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * API key id of the organization agent whose changes to undo.
+     */
+    id: string,
+    requestBody: AgentUndoRequest,
+  }): CancelablePromise<AgentUndoResult> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/agent-connections/{id}/undo',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
