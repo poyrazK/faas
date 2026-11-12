@@ -251,8 +251,20 @@ service or worker is priced for the replicas it starts with),
 `PATCH /v1/apps/{slug}` (including the `execution_mode`, `service_replicas`
 and `worker_replicas` that `gregale deploy` applies from `gregale.yaml`),
 `POST /v1/apps/{slug}/scaling`, `POST /v1/apps/{slug}/prewarm` and
-`PATCH /v1/deployments/{id}`. Project environment settings and managed
-Postgres are priced in a later release.
+`PATCH /v1/deployments/{id}`.
+
+Creating an environment from another (`gregale env create --from`, a full
+clone, or an environment branch) is priced at the warm instances it copies:
+each workload's floor in the source environment. A branch keeps no
+`min_instances` floor, but its services and workers still run their
+replicas.
+
+Managed Postgres is priced only when a database never scales to zero: its
+service class's smallest compute (0.25 compute units for development and
+burstable, 1 for production) running all month at the Postgres overage
+rate. That covers creating such a database, turning scale-to-zero off,
+resizing it to a larger class, and restoring a copy of it. A database that
+scales to zero adds nothing; its compute, storage and egress follow use.
 
 ## See what an agent changed
 

@@ -135,6 +135,21 @@ BEGIN
 	IF to_regclass('public.compute_node_db_logins') IS NOT NULL THEN
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.compute_node_db_logins FROM faas_runtime;
 	END IF;
+	-- ADR-20261112160000: neond holds the Neon keys and only needs to know
+	-- which Neon projects and branches live databases run on. Its login is
+	-- not a faas_runtime member: it reads managed_postgres_databases and
+	-- nothing else.
+	IF to_regrole('faas_neond') IS NULL THEN
+		CREATE ROLE faas_neond LOGIN;
+	END IF;
+	ALTER ROLE faas_neond LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+	IF pg_has_role('faas_neond', 'faas_runtime', 'MEMBER') THEN
+		REVOKE faas_runtime FROM faas_neond;
+	END IF;
+	GRANT USAGE ON SCHEMA public TO faas_neond;
+	IF to_regclass('public.managed_postgres_databases') IS NOT NULL THEN
+		GRANT SELECT ON public.managed_postgres_databases TO faas_neond;
+	END IF;
 END
 $$;
 

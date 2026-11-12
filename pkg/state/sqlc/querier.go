@@ -11,6 +11,11 @@ import (
 )
 
 type Querier interface {
+	// ADR 20261027132936 amendment 2: the AI budget threshold crossings (80% and
+	// 100%) at or after since of the integrations bound to an app, newest first,
+	// for the ai_budget_alerts alert metric. Another app's own budget is left
+	// out. total counts every match, not only the rows returned.
+	AIBudgetAlertsSince(ctx context.Context, db DBTX, arg AIBudgetAlertsSinceParams) ([]AIBudgetAlertsSinceRow, error)
 	// Used by handlers_auth.go so an operator investigating "who signed in
 	// as alice?" can identify the key that authenticated. See ADR-034 rev2.
 	APIKeyByHash(ctx context.Context, db DBTX, keySha256 []byte) (APIKeyByHashRow, error)
@@ -855,6 +860,8 @@ type Querier interface {
 	CountProjectEnvironmentClonePostgresContents(ctx context.Context, db DBTX, accountID pgtype.UUID) (CountProjectEnvironmentClonePostgresContentsRow, error)
 	CountProjectEnvironmentClonePostgresCopyReaders(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountProjectEnvironmentClonePostgresVerificationReadBudgets(ctx context.Context, db DBTX, accountID pgtype.UUID) (CountProjectEnvironmentClonePostgresVerificationReadBudgetsRow, error)
+	// Crons of the source environment on project apps the clone does not copy.
+	CountProjectEnvironmentCloneUncapturedCrons(ctx context.Context, db DBTX, arg CountProjectEnvironmentCloneUncapturedCronsParams) (int64, error)
 	// The environment's key count and whether the written key is already one of them.
 	CountProjectEnvironmentSecrets(ctx context.Context, db DBTX, arg CountProjectEnvironmentSecretsParams) (CountProjectEnvironmentSecretsRow, error)
 	CountProjectMigrations(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
@@ -2967,6 +2974,8 @@ type Querier interface {
 	InsertProjectEnvironmentCloneCapturedSecret(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCapturedSecretParams) error
 	InsertProjectEnvironmentCloneCapturedVariable(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCapturedVariableParams) error
 	InsertProjectEnvironmentCloneConfigurationCapture(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneConfigurationCaptureParams) error
+	// A copied cron starts disabled; clone_paused marks one the source ran.
+	InsertProjectEnvironmentCloneCron(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCronParams) error
 	InsertProjectEnvironmentCloneDatabase(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneDatabaseParams) (ManagedPostgresDatabase, error)
 	InsertProjectEnvironmentCloneLayerPin(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneLayerPinParams) error
 	InsertProjectEnvironmentCloneMaterialization(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneMaterializationParams) error
@@ -5017,6 +5026,11 @@ type Querier interface {
 	MigrationTaskAllowed(ctx context.Context, db DBTX, id string) (bool, error)
 	MigrationTaskIsContract(ctx context.Context, db DBTX, arg MigrationTaskIsContractParams) (bool, error)
 	MoveDomainPlanClaim(ctx context.Context, db DBTX, arg MoveDomainPlanClaimParams) (int64, error)
+	// ADR-20261031193635 branch lifecycle: an environment branch's extend moves
+	// its database copy's end. Only an undeleted restore that already ends, and
+	// whose end is still the one the caller read, moves; the caller keeps the
+	// new end within the copy's allowance.
+	MoveManagedPostgresBranchExpiry(ctx context.Context, db DBTX, arg MoveManagedPostgresBranchExpiryParams) (ManagedPostgresDatabase, error)
 	NativeIssueTicketClaim(ctx context.Context, db DBTX, arg NativeIssueTicketClaimParams) (NativeIssueTicketReceipt, error)
 	// Completed links and explicit provider rejections remain as durable
 	// idempotency evidence, but no longer occupy an unresolved-request slot.
@@ -6444,6 +6458,10 @@ type Querier interface {
 	// neither tenant identity columns nor foreign keys, so ownership heuristics
 	// would silently omit them. Partition children inherit their parent's policy.
 	ReadProjectEnvironmentCloneCoverageSchema(ctx context.Context, db DBTX) ([]ReadProjectEnvironmentCloneCoverageSchemaRow, error)
+	// The configuration of an app's crons in one environment, without the
+	// scheduler's own columns (ADR-20261104120000 amendment 2026-11-12). A cron a
+	// clone paused counts as enabled: resuming it would.
+	ReadProjectEnvironmentCloneCrons(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneCronsParams) ([]ReadProjectEnvironmentCloneCronsRow, error)
 	ReadProjectEnvironmentCloneDatabaseByName(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneDatabaseByNameParams) (ManagedPostgresDatabase, error)
 	ReadProjectEnvironmentCloneDatabaseReservation(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneDatabaseReservationParams) (ManagedPostgresDatabase, error)
 	ReadProjectEnvironmentCloneDatabaseReservationTime(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
@@ -7382,6 +7400,9 @@ type Querier interface {
 	RestoreTrafficPolicyStatementTimeout(ctx context.Context, db DBTX, timeout string) (string, error)
 	// A wave transaction cannot outlive the evidence that authorized it.
 	RestrictApplicationStandardWorkerEvidence(ctx context.Context, db DBTX, arg RestrictApplicationStandardWorkerEvidenceParams) (int64, error)
+	// Enables the crons a clone paused in one environment; the enable clears
+	// clone_paused and anchors the schedule.
+	ResumeEnvironmentClonePausedCrons(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]ResumeEnvironmentClonePausedCronsRow, error)
 	ResumeStoredWorkflowFailurePause(ctx context.Context, db DBTX, arg ResumeStoredWorkflowFailurePauseParams) error
 	// The first write of a key in a guard captures the row the guard replaces.
 	RetainAppConfigGuardSecret(ctx context.Context, db DBTX, arg RetainAppConfigGuardSecretParams) error

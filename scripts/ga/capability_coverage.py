@@ -150,6 +150,8 @@ RULES = [
     (r"^(secretd|secretpg|secret-grants|secret-open-audit)$", "INFRA"),
     # ADR-20261110210000 §3: secretd's listener, budget and identity settings.
     (r"^secretd-", "INFRA"),
+    # ADR-20261112160000: neond's key file, socket and delete limit.
+    (r"^neond-", "INFRA"),
     # Compile-on-first-use regexps for package-level patterns
     # (ADR-20261101215228 measurement); no capability of its own.
     (r"^lazyregexp$", "INFRA"),

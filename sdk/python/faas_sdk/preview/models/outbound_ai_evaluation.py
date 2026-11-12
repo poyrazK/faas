@@ -57,6 +57,8 @@ class OutboundAIEvaluation:
     started_at: datetime.datetime | None
     finished_at: datetime.datetime | None
     items: list[OutboundAIEvaluationItem] | Unset = UNSET
+    content_withheld: bool | Unset = UNSET
+    """The items' output texts were left out; reading them needs admin or secrets:read."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -132,6 +134,8 @@ class OutboundAIEvaluation:
                 items_item = items_item_data.to_dict()
                 items.append(items_item)
 
+        content_withheld = self.content_withheld
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -163,6 +167,8 @@ class OutboundAIEvaluation:
         )
         if items is not UNSET:
             field_dict["items"] = items
+        if content_withheld is not UNSET:
+            field_dict["content_withheld"] = content_withheld
 
         return field_dict
 
@@ -285,6 +291,8 @@ class OutboundAIEvaluation:
 
                 items.append(items_item)
 
+        content_withheld = d.pop("content_withheld", UNSET)
+
         outbound_ai_evaluation = cls(
             id=id,
             route_id=route_id,
@@ -310,6 +318,7 @@ class OutboundAIEvaluation:
             started_at=started_at,
             finished_at=finished_at,
             items=items,
+            content_withheld=content_withheld,
         )
 
         outbound_ai_evaluation.additional_properties = d

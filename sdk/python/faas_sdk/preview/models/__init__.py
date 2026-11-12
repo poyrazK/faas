@@ -4920,6 +4920,7 @@ from .queue_send_request import QueueSendRequest
 from .queue_send_request_payload import QueueSendRequestPayload
 from .queue_send_response import QueueSendResponse
 from .queue_state_response import QueueStateResponse
+from .queue_state_response_backlog_by_source import QueueStateResponseBacklogBySource
 from .queue_state_response_plan import QueueStateResponsePlan
 from .queue_workload_profile_request import QueueWorkloadProfileRequest
 from .queue_workload_profile_request_workload_class import QueueWorkloadProfileRequestWorkloadClass
@@ -5157,6 +5158,7 @@ from .restore_deleted_app_body import RestoreDeletedAppBody
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .restore_mcp_readiness_policy_request import RestoreMCPReadinessPolicyRequest
 from .restore_stored_workflow_revision_request import RestoreStoredWorkflowRevisionRequest
+from .resume_environment_automation_response import ResumeEnvironmentAutomationResponse
 from .resume_project_migration_request import ResumeProjectMigrationRequest
 from .resume_stored_workflow_failure_pause_request import ResumeStoredWorkflowFailurePauseRequest
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
@@ -5944,6 +5946,11 @@ from .support_message import SupportMessage
 from .support_message_author import SupportMessageAuthor
 from .support_message_page import SupportMessagePage
 from .support_message_request import SupportMessageRequest
+from .support_notification import SupportNotification
+from .support_notification_kind import SupportNotificationKind
+from .support_notification_page import SupportNotificationPage
+from .support_read_request import SupportReadRequest
+from .support_read_result import SupportReadResult
 from .support_satisfaction import SupportSatisfaction
 from .support_satisfaction_request import SupportSatisfactionRequest
 from .support_satisfaction_submission import SupportSatisfactionSubmission
@@ -11059,6 +11066,7 @@ __all__ = (
     "QueueSendRequestPayload",
     "QueueSendResponse",
     "QueueStateResponse",
+    "QueueStateResponseBacklogBySource",
     "QueueStateResponsePlan",
     "QueueWorkloadProfileRequest",
     "QueueWorkloadProfileRequestWorkloadClass",
@@ -11290,6 +11298,7 @@ __all__ = (
     "RestoreManagedPostgresDatabaseRequest",
     "RestoreMCPReadinessPolicyRequest",
     "RestoreStoredWorkflowRevisionRequest",
+    "ResumeEnvironmentAutomationResponse",
     "ResumeProjectMigrationRequest",
     "ResumeStoredWorkflowFailurePauseRequest",
     "ResumeWorkflowRunRequest",
@@ -12051,6 +12060,11 @@ __all__ = (
     "SupportMessageAuthor",
     "SupportMessagePage",
     "SupportMessageRequest",
+    "SupportNotification",
+    "SupportNotificationKind",
+    "SupportNotificationPage",
+    "SupportReadRequest",
+    "SupportReadResult",
     "SupportSatisfaction",
     "SupportSatisfactionRequest",
     "SupportSatisfactionSubmission",

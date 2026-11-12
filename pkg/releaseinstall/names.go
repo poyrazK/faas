@@ -28,6 +28,9 @@ var supportBinaryNames = []string{
 	// ADR-20261110210000 §3: the control plane's secret opener, started by
 	// the secretd_service role from the active release.
 	"secretd",
+	// ADR-20261112160000: the Neon key holder, started by the neond_service
+	// role from the active release.
+	"neond",
 	"schedd-brokerq-apply",
 	"s3-gatewayd",
 	"vmmd-jail-helper",

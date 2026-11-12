@@ -527,6 +527,9 @@
       # ADR-20261110210000 §3: secretd logs in only as faas_secretd, never as
       # the owner: it reads apps and nodes and writes grants and its audit.
       faas_map faas-secretd faas_secretd
+      # ADR-20261112160000: neond logs in only as faas_neond, which reads
+      # managed_postgres_databases and nothing else.
+      faas_map faas-neond   faas_neond
   register: pg_ident
   failed_when: false
   notify: reload postgresql

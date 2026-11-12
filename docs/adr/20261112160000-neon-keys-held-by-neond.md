@@ -144,7 +144,20 @@ neond, for each request:
     - apid reads `FAAS_MANAGED_POSTGRES_NEON_BROKER` from its process
       environment; set, the Neon backend needs no key.
   - Slice 1b (deploy): the `faas-neond` user, unit, credential drop-in,
-    the `faas_neond` database role and the release binary list.
+    the `faas_neond` database role and the release binary list. As built:
+    - The `neond_service` role, off by default. `faas_neond_enabled`
+      installs the drop-in, which hands `/etc/faas/secrets/neon-admin.key`
+      (root, 0400 or 0600) to neond through `LoadCredential` and admits
+      `faas-apid`. A separate `faas_neond_broker` writes apid's
+      `FAAS_MANAGED_POSTGRES_NEON_BROKER` drop-in, so operators turn neond
+      on, watch `neond_requests_total`, and only then move apid's calls
+      over. The role refuses the broker without neond or before the active
+      release ships the binary.
+    - `faas_neond` is a login that is not a `faas_runtime` member; it has
+      `SELECT` on `managed_postgres_databases` only (pg_ident
+      `faas-neond` → `faas_neond`).
+    - CD bundles the unit and restarts neond from each release when the
+      drop-in exists, waiting for `/run/faas/neond.sock`.
 - **Slice 2, project keys:** `neon_project_keys` (expand migration), the
   service user's key as neond's admin credential, mint on create, revoke on
   delete, the backfill sweep, rotation.

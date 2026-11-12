@@ -40084,6 +40084,35 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/automation/resume:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project whose stage automation is resumed.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Stage whose paused automation is enabled; production is refused.
+        schema: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+    post:
+      tags: [projects]
+      operationId: resumeEnvironmentAutomation
+      summary: Enable the crons a full environment clone copied paused.
+      description: Enables only the copied crons the source environment ran. A cron the source had disabled, or one enabled or disabled since, stays as it is.
+      responses:
+        '200':
+          description: Crons enabled in the environment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResumeEnvironmentAutomationResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments:
     parameters:
       - name: slug
@@ -40268,6 +40297,129 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: Branches are unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/branch:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project that owns the branch to show.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: The environment branch to show.
+        schema: { type: string }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentBranch
+      summary: Show an environment branch.
+      description: |
+        Reports the branch's parent, branch point, expiry, data state, the
+        managed PostgreSQL copies it owns, and each workload with its URL in
+        the branch and its deployment there. A workload with no live
+        deployment in the branch reports `starting`.
+      responses:
+        '200':
+          description: The branch.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Branches are unavailable, so the branch cannot be shown.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/branch/extend:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project that owns the branch to extend.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: The environment branch to extend.
+        schema: { type: string }
+    post:
+      tags: [projects]
+      operationId: extendProjectEnvironmentBranch
+      summary: Move an environment branch's expiry.
+      description: |
+        Sets the branch's expiry to now plus `ttl`, earlier or later. A branch
+        lives at most 30 days after its creation; a branch with managed
+        PostgreSQL copies at most 7 days, so its copies stay in the plan's
+        PostgreSQL branch allowance. The copies' expiry moves with the
+        branch. A branch whose data is still being copied cannot be extended
+        until its data is ready.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExtendProjectEnvironmentBranchRequest' }
+      responses:
+        '200':
+          description: The branch with its new expiry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Branches are unavailable, the expiry is past the branch's longest lifetime, or its data is still being copied.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/branch/reset:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project that owns the branch to reset.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: The environment branch to reset.
+        schema: { type: string }
+    post:
+      tags: [projects]
+      operationId: resetProjectEnvironmentBranch
+      summary: Make an environment branch again from its parent.
+      description: |
+        Deletes the branch and creates it again from its parent with the same
+        slug, egress, private-network mode and time to live. Its workloads
+        are published from the parent's current builds and its data is copied
+        again as of now. Work done in the branch is discarded, and its
+        workloads get new URLs. A branch with branches of its own cannot be
+        reset.
+      responses:
+        '200':
+          description: The new branch and its workloads.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The caller may not branch the parent.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Branches are unavailable, or the branch has branches of its own.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -86643,6 +86795,9 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/OutboundAIEvaluationItem' }
+        content_withheld:
+          type: boolean
+          description: The items' output texts were left out; reading them needs admin or secrets:read.
     OutboundAIEvaluationList:
       type: object
       description: A route's latest evaluations, newest first.
@@ -87025,6 +87180,9 @@ components:
         results:
           type: array
           items: { $ref: '#/components/schemas/OutboundAIReplayResult' }
+        content_withheld:
+          type: boolean
+          description: The source's and results' answers were left out; reading them needs admin or secrets:read.
     OutboundAIRequestLogList:
       type: object
       description: One newest-first page of the AI request log.
@@ -108745,6 +108903,7 @@ components:
         created_at: { type: string, format: date-time }
         last_fired_at: { type: [string, "null"], format: date-time }
         environment: { type: string, description: "Project environment the cron runs in; omitted for production.", example: "staging" }
+        clone_paused: { type: boolean, description: "A full environment clone copied this cron disabled although the source ran it; resuming the environment's automation enables it." }
         schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
 
@@ -110121,6 +110280,11 @@ components:
         workloads:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentBranchWorkload' }
+        created_at: { type: string, format: date-time, description: When the branch was created. Reported by the branch's own view. }
+        databases:
+          type: array
+          description: The managed PostgreSQL copies the branch owns. Reported by the branch's own view.
+          items: { $ref: '#/components/schemas/ProjectEnvironmentBranchDatabase' }
 
     ProjectEnvironmentBranchWorkload:
       description: One workload the branch published from its parent's build. It starts on its first request.
@@ -110132,6 +110296,21 @@ components:
         source_deployment_id: { type: string, description: The parent deployment whose build the branch reuses. }
         status: { type: string }
         url: { type: string, description: "The workload's address in the branch. Its first request starts it." }
+
+    ProjectEnvironmentBranchDatabase:
+      description: "One managed PostgreSQL copy a branch owns."
+      type: object
+      required: [source_database_id, name]
+      properties:
+        source_database_id: { type: string }
+        name: { type: string }
+        copy_database_id: { type: string, description: "Empty until the copy is made." }
+
+    ExtendProjectEnvironmentBranchRequest:
+      description: "Moves a branch's expiry."
+      type: object
+      properties:
+        ttl: { type: string, description: "The time from now the branch lives, such as 48h. Empty takes the default (168h)." }
 
     ProjectEnvironmentBranchListResponse:
       description: "The branches of one parent environment."
@@ -111135,6 +111314,17 @@ components:
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
 
+    ResumeEnvironmentAutomationResponse:
+      type: object
+      description: Crons enabled by resuming a stage's automation after a full environment clone.
+      required: [environment, crons_resumed, cron_ids]
+      properties:
+        environment: { type: string, description: "Stage whose paused automation was enabled.", example: "staging" }
+        crons_resumed: { type: integer, minimum: 0, description: "Number of crons enabled." }
+        cron_ids:
+          type: array
+          description: Crons enabled by this call.
+          items: { type: string }
     ProjectEnvironmentCloneOperationResponse:
       description: Durable clone progress within one account and project, excluding private source configuration and worker credentials.
       type: object
@@ -113349,6 +113539,7 @@ components:
             - route_insights_detected
             - route_monitor_incidents
             - route_health_holds
+            - ai_budget_alerts
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -113455,7 +113646,7 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds, ai_budget_alerts]
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -113548,7 +113739,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds, ai_budget_alerts]
         comparison: { type: string, enum: [gt, gte, lt, lte, above_baseline, below_baseline] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }

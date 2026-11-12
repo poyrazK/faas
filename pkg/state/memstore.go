@@ -14198,6 +14198,11 @@ func anchorCronSchedule(before, after Cron, now time.Time) Cron {
 		(after.Enabled && !before.Enabled) || (after.SuspendedReason == "" && before.SuspendedReason != "") {
 		after.ScheduleAnchorAt = now.UTC()
 	}
+	// Mirrors clear_cron_clone_pause: an explicit enable or disable is the
+	// customer's decision about a cron a clone paused.
+	if after.Enabled != before.Enabled {
+		after.ClonePaused = false
+	}
 	return after
 }
 

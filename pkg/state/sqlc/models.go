@@ -3394,6 +3394,7 @@ type Cron struct {
 	Labels                []byte
 	DeploymentScope       string
 	EnvironmentID         pgtype.UUID
+	ClonePaused           bool
 }
 
 type CronFireNowRequest struct {

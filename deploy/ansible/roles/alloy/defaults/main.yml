@@ -47,6 +47,7 @@ alloy_journal_units:
   - faas-edgednsd.service
   - faas-signd.service
   - faas-secretd.service
+  - faas-neond.service
   - faas-realtimed.service
   - faas-profiled.service
   - faas-livequeryd.service
