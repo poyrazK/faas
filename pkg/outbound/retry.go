@@ -191,7 +191,9 @@ func (h *Handler) doWithRetries(
 			// ADR 20261027132936 amendment 1: a billable AI call the
 			// provider received is not sent again after a failure, since
 			// the provider may have run it.
-			req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+			// The request carries ctx (the caller builds it, and
+			// cloneForRetry re-bases each retry, on ctx).
+			req = req.WithContext(httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
 				WroteRequest: func(info httptrace.WroteRequestInfo) {
 					if info.Err == nil {
 						wrote.Store(true)
