@@ -154,7 +154,10 @@ func TestSupportPoliciesPauseReopenAndPermanentReceipts(t *testing.T) {
 	if got.Episode.ResolutionBreached || got.Episode.Policy.ResolutionSeconds != 3600 || got.Episode.PausedUS != int64(48*time.Hour/time.Microsecond) {
 		t.Fatalf("clock snapshot: %+v", got.Episode)
 	}
-	f.call(t, f.customer, false, "satisfaction", ticket, "", "", api.SupportSatisfactionRequest{EpisodeID: oldEpisode, Rating: 5}, 202)
+	rating := unpack[api.SupportSatisfactionSubmission](t, f.call(t, f.customer, false, "satisfaction", ticket, "", "", api.SupportSatisfactionRequest{EpisodeID: oldEpisode, Rating: 5}, 202))
+	if rating.EpisodeID != oldEpisode || rating.Rating != 5 {
+		t.Fatalf("recorded satisfaction: %+v", rating)
+	}
 	key := newID()
 	in := Change{ExpectedRevision: 5, Body: "Still failing"}
 	first := unpack[api.SupportSubmission](t, f.call(t, f.customer, false, "reopen", ticket, key, "", in, 202))

@@ -430,6 +430,6 @@ func (x *session) satisfaction(key, ticket string, in *api.SupportSatisfactionRe
 	if e = x.q.SatisfactionSave(x.ctx, x.tx, q.SatisfactionSaveParams{EpisodeID: uid(st.Episode.ID), ActorID: uid(x.actor.ID), Rating: in.Rating, CreatedAt: ts(x.now)}); e != nil {
 		return nil, e
 	}
-	result := map[string]any{"episode_id": st.Episode.ID, "rating": in.Rating}
+	result := api.SupportSatisfactionSubmission{EpisodeID: st.Episode.ID, Rating: in.Rating}
 	return result, x.remember(key, "satisfaction", ticket, ticket, in, result)
 }

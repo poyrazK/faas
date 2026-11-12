@@ -9,7 +9,8 @@ creation are not implemented by this change.
 Support is cataloged as preview and hidden from customers by default. Use the
 existing `customer_support` platform flag to allow selected account IDs during
 rollout. Staff routes have their own session and roster checks. The published GA/
-beta SDK spec excludes this preview; use the HTTP contract below when enabled.
+beta SDK spec excludes this preview. The Go client exposes the typed customer
+methods below for accounts enrolled in the preview.
 
 ## Customer API
 
@@ -41,6 +42,14 @@ requests 65,536 bytes. There are at most 1,000 messages per case, 20 new cases p
 scope per rolling day and 100 ordinary case mutations per rolling hour. Pages
 contain at most 50 items. Limits are in `pkg/api/limits.go`. Context app/deployment
 UUIDs must belong to the scope; no secrets, logs or source code are collected.
+
+The Go SDK provides `ListSupportTickets`, `CreateSupportTicket`,
+`GetSupportTicket`, `ListSupportMessages`, `ReplySupportTicket`,
+`CloseSupportTicket`, `ReopenSupportTicket` and satisfaction methods, with
+matching `OrgSupport` methods accepting an organization slug. Attach a UUID with
+`api.ContextWithIdempotencyKey` and retain it when retrying the same mutation;
+use a new UUID for the next operation. `SupportTicketListOptions` carries list
+filters, and message pagination accepts the numeric `after` sequence.
 
 ## Staff API
 

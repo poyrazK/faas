@@ -65,6 +65,10 @@ type SupportSatisfactionRequest struct {
 	EpisodeID string `json:"episode_id"`
 	Rating    int32  `json:"rating"`
 }
+type SupportSatisfactionSubmission struct {
+	EpisodeID string `json:"episode_id"`
+	Rating    int32  `json:"rating"`
+}
 type SupportSatisfaction struct {
 	EpisodeID string `json:"episode_id"`
 	Eligible  bool   `json:"eligible"`

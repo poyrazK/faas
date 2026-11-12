@@ -779,7 +779,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SupportSubmission'
+                $ref: '#/components/schemas/SupportSatisfactionSubmission'
         '400':
           $ref: '#/components/responses/SupportInvalid'
         '401':
@@ -1306,7 +1306,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SupportSubmission'
+                $ref: '#/components/schemas/SupportSatisfactionSubmission'
         '400':
           $ref: '#/components/responses/SupportInvalid'
         '401':
@@ -71895,6 +71895,22 @@ components:
       - episode_id
       - rating
       description: One satisfaction rating for the currently resolved episode.
+    SupportSatisfactionSubmission:
+      type: object
+      additionalProperties: false
+      properties:
+        episode_id:
+          type: string
+          format: uuid
+        rating:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 5
+      required:
+      - episode_id
+      - rating
+      description: Recorded satisfaction score for a resolution episode; retries return the same result.
     SupportSatisfaction:
       type: object
       additionalProperties: false
