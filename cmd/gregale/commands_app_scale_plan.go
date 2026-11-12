@@ -397,6 +397,9 @@ func applyAppScaleSavedPlan(slug string, plan appScaleSavedPlan) int {
 		return jsonOut(writeJSON(updated))
 	}
 	PrintOK(osStdout, "Applied saved scale plan for %s", slug)
+	if plan.Request.MinInstances != nil && *plan.Request.MinInstances > 0 && updated.Status == "evicted_cold" {
+		PrintOK(osStdout, "%s", parkedMinInstancesNote(slug, *plan.Request.MinInstances))
+	}
 	if plan.Request.MinInstances != nil && *plan.Request.MinInstances > 0 {
 		if account, err := client.Whoami(context.Background()); err == nil {
 			printResidentCostEcho(api.Plan(account.Plan), updated.RAMMB, *plan.Request.MinInstances)
