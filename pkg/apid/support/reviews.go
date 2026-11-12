@@ -44,7 +44,7 @@ func (x *session) saveEngineering(key, ticket string, in Engineering) (any, erro
 	if v, e := x.receipt(key, "engineering", ticket, in); v != nil || e != nil {
 		return v, e
 	}
-	if x.role != "manager" && id(t.AssigneeID) != x.actor.ID {
+	if x.role != "manager" && t.AssigneeID != uid(x.actor.ID) {
 		return nil, forbidden()
 	}
 	if t.Revision != in.ExpectedRevision {

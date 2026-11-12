@@ -4037,6 +4037,10 @@ type Querier interface {
 	// Reservations survive month close and are paged without starving later keys
 	// when an older provider delivery keeps failing.
 	ListManagedPostgresOveragePending(ctx context.Context, db DBTX, arg ListManagedPostgresOveragePendingParams) ([]ListManagedPostgresOveragePendingRow, error)
+	// ADR-20261110184700 amendment 2026-11-12: notices whose mailed deletion date
+	// is between now and remind_until and whose reminder no intent has claimed,
+	// for databases not being deleted.
+	ListManagedPostgresPlanExcessRemindersDue(ctx context.Context, db DBTX, arg ListManagedPostgresPlanExcessRemindersDueParams) ([]ListManagedPostgresPlanExcessRemindersDueRow, error)
 	// ADR-20261110184700: when each database was first suspended past its plan,
 	// and the deletion date its queued email named (NULL until one did). The
 	// deletion runs only on that date.
@@ -7330,6 +7334,12 @@ type Querier interface {
 	// rollback included. Resolving here, rather than 24 hours later through
 	// ResolveStaleRegressionObservations, keeps the banner, status and the
 	// resolved webhook current. $2 is the pass start (with clock slack).
+	// Only what the pass could judge resolves: an observation of a deployment
+	// the pass no longer compares (superseded or rolled back), or of a route the
+	// current deployment served in this pass's window. A route that merely went
+	// quiet stays open (the stale sweep closes it after the lookback): on prod an
+	// unfixed 15x slowdown resolved five minutes after it was found, once its
+	// traffic aged out of the window.
 	ResolveRegressionObservationsNotSeenSince(ctx context.Context, db DBTX, arg ResolveRegressionObservationsNotSeenSinceParams) ([]DebugRegressionObservation, error)
 	ResolveRetainedProjectRelease(ctx context.Context, db DBTX, arg ResolveRetainedProjectReleaseParams) (ResolveRetainedProjectReleaseRow, error)
 	// A detector pass that no longer sees a regression resolves the previous

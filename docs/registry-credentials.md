@@ -13,12 +13,12 @@ The CLI prompts for the secret and sends it over the authenticated API; it never
 Image runs (`gregale run`) take the credential per run instead:
 `--registry-username USER` with the password from `--registry-password-stdin`,
 `GREGALE_REGISTRY_PASSWORD` or a prompt, or from a Docker config with
-`--docker-config ~/.docker` (ADR-20261025110000). It is stored sealed on the image's
+`--docker-config ~/.docker`. It is stored sealed on the image's
 runner job, for the image's registry only, and refreshed by every run that
-passes it (ADR-1790). See [image runs](image-runs.md).
+passes it. See [image runs](image-runs.md).
 
 A Dockerfile build uses the same credentials for its `FROM` images, so an app can
-build on a private base image ([ADR-20261026091500](adr/20261026091500-builder-private-base-images.md)).
+build on a private base image.
 The build log names the registries it authenticates to. Such a build never reuses
 a warm builder, and its cached image is reused only by the same app. An ECR access
 key cannot be used for `FROM` images; store an ECR password with the username `AWS`
@@ -26,7 +26,6 @@ for those, or build on a public base.
 
 ## Cloud registries
 
-([ADR-20261025124445](adr/20261025124445-cloud-registry-auth.md))
 
 | Registry | `--registry` | `--user` | Password |
 |---|---|---|---|
@@ -38,10 +37,9 @@ for those, or build on a public base.
 - **Artifact Registry.** Grant the service account `roles/artifactregistry.reader`.
 - **ACR.** Grant the `AcrPull` role, or use a token scoped to the repository.
 
-Docker Hub limits pulls without a credential per IP address. Operators can set
-`faas_docker_hub_mirrors` (for example `mirror.gcr.io`) so that deploys and
-Dockerfile builds read public Docker Hub images through those mirrors first
-([ADR-20261025114554](adr/20261025114554-docker-hub-mirrors.md)). A pull that
+Docker Hub limits pulls without a credential per IP address. Where Gregale has
+a Docker Hub mirror configured (such as `mirror.gcr.io`), deploys and Dockerfile
+builds read public Docker Hub images through it first. A pull that
 uses a stored credential always goes to Docker Hub itself; the credential is
 never sent to a mirror.
 

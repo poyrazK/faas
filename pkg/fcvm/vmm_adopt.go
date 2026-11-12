@@ -55,6 +55,14 @@ func (v *JailerVMM) adoptGuestProcess(l Lease, process resourceProcessIdentity, 
 		go wait() // closes the poll handle once the process exits
 		return err
 	}
+	anchoredJails := make([]resourceAsset, 0, len(jails))
+	for _, a := range jails {
+		anchored, err := anchorAdoptedJail(a)
+		if err != nil {
+			return fail(fmt.Errorf("vmm: adopt %s: jail %s: %w", l.Instance, a.Path, err))
+		}
+		anchoredJails = append(anchoredJails, anchored)
+	}
 	// Staged files (a reflinked writable layer, a materialised copy) are
 	// removed at teardown only while they are still the recorded files.
 	for _, a := range files {
@@ -96,7 +104,7 @@ func (v *JailerVMM) adoptGuestProcess(l Lease, process resourceProcessIdentity, 
 	v.proc[l.Instance] = cmd
 	v.recs[l.Instance] = rec
 	v.mu.Unlock()
-	for _, a := range jails {
+	for _, a := range anchoredJails {
 		v.rememberJail(l.Instance, a)
 	}
 	for _, a := range files {
@@ -125,6 +133,38 @@ func (v *JailerVMM) adoptGuestProcess(l Lease, process resourceProcessIdentity, 
 	}
 	go v.watchAdoptedProcess(l, cmd, rec, wait)
 	return nil
+}
+
+// anchorAdoptedJail re-anchors a jail the previous vmmd created to this vmmd's
+// mount namespace (adoption ADR §2 "Mounts"). Under systemd
+// ProtectSystem=strict every vmmd start gets its own mount namespace, so the
+// predecessor's recorded namespace never matches the successor's, and
+// teardown refused every adopted guest's jail for good: the guest stayed
+// draining, which held its node's drain and so every later rollout of the
+// node (production 2026-11-12). The jail lives on the host tmpfs that every
+// mount namespace sees; the same kernel boot and the same directory identity
+// prove it is the recorded jail, which is what the namespace stood for.
+func anchorAdoptedJail(a resourceAsset) (resourceAsset, error) {
+	if a.Namespace == nil {
+		return a, nil
+	}
+	current, err := resourceMountNamespace()
+	if err != nil {
+		return a, err
+	}
+	if current.BootID != a.Namespace.BootID {
+		return a, errors.New("jail was recorded in an earlier boot")
+	}
+	actual, err := resourceDirectoryID(a.Path)
+	if err != nil {
+		return a, err
+	}
+	if actual == nil || a.File == nil || *actual != *a.File {
+		return a, errors.New("jail directory identity changed or unknown")
+	}
+	current.MountID = a.Namespace.MountID
+	a.Namespace = &current
+	return a, nil
 }
 
 // watchAdoptedProcess is the adopted guest's exit watchdog, the counterpart

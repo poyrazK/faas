@@ -46117,6 +46117,7 @@ CREATE TABLE public.managed_postgres_plan_excess_notices (
     recorded_at timestamp with time zone NOT NULL,
     mail_intent_id uuid,
     delete_at timestamp with time zone,
+    reminder_mail_intent_id uuid,
     CONSTRAINT managed_postgres_plan_excess_notices_reason_check CHECK ((reason = ANY (ARRAY['database_limit'::text, 'service_class'::text]))),
     CONSTRAINT managed_postgres_plan_excess_notices_recorded_at_check CHECK (isfinite(recorded_at))
 );
@@ -58284,6 +58285,8 @@ CREATE TABLE public.scheduled_releases (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     started_at timestamp with time zone,
+    scheduled_by_account_id uuid,
+    scheduled_by_key_id uuid,
     CONSTRAINT scheduled_releases_canary_check CHECK (((canary IS NULL) OR ((jsonb_typeof(canary) = 'object'::text) AND (octet_length((canary)::text) <= 4096)))),
     CONSTRAINT scheduled_releases_check CHECK (((state = 'started'::text) = (started_at IS NOT NULL))),
     CONSTRAINT scheduled_releases_notify_channel_ids_check CHECK ((cardinality(notify_channel_ids) <= 5)),

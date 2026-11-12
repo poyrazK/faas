@@ -925,6 +925,11 @@ const ManagedPostgresDeleteGracePeriod = 7 * 24 * time.Hour
 // (ADR-20261110184700).
 const ManagedPostgresPlanExcessDeleteAfter = 30 * 24 * time.Hour
 
+// ManagedPostgresPlanExcessDeleteReminder is how long before a database past
+// its plan is deleted its owner is reminded, once (ADR-20261110184700
+// amendment 2026-11-12).
+const ManagedPostgresPlanExcessDeleteReminder = 7 * 24 * time.Hour
+
 // ManagedPostgresUsageWaiverPeriod bounds the usage waiver of a scheduled
 // delete (ADR-20261029174950 decision 6, amendment 1): a database's waiver
 // counts only when no earlier one for it began within this period. Deleting

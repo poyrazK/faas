@@ -12,7 +12,7 @@ sets ``GREGALE_FUNCTIONS``, a JSON map from each callable name to its app
 slug. Calls go over the private binding (``http://<slug>.internal:10081``),
 never the public internet; the platform authorizes them by the calling VM,
 wakes a parked callee, and the request's deadline and release travel with
-them. ``gregale functions types`` writes ``gregale_functions.py`` with each
+them. ``gregale function types`` writes ``gregale_functions.py`` with each
 function's input and output ``TypedDict`` and a typed client.
 """
 

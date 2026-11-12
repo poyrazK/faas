@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	faas "github.com/gregale-dev/gregale-go"
 )
 
 // EventOutboxPublishingControlSchema adds application-owned pause/history tables.

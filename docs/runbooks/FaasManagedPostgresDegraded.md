@@ -119,7 +119,9 @@ its counters on the 1st by itself, but only a sweep releases a hold.
    `apid_managed_postgres_cap_hold_decisions_total{outcome}` show whether
    writes are happening (`applied`, `held`, `released`) or only computed
    (`shadowed`). `apid_managed_postgres_cap_held_databases` counts the
-   databases held now.
+   databases held now. `apid_managed_postgres_egress_quota_decisions_total`
+   counts the egress quota backstop's writes; `failed` there means a Neon
+   project has no egress backstop until a later sweep writes it.
 
 The sweep stops a database by holding its compute: it disables the branch's
 read-write endpoint, as the delete grace period does (ADR-20261025094915

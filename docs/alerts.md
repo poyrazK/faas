@@ -119,7 +119,7 @@ For dashboards and SLOs, use the app metrics endpoint and correlate alert event 
 ## Notification channels
 
 Channels deliver alerts to Slack, PagerDuty or email without a webhook
-receiver of your own (ADR-749). Add a channel once per account, then send a
+receiver of your own. Add a channel once per account, then send a
 test:
 
 ```bash
@@ -256,7 +256,7 @@ To avoid alerts on tiny numbers, a baseline rule does not fire when:
 
 The webhook payload adds `baseline` (the usual value), `baseline_days`, and
 `ratio` (observed divided by baseline) to the usual fields. Baseline rules are a
-preview (ADR-744) and may not be enabled for your account.
+preview and may not be enabled for your account.
 
 ## Log alerts
 
@@ -414,7 +414,7 @@ for retention coverage and the distinction between backlog and formation rate.
 
 ## Custom metric alerts
 
-Where custom metric history is enabled (preview, ADR-745), you can alert on a
+Where custom metric history is enabled (preview), you can alert on a
 number you push yourself — orders waiting, failed payments, documents awaiting
 OCR. Name the metric with `custom_metric_name` (`--custom-metric` in the CLI):
 

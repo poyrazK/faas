@@ -1,16 +1,46 @@
-# Gregale customer support backend
+# Gregale customer support
 
-This checkout contains a reconstructed native support backend plus target policies,
-team routing, customer reopening, reviewed redaction and engineering handoffs. The
-previous uncommitted support code could not be recovered. Attachments, incoming
-email, knowledge articles, incident linking, dashboard screens and external issue
-creation are not implemented by this change.
+Gregale provides native customer conversations, a browser portal and staff inbox,
+target policies, team routing, customer reopening, reviewed redaction and engineering
+handoffs. Attachments, incoming email, knowledge articles, incident linking and
+external issue creation are not implemented.
 
 Support is cataloged as preview and hidden from customers by default. Use the
 existing `customer_support` platform flag to allow selected account IDs during
 rollout. Staff routes have their own session and roster checks. The published GA/
 beta SDK spec excludes this preview. The Go client exposes the typed customer
 methods below for accounts enrolled in the preview.
+
+## Dashboard
+
+Customers enrolled in the preview can open **Support** from the overview or account
+page at `/dashboard/support`. Organization owners and admins use the support link
+on their organization page at `/dashboard/orgs/{org}/support`. These are separate
+collections: a personal conversation never appears in an organization's portal.
+
+Customers can search and filter conversations, start one with optional app,
+deployment and request identifiers, read paginated messages, reply, mark resolved,
+reopen within the saved policy allowance, and rate a resolution from 1 to 5.
+Text is rendered as escaped plain text. Credentials and logs are never collected
+automatically.
+
+Staff use `/dashboard/admin/support` with their enrolled, MFA-completed support
+session. The inbox filters by team, assignee, status and search. Ticket pages show
+the saved first-response, next-reply and resolution targets, mark paused clocks,
+and keep internal notes visibly separate from public replies. Agents can claim
+unassigned cases and work their own cases; managers can work any case. Assignment
+changes require an audit reason and respect the backend's team, skill and capacity
+checks. Staff can mark a case resolved, reopen it, or pause/resume while waiting
+for the customer. Policies, roster administration, engineering reviews and
+redaction reviews remain available through the private API.
+
+Browser writes require an account-bound CSRF token and a trusted origin. Staff
+writes also require a fresh five-minute MFA step-up. Each form carries a UUID
+request key and the ticket revision. Failed submissions keep the form, key and
+revision for safe retries; a revision conflict requires loading the latest state.
+Copy any draft before reloading. Pages use `Cache-Control: no-store`. The customer
+preview flag also gates the portal routes; staff access uses the independent live
+roster checks.
 
 ## Customer API
 

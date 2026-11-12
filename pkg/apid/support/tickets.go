@@ -136,7 +136,7 @@ func (x *session) mutate(key, ticket, op string, in Change) (any, error) {
 		return nil, conflict("ticket revision changed; reload before applying this action")
 	}
 	claim := op == "triage" && !t.AssigneeID.Valid && uid(in.AssigneeID) == uid(x.actor.ID)
-	if x.role != "" && x.role != "manager" && id(t.AssigneeID) != x.actor.ID && !claim {
+	if x.role != "" && x.role != "manager" && t.AssigneeID != uid(x.actor.ID) && !claim {
 		return nil, forbidden()
 	}
 	if e = x.admission(t.ScopeKey, false); e != nil {

@@ -65,7 +65,7 @@ default:
 ```
 
 Imports in this sketch are `context`, `errors`, the SDK as `faas` and this example
-as `recovery` (`github.com/poyrazK/faas/sdk/go/examples/event-acknowledgment-recovery`).
+as `recovery` (`github.com/gregale-dev/gregale-go/examples/event-acknowledgment-recovery`).
 Several error sentinels can match; unknown commit takes precedence. A nil error
 does not mean all callbacks were confirmed. A committed unconfirmed settlement
 is counted even when its callback timed out; it does not fail the entire pass.
