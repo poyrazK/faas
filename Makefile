@@ -1772,6 +1772,18 @@ test-auth-app: ## Application Auth template and @gregale/auth SDK unit tests (AD
 	  cp -R cmd/gregale/templates/auth "$$scratch/template" && (cd "$$scratch/template" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test) && \
 	  cp -R sdk/auth "$$scratch/sdk" && rm -rf "$$scratch/sdk/dist" "$$scratch/sdk/node_modules" && (cd "$$scratch/sdk" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test)
 
+.PHONY: test-agents-sandbox
+test-agents-sandbox: ## @gregale/agents-sandbox (OpenAI Agents SDK backend, ADR-20261027090013 §8) unit tests; needs Node 22+ and npm
+	@cd sdk/agents-sandbox && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test
+
+.PHONY: test-sandbox-e2b
+test-sandbox-e2b: ## @gregale/sandbox-e2b (E2B-compatible client, ADR-20261027090013 §12) unit tests; needs Node 22+ and npm
+	@cd sdk/sandbox-e2b && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test
+
+.PHONY: test-sandbox-e2b-python
+test-sandbox-e2b-python: ## gregale-sandbox-e2b (E2B-compatible Python client, ADR-20261027090013 §12) unit tests; needs Python 3.12+, no packages
+	@cd sdk/sandbox-e2b-python && PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests
+
 .PHONY: auth-staging-check auth-staging-canary
 auth-staging-check: ## Application Auth canary harness contracts without provider calls (ADR-1190)
 	@node --test tests/auth/staging/*.test.mjs

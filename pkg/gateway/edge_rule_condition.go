@@ -92,8 +92,9 @@ type EdgeRuleMatchContext struct {
 	Query    url.Values
 	ClientIP net.IP // nil unless the single trusted forwarded hop parsed
 	// Method / Path are the request as received, for sampled events.
-	Method string
-	Path   string
+	Method    string
+	Path      string
+	requestID string
 
 	countryOnce sync.Once
 	lookup      func(net.IP) string
@@ -131,8 +132,9 @@ type EdgeRuleMatchContext struct {
 // conditions on country see it as absent. hits may be nil (no counting).
 func NewEdgeRuleMatchContext(r *http.Request, clientIP net.IP, lookup func(net.IP) string, hits EdgeRuleHitRecorder) *EdgeRuleMatchContext {
 	return &EdgeRuleMatchContext{
-		Host: hostname(r.Host), Headers: r.Header, Query: edgeRuleQuery(r.URL.RawQuery),
+		Host: hostname(r.Host), Headers: r.Header.Clone(), Query: edgeRuleQuery(r.URL.RawQuery),
 		ClientIP: clientIP, Method: r.Method, Path: r.URL.Path, lookup: lookup, hits: hits,
+		requestID: r.Header.Get(api.RequestIDHeader),
 	}
 }
 
@@ -167,12 +169,13 @@ func (m *EdgeRuleMatchContext) recordHit(ruleID, appID string, logged, sampleEve
 	}
 }
 
-// event snapshots the request for a sampled match. The request ID header is
-// read now: the handler stamps it after building the match context.
+// event snapshots the request for a sampled match. The handler supplies the
+// canonical request ID separately after generating it, preserving the inbound
+// header snapshot used by rule conditions.
 func (m *EdgeRuleMatchContext) event(ruleID, appID string, logged bool) EdgeRuleEvent {
 	ev := EdgeRuleEvent{
 		RuleID: ruleID, AppID: appID, Logged: logged, At: time.Now().UTC(),
-		RequestID: truncateBytes(m.Headers.Get(api.RequestIDHeader), 128),
+		RequestID: truncateBytes(m.requestID, 128),
 		Method:    truncateBytes(m.Method, 16), Host: m.Host,
 		Path:      truncateBytes(m.Path, EdgeRuleEventMaxPathBytes),
 		Country:   m.resolvedCountry(),

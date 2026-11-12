@@ -207,6 +207,9 @@ func (s *server) confirmEmailChange(w http.ResponseWriter, r *http.Request) {
 // device, so there is no session to keep) and notifies the old address.
 func (s *server) finishEmailChange(r *http.Request, change state.EmailChange) {
 	s.revokeSessionsAfterPasswordChange(r.Context(), change.AccountID, "")
+	if acct, err := s.store.AccountByID(r.Context(), change.AccountID); err == nil {
+		s.revokeInteractiveSignInKeys(r, acct, "email_changed")
+	}
 	s.audit.Emit(r.Context(), "account.email_changed", &change.AccountID, nil)
 	s.moveBillingEmailsInBackground(r.Context(), change)
 	subject, body := mailpkg.EmailChangedNoticeBody(change.OldEmail, change.NewEmail, time.Now())

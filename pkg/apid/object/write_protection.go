@@ -2,6 +2,7 @@ package object
 
 import (
 	"context"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -14,6 +15,11 @@ func (s *Service) resolveObjectWriteProtection(ctx context.Context, b state.Obje
 		p.Requested = requested.ForWrite()
 		if p.Requested.Empty() || !p.Requested.Valid() {
 			return p, objectstorage.ErrInvalid
+		}
+		if err := objectstorage.CheckObjectLockPlan(ctx, s.Host.Store(), b, func(l api.ObjectStoragePlanLimits) *api.ObjectLockPlanViolation {
+			return l.ObjectWriteProtectionViolation(p.Requested, time.Now())
+		}); err != nil {
+			return p, err
 		}
 	}
 	backend, err := s.Host.ObjectStorage().Resolve(b.BackendID, b.BackendFingerprint)

@@ -30,6 +30,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`whoami`](#whoami) | Show the authenticated account |
 | [`completion`](#completion) | Generate shell completion scripts or install them interactively |
 | [`version`](#version) | Print the CLI version |
+| [`update`](#update) | Update the CLI to the newest release |
 | [`man`](#man) | Print the CLI manual page, or one command&#39;s page |
 | [`release`](#release) | Inspect releases and control rollouts: canary, traffic, approvals |
 | [`preview`](#preview) | Manage pull-request preview environments |
@@ -451,7 +452,7 @@ Make a local view the project&#39;s default
 
 List or manage reusable local log filters
 
-`gregale logs views <copy|list|show|rename|update|delete|save> [--name <TEXT>] [--source <SOURCE>] [--details] [--app <SLUG>]`
+`gregale logs views [copy|list|show|rename|update|delete|save] [--name <TEXT>] [--source <SOURCE>] [--details] [--app <SLUG>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -931,12 +932,13 @@ Remove the linked project from this checkout
 
 Authenticate this machine
 
-`gregale login [--token <TOKEN>] [--token-stdin]`
+`gregale login [--token <TOKEN>] [--token-stdin] [--insecure-storage]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--token <TOKEN>` | use a pre-minted token (CI) |  |
 | `--token-stdin` | read a pre-minted token from stdin (CI) |  |
+| `--insecure-storage` | save the key to a plaintext file instead of the OS keychain (WSL, containers, SSH) |  |
 
 Examples:
 
@@ -1016,6 +1018,32 @@ Print the powershell completion snippet
 Print the CLI version
 
 `gregale version`
+
+
+## update
+
+Update the CLI to the newest release
+
+`gregale update [--check] [--version <TAG>]`
+
+Stable installs follow the newest stable release; prerelease installs follow the newest release.
+
+The download is verified against the release&#39;s CLI-SHA256SUMS and must run before it replaces this binary.
+
+An npm install prints the npm command instead of replacing files npm owns.
+
+| Flag | Meaning | |
+|---|---|---|
+| `--check` | report whether a newer release exists without installing it |  |
+| `--version <TAG>` | install this exact release tag, including an older one |  |
+
+Examples:
+
+```sh
+gregale update
+gregale update --check
+gregale update --version v0.1.18
+```
 
 
 ## man
@@ -1721,7 +1749,7 @@ gregale preview review pr-42-api pr-42-worker --test-report pr-42-api=api-tests.
 
 Build customer impact rosters and track route migrations
 
-`gregale preview customers <track|progress|migration> --report <PATH> [--by <consumer|tenant>] [--format <FORMAT>] [--out <PATH>]`
+`gregale preview customers [track|progress|migration] --report <PATH> [--by <consumer|tenant>] [--format <FORMAT>] [--out <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1840,10 +1868,11 @@ gregale preview customers migration diff --before migration-last-week.json --aft
 
 Wait for a preview deployment to become ready
 
-`gregale preview wait [--progress] [--open] [--timeout <SECONDS|DURATION>] <preview-slug>`
+`gregale preview wait [--commit <SHA>] [--progress] [--open] [--timeout <SECONDS|DURATION>] <preview-slug>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--commit <SHA>` | wait until the preview serves this commit (a full or abbreviated SHA), such as the pull request&#39;s head |  |
 | `--progress` | print deployment transitions while waiting |  |
 | `--open` | open the preview URL after it becomes ready |  |
 | `--timeout <SECONDS|DURATION>` | maximum wait (seconds, or a duration such as 10m) |  |
@@ -2692,7 +2721,7 @@ Change an app&#39;s settings
 | `--size <SIZE>` | set RAM/CPU resource size | one of `micro` · `small` · `medium` · `large` · `xlarge` |
 | `--profile <SIZE>` | deprecated: use --size |  |
 | `--ram <MB>` | set RAM in MB |  |
-| `--cpu-millicores <250|500|1000>` | set sustained CPU allowance | one of `250` · `500` · `1000` |
+| `--cpu-millicores <250|500|1000>` | cap CPU at 250 or 500 millicores; 1000 (the default) leaves it uncapped | one of `250` · `500` · `1000` |
 | `--max-concurrency <N>` | set the maximum instances (replicas) the app scales to |  |
 | `--concurrency-overflow <value>` | set saturated concurrency behavior | one of `queue` · `drop` |
 | `--max-queue-depth <N>` | set maximum queued requests (0 uses plan default) |  |
@@ -2789,7 +2818,7 @@ Preview or change resources and settings
 | `--size <SIZE>` | RAM/CPU resource size | one of `micro` · `small` · `medium` · `large` · `xlarge` |
 | `--profile <SIZE>` | deprecated: use --size |  |
 | `--ram <MB>` | RAM in MB |  |
-| `--cpu-millicores <250|500|1000>` | sustained CPU allowance | one of `250` · `500` · `1000` |
+| `--cpu-millicores <250|500|1000>` | cap CPU at 250 or 500 millicores; 1000 (the default) leaves it uncapped | one of `250` · `500` · `1000` |
 | `--max-concurrency <N>` | maximum instances (replicas) the app scales to |  |
 | `--concurrency-overflow <POLICY>` | saturated concurrency behavior | one of `queue` · `drop` |
 | `--max-queue-depth <N>` | maximum queued requests at warm saturation |  |
@@ -2839,7 +2868,7 @@ Read, guard or recover scaling configuration; prints JSON
 | `--expected-app-id <UUID>` | immutable app UUID required for writes |  |
 | `--expected-environment-id <UUID>` | immutable environment UUID required for named writes |  |
 | `--ram <MB>` | RAM in MB |  |
-| `--cpu-millicores <MILLICORES>` | CPU allowance |  |
+| `--cpu-millicores <MILLICORES>` | CPU cap: 250 or 500 millicores, or 1000 for none |  |
 | `--max-concurrency <COUNT>` | most instances the app runs at once |  |
 | `--min <COUNT>` | minimum warm instance count, including zero |  |
 
@@ -2885,7 +2914,7 @@ gregale app rename my-api my-api-v2
 
 Restart from a snapshot or fresh configuration
 
-`gregale app restart <status> [--fresh] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--json]`
+`gregale app restart [status] [--fresh] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3639,7 +3668,7 @@ Manage edge rules, rule lists, caching and CORS
 
 Route, rewrite, protect or rate-limit an app&#39;s requests at the edge
 
-`gregale edge rule <waf|attack-mode|recipe|list|summary|trace|create|get|update|delete|history|recipes|suggest|stats|review|events|rollback> [--app <slug>] [--kind <value>]`
+`gregale edge rule [waf|attack-mode|recipe|list|summary|trace|create|get|update|delete|history|recipes|suggest|stats|review|events|rollback] [--app <slug>] [--kind <value>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4399,13 +4428,6 @@ Create, attach and restore managed PostgreSQL databases
 
 Durably switch between idle suspension and always-on compute
 
-`gregale postgres compute-policy [set|status] --scale-to-zero <BOOL> --request-id <UUID> <database>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--scale-to-zero <BOOL>` | true for idle suspension, false for always-on | required; one of `true` · `false` |
-| `--request-id <UUID>` | stable request UUID; reuse after uncertain responses | required |
-
 #### postgres compute-policy set
 
 Durably switch between idle suspension and always-on compute
@@ -4634,7 +4656,7 @@ Rotate a binding, optionally waiting for the old credential
 | Flag | Meaning | |
 |---|---|---|
 | `--wait` | wait for the previous credential to retire |  |
-| `--wait-timeout <DURATION>` | maximum time to wait for rotation (default 5m) |  |
+| `--wait-timeout <DURATION>` | maximum time to wait for rotation (default 15m) |  |
 | `--poll-interval <DURATION>` | status polling interval while waiting (default 1s) |  |
 
 Examples:
@@ -5751,7 +5773,7 @@ gregale workflow list --app billing --created-after 2026-10-01T00:00:00Z --creat
 
 Inspect recurring workflow schedules and preview their next fires
 
-`gregale workflow schedules <preview> --app <SLUG>`
+`gregale workflow schedules [preview] --app <SLUG>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6698,7 +6720,7 @@ Your current recovery codes stop working.
 
 Print the Data Processing Agreement template
 
-`gregale account dpa <get> [-o <PATH>]`
+`gregale account dpa [get] [-o <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6867,7 +6889,7 @@ Show the org&#39;s agent policy
 
 Allow or deny agents and cap their capabilities
 
-`gregale org agent policy set --org <SLUG> --agents <allow|deny> [--capabilities <LIST>] [--approvals <LIST>] [--approval-channels <NAMES>]`
+`gregale org agent policy set --org <SLUG> --agents <allow|deny> [--capabilities <LIST>] [--approvals <LIST>] [--approval-channels <NAMES>] [--max-budget <USD>] [--clear-max-budget]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6876,6 +6898,8 @@ Allow or deny agents and cap their capabilities
 | `--capabilities <LIST>` | comma-separated capabilities agents may get: deploy:write, secrets:request, storage:manage, postgres:manage; empty for read-only |  |
 | `--approvals <LIST>` | kinds of action every agent must have a person approve: delete, production, credentials, billing, all or none |  |
 | `--approval-channels <NAMES>` | comma-separated names of your notification channels that also get the org&#39;s agents&#39; approval requests; empty for none |  |
+| `--max-budget <USD>` | ceiling on every agent&#39;s monthly budget for always-on capacity, in US dollars |  |
+| `--clear-max-budget` | remove the ceiling on agents&#39; budgets |  |
 
 Examples:
 
@@ -7143,7 +7167,7 @@ Manage your account&#39;s API keys
 
 Read or update the rotation grace window
 
-`gregale key grace-window <set> [--reset] [--days <N>]`
+`gregale key grace-window [set] [--reset] [--days <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7239,7 +7263,7 @@ Plans: free, hobby, pro and scale. Paid upgrades open the billing provider&#39;s
 
 Show this month&#39;s usage, or daily, storage and summary views
 
-`gregale billing usage <daily|storage|summary> [--month <YYYY-MM>]`
+`gregale billing usage [daily|storage|summary] [--month <YYYY-MM>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7349,7 +7373,7 @@ gregale billing egress-overage set off --org acme
 
 Show the card on file
 
-`gregale billing payment-method <get> [--print] [--no-open]`
+`gregale billing payment-method [get] [--print] [--no-open]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7371,7 +7395,7 @@ Show the card on file
 
 Open the active billing provider&#39;s portal
 
-`gregale billing portal <open> [--print] [--no-open]`
+`gregale billing portal [open] [--print] [--no-open]`
 
 | Flag | Meaning | |
 |---|---|---|

@@ -9,6 +9,9 @@ import (
 // appQuotaLimit preserves the separate production, developer and PR-preview
 // pools. Hosting limits remain defined exclusively by api.Limits.
 func appQuotaLimit(app App, limits api.Limits) (int, QuotaErrorKind) {
+	if app.SandboxTemplate {
+		return api.SandboxTemplatesMax[limits.Plan.PlanIndex()], QuotaErrorKindSandboxTemplates
+	}
 	if IsDeveloperApp(app) {
 		if limits.DeveloperApps > 0 {
 			return limits.DeveloperApps, QuotaErrorKindDeveloperApps

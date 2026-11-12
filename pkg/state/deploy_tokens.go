@@ -22,6 +22,27 @@ type DeployTokenStore interface {
 	TouchDeployTokenLastUsed(ctx context.Context, tokenID string) error
 }
 
+// DeployTokenHolderLister lists the live deploy tokens an account holds:
+// those it minted, and those minted before minters were recorded on apps it
+// created. The password-reset key review lists them (ADR 20261111130000).
+type DeployTokenHolderLister interface {
+	ListLiveDeployTokensHeldBy(ctx context.Context, accountID string) ([]DeployToken, error)
+}
+
+func (m *MemStore) ListLiveDeployTokensHeldBy(_ context.Context, accountID string) ([]DeployToken, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	var out []DeployToken
+	for _, t := range m.deployTokens {
+		if t.principalID() != accountID || t.Status == string(APIKeyStatusRevoked) || t.ExpiresAt == nil || !t.ExpiresAt.After(now) {
+			continue
+		}
+		out = append(out, cloneDeployToken(t))
+	}
+	return out, nil
+}
+
 type deployTokenMinterKey struct{}
 
 // WithDeployTokenMinter names the member minting or rotating a deploy token

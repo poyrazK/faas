@@ -13,6 +13,10 @@ type EnvironmentGitOpsExplanation struct {
 	Generation         int64                         `json:"generation"`
 	IntentVersion      int64                         `json:"intent_version"`
 	SourceFreshness    string                        `json:"source_freshness"`
+	ReportID           string                        `json:"report_id,omitempty"`
+	ReportStatus       string                        `json:"report_status,omitempty"`
+	ReportFreshness    string                        `json:"report_freshness,omitempty"`
+	ReportObservedAt   *time.Time                    `json:"report_observed_at,omitempty"`
 	ObservedCommitSHA  string                        `json:"observed_commit_sha,omitempty"`
 	ApprovedRevisionID string                        `json:"approved_revision_id,omitempty"`
 	AppliedRevisionID  string                        `json:"applied_revision_id,omitempty"`

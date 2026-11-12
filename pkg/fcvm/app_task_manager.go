@@ -136,6 +136,15 @@ func (m *Manager) runAppTask(ctx context.Context, instance string, req apptaskpr
 		m.stopRehearsalRecorder(instance)
 	}
 	cancel()
+	if executeErr == nil && recorder == nil && (sessionDestroyErr != nil || managerDestroyErr != nil) {
+		// The command finished and its result is final. A teardown that
+		// could not be confirmed is retained and retried by the manager's
+		// cleanup; failing the task for it reported a finished command as
+		// "result channel closed unexpectedly" (Hunt 33 H33-7).
+		m.log.Warn("app task finished; teardown pending", "instance", instance,
+			"session_err", sessionDestroyErr, "instance_err", managerDestroyErr)
+		return result, nil
+	}
 	var errs []error
 	if executeErr != nil {
 		errs = append(errs, fmt.Errorf("fcvm: guest app task: %w", executeErr))

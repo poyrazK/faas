@@ -31,6 +31,8 @@ export type { AgentApprovalPendingInfo } from './models/AgentApprovalPendingInfo
 export type { AgentApprovalResponse } from './models/AgentApprovalResponse.js';
 export type { AgentApprovalsResponse } from './models/AgentApprovalsResponse.js';
 export type { AgentApprovalWebhookPayload } from './models/AgentApprovalWebhookPayload.js';
+export type { AgentBudgetRequest } from './models/AgentBudgetRequest.js';
+export type { AgentBudgetResponse } from './models/AgentBudgetResponse.js';
 export type { AgentClientRequest } from './models/AgentClientRequest.js';
 export type { AgentConnectionResponse } from './models/AgentConnectionResponse.js';
 export type { AgentConnectionsResponse } from './models/AgentConnectionsResponse.js';
@@ -559,6 +561,7 @@ export type { OAuthTokenExchangeRequest } from './models/OAuthTokenExchangeReque
 export type { OAuthTokenExchangeResponse } from './models/OAuthTokenExchangeResponse.js';
 export type { ObjectSignedRequest } from './models/ObjectSignedRequest.js';
 export type { ObjectStorageCharge } from './models/ObjectStorageCharge.js';
+export type { ObjectStorageOverCeilingDeletion } from './models/ObjectStorageOverCeilingDeletion.js';
 export type { ObjectStoragePolicy } from './models/ObjectStoragePolicy.js';
 export type { ObjectStoragePricing } from './models/ObjectStoragePricing.js';
 export type { ObjectStorageReleaseRequirements } from './models/ObjectStorageReleaseRequirements.js';

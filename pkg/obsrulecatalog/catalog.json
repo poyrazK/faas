@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "9800b0ecf8a03754bb22d065400a5fac468ba8358f7a9d93c7b2b6a562538143",
+      "revision": "965c825d6a16f475e9448a5f87aa1e55b4bdc78590a26ce68c6c4ad53f6b9728",
       "files": [
         "faas.rules.yml"
       ],
@@ -2649,6 +2649,19 @@
           }
         },
         {
+          "id": "57397a26dbb7860074d5cabd658e872697bcc474ad6eb9e233082d5b7913a5d0",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageInventoryQuietBacklog",
+          "definition": {
+            "expression_hash": "efdab032c9fcf7d5249705784bbb59aab5cbfc4ab4840b6f03a588cb3eefdec4",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9c70fa6d93a121a0555a530719ff281a303d646a9699d1bcb18ab9c00347a9a8"
+          }
+        },
+        {
           "id": "57f242a7004adb2b0265c708867081ac21886232970daf99d1edf074d06e95ef",
           "file_name": "faas.rules.yml",
           "group_name": "faas_app_tasks",
@@ -3806,6 +3819,19 @@
           }
         },
         {
+          "id": "85ee32bcb96e5122f74f386755db0b524d4753c327446c2469c9301430a6d8e3",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageInventoryDrift",
+          "definition": {
+            "expression_hash": "acefe20aec12b5b4251d083a4325abbf45dab6f72e1dc07e0e6b97fb7d974695",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "594181c670051a6c5eaba752c2a4a1f461455d532ae476f554821a3ce1424ee5"
+          }
+        },
+        {
           "id": "86f08e6f1a68395874addb6c22b1377ec78fa78b893a33ad0187c3d0a6036fb5",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -4869,6 +4895,19 @@
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
             "fingerprint": "181a567448f7a40ed868df8d3dc6dd788190f539b2b6546f41efc25994f3a554"
+          }
+        },
+        {
+          "id": "ad67502e3fb5af0d089c3145ef5ba6c499a25522765d1a3861e8905e8919d684",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_compute_object_gateway",
+          "rule_name": "FaasS3GatewayDown",
+          "definition": {
+            "expression_hash": "f3eaf1a13e011ad0d13675f0f4c60727d8548276ca9aa5363f229c73cba84fcc",
+            "labels_hash": "6b0cb6db1e4730f77b9133acb63e8c85371038b874b109722ec5d129cca2b5e8",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "37499fab615f2f0bf48f427befc666e874cdd7549e4dca934b3eb09ee26e3528"
           }
         },
         {
@@ -7072,7 +7111,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "87c8d098e24e08a6b14d5ae3c76f83a04702c173054b38d330adae32d4019326",
+      "revision": "8cc8a2c7f6370709a6ff051a0950291e1b59da3ed9fd3ce84aac3919efc14c38",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -9825,6 +9864,19 @@
           }
         },
         {
+          "id": "57397a26dbb7860074d5cabd658e872697bcc474ad6eb9e233082d5b7913a5d0",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageInventoryQuietBacklog",
+          "definition": {
+            "expression_hash": "efdab032c9fcf7d5249705784bbb59aab5cbfc4ab4840b6f03a588cb3eefdec4",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9c70fa6d93a121a0555a530719ff281a303d646a9699d1bcb18ab9c00347a9a8"
+          }
+        },
+        {
           "id": "57f242a7004adb2b0265c708867081ac21886232970daf99d1edf074d06e95ef",
           "file_name": "faas.rules.yml",
           "group_name": "faas_app_tasks",
@@ -11060,6 +11112,19 @@
           }
         },
         {
+          "id": "85ee32bcb96e5122f74f386755db0b524d4753c327446c2469c9301430a6d8e3",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageInventoryDrift",
+          "definition": {
+            "expression_hash": "acefe20aec12b5b4251d083a4325abbf45dab6f72e1dc07e0e6b97fb7d974695",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "594181c670051a6c5eaba752c2a4a1f461455d532ae476f554821a3ce1424ee5"
+          }
+        },
+        {
           "id": "86710a05d7b9c2233f11d3660a1a516fc407d6c981e78b65c18ede14d7c8f1b6",
           "file_name": "pg_backup.rules.yml",
           "group_name": "faas.pg_backup",
@@ -12162,6 +12227,19 @@
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
             "fingerprint": "181a567448f7a40ed868df8d3dc6dd788190f539b2b6546f41efc25994f3a554"
+          }
+        },
+        {
+          "id": "ad67502e3fb5af0d089c3145ef5ba6c499a25522765d1a3861e8905e8919d684",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_compute_object_gateway",
+          "rule_name": "FaasS3GatewayDown",
+          "definition": {
+            "expression_hash": "f3eaf1a13e011ad0d13675f0f4c60727d8548276ca9aa5363f229c73cba84fcc",
+            "labels_hash": "6b0cb6db1e4730f77b9133acb63e8c85371038b874b109722ec5d129cca2b5e8",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "37499fab615f2f0bf48f427befc666e874cdd7549e4dca934b3eb09ee26e3528"
           }
         },
         {

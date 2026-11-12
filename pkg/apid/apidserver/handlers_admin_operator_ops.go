@@ -166,6 +166,7 @@ func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, 
 		if err == nil {
 			s.forgetTrustedBrowsers(r.Context(), targetID, "operator_revoke")
 			s.endPendingGrants(r.Context(), targetID, "operator_revoke")
+			s.revokeTargetSignInKeys(r, targetID, "operator_revoke")
 		}
 	case "reset-mfa":
 		if problem := s.operatorMFAResetRefusal(r.Context(), targetID); problem != nil {
@@ -173,6 +174,9 @@ func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		revokedSessions, err = s.operatorResetMFA(r.Context(), targetID)
+		if err == nil {
+			s.revokeTargetSignInKeys(r, targetID, "operator_mfa_reset")
+		}
 	case "revert-email":
 		var problem *api.Problem
 		revokedSessions, problem, err = s.operatorRevertEmail(r, targetID)

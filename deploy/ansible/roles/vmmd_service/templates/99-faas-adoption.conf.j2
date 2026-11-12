@@ -5,3 +5,5 @@
 Environment=FAAS_VMMD_ADOPTION_RECORD={{ 'true' if (vmmd_adoption_record | bool) else '' }}
 Environment=FAAS_VMMD_ADOPT_RUNNING_VMS={{ 'true' if (vmmd_adopt_running_vms | bool) else '' }}
 Environment=FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES={{ 'true' if (vmmd_adopt_admitted_runtimes | bool) else '' }}
+# Flat tenant cgroups (ADR-20261109172421 step 6.5); see defaults/main.yml.
+Environment=FAAS_VMMD_FLAT_TENANT_CGROUPS={{ 'true' if (vmmd_flat_tenant_cgroups | bool) else '' }}

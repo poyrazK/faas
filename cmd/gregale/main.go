@@ -113,6 +113,7 @@ func init() {
 }
 
 func run(args []string) (status int) {
+	args = protectImageRunCommandArgs(args)
 	resetCapabilityView()
 	previousJSON, previousUsageHelp, previousPath := jsonOutput, jsonUsageHelp, invokedCommandPath
 	defer func() {
@@ -301,6 +302,10 @@ func run(args []string) (status int) {
 		}
 		PrintUsage(os.Stderr, message, "cli")
 		return 1
+	case "update":
+		// Updating the CLI must work when saved configuration is broken:
+		// a newer CLI may be the fix.
+		return cmdUpdate(args[1:])
 	case "completion":
 		// Tier A8 / ADR-083. Routes to one of bash|zsh|fish|powershell
 		// via cmdCompletion; the dispatcher is in completion.go. Like help,
@@ -575,6 +580,8 @@ func run(args []string) (status int) {
 		return cmdDomains(args[1:])
 	case "deploy-tokens":
 		return cmdDeployTokens(args[1:])
+	case "sandbox-templates":
+		return cmdSandboxTemplates(args[1:])
 	case "sites":
 		return cmdSites(args[1:])
 	case "tenant-surfaces":
@@ -1000,6 +1007,11 @@ func printLocalCommandHelpDetail(w io.Writer, command cliCommand, showAll bool) 
 	usage := "gregale " + command.Name
 	if len(command.Subcommands) > 0 && !command.SubcommandsAfterPositionals && command.Name != "logs" {
 		choice := " <" + command.subcommandChoice() + ">"
+		if len(command.Flags) > 0 {
+			// A command with flags of its own also runs without a child:
+			// `release list [alias] [flags]` (Hunt 33 H33-4).
+			choice = " [" + command.subcommandChoice() + "]"
+		}
 		// Compact help stays within 80 columns; its Commands section lists
 		// the choices when they no longer fit on the usage line. Full help
 		// lists them too, so it takes the bad-invocation synopsis limit:

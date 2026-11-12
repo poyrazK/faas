@@ -13,7 +13,8 @@ import (
 // adr: 20261027090010 — the agent API belongs to the internal agents
 // capability (ADR-20261023115741): every agent route, any method, answers
 // like an unregistered route to an account the capability is not released
-// to. A released account reaches the routes.
+// to. A released account reaches the routes. ADR-20261027090013's sandbox
+// session routes are agent routes too.
 func TestAgentsHiddenUntilReleased(t *testing.T) {
 	e := entityAPISetup(t)
 	if err := e.s.InstallCapabilityGate(); err != nil {
@@ -21,6 +22,7 @@ func TestAgentsHiddenUntilReleased(t *testing.T) {
 	}
 	e.s.ConfigureAgentsForTest()
 	const run = "/v1/agent-runs/00000000-0000-4000-8000-0000000000aa"
+	const sandbox = "/v1/sandboxes/00000000-0000-4000-8000-0000000000bb"
 	requests := func() []*httptest.ResponseRecorder {
 		return []*httptest.ResponseRecorder{
 			e.do(t, http.MethodPost, "/v1/agents", nil, nil),
@@ -36,6 +38,17 @@ func TestAgentsHiddenUntilReleased(t *testing.T) {
 			e.do(t, http.MethodGet, run+"/outputs", nil, nil),
 			e.do(t, http.MethodGet, run+"/outputs/files/report.md", nil, nil),
 			e.do(t, http.MethodPut, "/v1/agents/triage", nil, nil),
+			e.do(t, http.MethodPost, "/v1/sandboxes", nil, nil),
+			e.do(t, http.MethodGet, "/v1/sandboxes", nil, nil),
+			e.do(t, http.MethodGet, sandbox, nil, nil),
+			e.do(t, http.MethodPatch, sandbox, nil, nil),
+			e.do(t, http.MethodDelete, sandbox, nil, nil),
+			e.do(t, http.MethodPut, sandbox, nil, nil),
+			e.do(t, http.MethodGet, "/v1/sandbox-snapshots", nil, nil),
+			e.do(t, http.MethodDelete, "/v1/sandbox-snapshots/00000000-0000-4000-8000-0000000000cc", nil, nil),
+			e.do(t, http.MethodGet, "/v1/sandbox-templates", nil, nil),
+			e.do(t, http.MethodPut, "/v1/sandbox-templates/tools", nil, nil),
+			e.do(t, http.MethodGet, sandbox+"/ports", nil, nil),
 		}
 	}
 	// The internal tier default: nobody.
@@ -57,6 +70,10 @@ func TestAgentsHiddenUntilReleased(t *testing.T) {
 		t.Fatalf("released account = %d %s", res.Code, res.Body.String())
 	}
 	assertUnregisteredRoute(t, e.do(t, http.MethodPut, "/v1/agents/triage", nil, nil))
+	if res := e.do(t, http.MethodGet, "/v1/sandboxes", nil, nil); res.Code == http.StatusNotFound {
+		t.Fatalf("released account, sandboxes = %d %s", res.Code, res.Body.String())
+	}
+	assertUnregisteredRoute(t, e.do(t, http.MethodPut, sandbox, nil, nil))
 
 	// The kill switch hides the routes before authentication, from
 	// everyone, released accounts included.

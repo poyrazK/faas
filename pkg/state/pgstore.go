@@ -2551,8 +2551,8 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	if workloadClass == "" {
 		workloadClass = WorkloadClassHTTP
 	}
-	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility, retry_policy, org_id, platform_tenant_required)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::cidr[], $12::cidr[], $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39::jsonb, coalesce(nullif($40, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)), $41)
+	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility, retry_policy, org_id, platform_tenant_required, sandbox_template)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::cidr[], $12::cidr[], $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39::jsonb, coalesce(nullif($40, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)), $41, $42)
 		returning ` + appsSelectColumns
 	// status: pull from app.Status when non-empty (the API surfaces it on
 	// update / restore paths); fall back to 'active' on the Go zero so the
@@ -2627,7 +2627,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 		// before reaching this path, so the floor is a
 		// last-line defence for internal callers that build an
 		// App by hand.
-		appProtocol, cpuMillicores, string(visibility), retryPolicy, nullString(app.OrgID), app.PlatformTenantRequired)
+		appProtocol, cpuMillicores, string(visibility), retryPolicy, nullString(app.OrgID), app.PlatformTenantRequired, app.SandboxTemplate)
 	created, err := scanApp(row)
 	if err != nil {
 		return App{}, err
@@ -2862,8 +2862,8 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 	// parent's gates through this path, and dropping them left a preview of
 	// an IP-allowlisted, password-protected or egress-restricted app open.
 	// The declared-route contract is one of those gates.
-	insertAppSQL := `insert into apps (id, account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility, retry_policy, org_id, platform_tenant_required, egress_allowlist, public_auth_ip_allowlist, public_auth_basic, require_signed, consumer_auth_mode, only_declared_routes, declared_routes, security_policy)
-		 values (coalesce(nullif($40, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37::jsonb, coalesce(nullif($38, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)), $39, $41, $42, $43, $44, $45, $46, $47::jsonb, $48)
+	insertAppSQL := `insert into apps (id, account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility, retry_policy, org_id, platform_tenant_required, egress_allowlist, public_auth_ip_allowlist, public_auth_basic, require_signed, consumer_auth_mode, only_declared_routes, declared_routes, security_policy, sandbox_template)
+		 values (coalesce(nullif($40, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37::jsonb, coalesce(nullif($38, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)), $39, $41, $42, $43, $44, $45, $46, $47::jsonb, $48, $49)
 		returning ` + appsSelectColumns
 	declaredRoutes, err := json.Marshal(previewDeclaredRoutes(app.DeclaredRoutes))
 	if err != nil {
@@ -2936,7 +2936,7 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 		appProtocol, cpuMillicores, string(visibility), retryPolicy, nullString(app.OrgID), app.PlatformTenantRequired, app.ID,
 		cidrPrefixesToArray(app.EgressAllowlist), cidrPrefixesToArray(app.PublicAuthIPAllowlist), app.PublicAuthBasicSealed,
 		app.RequireSigned, string(consumerAuth), app.OnlyAllowDeclaredRoutes, string(declaredRoutes),
-		string(previewSecurityPolicy(app.SecurityPolicy)))
+		string(previewSecurityPolicy(app.SecurityPolicy)), app.SandboxTemplate)
 	created, err := scanApp(row)
 	if err != nil {
 		return App{}, err
@@ -3295,7 +3295,7 @@ func (s *PgStore) StampPreviewDestroyCommentedAt(ctx context.Context, appID stri
 }
 
 func (s *PgStore) ListApps(ctx context.Context, accountID string) ([]App, error) {
-	sel := `select ` + appsSelectColumns + ` from apps where (account_id = $1 or org_id = $1) and status <> 'deleted' order by created_at desc`
+	sel := `select ` + appsSelectColumns + ` from apps where (account_id = $1 or org_id = $1) and status <> 'deleted' and not sandbox_template order by created_at desc`
 	rows, err := s.pool.Query(ctx, sel, accountID)
 	if err != nil {
 		return nil, err
@@ -3308,7 +3308,7 @@ func (s *PgStore) ListApps(ctx context.Context, accountID string) ([]App, error)
 // matches orgID. The API verifies membership separately; this SQL predicate
 // keeps the inventory tenant-scoped even if a future caller is miswired.
 func (s *PgStore) ListAppsByOrg(ctx context.Context, orgID string) ([]App, error) {
-	sel := `select ` + appsSelectColumns + ` from apps where org_id = $1 and status <> 'deleted' order by created_at desc, id desc`
+	sel := `select ` + appsSelectColumns + ` from apps where org_id = $1 and status <> 'deleted' and not sandbox_template order by created_at desc, id desc`
 	rows, err := s.pool.Query(ctx, sel, orgID)
 	if err != nil {
 		return nil, err
@@ -3499,7 +3499,7 @@ func (s *PgStore) FailRunningInstanceIfOwnedByNode(ctx context.Context, id, node
 // Projection matches scanCrons: id, app_id, schedule, path, enabled,
 // suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds.
 func (s *PgStore) ListOwnedCronsByNodeID(ctx context.Context, nodeID string) ([]Cron, error) {
-	sel := `select c.id, c.app_id, c.schedule, c.path, c.enabled, c.suspended_reason, c.timezone, c.skip_if_running, c.last_fired_at, c.created_at, c.command, c.command_shell, c.command_timeout_seconds, c.command_max_output_bytes, c.retry_max, c.retry_backoff_seconds, c.schedule_policy, c.failure_rules, c.schedule_revision, c.schedule_anchor_at
+	sel := `select c.id, c.app_id, c.schedule, c.path, c.enabled, c.suspended_reason, c.timezone, c.skip_if_running, c.last_fired_at, c.created_at, c.command, c.command_shell, c.command_timeout_seconds, c.command_max_output_bytes, c.retry_max, c.retry_backoff_seconds, c.schedule_policy, c.failure_rules, c.schedule_revision, c.schedule_anchor_at, c.deployment_scope
 		   from crons c
 		   join apps a on a.id = c.app_id
 		  where a.node_id = $1 and c.suspended_reason = '' and c.enabled
@@ -5894,18 +5894,21 @@ func (s *PgStore) deleteProjectEnvironmentWithCleanup(
 	leaseDuration time.Duration,
 ) (ProjectEnvironmentCleanupJob, error) {
 	return retryTrafficSerialization(ctx, func() (ProjectEnvironmentCleanupJob, error) {
-		return s.deleteProjectEnvironmentOnce(ctx, accountID, projectID, slug, resources, leaseToken, leaseDuration)
+		return s.deleteProjectEnvironmentOnce(ctx, accountID, projectID, slug, resources, leaseToken, leaseDuration, false)
 	})
 }
 
 // The environment's bound custom domains cascade with it, which can expose a
 // foreign wildcard fallback, so the delete joins the binding guard (ADR-570).
+// retireBranch first ends an environment branch's deployments
+// (ADR-20261031193635); an ordinary delete refuses live releases instead.
 func (s *PgStore) deleteProjectEnvironmentOnce(
 	ctx context.Context,
 	accountID, projectID, slug string,
 	resources ProjectEnvironmentCleanupResources,
 	leaseToken string,
 	leaseDuration time.Duration,
+	retireBranch bool,
 ) (ProjectEnvironmentCleanupJob, error) {
 	tx, err := s.beginAccountAppTrafficMutation(ctx, accountID, "")
 	if err != nil {
@@ -5928,8 +5931,27 @@ func (s *PgStore) deleteProjectEnvironmentOnce(
 		}
 		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
+	// A refusal below rolls the retirement back with the rest of the delete.
+	if retireBranch {
+		if err := retireProjectEnvironmentBranchDeploymentsTx(ctx, tx, accountID, projectID, slug); err != nil {
+			return ProjectEnvironmentCleanupJob{}, err
+		}
+	}
 	if slug == "production" || slug == DefaultEnvScope || protected {
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
+	}
+	var hasBranches bool
+	if err := tx.QueryRow(ctx, `
+		select exists (
+			select 1 from project_environment_branches b
+			  join project_environments e on e.id = b.parent_environment_id
+			 where e.project_id = $1 and e.slug = $2
+		)
+	`, projectID, slug).Scan(&hasBranches); err != nil {
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+	}
+	if hasBranches {
+		return ProjectEnvironmentCleanupJob{}, ErrProjectEnvironmentBranchChildren
 	}
 
 	hasActiveDeployment, err := sqlc.New().ProjectEnvironmentHasActiveDeployments(ctx, tx, sqlc.ProjectEnvironmentHasActiveDeploymentsParams{
@@ -5995,6 +6017,14 @@ func deleteProjectEnvironmentRowsTx(ctx context.Context, tx pgx.Tx, accountID, p
 		 where s.app_id = a.id and a.account_id = $1 and a.project_id = $2 and s.scope = $3
 		   and s.managed_postgres_binding_id is null
 		   and s.managed_object_storage_credential_id is null
+	`, accountID, projectID, slug); err != nil {
+		return mapErr(err)
+	}
+	// An environment's crons go with it (ADR-20261104120000); their runs keep
+	// their history with the cron detached.
+	if _, err := tx.Exec(ctx, `
+		delete from crons c using apps a
+		 where c.app_id = a.id and a.account_id = $1 and a.project_id = $2 and c.deployment_scope = $3
 	`, accountID, projectID, slug); err != nil {
 		return mapErr(err)
 	}
@@ -6235,7 +6265,7 @@ func (s *PgStore) ApplyProjectPlan(
 		}
 		row := tx.QueryRow(ctx,
 			`insert into crons (app_id, schedule, path, enabled) values ($1, $2, $3, $4)
-			 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at`,
+			 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope`,
 			c.AppID, c.Schedule, c.Path, c.Enabled,
 		)
 		out, err := scanCronRow(row)
@@ -6537,7 +6567,7 @@ func (s *PgStore) applyProjectReconcileOnce(
 			desiredOrder[appID] = append(desiredOrder[appID], key)
 		}
 		for _, appID := range appByWorkload {
-			rows, err = tx.Query(ctx, `select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at from crons where app_id = $1 order by created_at for update`, appID)
+			rows, err = tx.Query(ctx, `select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope from crons where app_id = $1 order by created_at for update`, appID)
 			if err != nil {
 				return ProjectReconcileResult{}, err
 			}
@@ -7914,6 +7944,24 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 			return Deployment{}, 0, err
 		}
 	}
+	branchInput, branchSourceID := d.branchInput, ""
+	if branchInput != nil {
+		if len(cloneInputs) > 0 || promotionInput != nil || activity != nil {
+			return Deployment{}, 0, ErrInvalidArgument
+		}
+		branchDeployment, existing, sourceID, err := prepareBranchDeploymentTx(ctx, tx, d)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		if existing != nil {
+			return *existing, 0, nil
+		}
+		if err := validateDeploymentReleaseCommand(branchDeployment.ReleaseCommand, branchDeployment.ReleaseCommandShell); err != nil {
+			return Deployment{}, 0, err
+		}
+		d, branchSourceID = branchDeployment, sourceID
+		d.branchInput = nil
+	}
 	if promotionInput != nil {
 		capture, err := scanPromotionWorkloadSpec(tx.QueryRow(ctx, promotionWorkloadSpecSelect+`
 			where promotion_id = $1 and app_id = $2`, promotionInput.PromotionID, d.AppID))
@@ -8172,6 +8220,11 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		}
 		created.RootfsPath, created.RootfsKey, created.RootfsBytes = d.RootfsPath, d.RootfsKey, d.RootfsBytes
 		created.SecretReloadSignal, created.SecretReloadSignalKnown = d.SecretReloadSignal, d.SecretReloadSignalKnown
+	}
+	if branchInput != nil {
+		if err := attachBranchDeploymentTx(ctx, tx, *branchInput, branchSourceID, d, &created); err != nil {
+			return Deployment{}, 0, err
+		}
 	}
 	if promotionInput != nil {
 		if err := preparePromotionWorkloadSpecTx(ctx, tx, created, *promotionInput); err != nil {
@@ -10541,7 +10594,17 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		}
 
 		// Short-circuit: step = total, traffic_percent = 100,
-		// siblings zeroed, rollout_state = 'complete'.
+		// siblings zeroed, rollout_state = 'complete'. Siblings go first:
+		// a completed candidate at 100% and a stable sibling still carrying
+		// traffic both fall under deployments_app_scope_live_uniq, so the
+		// candidate stamp failed with 23505 whenever the canary's weight was
+		// not explicit (Hunt 33 H33-43).
+		if _, err := tx.Exec(ctx,
+			`update deployments set traffic_percent = 0
+			  where app_id = $1 and scope = $3 and status = 'live' and id != $2`,
+			appID, dep.ID, normalizedDeploymentScope(dep.Scope)); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: recover_rollout zero siblings: %w", err)
+		}
 		if _, err := tx.Exec(ctx,
 			`update deployments set
 				canary_step = $2,
@@ -10553,12 +10616,6 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 			 where id = $1`,
 			dep.ID, dep.CanaryTotalSteps, now, nullableJSON(decision)); err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: recover_rollout stamp promote: %w", err)
-		}
-		if _, err := tx.Exec(ctx,
-			`update deployments set traffic_percent = 0
-			  where app_id = $1 and scope = $3 and status = 'live' and id != $2`,
-			appID, dep.ID, normalizedDeploymentScope(dep.Scope)); err != nil {
-			return Deployment{}, 0, fmt.Errorf("state: recover_rollout zero siblings: %w", err)
 		}
 
 		auditKind = DeployTrafficChanged
@@ -11134,15 +11191,23 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 		if err := json.Unmarshal(appManifestJSON, &appManifest); err != nil {
 			return fmt.Errorf("state: decode app manifest for revision pin: %w", err)
 		}
-		if appManifest.RevisionPinTTLSeconds > 0 && appManifest.RevisionPinTTLSeconds <= api.RevisionPinMaxTTLSeconds {
-			// Only traffic-bearing siblings receive a new deadline. Already
-			// retained revisions keep the original cutover deadline.
-			if err := sqlc.New().RetainServingDeploymentSiblings(ctx, tx, sqlc.RetainServingDeploymentSiblingsParams{AppID: mustPgUUID(dep.AppID), Scope: normalizedDeploymentScope(dep.Scope), TargetID: mustPgUUID(id), Ttl: int32(appManifest.RevisionPinTTLSeconds)}); err != nil {
-				return fmt.Errorf("state: retain replaced revisions: %w", err)
+		for _, lane := range servingLaneScopes(dep.Scope) {
+			if appManifest.RevisionPinTTLSeconds > 0 && appManifest.RevisionPinTTLSeconds <= api.RevisionPinMaxTTLSeconds {
+				// Only traffic-bearing siblings receive a new deadline. Already
+				// retained revisions keep the original cutover deadline.
+				if err := sqlc.New().RetainServingDeploymentSiblings(ctx, tx, sqlc.RetainServingDeploymentSiblingsParams{AppID: mustPgUUID(dep.AppID), Scope: lane, TargetID: mustPgUUID(id), Ttl: int32(appManifest.RevisionPinTTLSeconds)}); err != nil {
+					return fmt.Errorf("state: retain replaced revisions: %w", err)
+				}
 			}
-		}
-		if err := retireLiveDeploymentSiblingsTx(ctx, tx, dep.AppID, dep.Scope, id); err != nil {
-			return fmt.Errorf("state: mark stable live retire siblings: %w", err)
+			if lane != normalizedDeploymentScope(dep.Scope) {
+				if err := retireOtherProductionLiteralTx(ctx, tx, dep.AppID, lane, id); err != nil {
+					return fmt.Errorf("state: mark stable live retire production siblings: %w", err)
+				}
+				continue
+			}
+			if err := retireLiveDeploymentSiblingsTx(ctx, tx, dep.AppID, dep.Scope, id); err != nil {
+				return fmt.Errorf("state: mark stable live retire siblings: %w", err)
+			}
 		}
 		if _, err := tx.Exec(ctx,
 			`update deployments set
@@ -14778,6 +14843,7 @@ func (s *PgStore) OldestDoctorObservation(ctx context.Context) (time.Time, error
 // --- crons -------------------------------------------------------------------
 
 func normalizeCronOptions(opts CronOptions) CronOptions {
+	opts.DeploymentScope = NormalizeCronDeploymentScope(opts.DeploymentScope)
 	if opts.Timezone == "" {
 		opts.Timezone = "UTC"
 	}
@@ -14813,6 +14879,9 @@ func validateCronCreateRetryOptions(opts CronOptions) error {
 	if opts.RetryMax > 0 && len(opts.Command) == 0 {
 		return fmt.Errorf("%w: cron retries require a deployment command", ErrInvalidArgument)
 	}
+	if !ValidCronDeploymentScope(opts.DeploymentScope) {
+		return fmt.Errorf("%w: cron environment must be a project environment slug", ErrInvalidArgument)
+	}
 	return nil
 }
 
@@ -14846,12 +14915,12 @@ func (s *PgStore) CreateCronWithOptions(ctx context.Context, appID, schedule, pa
 	row := s.pool.QueryRow(ctx,
 		`insert into crons (app_id, schedule, path, enabled, timezone, skip_if_running,
 		                    command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds,
-		                    schedule_policy, failure_rules)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb)
-		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at`,
+		                    schedule_policy, failure_rules, deployment_scope)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15)
+		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope`,
 		appID, schedule, path, enabled, opts.Timezone, opts.SkipIfRunning,
 		opts.Command, opts.CommandShell, opts.CommandTimeoutSeconds, opts.CommandMaxOutputBytes,
-		opts.RetryMax, opts.RetryBackoffSeconds, policyJSON(opts.SchedulePolicy), policyJSON(opts.FailureRules))
+		opts.RetryMax, opts.RetryBackoffSeconds, policyJSON(opts.SchedulePolicy), policyJSON(opts.FailureRules), opts.DeploymentScope)
 	c, err := scanCronRow(row)
 	if err != nil {
 		return Cron{}, mapErr(err)
@@ -14918,9 +14987,9 @@ func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, 
 	// or account cap. This check must run after the app lock and before quota
 	// counts so concurrent retries cannot race into a duplicate INSERT.
 	existing, existingErr := scanCronRow(tx.QueryRow(ctx,
-		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at
-		 from crons where app_id = $1 and schedule = $2 and path = $3 and command = $4`,
-		appID, schedule, path, opts.Command))
+		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope
+		 from crons where app_id = $1 and schedule = $2 and path = $3 and command = $4 and deployment_scope = $5`,
+		appID, schedule, path, opts.Command, opts.DeploymentScope))
 	if existingErr == nil {
 		if existing.Enabled == enabled && existing.Timezone == opts.Timezone && existing.SkipIfRunning == opts.SkipIfRunning &&
 			existing.CommandShell == opts.CommandShell && existing.CommandTimeoutSeconds == opts.CommandTimeoutSeconds &&
@@ -14972,12 +15041,12 @@ func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, 
 	row := tx.QueryRow(ctx,
 		`insert into crons (app_id, schedule, path, enabled, timezone, skip_if_running,
 		                    command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds,
-		                    schedule_policy, failure_rules)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb)
-		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at`,
+		                    schedule_policy, failure_rules, deployment_scope)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15)
+		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope`,
 		appID, schedule, path, enabled, opts.Timezone, opts.SkipIfRunning,
 		opts.Command, opts.CommandShell, opts.CommandTimeoutSeconds, opts.CommandMaxOutputBytes,
-		opts.RetryMax, opts.RetryBackoffSeconds, policyJSON(opts.SchedulePolicy), policyJSON(opts.FailureRules))
+		opts.RetryMax, opts.RetryBackoffSeconds, policyJSON(opts.SchedulePolicy), policyJSON(opts.FailureRules), opts.DeploymentScope)
 	c, err := scanCronRow(row)
 	if err != nil {
 		return Cron{}, mapErr(err)
@@ -14992,7 +15061,7 @@ func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, 
 // did not exist for callers before deletion kept them for restore.
 func (s *PgStore) CronByID(ctx context.Context, id string) (Cron, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at from crons where id = $1 and suspended_reason <> 'app_deleted'`, id)
+		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope from crons where id = $1 and suspended_reason <> 'app_deleted'`, id)
 	c, err := scanCronRow(row)
 	if err != nil {
 		return Cron{}, mapErr(err)
@@ -15059,7 +15128,7 @@ func (s *PgStore) UpdateCronWithOptions(ctx context.Context, id string, schedule
 		   schedule_policy = case when $12::boolean then null else coalesce($10::jsonb, schedule_policy) end,
 		   failure_rules = case when $13::boolean then null else coalesce($11::jsonb, failure_rules) end
 		 where id = $1
-		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at`,
+		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope`,
 		id, schedule, path, enabled, timezone, skipIfRunning, createdAtArg, retryMaxArg, retryBackoffArg, schedulePolicyArg, failureRulesArg, clearPolicy, clearRules)
 	c, err := scanCronRow(row)
 	if err != nil {
@@ -15167,7 +15236,7 @@ func (s *PgStore) StampAppScaleIn(ctx context.Context, appID string) error {
 
 func (s *PgStore) ListCronsForApp(ctx context.Context, appID string) ([]Cron, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at from crons where app_id = $1 order by created_at`, appID)
+		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope from crons where app_id = $1 order by created_at`, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -15177,7 +15246,7 @@ func (s *PgStore) ListCronsForApp(ctx context.Context, appID string) ([]Cron, er
 
 func (s *PgStore) ListEnabledCrons(ctx context.Context) ([]Cron, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at from crons c where enabled = true and suspended_reason = ''
+		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope from crons c where enabled = true and suspended_reason = ''
 		  and not exists (select 1 from scenario_test_action_policies p where p.app_id = c.app_id)`)
 	if err != nil {
 		return nil, err
@@ -15196,6 +15265,22 @@ func (s *PgStore) SuspendCronsForApp(ctx context.Context, appID, reason string) 
 		 where app_id = $1 and enabled = true and suspended_reason = ''`, appID, reason)
 	if err != nil {
 		return 0, fmt.Errorf("state: suspend crons for app: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// SuspendCronsForAppScope suspends only the crons of one environment of the
+// app, whose live deployment went away (ADR-20261104120000).
+func (s *PgStore) SuspendCronsForAppScope(ctx context.Context, appID, scope, reason string) (int, error) {
+	if reason != CronSuspendedNoLiveDeployment {
+		return 0, ErrInvalidArgument
+	}
+	tag, err := s.pool.Exec(ctx, `
+		update crons
+		   set suspended_reason = $2
+		 where app_id = $1 and deployment_scope = $3 and enabled = true and suspended_reason = ''`, appID, reason, scope)
+	if err != nil {
+		return 0, fmt.Errorf("state: suspend environment crons for app: %w", err)
 	}
 	return int(tag.RowsAffected()), nil
 }
@@ -17203,7 +17288,7 @@ func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoca
 	if err != nil {
 		return Invocation{}, err
 	}
-	if info.environment.ID != "" {
+	if info.environment.ID != "" && !stageCronInvocationShape(inv) {
 		if err := bindInvocationEnvironmentDB(ctx, tx, info, out); err != nil {
 			return Invocation{}, err
 		}
@@ -22894,7 +22979,9 @@ func classifyInvoiceRefundStatus(status string) invoiceRefundLifecycle {
 // RecordInvoiceRefund stores a provider refund and advances its lifecycle in
 // one transaction. Pending refunds reserve refundable value separately from
 // settled money; a later webhook updates the same row and moves the aggregate
-// exactly once. Terminal state cannot be regressed by an out-of-order event.
+// exactly once. A settled refund can still fail (the provider reports the
+// refund returned); failed is terminal and is never regressed by an
+// out-of-order event.
 func (s *PgStore) RecordInvoiceRefund(ctx context.Context, refund InvoiceRefund) error {
 	if refund.InvoiceID == "" || refund.ProviderRefundID == "" || refund.IdempotencyKey == "" || refund.AmountCents <= 0 {
 		return errors.New("state: invoice refund requires invoice, provider refund, idempotency key, and positive amount")
@@ -22998,6 +23085,18 @@ func (s *PgStore) RecordInvoiceRefund(ctx context.Context, refund InvoiceRefund)
 			}
 			existing.Status = refund.Status
 		} else if oldState == invoiceRefundPending {
+			existing.Status = refund.Status
+		} else if oldState == invoiceRefundSettled && newState == invoiceRefundFailed {
+			// A provider can fail a refund after reporting it succeeded (the
+			// receiving bank returned it): the money was never refunded, so
+			// the settled amount and any credit it consumed are reversed.
+			// Failed is the only absorbing state (implicit state machines
+			// audit 2026-11-08, finding 5).
+			settledDelta = -refund.AmountCents
+			if existing.Source == "credit" {
+				creditDelta -= refund.AmountCents
+				reverseCredit = true
+			}
 			existing.Status = refund.Status
 		}
 		if _, err := tx.Exec(ctx,
@@ -26565,7 +26664,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 		&onlyAllowDeclaredRoutes, &declaredRoutesBytes, &visibility,
 		&a.RetryPolicyJSON, &securityPolicy, &orgID,
 		&a.RequestRateLimitRPS, &a.RequestRateLimitBurst, &egressPorts,
-		&a.PlatformTenantRequired, &a.EgressAllowlistRevision); err != nil {
+		&a.PlatformTenantRequired, &a.EgressAllowlistRevision, &a.SandboxTemplate); err != nil {
 		return mapErr(err)
 	}
 	a.EgressPorts = egressPortsFromDB(egressPorts)
@@ -26767,7 +26866,9 @@ const appsSelectColumns = `
 	-- Read with egress_allowlist/egress_ports in one row so a wake request
 	-- can name the revision of the policy it carries; appended to keep
 	-- positional scans stable.
-	egress_allowlist_revision`
+	egress_allowlist_revision,
+	-- ADR-20261027090013: sandbox template build apps.
+	sandbox_template`
 
 // Compile-time anchor: the const is interpolated only inside SQL raw-string
 // literals (the 9 SELECT/RETURNING sites), which golangci-lint's `unused`
@@ -27306,7 +27407,7 @@ func scanCronRow(row interface{ Scan(...any) error }) (Cron, error) {
 	if err := row.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled,
 		&c.SuspendedReason, &c.Timezone, &c.SkipIfRunning, &lastFired, &c.CreatedAt,
 		&c.Command, &c.CommandShell, &c.CommandTimeoutSeconds, &c.CommandMaxOutputBytes,
-		&c.RetryMax, &c.RetryBackoffSeconds, &schedulePolicy, &failureRules, &c.ScheduleRevision, &anchor); err != nil {
+		&c.RetryMax, &c.RetryBackoffSeconds, &schedulePolicy, &failureRules, &c.ScheduleRevision, &anchor, &c.DeploymentScope); err != nil {
 		return Cron{}, err
 	}
 	if anchor.Valid {
@@ -29091,7 +29192,7 @@ func (s *PgStore) ListBuildsForAccountPaged(
 // newest crons surface first.
 func (s *PgStore) ListCronsForAccount(ctx context.Context, accountID string) ([]Cron, error) {
 	rows, err := s.pool.Query(ctx,
-		`select c.id, c.app_id, c.schedule, c.path, c.enabled, c.suspended_reason, c.timezone, c.skip_if_running, c.last_fired_at, c.created_at, c.command, c.command_shell, c.command_timeout_seconds, c.command_max_output_bytes, c.retry_max, c.retry_backoff_seconds, c.schedule_policy, c.failure_rules, c.schedule_revision, c.schedule_anchor_at
+		`select c.id, c.app_id, c.schedule, c.path, c.enabled, c.suspended_reason, c.timezone, c.skip_if_running, c.last_fired_at, c.created_at, c.command, c.command_shell, c.command_timeout_seconds, c.command_max_output_bytes, c.retry_max, c.retry_backoff_seconds, c.schedule_policy, c.failure_rules, c.schedule_revision, c.schedule_anchor_at, c.deployment_scope
 		 from crons c
 		 join apps a on a.id = c.app_id
 		 where a.account_id = $1
@@ -30479,6 +30580,9 @@ func (s *PgStore) ConsumeOrgInvitation(ctx context.Context, hash []byte, accepti
 	}
 	if !strings.EqualFold(inv.Email, accepting.Email) {
 		return OrgMembership{}, OrgInvitation{}, ErrOrgInvitationInvalid
+	}
+	if err := checkInviterTx(ctx, tx, inv); err != nil {
+		return OrgMembership{}, OrgInvitation{}, err
 	}
 
 	// (3) Serialize status, plan and last-seat admission on the org row.

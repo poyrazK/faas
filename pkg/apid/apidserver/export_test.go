@@ -629,6 +629,8 @@ var NewObsPR3Env = newObsPR3Env
 var NewPgBackupPushedSampler = newPgBackupPushedSampler
 var NewPreviewJanitor = newPreviewJanitor
 var NewProjectLifecycleFixture = newProjectLifecycleFixture
+
+var CopyPromotedArtifactStamps = copyPromotedArtifactStamps
 var NewRuntimeConfigManager = newRuntimeConfigManager
 
 func (s *server) ConfigureHostingForTest(getenv func(string) string) error {
@@ -1614,6 +1616,12 @@ func (r *server) ValidateProjectDeploymentEnvironment(p0 context.Context, p1 sta
 func (r *server) VerifyOAuthAccountEmail(p0 context.Context, p1 state.Account, p2 string) (state.Account, error) {
 	return r.verifyOAuthAccountEmail(p0, p1, p2)
 }
+func (r *server) EndOtherAccessAfterMFAEnroll(p0 *http.Request, p1 state.Account) {
+	r.endOtherAccessAfterMFAEnroll(p0, p1)
+}
+func (r *server) KeysLeftAfterReset(p0 context.Context, p1 state.Account) []state.APIKey {
+	return r.keysLeftAfterReset(p0, p1)
+}
 func (r *server) RemoveForeignProviderLinks(p0 context.Context, p1 string, p2 string) {
 	r.removeForeignProviderLinks(p0, p1, p2)
 }
@@ -1829,6 +1837,27 @@ func (r *server) ConfigureProductEmail(getenv func(string) string) error {
 }
 
 func (s *server) RehearsalNetworkEnabled() *bool { return &s.rehearsalNetworkEnabled }
+
+// EnvironmentBranchContainmentEnabled is the contained/simulated branch
+// operator gate (ADR-20261031193635 slices 6a and 6b).
+func (s *server) EnvironmentBranchContainmentEnabled() *bool {
+	return &s.environmentBranchContainmentEnabled
+}
+
+// EnvironmentBranchContainedObjectsEnabled is the bridge object relay gate
+// (ADR-20261031193635 slice 6c).
+func (s *server) EnvironmentBranchContainedObjectsEnabled() *bool {
+	return &s.environmentBranchContainedObjectsEnabled
+}
+
+// EnableEnvironmentBranchesForTest turns environment_branches_enabled on.
+func (s *server) EnableEnvironmentBranchesForTest(t *testing.T) {
+	t.Helper()
+	s.runtimeConfig = newRuntimeConfigManager(nil)
+	if err := s.runtimeConfig.apply(runtimeConfigEnvironmentBranches, json.RawMessage("true")); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func (s *server) RehearsalSimulationEnabled() *bool { return &s.rehearsalSimulationEnabled }
 func (s *server) RehearsalCommandsEnabled() *bool   { return &s.rehearsalCommandsEnabled }
@@ -2111,6 +2140,11 @@ func (r *server) ResetTOTPAttempts(ctx context.Context, accountID string) {
 // TOTPMaxFailures is the per-account TOTP attempt limit.
 const TOTPMaxFailures = totpMaxFailures
 
+// ExpireComplimentaryAccounts runs one complimentary-account expiry sweep at now.
+func (r *server) ExpireComplimentaryAccounts(ctx context.Context, now time.Time) int {
+	return r.expireComplimentaryAccounts(ctx, now)
+}
+
 // ExpireUnverifiedAccounts runs one unverified-account expiry sweep.
 func (r *server) ExpireUnverifiedAccounts(ctx context.Context) int {
 	return r.expireUnverifiedAccounts(ctx)
@@ -2353,6 +2387,10 @@ var CSVSafeCell = csvSafeCell
 // enforcement.
 var ManagedPostgresCapNoticeReady = managedPostgresCapNoticeReady
 
+// ManagedPostgresPlanExcessDeleteReady exposes the startup gate on deleting
+// databases past their plan (ADR-20261110184700).
+var ManagedPostgresPlanExcessDeleteReady = managedPostgresPlanExcessDeleteReady
+
 func (s *server) GetEnvironmentRollbackReceipt(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	s.getEnvironmentRollbackReceipt(w, r, acct)
 }
@@ -2393,3 +2431,44 @@ func NewUsageSummaryEgressProvider(mode billing.MeterDeliveryMode) billing.Provi
 
 // PlanWorkloadPublicAuthMode exposes the plan's public URL auth (H32-30).
 var PlanWorkloadPublicAuthMode = planWorkloadPublicAuthMode
+
+var KeyApprovalCategories = keyApprovalCategories
+
+// ProjectEnvironmentPlanURLs applies the two-service project fixture, adds a
+// staging environment and scans it (Hunt 33 H33-33). It returns the staging
+// environment ID, the apps' IDs by workload name and the staging plan.
+func ProjectEnvironmentPlanURLs(t *testing.T) (string, map[string]string, api.PlanResponse) {
+	t.Helper()
+	s, store, acct, key := projectSecretsTestServer(t, api.ScopesAdminOnly)
+	if rec := projectSecretsRequest(t, s, key, "/v1/projects", "", nil); rec.Code != 200 {
+		t.Fatalf("initial apply: %d %s", rec.Code, rec.Body)
+	}
+	project, err := store.MemStore.ProjectBySlug(t.Context(), acct.ID, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := store.MemStore.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apps, err := store.MemStore.AppsForProject(t.Context(), acct.ID, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]string{}
+	for _, app := range apps {
+		ids[app.WorkloadName] = app.ID
+	}
+	rec := projectSecretsRequest(t, s, key, "/v1/projects/scan", "", map[string]string{"environment": "staging"})
+	if rec.Code != 200 {
+		t.Fatalf("staging scan: %d %s", rec.Code, rec.Body)
+	}
+	var plan api.PlanResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	return env.ID, ids, plan
+}
+
+// ProjectEnvironmentWorkloadURL exposes the environment URL builder.
+var ProjectEnvironmentWorkloadURL = projectEnvironmentWorkloadURL

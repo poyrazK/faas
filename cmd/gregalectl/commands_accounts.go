@@ -36,7 +36,7 @@ type accountMutationOutput struct {
 
 func cmdAccountsDispatch(args []string) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl accounts: missing subcommand; want list|show|360|activity|suspend|restore|revoke-sessions|reset-mfa|revert-email|object-storage-ceiling")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl accounts: missing subcommand; want list|show|360|activity|suspend|restore|revoke-sessions|reset-mfa|revert-email|object-storage-ceiling|complimentary")
 		return 2
 	}
 	switch args[0] {
@@ -52,6 +52,8 @@ func cmdAccountsDispatch(args []string) int {
 		return cmdAccountsMutation(args[0], args[1:])
 	case "object-storage-ceiling":
 		return cmdAccountsObjectStorageCeiling(args[1:])
+	case "complimentary":
+		return cmdAccountsComplimentary(args[1:])
 	default:
 		_, _ = fmt.Fprintf(osStderr, "gregalectl accounts: unknown subcommand %q\n", args[0])
 		return 2

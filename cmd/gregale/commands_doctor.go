@@ -257,8 +257,13 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	if _, err := os.ReadDir(abs); err != nil {
 		return printErr("Could not read source directory", err)
 	}
-	appEnv := loadDoctorAppEnv(context.Background(), *appFlag, abs)
-	report := withSourceCheck(runDoctorChecksForApp(abs, detectShape(abs), &appEnv), abs)
+	var report doctorReport
+	if hasDeployableSource(abs) {
+		appEnv := loadDoctorAppEnv(context.Background(), *appFlag, abs)
+		report = runDoctorChecksForApp(abs, detectShape(abs), &appEnv)
+	} else {
+		report = noSourceDoctorReport(abs)
+	}
 	if check, found := doctorCheckCapabilities(context.Background(), abs); found {
 		report.Checks = append([]doctorCheck{check}, report.Checks...)
 	}
@@ -324,15 +329,25 @@ func runDoctorChecksForApp(path string, deploymentShape shape, appEnv *doctorApp
 	return rep
 }
 
-// withSourceCheck adds the source finding to standalone doctor. Deploy
-// refuses a directory with no app marker or function handler; a Compose root
-// deploys with --project instead, and deploy preflights check their own shape.
-func withSourceCheck(report doctorReport, dir string) doctorReport {
-	if detectShape(dir) != shapeUnknown || composeFileIn(dir) != "" {
-		return report
+// hasDeployableSource reports whether deploy would accept dir: an app marker,
+// a function handler, or a Compose root (which deploys with --project).
+// Deploy preflights check their own shape.
+func hasDeployableSource(dir string) bool {
+	return detectShape(dir) != shapeUnknown || composeFileIn(dir) != ""
+}
+
+// noSourceDoctorReport is standalone doctor on a directory deploy would
+// refuse. The source scans are skipped rather than run: they walk the whole
+// tree, and doctor run from a home directory walked every file under it and
+// stalled on macOS-protected folders in ~/Library.
+func noSourceDoctorReport(dir string) doctorReport {
+	const reason = "no deployable source to scan"
+	rep := doctorReport{Path: dir, Checks: []doctorCheck{doctorCheckNoSource()}}
+	for _, name := range []string{"port-bind", "loopback-bind", "arch", "env-required", "stateless-only"} {
+		rep.Checks = append(rep.Checks, doctorCheck{Name: name, Status: "skipped", Reason: reason})
 	}
-	report.Checks = append([]doctorCheck{doctorCheckNoSource()}, report.Checks...)
-	return report
+	rep.Checks = append(rep.Checks, doctorCheckRuntimeOOM(), doctorCheckDepInstall(), doctorCheckStartupTimeout())
+	return rep
 }
 
 // doctorCheckNoSource reports a directory deploy would refuse: no app marker

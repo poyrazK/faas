@@ -2384,6 +2384,21 @@ groups:
           description: "Prometheus cannot scrape s3-gatewayd's control listener on {{ $labels.node }}. Its s3 tunnel connector leaves the tunnel once the gateway's unit stops; check faas-s3-gatewayd-compute on that node."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
 
+      # Object storage audit OS-10: the control-plane gateway behind
+      # s3.<domain> had no availability alert of its own.
+      - alert: FaasS3GatewayDown
+        expr: up{job="s3-gatewayd"} == 0
+        for: 2m
+        labels:
+          severity: page
+          component: s3-gatewayd
+          family: object_storage
+          public_status: internal
+        annotations:
+          summary: "The control-plane S3 gateway is not answering"
+          description: "Prometheus cannot scrape s3-gatewayd's control listener on the control plane. While it is down every request to s3.<domain> fails; check faas-s3-gatewayd there."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+
       - alert: FaasComputeObjectGatewayConnectorDisconnected
         expr: (up{job="cloudflared-s3"} == 0) or (cloudflared_tunnel_ha_connections{job="cloudflared-s3"} == 0)
         for: 2m
@@ -7892,6 +7907,36 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
           summary: "apid's object storage inventory sweep is falling behind"
           description: "The oldest bucket inventory admission still needs is {{ $value | humanizeDuration }} old. At 900 s that bucket's reads and writes answer 503; faas_object_storage_inventory_due_buckets shows the backlog."
+      # ADR-20261110151628 §2: with object_inventory_quiet on, a quiet
+      # bucket is verified once its observation is 23 h old and refuses at
+      # 24 h. Past 23.5 h the daily verification is falling behind.
+      - alert: FaasObjectStorageInventoryQuietBacklog
+        expr: |
+          max(faas_object_storage_inventory_oldest_observation_age_seconds{class="quiet"}) > 84600
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "apid's daily verification of quiet buckets is falling behind"
+          description: "The oldest quiet bucket inventory is {{ $value | humanizeDuration }} old. At 24 h that bucket's reads and writes answer 503."
+      # A quiet bucket (nothing admitted since its last listing started) whose
+      # verification listing counted something else was written around
+      # admission. object_inventory_quiet moves to on only after a shadow
+      # week without this.
+      - alert: FaasObjectStorageInventoryDrift
+        expr: |
+          sum(increase(faas_object_storage_inventory_drift_total[1h])) > 0
+        labels:
+          severity: warn
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "A quiet bucket's contents changed without passing admission"
+          description: "{{ $value | humanize }} verification listings of quiet buckets in the last hour counted different bytes or keys than the listing before. apid logs each bucket (\"object storage inventory drift on a quiet bucket\")."
       # Hunt 14 H14-14: a provider that refuses the credentials (here a closed
       # billing account) withdraws object storage; every bucket create failed
       # for three weeks with nothing paging.

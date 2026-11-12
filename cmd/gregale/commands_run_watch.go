@@ -134,6 +134,13 @@ func emitExecutionWatchEvent(event api.Event, receipt *api.ExecutionResponse) er
 		})
 	}
 	switch event.Event {
+	case "gap":
+		var payload struct {
+			ExecutionID string `json:"execution_id"`
+		}
+		_ = json.Unmarshal([]byte(event.Data), &payload)
+		PrintWarn(osStderr, "some run output expired from the event stream; read complete stored output with: %s sandbox get %s",
+			recoveryCLI(), recoveryArgument(payload.ExecutionID))
 	case "status":
 		var payload struct {
 			Status api.ExecutionStatus `json:"status"`

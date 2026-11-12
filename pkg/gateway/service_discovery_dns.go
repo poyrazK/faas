@@ -25,8 +25,11 @@ const (
 	// RehearsalServiceDiscoveryDNSPort mirrors netns's private-only DNS port.
 	// The vmmd protocol test keeps this agreement across the ownership boundary.
 	RehearsalServiceDiscoveryDNSPort = 5354
-	serviceDiscoveryTTL              = 5
-	serviceDiscoveryTimeout          = 2 * time.Second
+	// SandboxRegistriesDNSPort mirrors netns's registries-only DNS port for
+	// sandbox sessions (ADR-20261027090013 §6); the same vmmd test keeps it.
+	SandboxRegistriesDNSPort = 5356
+	serviceDiscoveryTTL      = 5
+	serviceDiscoveryTimeout  = 2 * time.Second
 )
 
 // ServiceDiscoveryDNSHandler answers private service names on a compute
@@ -45,7 +48,12 @@ type ServiceDiscoveryDNSHandler struct {
 	serviceAddr     ServiceAddressLookup
 	scenarioChaos   *serviceDiscoveryDNSChaos
 	database        databaseRoute
+	objectRelay     string
 	privateOnly     bool
+	// allowedHost, when set, is the only names the resolver answers: it
+	// forwards one question for an allowed name and refuses everything else,
+	// private service names included.
+	allowedHost func(name string) bool
 }
 
 // databaseRoute answers <database-id>.<suffix> with the platform database
@@ -79,12 +87,49 @@ func (h *ServiceDiscoveryDNSHandler) databaseRouteName(name string) bool {
 	return h.database.suffix != "" && privateServiceName(name, h.database.suffix) != ""
 }
 
+// WithObjectRelayName answers name with this node's bridge address: the
+// bridge object relay contained environment branch guests dial for object
+// storage (ADR-20261031193635 slice 6c). The name follows a restored guest to
+// any node, where an address baked into its environment would not.
+func (h *ServiceDiscoveryDNSHandler) WithObjectRelayName(name string) *ServiceDiscoveryDNSHandler {
+	h.objectRelay = strings.Trim(strings.ToLower(strings.TrimSpace(name)), ".")
+	return h
+}
+
+func (h *ServiceDiscoveryDNSHandler) objectRelayName(name string) bool {
+	return h.objectRelay != "" && strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".") == h.objectRelay
+}
+
 // WithPrivateServiceNamesOnly configures the dedicated rehearsal listener.
 // It never forwards upstream, resolves aliases or returns direct service
 // addresses, including before a caller has published its runtime identity.
 func (h *ServiceDiscoveryDNSHandler) WithPrivateServiceNamesOnly() *ServiceDiscoveryDNSHandler {
 	h.privateOnly = true
 	return h
+}
+
+// WithAllowedNamesOnly configures the listener for registries-mode sandbox
+// sessions (ADR-20261027090013 §6). It forwards a single A or AAAA question
+// for a name allowed reports true, so the ADR-373 hook admits only addresses
+// answered for allowed names, and refuses every other query, including
+// private service names.
+func (h *ServiceDiscoveryDNSHandler) WithAllowedNamesOnly(allowed func(name string) bool) *ServiceDiscoveryDNSHandler {
+	h.allowedHost = allowed
+	return h
+}
+
+// serveAllowedOnly answers a query on an allowed-names listener.
+func (h *ServiceDiscoveryDNSHandler) serveAllowedOnly(w dns.ResponseWriter, req *dns.Msg) {
+	if len(req.Question) != 1 {
+		h.writeRcode(w, req, dns.RcodeRefused)
+		return
+	}
+	q := req.Question[0]
+	if (q.Qtype != dns.TypeA && q.Qtype != dns.TypeAAAA) || q.Qclass != dns.ClassINET || !h.allowedHost(q.Name) {
+		h.writeRcode(w, req, dns.RcodeRefused)
+		return
+	}
+	h.forward(w, req)
 }
 
 // ServiceAddressLookup returns the private service address (ADR-576) the
@@ -257,6 +302,10 @@ func (h *ServiceDiscoveryDNSHandler) ServeDNS(w dns.ResponseWriter, req *dns.Msg
 	if h.refuseBlocked(w, req) {
 		return
 	}
+	if h.allowedHost != nil {
+		h.serveAllowedOnly(w, req)
+		return
+	}
 	private := false
 	external := false
 	caller := ""
@@ -269,7 +318,7 @@ func (h *ServiceDiscoveryDNSHandler) ServeDNS(w dns.ResponseWriter, req *dns.Msg
 			h.writeRcode(w, req, dns.RcodeRefused)
 			return
 		}
-		if serviceDiscoveryName(question.Name) != "" || h.databaseRouteName(question.Name) {
+		if serviceDiscoveryName(question.Name) != "" || h.databaseRouteName(question.Name) || h.objectRelayName(question.Name) {
 			private = true
 			continue
 		}

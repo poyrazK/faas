@@ -189,22 +189,29 @@ func TestCandidateBindingPostgresRotationAfterReceiptStaysHeld(t *testing.T) {
 	}
 }
 
-func TestCandidateBindingPostgresUnsupportedAccessStaysHeld(t *testing.T) {
-	postgresQualificationStores(t, func(t *testing.T, basic gitOpsTestStore, pool *pgxpool.Pool) {
-		lease, plan, requests, placement := candidateBindingFixture(t, basic, "", "")
-		store := basic.(candidatePostgresTestStore)
-		api := httpCandidate(t, requests)
-		_, version := seedCandidatePostgresBinding(t, store, pool, lease.Source.AccountID, api.AppID, "GREGALE_DATA_API_URL", "data_api")
-		completeCandidateBindingCohortWithSecrets(t, store, requests, placement, true,
-			map[string]map[string]int64{api.AppID: {"production/GREGALE_DATA_API_URL": version}})
-		if checks, err := store.PendingEnvironmentQualificationPostgresChecks(t.Context(), api.GraphID); err != nil || len(checks) != 0 {
-			t.Fatalf("unsupported access was offered for verification: %+v %v", checks, err)
-		}
-		if _, active, err := store.ActivateEnvironmentGitOpsWorkloadGraph(t.Context(), lease, plan); active || !state.IsBindingReleaseRequired(err) {
-			t.Fatalf("Data API binding activated under enforcement: %v %v", active, err)
-		}
-		assertCandidatesHeld(t, basic, requests)
-	})
+// ADR-20261110120000: Data API and Auth use their own qualified privilege
+// contracts, so neither requires a runtime ACL receipt to activate the graph.
+func TestCandidateBindingPostgresSelfQualifiedAccessDoesNotRequireACLReceipt(t *testing.T) {
+	for _, access := range []string{"data_api", "auth"} {
+		t.Run(access, func(t *testing.T) {
+			postgresQualificationStores(t, func(t *testing.T, basic gitOpsTestStore, pool *pgxpool.Pool) {
+				lease, plan, requests, placement := candidateBindingFixture(t, basic, "", "")
+				store := basic.(candidatePostgresTestStore)
+				api := httpCandidate(t, requests)
+				const key = "SERVICE_DATABASE_URL"
+				_, version := seedCandidatePostgresBinding(t, store, pool, lease.Source.AccountID, api.AppID, key, access)
+				completeCandidateBindingCohortWithSecrets(t, store, requests, placement, true,
+					map[string]map[string]int64{api.AppID: {"production/" + key: version}})
+				if checks, err := store.PendingEnvironmentQualificationPostgresChecks(t.Context(), api.GraphID); err != nil || len(checks) != 0 {
+					t.Fatalf("self-qualified access was offered for ACL verification: %+v %v", checks, err)
+				}
+				release, active, err := store.ActivateEnvironmentGitOpsWorkloadGraph(t.Context(), lease, plan)
+				if err != nil || !active || len(release.Members) != len(requests) {
+					t.Fatalf("self-qualified %s binding blocked activation: %+v %v %v", access, release, active, err)
+				}
+			})
+		})
+	}
 }
 
 // Without a secret write the candidate stays qualified, so only the

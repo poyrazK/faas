@@ -153,7 +153,7 @@ API-key scopes and human MFA/verification still apply. App-scoped deploy tokens
 cannot administer an entire project. A deploy token acts as the member who
 minted or last rotated it, with that member's current role, so it stops working
 when they leave; tokens minted before 2026-11-10 act as the app's creator
-(ADR-20261110190000). Only a key's holder can rotate an organization key,
+(ADR-20261110190500). Only a key's holder can rotate an organization key,
 because rotation returns the new key's plaintext; owners and admins can still
 revoke anyone's. An organization key cannot manage its holder's personal
 account, keys or sessions (`/v1/keys`, `/v1/auth/sessions`, account deletion,
@@ -194,9 +194,11 @@ URLs and dashboard lists also enforce departure and role changes.
 A company project links its repository through the company's own GitHub
 installation, never a member's personal one
 ([ADR-20261110200000](adr/20261110200000-organization-owned-github-installations.md)).
-An owner or admin connects it from Connect GitHub with the company selected
-(the form's `organization` field); the role is checked again when GitHub
-returns. An installation belongs to one Gregale owner, so disconnect it from a
+An owner or admin connects it from the GitHub section of the organization's
+dashboard page (Connect GitHub for the company); the role is checked again
+when GitHub returns. The same section lists the company's installations to
+every member and lets owners and admins disconnect one, which unlinks every
+company project bound through it. An installation belongs to one Gregale owner, so disconnect it from a
 personal account before connecting it for the company. Owners and admins then
 set `repo_full_name` with `PATCH /v1/orgs/{organization}/projects/{slug}`;
 members list the company's installations at
@@ -268,6 +270,13 @@ organization routes. See [ADR-202610171906](adr/202610171906-organization-manage
 for backfill, rollout and acceptance requirements.
 
 ## Removing a member
+
+Removing a member, changing a member's role, transferring ownership and
+inviting an admin email every owner and the member concerned; changing the
+billing email emails the previous billing address and the owners
+(ADR-20261111130000). An invitation only works while the member who sent it
+is still an owner or admin: invitations an admin sent stop working when the
+admin is demoted or removed.
 
 `DELETE /v1/orgs/{slug}/members/{user_id}` removes the member and revokes their
 organization API keys (including rotation grace keys), deploy tokens for the

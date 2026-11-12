@@ -1,0 +1,28 @@
+=== RUN   TestInvestigationSchemaLiteralDataDoesNotHideTools
+=== RUN   TestInvestigationSchemaLiteralDataDoesNotHideTools/default
+    zz_investigation_round4_test.go:41: valid tool was hidden because default data was interpreted as schema: tools=0 rejected=[{Name:lookup Reason:schema properties must be an object}]
+=== RUN   TestInvestigationSchemaLiteralDataDoesNotHideTools/examples
+    zz_investigation_round4_test.go:41: valid tool was hidden because examples data was interpreted as schema: tools=0 rejected=[{Name:lookup Reason:schema properties must be an object}]
+=== RUN   TestInvestigationSchemaLiteralDataDoesNotHideTools/const
+    zz_investigation_round4_test.go:41: valid tool was hidden because const data was interpreted as schema: tools=0 rejected=[{Name:lookup Reason:schema properties must be an object}]
+=== RUN   TestInvestigationSchemaLiteralDataDoesNotHideTools/enum
+    zz_investigation_round4_test.go:41: valid tool was hidden because enum data was interpreted as schema: tools=0 rejected=[{Name:lookup Reason:schema properties must be an object}]
+--- FAIL: TestInvestigationSchemaLiteralDataDoesNotHideTools (0.01s)
+    --- FAIL: TestInvestigationSchemaLiteralDataDoesNotHideTools/default (0.00s)
+    --- FAIL: TestInvestigationSchemaLiteralDataDoesNotHideTools/examples (0.00s)
+    --- FAIL: TestInvestigationSchemaLiteralDataDoesNotHideTools/const (0.00s)
+    --- FAIL: TestInvestigationSchemaLiteralDataDoesNotHideTools/enum (0.00s)
+=== RUN   TestInvestigationCatalogAcceptsStandardMetadata
+=== RUN   TestInvestigationCatalogAcceptsStandardMetadata/resource
+    zz_investigation_round4_test.go:87: official SDK resource definition with standard _meta was rejected: decode resources/list resources: json: unknown field "_meta"
+=== RUN   TestInvestigationCatalogAcceptsStandardMetadata/template
+    zz_investigation_round4_test.go:87: official SDK template definition with standard _meta was rejected: decode resources/templates/list resourceTemplates: json: unknown field "_meta"
+=== RUN   TestInvestigationCatalogAcceptsStandardMetadata/prompt
+    zz_investigation_round4_test.go:87: official SDK prompt definition with standard _meta was rejected: decode prompts/list prompts: json: unknown field "_meta"
+--- FAIL: TestInvestigationCatalogAcceptsStandardMetadata (0.00s)
+    --- FAIL: TestInvestigationCatalogAcceptsStandardMetadata/resource (0.00s)
+    --- FAIL: TestInvestigationCatalogAcceptsStandardMetadata/template (0.00s)
+    --- FAIL: TestInvestigationCatalogAcceptsStandardMetadata/prompt (0.00s)
+FAIL
+FAIL	github.com/onebox-faas/faas/pkg/mcphosting	0.075s
+FAIL

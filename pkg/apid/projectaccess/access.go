@@ -183,6 +183,9 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 	if !supported {
 		return zero, member, fence, api.ErrOrgRoleForbidden("use a project operation without a reviewed organization permission")
 	}
+	if action, err = environmentDeleteAction(r, store, project, action); err != nil {
+		return zero, member, fence, lookupProblem(err)
+	}
 	// Past due loses only deploys (spec §4.7); the owner account carries it.
 	if org.Status != state.OrgStatusActive && org.Status != state.OrgStatusPastDue && action != authz.OrgActionReadProject && action != authz.OrgActionReadQueues {
 		return zero, member, fence, api.ErrOrgRoleForbidden("change a project in an inactive organization")
@@ -205,6 +208,58 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 		fence.CredentialID, fence.CredentialOrgID = key.ID, key.OrgID
 	}
 	return owner, member, fence, nil
+}
+
+// branchReader is the optional store capability that tells a branch from
+// any other environment.
+type branchReader interface {
+	ProjectEnvironmentBranchBySlug(ctx context.Context, accountID, projectID, slug string) (state.ProjectEnvironmentBranch, error)
+}
+
+// environmentDeleteAction lets whoever may create an environment branch
+// delete one before it expires (ADR-20261031193635, company projects):
+// deleting a branch needs the configure action, deleting any other
+// environment still needs the delete action. A store without branches keeps
+// the delete action.
+func environmentDeleteAction(r *http.Request, store Store, project state.Project, action authz.OrgAction) (authz.OrgAction, error) {
+	pattern := strings.Replace(r.Pattern, "/v1/orgs/{organization}/projects", "/v1/projects", 1)
+	if pattern != environmentDeletePattern {
+		return action, nil
+	}
+	branches, ok := store.(branchReader)
+	if !ok {
+		return action, nil
+	}
+	owner, err := state.ProjectResourceAccount(r.Context(), store, project)
+	if err != nil {
+		return action, err
+	}
+	_, err = branches.ProjectEnvironmentBranchBySlug(r.Context(), owner.ID, project.ID, r.PathValue("environment"))
+	switch {
+	case err == nil:
+		return authz.OrgActionConfigureProject, nil
+	case errors.Is(err, state.ErrNotFound):
+		return action, nil
+	default:
+		return action, err
+	}
+}
+
+// BranchParent refuses a member who may not branch parent: a branch copies
+// the parent's configuration and secrets into an unprotected environment a
+// developer may deploy to, so branching a protected environment needs the
+// action that approves it. Production is the exception, as it is for
+// releases (ADR-20261019071733 amendment 9): a developer already deploys to
+// it directly, so its branch hands them nothing new. Personal projects pass.
+func BranchParent(r *http.Request, parent state.ProjectEnvironment) *api.Problem {
+	if _, shared := From(r.Context()); !shared || !parent.Protected || state.IsProductionScope(parent.Slug) {
+		return nil
+	}
+	_, _, member, ok := authmw.PrincipalFrom(r)
+	if !ok || member == nil || !authz.Can(member.Role, authz.OrgActionApproveProjectEnvironment) {
+		return api.ErrOrgRoleForbidden("branch a protected project environment")
+	}
+	return nil
 }
 
 func lookupProblem(err error) *api.Problem {

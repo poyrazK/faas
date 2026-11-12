@@ -95,6 +95,9 @@ type githubdBridge struct {
 	// agentSteps reports whether an account may deploy workflow agent steps
 	// (ADR-20261027090010 §1); nil refuses them.
 	agentSteps func(state.Account) bool
+	// githubSubscriptions publishes a forwarded GitHub event to the agent
+	// threads subscribed to it (ADR-20261030125501 §4); nil publishes to none.
+	githubSubscriptions func(ctx context.Context, accountID, deliveryID string, event api.GitHubPullRequestEvent) error
 	// releasePhaseOff refuses a push that declares a release command while
 	// FAAS_RELEASE_PHASE_ENABLED is off on apid.
 	releasePhaseOff bool
@@ -898,7 +901,7 @@ func deploymentKindToWireLabel(k state.DeploymentKind) string {
 // allowlist-checks req.SourcePath against. Empty stagingRoot
 // disables the check (test-only path; production wiring MUST set
 // it).
-func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool, applySettings bridgeSettingsApplier, previewDatabases func(context.Context, state.Account, api.Plan, state.App) error) {
+func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool, applySettings bridgeSettingsApplier, previewDatabases func(context.Context, state.Account, api.Plan, state.App) error, githubSubscriptions func(context.Context, string, string, api.GitHubPullRequestEvent) error) {
 	githubdpb.RegisterGithubdServer(s, &githubdBridge{
 		store:       store,
 		notif:       notif,
@@ -912,6 +915,8 @@ func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githu
 		releasePhaseOff:  releasePhaseOff,
 		applySettings:    applySettings,
 		previewDatabases: previewDatabases,
+
+		githubSubscriptions: githubSubscriptions,
 	})
 }
 

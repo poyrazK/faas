@@ -339,12 +339,12 @@ func TestBuildConfigPromotionBoot(t *testing.T) {
 // and names that major on the command line.
 func TestBuildConfigUpgradeBoot(t *testing.T) {
 	s := validSpec()
-	s.UpgradeFrom, s.UpgradeBasePath = 14, "/srv/fc/base/postgres-14.ext4"
+	s.UpgradeFrom, s.UpgradeBasePath = 15, "/srv/fc/base/postgres-15.ext4"
 	cfg, err := BuildConfig(s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if from, err := dbguest.UpgradeFrom(cfg.BootSource.BootArgs, 17); err != nil || from != 14 {
+	if from, err := dbguest.UpgradeFrom(cfg.BootSource.BootArgs, 17); err != nil || from != 15 {
 		t.Fatalf("boot args %q: upgrade from %d, %v", cfg.BootSource.BootArgs, from, err)
 	}
 	if len(cfg.Drives) != 3 || cfg.Drives[2].DriveID != DriveUpgradeBase || !cfg.Drives[2].IsReadOnly || cfg.Drives[2].IsRootDevice ||

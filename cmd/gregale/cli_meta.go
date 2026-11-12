@@ -304,9 +304,11 @@ func (s cliSub) subcommandChoice() string {
 // subcommandSynopsis renders the child-verb slot of a usage line. A verb
 // that also runs on its own (`postgres resize --class ... <database>` beside
 // `postgres resize status`) shows the child as optional; `<status>` read as a
-// required argument of the resize itself (ChronoLake finding 22).
+// required argument of the resize itself (ChronoLake finding 22). Flags alone
+// mark such a verb too: `release list [alias] [flags]` lists without the
+// child (Hunt 33 H33-4).
 func (s cliSub) subcommandSynopsis() string {
-	if len(s.Flags) > 0 && len(s.Positionals) > 0 {
+	if len(s.Flags) > 0 {
 		return "[" + s.subcommandChoice() + "]"
 	}
 	return "<" + s.subcommandChoice() + ">"
@@ -398,7 +400,7 @@ func appScaleCLIFlags() []cliFlag {
 		{Name: "size", Short: "RAM/CPU resource size", Value: "SIZE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}},
 		{Name: "profile", Short: "deprecated: use --size", Value: "SIZE"},
 		{Name: "ram", Short: "RAM in MB", Value: "MB"},
-		{Name: "cpu-millicores", Short: "sustained CPU allowance", Value: "250|500|1000", ClosedSet: []string{"250", "500", "1000"}},
+		{Name: "cpu-millicores", Short: "cap CPU at 250 or 500 millicores; 1000 (the default) leaves it uncapped", Value: "250|500|1000", ClosedSet: []string{"250", "500", "1000"}},
 		{Name: "max-concurrency", Short: "maximum instances (replicas) the app scales to", Value: "N"},
 		{Name: "concurrency-overflow", Short: "saturated concurrency behavior", Value: "POLICY", ClosedSet: []string{"queue", "drop"}},
 		{Name: "max-queue-depth", Short: "maximum queued requests at warm saturation", Value: "N"},
@@ -771,6 +773,7 @@ var cliCommands = []cliCommand{
 				{Name: "list", Short: "List multipart sessions", Positionals: []string{"<app>", "<bucket-id>"}, Flags: []cliFlag{{Name: "limit", Value: "N", Short: "page size (1..1000)"}, {Name: "cursor", Value: "ID", Short: "next page cursor"}}},
 				{Name: "status", Short: "Inspect a multipart session returned by an upload", Positionals: []string{"<app>", "<bucket-id>", "<upload-id>"}},
 				{Name: "parts", Short: "List uploaded multipart parts", Positionals: []string{"<app>", "<bucket-id>", "<upload-id>"}, Flags: []cliFlag{{Name: "limit", Value: "N", Short: "page size (1..1000)"}, {Name: "part-number-marker", Value: "N", Short: "last part from the previous page"}}},
+				{Name: "abort", Short: "Abort an unfinished multipart session, freeing the bucket it holds", Positionals: []string{"<app>", "<bucket-id>", "<upload-id>"}},
 			}},
 			{Name: "upload", Short: "Upload a file with resumable multipart transfers", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<file>"}, Flags: []cliFlag{{Name: "content-type", Value: "TYPE", Short: "object MIME type"}, {Name: "if-match", Value: "ETAG", Short: "replace a matching object (single PUT only)"}, {Name: "if-none-match", Value: "*", Short: "create only if absent (single PUT only)"}, {Name: "resume", Value: "UPLOAD-ID", Short: "resume a multipart upload from its local checkpoint"}, {Name: "timeout", Value: "DURATION", Short: "transfer deadline (default 30m)"}}},
 			{Name: "sign", Short: "Mint a short-lived signed URL to download or upload one object", Positionals: []string{"<app>", "<bucket-id>", "<key>"}, Flags: []cliFlag{
@@ -792,13 +795,13 @@ var cliCommands = []cliCommand{
 				{Name: "revoke", Short: "Prevent new copy dispatch from a source", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>", "<source-bucket-id>"}},
 			}}, {Name: "encryption-keys", Short: "List owned encryption capabilities and key references", Positionals: []string{"<app>", "<bucket-id>"}},
 			{Name: "encryption", Short: "Inspect or configure verified bucket encryption defaults", Subcommands: []cliSub{
-				{Name: "status", Short: "Show durable encryption progress", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "status", Aliases: []string{"get"}, Short: "Show durable encryption progress", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "clear", Short: "Remove the default for new writes", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "AES256", Short: "Set provider AES256 encryption", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "aws:kms", Short: "Set owned KMS encryption", Positionals: []string{"<app>", "<bucket-id>", "<owned-key-ref>", "[bucket-key-enabled]"}},
 				{Name: "aws:kms:dsse", Short: "Set owned dual-layer KMS encryption", Positionals: []string{"<app>", "<bucket-id>", "<owned-key-ref>"}},
 			}}, {Name: "object-lock", Short: "Inspect permanent Object Lock and configure retention defaults", Subcommands: []cliSub{
-				{Name: "status", Short: "Show durable Object Lock progress", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "status", Aliases: []string{"get"}, Short: "Show durable Object Lock progress", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "capabilities", Short: "Show enrolled bucket lock capabilities", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "enable", Short: "Permanently enable Object Lock without defaults", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "clear-default", Short: "Clear future defaults while keeping Object Lock enabled", Positionals: []string{"<app>", "<bucket-id>"}},
@@ -1579,7 +1582,7 @@ var cliCommands = []cliCommand{
 
 			{Name: "subscription-pause", Short: "Pause new routing admissions for one event consumer", Positionals: []string{"<app>", "<subscription-id>"}, Flags: []cliFlag{{Name: "yes", Short: "confirm pausing subscription delivery", Req: true, Bool: true}}},
 			{Name: "subscription-resume", Short: "Resume one consumer with paced backlog draining", Positionals: []string{"<app>", "<subscription-id>"}, Flags: []cliFlag{{Name: "rate", Short: "admissions per second (0..100; default 10; 0 removes pacing)", Value: "N"}, {Name: "yes", Short: "confirm resuming subscription delivery", Req: true, Bool: true}}},
-			{Name: "schema-rollout-preview", Short: "Preview schema version coverage and validate payload samples", Positionals: []string{"<source>", "<type>"}, Flags: []cliFlag{{Name: "version", Value: "VERSION", Short: "proposed or registered version"}, {Name: "schema", Value: "JSON|@FILE|-", Short: "proposed schema; omitted uses registry"}, {Name: "samples", Value: "JSON|@FILE|-", Short: "array of event data samples"}, {Name: "from", Value: "RFC3339", Short: "retained acceptance start"}, {Name: "until", Value: "RFC3339", Short: "exclusive retained acceptance end"}, {Name: "retained-limit", Value: "N", Short: "1..100 matching payloads; default 100"}}},
+			{Name: "schema-rollout-preview", Short: "Preview schema version coverage and validate payload samples", Positionals: []string{"<source>", "<type>"}, Flags: []cliFlag{{Name: "version", Value: "VERSION", Short: "proposed or registered version", Req: true}, {Name: "schema", Value: "JSON|@FILE|-", Short: "proposed schema; omitted uses registry"}, {Name: "samples", Value: "JSON|@FILE|-", Short: "array of event data samples"}, {Name: "from", Value: "RFC3339", Short: "retained acceptance start"}, {Name: "until", Value: "RFC3339", Short: "exclusive retained acceptance end"}, {Name: "retained-limit", Value: "N", Short: "1..100 matching payloads; default 100"}}},
 			{Name: "subscription-versions-status", Short: "Inspect schema version selection", Positionals: []string{"<app>", "<subscription-id>"}},
 			{Name: "subscription-versions-set", Short: "Select schema versions for future events", Positionals: []string{"<app>", "<subscription-id>"}, Flags: []cliFlag{{Name: "versions", Value: "v1,v2", Short: "up to 16 unique version identifiers"}, {Name: "yes", Short: "confirm selection"}}},
 			{Name: "subscription-versions-reset", Short: "Accept all schema versions for future events", Positionals: []string{"<app>", "<subscription-id>"}, Flags: []cliFlag{{Name: "yes", Short: "confirm reset"}}},
@@ -1862,7 +1865,7 @@ var cliCommands = []cliCommand{
 				{Name: "expected-app-id", Short: "immutable app UUID required for writes", Value: "UUID"},
 				{Name: "expected-environment-id", Short: "immutable environment UUID required for named writes", Value: "UUID"},
 				{Name: "ram", Short: "RAM in MB", Value: "MB"},
-				{Name: "cpu-millicores", Short: "CPU allowance", Value: "MILLICORES"},
+				{Name: "cpu-millicores", Short: "CPU cap: 250 or 500 millicores, or 1000 for none", Value: "MILLICORES"},
 				{Name: "max-concurrency", Short: "most instances the app runs at once", Value: "COUNT"},
 				{Name: "min", Short: "minimum warm instance count, including zero", Value: "COUNT"},
 			}, Examples: []string{"gregale app scaling my-api", "gregale app scaling my-api --expected-app-id 612e5aba-cd70-49e7-b29a-e5f73c29dcf2 --expected-revision 3 --request-id 4ed5f921-9eae-4bd0-a7ab-f851d38f745b --ram 512", "gregale app scaling my-api --receipt 4ed5f921-9eae-4bd0-a7ab-f851d38f745b"}},
@@ -1931,7 +1934,7 @@ var cliCommands = []cliCommand{
 			{Name: "size", Group: "Resources and scaling", Short: "set RAM/CPU resource size", Value: "SIZE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}},
 			{Name: "profile", Group: "Resources and scaling", Short: "deprecated: use --size", Value: "SIZE"},
 			{Name: "ram", Group: "Resources and scaling", Short: "set RAM in MB", Value: "MB"},
-			{Name: "cpu-millicores", Group: "Resources and scaling", Short: "set sustained CPU allowance", Value: "250|500|1000", ClosedSet: []string{"250", "500", "1000"}},
+			{Name: "cpu-millicores", Group: "Resources and scaling", Short: "cap CPU at 250 or 500 millicores; 1000 (the default) leaves it uncapped", Value: "250|500|1000", ClosedSet: []string{"250", "500", "1000"}},
 			{Name: "max-concurrency", Group: "Resources and scaling", Short: "set the maximum instances (replicas) the app scales to", Value: "N"},
 			{Name: "concurrency-overflow", Group: "Queues and timeouts", Short: "set saturated concurrency behavior", ClosedSet: []string{"queue", "drop"}},
 			{Name: "max-queue-depth", Group: "Queues and timeouts", Short: "set maximum queued requests (0 uses plan default)", Value: "N"},
@@ -3274,22 +3277,25 @@ var cliCommands = []cliCommand{
 	{
 		Name:     "dev",
 		DocSlug:  "dev",
-		Short:    "Sync local changes to a developer environment",
+		Short:    "Run locally or sync changes to a developer environment",
 		Examples: []string{"gregale dev --once", "gregale dev --path ./api --once", "gregale dev --all", "gregale dev --local"},
 		HelpNotes: []string{
-			"--local runs the project's Node, Python and Go functions on this machine with the production adapters and runner, at http://<function>.localhost:<port>, and reloads a function when its files change. Nothing is uploaded.",
+			"--local runs HTTP apps on this machine at http://localhost:<port>, using their development or start command and restarting on source edits. --watch-command overrides the app command. Functions use the production adapters and runner at http://<function>.localhost:<port>. Nothing is uploaded.",
+			"Remote development automatically selects hot reload for supported Node.js and Python apps. Explicit flags override dev.watch, and dev.watch overrides detection. Use --watch=false for production-shaped builds. Automatic selection falls back when the environment cannot support watch mode; explicit watch requests report the error.",
 		},
 		Flags: []cliFlag{
 			{Name: "path", Short: "source directory", Value: "DIR"},
-			{Name: "local", Short: "run the project's functions on this machine instead of a remote developer environment"},
+			{Name: "local", Short: "run HTTP apps or functions on this machine"},
 			{Name: "port", Short: "local port for --local (default 8787)", Value: "N"},
-			{Name: "no-reload", Short: "with --local, do not reload functions when their files change"},
+			{Name: "no-reload", Short: "with --local, do not restart on source or env-file edits"},
+			{Name: "watch", Short: "remote hot reload (automatic for supported apps; false uses production builds)", Bool: true},
+			{Name: "watch-command", Short: "development server command (with --local: HTTP app command)", Value: "CMD"},
 			{Name: "no-remote", Short: "with --local, do not connect to the developer session's database and buckets"},
 			{Name: "offline", Short: "with --local, run Postgres and buckets in Docker instead (with --postgres, --bucket)"},
 			{Name: "reset", Short: "with --local --offline, wipe the local database and bucket files first"},
 			{Name: "all", Short: "run one developer loop per deployable workspace app"},
 			{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
-			{Name: "env-file", Short: "sync KEY=VALUE entries as developer secrets (with --local: give them to every function)", Value: "PATH"},
+			{Name: "env-file", Short: "KEY=VALUE file (default: dev.env_file; local process settings or remote developer secrets)", Value: "PATH"},
 			{Name: "service-override-file", Short: "sync validated service URLs as developer secrets", Value: "PATH"},
 			{Name: "once", Short: "deploy once and exit"},
 			{Name: "stop", Short: "tear down the developer environment"},
@@ -3362,7 +3368,9 @@ var cliCommands = []cliCommand{
 					{Name: "payload", Short: "JSON payload, @file, or - for stdin", Value: "JSON"},
 				}},
 			}},
-			{Name: "setup", Short: "preflight a project and prepare the first developer environment", Flags: []cliFlag{
+			{Name: "setup", Short: "preflight a project and prepare the first developer environment", Notes: []string{
+				"Setup checks required configuration offline against selected files and planned bindings. Unselected .env declarations do not prove delivery. --start verifies unresolved key names in the developer session before upload; values are never displayed.",
+			}, Flags: []cliFlag{
 				{Name: "path", Short: "source directory", Value: "DIR"},
 				{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
 				{Name: "env-file", Short: "validate and sync developer secrets", Value: "PATH"},
@@ -3640,6 +3648,7 @@ var cliCommands = []cliCommand{
 				{Name: "fail-on-regression", Short: "exit 1 when confirmed customer migration regressions are found"},
 			}}}}}},
 			{Name: "wait", Short: "Wait for a preview deployment to become ready", Examples: []string{"gregale preview wait pr-42-my-api --progress --open"}, Positionals: []string{"<preview-slug>"}, Flags: []cliFlag{
+				{Name: "commit", Short: "wait until the preview serves this commit (a full or abbreviated SHA), such as the pull request's head", Value: "SHA"},
 				{Name: "progress", Short: "print deployment transitions while waiting"},
 				{Name: "open", Short: "open the preview URL after it becomes ready"},
 				{Name: "timeout", Short: "maximum wait (seconds, or a duration such as 10m)", Value: "SECONDS|DURATION"},
@@ -4894,6 +4903,25 @@ var cliCommands = []cliCommand{
 		Positionals: []string{"<id>"},
 	},
 	{
+		Name:    "sandbox-templates",
+		DocSlug: "sandbox-templates",
+		Short:   "Build sandbox templates from an E2B-style Dockerfile directory",
+		Subcommands: []cliSub{
+			{Name: "build", Short: "Build a template from e2b.toml and e2b.Dockerfile", Positionals: []string{"[<dir>]"}, Examples: []string{"gregale sandbox template publish ./my-template"}, Flags: []cliFlag{
+				{Name: "name", Short: "template name (default: e2b.toml template_name, else the directory name)", Value: "NAME"},
+				{Name: "dockerfile", Short: "Dockerfile inside the directory (default: e2b.toml dockerfile, else e2b.Dockerfile, else Dockerfile)", Value: "FILE"},
+				{Name: "start-cmd", Short: "command a session runs in the background at boot (default: e2b.toml start_cmd)", Value: "CMD"},
+				{Name: "ready-cmd", Short: "command polled until it exits 0 before a session is ready (default: e2b.toml ready_cmd)", Value: "CMD"},
+				{Name: "ready-timeout", Short: "seconds the ready command may take (default 60)", Value: "S"},
+				{Name: "no-wait", Short: "queue the build and return", Bool: true},
+				{Name: "wait-timeout", Short: "maximum time to wait for the build", Value: "D"},
+			}},
+			{Name: subList, Short: "List sandbox templates"},
+			{Name: subGet, Short: "Show one template and its newest build", Positionals: []string{"<name>"}},
+			{Name: subRm, Short: "Delete a template; running sessions keep their copy", Positionals: []string{"<name>"}},
+		},
+	},
+	{
 		Name:    "invocations",
 		DocSlug: "invocations",
 		Short:   "List, inspect and wait on invocations across your account",
@@ -5055,6 +5083,7 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{
 			{Name: "token", Short: "use a pre-minted token (CI)", Value: "TOKEN"},
 			{Name: "token-stdin", Short: "read a pre-minted token from stdin (CI)"},
+			{Name: "insecure-storage", Short: "save the key to a plaintext file instead of the OS keychain (WSL, containers, SSH)", Bool: true},
 		},
 	},
 	{
@@ -5424,6 +5453,8 @@ var cliCommands = []cliCommand{
 					{Name: "capabilities", Short: "comma-separated capabilities agents may get: deploy:write, secrets:request, storage:manage, postgres:manage; empty for read-only", Value: "LIST"},
 					{Name: "approvals", Short: "kinds of action every agent must have a person approve: delete, production, credentials, billing, all or none", Value: "LIST"},
 					{Name: "approval-channels", Short: "comma-separated names of your notification channels that also get the org's agents' approval requests; empty for none", Value: "NAMES"},
+					{Name: "max-budget", Short: "ceiling on every agent's monthly budget for always-on capacity, in US dollars", Value: "USD"},
+					{Name: "clear-max-budget", Short: "remove the ceiling on agents' budgets", Bool: true},
 				}},
 			}},
 			{Name: "transfer-ownership", Short: "Transfer org ownership", Flags: []cliFlag{
@@ -6122,7 +6153,7 @@ var cliCommands = []cliCommand{
 				{Name: "delete", Short: "Delete a binding", Positionals: []string{"<id>"}},
 				{Name: "rotate", Short: "Rotate a binding, optionally waiting for the old credential", Notes: []string{"Waits until the previous credential retires."}, Positionals: []string{"<id>"}, Flags: []cliFlag{
 					{Name: "wait", Short: "wait for the previous credential to retire"},
-					{Name: "wait-timeout", Short: "maximum time to wait for rotation (default 5m)", Value: "DURATION"},
+					{Name: "wait-timeout", Short: "maximum time to wait for rotation (default 15m)", Value: "DURATION"},
 					{Name: "poll-interval", Short: "status polling interval while waiting (default 1s)", Value: "DURATION"},
 				}, Examples: []string{"gregale postgres bindings rotate BINDING_ID --wait"}},
 			}},
@@ -6511,6 +6542,13 @@ var cliCommands = []cliCommand{
 					{Name: "share-resources", Short: "explicitly share managed database and object-storage data", Bool: true},
 				}},
 				{Name: "delete", Short: "Delete a non-production environment", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "yes", Bool: true, Req: true, Short: "confirm environment deletion"}}},
+				{Name: "branch", Short: "Branch an environment; workloads start on first request", Notes: []string{"Deleted at its TTL or with `environment delete`."}, Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{
+					{Name: "from", Value: "ENV", Short: "parent environment (default production)"},
+					{Name: "ttl", Value: "DURATION", Short: "time to live, 1h to 720h (default 168h)"},
+					{Name: "list", Bool: true, Short: "list the parent's branches"},
+					{Name: "egress", Value: "MODE", Short: "live (default), contained or simulated"},
+					{Name: "private-networks", Value: "MODE", Short: "off (default) or join"},
+				}},
 				{Name: "protect", Short: "Protect an environment"},
 				{Name: "unprotect", Short: "Remove environment protection"},
 				{Name: "inspect", Short: "Inspect the active graph and environment deployments"},
@@ -6847,6 +6885,21 @@ var cliCommands = []cliCommand{
 		Name:    "version",
 		DocSlug: "version",
 		Short:   "Print the CLI version",
+	},
+	{
+		Name:     "update",
+		DocSlug:  "update",
+		Short:    "Update the CLI to the newest release",
+		Examples: []string{"gregale update", "gregale update --check", "gregale update --version v0.1.18"},
+		HelpNotes: []string{
+			"Stable installs follow the newest stable release; prerelease installs follow the newest release.",
+			"The download is verified against the release's CLI-SHA256SUMS and must run before it replaces this binary.",
+			"An npm install prints the npm command instead of replacing files npm owns.",
+		},
+		Flags: []cliFlag{
+			{Name: "check", Bool: true, Short: "report whether a newer release exists without installing it"},
+			{Name: "version", Value: "TAG", Short: "install this exact release tag, including an older one"},
+		},
 	},
 	{
 		Name:     "config",

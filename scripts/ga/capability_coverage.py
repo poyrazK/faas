@@ -182,7 +182,7 @@ RULES = [
     (r"internal/hosting|hosting-|internal-frontend|^sites$|^hosting|frontend-hosting|site-", "Internal frontend hosting"),
     (r"internal-?mail|maild|mailctl|mail-feedback|mail-metrics|mail-report|productemail|product-email", "Internal mail service"),
     (r"product-control|productcontrol|product_control|/product/|^product$|product-customers", "Product control"),
-    (r"agent-run|agent-execution|agent-callback|agent-tool|^agent|agents", "Gregale Agents"),
+    (r"agent-run|agent-execution|agent-callback|agent-tool|sandbox|^agent|agents", "Gregale Agents"),
     (r"oci/registry|^/v2/?$|registry-storage|ociregistry", "Platform OCI registry"),
     (r"^/v1/admin|^admin|gregalectl|compute-nodes|operator|break-glass|abuse|^/admin|deployctl|nodes?-|fleet|cluster-signing", "Operator admin"),
     (r"data-repair|datarepair|repair", "Selective data repair"),
@@ -210,7 +210,7 @@ RULES = [
     (r"openapi\.(json|yaml)|^/v1/openapi|capabilities|productcap|sdk-coverage|^meta$", "Public OpenAPI spec"),
     (r"^sdk|sdk$|webhook-receiver|idempotency|transport|^client|options$|dto$|codes$|errors$|scopes$|^doc$|streaming$|release-context|^context", "SDKs:"),
     (r"dashboard|templates?/|^index$|^app\.(css|js)|\.js$|^stateless$|email-verification-banner|email-verified|set-password|password-reset|^login$|^profile$", "Web dashboard"),
-    (r"^gregale$|^cli|cli-|completion|^man$|^menu$|^start$|^open$|^config$|^version$|doctor|^context|profiles?-config|^init$", "`gregale` CLI"),
+    (r"^gregale$|^cli|cli-|completion|^man$|^menu$|^start$|^open$|^config$|^version$|^update$|doctor|^context|profiles?-config|^init$", "`gregale` CLI"),
     # --- observability
     (r"status-page|^/status|public-status|^status$|status/slo", "Public status page"),
     (r"audit", "Audit log"),

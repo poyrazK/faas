@@ -1901,6 +1901,10 @@ const (
 	// FunctionInitFailedMarker line in the workload output names it; it is
 	// otherwise an app_startup_crash, and customer-caused like one.
 	CodeFunctionInitFailed = "function_init_failed"
+	// CodeFunctionInputInvalid is a function adapter's 422 for a typed-client
+	// call whose body does not match the function's input schema
+	// (ADR-20261111150000); the detail names the failing path.
+	CodeFunctionInputInvalid = "function_input_invalid"
 	// FunctionInitFailedMarker begins the line the Node and Python function
 	// adapters print to stderr when init fails (pkg/fnadapter).
 	FunctionInitFailedMarker = "gregale: function init failed:"
@@ -3901,6 +3905,14 @@ func ErrAPIContractComparisonIncomplete(detail string) *Problem {
 		WithDocs(docsBase + "/api-hosting#contract-diff")
 }
 
+// ErrCronEnvironmentRequiresProject is the 400 for an environment cron on an
+// app outside a project.
+func ErrCronEnvironmentRequiresProject() *Problem {
+	return NewProblem(http.StatusBadRequest, CodeCronInvalid, "Cron environment requires a project",
+		"only an app in a project has environments; omit environment for this app").
+		WithDocs(docsBase + "/crons#environments")
+}
+
 // ErrCronInvalid is returned for malformed cron expressions.
 func ErrCronInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeCronInvalid,
@@ -4555,6 +4567,9 @@ const (
 	// customers write runbooks that key on code !=
 	// insufficient_scope without parsing titles.
 	CodeGeoDenied = "geo_denied"
+	// CodeWAFBlocked is the 403 a blocking kind=waf edge rule sends. It
+	// answered insufficient_scope, the API-key scope code (Hunt 33 H33-18).
+	CodeWAFBlocked = "waf_blocked"
 	// CodeRequestValidationFailed is the 422 a kind=validate edge
 	// rule emits when the inbound request body fails the customer's
 	// JSON Schema. Carries Problem.Errors (Cloudflare / Stripe shape)
@@ -4581,6 +4596,10 @@ const (
 	// candidate instance of an app has an open instance-health circuit
 	// (ADR-201 §2). It carries Retry-After.
 	CodeCircuitOpen = "circuit_open"
+	// CodeGatewayOverloaded is the 503 gatewayd-internal answers when it
+	// already holds GatewayAwaitingResponseMax app requests waiting for their
+	// response head. It carries Retry-After.
+	CodeGatewayOverloaded = "gateway_overloaded"
 	// Upload admission precedes guest execution, so upload failures have
 	// distinct stable codes and do not masquerade as app timeouts.
 	CodeRequestUploadTimeout  = "request_upload_timeout"

@@ -1,0 +1,28 @@
+test_completion_does_not_enumerate_another_callers_records (__main__.PythonMCPInvestigation.test_completion_does_not_enumerate_another_callers_records) ... ok
+test_subscriptions_do_not_reveal_unreadable_record_updates (__main__.PythonMCPInvestigation.test_subscriptions_do_not_reveal_unreadable_record_updates) ... 127.0.0.1 - - [11/Nov/2026 17:33:41] "POST /mcp HTTP/1.1" 200 -
+{"event":"mcp_protocol_request","method":"subscriptions/listen","tool":"none","outcome":"success","stream_outcome":"complete","execution_duration_ms":0.5032429999118904,"stream_duration_ms":0.4343069995229598}
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 55122)
+Traceback (most recent call last):
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/socketserver.py", line 766, in __init__
+    self.handle()
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/http/server.py", line 442, in handle
+    self.handle_one_request()
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/http/server.py", line 408, in handle_one_request
+    self.raw_requestline = self.rfile.readline(65537)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/socket.py", line 720, in readinto
+    return self._sock.recv_into(b)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+ConnectionResetError: [Errno 104] Connection reset by peer
+----------------------------------------
+ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.514s
+
+OK

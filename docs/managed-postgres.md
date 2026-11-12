@@ -23,17 +23,19 @@ database reservation boundary:
 
 | Plan | Databases | Pooled storage | Compute per month | Restore window | Classes |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Free | 1 | 0.5 GiB | 5 CU-hours | 7 days | development |
+| Free | — | — | — | — | — |
 | Hobby | 1 | 1 GiB | 25 CU-hours | 7 days | development |
 | Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
 | Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
 
-A Free-plan database needs enforced compute caps, because Free has no
-overage to pay for compute past its allowance. Until the platform enforces
-them, `gregale postgres create`, `gregale dev --postgres`, pipeline mirrors
-and restores answer `403 managed_postgres_not_in_plan` on Free, and a
-Compose `postgres` service is not provisioned (the deploy names the plan as
-the reason).
+The Free plan includes no managed PostgreSQL
+([ADR-20261110184700](adr/20261110184700-free-plan-includes-no-managed-postgres.md)):
+`gregale postgres create`, `gregale dev --postgres`, pipeline mirrors and
+restores answer `403 managed_postgres_not_in_plan` on Free, whatever the cap
+enforcement mode, and a Compose `postgres` service is not provisioned (the
+deploy names the plan as the reason). An account that falls to Free from a
+paid plan keeps its databases suspended as past the plan
+([Databases past a lowered plan](#databases-past-a-lowered-plan)).
 
 Storage is pooled across the account's databases: one database may use the
 whole pool. Storage and compute are limits unless a paid account turns
@@ -44,11 +46,13 @@ overage on ([Compute overage](#compute-overage)):
 - the pool doubles, and storage past the plan's pool, averaged over the
   month, costs $0.50 per GiB-month.
 
-Data your databases send counts toward your plan's monthly egress allowance
-together with your apps' egress (Free 10 GiB, Hobby 100 GiB, Pro 500 GiB,
-Scale 2,000 GiB; see [plans](plans.md)). Once the two together reach it, your
-databases stop and refuse connections until the month ends or the plan grows.
-Egress overage does not extend this for databases yet.
+Each database has its own monthly egress allowance of 500 GB (10^9 bytes), as
+Neon includes per project. It is separate from your apps' egress allowance
+(see [plans](plans.md)). A database that reaches it stops and refuses
+connections until the month ends; your other databases and your apps keep
+running. With egress overage on (`gregale billing egress-overage on`), a
+database's egress past its 500 GB is billed at $0.105 per GB, and it stops
+only at twice its allowance.
 
 All current plans use provider-managed compute suspension. Always-on database
 compute is not included in the bundled plans, and requests that disable
@@ -171,9 +175,13 @@ customers out until the owner has tested production
 3. Turn on enforcement after each shadow readout (until both caps are `on`,
    step 6's default releases nobody):
    `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on`,
-   `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on`, and the cap emails
+   `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on`, the cap emails
    (`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=1` on apid and
-   maild). Create the [SQL probe](#sql-availability-probe) canary databases.
+   maild), and the restore slot emails
+   (`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_RESTORE_SLOT_OUTBOX_ENABLED=1` on apid
+   and maild). Without the latter, a one-database plan's restored copy loses
+   its bindings and has its delete scheduled at `restore_slot_until` with no
+   warning. Create the [SQL probe](#sql-availability-probe) canary databases.
    Set `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT=on` once the release
    shows [databases past a lowered plan](#databases-past-a-lowered-plan) to
    the customer.
@@ -469,9 +477,9 @@ high-availability promise merely because Neon storage has internal redundancy.
 `scale_to_zero=true` uses a 300-second suspend timeout; false disables compute
 suspension. Customer requests cannot currently select `false`; the adapter
 retains the provider-neutral field for a future always-on entitlement.
-PostgreSQL majors 14 through 18 are enabled. New databases choose 15 through
-18: 14 is retiring (`Capabilities.RetiringMajors`) and stays available to the
-databases that already run it.
+PostgreSQL majors 15 through 18 are enabled. PostgreSQL 14 reached upstream
+end of life in November 2026 and is not supported (owner, 2026-11-12); Neon
+has no in-place major upgrade, and no upgrade path from 14 is offered.
 
 The mutating qualification run also proves the runtime behavior: it connects
 to the disposable database, closes the connection, waits for Neon to report
@@ -617,10 +625,11 @@ gregale postgres capabilities --region eu-central-1 --json
 
 The versioned response lists PostgreSQL versions, service classes, access modes,
 availability, pooling, scale-to-zero and restore/storage limits. PostgreSQL 14 is
-retiring: it reaches upstream end of life in November 2026 and Neon has no
-in-place major upgrade. Existing PostgreSQL 14 databases keep restore, resize
-and maintenance, but a new database is refused with `422 managed_postgres_unsupported`, naming the
-offered versions, and discovery no longer lists 14. It exposes no
+not supported: it reached upstream end of life in November 2026. A request for
+it is refused with `422 managed_postgres_unsupported`, naming the offered
+versions, and discovery does not list it. `Capabilities.RetiringMajors` stays
+for a later major that existing databases keep while new ones cannot pick it.
+It exposes no
 backend identity, credentials or provider costs. `provisioning_enabled` describes
 the qualification/canary gate separately from configured support; usage, budget
 and current quota admission are checked when reserving a resource. Discovery
@@ -844,8 +853,8 @@ The billing seam emits stable internal line-item codes
 `managed_postgres.restore_history`, and `managed_postgres.egress`) with
 normalized quantities and provider-cost millicents. They are COGS/invoice
 mapping inputs only: customers never see provider costs. The only customer
-charge is compute overage, which an account turns on itself
-([Compute overage](#compute-overage)).
+charge is compute overage, which an account turns on itself, or which is on
+by default on Scale ([Compute overage](#compute-overage)).
 
 Customers can inspect the current account snapshot with
 `GET /v1/account/managed-postgres-usage` (the `usage:read` scope) or
@@ -1063,7 +1072,10 @@ The state is judged from the ledger, which can trail Neon by up to two hours.
 `GET` and `PUT /v1/postgres/overage` read and set a paid account's overage
 choice, `{"enabled": true|false}`:
 
-- Off is the default, and the databases are suspended at the allowance.
+- Off is the default on Hobby and Pro, and the databases are suspended at the
+  allowance. On Scale it is on until the account turns it off
+  (`api.ManagedPostgresPlanLimits.OverageOnByDefault`), so a busy production
+  database does not stop mid-month. An explicit choice either way is kept.
 - On, they keep running until twice the allowance (the ceiling), then are
   suspended.
 - A suspended, abuse-held or pending-deletion account's databases are
@@ -1280,7 +1292,15 @@ sweep. The same sweep suspends the databases the plan no longer includes
   source's project) is left running and logged as shared.
 - Each sweep recomputes the set. Once the subject fits (an upgrade, a deleted
   database, or a resize to an included class), the next sweep restores the
-  ordinary quota. Nothing is deleted.
+  ordinary quota.
+- A database that stays past the plan for 30 days
+  (`api.ManagedPostgresPlanExcessDeleteAfter`, counted from its first
+  suspension) is deleted
+  ([ADR-20261110184700](adr/20261110184700-free-plan-includes-no-managed-postgres.md)):
+  the sweep revokes its bindings and schedules its delete through the delete
+  grace period, so the owner can still recover it for 7 days. Fitting the
+  plan again clears the clock. A suspended, abuse-held or deleting account's
+  databases are never deleted this way.
 
 `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT` selects the mode:
 
@@ -1288,6 +1308,21 @@ sweep. The same sweep suspends the databases the plan no longer includes
   project it would suspend, and writes nothing.
 - `on` writes the quota, only while `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` is
   `on` too; it logs `managed postgres plan excess suspended` when it does.
+- `off` does nothing.
+
+`FAAS_MANAGED_POSTGRES_PLAN_EXCESS_DELETE` selects the deletion pass. It acts
+only on databases the sweep suspends, so only while both modes above are `on`:
+
+- `shadow` (the default) logs `managed postgres plan excess due for deletion
+  (shadow)` for each database past its 30 days.
+- `on` deletes them and logs `managed postgres plan excess delete scheduled`.
+  The suspension email then names the deletion date, and a database is
+  deleted only once the date its queued email named has come. A suspension
+  mailed earlier without a date, or never mailed, starts again when `on`
+  first sees it, so its owner gets a full 30 days' notice. apid refuses `on`
+  unless `FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_PLAN_EXCESS_OUTBOX_ENABLED=1`
+  and the producer outbox are on. Turn it on only once every apid runs the
+  release that added it: an older apid cannot read that email's payload.
 - `off` does nothing.
 
 While it is `on`, `GET /v1/postgres/databases` and the read show

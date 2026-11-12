@@ -858,6 +858,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// ADR 20261110120000: never-verified accounts that hold nothing
 		// are scheduled for deletion 60 days after signup.
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runUnverifiedAccountExpiry(ctx) })
+		// ADR-20261111140000: complimentary accounts return to Free at
+		// their end date.
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runComplimentaryExpiry(ctx) })
 		// ADR-20261107220000 §2: agent activity is kept 7 days.
 		go background.Staggered(ctx, background.StartSpread, func() {
 			srv.runAgentActivitySweep(ctx)
@@ -877,6 +880,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresBindingReconciler(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runPreviewDatabaseSweep(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runProjectEnvironmentCleanupReconciler(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runEnvironmentBranchSweeper(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runEnvironmentBranchDataReconciler(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runProjectEnvironmentCloneCoordinator(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresUsageCollector(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresHealthCollector(ctx) })
@@ -1648,6 +1653,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	srv.rehearsalNetworkEnabled = deps.getenv("FAAS_REHEARSAL_NETWORK_CONTAINMENT") == "1"
+	srv.environmentBranchContainmentEnabled = deps.getenv(api.EnvironmentBranchContainmentEnv) == "1"
+	srv.environmentBranchContainedObjectsEnabled = deps.getenv(api.EnvironmentBranchContainedObjectsEnv) == "1"
 	srv.rehearsalSimulationEnabled = deps.getenv("FAAS_REHEARSAL_ACTION_SIMULATION") == "1"
 	srv.rehearsalWorkersEnabled = deps.getenv("FAAS_REHEARSAL_WORKERS") == "1"
 	srv.rehearsalWorkerFaultsEnabled = deps.getenv("FAAS_REHEARSAL_WORKER_FAULTS") == "1"
@@ -1790,6 +1797,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid live queries configuration: %w", err)
 	}
 	srv.configureAgents(deps.pool)
+	if err := srv.configureSandboxes(deps.pool, deps.getenv); err != nil {
+		return fmt.Errorf("apid sandbox sessions: %w", err)
+	}
 	srv.configureDataAPIUsage(deps.pool)
 	if err := srv.configureDataPipelines(*cfg, deps.pool); err != nil {
 		return err
@@ -2627,7 +2637,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if deps.captureDialTLS != nil {
 			deps.captureDialTLS("bridge", bridgeTLS)
 		}
-		bridgeSrv, bridgeLis, err = runGithubdBridgeServer(ctx, sock, bridgeTLS, srv.store, srv.notif, log, srv.ops, spoolRoot(), resolveGithubdStagingRoot(deps.getenv), srv.agentStepsAllowed, srv.releasePhaseOff, srv.applyBridgeSourceSettings, srv.prepareBuildPreviewDatabases)
+		bridgeSrv, bridgeLis, err = runGithubdBridgeServer(ctx, sock, bridgeTLS, srv.store, srv.notif, log, srv.ops, spoolRoot(), resolveGithubdStagingRoot(deps.getenv), srv.agentStepsAllowed, srv.releasePhaseOff, srv.applyBridgeSourceSettings, srv.prepareBuildPreviewDatabases, srv.deliverGitHubSubscriptions)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: githubd bridge listen %q: %w", sock, err)
@@ -2674,7 +2684,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	spansLimiter := peraccount.NewLimiter()
 	// The tracing capability gates span ingest as it gates trace reads.
 	tracing := receivers.TracingReleased(srv.tracingReleased)
-	spans := spansIngest{limiter: spansLimiter, tracing: tracing, sessions: sessions}
+	spans := spansIngest{limiter: spansLimiter, tracing: tracing, sessions: sessions, agents: srv.agentRequestsForGateways()}
 	// ADR-958: one in-guest span ingester shared by both SpansWriter listeners.
 	// Its flush loop writes back through WriteSpansSummary so guest spans share
 	// that path's validation, rate cap and outcome metrics.
@@ -2846,7 +2856,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// key authentication and the OTel handler.
 	if deps.getenv("FAAS_AUTH_RPC_ENABLED") != "false" {
 		authTarget := envOrFrom(deps.getenv, "FAAS_APID_AUTH_SOCKET", "/run/faas/auth.sock")
-		authSrv, authLis, err := runAuthServer(ctx, authTarget, srv.store, log, spans.tracing, spans.sessions)
+		authSrv, authLis, err := runAuthServer(ctx, authTarget, srv.store, log, spans.tracing, spans.sessions, spans.agents)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: auth server: %w", err)
@@ -3337,7 +3347,7 @@ func runAdvisoryServer(ctx context.Context, target string, tlsCfg *tls.Config, s
 // here are fatal — without the bridge listener githubd has no
 // way to enqueue builds and the dispatch path is silently
 // degraded (every push hits the noopEnqueuer path).
-func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Config, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool, applySettings bridgeSettingsApplier, previewDatabases func(context.Context, state.Account, api.Plan, state.App) error) (*grpc.Server, net.Listener, error) {
+func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Config, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool, applySettings bridgeSettingsApplier, previewDatabases func(context.Context, state.Account, api.Plan, state.App) error, githubSubscriptions func(context.Context, string, string, api.GitHubPullRequestEvent) error) (*grpc.Server, net.Listener, error) {
 	// Same multi-box guard as runAdvisoryServer — a tcp/dns
 	// target without TLS would silently build an insecure server.
 	// ADR-052.
@@ -3364,7 +3374,7 @@ func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Conf
 	// apid_githubd_bridge_enqueued_total on each landed build.
 	// The accessor is nil-receiver safe so the metric stays zero
 	// when ops is nil (test path).
-	registerGithubdBridge(srv, store, notif, log, ops, spool, stagingRoot, agentSteps, releasePhaseOff, applySettings, previewDatabases)
+	registerGithubdBridge(srv, store, notif, log, ops, spool, stagingRoot, agentSteps, releasePhaseOff, applySettings, previewDatabases, githubSubscriptions)
 	return srv, lis, nil
 }
 
@@ -3415,7 +3425,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	// credential hash itself (ADR 20261029202403); single-box gateways ask
 	// over /run/faas/auth.sock.
 	if !isUnixSocketPath(target) {
-		receivers.RegisterAuthReceiver(srv, store, spans.tracing, spans.sessions)
+		receivers.RegisterAuthReceiver(srv, store, spans.tracing, spans.sessions, receivers.WithAgentRequests(spans.agents))
 		receivers.RegisterRealtimeHistoryReceiver(srv, store)
 		if len(fleetRouter) > 0 {
 			receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush, accessFeed)
@@ -3463,7 +3473,7 @@ func runRequestTelemetryServer(ctx context.Context, target string, store state.S
 	// and asks it to match Data API server keys there (ADR 20261029202403
 	// amendment 1).
 	receivers.RegisterRealtimeHistoryReceiver(srv, store)
-	receivers.RegisterAuthReceiver(srv, store, spans.tracing, spans.sessions)
+	receivers.RegisterAuthReceiver(srv, store, spans.tracing, spans.sessions, receivers.WithAgentRequests(spans.agents))
 	if len(fleetRouter) > 0 {
 		receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush, accessFeed)
 	} else {
@@ -3504,13 +3514,13 @@ func runSpansWriterServer(ctx context.Context, target string, store state.Store,
 // serves; the gateway's OTel handler refuses to start without
 // auth, so a missing auth server == a missing OTel surface,
 // which is the desired fail-closed posture).
-func runAuthServer(ctx context.Context, target string, store state.Store, log *slog.Logger, tracing receivers.TracingReleased, sessions receivers.SessionOpener) (*grpc.Server, net.Listener, error) {
+func runAuthServer(ctx context.Context, target string, store state.Store, log *slog.Logger, tracing receivers.TracingReleased, sessions receivers.SessionOpener, agents receivers.AgentRequests) (*grpc.Server, net.Listener, error) {
 	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("auth listen: %w", err)
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
-	receivers.RegisterAuthReceiver(srv, store, tracing, sessions)
+	receivers.RegisterAuthReceiver(srv, store, tracing, sessions, receivers.WithAgentRequests(agents))
 	return srv, lis, nil
 }
 
@@ -3530,4 +3540,7 @@ type spansIngest struct {
 	limiter  *peraccount.Limiter
 	tracing  receivers.TracingReleased
 	sessions receivers.SessionOpener
+	// agents answers gateways' agent approval and activity calls
+	// (ADR-20261111150000).
+	agents receivers.AgentRequests
 }

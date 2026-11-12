@@ -27,9 +27,13 @@ type contractTestStore interface {
 	state.AgentApprovalNotificationStore
 	state.AgentApprovalChannelStore
 	state.AgentActivityStore
+	state.AgentBudgetStore
 	state.NotificationChannelStore
+	state.AppPrivateNetworkAttachmentStore
 	state.AppWorkPolicyStore
 	state.ObjectStorageCeilingGrantStore
+	state.ObjectStorageOverCeilingStore
+	state.ComplimentaryAccountStore
 	state.CreditDiscountStore
 	state.AuditEventOutboxStore
 	state.ComputeNodeCPUUsageBatcher
@@ -100,6 +104,7 @@ type contractTestStore interface {
 	state.ObjectCapacityStore
 	state.ObjectInventoryBacklogStore
 	state.ObjectInventoryQueueStore
+	state.ObjectInventoryVerificationStore
 	state.ObjectInventoryScanStore
 	state.ObjectMultipartCompletionStore
 	state.ObjectMultipartTransferStore
@@ -141,6 +146,16 @@ type contractTestStore interface {
 	state.ProjectEnvironmentCloneValuesStore
 	state.ProjectEnvironmentCloneWorkerLeaseStore
 	state.ProjectEnvironmentCloneWorkloadStore
+	state.ProjectEnvironmentBranchStore
+	state.ProjectEnvironmentBranchDataStore
+	state.ProjectEnvironmentBranchBucketStore
+	state.ObjectBucketOverlayStore
+	state.EnvironmentBranchDeploymentReader
+	state.EnvironmentBranchCaptureStore
+	state.EnvironmentBranchCaptureObjectStore
+	state.EnvironmentBranchEgressStore
+	state.EnvironmentBranchObjectRelayStore
+	state.EnvironmentBranchSeedStore
 	state.ProjectEnvironmentPromotionFeatureFlagStore
 	state.ProjectEnvironmentPromotionReleaseSetStore
 	state.ProjectEnvironmentPromotionWorkloadSpecStore

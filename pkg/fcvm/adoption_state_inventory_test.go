@@ -124,6 +124,7 @@ var adoptionInstanceInventory = map[string]string{
 	"runtimeAdmissionEgress":          "rebuilt",
 	"admissionHeldFrom":               "rebuilt",
 	"ExecutionOnly":                   "refused", // execution kind
+	"SandboxID":                       "refused", // sandbox sessions are execution-only
 	"ExecutionID":                     "refused",
 	"ExecutionLeaseToken":             "refused",
 	"ExecutionOutboundIntegrationIDs": "refused",
@@ -138,6 +139,7 @@ var adoptionInstanceInventory = map[string]string{
 	"IdleLadderGuardedPause":          "rebuilt",
 	"Frozen":                          "rebuilt",
 	"FrozenSince":                     "rebuilt",
+	"FrozenTotal":                     "reset",   // read only by a sandbox session's usage meter; sessions are not adopted
 	"freezing":                        "reset",   // no freeze is in flight at startup
 	"parking":                         "reset",   // no park is in flight at startup
 	"parkHeld":                        "reset",   // nor a forward held on one
@@ -181,6 +183,7 @@ var adoptionInstanceInventory = map[string]string{
 	"EgressFanoutValid":               "reset",
 	"EgressFloodDropsPerMin":          "reset",
 	"StaticEgressExcluded":            "rebuilt",
+	"PrivateNetworkExcluded":          "rebuilt",
 	"networkPolicyMu":                 "reset",
 	"resolvedEgress":                  "rebuilt", // surviving nft entries retain their remaining lifetimes
 	"resolvedEgressGeneration":        "reset",   // restart invalidates outstanding DNS grants
@@ -189,6 +192,8 @@ var adoptionInstanceInventory = map[string]string{
 	"egressAllowlistUncertain":        "reset",   // adopted guests re-prove their journaled allowlist
 	"egressPortsUncertain":            "reset",   // adopted guests read the surviving port sets
 	"databaseEgress":                  "rebuilt", // surviving egress_db pairs retain their remaining lifetimes
+	"environmentBranch":               "refused", // a contained branch guest is not adopted (ADR-20261031193635)
+	"branchDatabaseEgress":            "refused", // its branch_db pairs go with it
 	"TailCount":                       "reset",   // the host only ever sees decrements
 	"tailSecondsAccum":                "reset",   // informational, not billed
 	"adoptionVCPUs":                   "rebuilt",

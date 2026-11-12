@@ -255,6 +255,18 @@ func (s *server) resolveJob(ctx context.Context, name string, acct state.Account
 // queries (run → job → account_id compare) to keep the IDOR
 // shape uniform across the family.
 func (s *server) resolveJobRun(ctx context.Context, runID string, acct state.Account) (state.Job, state.JobRun, bool, error) {
+	return s.resolveJobRunWithLookup(ctx, runID, acct, s.store.JobGetByID)
+}
+
+func (s *server) resolveJobRunRead(ctx context.Context, runID string, acct state.Account) (state.Job, state.JobRun, bool, error) {
+	lookup := s.store.JobGetByID
+	if history, ok := s.store.(state.ImageRunHistoryStore); ok {
+		lookup = history.JobGetByIDForRunHistory
+	}
+	return s.resolveJobRunWithLookup(ctx, runID, acct, lookup)
+}
+
+func (s *server) resolveJobRunWithLookup(ctx context.Context, runID string, acct state.Account, lookup func(context.Context, string) (state.Job, error)) (state.Job, state.JobRun, bool, error) {
 	run, err := s.store.JobRunGetByID(ctx, runID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -262,7 +274,7 @@ func (s *server) resolveJobRun(ctx context.Context, runID string, acct state.Acc
 		}
 		return state.Job{}, state.JobRun{}, false, err
 	}
-	job, err := s.store.JobGetByID(ctx, run.JobID)
+	job, err := lookup(ctx, run.JobID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return state.Job{}, state.JobRun{}, false, nil
@@ -498,7 +510,7 @@ func (s *server) listJobRuns(w http.ResponseWriter, r *http.Request, acct state.
 // resolveJobRun which walks run → job → account_id compare.
 func (s *server) getJobRun(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	runID := r.PathValue("id")
-	job, run, ok, err := s.resolveJobRun(r.Context(), runID, acct)
+	job, run, ok, err := s.resolveJobRunRead(r.Context(), runID, acct)
 	if err != nil {
 		s.log.Error("get job run failed", "id", runID, "account", acct.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not get run"))
@@ -516,7 +528,7 @@ func (s *server) getJobRun(w http.ResponseWriter, r *http.Request, acct state.Ac
 // task_index (the dispatch tick's primary key).
 func (s *server) listJobRunTasks(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	runID := r.PathValue("id")
-	job, _, ok, err := s.resolveJobRun(r.Context(), runID, acct)
+	job, _, ok, err := s.resolveJobRunRead(r.Context(), runID, acct)
 	if err != nil {
 		s.log.Error("list run tasks: resolve failed", "id", runID, "account", acct.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not list tasks"))
@@ -574,7 +586,7 @@ func (s *server) getJobTaskLogs(w http.ResponseWriter, r *http.Request, acct sta
 			"Invalid task_index", "task_index must be a non-negative integer"))
 		return
 	}
-	_, _, ok, err := s.resolveJobRun(r.Context(), runID, acct)
+	_, _, ok, err := s.resolveJobRunRead(r.Context(), runID, acct)
 	if err != nil {
 		s.log.Error("get task logs: resolve failed", "id", runID, "account", acct.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not get logs"))
@@ -630,7 +642,7 @@ func (s *server) listJobTaskAttempts(w http.ResponseWriter, r *http.Request, acc
 			"Invalid task_index", "task_index must be a non-negative integer"))
 		return
 	}
-	job, _, ok, err := s.resolveJobRun(r.Context(), runID, acct)
+	job, _, ok, err := s.resolveJobRunRead(r.Context(), runID, acct)
 	if err != nil {
 		s.log.Error("list task attempts: resolve failed", "run", runID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not list attempts"))

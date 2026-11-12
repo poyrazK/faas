@@ -214,6 +214,8 @@ func BucketProblem(w http.ResponseWriter, err error) {
 		status, code, detail = 503, "object_storage_checkpoint_active", "Bucket writes are temporarily paused for checkpoint capture."
 	case errors.Is(err, state.ErrObjectUsageStale):
 		status, code, detail = 503, "object_storage_usage_stale", "Storage accounting is not configured or usage data is stale; new provider requests and transfer authorizations are blocked."
+	case errors.Is(err, objectstorage.ErrObjectLockPlan):
+		status, code, detail = 403, "object_lock_plan_limit", "The bucket owner's plan does not include this much Object Lock protection: Free includes none, Hobby 90 days, Pro 1 year and Scale 7 years of retention. Choose a shorter retention or upgrade the plan."
 	case errors.Is(err, state.ErrObjectBudget):
 		status, code, detail = 402, "object_storage_budget_reached", "The object storage safety budget has been reached; new provider requests and transfer authorizations are blocked."
 	case errors.Is(err, state.ErrObjectStorageRegionFull):
@@ -236,6 +238,12 @@ func BucketProblem(w http.ResponseWriter, err error) {
 		status, code, detail = 501, "object_storage_unsupported", "This object storage operation is not supported by the selected provider."
 	case errors.Is(err, objectstorage.ErrNotEmpty):
 		status, code, detail = 409, "bucket_not_empty", "Empty the bucket, including any versions, before deleting it."
+	case errors.Is(err, state.ErrObjectBucketTransition):
+		status, code, detail = 503, "object_storage_bucket_transition", "The bucket is finishing a versioning or capacity inventory; retry after the Retry-After delay."
+		w.Header().Set("Retry-After", strconv.Itoa(api.ObjectBucketTransitionRetryAfterSeconds))
+	case errors.Is(err, state.ErrObjectBucketBusy):
+		status, code, detail = 503, "object_storage_busy", "Other work on this object has not settled yet; retry after the Retry-After delay."
+		w.Header().Set("Retry-After", "1")
 	case errors.Is(err, state.ErrConflict), errors.Is(err, objectstorage.ErrConflict):
 		status, code, detail = 409, "object_storage_conflict", "Bucket is busy, conflicts with this request, or the bucket limit was reached."
 	}
@@ -344,6 +352,12 @@ func (s *Service) CreateBucket(w http.ResponseWriter, r *http.Request, acct stat
 	if !ok {
 		return
 	}
+	// A PR preview runs unreviewed code and is torn down with its pull
+	// request; a bucket on it would outlive it (ADR-20261105090226).
+	if state.IsPRPreviewApp(app) {
+		api.WriteProblem(w, api.ErrPRPreviewResourceUnsupported("object storage buckets"))
+		return
+	}
 	var req CreateBucketRequest
 	if !decodeBucketRequest(w, r, &req) {
 		return
@@ -386,10 +400,33 @@ func (s *Service) CreateBucket(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	b, err = s.ProvisionBucket(r.Context(), st, b)
 	if err != nil {
+		if pending, ok := s.provisioningRetry(r.Context(), st, b, err); ok {
+			httpkit.WriteJSON(w, http.StatusAccepted, viewBucket(pending))
+			return
+		}
 		BucketProblem(w, err)
 		return
 	}
 	httpkit.WriteJSON(w, 201, viewBucket(b))
+}
+
+// provisioningRetry reports a bucket whose first provider attempt failed
+// temporarily and is scheduled for retry. The bucket exists and will become
+// ready, so the request is accepted and the client waits for it, as for any
+// provisioning bucket. Answering 503 made `gregale add bucket` exit before
+// attaching its binding, although the bucket was ready 30 s later (Hunt 33
+// H33-22).
+func (s *Service) provisioningRetry(ctx context.Context, st state.ObjectBucketStore, b state.ObjectBucket, cause error) (state.ObjectBucket, bool) {
+	if code, _ := ObjectRetryPolicy(cause, b.AttemptCount); code != "temporary" {
+		return b, false
+	}
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	current, err := st.GetObjectBucket(readCtx, b.AccountID, b.AppID, b.ID)
+	if err != nil || current.State != "provisioning" {
+		return b, false
+	}
+	return current, true
 }
 
 func (s *Service) reserveBucket(ctx context.Context, st state.ObjectBucketStore, account, app string, req CreateBucketRequest) (state.ObjectBucket, error) {
@@ -420,23 +457,33 @@ func (s *Service) reserveBucket(ctx context.Context, st state.ObjectBucketStore,
 	if req.Region == "" {
 		req.Region = s.Host.ObjectStorage().DefaultRegion
 	}
+	id := uuid.NewString()
+	want := state.ObjectBucket{ID: id, AccountID: account, AppID: app, Name: req.Name, Scope: req.Scope, Region: req.Region, PhysicalName: objectstorage.PhysicalBucketPrefix + strings.ReplaceAll(id, "-", ""), PublicRead: req.Public, ServeAt: req.ServeAt}
+	return s.ReserveRegionBucket(ctx, st, want)
+}
+
+// ReserveRegionBucket reserves want in its region the way a customer's new
+// bucket is reserved: on the region's placement pool when its backends have
+// bucket ceilings (ADR-20261029174627), else on the region's default
+// backend. Environment branch buckets (ADR-20261031193635) use it too, so
+// they never bypass a backend's ceiling.
+func (s *Service) ReserveRegionBucket(ctx context.Context, st state.ObjectBucketStore, want state.ObjectBucket) (state.ObjectBucket, error) {
 	if !s.Host.ObjectStorage().CanProvisionAllRegions() {
 		return state.ObjectBucket{}, state.ErrObjectUsageStale
 	}
-	id := uuid.NewString()
-	want := state.ObjectBucket{ID: id, AccountID: account, AppID: app, Name: req.Name, Scope: req.Scope, Region: req.Region, PhysicalName: objectstorage.PhysicalBucketPrefix + strings.ReplaceAll(id, "-", ""), PublicRead: req.Public, ServeAt: req.ServeAt}
 	var b state.ObjectBucket
-	if s.Host.ObjectStorage().PlacementLimited(req.Region) {
+	var err error
+	if s.Host.ObjectStorage().PlacementLimited(want.Region) {
 		b, err = s.reservePlacedBucket(ctx, st, want)
 	} else {
 		var backend objectstorage.Backend
-		if backend, err = s.Host.ObjectStorage().Default(req.Region); err != nil {
+		if backend, err = s.Host.ObjectStorage().Default(want.Region); err != nil {
 			return state.ObjectBucket{}, err
 		}
 		want.BackendID, want.BackendFingerprint = backend.ID, backend.Fingerprint
 		b, err = st.ReserveObjectBucket(ctx, want, s.Host.ObjectStorage().MaxBucketsPerApp)
 	}
-	if err == nil && b.Region != req.Region {
+	if err == nil && b.Region != want.Region {
 		return b, state.ErrConflict
 	}
 	return b, err
