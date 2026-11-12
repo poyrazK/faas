@@ -556,6 +556,14 @@ type CapSweepSummary struct {
 	HoldsApplied  int
 	HoldsReleased int
 	HoldsShadowed int
+
+	// Egress quota backstop (ADR-20261110160000 slice 4): provider objects
+	// whose quota was set, only logged in shadow mode, already right, or
+	// not written.
+	EgressQuotasApplied   int
+	EgressQuotasShadowed  int
+	EgressQuotasUnchanged int
+	EgressQuotasFailed    int
 }
 
 // CapEnforcer applies compute ceilings to running databases.
@@ -812,7 +820,7 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 			return err
 		}
 		e.noticeEgressHold(ctx, accountID, now, check, summary)
-		return nil
+		return e.applyEgressQuotas(ctx, accountID, databases, check, now, summary)
 	}
 	if policy := e.registry.UsagePolicy(); policy.Enabled && policy.MaxMonthlyComputeUnitSeconds > 0 {
 		ceiling = min(ceiling, policy.MaxMonthlyComputeUnitSeconds)
@@ -879,6 +887,10 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 	}
 	reasons := withEgressHolds(capHeldDatabases(databases, plan, suspended), egress)
 	if err := e.holdDatabases(ctx, accountID, databases, all, reasons, summary); err != nil {
+		failures = append(failures, err)
+	}
+	// The egress quota is a backstop too: it never skips a hold.
+	if err := e.applyEgressQuotas(ctx, accountID, databases, egress, now, summary); err != nil {
 		failures = append(failures, err)
 	}
 	if e.mode == CapEnforcementOn && len(failures) == 0 && !limits.Inactive {

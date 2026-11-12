@@ -27,6 +27,7 @@ type computeCapProject struct {
 	ID                     string `json:"id"`
 	ComputeTimeSeconds     int64  `json:"compute_time_seconds"`
 	ActiveTimeSeconds      int64  `json:"active_time_seconds"`
+	DataTransferBytes      int64  `json:"data_transfer_bytes"`
 	ConsumptionPeriodStart string `json:"consumption_period_start"`
 	Settings               struct {
 		Quota computeCapQuota `json:"quota"`
@@ -36,6 +37,8 @@ type computeCapProject struct {
 type computeCapQuota struct {
 	ComputeTimeSeconds *int64 `json:"compute_time_seconds,omitempty"`
 	LogicalSizeBytes   *int64 `json:"logical_size_bytes,omitempty"`
+	// DataTransferBytes is the egress quota backstop (egress_cap.go).
+	DataTransferBytes *int64 `json:"data_transfer_bytes,omitempty"`
 }
 
 type computeCapPatch struct {
@@ -73,38 +76,14 @@ func (p *Provider) ObserveComputeCap(ctx context.Context, providerResourceID str
 	return observed, nil
 }
 
-// SetComputeCap writes the compute quota and, read back first, the project's
-// current logical size quota, so the write never changes the storage limit
-// whatever Neon's merge semantics for settings.quota. It reads the project
-// again to confirm, because an accepted PATCH alone is not evidence.
+// SetComputeCap writes the compute quota and keeps the project's storage and
+// transfer quotas as read (writeQuota).
 func (p *Provider) SetComputeCap(ctx context.Context, providerResourceID string, quotaUnitSeconds int64) error {
 	if quotaUnitSeconds <= 0 {
 		// Zero is unlimited to Neon; a cap is never removed this way.
 		return managedpostgres.ErrInvalid
 	}
-	ref, err := parseResourceRef(providerResourceID)
-	if err != nil {
-		return err
-	}
-	current, err := p.readComputeCapProject(ctx, ref.projectID)
-	if err != nil {
-		return err
-	}
-	var patch computeCapPatch
-	patch.Project.Settings.Quota = computeCapQuota{ComputeTimeSeconds: &quotaUnitSeconds, LogicalSizeBytes: current.Settings.Quota.LogicalSizeBytes}
-	path := "/projects/" + url.PathEscape(ref.projectID)
-	if err := p.doJSON(ctx, http.MethodPatch, path, nil, patch, nil, http.StatusOK); err != nil {
-		return err
-	}
-	confirmed, err := p.readComputeCapProject(ctx, ref.projectID)
-	if err != nil {
-		return err
-	}
-	if !sameQuota(confirmed.Settings.Quota.ComputeTimeSeconds, &quotaUnitSeconds) ||
-		!sameQuota(confirmed.Settings.Quota.LogicalSizeBytes, current.Settings.Quota.LogicalSizeBytes) {
-		return managedpostgres.ErrUnavailable
-	}
-	return nil
+	return p.writeQuota(ctx, providerResourceID, func(q *computeCapQuota) { q.ComputeTimeSeconds = &quotaUnitSeconds })
 }
 
 func (p *Provider) readComputeCapProject(ctx context.Context, projectID string) (computeCapProject, error) {

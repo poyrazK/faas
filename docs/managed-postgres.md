@@ -1159,6 +1159,10 @@ hour of the UTC month start. Metrics:
   is `held`, `released` or `shadowed`
 - `apid_managed_postgres_cap_last_sweep_timestamp_seconds`
 - `apid_managed_postgres_cap_enforcement_mode{mode}`
+- `apid_managed_postgres_egress_quota_decisions_total{outcome}`: the Neon
+  `data_transfer_bytes` quota the sweep sets at each database's egress hold
+  as a backstop (ADR-20261110160000 slice 4); `outcome` is `applied`,
+  `shadowed`, `unchanged` or `failed`
 
 ### Qualifying compute caps
 
