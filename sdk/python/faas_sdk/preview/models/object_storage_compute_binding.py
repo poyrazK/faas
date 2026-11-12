@@ -32,6 +32,8 @@ class ObjectStorageComputeBinding:
     """Bucket-scoped Gregale S3 credential metadata. The secret access key is never included in this shape."""
     secret_keys: ObjectStorageComputeBindingSecretKeys
     """Names of sealed app secrets written for a compute binding; values are never returned."""
+    key_prefix: str | Unset = UNSET
+    """Object keys this binding is limited to; absent for a whole-bucket binding."""
     rotation_pending: bool | Unset = UNSET
     """Previous key is still valid until the rolling refresh has drained old instances."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -49,6 +51,8 @@ class ObjectStorageComputeBinding:
 
         secret_keys = self.secret_keys.to_dict()
 
+        key_prefix = self.key_prefix
+
         rotation_pending = self.rotation_pending
 
         field_dict: dict[str, Any] = {}
@@ -63,6 +67,8 @@ class ObjectStorageComputeBinding:
                 "secret_keys": secret_keys,
             }
         )
+        if key_prefix is not UNSET:
+            field_dict["key_prefix"] = key_prefix
         if rotation_pending is not UNSET:
             field_dict["rotation_pending"] = rotation_pending
 
@@ -86,6 +92,8 @@ class ObjectStorageComputeBinding:
 
         secret_keys = ObjectStorageComputeBindingSecretKeys.from_dict(d.pop("secret_keys"))
 
+        key_prefix = d.pop("key_prefix", UNSET)
+
         rotation_pending = d.pop("rotation_pending", UNSET)
 
         object_storage_compute_binding = cls(
@@ -95,6 +103,7 @@ class ObjectStorageComputeBinding:
             prefix=prefix,
             credential=credential,
             secret_keys=secret_keys,
+            key_prefix=key_prefix,
             rotation_pending=rotation_pending,
         )
 

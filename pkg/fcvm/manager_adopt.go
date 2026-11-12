@@ -44,6 +44,7 @@ const (
 	adoptionRefusedPrivateNetwork  = "private_network"
 	adoptionRefusedPrepared        = "prepared_network"
 	adoptionRefusedRehearsal       = "rehearsal"
+	adoptionRefusedBranchContained = "environment_branch_contained"
 	adoptionRefusedEgressCircuit   = "egress_circuit"
 	adoptionRefusedProductionFork  = "production_fork"
 	adoptionRefusedFunction        = "function_resources"
@@ -63,6 +64,23 @@ type guestAdopter interface {
 	adoptJobExitListener(l Lease) error
 	chrootRoot(instance string) string
 	ResumeVM(ctx context.Context, l Lease) error
+}
+
+// WithFlatTenantCgroups launches every new tenant VM directly under
+// faas-tenant.slice instead of its plan's sub-slice (vmmd.toml
+// flat_tenant_cgroups, ADR-20261109172421 step 6.5), so a busy host shares
+// CPU between all instances by their cpu.weight. VMs already running in a
+// sub-slice stay there until they park. Startup only.
+func (m *Manager) WithFlatTenantCgroups(on bool) *Manager {
+	m.flatTenantCgroups = on
+	return m
+}
+
+// stampCgroupParent records the parent cgroup a new lease's VM launches under.
+func (m *Manager) stampCgroupParent(l *Lease) {
+	if m.flatTenantCgroups && !l.IsBuilder {
+		l.cgroupParent = CgroupMountRoot
+	}
 }
 
 // WithAdoptAdmittedRuntimes lets adoption keep guests booted under an ADR-595
@@ -177,6 +195,8 @@ func adoptionScope(chrootRoot func(string) string, adoptAdmitted bool, r resourc
 		return adoptionRefusedStaticEgress, "static egress SNAT is not rebuilt yet"
 	case a.Network.RehearsalRunID != "":
 		return adoptionRefusedRehearsal, "rehearsal containment and recorder are not rebuilt"
+	case a.Network.EnvironmentBranchContained:
+		return adoptionRefusedBranchContained, "environment branch containment is not rebuilt"
 	case a.Network.EgressCircuits:
 		return adoptionRefusedEgressCircuit, "egress circuit registration is not rebuilt"
 	case r.Lease.Quarantine:
@@ -241,7 +261,7 @@ func (m *Manager) adoptOne(ctx context.Context, adopter guestAdopter, c adoption
 	if private := r.Adoption.Network.Private; m.privateNetworkMemberSource != nil && private != nil && (private.NetworkID == "" || private.AppID == "" || private.AccountID == "") {
 		return refuse(v.Instance, adoptionRefusedPrivateNetwork, "private member predates durable instance identities; replace this guest")
 	}
-	if err := m.adoptGuest(ctx, adopter, r); err != nil {
+	if err := m.adoptGuest(ctx, adopter, r, !AdoptionEnds(v.Resolved)); err != nil {
 		return refuse(v.Instance, adoptionRefusedAdoptFailed, err.Error())
 	}
 	if AdoptionEnds(v.Resolved) {
@@ -278,7 +298,7 @@ func (m *Manager) adoptedAdmission(instance string) *AdoptionAdmission {
 	}
 }
 
-func (m *Manager) adoptGuest(ctx context.Context, adopter guestAdopter, r resourceJournalRecord) error {
+func (m *Manager) adoptGuest(ctx context.Context, adopter guestAdopter, r resourceJournalRecord, restoreEgress bool) error {
 	var jails, binds, files, private []resourceAsset
 	var ns, veth resourceAsset
 	for _, a := range r.Assets {
@@ -324,7 +344,18 @@ func (m *Manager) adoptGuest(ctx context.Context, adopter guestAdopter, r resour
 		}
 	}
 	lease := m.beginProcessAttempt(r.Lease)
+	if !lease.IsBuilder {
+		// The record has no parent; pin the one the process was found in
+		// (checkCgroup), flat or the plan's sub-slice.
+		lease.cgroupParent = tenantCgroupParent(lease)
+	}
 	inst := m.adoptedInstance(lease, r.Adoption)
+	if restoreEgress {
+		if err := m.restoreAdoptedEgress(ctx, inst); err != nil {
+			m.alloc.unadopt(id)
+			return fmt.Errorf("restore adopted egress: %w", err)
+		}
+	}
 	if inst.Net.PrivateNetworkAddress.IsValid() {
 		if err := m.reservePrivateNetworkAddresses(inst.Net, id); err != nil {
 			return err
@@ -375,9 +406,9 @@ func (m *Manager) adoptDriveHandoff(ctx context.Context, adopter guestAdopter, l
 	}
 }
 
-// adoptedInstance rebuilds the Instance from the record. Network policy that
-// is not recorded (egress allowlist contents, DNS gating sets) is pushed
-// again by the scheduler (slice 3); the per-netns rules themselves survived.
+// adoptedInstance rebuilds the journaled instance identity. restoreAdoptedEgress
+// reads the surviving namespace before publication; schedd re-proves the
+// desired allowlist revision through its ordinary convergence path.
 func (m *Manager) adoptedInstance(l Lease, a *resourceAdoption) *Instance {
 	nc := netns.NewConfig(l.Instance, l.Netns, l.VethHost, l.VethPeer, l.HostIP)
 	nc.TapUID = l.UID
@@ -400,16 +431,19 @@ func (m *Manager) adoptedInstance(l Lease, a *resourceAdoption) *Instance {
 		Lease: l, Net: nc, Method: method, Plan: l.Plan,
 		AppID: in.AppID, AccountID: in.AccountID, DeploymentID: in.DeploymentID, WakeID: in.WakeID, NodeID: in.NodeID,
 		Port: in.Port, HealthcheckPath: in.HealthcheckPath, HealthcheckGRPC: in.HealthcheckGRPC, ImageHealthcheckRequired: in.ImageHealthcheckRequired,
-		StartupDeadlineS: in.StartupDeadlineS, ExecutionMode: in.ExecutionMode, Runtime: in.Runtime,
+		StartupDeadlineS: in.StartupDeadlineS, RequestConcurrency: in.RequestConcurrency, ExecutionMode: in.ExecutionMode, Runtime: in.Runtime,
 		WorkloadNames:          append([]string(nil), in.WorkloadNames...),
 		LivenessProbe:          append([]byte(nil), in.LivenessProbe...),
 		ReadinessProbe:         append([]byte(nil), in.ReadinessProbe...),
 		QuietPauseAfter:        durationMillis(in.QuietPauseAfterMs),
+		IdleLadderEligible:     in.IdleLadderEligible,
+		IdleLadderGuardedPause: in.IdleLadderGuarded,
 		AllowlistHandleV4:      a.Network.AllowlistHandleV4,
 		AllowlistHandleV6:      a.Network.AllowlistHandleV6,
 		PrivateNetworkHandleV4: a.Network.PrivateNetworkHandleV4,
 		PrivateNetworkHandleV6: a.Network.PrivateNetworkHandleV6,
 		StaticEgressExcluded:   a.Network.StaticEgressExcluded,
+		PrivateNetworkExcluded: a.Network.PrivateNetworkExcluded,
 		adoptionVCPUs:          a.Firecracker.VCPUs,
 		adoptionMemSizeMiB:     a.Firecracker.MemoryMiB,
 		devPatched:             in.DevPatched,
@@ -512,7 +546,7 @@ func (m *Manager) resumeAdoptedGuest(ctx context.Context, adopter guestAdopter, 
 		// says thawed so the scheduler can settle a FROZEN row.
 		m.setFrozenSwap(inst.Lease, false)
 		m.mu.Lock()
-		inst.Frozen, inst.FrozenSince = false, time.Time{}
+		endFrozenLocked(inst, time.Now())
 		m.mu.Unlock()
 	}
 	if inst.Frozen {

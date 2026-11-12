@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from ..models.deployment_build_dependency_gate import DeploymentBuildDependencyGate
     from ..models.deployment_dependency_gate import DeploymentDependencyGate
     from ..models.deployment_hosting_verification import DeploymentHostingVerification
+    from ..models.deployment_retry_intent import DeploymentRetryIntent
     from ..models.deployment_stage_history_entry import DeploymentStageHistoryEntry
 
 
@@ -42,6 +43,9 @@ class DeploymentStageState:
     source_download."""
     retry_restart_reason: str | Unset = UNSET
     """Why a retry restarted from source_download rather than retry_requested_stage."""
+    retry_intent: DeploymentRetryIntent | Unset = UNSET
+    """Admission-time release intent retained across routing, failure and stage changes. Absent on legacy
+    deployments."""
     dependency_gate: DeploymentDependencyGate | Unset = UNSET
     """Compose dependency readiness gate pinned at admission. The deadline starts when the candidate first presents
     its own readiness proof."""
@@ -77,6 +81,10 @@ class DeploymentStageState:
 
         retry_restart_reason = self.retry_restart_reason
 
+        retry_intent: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.retry_intent, Unset):
+            retry_intent = self.retry_intent.to_dict()
+
         dependency_gate: dict[str, Any] | Unset = UNSET
         if not isinstance(self.dependency_gate, Unset):
             dependency_gate = self.dependency_gate.to_dict()
@@ -103,6 +111,8 @@ class DeploymentStageState:
             field_dict["retry_requested_stage"] = retry_requested_stage
         if retry_restart_reason is not UNSET:
             field_dict["retry_restart_reason"] = retry_restart_reason
+        if retry_intent is not UNSET:
+            field_dict["retry_intent"] = retry_intent
         if dependency_gate is not UNSET:
             field_dict["dependency_gate"] = dependency_gate
         if build_dependency_gate is not UNSET:
@@ -117,6 +127,7 @@ class DeploymentStageState:
         from ..models.deployment_build_dependency_gate import DeploymentBuildDependencyGate
         from ..models.deployment_dependency_gate import DeploymentDependencyGate
         from ..models.deployment_hosting_verification import DeploymentHostingVerification
+        from ..models.deployment_retry_intent import DeploymentRetryIntent
         from ..models.deployment_stage_history_entry import DeploymentStageHistoryEntry
 
         d = dict(src_dict)
@@ -155,6 +166,13 @@ class DeploymentStageState:
 
         retry_restart_reason = d.pop("retry_restart_reason", UNSET)
 
+        _retry_intent = d.pop("retry_intent", UNSET)
+        retry_intent: DeploymentRetryIntent | Unset
+        if isinstance(_retry_intent, Unset):
+            retry_intent = UNSET
+        else:
+            retry_intent = DeploymentRetryIntent.from_dict(_retry_intent)
+
         _dependency_gate = d.pop("dependency_gate", UNSET)
         dependency_gate: DeploymentDependencyGate | Unset
         if isinstance(_dependency_gate, Unset):
@@ -182,6 +200,7 @@ class DeploymentStageState:
             current_started_at=current_started_at,
             retry_requested_stage=retry_requested_stage,
             retry_restart_reason=retry_restart_reason,
+            retry_intent=retry_intent,
             dependency_gate=dependency_gate,
             build_dependency_gate=build_dependency_gate,
             hosting_verification=hosting_verification,

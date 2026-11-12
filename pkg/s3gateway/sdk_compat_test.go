@@ -195,6 +195,22 @@ func TestGatewayAWSGoSDKDefaultChecksumRead(t *testing.T) {
 	}
 }
 
+// The AWS CLI's CRT transfer client sends a lowercase checksum mode on its
+// HEAD and ranged GETs; S3 matches the value case-insensitively.
+func TestGatewayLowercaseChecksumModeRead(t *testing.T) {
+	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionRead, func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Length": {"4"}}, Body: io.NopCloser(strings.NewReader("data")), Request: r}, nil
+	})
+	for _, method := range []string{http.MethodHead, http.MethodGet} {
+		request := signedGatewayRequest(t, method, "https://s3.gregale.dev/assets/key?x-amz-checksum-mode=enabled", nil, "UNSIGNED-PAYLOAD")
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s response = %d %s presigns=%v", method, recorder.Code, recorder.Body.String(), provider.presignRequests)
+		}
+	}
+}
+
 func TestGatewayMissingObjectDeleteIsIdempotent(t *testing.T) {
 	h, _, p := newGatewayTestHandler(t, state.ObjectBucketPermissionWrite, func(*http.Request) (*http.Response, error) { t.Fatal("unexpected upstream request"); return nil, nil })
 	p.deleteErrors = map[string]error{"missing": objectstorage.ErrNotFound}

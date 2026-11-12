@@ -23,8 +23,8 @@ type AIUsage struct {
 	InputTokens       int64
 	CachedInputTokens int64
 	CacheWriteTokens  int64
-	// CacheWrite1hTokens are the cache writes kept for an hour, part of
-	// CacheWriteTokens and priced apart (ADR 20261027132936 amendment 2).
+	// CacheWrite1hTokens is the part of CacheWriteTokens written with a
+	// one-hour TTL (Anthropic), priced above the five-minute rate.
 	CacheWrite1hTokens int64
 	OutputTokens       int64
 	// Media usage (ADR-997). InputImageTokens and OutputImageTokens are the
@@ -375,8 +375,8 @@ type aiUsageFields struct {
 
 	CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
-	// Anthropic splits cache writes by lifetime (ADR 20261027132936
-	// amendment 2).
+	// Anthropic's cache-write breakdown by TTL: one-hour writes cost twice
+	// the input price, five-minute writes 1.25 times (review round 3 #3).
 	CacheCreation *struct {
 		Ephemeral1h *int64 `json:"ephemeral_1h_input_tokens"`
 	} `json:"cache_creation"`

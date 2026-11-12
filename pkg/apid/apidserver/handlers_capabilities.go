@@ -43,6 +43,22 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 		case "github-deploys", "pr-previews":
 			// PR previews are built from the same GitHub push/PR pipeline.
 			available = s.githubDeploysAvailable != nil && s.githubDeploysAvailable(r.Context())
+		case "release-commands":
+			// imaged fails a release command while FAAS_RELEASE_PHASE_ENABLED
+			// is off, so it is advertised only when apid says it is on.
+			available = !s.releasePhaseOff
+		case "outbound-integrations":
+			// The outbound relay authenticates the instance with a
+			// vmmd-signed workload-identity token. ADR-1141 provisioning
+			// installs apid's cluster JWKS with vmmd's key; without it every
+			// relay call is answered 503, so the feature is not advertised
+			// (found in production 2026-11-09). Pull leases are not gated
+			// here: they also accept API keys with queues:consume, which work
+			// without workload identity (ADR-20261110120000).
+			available = s.workloadVerifier != nil
+			if flagKey, ok := platformflags.FlagForCapability(capabilities.Capabilities[i].Key); ok {
+				available = available && s.platformFlagFor(flagKey, flagSubject(r, acct))
+			}
 		case "custom-domains":
 			// production-us hunt #8: with ADR-520 on-demand TLS off, a
 			// customer hostname can never obtain a certificate or reach

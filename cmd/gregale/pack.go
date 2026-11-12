@@ -790,39 +790,7 @@ func detectShape(srcDir string) shape {
 // same wire shape they would have got via
 // `gregale --template function-node --tarball ...`.
 func inferFunctionRuntime(srcDir string) (runtime, handler string, ok bool) {
-	if manifest, found, err := gregalemanifest.Load(srcDir); err == nil && found && manifest.Function != nil {
-		if err := manifest.Validate(); err == nil {
-			return strings.TrimSpace(manifest.Function.Runtime), strings.TrimSpace(manifest.Function.Handler), true
-		}
-	}
-	entries, err := os.ReadDir(srcDir)
-	if err != nil {
-		return "", "", false
-	}
-	var picked string
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		if functionHandlerFiles[strings.ToLower(e.Name())] {
-			if picked != "" {
-				return "", "", false // ambiguous — multiple handlers
-			}
-			picked = strings.ToLower(e.Name())
-		}
-	}
-	if picked == "" {
-		return "", "", false
-	}
-	switch strings.ToLower(picked) {
-	case "handler.js", "handler.ts":
-		return runtimeNode22, defaultTemplateHandler, true
-	case "handler.py":
-		return runtimePython312, defaultTemplateHandler, true
-	case "handler.go":
-		return runtimeGo124, defaultTemplateHandler, true
-	}
-	return "", "", false
+	return gregalemanifest.InferFunctionRuntime(srcDir)
 }
 
 // defaultZeroConfigSourceCapMB is the conservative per-plan floor used when
@@ -1100,8 +1068,16 @@ func packWriteError(capMB int, name string, err error) error {
 	return fmt.Errorf("write %s: %w", name, err)
 }
 
+// sourceUploadLimitErr is a packed source over the upload cap the CLI packed
+// against. resolveSourceUploadCap explains a cap it could not verify.
+type sourceUploadLimitErr struct{ capMB int }
+
+func (e *sourceUploadLimitErr) Error() string {
+	return fmt.Sprintf("packed source is over your plan's %d MB upload limit; exclude large files in .gregaleignore (https://gregale.dev/docs/deploy-from-source#what-gets-uploaded)", e.capMB)
+}
+
 func sourceUploadLimitError(capMB int) error {
-	return fmt.Errorf("packed source is over your plan's %d MB upload limit; exclude large files in .gregaleignore (https://gregale.dev/docs/deploy-from-source#what-gets-uploaded)", capMB)
+	return &sourceUploadLimitErr{capMB: capMB}
 }
 
 func sourceExpandedLimitError() error {

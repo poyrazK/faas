@@ -29,6 +29,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/edgecert"
 	"github.com/onebox-faas/faas/pkg/gateway"
 )
 
@@ -54,13 +55,15 @@ func TestEdgeTLSConfigFromEnv(t *testing.T) {
 		return out
 	}
 	direct := with(full, edgeTLSFrontEnv, "none")
+	fromDatabase := with(with(with(without(without(direct, edgeTLSCertEnv), edgeTLSKeyEnv), edgeTLSCertSourceEnv, "database"), edgeTLSIdentityEnv, "/run/credentials/x/edge_tls"), edgeTLSClientCAEnv, full[edgeTLSClientCAEnv])
 	for _, tc := range []struct {
-		name        string
-		mode        publicEdgeMode
-		env         map[string]string
-		wantEnabled bool
-		wantDirect  bool
-		wantErr     string
+		name         string
+		mode         publicEdgeMode
+		env          map[string]string
+		wantEnabled  bool
+		wantDirect   bool
+		wantDatabase bool
+		wantErr      string
 	}{
 		{name: "off", mode: edgeModeCompute, env: map[string]string{}},
 		{name: "on for a compute edge", mode: edgeModeCompute, env: full, wantEnabled: true},
@@ -74,6 +77,13 @@ func TestEdgeTLSConfigFromEnv(t *testing.T) {
 		{name: "no front without an address", mode: edgeModeCompute, env: map[string]string{edgeTLSFrontEnv: "none"}, wantErr: edgeTLSAddrEnv},
 		{name: "no front on a control-plane edge", mode: edgeModeControlPlane, env: direct, wantErr: "for a compute edge"},
 		{name: "an unknown front", mode: edgeModeCompute, env: with(full, edgeTLSFrontEnv, "akamai"), wantErr: edgeTLSFrontEnv},
+		{name: "the edge-tls identity alone", mode: edgeModeCompute, env: map[string]string{edgeTLSIdentityEnv: "/run/credentials/x/edge_tls"}},
+		{name: "from the database", mode: edgeModeCompute, env: fromDatabase, wantEnabled: true, wantDirect: true, wantDatabase: true},
+		{name: "from the database without the identity", mode: edgeModeCompute, env: without(fromDatabase, edgeTLSIdentityEnv), wantErr: edgeTLSIdentityEnv},
+		{name: "from the database with files too", mode: edgeModeCompute, env: with(fromDatabase, edgeTLSCertEnv, "/etc/faas/edge-tls/cert.pem"), wantErr: "takes no"},
+		{name: "from the database of an unknown CA", mode: edgeModeCompute, env: with(fromDatabase, edgeTLSCertCAEnv, "zerossl"), wantErr: edgeTLSCertCAEnv},
+		{name: "a CA for files", mode: edgeModeCompute, env: with(full, edgeTLSCertCAEnv, "letsencrypt"), wantErr: edgeTLSCertCAEnv},
+		{name: "an unknown source", mode: edgeModeCompute, env: with(full, edgeTLSCertSourceEnv, "vault"), wantErr: edgeTLSCertSourceEnv},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := edgeTLSConfigFromEnv(tc.mode, func(k string) string { return tc.env[k] })
@@ -91,6 +101,9 @@ func TestEdgeTLSConfigFromEnv(t *testing.T) {
 			}
 			if c.direct() != tc.wantDirect {
 				t.Fatalf("direct = %v, want %v", c.direct(), tc.wantDirect)
+			}
+			if c.fromDatabase() != tc.wantDatabase || (c.fromDatabase() && c.ca != edgecert.CALetsEncrypt) {
+				t.Fatalf("source = %q, ca = %q; want database %v, letsencrypt by default", c.source, c.ca, tc.wantDatabase)
 			}
 		})
 	}
@@ -180,7 +193,7 @@ func TestEdgeTLSListenerServesOnlyTheZone(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := edgeTLSConfig{addr: "127.0.0.1:0", certFile: certFile, keyFile: keyFile, clientCAFile: clientCAFile}
-	ln, err := openEdgeTLSListener(t.Context(), cfg, nil, edgeClientLimits{}, nil)
+	ln, err := openEdgeTLSListener(t.Context(), cfg, nil, nil, edgeClientLimits{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +266,7 @@ func TestEdgeTLSListenerWithNoFront(t *testing.T) {
 	}
 	cfg := edgeTLSConfig{addr: "127.0.0.1:0", certFile: certFile, keyFile: keyFile, clientCAFile: clientCAFile, front: edgeFrontNone}
 	appHost := func(name string) bool { return strings.HasSuffix(name, ".gregale.dev") }
-	ln, err := openEdgeTLSListener(t.Context(), cfg, appHost, edgeClientLimits{}, nil)
+	ln, err := openEdgeTLSListener(t.Context(), cfg, appHost, nil, edgeClientLimits{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,5 +392,27 @@ func TestEdgeServerErrorsLogOneHandshakeFailureAMinute(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "superfluous") {
 		t.Fatalf("another server error was not logged:\n%s", buf.String())
+	}
+}
+
+// Hunt 33 P-3: a client resetting during the HTTP/2 preface logged a Warn
+// every few minutes on every node.
+func TestEdgeServerErrorsLogClientResetsAtDebug(t *testing.T) {
+	var buf bytes.Buffer
+	failures := prometheus.NewCounter(prometheus.CounterOpts{Name: "failures"})
+	e := newEdgeServerErrors(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})), failures)
+	for _, line := range []string{
+		"http2: server: error reading preface from client 198.51.100.7:33936: read tcp 192.0.2.1:443->198.51.100.7:33936: read: connection reset by peer\n",
+		"http2: server: error reading preface from client 198.51.100.7:33937: EOF\n",
+		"http: response.Write on hijacked connection: write: broken pipe\n",
+	} {
+		_, _ = e.Write([]byte(line))
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("client resets were logged above Debug:\n%s", buf.String())
+	}
+	_, _ = e.Write([]byte("http2: server: error reading preface from client 198.51.100.7:1: bogus greeting \"GET / HTTP/1.1\"\n"))
+	if !strings.Contains(buf.String(), "bogus greeting") {
+		t.Fatalf("a malformed preface was not logged:\n%s", buf.String())
 	}
 }

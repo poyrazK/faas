@@ -27,6 +27,12 @@ an App subscribed to a payload shape githubd does not know. Retry it only after
 the release that fixes the decoder is deployed. Pull request actions previews
 do not use (labeled, edited, ...) are completed as ignored, not dead.
 
+`FaasGithubWebhookDeliveryDead` fires when a delivery died within the last
+24 hours (the dead count is above its 24-hour low), not merely because dead
+rows exist. githubd prunes dead deliveries 7 days after they were last
+touched, so a dead item can be retried for a week. Do not bulk-retry old dead
+items: a week-old pull request event can rebuild a stale preview.
+
 ## Recover
 
 After correcting the dependency failure, retry one dead item:

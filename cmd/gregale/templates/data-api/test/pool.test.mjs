@@ -119,12 +119,14 @@ test('metrics failure does not change SQL readiness and coordinated refresh uses
     if (req.url === '/metrics' && supported) return res.end(metrics(1))
     res.end(req.url === '/metrics' ? 'private-error-body' : '{}')
   })
-  const health = createHealth({ coordinatedRefresh: true, refreshStatus: async () => ({ paused: false }) }, server.address().port, server.address().port)
+  let clock = 0
+  const health = createHealth({ coordinatedRefresh: true, refreshStatus: async () => ({ paused: false }) }, server.address().port, server.address().port, { monotonic: () => clock })
   const admission = () => ({ active: 0, queued: 0, capacity: 1, queue_capacity: 8 })
   const failed = await health.snapshot(admission)
   assert.equal(failed.ready, true)
   assert.equal(failed.pool.state, 'unknown')
   supported = true
+  clock += limits.healthCacheMs
   const recovered = await health.snapshot(admission)
   assert.equal(recovered.ready, true)
   assert.equal(recovered.pool.capacity, 1)

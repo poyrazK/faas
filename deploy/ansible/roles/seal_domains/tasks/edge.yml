@@ -11,11 +11,13 @@
     that:
       - faas_seal_domain_edge_writes in ['', 'fleet', 'dual', 'domain']
       - faas_seal_domain_edge_writes != 'domain' or (faas_seal_domain_edge_readers_verified | bool)
+      - not (faas_seal_domain_edge_contracted | bool) or faas_seal_domain_edge_writes == 'domain'
     fail_msg: >-
       faas_seal_domain_edge_writes is '', fleet, dual or domain. domain needs
       faas_seal_domain_edge_readers_verified once every gatewayd-internal reports
       faas_seal_domain_loaded{domain="edge"} 1 and the previous release
-      left the rollback window.
+      left the rollback window. faas_seal_domain_edge_contracted needs
+      writes=domain.
 
 # 0400 root:root. systemd hands the identity to gatewayd-internal alone as a
 # credential; no other unit names it.
@@ -68,6 +70,47 @@
     - faas_box_role | default('single-box') in ['compute-only', 'single-box']
     - faas_seal_domain_edge_identity_src | length > 0
 
+# The contract step (ADR 20261022111812, step 4): gatewayd-internal keeps no
+# identity that opens a value the domain does not. The check writes nothing
+# and fails while a credential still opens with the fleet or host identity.
+- name: seal_domains — check every edge value opens with the domain alone before gatewayd-internal drops the fleet identity
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/gregalectl
+      - seal-domain
+      - migrate
+      - --domain
+      - edge
+      - --check
+      - --db-env
+      - "{{ faas_seal_domain_db_env }}"
+      - --json
+  changed_when: false
+  when:
+    - faas_box_role | default('single-box') in ['compute-only', 'single-box']
+    - faas_seal_domain_edge_identity_src | length > 0
+    - faas_seal_domain_edge_contracted | bool
+
+- name: seal_domains — drop gatewayd-internal's fleet and host identities once edge contracts
+  ansible.builtin.template:
+    src: 30-faas-seal-domain-edge-contract.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-internal.service.d/30-faas-seal-domain-edge-contract.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-gatewayd-internal for seal domains
+  when:
+    - faas_box_role | default('single-box') in ['compute-only', 'single-box']
+    - faas_seal_domain_edge_identity_src | length > 0
+    - faas_seal_domain_edge_contracted | bool
+
+- name: seal_domains — keep gatewayd-internal's base credentials while edge is not contracted
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-gatewayd-internal.service.d/30-faas-seal-domain-edge-contract.conf
+    state: absent
+  notify: restart faas-gatewayd-internal for seal domains
+  when: not (faas_seal_domain_edge_contracted | bool)
+
 - name: seal_domains — give gatewayd-internal the edge domain identity
   ansible.builtin.template:
     src: 60-faas-seal-domain-edge-reader.conf.j2
@@ -82,6 +125,23 @@
 
 - name: seal_domains — restart gatewayd-internal before proving the domain
   ansible.builtin.meta: flush_handlers
+
+# systemd places a running unit's credentials in its credentials directory:
+# a contracted gatewayd-internal has the domain identity there and no fleet
+# or host one.
+- name: seal_domains — prove a contracted gatewayd-internal runs without the fleet and host identities
+  ansible.builtin.find:
+    paths: /run/credentials/faas-gatewayd-internal.service
+  register: faas_seal_domain_edge_credentials
+  failed_when: >-
+    'faas_seal_domain_edge' not in (faas_seal_domain_edge_credentials.files | map(attribute='path') | map('basename') | list) or
+    'fleet.age' in (faas_seal_domain_edge_credentials.files | map(attribute='path') | map('basename') | list) or
+    'host.age' in (faas_seal_domain_edge_credentials.files | map(attribute='path') | map('basename') | list)
+  when:
+    - faas_box_role | default('single-box') in ['compute-only', 'single-box']
+    - faas_seal_domain_edge_identity_src | length > 0
+    - faas_seal_domain_edge_contracted | bool
+    - not (faas_join_defer_service_handlers | default(false) | bool)
 
 - name: seal_domains — prove this node opens the edge domain probe
   ansible.builtin.command:

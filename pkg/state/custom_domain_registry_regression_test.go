@@ -90,8 +90,8 @@ func TestCustomDomainOldObservationPreservesCertificate(t *testing.T) {
 			if err = store.UpdateCustomDomainCertStatus(bound, host, state.CustomDomainCertIssued, time.Now().Add(30*24*time.Hour), "", time.Now()); err != nil {
 				t.Fatal(err)
 			}
-			if err = store.UpdateCustomDomainCertStatus(bound, host, state.CustomDomainCertPending, time.Time{}, "", checked); err != nil {
-				t.Fatal(err)
+			if err = store.UpdateCustomDomainCertStatus(bound, host, state.CustomDomainCertPending, time.Time{}, "", checked); !errors.Is(err, state.ErrStaleCustomDomainObservation) {
+				t.Fatalf("older result was not rejected: %v", err)
 			}
 			current, err := store.DomainByName(ctx, host)
 			if err != nil {

@@ -88,3 +88,25 @@ func TestDeployManifestQueueBindingsPreservesNamedEnvironments(t *testing.T) {
 		t.Fatalf("manifest updated named binding: %+v", f)
 	}
 }
+
+// A function app's queue_bindings entry without mode or workload_class is a
+// push/http binding, like an entry under `functions:`. It defaulted to
+// pull/worker and the deploy failed with `workload_class "worker" does not
+// match app workload class "http"` (production-us 2026-11-07).
+func TestDeployManifestQueueBindingsDefaultFunctionAppsToPush(t *testing.T) {
+	dir := t.TempDir()
+	main.WriteManifest(t, dir, `function:
+  runtime: node22
+  handler: handler.handler
+queue_bindings:
+  - name: labq
+    queue_name: labq
+`)
+	f := &manifestScopeQueueClient{}
+	if err := main.DeployManifestQueueBindings(context.Background(), f, "fn", dir); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.created) != 1 || f.created[0].Mode != "push" || f.created[0].WorkloadClass != "http" {
+		t.Fatalf("function binding = %+v, want push/http", f.created)
+	}
+}

@@ -289,6 +289,13 @@ func (o *Orchestrator) walkRow(ctx context.Context, d state.Deployment, now time
 		if o.CompleteOnly {
 			return
 		}
+		// A deleted app's rollout has nothing left to promote. Waiting for
+		// the stuck threshold left its canary evaluated against a missing app
+		// for 30 minutes (dapi-t1109-probe, 2026-11-09).
+		if o.appDeleted(ctx, d) {
+			o.closeDeletedAppRollout(ctx, d, stats)
+			return
+		}
 		// Stuck detection: rolling_out with canary_step not at
 		// terminal AND canary_step_started_at older than
 		// StuckAfterDuration. Warn-log (rate-limited via
@@ -389,6 +396,16 @@ func (o *Orchestrator) autoAbort(ctx context.Context, d state.Deployment, elapse
 	stats.AutoAborted++
 	o.Log.Warn("safedeploy: automatically aborted stuck rollout",
 		"deployment_id", d.ID, "app_slug", app.Slug, "reason", reason)
+}
+
+// appDeleted reports whether d's app is soft-deleted. A failed lookup is not
+// proof of deletion, so the row keeps its normal handling.
+func (o *Orchestrator) appDeleted(ctx context.Context, d state.Deployment) bool {
+	if o.Targets == nil {
+		return false
+	}
+	app, err := o.Targets.AppByID(ctx, d.AppID)
+	return err == nil && app.Status == state.AppDeleted
 }
 
 // closeDeletedAppRollout ends a stuck rollout whose app was deleted. APID

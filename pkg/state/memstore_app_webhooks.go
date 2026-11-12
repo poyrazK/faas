@@ -372,6 +372,18 @@ func (m *MemStore) DeleteAppWebhook(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.appWebhooks, id)
+	// Mirror the PgStore cascade: the webhook's deliveries, and with them
+	// their derived dead-letter events, go too (ChronoLake finding 28).
+	for deliveryID, d := range m.appWebhookDeliveries {
+		if d.WebhookID != id {
+			continue
+		}
+		delete(m.appWebhookDeliveries, deliveryID)
+		delete(m.appWebhookDeliveryAttempts, deliveryID)
+		delete(m.appWebhookDeliverySources, deliveryID)
+		delete(m.appWebhookReplayGenerations, deliveryID)
+		delete(m.deadLetterPurged, unifiedDeadLetterEventID("webhook_delivery", deliveryID))
+	}
 	delete(m.appWebhookPreviousSecrets, id)
 	delete(m.realtimeChannelWebhookFilters, id)
 	delete(m.appWebhookReceiverCooldowns, id)

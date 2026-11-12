@@ -8,6 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -28,10 +29,22 @@ func wrapCLITransport(base http.RoundTripper) http.RoundTripper {
 }
 
 func (t cliTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.Header.Get("User-Agent") == "" {
+	reason := ""
+	// A call's own reason (api.WithAgentReason, a reviewed MCP plan's) is
+	// more specific than the run's.
+	if req.Method != http.MethodGet && req.Method != http.MethodHead && req.Header.Get(api.AgentReasonHeader) == "" &&
+		api.AgentReasonFromContext(req.Context()) == "" {
+		reason = api.SanitizeAgentReason(agentReason)
+	}
+	if req.Header.Get("User-Agent") == "" || reason != "" {
 		// A RoundTripper must not change the caller's request.
 		req = req.Clone(req.Context())
-		req.Header.Set("User-Agent", cliUserAgent())
+		if req.Header.Get("User-Agent") == "" {
+			req.Header.Set("User-Agent", cliUserAgent())
+		}
+		if reason != "" {
+			req.Header.Set(api.AgentReasonHeader, reason)
+		}
 	}
 	resp, err := t.base.RoundTrip(req)
 	if err == nil {

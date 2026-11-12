@@ -107,3 +107,53 @@ func TestAppWait(t *testing.T) {
 		})
 	}
 }
+
+// A wait that ran out of time reported invalid_request with exit_code 1 in
+// its JSON problem while the process exited 3 (CLI journey 2026-11-05,
+// #6653). The problem now names the timeout and carries the real exit code;
+// an invalid condition stays invalid_request with exit 1.
+func TestAppWaitTimeoutJSONMatchesExit(t *testing.T) {
+	starting := appStatus(api.Condition{Status: "False", Reason: "deploying", Message: "No release is serving yet."})
+	ready := appStatus(api.Condition{Status: "True", Reason: "serving", Message: "The app is serving."})
+	for _, tc := range []struct {
+		name     string
+		status   api.ResourceStatus
+		args     []string
+		exit     int
+		code     string
+		category string
+	}{
+		{"pending condition times out", starting, []string{"--timeout", "1200ms"}, 3, "wait_timed_out", ""},
+		{"invalid condition", ready, []string{"--for", "Ready=yes"}, 1, "invalid_request", "invalid_request"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			main.ResetJSONOut(t)
+			statusServer(t, tc.status)
+			_, readStderr, restore := main.SwapIO(t)
+			args := append([]string{"--json", "app", "demo", "wait", "--poll-interval", "1s"}, tc.args...)
+			code := main.Run(args)
+			restore()
+			stderr := readStderr()
+			if code != tc.exit {
+				t.Fatalf("exit = %d, want %d; stderr:\n%s", code, tc.exit, stderr)
+			}
+			var problem struct {
+				Code     string `json:"code"`
+				Category string `json:"category"`
+				ExitCode int    `json:"exit_code"`
+			}
+			if err := json.Unmarshal([]byte(stderr), &problem); err != nil {
+				t.Fatalf("stderr is not one JSON problem: %v\n%s", err, stderr)
+			}
+			if problem.Code != tc.code || problem.ExitCode != tc.exit {
+				t.Fatalf("problem = %+v, want code %s and exit_code %d", problem, tc.code, tc.exit)
+			}
+			if tc.category != "" && problem.Category != tc.category {
+				t.Fatalf("category = %q, want %q", problem.Category, tc.category)
+			}
+			if tc.exit == 3 && problem.Category == "invalid_request" {
+				t.Fatalf("a timed-out wait is classified as an invalid request: %+v", problem)
+			}
+		})
+	}
+}

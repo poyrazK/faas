@@ -102,6 +102,9 @@ func (m *management) listErrorGroups(ctx context.Context, args errorGroupsArgs) 
 	if err != nil {
 		return nil, err
 	}
+	if !m.toolListedForContext(ctx, "gregale_list_error_requests") {
+		v.Limitations += " Request drill-down requires a connection with the diagnose toolset and current diagnostic consent; the selected catalog does not include gregale_list_error_requests."
+	}
 	return m.performanceResult(performanceArgs{App: args.App}, app.ID, v), nil
 }
 

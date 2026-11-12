@@ -2,8 +2,10 @@
 
 from urllib.parse import urlsplit, urlunsplit
 import re
+import time
 
 import jwt
+from bounded_jwks import BoundedJWKClient
 
 
 SCOPE_PATTERN = re.compile(r"^[\x21\x23-\x5b\x5d-\x7e]+$")
@@ -12,6 +14,52 @@ ENDPOINT_PATTERN = re.compile(r"^/(?:[A-Za-z0-9._~-]+/?)*$")
 BEARER_PATTERN = re.compile(r"(?i:Bearer) +([^ ]+)")
 RESOURCE_VARIABLE_PATTERN = re.compile(r"\{([A-Za-z][A-Za-z0-9_.-]*)\}")
 MAX_BEARER_TOKEN_BYTES = 32 * 1024
+
+
+class CooldownJWKClient(BoundedJWKClient):
+    """Throttle failed refreshes without blocking verification with cached keys."""
+
+    def get_signing_key_from_jwt(self, token):
+        header = jwt.get_unverified_header(token)
+        algorithm = header.get("alg")
+        if algorithm not in {"RS256", "ES256"} or (
+            "kid" in header and not isinstance(header["kid"], str)
+        ):
+            raise jwt.PyJWKClientError("Unsupported JWT key selection")
+
+        def candidates(key_set):
+            selected = []
+            for key in key_set.keys:
+                # PyJWT 2.15 exposes no public key_ops accessor. Filter the
+                # retained JWK metadata before selecting its verification key.
+                metadata = key._jwk_data
+                operations = metadata.get("key_ops", ["verify"])
+                if (key.algorithm_name != algorithm
+                    or "alg" in metadata and metadata["alg"] != algorithm
+                    or key.public_key_use not in (None, "sig")
+                    or "kid" in header and key.key_id != header["kid"]
+                    or not isinstance(operations, list)
+                    or any(not isinstance(op, str) for op in operations)
+                    or "verify" not in operations):
+                    continue
+                selected.append(key)
+            return selected
+
+        # Fresh cached keys never wait for an unrelated rotation refresh.
+        with self._client_lock:
+            current = self.jwk_set_cache.get() if self.jwk_set_cache is not None else None
+            selected = candidates(current) if current is not None else []
+            if len(selected) == 1:
+                return selected[0]
+            cooling_down = self._last_successful_fetch is not None and (
+                time.monotonic() - self._last_successful_fetch < self.cooldown_duration
+            )
+            if selected or current is not None and cooling_down:
+                raise jwt.PyJWKClientError("JWT must identify one eligible verification key")
+        selected = candidates(self.get_jwk_set(refresh=True))
+        if len(selected) != 1:
+            raise jwt.PyJWKClientError("JWT must identify one eligible verification key")
+        return selected[0]
 
 
 class AuthConfigurationError(ValueError):
@@ -198,11 +246,7 @@ class Authenticator:
             "",
             "",
         ))
-        try:
-            from jwt import PyJWKClient
-        except ImportError as exc:
-            raise AuthConfigurationError("install requirements.txt to enable external OAuth") from exc
-        self.jwks_client = PyJWKClient(
+        self.jwks_client = CooldownJWKClient(
             self.jwks_url,
             cache_jwk_set=True,
             lifespan=300,
@@ -237,7 +281,8 @@ class Authenticator:
                 "b64" in header and header["b64"] is not True
             ):
                 raise ValueError("unsupported JWT header")
-            signing_key = self.jwks_client.get_signing_key_from_jwt(token).key
+            jwk = self.jwks_client.get_signing_key_from_jwt(token)
+            signing_key = jwk.key
             from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
             if isinstance(signing_key, rsa.RSAPublicKey):
@@ -250,7 +295,7 @@ class Authenticator:
                 raise ValueError("unsupported JWT signing key")
             claims = jwt.decode(
                 token,
-                signing_key,
+                jwk,
                 algorithms=["RS256", "ES256"],
                 issuer=self.issuer,
                 audience=self.resource,

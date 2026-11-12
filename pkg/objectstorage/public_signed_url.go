@@ -13,12 +13,16 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"golang.org/x/net/http/httpguts"
 )
 
 // NormalizePublicSignRequest freezes defaults and canonical metadata before
 // its authority is persisted. Public URLs never contain native placement.
 func NormalizePublicSignRequest(r SignRequest, maxBytes int64) (SignRequest, error) {
+	if r.ExpiresIn > api.MaxObjectSignedURLExpiresSeconds {
+		return r, &state.ObjectStorageLimitError{Kind: "signed_url_expires_in_seconds", Limit: api.MaxObjectSignedURLExpiresSeconds, Observed: r.ExpiresIn, Cause: ErrInvalid}
+	}
 	if err := r.Validate(maxBytes); err != nil {
 		return r, err
 	}

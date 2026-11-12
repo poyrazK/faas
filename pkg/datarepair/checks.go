@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"regexp"
 	"slices"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
+
 	"github.com/jackc/pgx/v5"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -54,8 +56,8 @@ type CheckError struct{ Report *CheckReport }
 func (*CheckError) Error() string { return "datarepair: declared business checks failed" }
 func (*CheckError) Unwrap() error { return ErrConflict }
 
-var checkNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9 ._-]*$`)
-var checkSelectPattern = regexp.MustCompile(`(?i)^SELECT[[:space:]]`)
+var checkNamePattern = lazyregexp.New(`^[A-Za-z][A-Za-z0-9 ._-]*$`)
+var checkSelectPattern = lazyregexp.New(`(?i)^SELECT[[:space:]]`)
 
 type checkSet struct {
 	query       string

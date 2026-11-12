@@ -24,7 +24,7 @@ func (e *Engine) CaptureCrash(ctx context.Context, capture state.CrashCapture) (
 	release := e.lockApp(capture.AppID)
 	defer release()
 	ins, err := e.store.InstanceByID(ctx, capture.InstanceID)
-	if err != nil || ins.AppID != capture.AppID || state.IsFork(ins.Mode) || ins.State != string(state.StateRunning) || ins.NodeID == "" {
+	if err != nil || ins.AppID != capture.AppID || state.NeverServes(ins.Mode) || ins.State != string(state.StateRunning) || ins.NodeID == "" {
 		return state.CompleteCrashCaptureParams{}, ErrCrashInstanceGone
 	}
 	memKey := state.SnapshotCaptureMemKey(ins.DeploymentID, state.SnapshotTierWarm, capture.ID)

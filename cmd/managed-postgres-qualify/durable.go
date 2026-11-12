@@ -12,7 +12,9 @@ import (
 	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	dbbounds "github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/credentialdelivery"
 	probesql "github.com/onebox-faas/faas/pkg/managedpostgres/credentialdelivery/sqlc"
@@ -76,6 +78,7 @@ func loadDurableQualification(ctx context.Context, getenv func(string) string, s
 		return c, managedpostgres.ErrInvalid
 	}
 	c.pool.MaxConns = 4
+	dbbounds.ConfigureTimeouts(c.pool)
 	pool, err := pgxpool.NewWithConfig(ctx, c.pool.Copy())
 	if err != nil {
 		return c, managedpostgres.ErrUnavailable
@@ -155,6 +158,7 @@ func readQualificationSecret(path string) ([]byte, error) {
 
 func (c durableQualificationConfig) factory(getenv func(string) string) managedpostgres.DurableLifecycleFactory {
 	return func(ctx context.Context, stage managedpostgres.DurableQualificationStage) (session managedpostgres.DurableLifecycleSession, resultErr error) {
+		dbbounds.ConfigureTimeouts(c.pool)
 		pool, err := pgxpool.NewWithConfig(ctx, c.pool.Copy())
 		if err != nil {
 			return session, managedpostgres.ErrUnavailable

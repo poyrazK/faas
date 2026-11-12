@@ -29,6 +29,9 @@ type devSourceConfig struct {
 }
 
 func resolveDevSourceConfig(sourceDir string) (devSourceConfig, error) {
+	if err := refuseDevFunctionSet(sourceDir); err != nil {
+		return devSourceConfig{}, err
+	}
 	resolvedShape, runtime, handler, err := resolveDeployShape(sourceDir, false, false, jsonOutput)
 	if err != nil {
 		return devSourceConfig{}, err
@@ -316,6 +319,10 @@ func cmdDev(args []string) int {
 	if len(args) > 0 && args[0] == "trigger" {
 		return cmdDevTrigger(args[1:])
 	}
+	// ADR-20261107210000: run the functions on this machine instead.
+	if rest, isLocal := hasLocalFlag(args); isLocal {
+		return cmdDevLocal(rest)
+	}
 	fs := newFlagSet("dev", flag.ContinueOnError)
 	name := fs.String("name", "", "developer-session project name (default: selected source directory)")
 	sourcePath := fs.String("path", "", "source directory (relative to the current directory)")
@@ -335,7 +342,7 @@ func cmdDev(args []string) int {
 	debug := fs.Bool("debug", false, "start the Node.js inspector and expose it on a local port (ADR-741)")
 	debugPort := fs.Int("debug-port", api.DevDebugNodePort, "local port for --debug")
 	all := fs.Bool("all", false, "run one developer loop per deployable workspace app below --path")
-	watch := fs.Bool("watch", false, "run the app's development server with hot reload instead of the production build (ADR-1170)")
+	watch := fs.Bool("watch", false, "use hot reload (automatic for supported apps); --watch=false uses the production build")
 	watchCommand := fs.String("watch-command", "", "development server command for --watch (default: the dev script or the detected framework's server)")
 	goCommand := fs.String("go-command", "", "build cmd/NAME of the Go module at --path, for a module with several commands")
 	if err := fs.Parse(args); err != nil {
@@ -350,6 +357,9 @@ func cmdDev(args []string) int {
 		return 1
 	}
 	explicitFlags := flagSetWasSet(fs)
+	if explicitFlags["watch"] && !*watch && explicitFlags["watch-command"] {
+		return printErr("Invalid flags", errors.New("--watch=false cannot be combined with --watch-command"))
+	}
 	if *stop && explicitFlags["bucket"] {
 		return printErr("Invalid flags", fmt.Errorf("--bucket cannot be combined with --stop"))
 	}
@@ -404,7 +414,7 @@ func cmdDev(args []string) int {
 	var linkedContext localProjectContext
 	linkedErr := errProjectContextNotFound
 	if *name == "" {
-		linkedContext, _, linkedErr = linkedProjectContext(sourceDir)
+		linkedContext, _, linkedErr = targetProjectContext(sourceDir)
 		if linkedErr != nil && !errors.Is(linkedErr, errProjectContextNotFound) {
 			return printErr("Could not read local project context", linkedErr)
 		}
@@ -418,17 +428,28 @@ func cmdDev(args []string) int {
 	}
 	// --stop only tears the environment down, so team defaults for files that
 	// would be synced on start must not turn it into a flag conflict.
+	debugFromManifest := false
 	if !*stop {
 		applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion, ttl)
 		applyDevSeedManifestDefault(manifest, explicitFlags, postgresSeed)
-		applyDevDebugManifestDefault(manifest, explicitFlags, debug)
-		applyDevWatchManifestDefault(manifest, explicitFlags, watch, watchCommand)
+		debugFromManifest = applyDevDebugManifestDefault(manifest, explicitFlags, debug, debugPort)
 	}
 	var buckets []api.DevBucketRequest
 	if !*stop {
 		buckets, err = resolveDevBuckets(manifest, bucketNames, explicitFlags["bucket"])
 		if err != nil {
 			return printErr("Invalid developer buckets", err)
+		}
+	}
+	if *debugPort < 1 || *debugPort > 65535 {
+		return printErr("Invalid debug port", fmt.Errorf("dev.debug_port must be between 1 and 65535"))
+	}
+	if *debug && *once && debugFromManifest {
+		// gregale.yaml's dev.debug is a team default for interactive loops; a
+		// one-shot sync (CI, scripts) just skips the debugger.
+		*debug = false
+		if !jsonOutput {
+			PrintProgress(osStdout, "dev.debug skipped: --once exits after one sync")
 		}
 	}
 	if *debug && *once {
@@ -531,7 +552,11 @@ func cmdDev(args []string) int {
 	if err != nil {
 		return printErr("No deployable source found in "+filepath.Base(sourceDir), err)
 	}
-	if code := checkDevSource(sourceDir, config); code != 0 {
+	configuration, err := loadDevConfiguration(sourceDir, envFilePath, serviceOverrideFilePath, *withPostgres, buckets)
+	if err != nil {
+		return printErr("Invalid developer configuration", err)
+	}
+	if code := checkDevSource(sourceDir, config, configuration.evaluate(nil)); code != 0 {
 		return code
 	}
 	if err := checkDevGoCommand(sourceDir, config, *goCommand); err != nil {
@@ -541,24 +566,35 @@ func cmdDev(args []string) int {
 		PrintProgress(osStdout, "Source: %s; connection: %s; isolated developer session: %s", sourceDir, currentProfile(), project)
 	}
 
-	if *debug && !devDebugSupported(sourceDir, config) {
-		return printErr("Invalid flags", fmt.Errorf("--debug supports Node.js workloads only"))
+	if *debug && !devDebugSupported(sourceDir, config) && debugFromManifest {
+		*debug = false
+		if !jsonOutput {
+			PrintProgress(osStdout, "dev.debug skipped: the debugger supports Node.js workloads only (not Bun or Deno)")
+		}
 	}
-	devWatch, err := resolveDevWatch(sourceDir, config, *watch, *watchCommand)
+	if *debug && !devDebugSupported(sourceDir, config) {
+		return printErr("Invalid flags", fmt.Errorf("--debug supports Node.js workloads only (not Bun or Deno)"))
+	}
+	devMode, err := resolveDevMode(sourceDir, config, manifest, explicitFlags, *watch, *watchCommand)
 	if err != nil {
 		return printErr("Invalid --watch", err)
 	}
-	var devWatchNotes []string
-	if devWatch != nil {
-		// Before the first sync, so a config edit ships with it.
-		devWatchNotes = prepareDevWatchSource(sourceDir, !jsonOutput && !nonInteractive && stdinIsTTY() && stdoutIsTTY(), osStdin, osStdout)
-	}
-	session, err := upsertDevSession(client, project, withDevGoCommand(config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devWatch, buckets...), *goCommand))
+	session, devMode, err := upsertDevSessionWithMode(client, project, withDevGoCommand(config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devMode.watch(), buckets...), *goCommand), devMode)
 	if err != nil {
 		return printErr("Could not create developer environment", err)
 	}
 	if session.GoCommand != *goCommand {
 		return printErr("Could not select the Go command", errDevGoCommandUnsupported(*goCommand))
+	}
+	devWatch := devMode.watch()
+	if err := reportDevMode(devMode); err != nil {
+		return jsonOut(err)
+	}
+	var devWatchNotes []string
+	if devWatch != nil {
+		// Prepare only an accepted watch session, before the first sync, so
+		// an automatic fallback never asks to edit framework configuration.
+		devWatchNotes = prepareDevWatchSource(sourceDir, !jsonOutput && !nonInteractive && stdinIsTTY() && stdoutIsTTY(), osStdin, osStdout)
 	}
 	if group != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -577,7 +613,7 @@ func cmdDev(args []string) int {
 	}
 	if !jsonOutput {
 		PrintOK(osStdout, "Developer environment: %s", canonicalAppURL(session.App))
-		PrintProgress(osStdout, "lease %s after the latest sync (expires %s unless renewed)", formatDevLease(lease), session.ExpiresAt.Local().Format(time.RFC822))
+		PrintProgress(osStdout, "lease %s after the latest sync (expires %s unless renewed)", formatDevLease(lease), session.ExpiresAt.UTC().Format("2006-01-02 15:04 MST"))
 		if session.Postgres != nil {
 			PrintProgress(osStdout, "PostgreSQL: %s (%s); %s is injected when the binding is ready", session.Postgres.Name, session.Postgres.BindingState, session.Postgres.EnvironmentKey)
 		}
@@ -585,7 +621,6 @@ func cmdDev(args []string) int {
 			PrintProgress(osStdout, "Bucket: %s (%s); binding %s under %s", bucket.Bucket.Name, bucket.Bucket.State, bucket.Binding.Credential.Permission, bucket.Binding.Prefix)
 		}
 		if session.Watch != nil {
-			PrintProgress(osStdout, "watch mode: runs %q with hot reload; this environment does not run your production build", session.Watch.Command)
 			for _, note := range devWatchNotes {
 				PrintProgress(osStdout, "watch mode: %s", note)
 			}
@@ -594,8 +629,8 @@ func cmdDev(args []string) int {
 
 	ctx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stopSignal()
-	runtimeLogCtx, cancelRuntimeLogs := context.WithCancel(ctx)
-	defer cancelRuntimeLogs()
+	stopRuntimeLogs := func() {}
+	defer func() { stopRuntimeLogs() }()
 	runtimeLogsStarted := false
 	debugProxyStarted := false
 	devBrowserOpened := false
@@ -607,14 +642,7 @@ func cmdDev(args []string) int {
 	}
 	seedPending := *postgresSeed != ""
 	forceReseed := *reseed
-	reportDevDiagnostic := func(d devDiagnostic) {
-		d.SourceDir = sourceDir
-		if jsonOutput {
-			_ = writeJSON(d)
-			return
-		}
-		renderDevDiagnostic(osStderr, d)
-	}
+	reportDevDiagnostic := newDevDiagnosticReporter(sourceDir, session.App.Slug)
 	openDevBrowser := func() {
 		if !*open || jsonOutput || devBrowserOpened {
 			return
@@ -638,8 +666,14 @@ func cmdDev(args []string) int {
 	return runDevWatchLoop(ctx, sourceDir, lastSynced, config, *once, devLoopOps{
 		deploy: func(deployCtx context.Context, config devSourceConfig, queued func(string)) int {
 			diagnosticReported.Store(false)
+			validated, configurationCode := checkDevConfiguration(deployCtx, client, session, sourceDir, envFilePath, serviceOverrideFilePath)
+			if configurationCode != 0 {
+				diagnosticReported.Store(true)
+				return configurationCode
+			}
 			if envFilePath != "" {
-				report, syncErr := envSyncState.sync(deployCtx, client, session.App.Slug, envFilePath)
+				file := validated.files[0]
+				report, syncErr := envSyncState.syncPairs(deployCtx, client, session.App.Slug, envFilePath, file.pairs, file.fingerprint, "developer config")
 				if syncErr != nil {
 					_ = printErr("Could not sync developer config", syncErr)
 					diagnosticReported.Store(true)
@@ -651,7 +685,8 @@ func cmdDev(args []string) int {
 				}
 			}
 			if serviceOverrideFilePath != "" {
-				report, syncErr := serviceOverrideSyncState.syncServiceOverrides(deployCtx, client, session.App.Slug, serviceOverrideFilePath)
+				file := validated.files[1]
+				report, syncErr := serviceOverrideSyncState.syncPairs(deployCtx, client, session.App.Slug, serviceOverrideFilePath, file.pairs, file.fingerprint, "developer service overrides")
 				if syncErr != nil {
 					_ = printErr("Could not sync developer service overrides", syncErr)
 					diagnosticReported.Store(true)
@@ -771,12 +806,11 @@ func cmdDev(args []string) int {
 				debugProxyStarted = true
 				startDevDebugSession(ctx, session.App.Slug, *debugPort)
 			}
-			if *once || *noLogs || jsonOutput || runtimeLogsStarted {
+			if runtimeLogsStarted {
 				return
 			}
 			runtimeLogsStarted = true
-			PrintProgress(osStdout, "runtime logs attached (Ctrl-C to stop watching)")
-			go followDevRuntimeLogsWithDiagnostics(runtimeLogCtx, client, session.App.Slug, reportDevDiagnostic)
+			stopRuntimeLogs = startDevRuntimeLogs(ctx, client, session.App.Slug, *once, *noLogs, reportDevDiagnostic)
 		},
 		cancelDeploy: func(cancelCtx context.Context, deploymentID string) error {
 			cancelCtx, cancel := context.WithTimeout(cancelCtx, 15*time.Second)
@@ -949,7 +983,7 @@ func cmdDevHistory(args []string) int {
 		if !item.WithinSLO {
 			mark = "slow"
 		}
-		_, _ = fmt.Fprintf(osStdout, "  %s %s  %s  %s%s\n", mark, item.CreatedAt.Local().Format("2006-01-02 15:04"), formatDevDuration(item.EditToLiveMS), item.DeploymentID, devHistoryPatchNote(item.Phases))
+		_, _ = fmt.Fprintf(osStdout, "  %s %s  %s  %s%s\n", mark, item.CreatedAt.UTC().Format("2006-01-02 15:04Z"), formatDevDuration(item.EditToLiveMS), item.DeploymentID, devHistoryPatchNote(item.Phases))
 	}
 	return 0
 }

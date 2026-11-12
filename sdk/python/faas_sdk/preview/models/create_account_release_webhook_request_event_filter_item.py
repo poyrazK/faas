@@ -1,12 +1,22 @@
 from typing import Literal
 
 CreateAccountReleaseWebhookRequestEventFilterItem = Literal[
-    "deployment.failed", "deployment.live", "environment.gitops.changed", "rollout.aborted", "rollout.completed"
+    "agent.approval.approved",
+    "agent.approval.denied",
+    "agent.approval.requested",
+    "deployment.failed",
+    "deployment.live",
+    "environment.gitops.changed",
+    "rollout.aborted",
+    "rollout.completed",
 ]
 
 CREATE_ACCOUNT_RELEASE_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[
     CreateAccountReleaseWebhookRequestEventFilterItem
 ] = {
+    "agent.approval.approved",
+    "agent.approval.denied",
+    "agent.approval.requested",
     "deployment.failed",
     "deployment.live",
     "environment.gitops.changed",

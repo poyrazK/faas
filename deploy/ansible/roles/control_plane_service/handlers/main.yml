@@ -18,6 +18,8 @@
     - restart faas-bridged
     - restart faas-mcp-bridge
     - restart faas-apid-clone-worker
+    - restart faas-apid-data-pipeline-worker
+    - restart faas-apid-data-pipeline-alert-worker
 
 - name: control_plane_service — try-restart faas-apid
   ansible.builtin.command: systemctl try-restart faas-apid.service  # noqa: command-instead-of-module (systemd module has no try-restart)
@@ -29,6 +31,18 @@
   ansible.builtin.command: systemctl try-restart faas-apid-clone-worker.service  # noqa: command-instead-of-module (systemd module has no try-restart)
   changed_when: true
   listen: restart faas-apid-clone-worker
+  when: not (faas_join_defer_service_handlers | default(false) | bool)
+
+- name: control_plane_service — try-restart private pipeline worker
+  ansible.builtin.command: systemctl try-restart faas-apid-data-pipeline-worker.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-apid-data-pipeline-worker
+  when: not (faas_join_defer_service_handlers | default(false) | bool)
+
+- name: control_plane_service — try-restart private pipeline alert worker
+  ansible.builtin.command: systemctl try-restart faas-apid-data-pipeline-alert-worker.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-apid-data-pipeline-alert-worker
   when: not (faas_join_defer_service_handlers | default(false) | bool)
 
 - name: control_plane_service — try-restart faas-schedd

@@ -28,10 +28,10 @@ func (s *server) listWorkflowSchedules(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, api.ErrCapacity("failed to read workflow deployment"))
 		return
 	}
-	if store, ok := s.store.(state.AutomationStore); ok {
+	if store, ok := s.store.(state.StoredWorkflowStore); ok {
 		deployment.Workflows, err = store.EffectiveWorkflowDefinitions(r.Context(), app.ID, deployment.Workflows)
 		if err != nil {
-			api.WriteProblem(w, api.ErrCapacity("failed to read published automations"))
+			api.WriteProblem(w, api.ErrCapacity("failed to read published stored workflows"))
 			return
 		}
 	}

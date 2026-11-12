@@ -281,7 +281,8 @@ func Roles() []Role {
 // the connection to an active node. Other leaves keep their daemon-role CNs
 // for service-to-service authorization.
 func RoleUsesNodeIdentity(role Role) bool {
-	return role.Directory == "vmmd" || (role.Directory == "gatewayd" && role.Filename == "apid-client")
+	return role.Directory == "vmmd" || (role.Directory == "gatewayd" && role.Filename == "apid-client") ||
+		role.Directory == SigndClientDirectory
 }
 
 // RolesForBox returns the subset of Roles() that a box running with

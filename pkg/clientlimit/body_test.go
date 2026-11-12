@@ -107,7 +107,7 @@ func TestInFlightCapsConcurrentRequests(t *testing.T) {
 		entered <- struct{}{}
 		<-release
 		w.WriteHeader(http.StatusNoContent)
-	}), 1, refused.add)
+	}), 1, 0, nil, refused.add)
 
 	var wg sync.WaitGroup
 	wg.Add(1)

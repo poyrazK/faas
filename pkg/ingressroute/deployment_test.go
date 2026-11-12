@@ -1,3 +1,4 @@
+// adr: 20261105120000
 package ingressroute
 
 import (
@@ -69,5 +70,62 @@ func TestServingDeploymentReadFailure(t *testing.T) {
 	failure := errors.New("storage unavailable")
 	if id, err := Deployment(context.Background(), failingDeploymentSource{err: failure}, "app", 0); id != "" || !errors.Is(err, failure) {
 		t.Fatalf("id=%s err=%v", id, err)
+	}
+}
+
+type fixedDeploymentSource []state.Deployment
+
+func (s fixedDeploymentSource) LiveDeployments(context.Context, string) ([]state.Deployment, error) {
+	return s, nil
+}
+func TestServingDeploymentQuarantineRecheck(t *testing.T) {
+	rows := fixedDeploymentSource{
+		{ID: "old", AppID: "app", Status: state.DeployLive, TrafficPercent: 0},
+		{ID: "current", AppID: "app", Status: state.DeployLive, TrafficPercent: 100},
+	}
+	if err := RequireDeployment(t.Context(), rows, "app", "old"); err != nil {
+		t.Fatal("ordinary zeroed bucket should remain pinned", err)
+	}
+	rows[0].ParkedReason = string(state.ParkReasonSecurityScanRegressed)
+	if err := RequireDeployment(t.Context(), rows, "app", "old"); err == nil {
+		t.Fatal("selected quarantined zero-traffic bucket admitted")
+	}
+	if err := RequireDeployment(t.Context(), rows, "app", "current"); err != nil {
+		t.Fatal("unselected retained bucket blocked clean traffic", err)
+	}
+	rows[0].TrafficPercent = 20
+	rows[1].TrafficPercent = 80
+	if _, err := Select(rows, "app", 90); err == nil {
+		t.Fatal("quarantined canary admitted through clean bucket")
+	}
+}
+
+func TestRawProductionLaneSelectionAndRecheck(t *testing.T) {
+	rows := fixedDeploymentSource{
+		{ID: "legacy", AppID: "app", Status: state.DeployLive, TrafficPercent: 100, Scope: "default"},
+		{ID: "production", AppID: "app", Status: state.DeployLive, Scope: "production"},
+		{ID: "stage", AppID: "app", Status: state.DeployLive, TrafficPercent: 100, Scope: "staging", ParkedReason: string(state.ParkReasonSecurityScanRegressed)},
+		{ID: "foreign", AppID: "other", Status: state.DeployLive, TrafficPercent: 100, Scope: "production"},
+		{ID: "superseded", AppID: "app", Status: state.DeploySuperseded, TrafficPercent: 100, Scope: "production"},
+	}
+	if got, err := Select(rows, "app", 0); err != nil || got != "legacy" {
+		t.Fatalf("dark production displaced legacy: %s/%v", got, err)
+	}
+	if err := RequireDeployment(t.Context(), rows, "app", "legacy"); err != nil {
+		t.Fatal(err)
+	}
+	rows[1].TrafficPercent = 100
+	if got, err := Select(rows, "app", 0); err != nil || got != "production" {
+		t.Fatalf("production did not win: %s/%v", got, err)
+	}
+	if err := RequireDeployment(t.Context(), rows, "app", "legacy"); err == nil {
+		t.Fatal("late lane switch retained legacy target")
+	}
+	rows[0].ParkedReason = string(state.ParkReasonSecurityScanRegressed)
+	if err := RequireDeployment(t.Context(), rows, "app", "production"); err != nil {
+		t.Fatal("inactive legacy quarantine blocked production", err)
+	}
+	if err := RequireDeployment(t.Context(), rows, "app", "stage"); err == nil {
+		t.Fatal("staging target admitted")
 	}
 }

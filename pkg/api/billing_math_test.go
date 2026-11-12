@@ -28,11 +28,12 @@ func TestBillableMBSecondsUsesPlanAllowance(t *testing.T) {
 }
 
 func TestOverageCentsForMBSecondsUsesCorrectUnits(t *testing.T) {
-	// One included Hobby allowance plus three and a half GB-hours is three
-	// cents, because the overage price is €0.01 per GB-hour.
+	// One included Hobby allowance plus three and a half GB-hours is 17
+	// cents (17.5 floored), because the overage price is $0.05 per GB-hour
+	// (ADR-20261107192333).
 	total := int64(203)*SecondsPerGBHour + SecondsPerGBHour/2
-	if got := OverageCentsForMBSeconds(PlanHobby, total); got != 3 {
-		t.Fatalf("OverageCentsForMBSeconds = %d, want 3", got)
+	if got := OverageCentsForMBSeconds(PlanHobby, total); got != 17 {
+		t.Fatalf("OverageCentsForMBSeconds = %d, want 17", got)
 	}
 	if got := OverageCentsForMBSeconds(PlanHobby, 200*SecondsPerGBHour); got != 0 {
 		t.Fatalf("at-allowance overage = %d, want 0", got)
@@ -43,7 +44,7 @@ func TestOverageCentsForMBSecondsUsesCorrectUnits(t *testing.T) {
 // the managed PostgreSQL overage ceiling; Free has none.
 // adr: 20261029180000
 func TestDefaultOverageCapCents(t *testing.T) {
-	for plan, want := range map[Plan]int64{PlanHobby: 200, PlanPro: 1_000, PlanScale: 3_000} {
+	for plan, want := range map[Plan]int64{PlanHobby: 1_000, PlanPro: 5_000, PlanScale: 15_000} {
 		got, ok := plan.DefaultOverageCapCents()
 		if !ok || got != want {
 			t.Errorf("%s default cap = (%d, %v), want (%d, true)", plan, got, ok, want)

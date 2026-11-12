@@ -56,7 +56,10 @@ connection is returned and destroyed.
 
 The existing restore hook aborts captured work, fences pending candidates and
 reloads the latest atomic snapshot even if its revision has not changed. It
-validates the schema and drains captured resources within its 1.5-second budget.
+drains captured resources within its 1.5-second budget and runs no SQL: the new
+pool connects on the first query, which reports `database_unavailable` if the
+database is unreachable, so a scale-to-zero database never holds the wake
+(ADR-20261109180000).
 A timeout cancels queued/active adoption, prevents late publication or applied
 ACKs from that attempt, and keeps readiness closed. A successful later restore
 can recover; the platform can otherwise fall back to cold boot.

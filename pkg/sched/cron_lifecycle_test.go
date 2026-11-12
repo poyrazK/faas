@@ -91,6 +91,75 @@ func TestDrainCancelsRunsOfDeletedCrons(t *testing.T) {
 	}
 }
 
+// A queued run of a cron that was disabled or suspended after it was queued is
+// cancelled, and one of a cron whose path changed goes to the new path. Both
+// used to reach the app as queued: a disabled cron's runs the spend cap held
+// back were delivered when the cap was raised (crons audit 2026-11-05).
+func TestDrainFollowsTheCronsCurrentState(t *testing.T) {
+	ctx := context.Background()
+	d, store, _, _, synth := sched.NewDrainHarness(t, api.PlanHobby, true)
+	apps, err := store.ListAllApps(ctx)
+	if err != nil || len(apps) == 0 {
+		t.Fatalf("ListAllApps: %v / %d apps", err, len(apps))
+	}
+	app := apps[0]
+	enqueue := func(cronID string) string {
+		t.Helper()
+		inv, err := store.EnqueueInvocation(ctx, state.Invocation{
+			AppID: app.ID, AccountID: app.AccountID, CronID: &cronID,
+			Source: state.InvocationCron, Method: "POST", Path: "/old", DueAt: time.Now().UTC(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return inv.ID
+	}
+	wantState := func(id string, want state.InvocationState) {
+		t.Helper()
+		if inv, err := store.InvocationByID(ctx, id); err != nil || inv.State != want {
+			t.Fatalf("run = %+v (err %v), want %s", inv, err, want)
+		}
+	}
+	disabled, err := store.CreateCron(ctx, app.ID, "* * * * *", "/old", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabledRun := enqueue(disabled.ID)
+	off := false
+	if _, err := store.UpdateCron(ctx, disabled.ID, nil, nil, &off, nil); err != nil {
+		t.Fatal(err)
+	}
+	d.Tick(ctx)
+	wantState(disabledRun, state.InvocationCancelled)
+
+	moved, err := store.CreateCron(ctx, app.ID, "*/5 * * * *", "/old", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	movedRun := enqueue(moved.ID)
+	newPath := "/new"
+	if _, err := store.UpdateCron(ctx, moved.ID, nil, &newPath, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	before := (*synth.Calls()).Load()
+	d.Tick(ctx)
+	if (*synth.Calls()).Load() == before || synth.LastPath() != "/new" {
+		t.Fatalf("moved cron's run delivered to %q (calls %d), want /new", synth.LastPath(), (*synth.Calls()).Load()-before)
+	}
+	wantState(movedRun, state.InvocationCompleted)
+
+	suspendedRun := enqueue(moved.ID)
+	suspender, ok := store.(state.CronSuspensionStore)
+	if !ok {
+		t.Fatalf("%T cannot suspend crons", store)
+	}
+	if _, err := suspender.SuspendCronsForApp(ctx, app.ID, state.CronSuspendedNoLiveDeployment); err != nil {
+		t.Fatal(err)
+	}
+	d.Tick(ctx)
+	wantState(suspendedRun, state.InvocationCancelled)
+}
+
 // A manual run claimed but never linked to a queued run, as when schedd
 // stopped between the two writes, is failed with a reason instead of staying
 // running forever; a fresh one is left alone (crons audit 2026-11-02).

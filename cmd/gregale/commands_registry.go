@@ -213,7 +213,7 @@ func cmdRegistryRm(args []string) int {
 // Extracted to keep cmdRegistrySet under the 50-line handler cap.
 func validateRegistrySetFlags(slug, registry, username, password *string) bool {
 	if *slug == "" || *registry == "" || *username == "" || *password == "" {
-		PrintUsage(os.Stderr, "usage: gregale registry set --app <slug> --registry <h> --user <u> (--password-stdin|--password <p>)", "registry")
+		PrintUsage(os.Stderr, "usage: gregale registry set --app <slug> --registry <h> --user <u> [--password-stdin]   (without it, a terminal prompts for the password)", "registry")
 		return false
 	}
 	if _, err := registryInputForAPI(*registry); err != nil {

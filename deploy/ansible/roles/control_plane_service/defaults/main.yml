@@ -100,8 +100,8 @@ faas_postgres_runtime_roles_enabled: false
 faas_postgres_runtime_role_units:
   - { unit: faas-apid, os_user: faas-apid, role: faas_apid, restart: restart faas-apid }
   - { unit: faas-apid-clone-worker, os_user: faas-apid, role: faas_apid, restart: restart faas-apid-clone-worker }
-  - { unit: faas-apid-data-pipeline-worker, os_user: faas-apid, role: faas_apid, restart: restart faas-apid }
-  - { unit: faas-apid-data-pipeline-alert-worker, os_user: faas-apid, role: faas_apid, restart: restart faas-apid }
+  - { unit: faas-apid-data-pipeline-worker, os_user: faas-apid, role: faas_apid, restart: restart faas-apid-data-pipeline-worker }
+  - { unit: faas-apid-data-pipeline-alert-worker, os_user: faas-apid, role: faas_apid, restart: restart faas-apid-data-pipeline-alert-worker }
   - { unit: faas-schedd, os_user: faas-schedd, role: faas_schedd, restart: restart faas-schedd }
   - { unit: faas-meterd, os_user: faas-meterd, role: faas_meterd, restart: restart faas-meterd }
   - { unit: faas-outboundd, os_user: faas-outboundd, role: faas_outboundd, restart: restart faas-outboundd }

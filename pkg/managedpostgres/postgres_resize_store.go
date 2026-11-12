@@ -17,7 +17,7 @@ func resizeFromSQL(row sqlc.ManagedPostgresResize) (ResizeOperation, error) {
 	operation := ResizeOperation{ID: cutoverUUID(row.ID), AccountID: cutoverUUID(row.AccountID), DatabaseID: cutoverUUID(row.DatabaseID),
 		BackendID: row.BackendID, BackendFingerprint: row.BackendFingerprint, ProviderResourceID: row.ProviderResourceID,
 		PolicyChange: row.TargetScaleToZero.Valid, TargetScaleToZero: row.TargetScaleToZero.Bool, TargetStorageLimitBytes: row.TargetStorageLimitBytes.Int64,
-		TargetPostgresMajor: int(row.TargetPostgresMajor.Int32), ErrorCode: row.ErrorCode.String,
+		TargetPostgresMajor: int(row.TargetPostgresMajor.Int32), ErrorCode: row.ErrorCode.String, LastErrorCode: row.ErrorCode.String,
 		DataResourceID: row.DataResourceID, TargetClass: ServiceClass(row.TargetClass), Generation: row.Generation, State: ResizeState(row.State),
 		CreatedAt: bindingDeliveryTime(row.CreatedAt), CompletedAt: bindingDeliveryTime(row.CompletedAt)}
 	if json.Unmarshal(row.SourceSpec, &operation.SourceSpec) != nil || operation.SourceSpec.Validate() != nil || operation.TargetSpec().Validate() != nil {
@@ -257,7 +257,7 @@ func (s *PostgresStore) FinishResize(ctx context.Context, expected Database, ope
 }
 
 func (s *PostgresStore) FailResize(ctx context.Context, expected Database, operation ResizeOperation, code string, now time.Time) (Database, error) {
-	if now.IsZero() || expected.LeaseToken == "" || !operation.MajorUpgrade() || !validRejectionCode(code) {
+	if now.IsZero() || expected.LeaseToken == "" || !validRejectionCode(code) {
 		return Database{}, ErrInvalid
 	}
 	account, err := postgresUUID(expected.AccountID)
@@ -298,7 +298,7 @@ func (s *PostgresStore) FailResize(ctx context.Context, expected Database, opera
 		return Database{}, err
 	}
 	database := databaseFromSQL(row)
-	if actual.ID != operation.ID || !actual.MajorUpgrade() || !sameComputeChangeRequest(actual, operation) || actual.Generation != operation.Generation ||
+	if actual.ID != operation.ID || !sameComputeChangeRequest(actual, operation) || actual.Generation != operation.Generation ||
 		!resizeSourceMatches(database, actual) || !resizeSourceMatches(expected, actual) || database.State != StateUpdating ||
 		database.DesiredGeneration != actual.Generation || expected.DesiredGeneration != actual.Generation || database.ObservedGeneration != actual.Generation-1 ||
 		database.LeaseToken != expected.LeaseToken || !database.LeaseUntil.After(clock.Time) {

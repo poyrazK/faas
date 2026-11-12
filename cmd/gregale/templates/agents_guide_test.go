@@ -19,7 +19,10 @@ func TestMaterializeWritesAgentsGuideForEveryTemplate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, want := range []string{"`" + name + "` starter", "--non-interactive --json", "resume_command", "FAAS_TOKEN", "https://gregale.dev/docs/agents"} {
+			for _, want := range []string{"`" + name + "` starter", "--non-interactive --json", "resume_command", "FAAS_TOKEN", "https://gregale.dev/docs/agents",
+				// The app is private by default on paid plans and a JSON deploy is
+				// silent while it waits (CLI journey 2026-11-05, #6628, #6634).
+				"invoke <app> --method GET --path /", "--no-wait", "answers from Gregale's edge"} {
 				if !strings.Contains(string(guide), want) {
 					t.Errorf("AGENTS.md lacks %q", want)
 				}

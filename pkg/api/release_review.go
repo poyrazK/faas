@@ -28,5 +28,5 @@ func (c *Client) GetAppHealthInEnvironment(ctx context.Context, slug, environmen
 
 func (c *Client) PatchDeploymentTrafficReviewed(ctx context.Context, id, serving string, review AppReleaseReview) (DeploymentResponse, error) {
 	var out DeploymentResponse
-	return out, c.do(ctx, "PATCH", "/v1/deployments/"+url.PathEscape(id)+"/traffic", UpdateDeploymentTrafficRequest{TrafficPercent: 100, ExpectedServingDeploymentID: &serving, ExpectedReview: &review}, &out)
+	return out, c.doWithHeaders(ctx, "PATCH", "/v1/deployments/"+url.PathEscape(id)+"/traffic", UpdateDeploymentTrafficRequest{TrafficPercent: 100, ExpectedServingDeploymentID: &serving, ExpectedReview: &review}, &out, deploymentPromotionHeaders(ctx))
 }

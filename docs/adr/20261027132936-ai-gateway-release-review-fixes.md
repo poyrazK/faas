@@ -74,30 +74,20 @@ Consequences:
 
 ## Amendment 2 (2026-11-12): third review
 
-A third review found:
+A third review found eight issues. #6826 fixed five of them (long-context tiers, one-hour cache writes, the Claude output ceiling of translated calls, blocking moderation failing closed and CSV formula cells) and documented `outbound_stage_not_allowed`. This amendment covers the rest:
 
-- **Non-production scopes.** The gateway serves production workloads only (environment `""`, `default` or `production`). `gregale add ai --scope <other>` still wrote base URLs and credentials the gateway refuses; previews (scope `pr-preview`) were not affected by the default.
-- **Long-context prices.** Models priced higher above a prompt-size threshold (Claude on Vertex above 200k tokens, Gemini above 200k, GPT above 272k) were billed at the base rate.
-- **One-hour cache writes.** Anthropic's one-hour prompt-cache writes cost more than five-minute ones and were billed at the five-minute rate.
-- **Translated output limit.** An OpenAI-format call routed to Claude without `max_tokens` was sent with 4,096, truncating long answers; Gemini and Bedrock got the same cap.
-- **Account throughput.** Rates applied per integration; an account could multiply its share of the gateway by opening integrations.
-- **Moderation failure.** A `block` check whose classifier failed let the call through unless `on_error` was set.
-- **CSV exports.** End-user IDs and tags starting with `=`, `+`, `-` or `@` were exported as spreadsheet formulas.
-- **Budget alerts** reach only app webhooks. Delivery to email or notification channels is a new feature and is deferred to its own decision.
+- **Non-production scopes.** The gateway serves production workloads only, yet `gregale add ai --scope <other>` wrote base URLs and credentials for a scope whose calls the gateway refuses.
+- **Account throughput.** Rates applied per integration; an account could multiply its share of the gateway, and of its database writes, by opening integrations.
+- **Budget alerts** reached only the app's webhooks (`outbound.ai_budget.threshold`). An account without a webhook receiver learned of a spent budget when calls started failing.
 
 Decision:
 
-1. `gregale add ai` refuses a non-production `--scope` unless `--no-env`, and says previews call the provider with their own key. The docs say the gateway serves production only.
-2. The price catalog carries each model's long-context threshold and long prices. A call whose input (including cache reads and writes) exceeds the threshold is priced entirely at the long rates.
-3. The catalog carries the one-hour cache write price; usage records `cache_creation.ephemeral_1h_input_tokens`, and those writes use it. Price lists without one charge the base write price.
-4. A translated call without a caller limit gets the model's catalog maximum output on Claude (Anthropic and Vertex), whose API requires one, and no limit on Gemini and Bedrock. Reservation still uses the default reserve for unpriced limits.
-5. Each account has an in-process AI call rate across its customer integrations, `OutboundAIAccountRatePerSecondMax` by plan (Free 20, Hobby 40, Pro 200, Scale 1000; burst twice), counted after the caller is authorized. Excess calls get `429 outbound_ai_account_rate_limited` with `Retry-After: 1`. The gateway's own checks and probes are exempt.
-6. A moderation check with `action: block` and no `on_error` fails closed (`on_error: block`); `flag` keeps `allow`.
-7. CSV exports prefix caller-chosen cells starting with `=`, `+`, `-` or `@` with `'`. NDJSON is unchanged.
+1. `gregale add ai` refuses a non-production `--scope` unless `--no-env`, and says to give that scope its own provider key.
+2. Each account has an in-process AI call rate across its customer integrations, `OutboundAIAccountRatePerSecondMax` by plan (Free 20, Hobby 40, Pro 200, Scale 1000; burst twice that), counted after the caller is authorized so nobody else can spend it. Excess calls get `429 outbound_ai_account_rate_limited` with `Retry-After: 1`. The gateway's own checks and probes are exempt.
+3. Alert rules gain the app-scoped, notification-only metric `ai_budget_alerts`: the count of AI budget threshold crossings (the 80% and 100% rows `outbound_ai_budget_alerts` already records, for every budget kind) within the window, of the integrations bound to the rule's app, leaving out other apps' own budgets. It takes the route alert windows (`5m` to `24h`), needs the `ai-gateway` capability, and a firing notification lists up to five crossings with integration, budget, use and end user or tag. A Hobby preset (`gt 0` over 15 minutes) adds it. Rules on it fire through notification channels like any other alert rule, so email, Slack and the other channels reach people who never read webhooks. The webhook stays.
 
 Consequences:
 
-- Long prompts and one-hour cache writes cost more than before, matching the provider bill.
 - The account rate is per `outboundd` process; with several gateway nodes an account may reach that many times the rate.
-- Existing `block` checks without `on_error` now refuse calls when the classifier is down.
-- The price catalog API still lists base prices only; a price list copied from it has no long-context or one-hour tiers.
+- `ai_budget_alerts` is evaluated on meterd's alert cadence, so a channel hears of a crossing up to one evaluation after the webhook.
+- An integration budget's crossing is counted by the rule of every app bound to the integration.

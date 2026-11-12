@@ -14,8 +14,8 @@ SELECT * FROM migration_sources WHERE lease_token=sqlc.arg(lease_token)::text FO
 INSERT INTO migration_sources(lease_token,instance_id,source_node_id,source_wake_id,native_generation,physical_binding,ram_mb,cpu_millicores,vcpu)
 SELECT sqlc.arg(lease_token)::text,i.id,sqlc.arg(node_id)::uuid,sqlc.arg(wake_id)::uuid,sqlc.arg(generation)::uuid,sqlc.arg(binding)::text,
  greatest(i.capacity_ram_mb,i.ram_mb+p.overhead_mb),
- greatest(i.capacity_cpu_millicores,coalesce(nullif(a.cpu_millicores,0),p.startup_cpu)),
- greatest(i.capacity_vcpu,CASE WHEN i.app_id IS NULL THEN 1 ELSE coalesce((p.plan_vcpus->>ac.plan)::integer,4) END)
+ greatest(i.capacity_cpu_millicores,coalesce(i.booked_cpu_millicores,nullif(a.cpu_millicores,0),p.startup_cpu)),
+ greatest(i.capacity_vcpu,CASE WHEN i.app_id IS NULL THEN 1 ELSE coalesce(i.booked_vcpu,greatest(1,(i.ram_mb+1023)/1024)) END)
 FROM instances i LEFT JOIN apps a ON a.id=i.app_id LEFT JOIN accounts ac ON ac.id=a.account_id CROSS JOIN service_capacity_policy p
 WHERE p.singleton AND i.id=sqlc.arg(instance_id)::uuid RETURNING *;
 

@@ -44,6 +44,13 @@
     # ADR-143: the same OS posture as every fleet host; the standby holds a
     # full copy of the database.
     - role: host_hardening
+    # ADR-20261109120000: with disk encryption, the standby's copy of the
+    # database lives on an encrypted /srv/fc that unlocks from the fleet's
+    # Tang servers, created before PostgreSQL is installed. A takeover's
+    # bootstrap then finds the volume in place. In a disaster without the
+    # fleet, the operator promoting it opens the volume with the recovery key.
+    - role: storage
+      when: faas_disk_encryption | default(false) | bool
     - role: node_exporter
     # Installs and configures PostgreSQL as on the control plane, but skips
     # every task that writes to the database (faas_postgres_standby_mode).

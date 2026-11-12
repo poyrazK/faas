@@ -172,9 +172,11 @@ func TestProjectProtectedApprovalBindsSelectedService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Only a person's sign-in approves a protected environment (bug hunt H70).
+	humanKey := humanLoginKey(t, *e.Store(), (*e.Acct()).ID)
 	legacyReq := httptest.NewRequest(http.MethodPost, "/v1/projects/environment-shop/environments/staging/approvals", strings.NewReader(string(legacyBody)))
 	legacyReq.Header.Set("Content-Type", "application/json")
-	legacyReq.Header.Set("Authorization", "Bearer "+*e.Key())
+	legacyReq.Header.Set("Authorization", "Bearer "+humanKey)
 	legacyResponse := httptest.NewRecorder()
 	(*e.H()).ServeHTTP(legacyResponse, legacyReq)
 	if legacyResponse.Code != http.StatusConflict {
@@ -184,14 +186,25 @@ func TestProjectProtectedApprovalBindsSelectedService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ciReq := httptest.NewRequest(http.MethodPost, "/v1/projects/environment-shop/environments/staging/approvals", strings.NewReader(string(body)))
+	ciReq.Header.Set("Content-Type", "application/json")
+	ciReq.Header.Set("Authorization", "Bearer "+*e.Key())
+	ciApproval := httptest.NewRecorder()
+	(*e.H()).ServeHTTP(ciApproval, ciReq)
+	apidserver.AssertProblem(t, ciApproval, http.StatusForbidden, api.CodeForbidden)
 	approveReq := httptest.NewRequest(http.MethodPost, "/v1/projects/environment-shop/environments/staging/approvals", strings.NewReader(string(body)))
 	approveReq.Header.Set("Content-Type", "application/json")
-	approveReq.Header.Set("Authorization", "Bearer "+*e.Key())
+	approveReq.Header.Set("Authorization", "Bearer "+humanKey)
 	approved := httptest.NewRecorder()
 	(*e.H()).ServeHTTP(approved, approveReq)
 	var approval api.ProjectEnvironmentApprovalResponse
 	if approved.Code != http.StatusCreated || json.Unmarshal(approved.Body.Bytes(), &approval) != nil {
 		t.Fatalf("approval: %d %s", approved.Code, approved.Body)
+	}
+	// The approval names the person's sign-in key, not only the account.
+	stored, err := (*e.Store()).ProjectEnvironmentApprovalByID(t.Context(), (*e.Acct()).ID, "environment-shop", "staging", approval.ApprovalID)
+	if err != nil || !strings.HasPrefix(stored.ApprovedByPrincipal, "key:") {
+		t.Fatalf("approval principal = %q, %v; want the cli-login key", stored.ApprovedByPrincipal, err)
 	}
 	// Same source, unmodified plan token, and legitimate approval; only selection changes.
 	applyReq := scanAuditRegressionRequest(t, *e.Key(), archive, map[string]string{"project_slug": "environment-shop", "environment": "staging", "only": "beta", "plan_token": plan.PlanToken, "approval_token": approval.ApprovalToken})

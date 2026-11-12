@@ -63,6 +63,10 @@ func (s *server) captureProjectEnvironmentValues(ctx context.Context, acct state
 	if err != nil {
 		return nil, state.ProjectEnvironmentCloneValuesSnapshot{}, fmt.Errorf("list project workloads for resource clone: %w", err)
 	}
+	apps, err = state.ProjectAppsForEnvironment(ctx, s.store, acct.ID, project.ID, source, apps)
+	if err != nil {
+		return nil, state.ProjectEnvironmentCloneValuesSnapshot{}, err
+	}
 	snapshot, err := store.CaptureProjectEnvironmentCloneValues(ctx, acct.ID, project.ID, source)
 	if err != nil {
 		return nil, snapshot, err
@@ -79,6 +83,14 @@ func (s *server) captureProjectEnvironmentValues(ctx context.Context, acct state
 }
 
 func (s *server) planProjectEnvironmentBindingClones(ctx context.Context, acct state.Account, apps []state.App, sourceScopes map[string]string, shareResources bool) ([]projectEnvironmentBindingClone, error) {
+	return s.planProjectEnvironmentBindingClonesFor(ctx, acct, apps, sourceScopes, shareResources, false)
+}
+
+// planProjectEnvironmentBindingClonesFor plans the clone of each managed
+// binding. overlayObjects plans an environment branch's buckets
+// (ADR-20261031193635), which are empty overlays placed like any new bucket,
+// so their source's backend needs no cross-bucket copier.
+func (s *server) planProjectEnvironmentBindingClonesFor(ctx context.Context, acct state.Account, apps []state.App, sourceScopes map[string]string, shareResources, overlayObjects bool) ([]projectEnvironmentBindingClone, error) {
 	plans := make([]projectEnvironmentBindingClone, 0)
 	for _, app := range apps {
 		source := sourceScopes[app.ID]
@@ -166,7 +178,7 @@ func (s *server) planProjectEnvironmentBindingClones(ctx context.Context, acct s
 				foundCredential.ManagedPrefix == "" || foundBucket.Scope != source {
 				return nil, fmt.Errorf("object storage binding %q is not ready in the source environment", credentialID)
 			}
-			if !shareResources {
+			if !shareResources && !overlayObjects {
 				backend, resolveErr := s.objectStorage.Resolve(foundBucket.BackendID, foundBucket.BackendFingerprint)
 				if resolveErr != nil {
 					return nil, fmt.Errorf("resolve object storage provider for isolated binding %q: %w", credentialID, resolveErr)
@@ -362,7 +374,7 @@ func (s *server) cloneSharedObjectStorageBinding(r *http.Request, acct state.Acc
 		ID: credentialID, AccountID: acct.ID, BucketID: plan.bucket.ID, AccessKeyID: accessKeyID,
 		SecretSealed: sealed, KID: kid, Label: plan.objectCred.Label,
 		Permission: plan.objectCred.Permission, Status: state.ObjectS3CredentialStatusActive,
-		ManagedAppID: plan.app.ID, ManagedScope: target, ManagedPrefix: plan.objectCred.ManagedPrefix,
+		ManagedAppID: plan.app.ID, ManagedScope: target, ManagedPrefix: plan.objectCred.ManagedPrefix, KeyPrefix: plan.objectCred.KeyPrefix,
 	}, Secrets: secrets, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket, MaxSecretsPerApp: limits.SecretCountMax})
 	if err != nil {
 		return fmt.Errorf("create isolated object storage credential: %w", err)

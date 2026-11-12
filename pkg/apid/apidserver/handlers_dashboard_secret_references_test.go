@@ -111,6 +111,10 @@ func TestSecretReferenceDashboardSessionFormsAndAuthority(t *testing.T) {
 	if _, err := store.CreateSession(t.Context(), sid, acct.ID, "192.0.2.30", "reference-test"); err != nil {
 		t.Fatal(err)
 	}
+	// A pending envelope models a live MFA requirement (ADR-20261106210000).
+	if _, err := store.SetMFARequired(t.Context(), acct.ID, true); err != nil {
+		t.Fatal(err)
+	}
 	pending := apidserver.ReissueWithMFAFlag(t, mgr, sid, acct.ID, true)
 	if rec := secretReferenceDashboardPost(t, h, pending, page, path, form, true); rec.Code != 302 || !strings.HasPrefix(rec.Header().Get("Location"), apidserver.DashboardMFAPath) {
 		t.Fatalf("pending MFA: %d %s", rec.Code, rec.Body.String())

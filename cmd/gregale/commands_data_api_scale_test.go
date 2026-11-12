@@ -21,6 +21,8 @@ type capacityAPI struct {
 	present []api.AppSecretResponse
 	writes  []string
 	lists   int
+	// ramMB is the app's RAM; 0 leaves it unreported.
+	ramMB int
 }
 
 func newCapacityAPI(t *testing.T, present ...string) *capacityAPI {
@@ -34,6 +36,8 @@ func newCapacityAPI(t *testing.T, present ...string) *capacityAPI {
 		defer c.mu.Unlock()
 		body, _ := io.ReadAll(r.Body)
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/shop-data":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: "shop-data", RAMMB: c.ramMB})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/shop-data/secrets":
 			c.lists++
 			_ = json.NewEncoder(w).Encode(api.AppSecretListResponse{Secrets: c.present})
@@ -123,6 +127,27 @@ func TestDataAPIConfigurePoolGuardsTheRefreshReader(t *testing.T) {
 	plain := newCapacityAPI(t, "DATA_API_USER_CONCURRENCY")
 	if code, errors, writes := configureCapacity(t, plain, "--pool", "1", "--no-restart"); code != 0 || strings.Join(writes, "|") != "PUT DATA_API_POOL=1" || plain.lists != 1 {
 		t.Fatalf("one-connection pool without refresh: %d %s %v (%d lists)", code, errors, writes, plain.lists)
+	}
+}
+
+// The runtime peaks near 200 MB with eight connections, so a pool above the
+// default needs DataAPILargePoolMinRAMMB of app RAM; the default pool fits a
+// 256 MB app.
+func TestDataAPIConfigureLargePoolNeedsRAM(t *testing.T) {
+	c := newCapacityAPI(t)
+	c.ramMB = 256
+	code, errors, writes := configureCapacity(t, c, "--pool", "6", "--no-restart")
+	if code == 0 || len(writes) != 0 || !strings.Contains(errors, "at least 512 MB") {
+		t.Fatalf("a large pool on 256 MB: %d %s %v", code, errors, writes)
+	}
+	for _, pool := range []string{"2", "1", "default"} {
+		if code, errors, _ := configureCapacity(t, c, "--pool", pool, "--no-restart"); code != 0 {
+			t.Fatalf("pool %s on 256 MB: %d %s", pool, code, errors)
+		}
+	}
+	c.ramMB = api.DataAPILargePoolMinRAMMB
+	if code, errors, writes := configureCapacity(t, c, "--pool", "8", "--no-restart"); code != 0 || strings.Join(writes, "|") != "PUT DATA_API_POOL=8" {
+		t.Fatalf("a large pool on %d MB: %d %s %v", api.DataAPILargePoolMinRAMMB, code, errors, writes)
 	}
 }
 

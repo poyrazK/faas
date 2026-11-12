@@ -130,18 +130,36 @@ func TestRouteProbeInvalidTokenIsRefusedWithoutTelemetry(t *testing.T) {
 	}
 }
 
-func TestRouteProbeKeepsCustomerAuthGates(t *testing.T) {
+// ADR-847 amendment 2: a validated probe passes the platform's own auth gate,
+// so a protected app's canary gets evidence, and carries the deployment proof.
+// An ordinary request without a credential, and a probe that does not read,
+// are still refused before the app.
+func TestRouteProbePassesPlatformAuthGates(t *testing.T) {
 	app := App{ID: uuid.NewString(), AccountID: uuid.NewString(), Plan: api.PlanPro, MaxConcurrency: 2, RequireAuthn: true}
 	h, stable, candidate := routeProbeHandler(t, app, http.StatusOK, http.StatusNoContent)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, probeRequest("probe-token"))
-	// Without a configured authenticator the gate fails closed (503); either
-	// way the probe must be refused before reaching the app.
-	if rec.Code < http.StatusBadRequest {
-		t.Fatalf("probe bypassed require_authn: status %d", rec.Code)
+	if rec.Code != http.StatusNoContent || rec.Header().Get(apihostingreceipt.ServedResponseHeader) == "" {
+		t.Fatalf("probe of a protected app = %d with proof %q, want the candidate's attributed answer", rec.Code, rec.Header().Get(apihostingreceipt.ServedResponseHeader))
 	}
-	if candidate.hits != 0 || stable.hits != 0 {
-		t.Fatalf("unauthenticated probe reached the app: candidate=%d stable=%d", candidate.hits, stable.hits)
+
+	plain := httptest.NewRecorder()
+	h.ServeHTTP(plain, httptest.NewRequest(http.MethodGet, probeRequest("probe-token").URL.String(), nil))
+	if plain.Code < http.StatusBadRequest {
+		t.Fatalf("request without a credential passed require_authn: status %d", plain.Code)
+	}
+
+	write := probeRequest("probe-token")
+	write.Method = http.MethodPost
+	refused := httptest.NewRecorder()
+	h.ServeHTTP(refused, write)
+	if refused.Code < http.StatusBadRequest {
+		t.Fatalf("POST probe passed require_authn: status %d", refused.Code)
+	}
+	candidate.mu.Lock()
+	defer candidate.mu.Unlock()
+	if candidate.hits != 1 || stable.hits != 0 {
+		t.Fatalf("hits candidate=%d stable=%d, want only the validated probe to reach the candidate", candidate.hits, stable.hits)
 	}
 }
 

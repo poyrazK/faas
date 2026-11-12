@@ -35,11 +35,13 @@ type Options struct {
 	// AssessMemory is the app_health_memory platform flag
 	// (ADR-20261102124306).
 	AssessMemory bool
+	// Plan is the account's plan, for the memory check's RAM suggestion.
+	Plan api.Plan
 }
 
 func CollectScopeWith(ctx context.Context, store EvidenceStore, client *promql.Client, app state.App, scope string, opts Options) api.AppHealthResponse {
 	e := Evidence{App: app, MetricsAllowed: opts.MetricsAllowed, AssessWorkers: opts.AssessWorkers,
-		AssessMemory: opts.AssessMemory, Scope: evidenceScope(scope)}
+		AssessMemory: opts.AssessMemory, Plan: opts.Plan, Scope: evidenceScope(scope)}
 	collectDeployments(ctx, store, &e)
 	collectInstances(ctx, store, &e)
 	if e.AssessMemory {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"slices"
 	"time"
 )
 
@@ -23,8 +24,9 @@ func (m *MemStore) releaseStageSnapshotLocked(account, project, scope, source st
 		return releaseStageSnapshot{}, ErrNotFound
 	}
 	out := releaseStageSnapshot{Project: p, Deployments: map[string]Deployment{}, Policies: map[string]api.BindingReleasePolicy{}, Managed: map[string]bool{}, Active: m.activeProjectReleaseSets[releaseKey(project, scope)]}
+	members := m.projectEnvironmentAppIDsLocked(account, project, scope)
 	for _, app := range m.apps {
-		if app.ProjectID == project && app.AccountID == account && app.Status != AppDeleted && app.PreviewOfSlug == "" {
+		if slices.Contains(members, app.ID) {
 			out.Apps = append(out.Apps, app)
 			out.Policies[app.ID] = m.bindingReleasePolicyLocked(app.ID, scope)
 			out.Managed[app.ID] = m.environmentGitOpsManagedForScopeLocked(app.ID, scope)

@@ -11,6 +11,7 @@ func TestFrameRoundTrip(t *testing.T) {
 	want := Timings{
 		ReadUs: 40, EntropyUs: 2100, HWRNGUs: 1600, ClockUs: 100, UUIDMarkerUs: 5400,
 		UserspaceReseedUs: 120000, ReseedClients: 2, ReseedSlowestUs: 118000, ReseedSlowestRuntime: "node",
+		ReseedUnregistered: 3, ReseedUnregisteredRuntimes: "bun,python-sidecar",
 		ProfilesUs: 10, AfterRestoreUs: 0, TotalUs: 130000,
 	}
 	frame, err := AppendFrame([]byte{0, 0x03}, want)

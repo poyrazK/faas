@@ -166,7 +166,8 @@ func (c *HealthCollector) observe(ctx context.Context, database Database) Health
 	}
 	providerCtx, cancel := context.WithTimeout(ctx, healthProviderTimeout)
 	defer cancel()
-	observed, err := observer.Observe(providerCtx, database.ProviderResourceID)
+	target := databaseDataResource(database)
+	observed, err := observer.Observe(providerCtx, target)
 	if err != nil {
 		result.LastErrorCode = healthErrorCode(err)
 		if errors.Is(err, ErrNotFound) {
@@ -174,7 +175,7 @@ func (c *HealthCollector) observe(ctx context.Context, database Database) Health
 		}
 		return result
 	}
-	if observed.ProviderResourceID != database.ProviderResourceID {
+	if observed.ProviderResourceID != target || database.DataResourceID != "" && observed.DataResourceID != database.DataResourceID {
 		result.LastErrorCode = "observation_invalid"
 		return result
 	}

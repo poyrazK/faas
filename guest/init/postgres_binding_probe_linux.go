@@ -71,7 +71,9 @@ func executePostgresBindingProbeCommandWithConnector(ctx context.Context, req ap
 		return writePostgresBindingProbeReport(stdout, report)
 	}
 	report.EnvironmentKey = key
-	databaseURL := appTaskEnvValue(BuildEnvWithSecrets(os.Environ(), manifest, secrets, apiEnv), key)
+	env := BuildEnvWithSecrets(os.Environ(), manifest, secrets, apiEnv)
+	databaseURL := appTaskEnvValue(env, key)
+	report.PoolMax = api.ParsePostgresPoolMax(appTaskEnvValue(env, api.PostgresPoolMaxEnv))
 	if databaseURL == "" {
 		report.Environment = api.PostgresBindingProbeCheck{Status: "failed", Detail: "environment variable is missing from this deployment"}
 		report.Error = "database connection environment variable is missing"

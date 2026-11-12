@@ -63,6 +63,10 @@
   ansible.builtin.include_tasks: edge.yml
   when: faas_seal_domain_edge_identity_src | length > 0 or faas_seal_domain_edge_recipient_src | length > 0
 
+- name: seal_domains — edge-tls domain
+  ansible.builtin.include_tasks: edge_tls.yml
+  when: faas_seal_domain_edge_tls_identity_src | length > 0 or faas_seal_domain_edge_tls_recipient_src | length > 0
+
 - name: seal_domains — runtime domain
   ansible.builtin.include_tasks: runtime.yml
   when: faas_seal_domain_runtime_identity_src | length > 0 or faas_seal_domain_runtime_recipient_src | length > 0

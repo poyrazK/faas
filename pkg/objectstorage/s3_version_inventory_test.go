@@ -58,6 +58,7 @@ func TestS3VersionInventoryRejectsPartialOrMalformedPages(t *testing.T) {
 		want       error
 	}{
 		{"missing truncation", `<ListVersionsResult/>`, 200, ErrUnavailable},
+		{"contradictory completion", `<ListVersionsResult><IsTruncated>false</IsTruncated><NextKeyMarker>remaining</NextKeyMarker><NextVersionIdMarker>v1</NextVersionIdMarker></ListVersionsResult>`, 200, ErrUnavailable},
 		{"missing size", `<ListVersionsResult><IsTruncated>false</IsTruncated><Version><Key>key</Key><VersionId>v</VersionId></Version></ListVersionsResult>`, 200, ErrUnavailable},
 		{"negative size", `<ListVersionsResult><IsTruncated>false</IsTruncated><Version><Key>key</Key><VersionId>v</VersionId><Size>-1</Size></Version></ListVersionsResult>`, 200, ErrUnavailable},
 		{"missing version", `<ListVersionsResult><IsTruncated>false</IsTruncated><DeleteMarker><Key>key</Key></DeleteMarker></ListVersionsResult>`, 200, ErrUnavailable},

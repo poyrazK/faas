@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -32,3 +33,8 @@ func (s *server) logEvents() state.LogEventStore {
 func (h logSearchHost) SavedSearches() state.LogSavedSearchStore { return h.s.store }
 
 func (h logSearchHost) Logger() *slog.Logger { return h.s.log }
+
+// Audit records a saved search change (ADR-20261031144636).
+func (h logSearchHost) Audit(ctx context.Context, kind string, accountID string, data map[string]any) {
+	h.s.audit.Emit(ctx, kind, &accountID, data)
+}

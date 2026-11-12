@@ -21,7 +21,20 @@ import (
 )
 
 var dataAPIDiagnosticUUID = regexp.MustCompile(`^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$`)
-var dataAPIDiagnosticRoutes = []string{"rest", "rpc", "health", "schema", "openapi", "unknown"}
+var dataAPIDiagnosticRoutes = []string{"rest", "rpc", "storage", "health", "schema", "openapi", "hooks", "lifecycle", "unknown"}
+
+// dataAPIDiagnosticCodes are the request codes the runtime logs
+// (templates/data-api/logging.mjs); TestDataAPIDiagnosticCodesMatchRuntime
+// keeps the two lists equal.
+var dataAPIDiagnosticCodes = []string{"origin_not_allowed", "not_found", "invalid_path", "method_not_allowed", "token_required", "token_invalid", "read_only_identity",
+	"serving_contract_unavailable", "data_api_unavailable", "data_api_refresh_paused", "data_api_refresh_unavailable", "data_api_overloaded", "data_api_rate_limited",
+	"data_api_concurrency_limited", "request_too_large", "response_too_large", "query_timeout", "request_deadline_exceeded", "schema_document_too_large",
+	"schema_contract_mismatch", "upstream_error", "public_read_not_allowed", "public_rpc_requires_get", "server_key_browser_forbidden", "server_key_permission_denied",
+	"data_api_monthly_cap_reached", "rls_required", "data_api_public_read_unsafe", "data_api_public_rpc_unsafe", "data_api_change_hooks_off",
+	"data_api_change_hooks_unavailable", "data_api_change_hooks_not_production", "storage_unavailable", "storage_busy", "storage_client_busy",
+	"storage_backend_unavailable", "storage_commit_failed", "storage_forbidden", "storage_rejected", "storage_not_found", "storage_bucket_not_found",
+	"storage_invalid_name", "storage_invalid_content_type", "storage_invalid_length", "storage_length_required", "storage_object_too_large",
+	"storage_range_not_satisfiable"}
 
 type dataAPIRequestRecord struct {
 	Time             string                         `json:"time"`
@@ -292,7 +305,7 @@ func parseDataAPIRequestRecord(content string) (dataAPIRequestRecord, bool, erro
 	if (record.Status == nil && record.Outcome != "aborted") || (record.Status != nil && (*record.Status < 100 || *record.Status > 599)) {
 		return record, true, errors.New("invalid request status")
 	}
-	if record.Code != nil && !dataAPIDiagnosticAllowed(*record.Code, "origin_not_allowed", "not_found", "invalid_path", "method_not_allowed", "token_required", "token_invalid", "read_only_identity", "serving_contract_unavailable", "data_api_unavailable", "data_api_refresh_paused", "data_api_refresh_unavailable", "request_too_large", "response_too_large", "query_timeout", "request_deadline_exceeded", "schema_document_too_large", "schema_contract_mismatch", "upstream_error", "data_api_overloaded", "data_api_rate_limited", "data_api_concurrency_limited", "public_read_not_allowed", "public_rpc_requires_get", "server_key_browser_forbidden", "server_key_permission_denied", "data_api_monthly_cap_reached") {
+	if record.Code != nil && !dataAPIDiagnosticAllowed(*record.Code, dataAPIDiagnosticCodes...) {
 		return record, true, errors.New("invalid request code")
 	}
 	if err := validateDataAPIQueryShape(record); err != nil {

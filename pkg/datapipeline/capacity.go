@@ -41,10 +41,11 @@ func validateQualifications(qualifications []connectioncapacity.Qualification, n
 		if q.DatabaseID != "" && (!validID(q.DatabaseID) || q.DatabaseGeneration < 1 || q.BackendFingerprint == "" || q.DataResourceID == "") {
 			return ErrInvalid
 		}
-		if databases[q.DatabaseID] && q.DatabaseID != "" {
+		databaseID := canonicalID(q.DatabaseID)
+		if databases[databaseID] && databaseID != "" {
 			return ErrInvalid
 		}
-		databases[q.DatabaseID] = true
+		databases[databaseID] = true
 		for _, ep := range q.Endpoints {
 			host, port, err := net.SplitHostPort(ep)
 			if err != nil || host == "" || port == "" || ep != strings.ToLower(ep) || endpoints[ep] {
@@ -157,7 +158,7 @@ func (o *CapacityObserver) target(ctx context.Context, account, id string, db ca
 		return connectioncapacity.Snapshot{}, connectioncapacity.ErrUnknown
 	}
 	for _, q := range o.Qualifications {
-		if q.DatabaseID == id && q.DatabaseGeneration == t.Generation && q.BackendFingerprint == t.BackendFingerprint && q.DataResourceID == t.DataResourceID {
+		if canonicalID(q.DatabaseID) == canonicalID(id) && q.DatabaseGeneration == t.Generation && q.BackendFingerprint == t.BackendFingerprint && q.DataResourceID == t.DataResourceID {
 			e, err := observeCapacity(ctx, db, q)
 			if err != nil {
 				return connectioncapacity.Snapshot{}, err

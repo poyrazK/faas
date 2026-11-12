@@ -592,7 +592,7 @@ WHERE outbox_id = sqlc.arg(outbox_id)::bigint AND app_id = sqlc.arg(app_id)::uui
   AND subscription_id = sqlc.arg(subscription_id)::text
 FOR UPDATE;
 -- name: EventRecoveryPublishedVersion :one
-SELECT published_version FROM workflow_automation_definitions
+SELECT published_version FROM stored_workflows
 WHERE app_id=sqlc.arg(app_id)::uuid AND name=sqlc.arg(name)::text;
 
 -- name: EventRecoveryReplayCount :one

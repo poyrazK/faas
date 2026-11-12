@@ -43,13 +43,19 @@ func TestObsObjectStorageCeiling(t *testing.T) {
 		t.Fatalf("stored grant = %+v, %v", got, err)
 	}
 
-	// Pro's default $10 cap pays for 383 GiB, below the grant.
-	proCap, _ := api.PlanPro.DefaultOverageCapCents()
+	// A $10 spend cap pays for less storage than the grant, so it binds.
+	// (Pro's default cap now pays for more than 500 GiB, ADR-20261107192333.)
+	proCap := int64(1000)
 	if err := store.UpdateAccountOverageCapCents(ctx, pro.ID, &proCap); err != nil {
 		t.Fatal(err)
 	}
+	grant := int64(500 * gib)
+	capped := api.ObjectStorageLimitsFor(api.PlanPro, &grant, &proCap).MaxAccountBytes
+	if capped >= grant {
+		t.Fatalf("a $10 cap no longer binds below the 500 GiB grant (%d bytes)", capped)
+	}
 	rec = e.DoAdmin(t, http.MethodPost, base+"&gib=500", nil, nil)
-	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &view) != nil || view.CeilingBytes != 383*gib {
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &view) != nil || view.CeilingBytes != capped {
 		t.Fatalf("grant under the default cap: %d %s", rec.Code, rec.Body.String())
 	}
 

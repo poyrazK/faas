@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/outbound/aiprices"
 )
 
 // errTranslationUnsupported marks an OpenAI request the translation layer
@@ -241,7 +240,6 @@ func translateChatRequest(integration Integration, request openAIChatRequest, mo
 		return routeTranslation{}, err
 	}
 	includeUsage := request.StreamOptions != nil && request.StreamOptions.IncludeUsage
-	request = withTranslatedOutputLimit(provider, model, request)
 	switch provider {
 	case api.OutboundAIProviderAnthropic:
 		fields, err := openAIToAnthropic(request, model, format)
@@ -377,32 +375,7 @@ func openAIStopSequences(raw json.RawMessage) []string {
 	return nil
 }
 
-// withTranslatedOutputLimit gives a request without an output limit the
-// target model's largest answer when its provider requires a limit: Claude,
-// on Anthropic or Vertex. Gemini and Bedrock Converse take no limit as the
-// model's own (ADR 20261027132936 amendment 2).
-func withTranslatedOutputLimit(provider, model string, request openAIChatRequest) openAIChatRequest {
-	if _, requested := openAIRequestedOutput(request); requested {
-		return request
-	}
-	catalogModel := model
-	if provider == api.OutboundAIProviderVertex {
-		publisher, name := vertexPublisherModel(model)
-		if publisher != "anthropic" {
-			return request
-		}
-		catalogModel = name
-	} else if provider != api.OutboundAIProviderAnthropic {
-		return request
-	}
-	if entry, ok := aiprices.Default().Lookup(provider, catalogModel); ok && entry.Price.MaxOutputTokens != nil {
-		limit := *entry.Price.MaxOutputTokens
-		request.MaxTokens = &limit
-	}
-	return request
-}
-
-// openAIRequestedOutput is the output limit the caller set, if any.
+// openAIRequestedOutput is the output ceiling the caller named, if any.
 func openAIRequestedOutput(request openAIChatRequest) (int64, bool) {
 	if request.MaxCompletionTokens != nil && *request.MaxCompletionTokens > 0 {
 		return *request.MaxCompletionTokens, true
@@ -413,12 +386,30 @@ func openAIRequestedOutput(request openAIChatRequest) (int64, bool) {
 	return 0, false
 }
 
-func openAIOutputCeiling(request openAIChatRequest) int64 {
-	if request.MaxCompletionTokens != nil && *request.MaxCompletionTokens > 0 {
-		return *request.MaxCompletionTokens
+// anthropicMaxOutput is the largest output each Claude family accepts.
+// OpenAI-format callers rarely name an output ceiling, and Anthropic requires
+// one: defaulting to 4096 silently cut long answers short on models that
+// write 32k-64k tokens (AI gateway review round 3, finding 5). Longer
+// prefixes come first; an unknown model keeps the conservative default.
+var anthropicMaxOutput = []struct {
+	prefix string
+	tokens int64
+}{
+	{"claude-3-7-sonnet", 64_000}, {"claude-3-5-haiku", 8_192}, {"claude-3-5-sonnet", 8_192},
+	{"claude-sonnet-4", 64_000}, {"claude-haiku-4", 64_000}, {"claude-opus-4", 32_000},
+	{"claude-3-", 4_096},
+}
+
+// anthropicOutputCeiling is the caller's ceiling, else the model's maximum.
+func anthropicOutputCeiling(request openAIChatRequest, model string) int64 {
+	if n, ok := openAIRequestedOutput(request); ok {
+		return n
 	}
-	if request.MaxTokens != nil && *request.MaxTokens > 0 {
-		return *request.MaxTokens
+	m := strings.ToLower(model)
+	for _, family := range anthropicMaxOutput {
+		if strings.Contains(m, family.prefix) {
+			return family.tokens
+		}
 	}
 	return api.OutboundAIDefaultOutputReserveTokens
 }
@@ -514,7 +505,7 @@ func openAIToAnthropic(request openAIChatRequest, model string, format openAIRes
 			return nil, errTranslationUnsupported
 		}
 	}
-	out := map[string]any{"model": model, "messages": messages, "max_tokens": openAIOutputCeiling(request)}
+	out := map[string]any{"model": model, "messages": messages, "max_tokens": anthropicOutputCeiling(request, model)}
 	choice, instruction := anthropicToolChoice(request, model)
 	if instruction != "" {
 		system = append(system, instruction)
@@ -692,9 +683,11 @@ func openAIToGemini(request openAIChatRequest, format openAIResponseFormat) ([]b
 			return nil, errTranslationUnsupported
 		}
 	}
+	// Gemini's own default is the model's maximum output; name a ceiling
+	// only when the caller did.
 	generation := map[string]any{}
-	if limit, ok := openAIRequestedOutput(request); ok {
-		generation["maxOutputTokens"] = limit
+	if n, ok := openAIRequestedOutput(request); ok {
+		generation["maxOutputTokens"] = n
 	}
 	if request.Temperature != nil {
 		generation["temperature"] = *request.Temperature

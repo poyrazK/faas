@@ -69,6 +69,45 @@ func (q *Queries) LockDataRepairOperation(ctx context.Context, db DBTX, arg Lock
 	return record, err
 }
 
+const lockExpiredDataRepairDrafts = `-- name: LockExpiredDataRepairDrafts :many
+SELECT o.record FROM customer_operations o
+WHERE o.data_repair_id IS NOT NULL AND o.state IN ('accepted','running','waiting','requires_reconciliation')
+ AND COALESCE(o.record->'data_repair'->>'phase','')='prepared'
+ AND COALESCE(o.record->'data_repair'->'approval','null'::jsonb)='null'::jsonb
+ AND COALESCE(o.record->'data_repair'->>'rehearsal_status','') NOT IN ('queued','running','cleanup','publishing')
+ AND (o.record->'data_repair'->>'plan_expires_at')::timestamptz<=$1::timestamptz
+ AND NOT EXISTS(SELECT 1 FROM data_repair_rehearsals r WHERE r.operation_id=o.id AND r.phase IN ('queued','running','cleanup','publishing'))
+ORDER BY (o.record->'data_repair'->>'plan_expires_at')::timestamptz,o.id
+LIMIT $2::integer FOR UPDATE OF o SKIP LOCKED
+`
+
+type LockExpiredDataRepairDraftsParams struct {
+	ObservedAt pgtype.Timestamptz
+	PageLimit  int32
+}
+
+// Only unapproved drafts without a physical task can settle on local expiry.
+// Share the admission predicate and skip lifecycle rows locked by foreground work.
+func (q *Queries) LockExpiredDataRepairDrafts(ctx context.Context, db DBTX, arg LockExpiredDataRepairDraftsParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, lockExpiredDataRepairDrafts, arg.ObservedAt, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var record []byte
+		if err := rows.Scan(&record); err != nil {
+			return nil, err
+		}
+		items = append(items, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateDataRepairOperation = `-- name: UpdateDataRepairOperation :exec
 UPDATE customer_operations SET state=$1::text,record=$2::jsonb,
  expires_at=$3::timestamptz

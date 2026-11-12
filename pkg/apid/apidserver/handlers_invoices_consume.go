@@ -59,6 +59,11 @@ func (s *server) consumeInvoiceCredits(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, prob)
 		return
 	}
+	if s.creditDiscounts != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Credits apply as a discount",
+			"Account credit is applied as a discount on the subscription's next order, not drawn against a paid invoice (ADR-20261104212028)."))
+		return
+	}
 	invoiceID := r.PathValue("id")
 	if _, err := uuid.Parse(invoiceID); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,

@@ -374,6 +374,9 @@ export async function run(options) {
       DATA_API_ALLOWED_ORIGINS: 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:3030,http://127.0.0.1:3030',
       ...(project.publicRead ? { DATA_API_PUBLIC_READ: project.publicRead } : {}), ...(project.publicRpc ? { DATA_API_PUBLIC_RPC: project.publicRpc } : {}),
       ...(project.allowWithoutRls ? { DATA_API_ALLOW_WITHOUT_RLS: project.allowWithoutRls } : {}) })
+    // The local server takes no public polling and restarts its engine on every
+    // reload: /healthz reports each check as it happens.
+    config.healthCacheMs = 0
     if (config.publicRead) {
       try { await checkPublicRelations(connection.toString(), config.publicRead) } catch (error) { throw new DevFailure(error.message) }
     }

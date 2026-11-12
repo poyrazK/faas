@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -125,6 +126,10 @@ func TestWAFCookieOnlyDetectionBlocksWithoutBoxing(t *testing.T) {
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK, request: r}
 			if handled, _ := h.applyEdgeRuleWAF(rec, r, app, rec); !handled || w.Code != http.StatusForbidden {
 				t.Fatalf("handled=%v status=%d, want a 403 block", handled, w.Code)
+			}
+			// Hunt 33 H33-18: the block named the API-key scope code.
+			if !strings.Contains(w.Body.String(), `"code":"waf_blocked"`) {
+				t.Fatalf("WAF block body = %s, want code waf_blocked", w.Body.String())
 			}
 			if _, _, boxed := box.Boxed(app.ID, challengeClientIP(r)); boxed != tc.wantBoxed {
 				t.Fatalf("boxed = %v, want %v", boxed, tc.wantBoxed)

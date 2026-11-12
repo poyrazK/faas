@@ -23,7 +23,7 @@ func (m *MemStore) captureCloneBindingsLocked(accountID, appID, scope string, va
 		for _, c := range m.objectS3Credentials {
 			if c.AccountID == accountID && c.BucketID == bucket.ID && c.Status == ObjectS3CredentialStatusActive && c.RotationParentID == "" {
 				capture.Credentials = append(capture.Credentials, ProjectEnvironmentCloneObjectCredential{ID: c.ID, Label: c.Label, Permission: c.Permission,
-					ManagedAppID: c.ManagedAppID, ManagedScope: c.ManagedScope, ManagedPrefix: c.ManagedPrefix})
+					ManagedAppID: c.ManagedAppID, ManagedScope: c.ManagedScope, ManagedPrefix: c.ManagedPrefix, KeyPrefix: c.KeyPrefix})
 			}
 		}
 		for _, grant := range m.objectAccessGrants {

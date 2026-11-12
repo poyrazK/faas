@@ -179,7 +179,7 @@ func orgProjectHTTP(t *testing.T, store state.Store, creator state.Account, do f
 	if err := json.Unmarshal(rec.Body.Bytes(), &preview); err != nil {
 		t.Fatal(err)
 	}
-	rec = do(t, "POST", base+"/environments/production/approvals", api.CreateProjectEnvironmentApprovalRequest{PromotionToken: preview.PromotionToken}, adminHeaders)
+	rec = do(t, "POST", base+"/environments/production/approvals", api.CreateProjectEnvironmentApprovalRequest{PromotionToken: preview.PromotionToken}, humanOrgLoginHeaders(t, store, org.ID, admin.ID))
 	if rec.Code != 201 {
 		t.Fatalf("admin approval: %d %s", rec.Code, rec.Body)
 	}

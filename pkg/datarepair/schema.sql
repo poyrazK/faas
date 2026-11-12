@@ -15,7 +15,8 @@ CREATE TABLE gregale_repair.enrollments (
     fingerprint text NOT NULL,
     fingerprint_timezone text CHECK (octet_length(fingerprint_timezone) BETWEEN 1 AND 256),
     fingerprint_datestyle text CHECK (octet_length(fingerprint_datestyle) BETWEEN 1 AND 256),
-    fingerprint_intervalstyle text CHECK (fingerprint_intervalstyle IN ('postgres','postgres_verbose','sql_standard','iso_8601'))
+    fingerprint_intervalstyle text CHECK (fingerprint_intervalstyle IN ('postgres','postgres_verbose','sql_standard','iso_8601')),
+    fingerprint_monetary text CHECK (octet_length(fingerprint_monetary) BETWEEN 1 AND 256)
 );
 CREATE TABLE gregale_repair.operations (
     id uuid PRIMARY KEY CHECK (id <> '00000000-0000-0000-0000-000000000000'),

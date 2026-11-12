@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
@@ -102,10 +101,10 @@ func (s *server) contractTrafficContext(ctx context.Context, app state.App, d st
 	if problem := s.durable.ValidatorReleaseProblem(ctx, app, d); problem != nil {
 		return ctx, problem
 	}
-	if !api.ApiContractDiffEnabled() || !strings.EqualFold(strings.TrimSpace(d.Scope), "prod") {
+	if !api.ApiContractDiffEnabled() || !openapidiff.IsProductionScope(d.Scope) {
 		return ctx, nil
 	}
-	check, err := openapidiff.CheckLiveContract(ctx, s.store, app.ID, d.ID, "prod", true)
+	check, err := openapidiff.CheckLiveContract(ctx, s.store, app.ID, d.ID, d.Scope, true)
 	if errors.Is(err, openapidiff.ErrSnapshotBaselineMissing) {
 		return ctx, nil
 	}

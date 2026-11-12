@@ -3,6 +3,7 @@ from typing import Literal
 AppHealthCheckReason = Literal[
     "capacity_below_target",
     "collection_gap",
+    "memory_pressure",
     "request_coverage_incomplete",
     "request_error_rate_elevated",
     "request_error_rate_severe",
@@ -20,6 +21,7 @@ AppHealthCheckReason = Literal[
 APP_HEALTH_CHECK_REASON_VALUES: set[AppHealthCheckReason] = {
     "capacity_below_target",
     "collection_gap",
+    "memory_pressure",
     "request_coverage_incomplete",
     "request_error_rate_elevated",
     "request_error_rate_severe",

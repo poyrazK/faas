@@ -13,8 +13,9 @@ import (
 // guarded are the packages every daemon and every per-instance stream bridge
 // imports. A package-level regexp in them compiles in each of those processes
 // at startup whether or not it is used: pkg/api's 91 cost about 4 MB and 7 ms
-// per process, pkg/state's 57 about 1.5 MB (ADR-20261101215228). They use New.
-var guarded = []string{"../api", "../state"}
+// per process, pkg/state's 57 about 1.5 MB (ADR-20261101215228). pkg/datarepair
+// is imported by pkg/state and pkg/fcvm. They use New.
+var guarded = []string{"../api", "../state", "../datarepair"}
 
 func TestGuardedPackagesHaveNoPackageLevelRegexpCompile(t *testing.T) {
 	fset := token.NewFileSet()

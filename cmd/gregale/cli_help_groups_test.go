@@ -18,6 +18,7 @@ func enableEveryCLIFeature(t *testing.T) {
 	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1")
 	t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", "1")
 	t.Setenv("FAAS_FULL_ENVIRONMENT_CLONES_ENABLED", "1")
+	t.Setenv("FAAS_ENVIRONMENT_BRANCHES_ENABLED", "1")
 }
 
 // cliTreeUnplacedCommands are customer commands the command tree does not

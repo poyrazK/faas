@@ -58,13 +58,13 @@ func TestMigrateBacksUpBeforePendingMigrations(t *testing.T) {
 			t.Cleanup(func() { commandOutput, runCommand = origOutput, origRun })
 			var calls []string
 			commandOutput = func(_ context.Context, name string, args ...string) (string, error) {
-				if name != "su" || !strings.Contains(strings.Join(args, " "), "-status") {
+				if name != "/bin/bash" || !strings.Contains(strings.Join(args, " "), "-status") {
 					t.Fatalf("unexpected output command %s %v", name, args)
 				}
 				return tc.status, nil
 			}
 			runCommand = func(_ context.Context, name string, args ...string) error {
-				if name == "su" {
+				if name == "/bin/bash" && strings.Contains(strings.Join(args, " "), "/bin/migrate") {
 					calls = append(calls, "migrate")
 					return nil
 				}
@@ -87,5 +87,49 @@ func TestMigrateBacksUpBeforePendingMigrations(t *testing.T) {
 				t.Fatalf("calls = %v, want %v", calls, tc.wantCalls)
 			}
 		})
+	}
+}
+
+// TestMigrateRunsAsRootNotTheFaasUser: the owner role is reachable only from
+// root once faas_postgres_owner_contracted drops `faas_map faas faas`
+// (ADR-20261023104734), so neither the status check nor the migration may
+// switch to the faas OS user (rc.330 failed its control-plane activation on
+// "Peer authentication failed for user faas").
+func TestMigrateRunsAsRootNotTheFaasUser(t *testing.T) {
+	release := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(release, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(release, "bin", "migrate"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(release, "systemd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	origOutput, origRun := commandOutput, runCommand
+	t.Cleanup(func() { commandOutput, runCommand = origOutput, origRun })
+	var seen []string
+	commandOutput = func(_ context.Context, name string, args ...string) (string, error) {
+		seen = append(seen, name+" "+strings.Join(args, " "))
+		return `{"msg":"migration status","pending_count":0}` + "\n", nil
+	}
+	runCommand = func(_ context.Context, name string, args ...string) error {
+		seen = append(seen, name+" "+strings.Join(args, " "))
+		return nil
+	}
+	r := hostRuntime{unitDir: t.TempDir(), databaseURL: "postgres:///faas?host=/run/postgresql&user=faas"}
+	if err := r.Migrate(context.Background(), releasebundle.Manifest{Target: "linux/amd64"}, release, ""); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("commands = %q, want the status check and the migration", seen)
+	}
+	for _, call := range seen {
+		if strings.HasPrefix(call, "su ") || strings.Contains(call, " faas -s ") || strings.HasPrefix(call, "runuser ") || strings.HasPrefix(call, "sudo ") {
+			t.Errorf("%q switches users; the migrator must run as root (faas_map root faas)", call)
+		}
+		if !strings.Contains(call, `exec env -i PATH=/usr/bin:/bin DATABASE_URL="postgres:///faas?host=/run/postgresql&user=faas"`) {
+			t.Errorf("%q must start the migrator with a clean environment and the owner DATABASE_URL", call)
+		}
 	}
 }

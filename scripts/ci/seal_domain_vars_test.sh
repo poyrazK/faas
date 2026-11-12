@@ -30,7 +30,8 @@ all=(SEAL_DOMAIN_OUTBOUND_AGE_KEY="$(key outbound)" SEAL_DOMAIN_OUTBOUND_AGE_REC
   SEAL_DOMAIN_ACCOUNT_AGE_KEY="$(key account)" SEAL_DOMAIN_ACCOUNT_AGE_RECIPIENT="$(pub account)"
   SEAL_DOMAIN_RUNTIME_AGE_KEY="$(key runtime)" SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT="$(pub runtime)"
   SEAL_DOMAIN_BUILD_AGE_KEY="$(key build)" SEAL_DOMAIN_BUILD_AGE_RECIPIENT="$(pub build)"
-  SEAL_DOMAIN_EDGE_AGE_KEY="$(key edge)" SEAL_DOMAIN_EDGE_AGE_RECIPIENT="$(pub edge)")
+  SEAL_DOMAIN_EDGE_AGE_KEY="$(key edge)" SEAL_DOMAIN_EDGE_AGE_RECIPIENT="$(pub edge)"
+  SEAL_DOMAIN_EDGE_TLS_AGE_KEY="$(key edgetls)" SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT="$(pub edgetls)")
 mkdir -p "$work/cp"
 printf 'faas_box_role: control-plane\n' > "$work/cp/vars.yml"
 run control-plane cp "${all[@]}" || fail "control-plane staging failed"
@@ -50,11 +51,12 @@ for want in "faas_seal_domains_managed: true" \
   "faas_seal_domain_account_identity_src: \"$work/cp/out/account.age\"" \
   "faas_seal_domain_runtime_recipient_src: \"$work/cp/out/runtime.age.pub\"" \
   "faas_seal_domain_build_recipient_src: \"$work/cp/out/build.age.pub\"" \
-  "faas_seal_domain_edge_recipient_src: \"$work/cp/out/edge.age.pub\""; do
+  "faas_seal_domain_edge_recipient_src: \"$work/cp/out/edge.age.pub\"" \
+  "faas_seal_domain_edge_tls_recipient_src: \"$work/cp/out/edge_tls.age.pub\""; do
   grep -qxF "$want" "$work/cp/vars.yml" || fail "control plane is missing: $want"$'\n'"$vars"
 done
 grep -qxF "# runtime recipient: $(pub runtime)" "$work/cp/vars.yml" || fail "the runtime recipient is not recorded for the contract hash"
-for unwanted in runtime_identity_src build_identity_src edge_identity_src account_recipient_src; do
+for unwanted in runtime_identity_src build_identity_src edge_identity_src edge_tls_identity_src account_recipient_src; do
   ! grep -q "$unwanted" "$work/cp/vars.yml" || fail "control plane got $unwanted"
 done
 [[ ! -e "$work/cp/out/runtime.age" && ! -e "$work/cp/out/build.age" && ! -e "$work/cp/out/edge.age" ]] || fail "compute identities were written for the control plane"
@@ -66,6 +68,7 @@ run compute compute "${all[@]}" || fail "compute staging failed"
 for want in "faas_seal_domain_runtime_identity_src: \"$work/compute/out/runtime.age\"" \
   "faas_seal_domain_build_identity_src: \"$work/compute/out/build.age\"" \
   "faas_seal_domain_edge_identity_src: \"$work/compute/out/edge.age\"" \
+  "faas_seal_domain_edge_tls_identity_src: \"$work/compute/out/edge_tls.age\"" \
   "faas_seal_domain_control_identity_src: \"$work/compute/out/control.age\"" \
   "faas_seal_domain_delivery_identity_src: \"$work/compute/out/delivery.age\""; do
   grep -qxF "$want" "$work/compute/vars.yml" || fail "compute is missing: $want"
@@ -85,6 +88,11 @@ if run compute bad SEAL_DOMAIN_RUNTIME_AGE_KEY="not-a-key" SEAL_DOMAIN_RUNTIME_A
 fi
 mkdir -p "$work/owned"
 printf 'faas_seal_domain_runtime_identity_src: /tmp/x\n' > "$work/owned/vars.yml"
+mkdir -p "$work/owned_tls"
+printf 'faas_seal_domain_edge_tls_identity_src: /tmp/x\n' > "$work/owned_tls/vars.yml"
+if run compute owned_tls SEAL_DOMAIN_EDGE_TLS_AGE_KEY="$(key edgetls)" SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT="$(pub edgetls)" 2>/dev/null; then
+  fail "a vars file that already sets the edge-tls key variable was accepted"
+fi
 if run compute owned SEAL_DOMAIN_RUNTIME_AGE_KEY="$(key runtime)" SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT="$(pub runtime)" 2>/dev/null; then
   fail "a vars file that already sets a key variable was accepted"
 fi

@@ -73,6 +73,11 @@ func TestCmdEdgeRuleListsCreateAndUpdate(t *testing.T) {
 	if code := main.CmdEdgeRuleLists([]string{"rm", "office"}); code != 0 || method != http.MethodDelete {
 		t.Fatalf("rm = %d (%s)", code, method)
 	}
+	// ChronoLake finding 35: the reference documents `delete`.
+	method = ""
+	if code := main.CmdEdgeRuleLists([]string{"delete", "office"}); code != 0 || method != http.MethodDelete {
+		t.Fatalf("delete = %d (%s)", code, method)
+	}
 	if code := main.CmdEdgeRuleLists([]string{"create", "office"}); code != 1 {
 		t.Fatalf("create without --kind = %d, want 1", code)
 	}

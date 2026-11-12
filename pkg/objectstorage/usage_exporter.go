@@ -13,7 +13,6 @@ import (
 )
 
 const (
-	maxUsageReports      = 10000
 	maxUsageReportSource = 128
 	usageReportFileMode  = 0o600
 	usageReportPathLimit = 4096
@@ -34,6 +33,8 @@ type UsageReportExportRequest struct {
 // UsageReportExporter is the narrow seam for provider-specific billing
 // adapters. The generic S3 driver intentionally does not implement it: S3
 // protocol operations do not expose portable request, egress, or cost data.
+// ObservedAt in the request is an upper bound: a complete batch may retain an
+// older actual provider observation, shared by every account in that batch.
 type UsageReportExporter interface {
 	ExportUsageReports(context.Context, UsageReportExportRequest) ([]api.ObjectStorageUsageReport, error)
 }
@@ -76,7 +77,7 @@ func ExportUsageReportSet(ctx context.Context, path string, exporter UsageReport
 // The caller should use a path that apid can read; it must not be writable by
 // customer workloads.
 func WriteUsageReportsAtomic(path string, reports []api.ObjectStorageUsageReport) error {
-	if !validUsageReportPath(path) || len(reports) > maxUsageReports {
+	if !validUsageReportPath(path) || len(reports) > api.MaxObjectStorageUsageReportRows {
 		return ErrInvalid
 	}
 	if info, err := os.Lstat(path); err == nil {
@@ -92,6 +93,9 @@ func WriteUsageReportsAtomic(path string, reports []api.ObjectStorageUsageReport
 		return ErrInvalid
 	}
 	data = append(data, '\n')
+	if len(data) > api.MaxObjectStorageUsageReportBytes {
+		return ErrInvalid
+	}
 
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".gregale-object-storage-usage-*")
@@ -146,9 +150,13 @@ func validateUsageReportExportRequest(req UsageReportExportRequest) error {
 
 func validateExportedUsageReports(reports []api.ObjectStorageUsageReport, req UsageReportExportRequest) error {
 	period := utcMonth(req.PeriodStart)
+	observed := req.ObservedAt
+	if len(reports) > 0 {
+		observed = reports[0].ObservedAt
+	}
 	seen := make(map[string]struct{}, len(reports))
 	for _, report := range reports {
-		if report.AccountID == "" || report.BackendID != req.BackendID || report.BackendFingerprint != req.BackendFingerprint || report.Source == "" || len(report.Source) > maxUsageReportSource || !report.PeriodStart.Equal(period) || !report.ObservedAt.Equal(req.ObservedAt) || report.ObservedAt.After(time.Now().UTC()) {
+		if report.AccountID == "" || report.BackendID != req.BackendID || report.BackendFingerprint != req.BackendFingerprint || report.Source == "" || len(report.Source) > maxUsageReportSource || !report.PeriodStart.Equal(period) || report.ObservedAt.IsZero() || report.ObservedAt.Before(period) || !report.ObservedAt.Equal(observed) || report.ObservedAt.After(req.ObservedAt) || report.ObservedAt.After(time.Now().UTC()) {
 			return ErrInvalid
 		}
 		for _, value := range []int64{report.StoredByteHours, report.RequestCount, report.EgressBytes, report.CostMillicents} {

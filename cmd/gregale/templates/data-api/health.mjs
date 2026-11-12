@@ -15,9 +15,15 @@ export function readRuntimeVersion(file = new URL('./runtime-version.json', impo
   }
 }
 
-// Share in-flight work without caching completed results. Reuse the existing
+// isReady is /healthz's readiness: engine SQL ready and the refresh reader,
+// when there is one, answering.
+function isReady(sql, gate) {
+  return sql === 'ready' && gate !== 'unavailable'
+}
+
+// Share in-flight work and cache completed ready checks briefly. Reuse the existing
 // engine pool and reserved refresh reader; never create a diagnostic SQL pool.
-export function createHealth(config, upstreamPort, readyPort) {
+export function createHealth(config, upstreamPort, readyPort, { monotonic = () => performance.now() } = {}) {
   const runtimeVersion = config.runtimeVersion ?? readRuntimeVersion()
   const pool = config.poolObservation ?? createPoolObservation(readyPort, enginePool(config))
   const pending = new Map()
@@ -80,13 +86,42 @@ export function createHealth(config, upstreamPort, readyPort) {
     }
     return bounded(reading, 'unavailable')
   }
+  // /healthz is public and its checks reach the database (PostgREST's /ready
+  // and the refresh reader). Concurrent checks share one running set. A
+  // completed ready set answers further checks for healthCacheMs, so polling
+  // a healthy API asks the database at most once per interval; admission is
+  // read live, it costs nothing. An unready set is never reused: the platform
+  // polls readiness while an engine starts, and a remembered "not yet" would
+  // hold back a ready instance. invalidate() forgets every set when the
+  // engine stops, starts, reloads or is restored, so no answer outlives the
+  // engine it describes (a restore resumes the monotonic clock where the
+  // snapshot paused it).
+  // Local development and real-engine tests set config.healthCacheMs to 0.
+  const cacheMs = config.healthCacheMs ?? limits.healthCacheMs
+  let checked = null
+  function checks() {
+    if (checked && (checked.pending || (checked.ready && monotonic() - checked.at < cacheMs))) return checked.result
+    const entry = { pending: true, ready: false, at: 0 }
+    entry.result = Promise.all([probe('/ready'), engine(), refresh(), pool()])
+    checked = entry
+    // A completed result is cached from when it completed.
+    void entry.result.then(([sql, , gate]) => {
+      entry.pending = false
+      entry.ready = isReady(sql, gate)
+      entry.at = monotonic()
+    })
+    return entry.result
+  }
   return {
     sql: () => probe('/ready'),
+    // invalidate drops completed and running check sets: neither describes an
+    // engine that stopped, started, reloaded or was restored since.
+    invalidate() { checked = null },
     async snapshot(admission) {
       // PostgREST 14.3's admin /live also checks SQL with listeners disabled.
       // A TCP check observes only the engine listener, never pool availability.
-      const [sql, listener, gate, poolObservation] = await Promise.all([probe('/ready'), engine(), refresh(), pool()])
-      return { version: 1, runtime_version: runtimeVersion, live: true, ready: sql === 'ready' && gate !== 'unavailable',
+      const [sql, listener, gate, poolObservation] = await checks()
+      return { version: 1, runtime_version: runtimeVersion, live: true, ready: isReady(sql, gate),
         checks: { engine: listener,
           sql, database: sql === 'ready' || gate === 'active' || gate === 'paused' ? 'reachable' : 'unknown', refresh: gate },
         admission: admission(), pool: poolObservation, ...(gate === 'active' || gate === 'paused' ? { refresh_paused: gate === 'paused' } : {}) }

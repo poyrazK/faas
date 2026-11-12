@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -88,6 +89,42 @@ func nativeSnapshotMemoryFixture(t *testing.T) (*nativeSnapshotMemoryGrant, *nat
 	io := &nativeSnapshotMemoryFixtureIO{value: base}
 	check := func(ctx context.Context) error { return ctx.Err() }
 	return &nativeSnapshotMemoryGrant{j: j, owner: owner, record: record, io: io, checkOwner: check, checkRestoreOwner: check}, io
+}
+
+// vmmd's fence repair rewrites any live cgroup that drifts from its recorded
+// fence. The native allowance must move that record with the limit, or a
+// repair during the capture writes the ordinary limit back and the kernel
+// OOM-kills Firecracker while it writes the snapshot (n2, 2026-10-29).
+func TestNativeSnapshotMemoryAllowanceMovesTheFenceRecord(t *testing.T) {
+	g, io := nativeSnapshotMemoryFixture(t)
+	base, raised, _ := nativeSnapshotMemoryLimits(g.owner)
+	v := &JailerVMM{fences: map[string]*cgroupFence{g.owner.Lease.Instance: {memoryMax: strconv.FormatUint(base, 10)}}}
+	recorded := func() string { return v.fences[g.owner.Lease.Instance].memoryMax }
+	g.fenceLimit = func(limit uint64) func() {
+		return v.trackFenceValue(g.owner.Lease.Instance, fenceMemoryMax, strconv.FormatUint(limit, 10))
+	}
+	io.before = func(_, next uint64) error {
+		if recorded() != strconv.FormatUint(next, 10) {
+			return errors.New("limit written before the fence recorded it")
+		}
+		return nil
+	}
+	if err := g.Raise(t.Context()); err != nil || recorded() != strconv.FormatUint(raised, 10) {
+		t.Fatalf("raise: err=%v fence=%s, want %d", err, recorded(), raised)
+	}
+	if err := g.Restore(t.Context()); err != nil || recorded() != strconv.FormatUint(base, 10) {
+		t.Fatalf("restore: err=%v fence=%s, want %d", err, recorded(), base)
+	}
+
+	failed, failedIO := nativeSnapshotMemoryFixture(t)
+	v.fences = map[string]*cgroupFence{failed.owner.Lease.Instance: {memoryMax: strconv.FormatUint(base, 10)}}
+	failed.fenceLimit = func(limit uint64) func() {
+		return v.trackFenceValue(failed.owner.Lease.Instance, fenceMemoryMax, strconv.FormatUint(limit, 10))
+	}
+	failedIO.before = func(uint64, uint64) error { return errors.New("fixture: write refused") }
+	if failed.Raise(t.Context()) == nil || v.fences[failed.owner.Lease.Instance].memoryMax != strconv.FormatUint(base, 10) {
+		t.Fatalf("a refused raise left the fence at %s, want %d", v.fences[failed.owner.Lease.Instance].memoryMax, base)
+	}
 }
 
 func TestNativeSnapshotMemoryJournalPrecedesEffectsAndFencePrecedesReadiness(t *testing.T) {

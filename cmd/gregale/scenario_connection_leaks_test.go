@@ -40,7 +40,8 @@ func TestConnectionLeakObservationRejectsIncompleteCounters(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"instance_id": connectionTestInstance, "active_connections": 2, "extra": "allowed"})
 	}))
 	defer server.Close()
-	count, id, err := main.ReadTestConnections(context.Background(), server.Client(), server.URL, &main.TestConnectionLeaksSpec{Path: "/connections", As: "observer"}, map[string]string{"observer": "credential"})
+	keys := main.TestHTTPConsumerKeys([]string{"GREGALE_TEST_CONSUMER_OBSERVER_KEY=credential"})
+	count, id, err := main.ReadTestConnections(context.Background(), server.Client(), server.URL, &main.TestConnectionLeaksSpec{Path: "/connections", As: "observer"}, keys)
 	if err != nil || count != 2 || id != connectionTestInstance {
 		t.Fatalf("valid observation: %d %s %v", count, id, err)
 	}

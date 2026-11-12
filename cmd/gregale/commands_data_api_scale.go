@@ -93,6 +93,25 @@ func parseDataAPIScale(s dataAPIScaleSettings) (dataAPIScale, error) {
 	return p, nil
 }
 
+// checkDataAPIPoolMemory refuses a pool above the default on an app with less
+// than DataAPILargePoolMinRAMMB of RAM, where the runtime's peak memory would
+// leave no headroom. An app whose RAM the control plane does not report is
+// not refused.
+func checkDataAPIPoolMemory(ctx context.Context, client *api.Client, slug string, pool int) error {
+	if pool <= api.DataAPIDefaultPoolConnections {
+		return nil
+	}
+	app, err := client.GetApp(ctx, slug)
+	if err != nil {
+		return err
+	}
+	if app.RAMMB > 0 && app.RAMMB < api.DataAPILargePoolMinRAMMB {
+		return fmt.Errorf("a pool of %d needs an app with at least %d MB of RAM; %s has %d MB. Keep the default pool of %d, or give the app more RAM first (gregale app update %s --ram %d) on a plan that allows it",
+			pool, api.DataAPILargePoolMinRAMMB, slug, app.RAMMB, api.DataAPIDefaultPoolConnections, slug, api.DataAPILargePoolMinRAMMB)
+	}
+	return nil
+}
+
 // configureDataAPIScale stores the capacity settings. The runtime treats a
 // per-user or server-key limit above the engine pool as the pool, so no pool
 // change can stop it from starting.
@@ -100,6 +119,9 @@ func configureDataAPIScale(ctx context.Context, client *api.Client, app, scope s
 	set := func(key, value string) error { return client.SetSecretWithScope(ctx, app, key, value, scope) }
 	unset := func(key string) error { return unsetDataAPISetting(ctx, client, app, key, scope) }
 	if p.Pool != "" {
+		if err := checkDataAPIPoolMemory(ctx, client, app, p.pool); err != nil {
+			return err
+		}
 		if err := configureDataAPIPool(ctx, client, app, scope, p.pool, set, unset); err != nil {
 			return err
 		}

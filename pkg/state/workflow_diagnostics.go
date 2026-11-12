@@ -228,19 +228,19 @@ func workflowRunQueueDiagnostic(result *api.WorkflowRunDiagnosticsResponse, run 
 	}
 	if at.After(now) {
 		result.NextWakeAt = workflowDiagnosticTime(&at)
-		result.StateReason = api.AutomationQueueScheduled
+		result.StateReason = api.StoredWorkflowQueueScheduled
 		if run.Status == WorkflowRunStatusAwaitingEvent {
-			result.StateReason = api.AutomationQueueParkedWait
+			result.StateReason = api.StoredWorkflowQueueParkedWait
 		} else {
 			for _, step := range steps {
 				if step.Status == WorkflowStepStatusPending && step.NextRetryAt != nil && step.NextRetryAt.Equal(at) {
-					result.StateReason = api.AutomationQueueRetryBackoff
+					result.StateReason = api.StoredWorkflowQueueRetryBackoff
 				}
 			}
 		}
 		return
 	}
-	result.StateReason = api.AutomationQueueReady
+	result.StateReason = api.StoredWorkflowQueueReady
 	if blocked := counts.capacityReason(run); blocked != "" {
 		result.StateReason = blocked
 	}

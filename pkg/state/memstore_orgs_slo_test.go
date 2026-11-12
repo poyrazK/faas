@@ -240,12 +240,14 @@ func TestMemStore_UpdateAccountOverageCapCents_SetAndClear(t *testing.T) {
 	if err := m.UpdateAccountOverageCapCents(ctx, acct.ID, nil); err != nil {
 		t.Fatalf("UpdateAccountOverageCapCents(nil): %v", err)
 	}
-	_, ok, err = m.GetAccountOverageCapCents(ctx, acct.ID)
+	got, ok, err = m.GetAccountOverageCapCents(ctx, acct.ID)
 	if err != nil {
 		t.Fatalf("GetAccountOverageCapCents: %v", err)
 	}
-	if ok {
-		t.Error("ok = true after clear; want false")
+	// ADR-20261105120000: a cleared cap on a paid (Pro) account reads as the
+	// plan's self-service ceiling.
+	if want, _ := api.PlanPro.MaxSelfServiceOverageCapCents(); !ok || got != want {
+		t.Errorf("after clear got = %d, ok = %v; want %d, true", got, ok, want)
 	}
 }
 

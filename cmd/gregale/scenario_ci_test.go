@@ -387,6 +387,15 @@ func TestGeneratedTestCICommandsAreValidBash(t *testing.T) {
 }
 
 func TestGeneratedTestCICompareCommandBaselineBehavior(t *testing.T) {
+	t.Run("missing candidate report fails before baseline lookup", func(t *testing.T) {
+		code, summary, output, _ := runGeneratedTestCICompare(t, map[string]string{
+			"FAKE_OMIT_CURRENT": "1", "FAKE_GH_LIST_EXIT": "42",
+		})
+		if code != 1 || !strings.Contains(summary, "did not produce a JSON report") || !strings.Contains(output, "::error::") {
+			t.Fatalf("missing report result = %d, summary %q, output %q", code, summary, output)
+		}
+	})
+
 	t.Run("no successful baseline bootstraps", func(t *testing.T) {
 		code, summary, output, _ := runGeneratedTestCICompare(t, map[string]string{
 			"FAKE_GH_BASELINE": "",
@@ -495,6 +504,11 @@ esac
 	runnerTemp := filepath.Join(root, "runner-temp")
 	if err := os.MkdirAll(runnerTemp, 0o700); err != nil {
 		t.Fatal(err)
+	}
+	if overrides["FAKE_OMIT_CURRENT"] != "1" {
+		if err := os.WriteFile(filepath.Join(runnerTemp, "gregale-test-results.json"), []byte("[]\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	envValues := map[string]string{
 		"PATH":                             binDir + string(os.PathListSeparator) + os.Getenv("PATH"),

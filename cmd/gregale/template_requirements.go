@@ -137,8 +137,18 @@ func templateNeedsNote(name string) string {
 // is reconciled through its own routes after the deploy, which answered a
 // bare 404 once the app and release already existed.
 func refuseHiddenManifestCapabilities(ctx context.Context, template, sourceDir string) error {
+	if what, name, hidden := hiddenManifestCapability(ctx, template, sourceDir); hidden {
+		return fmt.Errorf("%s uses %s, which is not enabled for this account, so nothing was deployed; see `gregale feature list --early-access`", what, name)
+	}
+	return nil
+}
+
+// hiddenManifestCapability names the first capability a template or a
+// source directory's gregale.yaml turns on that the account does not have,
+// with what declared it ("template event-worker" or "gregale.yaml").
+func hiddenManifestCapability(ctx context.Context, template, sourceDir string) (what, name string, hidden bool) {
 	var m *gregalemanifest.Manifest
-	what := "gregale.yaml"
+	what = "gregale.yaml"
 	switch {
 	case template != "":
 		m, what = templateManifest(template), "template "+template
@@ -147,10 +157,27 @@ func refuseHiddenManifestCapabilities(ctx context.Context, template, sourceDir s
 	}
 	for _, capability := range capabilitiesFor(m) {
 		if deployCapabilityHidden(ctx, capability) {
-			return fmt.Errorf("%s uses %s, which is not enabled for this account, so nothing was deployed; see `gregale feature list --early-access`", what, capabilityDisplayName(capability))
+			return what, capabilityDisplayName(capability), true
 		}
 	}
-	return nil
+	return what, "", false
+}
+
+// doctorCheckCapabilities reports a gregale.yaml that turns on a capability
+// the account does not have: the deploy would be refused (CLI audit
+// 2026-11-05: templates such as event-worker passed doctor and deploy check).
+func doctorCheckCapabilities(ctx context.Context, dir string) (doctorCheck, bool) {
+	what, name, hidden := hiddenManifestCapability(ctx, "", dir)
+	if !hidden {
+		return doctorCheck{}, false
+	}
+	return doctorCheck{
+		Name:   "capabilities",
+		Status: "error",
+		Code:   "capability_not_enabled",
+		Hint:   fmt.Sprintf("%s uses %s, which is not enabled for this account, so gregale deploy would refuse it.", what, name),
+		Fix:    "remove that setting from gregale.yaml, or ask for early access: gregale feature list --early-access",
+	}, true
 }
 
 // deployCapabilityHidden reports whether the server hides capability from the

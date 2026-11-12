@@ -255,8 +255,13 @@ func TestObjectStorageTrackedMultipartCleanupRecovery(t *testing.T) {
 		name              string
 		pending, latePart bool
 		providerErr       error
+		// abandoned dispatches the part and leaves it uncertain, as a
+		// client that gave up mid-transfer does; windowEnded moves past its
+		// transfer window (ADR-20261104151650).
+		abandoned, windowEnded bool
 	}{
 		{name: "verified"}, {name: "in-flight", pending: true}, {name: "late-part", latePart: true}, {name: "provider-failure", providerErr: objectstorage.ErrUnavailable},
+		{name: "abandoned-in-window", pending: true, abandoned: true}, {name: "abandoned-after-window", abandoned: true, windowEnded: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := setup(t, api.PlanHobby)
@@ -284,7 +289,11 @@ func TestObjectStorageTrackedMultipartCleanupRecovery(t *testing.T) {
 			if err = transfers.BeginObjectMultipartPart(ctx, bucket.AccountID, bucket.ID, u.ID, "part", 1, 30, 100, e.s.objectStorage.Accounting); err != nil {
 				t.Fatal(err)
 			}
-			if !tc.pending {
+			if tc.abandoned {
+				if _, err = e.store.DispatchObjectMultipartPartMutation(ctx, bucket, u.ID, 1, "part"); err != nil {
+					t.Fatal(err)
+				}
+			} else if !tc.pending {
 				if err = transfers.SettleObjectMultipartPart(ctx, bucket.AccountID, u.ID, 1, "part"); err != nil {
 					t.Fatal(err)
 				}
@@ -298,6 +307,10 @@ func TestObjectStorageTrackedMultipartCleanupRecovery(t *testing.T) {
 			// Durable retry state becomes due; the sweep must work with new writes disabled.
 			time.Sleep(1100 * time.Millisecond)
 			setS3Flag(t, e, false)
+			if tc.windowEnded {
+				later := time.Now().Add(api.ObjectTransferTimeout + time.Duration(api.ObjectMultipartPartURLTTLSeconds)*time.Second + api.ObjectMultipartCleanupGrace + time.Minute)
+				e.store.SetClockForTest(func() time.Time { return later })
+			}
 			provider.multipartErr = tc.providerErr
 			if tc.latePart {
 				provider.multipartParts = objectstorage.MultipartPartsPage{Items: []objectstorage.MultipartPart{{PartNumber: 1, SizeBytes: 30, ETag: "etag"}}}

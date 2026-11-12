@@ -37,27 +37,31 @@ func TestRecoveryMigrationReplayPreservesCurrentWork(t *testing.T) {
 
 	// Replaying an older incoming migration must preserve the newer physical
 	// source guards and capacity projection, as well as active operator claims.
-	fingerprint := func(except string) string {
+	fingerprint := func(except ...string) string {
 		t.Helper()
 		var value string
 		err := pool.QueryRow(t.Context(), `SELECT md5(coalesce(string_agg(pg_get_functiondef(oid), E'\n' ORDER BY oid),''))
-FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND prokind='f' AND proname<>$1`, except).Scan(&value)
+FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND prokind='f'
+AND oid NOT IN (SELECT to_regprocedure(signature)::oid FROM unnest($1::text[]) AS signature)`, except).Scan(&value)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return value
 	}
-	wantFunctions := fingerprint("")
-	// 20261019190114207_org_resource_lifecycle_online later rewrote the capacity
-	// projection to read app_resource_accounts. Issued migrations are
-	// append-only, so replaying 004 itself restores its own projection: check
-	// everything else, then put the current projection back so the older 003
-	// replay below is still checked against it.
-	const laterProjection = "service_capacity_snapshot"
-	wantOtherFunctions := fingerprint(laterProjection)
-	var currentProjection string
-	if err := pool.QueryRow(t.Context(), `SELECT pg_get_functiondef(to_regprocedure('service_capacity_snapshot()'))`).Scan(&currentProjection); err != nil {
-		t.Fatal(err)
+	wantFunctions := fingerprint()
+	// 20261019190114207_org_resource_lifecycle_online rewrote the capacity
+	// projection to read app_resource_accounts; 20261105003436673_instance_booked_cpu
+	// later updated migration admission accounting to use each instance's booked
+	// CPU. Issued migrations are append-only, so 004 restores its own versions
+	// of these two functions. Check every other definition, then restore the
+	// current versions before independently replaying 003 against them.
+	laterFunctions := []string{"service_capacity_snapshot()", "migration_admission_node_usage(uuid,uuid)"}
+	wantOtherFunctions := fingerprint(laterFunctions...)
+	currentDefinitions := make([]string, len(laterFunctions))
+	for i, signature := range laterFunctions {
+		if err := pool.QueryRow(t.Context(), `SELECT pg_get_functiondef(to_regprocedure($1))`, signature).Scan(&currentDefinitions[i]); err != nil {
+			t.Fatal(err)
+		}
 	}
 	directory := filepath.Join("..", "..", "migrations")
 	files := []string{
@@ -82,14 +86,16 @@ FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND prokind='f' A
 			t.Fatalf("replay %s: %v", name, err)
 		}
 		if name == files[8] {
-			if got := fingerprint(laterProjection); got != wantOtherFunctions {
+			if got := fingerprint(laterFunctions...); got != wantOtherFunctions {
 				t.Fatalf("replay %s changed existing function definitions", name)
 			}
-			if _, err := pool.Exec(t.Context(), currentProjection); err != nil {
-				t.Fatal(err)
+			for _, definition := range currentDefinitions {
+				if _, err := pool.Exec(t.Context(), definition); err != nil {
+					t.Fatal(err)
+				}
 			}
 		}
-		if got := fingerprint(""); got != wantFunctions {
+		if got := fingerprint(); got != wantFunctions {
 			t.Fatalf("replay %s changed existing function definitions", name)
 		}
 		for _, want := range intents {

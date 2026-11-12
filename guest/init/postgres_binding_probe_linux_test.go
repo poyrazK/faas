@@ -158,3 +158,28 @@ func TestExecuteAppTaskCommandHandlesMissingPostgresBindingEnvironment(t *testin
 		t.Fatalf("report = %+v", report)
 	}
 }
+
+func TestPostgresBindingProbeReportsTheDeploymentPoolSize(t *testing.T) {
+	connect := func(context.Context, *pgx.ConnConfig) (postgresBindingProbeConn, error) {
+		return &fakePostgresBindingProbeConn{}, nil
+	}
+	for value, want := range map[string]int{"7": 7, "": 0, "0": 0, "lots": 0} {
+		manifest := api.AppManifest{}
+		if value != "" {
+			manifest.Env = map[string]string{api.PostgresPoolMaxEnv: value}
+		}
+		var stdout strings.Builder
+		if _, err := executePostgresBindingProbeCommandWithConnector(context.Background(), apptaskproto.Request{
+			Command: []string{api.AppTaskPostgresBindingProbeCommand, "DATABASE_URL"},
+		}, manifest, map[string]string{"DATABASE_URL": "postgres://u:p@db.internal:5432/app"}, nil, &stdout, connect); err != nil {
+			t.Fatal(err)
+		}
+		var report api.PostgresBindingProbeReport
+		if err := json.Unmarshal([]byte(stdout.String()), &report); err != nil {
+			t.Fatalf("decode report: %v", err)
+		}
+		if !report.Passed() || report.PoolMax != want || report.Connections != nil {
+			t.Fatalf("%s=%q: report = %+v, want pool_max %d", api.PostgresPoolMaxEnv, value, report, want)
+		}
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/onebox-faas/faas/pkg/state"
+	"strings"
 	"testing"
 )
 
@@ -33,6 +34,43 @@ func TestWildcardCustomDomainHelpers(t *testing.T) {
 	}
 	if got, ok := state.WildcardProbeHost("*.example.com"); !ok || got != "gregale-wildcard-check.example.com" {
 		t.Fatalf("probe host = %q, %v", got, ok)
+	}
+}
+
+func TestCustomDomainClaimDNSNameBounds(t *testing.T) {
+	// Each label is legal; the boundary is the complete TXT owner name.
+	base := strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "."
+	for _, tc := range []struct {
+		name   string
+		domain string
+		valid  bool
+	}{
+		{"exact fits", base + strings.Repeat("d", 48), true},
+		{"exact too long", base + strings.Repeat("d", 49), false},
+		{"wildcard fits", "*." + base + strings.Repeat("d", 48), true},
+		{"wildcard too long", "*." + base + strings.Repeat("d", 49), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := state.ValidateCustomDomainClaim(tc.domain); (err == nil) != tc.valid {
+				t.Fatalf("claim %q: %v; valid=%v", tc.domain, err, tc.valid)
+			}
+		})
+	}
+}
+
+func TestWildcardProbeHostFitsLongClaims(t *testing.T) {
+	base := strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "."
+	// Cover the truncation boundary, including a cut on a hyphen and a
+	// legacy wildcard whose suffix leaves room for only one probe character.
+	for _, n := range []int{40, 43, 46, 48, 52, 59} {
+		domain := "*." + base + strings.Repeat("d", n)
+		if err := state.ValidateCustomDomainName(domain); err != nil {
+			t.Fatal(err)
+		}
+		host, ok := state.WildcardProbeHost(domain)
+		if !ok || !state.WildcardMatchesHost(domain, host) || state.ValidateCustomDomainName(host) != nil {
+			t.Fatalf("probe for %q = %q, valid=%v", domain, host, ok)
+		}
 	}
 }
 

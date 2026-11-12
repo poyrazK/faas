@@ -328,6 +328,7 @@ Latency and the trace timeline come from the request log, so turn it on with
 | `403 outbound_ai_gateway_unavailable` | From the gateway: the AI gateway is not enabled for your account yet, or your plan does not include it. |
 | `503 outbound_ai_gateway_disabled` | The AI gateway is turned off on the platform. |
 | `403 outbound_account_suspended` | The account is suspended or being deleted. |
+| `403 outbound_stage_not_allowed` | The caller is a preview or staging environment. The gateway serves production deployments; previews inherit the SDK settings `gregale add ai` writes, so give a stage its own provider key (a scoped secret) instead. |
 | `403 outbound_ai_model_not_allowed` | The app's guardrails do not allow this model. |
 | `400 outbound_ai_max_tokens_exceeded` | The request asks for more output tokens than the app's guardrails allow. |
 | `413 outbound_ai_request_too_large` | The body is larger than the gateway can check or sign (4 MiB), for a guarded app or a Bedrock integration. |
@@ -338,7 +339,7 @@ Latency and the trace timeline come from the request log, so turn it on with
 | `400 outbound_ai_feedback_invalid`, `403 outbound_ai_feedback_not_authorized` | Feedback was malformed, or did not come from an app. |
 | `400 outbound_ai_translation_unsupported` | A route cannot translate this request for its target. |
 | `400 outbound_ai_content_flagged` | The moderation check found a blocked category. `X-Gregale-AI-Moderation` names it. |
-| `503 outbound_ai_moderation_unavailable` | The moderation check failed and its policy blocks on failure. A `block` check blocks on failure unless `on_error` is `allow`; a `flag` check lets the call through. |
+| `503 outbound_ai_moderation_unavailable` | The moderation check failed and its policy blocks on failure. A `block` policy fails closed unless set with `--moderation-on-error allow`; a `flag` policy lets the call through. |
 | `429 outbound_ai_account_rate_limited` | The account's AI calls per second across all its integrations reached the plan limit (see Plans). Retry after a second. |
 | `401 outbound_access_token_invalid` | The access token is missing, unknown, revoked or expired. |
 | `403 outbound_ai_endpoint_unmetered` | The gateway cannot meter this call against your caps. `gregale ai policy <id> --allow-unmetered on` lets such calls through, outside the caps. |
@@ -349,12 +350,6 @@ Latency and the trace timeline come from the request log, so turn it on with
 
 A model with no price in the integration's list or the built-in catalog
 costs nothing in usage reports; under a cost cap it is refused (above).
-Built-in prices follow the provider's tiers: a call whose prompt (cache reads
-and writes included) is above a model's long-context threshold, such as 200k
-tokens for Claude on Vertex and Gemini, is priced entirely at the long-context
-rates, and Anthropic one-hour cache writes at the one-hour write price.
-An OpenAI-format call routed to Claude without `max_tokens` is sent with the
-model's maximum output; Gemini and Bedrock get no limit.
 Request bodies a content policy must inspect are limited to 4 MiB. Usage,
 alerts, the request log and captures each have their own retention; see the
 [operator guide](ops/outbound-integrations.md) for the full reference.
@@ -373,10 +368,9 @@ catalog, used for budgets and reports.
 
 - Calls for one integration share its admission state, so very high call rates
   are better spread across integrations, up to the account's AI rate.
-- Budget alerts are delivered to the app's webhooks only, not by email or
-  notification channels yet.
-- CSV exports prefix end-user IDs and tags that start with `=`, `+`, `-` or
-  `@` with `'`, so spreadsheets do not run them as formulas.
+- Budget alerts are sent to the app's webhooks (`outbound.ai_budget.threshold`).
+  To get them by email, Slack or another notification channel, add an
+  `ai_budget_alerts` alert rule ([AI budget alerts](alerts.md#ai-budget-alerts)).
 - Captured content is redacted and kept for 3 days; turn capture on only for
   traffic you may store. Reading it needs an API key with `secrets:read`;
   replays and evaluations leave out answer texts for other keys and say so

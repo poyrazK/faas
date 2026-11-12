@@ -85,6 +85,7 @@ func (s *server) scopedOperationalSummary(ctx context.Context, acct state.Accoun
 		MetricsAllowed: acct.Plan.PerAppMetricsAllowed(),
 		AssessWorkers:  s.platformFlagEnabled(platformflags.AppHealthWorkers, acct),
 		AssessMemory:   s.platformFlagEnabled(platformflags.AppHealthMemory, acct),
+		Plan:           acct.Plan,
 	})
 	health.ProjectID, health.EnvironmentID = env.ProjectID, env.ID
 	out.Health = &health

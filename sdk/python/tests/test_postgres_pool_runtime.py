@@ -7,7 +7,13 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from faas_sdk.preview.postgres_pool_runtime import PostgresPoolBinding, PostgresPoolBindingError
+from faas_sdk.preview.postgres_pool_runtime import (
+    POSTGRES_POOL_MAX_ENV,
+    PostgresPoolBinding,
+    PostgresPoolBindingError,
+    _configuration,
+    postgres_pool_max,
+)
 from faas_sdk.secret_reload_runtime import SecretConsumer, SecretReloadCoordinator, SecretReloadError, SecretReloadIO
 
 
@@ -321,3 +327,13 @@ def test_coordinator_ack_waits_for_validation_and_later_consumer_failure_invalid
     finally:
         finish.set()
         coordinator.stop()
+
+
+@pytest.mark.parametrize("value,want", [("10", 10), (" 4 ", 4), ("", None), ("0", None), ("1001", None), ("ten", None)])
+def test_pool_size_from_environment(monkeypatch, value, want):
+    """ADR-20261104141122: the size Gregale derives from instance concurrency reaches the factory."""
+    assert postgres_pool_max(value) == want
+    monkeypatch.setenv(POSTGRES_POOL_MAX_ENV, value)
+    assert _configuration("DATABASE_URL", values()).max_size == want
+    monkeypatch.delenv(POSTGRES_POOL_MAX_ENV)
+    assert _configuration("DATABASE_URL", values()).max_size is None

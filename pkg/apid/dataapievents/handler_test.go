@@ -152,7 +152,9 @@ func decode(t *testing.T, w *httptest.ResponseRecorder) api.DataAPIChangeEventBa
 
 func TestHandlerPublishesUnderTheAppsOwnSourceAndKeys(t *testing.T) {
 	f := newFixture(t)
-	w := f.serve(f.token(t, workloadidentity.DataAPIEventsAudience), batch(t, event(1), event(2)))
+	versioned := event(1)
+	versioned.SchemaVersion = "v1"
+	w := f.serve(f.token(t, workloadidentity.DataAPIEventsAudience), batch(t, versioned, event(2)))
 	if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
@@ -162,6 +164,9 @@ func TestHandlerPublishesUnderTheAppsOwnSourceAndKeys(t *testing.T) {
 	}
 	if got := f.publisher.events[0].Key; got != "data-api.change.00000000-0000-4000-8000-000000000001" {
 		t.Fatalf("key %q", got)
+	}
+	if f.publisher.events[0].SchemaVersion != "v1" || f.publisher.events[1].SchemaVersion != "" {
+		t.Fatalf("schema versions were changed: %+v", f.publisher.events)
 	}
 	if f.publisher.notified != 1 {
 		t.Fatalf("notified %d times", f.publisher.notified)
@@ -202,8 +207,14 @@ func TestHandlerAcceptsOnlyLiveWorkloadsOfActiveApps(t *testing.T) {
 			if tc.change != nil {
 				tc.change(f)
 			}
-			if w := f.serve(token, body); w.Code != http.StatusUnauthorized || len(f.publisher.events) != 0 {
-				t.Fatalf("status %d, %d published", w.Code, len(f.publisher.events))
+			// A stage is refused for good (403), so its relay stops instead
+			// of retrying; every other refusal is retried (401).
+			want, code := http.StatusUnauthorized, api.CodeUnauthorized
+			if strings.HasPrefix(tc.name, "stage ") {
+				want, code = http.StatusForbidden, api.CodeWorkloadNotProduction
+			}
+			if w := f.serve(token, body); w.Code != want || !strings.Contains(w.Body.String(), `"code":"`+code+`"`) || len(f.publisher.events) != 0 {
+				t.Fatalf("status %d (%s), %d published", w.Code, w.Body, len(f.publisher.events))
 			}
 		})
 	}

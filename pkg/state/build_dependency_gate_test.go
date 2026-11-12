@@ -29,6 +29,9 @@ func buildWaitFixture(t *testing.T, backend string, split bool, stores ...state.
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: a.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+		t.Fatal(err)
+	}
 	create := func(name string) state.App {
 		t.Helper()
 		app, err := s.CreateApp(t.Context(), state.App{AccountID: a.ID, ProjectID: project.ID, Slug: "wait-" + name, WorkloadName: name, Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassHTTP})

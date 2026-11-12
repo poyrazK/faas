@@ -157,3 +157,13 @@ on a quiet fleet does not page. It is still the only event-routing page. A new w
 in fifteen minutes (and at least 50) failed or went back to retry.
 `FaasDeadLetterSpike` now counts recipients whose routing failed alongside
 invocation and trigger dead letters. The warn route is unchanged.
+
+## Amendment (2026-11-09): managed PostgreSQL approval near expiry
+
+`FaasManagedPostgresProductionApprovalImminent` pages when the production
+managed PostgreSQL approval ends within 48 hours. When it ends, new databases,
+bindings, restores and resizes close for every account, and renewal is a
+config change plus an apid restart, so it gets the same short lead as the
+near-expiry certificate pages above. The 14-day
+`FaasManagedPostgresProductionApprovalExpiring` stays warn; on 2026-11-09 it had
+fired for days with the approval 44 hours from ending and no one had acted.

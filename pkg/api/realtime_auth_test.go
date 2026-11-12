@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateRealtimeAuthOIDCPolicy(t *testing.T) {
 	err := ValidateRealtimeAuth(
@@ -33,5 +36,14 @@ func TestNormalizeRealtimeAuthModeLegacyDefaults(t *testing.T) {
 	mode, err = NormalizeRealtimeAuthMode("", false)
 	if err != nil || mode != RealtimeAuthModeNone {
 		t.Fatalf("mode=%q err=%v, want none", mode, err)
+	}
+}
+
+// Leaving out the signing algorithm is the common mistake; the error used to
+// say "bounded to 16 entries" for one audience and no algorithm.
+func TestValidateRealtimeAuthNamesMissingAlgorithm(t *testing.T) {
+	err := ValidateRealtimeAuth(RealtimeAuthModeOIDCJWT, false, "https://issuer.example", "https://issuer.example/.well-known/jwks.json", []string{"realtime"}, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "auth_algorithms is required") {
+		t.Fatalf("err = %v, want auth_algorithms is required", err)
 	}
 }

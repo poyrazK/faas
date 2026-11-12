@@ -50,6 +50,9 @@ func (s *server) createPreview(w http.ResponseWriter, r *http.Request, acct stat
 	if prob == nil {
 		prob = s.syncPreviewConfiguration(r.Context(), parent, created)
 	}
+	if prob == nil {
+		prob = previewDatabasesProblem(s.preparePreviewDatabases(r.Context(), acct, acct.Plan, parent, created))
+	}
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return

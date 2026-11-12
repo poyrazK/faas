@@ -55,3 +55,42 @@ func versioningBaselineSuite(t *testing.T, st accountingStore) {
 		t.Fatal("observation after a requested change skipped the fence", j, err)
 	}
 }
+
+// TestVersioningChangeHoldsInventory pins the 11-04 prod read outage: a
+// versioning change outlasts the inventory freshness window and the sweep
+// skips the bucket meanwhile, so the snapshot must mark its inventory held.
+func TestVersioningChangeHoldsInventoryMem(t *testing.T) {
+	versioningHoldSuite(t, state.NewMemStore())
+}
+func TestVersioningChangeHoldsInventoryPG(t *testing.T) {
+	st, _ := pgStore(t)
+	versioningHoldSuite(t, st)
+}
+
+func versioningHoldSuite(t *testing.T, st accountingStore) {
+	ctx := t.Context()
+	b, _ := seedAccounting(t, st)
+	held := func() bool {
+		t.Helper()
+		s, err := st.ObjectUsage(ctx, b.AccountID, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, u := range s.Buckets {
+			if u.Bucket.ID == b.ID {
+				return u.InventoryHeld
+			}
+		}
+		t.Fatal("bucket missing from usage snapshot")
+		return false
+	}
+	if held() {
+		t.Fatal("an idle bucket's inventory is held")
+	}
+	if _, err := st.(state.ObjectBucketVersioningStore).RequestObjectBucketVersioning(ctx, b.AccountID, b.AppID, b.ID, "Enabled"); err != nil {
+		t.Fatal(err)
+	}
+	if !held() {
+		t.Fatal("a versioning change does not hold the bucket's inventory")
+	}
+}

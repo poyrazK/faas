@@ -49,8 +49,10 @@ func testAccountOverageCaps(t *testing.T, s overageCapsTestStore) {
 	if err != nil {
 		t.Fatalf("AccountOverageCaps: %v", err)
 	}
-	if len(caps) != 2 || caps[capped] != 100 {
-		t.Fatalf("caps = %v, want %s=100 and %s=0 only", caps, capped, zeroCapped)
+	// ADR-20261105120000: the uncapped Pro account is held to Pro's ceiling.
+	ceiling, _ := api.PlanPro.MaxSelfServiceOverageCapCents()
+	if len(caps) != 3 || caps[capped] != 100 || caps[uncapped] != ceiling {
+		t.Fatalf("caps = %v, want %s=100, %s=0 and %s=%d only", caps, capped, zeroCapped, uncapped, ceiling)
 	}
 	if c, ok := caps[zeroCapped]; !ok || c != 0 {
 		t.Fatalf("zero cap = %d, %v; want present and 0", c, ok)

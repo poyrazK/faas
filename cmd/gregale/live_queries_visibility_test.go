@@ -32,10 +32,12 @@ func TestLiveQueriesHiddenFromCustomerDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The published reference lists GA and beta commands only; live queries
+	// (preview) appear under neither name there.
 	if strings.Contains(string(reference), "postgres live") {
 		t.Error("the published CLI reference documents `postgres live`")
 	}
-	if !strings.Contains(string(reference), "gregale data-api live enable") {
-		t.Error("the published CLI reference does not document `data-api live enable`")
+	if strings.Contains(string(reference), "gregale data-api live enable") {
+		t.Error("the published CLI reference documents the preview `data-api live enable`")
 	}
 }

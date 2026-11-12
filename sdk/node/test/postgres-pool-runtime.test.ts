@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {inspect} from 'node:util';
-import {PostgresPoolBinding, PostgresPoolBindingError, type PostgresPoolConfig} from '../src/postgres-pool-runtime.js';
+import {POSTGRES_POOL_MAX_ENV, PostgresPoolBinding, PostgresPoolBindingError, postgresPoolMax, type PostgresPoolConfig} from '../src/postgres-pool-runtime.js';
 import {SecretReloadCoordinator} from '../src/secret-reload-runtime.js';
 
 const uri = (password = 'private-first') => `postgresql://worker:${password}@db.example:6432/app?sslmode=require`;
@@ -139,4 +139,24 @@ test('coordinated applied ACK follows validation; a later consumer failure inval
   await assert.rejects(coordinator.reload()); assert.throws(() => b.acquire());
   assert.equal(pool.closed, 0); assert.deepEqual(receipts, ['applied', 'failed']);
   old.release(); coordinator.stop(); await b.waitForRetirement(); assert.equal(pool.closed, 1);
+});
+
+test('the pool size Gregale derives from instance concurrency reaches the factory (ADR-20261104141122)', async () => {
+  for (const [value, want] of [['10', 10], [' 4 ', 4], ['', undefined], ['0', undefined], ['1001', undefined], ['ten', undefined], [undefined, undefined]] as const) {
+    assert.equal(postgresPoolMax(value), want, String(value));
+  }
+  const previous = process.env[POSTGRES_POOL_MAX_ENV];
+  try {
+    for (const [value, want] of [['7', 7], [undefined, undefined]] as const) {
+      if (value === undefined) delete process.env[POSTGRES_POOL_MAX_ENV]; else process.env[POSTGRES_POOL_MAX_ENV] = value;
+      let seen: PostgresPoolConfig | undefined;
+      const b = new PostgresPoolBinding('DATABASE_URL', config => {seen = config; return new Pool(config.connectionString);}, {validate: () => {}, retire: pool => pool.close()});
+      await b.reload(values());
+      assert.equal(seen?.max, want);
+      assert.equal('max' in (seen ?? {}), want !== undefined);
+      b.invalidate(); await b.waitForRetirement();
+    }
+  } finally {
+    if (previous === undefined) delete process.env[POSTGRES_POOL_MAX_ENV]; else process.env[POSTGRES_POOL_MAX_ENV] = previous;
+  }
 });

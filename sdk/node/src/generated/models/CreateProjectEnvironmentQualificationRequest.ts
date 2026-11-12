@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { ProjectEnvironmentQualificationCheck } from './ProjectEnvironmentQualificationCheck.js';
 /**
- * Closed-schema health and smoke probe results for one exact active source release set, non-secret source configuration version, and per-workload secret revision fingerprints.
+ * Closed-schema health and smoke probe results for one exact active source release set, non-secret source configuration version, and workload and shared-secret revision fingerprints observed before probes.
  */
 export type CreateProjectEnvironmentQualificationRequest = {
   /**
@@ -14,6 +14,9 @@ export type CreateProjectEnvironmentQualificationRequest = {
   release_set_id: string;
   configuration_version: number;
   configuration_hash: string;
+  /**
+   * Per-workload secret fingerprints plus the reserved project:secrets identity from the pre-probe environment state. The shared identity is required once the environment has held shared secrets, including after the final key is deleted.
+   */
   secret_revision_hashes: Record<string, string>;
   checks: Array<ProjectEnvironmentQualificationCheck>;
 };

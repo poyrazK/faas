@@ -156,7 +156,7 @@ type inventoryProvider struct {
 
 func (p *inventoryProvider) ListObjects(_ context.Context, _, _, cursor string, _ int32) (objectstorage.ObjectPage, error) {
 	if cursor == "" {
-		if p.mode == "empty-truncated" {
+		if strings.HasPrefix(p.mode, "empty-truncated") {
 			return objectstorage.ObjectPage{NextCursor: "page2"}, nil
 		}
 		if p.mode == "unexpected-prefix" {
@@ -164,10 +164,10 @@ func (p *inventoryProvider) ListObjects(_ context.Context, _, _, cursor string, 
 		}
 		return objectstorage.ObjectPage{Items: []objectstorage.Object{{Key: "a", Size: 3}}, NextCursor: "page2"}, nil
 	}
-	if p.mode == "failed" {
+	if p.mode == "failed" || p.mode == "empty-truncated-failed" {
 		return objectstorage.ObjectPage{}, errors.New("do not log upstream secrets")
 	}
-	if p.mode == "cycle" {
+	if p.mode == "cycle" || p.mode == "empty-truncated-cycle" {
 		return objectstorage.ObjectPage{NextCursor: "page2"}, nil
 	}
 	if p.mode == "duplicate" {
@@ -177,7 +177,7 @@ func (p *inventoryProvider) ListObjects(_ context.Context, _, _, cursor string, 
 }
 
 func TestObjectStorageInventoryPublishesOnlyCompleteScans(t *testing.T) {
-	for _, mode := range []string{"complete", "failed", "cycle", "empty-truncated", "unexpected-prefix", "duplicate"} {
+	for _, mode := range []string{"complete", "failed", "cycle", "empty-truncated", "empty-truncated-failed", "empty-truncated-cycle", "unexpected-prefix", "duplicate"} {
 		t.Run(mode, func(t *testing.T) {
 			e := setup(t, api.PlanPro)
 			createApp(t, e, "inventory")
@@ -199,8 +199,14 @@ func TestObjectStorageInventoryPublishesOnlyCompleteScans(t *testing.T) {
 				t.Fatal(err)
 			}
 			u := snapshot.Buckets[0]
-			if mode == "complete" {
-				if u.ObservedBytes != 7 || u.ObservedKeys != 2 || u.ObservedAt.IsZero() || outcome != "success" {
+			if mode == "complete" || mode == "empty-truncated" {
+				bytes, keys := int64(7), int64(2)
+				if mode == "empty-truncated" {
+					// Empty native pages remain valid when their cursor advances
+					// to a complete listing; later failures must not publish it.
+					bytes, keys = 4, 1
+				}
+				if u.ObservedBytes != bytes || u.ObservedKeys != keys || u.ObservedAt.IsZero() || outcome != "success" {
 					t.Fatal(u, outcome)
 				}
 			} else if !u.ObservedAt.IsZero() || outcome != "failed" {

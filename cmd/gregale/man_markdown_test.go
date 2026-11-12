@@ -13,7 +13,7 @@ import (
 // the command tree's names (ADR-20261026145832 step 5).
 func TestMarkdownReferenceFresh(t *testing.T) {
 	var buf bytes.Buffer
-	main.RenderMarkdownReference(&buf, main.CliTreeManifest(main.VisibleCliCommands()))
+	main.RenderMarkdownReference(&buf, main.CliTreeManifest(main.PublicReferenceCommands()))
 	want, err := os.ReadFile("../../docs/cli-reference.md")
 	if err != nil {
 		t.Fatalf("docs/cli-reference.md missing: %v — run `go run ./cmd/gregale man --markdown > docs/cli-reference.md`", err)
@@ -131,7 +131,7 @@ func TestMarkdownReferenceEscapesPlaceholdersAndFlagValues(t *testing.T) {
 func TestMarkdownReferenceListsAppsRmConfirmation(t *testing.T) {
 	var buf bytes.Buffer
 	main.RenderMarkdownReference(&buf, main.CliTreeManifest(main.VisibleCliCommands()))
-	if !strings.Contains(buf.String(), "`gregale app delete [--dry-run] [--yes] [--quiet] [-q] <slug>`") {
+	if !strings.Contains(buf.String(), "`gregale app delete [--dry-run] [--yes] [--quiet] [-q] [--delete-bindings] <slug>`") {
 		t.Error("app delete reference omits its confirmation flags")
 	}
 }

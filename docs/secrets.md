@@ -60,6 +60,23 @@ recording the value. Every mutation invalidates snapshots that already exist;
 the `--restart` path additionally prevents the live process with the old value
 from being captured into a replacement snapshot.
 
+### Snapshots and secrets
+
+An app that reads its secrets from the environment once at startup works
+correctly with snapshots and needs no extra code. Gregale captures an app's
+snapshot after the app has started with the secret values current at that
+moment, and records which secret versions it used. A restored app therefore
+has the same environment a cold boot would give it. When a secret changes,
+existing snapshots are invalidated: the next wake cold-boots with the new
+values and a fresh snapshot is captured from it. A restore never serves
+secret values that are older than the latest change.
+
+You need the reload label below only to apply a change to processes that are
+already running, without restarting them. `FAAS_SECRETS_FILE` and
+`FAAS_SECRETS_SNAPSHOT_FILE` exist only in reload-enabled images, so an
+`after_restore` handler must not depend on them unless the image sets the
+label: a failing handler makes that wake fall back to a cold boot.
+
 By default, a running process keeps its current environment and the new value
 arrives on the next cold wake. Add `--restart` to `secrets set` or `secrets
 rotate` to apply immediately. Gregale durably queues a rolling configuration
@@ -89,6 +106,11 @@ Apps that can reload credentials in-process may opt in via an OCI image label:
 ```dockerfile
 LABEL com.gregale.secret-reload-signal="SIGHUP"
 ```
+
+The label is optional. Without it, snapshots and restores still deliver
+current secrets (see [Snapshots and secrets](#snapshots-and-secrets)); a
+change reaches running processes on their next cold wake or with
+`--restart`.
 
 The supported signals are `SIGHUP`, `SIGUSR1`, and `SIGUSR2`; the selected
 signal must differ from the image's `STOPSIGNAL`. On rotation, guest-init polls

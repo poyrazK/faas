@@ -25,6 +25,8 @@ func runtimeConfigRestartProgress(r RuntimeConfigRestartStatusResponse) (string,
 			message = "Restart failed before a quiet period was observed."
 		case "telemetry_missing":
 			message = "Restart failed without request activity information."
+		case CodeAppStartupCrash:
+			return "Restart failed: the app crashed during startup with the current config.", startupCrashNextStep
 		}
 		return message, "Inspect app logs and instances before requesting another restart."
 	case "queued":
@@ -39,6 +41,8 @@ func runtimeConfigRestartProgress(r RuntimeConfigRestartStatusResponse) (string,
 			return "Waiting for a quiet period before replacing an instance.", "Check this restart again after traffic settles."
 		case "telemetry_missing":
 			return "Waiting for request activity information.", "Inspect app logs and instances if this keeps retrying."
+		case CodeAppStartupCrash:
+			return "The app crashed during startup with the current config; processing will retry, and the running instance keeps serving.", startupCrashNextStep
 		case "restart_attempt_failed":
 			return "A restart attempt was unsuccessful; processing will retry.", "Inspect app logs and instances if this keeps retrying."
 		}
@@ -47,3 +51,7 @@ func runtimeConfigRestartProgress(r RuntimeConfigRestartStatusResponse) (string,
 		return "Restart status is unavailable.", "Check this restart again; an unavailable status does not establish failure."
 	}
 }
+
+// startupCrashNextStep points at the change that most often causes a crash on
+// restart: the env or secret values the restart applies.
+const startupCrashNextStep = "Check the startup error with gregale logs, then review recent config changes with gregale env history and revert one with gregale env rollback <rev>."

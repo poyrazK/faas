@@ -125,3 +125,46 @@ It differs from the decision above in these places:
 - **The CLI** listens on `127.0.0.1:9229` (`--debug-port`) and opens one
   tunnel per debugger connection, so a debugger that reconnects after a
   live-patch restart (ADR-740) gets a fresh session.
+
+## Amendment (2026-11-09): hardening after the debugger review
+
+A review of the attach path found that the inspector could be switched on
+outside developer environments, that liveness stayed forced healthy whenever
+`--debug` was on (attached or not), that the preload opened the inspector in
+the package-manager or watcher wrapper instead of the server, and that
+functions killed or replaced a worker held at a breakpoint.
+
+- **Developer marker.** schedd stamps `FAAS_DEVELOPER_ENVIRONMENT=1` on
+  developer apps as platform identity (authoritative over customer env and
+  secrets). guest-init honours `FAAS_DEV_DEBUG` only with that marker, so a
+  production app that sets the variable gets a logged warning and no
+  inspector.
+- **Liveness exemption only while attached.** guest-init forces liveness
+  healthy only while an inspector connection is established on port 9229
+  (read from `/proc/net/tcp{,6}`), and only when the inspector it opened (or
+  the app's own `--inspect` on a wildcard address) is the one listening.
+- **Preload targets the server.** The preload skips npm, yarn, pnpm,
+  corepack, nodemon, tsx, ts-node-dev, concurrently, npm-run-all, Next's CLI,
+  `.bin` shims and `node --watch` parents.
+- **Functions.** While debugging, the runner pool keeps one worker, and a
+  timed-out or cancelled invocation on a worker the debugger holds waits for
+  the worker instead of retiring it.
+- **Tunnel.** The gateway emits `dev.debugger.attached` and
+  `dev.debugger.detached` audit events (app, instance, key, duration), and
+  picks one instance deterministically (lowest instance id) when several are
+  live. The CLI waits for the full wake timeout plus a margin, caches the
+  `/json` discovery requests for two seconds, refuses Bun and Deno projects,
+  and reads `dev.debug_port` from `gregale.yaml` so `--all` can debug several
+  apps on distinct ports.
+- **Documented limits.** The per-app session cap is counted per
+  gatewayd-internal process, not cluster-wide; with N gateway processes an
+  app can hold up to N × `DevDebugSessionsPerApp` tunnels. The cap bounds
+  resource use per process, which is what it protects, so it stays local.
+  The idle and byte caps close a session; the debugger reattaches. The tunnel
+  route `GET /v1/apps/{slug}/debug` is served by gatewayd, not apid, and is
+  documented in `docs/gregale-dev.md` rather than the apid OpenAPI spec,
+  whose route parity and SDK generation cover apid only.
+- **Test gap.** The metal test drives `FAAS_DEV_DEBUG` through the developer
+  env path only. The developer marker itself is platform identity and is
+  covered by a schedd unit test; a metal case for a production app that sets
+  `FAAS_DEV_DEBUG` (expect no inspector) is still to be added.

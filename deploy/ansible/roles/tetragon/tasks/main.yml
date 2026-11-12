@@ -1,0 +1,143 @@
+---
+# tetragon — eBPF runtime detection on compute nodes (ADR-20261110183000).
+# Observe only; Alloy ships /var/log/tetragon/tetragon.log to Loki under
+# job="faas-security" and counts its high-signal events.
+
+- name: tetragon — stop and disable when turned off
+  ansible.builtin.systemd_service:
+    name: tetragon
+    state: stopped
+    enabled: false
+  failed_when: false
+  when: not (faas_tetragon_enabled | bool)
+
+- name: tetragon — end here when turned off
+  ansible.builtin.meta: end_role
+  when: not (faas_tetragon_enabled | bool)
+
+- name: tetragon — assert SHA-256 pin was supplied
+  ansible.builtin.assert:
+    that:
+      - tetragon_release_sha256 | length == 64
+    fail_msg: >-
+      tetragon_release_sha256 is not set. Pin it from the cilium/tetragon
+      release's tetragon-v{{ tetragon_version }}-amd64.tar.gz.sha256sum.
+
+- name: tetragon — check the kernel exposes BTF
+  ansible.builtin.stat:
+    path: /sys/kernel/btf/vmlinux
+  register: tetragon_btf
+
+- name: tetragon — require BTF
+  ansible.builtin.assert:
+    that:
+      - tetragon_btf.stat.exists
+    fail_msg: >-
+      Tetragon needs the kernel's BTF (/sys/kernel/btf/vmlinux); this kernel
+      was built without CONFIG_DEBUG_INFO_BTF.
+
+- name: tetragon — set the release directory
+  ansible.builtin.set_fact:
+    tetragon_release_dir: "{{ tetragon_install_root }}/tetragon-v{{ tetragon_version }}-amd64"
+
+- name: tetragon — create the install root
+  ansible.builtin.file:
+    path: "{{ tetragon_install_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: tetragon — download the release archive
+  ansible.builtin.get_url:
+    url: "https://github.com/cilium/tetragon/releases/download/v{{ tetragon_version }}/tetragon-v{{ tetragon_version }}-amd64.tar.gz"
+    dest: "{{ tetragon_install_root }}/tetragon-v{{ tetragon_version }}-amd64.tar.gz"
+    checksum: "sha256:{{ tetragon_release_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: tetragon — unpack the release
+  ansible.builtin.unarchive:
+    src: "{{ tetragon_install_root }}/tetragon-v{{ tetragon_version }}-amd64.tar.gz"
+    dest: "{{ tetragon_install_root }}"
+    remote_src: true
+    owner: root
+    group: root
+    creates: "{{ tetragon_release_dir }}/usr/local/bin/tetragon"
+  notify: restart tetragon
+
+- name: tetragon — create configuration and export directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/tetragon, group: root, mode: "0755" }
+    - { path: "{{ tetragon_config_dir }}", group: root, mode: "0755" }
+    - { path: "{{ tetragon_policy_dir }}", group: root, mode: "0755" }
+    - { path: "{{ tetragon_export_dir }}", group: adm, mode: "2750" }
+
+# One flag per file, as Tetragon's --config-dir reads them. Only kprobe
+# events are exported: process exec and exit are not, which keeps the volume
+# to what the policies select.
+- name: tetragon — write configuration
+  ansible.builtin.copy:
+    dest: "{{ tetragon_config_dir }}/{{ item.key }}"
+    content: "{{ item.value }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ tetragon_flags | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  vars:
+    tetragon_flags:
+      bpf-lib: "{{ tetragon_release_dir }}/usr/local/lib/tetragon/bpf/"
+      tracing-policy-dir: "{{ tetragon_policy_dir }}"
+      server-address: unix:///var/run/tetragon/tetragon.sock
+      export-filename: "{{ tetragon_export_file }}"
+      export-file-perm: "640"
+      export-file-max-size-mb: "{{ tetragon_export_max_size_mb }}"
+      export-file-max-backups: "{{ tetragon_export_max_backups }}"
+      export-file-compress: "true"
+      export-rate-limit: "{{ tetragon_export_rate_limit }}"
+      export-allowlist: '{"event_set":["PROCESS_KPROBE"]}'
+      enable-process-cred: "true"
+      log-format: json
+      log-level: info
+      gops-address: ""
+      metrics-server: ""
+  notify: restart tetragon
+
+- name: tetragon — install the observe-only tracing policies
+  ansible.builtin.copy:
+    src: "policies/{{ item }}"
+    dest: "{{ tetragon_policy_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - faas-secret-open.yaml
+    - faas-module-load.yaml
+    - faas-ptrace.yaml
+    - faas-setuid-root.yaml
+  notify: restart tetragon
+
+- name: tetragon — install the unit
+  ansible.builtin.template:
+    src: tetragon.service.j2
+    dest: /etc/systemd/system/tetragon.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart tetragon
+
+- name: tetragon — enable and start
+  ansible.builtin.systemd_service:
+    name: tetragon
+    enabled: true
+    state: started
+    daemon_reload: true

@@ -1,0 +1,1226 @@
+diff --git a/src/vmm/src/devices/virtio/iovec.rs b/src/vmm/src/devices/virtio/iovec.rs
+index 0d00f2d..6815e4e 100644
+--- a/src/vmm/src/devices/virtio/iovec.rs
++++ b/src/vmm/src/devices/virtio/iovec.rs
+@@ -129,6 +129,22 @@ impl IoVecBuffer {
+         self.len = 0u32;
+     }
+ 
++    /// Appends `iovec`s covering this buffer from `offset` to its end. Nothing is
++    /// appended when `offset >= self.len()`.
++    pub(crate) fn append_iovecs_from(&self, mut offset: usize, out: &mut Vec<iovec>) {
++        for iov in &self.vecs {
++            if offset >= iov.iov_len {
++                offset -= iov.iov_len;
++                continue;
++            }
++            out.push(iovec {
++                iov_base: iov.iov_base.cast::<u8>().wrapping_add(offset).cast(),
++                iov_len: iov.iov_len - offset,
++            });
++            offset = 0;
++        }
++    }
++
+     /// Reads a number of bytes from the `IoVecBuffer` starting at a given offset.
+     ///
+     /// This will try to fill `buf` reading bytes from the `IoVecBuffer` starting from
+@@ -612,6 +628,44 @@ mod tests {
+         chain(mem, true)
+     }
+ 
++    #[test]
++    fn test_append_iovecs_from() {
++        let a = [1u8; 10];
++        let b = [2u8; 5];
++        let c = [3u8; 7];
++        let buf = IoVecBuffer::from(vec![&a[..], &b[..], &c[..]]);
++        let all: Vec<u8> = a.iter().chain(&b).chain(&c).copied().collect();
++        let cases: [(usize, &[usize]); 8] = [
++            (0, &[10, 5, 7]),
++            (3, &[7, 5, 7]),
++            (10, &[5, 7]),
++            (12, &[3, 7]),
++            (15, &[7]),
++            (21, &[1]),
++            (22, &[]),
++            (40, &[]),
++        ];
++        for (offset, want) in cases {
++            let mut out = vec![iovec {
++                iov_base: std::ptr::null_mut(),
++                iov_len: 0,
++            }];
++            buf.append_iovecs_from(offset, &mut out);
++            // Appends after what is already there.
++            assert_eq!(out[0].iov_len, 0);
++            let lens: Vec<usize> = out[1..].iter().map(|v| v.iov_len).collect();
++            assert_eq!(lens, want, "offset {offset}");
++            let mut bytes = Vec::new();
++            for v in &out[1..] {
++                // SAFETY: every entry points into `a`, `b` or `c`, which outlive `out`.
++                bytes.extend_from_slice(unsafe {
++                    std::slice::from_raw_parts(v.iov_base.cast::<u8>(), v.iov_len)
++                });
++            }
++            assert_eq!(bytes, all[offset.min(all.len())..], "offset {offset}");
++        }
++    }
++
+     #[test]
+     fn test_access_mode() {
+         let mem = default_mem();
+diff --git a/src/vmm/src/devices/virtio/net/device.rs b/src/vmm/src/devices/virtio/net/device.rs
+index 8ccc58d..30ad171 100644
+--- a/src/vmm/src/devices/virtio/net/device.rs
++++ b/src/vmm/src/devices/virtio/net/device.rs
+@@ -20,15 +20,18 @@ use crate::devices::virtio::ActivateError;
+ use crate::devices::virtio::device::{ActiveState, DeviceState, VirtioDevice, VirtioDeviceType};
+ use crate::devices::virtio::generated::virtio_config::VIRTIO_F_VERSION_1;
+ use crate::devices::virtio::generated::virtio_net::{
+-    VIRTIO_NET_F_CSUM, VIRTIO_NET_F_GUEST_CSUM, VIRTIO_NET_F_GUEST_TSO4, VIRTIO_NET_F_GUEST_TSO6,
+-    VIRTIO_NET_F_GUEST_UFO, VIRTIO_NET_F_HOST_TSO4, VIRTIO_NET_F_HOST_TSO6, VIRTIO_NET_F_HOST_UFO,
+-    VIRTIO_NET_F_MAC, VIRTIO_NET_F_MRG_RXBUF, VIRTIO_NET_F_MTU, virtio_net_hdr_v1,
++    VIRTIO_NET_F_GUEST_CSUM, VIRTIO_NET_F_GUEST_TSO4, VIRTIO_NET_F_GUEST_TSO6,
++    VIRTIO_NET_F_GUEST_UFO, VIRTIO_NET_F_MAC, VIRTIO_NET_F_MRG_RXBUF, VIRTIO_NET_F_MTU,
++    virtio_net_hdr_v1,
+ };
+ use crate::devices::virtio::generated::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
+ use crate::devices::virtio::iovec::{
+     IoVecBuffer, IoVecBufferMut, IoVecError, ParsedDescriptorChain,
+ };
+ use crate::devices::virtio::net::metrics::{NetDeviceMetrics, NetMetricsPerDevice};
++use crate::devices::virtio::net::offload_guard::{
++    self, GUEST_TX_OFFLOAD_FEATURES, LEGACY_HEADER_COPY_LEN, VNET_HDR_LEN,
++};
+ use crate::devices::virtio::net::tap::Tap;
+ use crate::devices::virtio::net::{
+     MAX_BUFFER_SIZE, NET_QUEUE_SIZES, NetError, NetQueue, RX_INDEX, TX_INDEX, generated,
+@@ -52,6 +55,32 @@ pub(crate) const fn vnet_hdr_len() -> usize {
+     mem::size_of::<virtio_net_hdr_v1>()
+ }
+ 
++const _: () = assert!(VNET_HDR_LEN == vnet_hdr_len());
++
++/// Host-owned memory for writing one guest frame to the TAP. The vnet header and,
++/// on the legacy offload path, the validated frame headers come from here, never
++/// from guest memory (see `offload_guard`).
++#[derive(Debug)]
++pub(crate) struct TxScratch {
++    vnet_hdr: [u8; VNET_HDR_LEN],
++    headers: [u8; LEGACY_HEADER_COPY_LEN],
++    iovecs: Vec<iovec>,
++}
++
++// SAFETY: `iovecs` only holds pointers for the duration of one `write_frame_to_tap`
++// call and is cleared before it returns; no pointer outlives that call.
++unsafe impl Send for TxScratch {}
++
++impl TxScratch {
++    fn new() -> Self {
++        Self {
++            vnet_hdr: [0u8; VNET_HDR_LEN],
++            headers: [0u8; LEGACY_HEADER_COPY_LEN],
++            iovecs: Vec::with_capacity(usize::from(NET_QUEUE_MAX_SIZE) + 2),
++        }
++    }
++}
++
+ // This returns the maximum frame header length. This includes the VNET header plus
+ // the maximum L2 frame header bytes which includes the ethernet frame header plus
+ // the header IPv4 ARP header which is 28 bytes long.
+@@ -266,6 +295,7 @@ pub struct Net {
+     rx_frame_buf: [u8; MAX_BUFFER_SIZE],
+ 
+     tx_frame_headers: [u8; frame_hdr_len()],
++    tx_scratch: TxScratch,
+ 
+     pub(crate) config_space: ConfigSpace,
+     pub(crate) guest_mac: Option<MacAddr>,
+@@ -292,15 +322,11 @@ impl Net {
+         tx_rate_limiter: RateLimiter,
+         mtu: Option<u16>,
+     ) -> Result<Self, NetError> {
+-        let mut avail_features = (1 << VIRTIO_NET_F_GUEST_CSUM)
+-            | (1 << VIRTIO_NET_F_CSUM)
+-            | (1 << VIRTIO_NET_F_GUEST_TSO4)
+-            | (1 << VIRTIO_NET_F_GUEST_TSO6)
+-            | (1 << VIRTIO_NET_F_GUEST_UFO)
+-            | (1 << VIRTIO_NET_F_HOST_TSO4)
+-            | (1 << VIRTIO_NET_F_HOST_TSO6)
+-            | (1 << VIRTIO_NET_F_HOST_UFO)
+-            | (1 << VIRTIO_F_VERSION_1)
++        // Gregale: no checksum or segmentation offload in either direction. The
++        // host kernel must never act on guest-built offload metadata, and the
++        // guest receives fully checksummed, segmented frames. Devices restored
++        // from older snapshots keep their saved features (see `offload_guard`).
++        let mut avail_features = (1 << VIRTIO_F_VERSION_1)
+             | (1 << VIRTIO_NET_F_MRG_RXBUF)
+             | (1 << VIRTIO_RING_F_EVENT_IDX);
+ 
+@@ -337,6 +363,7 @@ impl Net {
+             tx_rate_limiter,
+             rx_frame_buf: [0u8; MAX_BUFFER_SIZE],
+             tx_frame_headers: [0u8; frame_hdr_len()],
++            tx_scratch: TxScratch::new(),
+             config_space,
+             guest_mac,
+             device_state: DeviceState::Inactive,
+@@ -527,6 +554,7 @@ impl Net {
+     // Tries to detour the frame to MMDS and if MMDS doesn't accept it, sends it on the host TAP.
+     //
+     // Returns whether MMDS consumed the frame.
++    #[allow(clippy::too_many_arguments)]
+     fn write_to_mmds_or_tap(
+         mmds_ns: Option<&mut MmdsNetworkStack>,
+         rate_limiter: &mut RateLimiter,
+@@ -535,6 +563,8 @@ impl Net {
+         tap: &mut Tap,
+         guest_mac: Option<MacAddr>,
+         net_metrics: &NetDeviceMetrics,
++        acked_features: u64,
++        scratch: &mut TxScratch,
+     ) -> Result<bool, NetError> {
+         // There is a potential for a TOCTOU race condition here where,
+         // when MMDS is enabled, the guest can rewrite packet headers between
+@@ -570,10 +600,12 @@ impl Net {
+                 NetError::VnetHeaderMissing
+             })?;
+ 
+-        let headers = frame_bytes_from_buf(&headers[..header_len]).inspect_err(|_| {
++        let raw_headers = &headers[..header_len];
++        let headers = frame_bytes_from_buf(raw_headers).inspect_err(|_| {
+             error!("VNET headers missing in TX frame");
+             net_metrics.tx_malformed_frames.inc();
+         })?;
++        let guest_vnet_hdr = &raw_headers[..vnet_hdr_len()];
+ 
+         if let Some(ns) = mmds_ns
+             && ns.is_mmds_frame(headers)
+@@ -606,8 +638,17 @@ impl Net {
+         }
+ 
+         let _metric = net_metrics.tap_write_agg.record_latency_metrics();
+-        match Self::write_tap(tap, frame_iovec) {
+-            Ok(_) => {
++        match Self::write_frame_to_tap(
++            tap,
++            frame_iovec,
++            guest_vnet_hdr,
++            acked_features,
++            scratch,
++            net_metrics,
++        ) {
++            // Dropped by offload validation; already counted.
++            Ok(None) => {}
++            Ok(Some(_)) => {
+                 let len = u64::from(frame_iovec.len());
+                 net_metrics.tx_bytes_count.add(len);
+                 net_metrics.tx_packets_count.inc();
+@@ -787,6 +828,8 @@ impl Net {
+                 &mut self.tap,
+                 self.guest_mac,
+                 &self.metrics,
++                self.acked_features,
++                &mut self.tx_scratch,
+             )
+             .unwrap_or(false);
+             if frame_consumed_by_mmds && self.rx_buffer.used_bytes == 0 {
+@@ -880,8 +923,75 @@ impl Net {
+         self.tap.read_iovec(slice)
+     }
+ 
+-    fn write_tap(tap: &mut Tap, buf: &IoVecBuffer) -> std::io::Result<usize> {
+-        tap.write_iovec(buf)
++    /// Writes one guest frame to the TAP behind a vnet header the host owns.
++    ///
++    /// Without a negotiated guest-to-host offload the header is all zero, whatever
++    /// the guest put in its own. With one (a device restored from an older
++    /// snapshot), the guest header must pass `offload_guard::validate_legacy_offload`
++    /// against a host copy of the frame headers; the host then writes its own
++    /// header and those copied headers, followed by the rest of the frame from
++    /// guest memory. A frame that fails validation is dropped (`Ok(None)`).
++    fn write_frame_to_tap(
++        tap: &mut Tap,
++        frame_iovec: &IoVecBuffer,
++        guest_vnet_hdr: &[u8],
++        acked_features: u64,
++        scratch: &mut TxScratch,
++        net_metrics: &NetDeviceMetrics,
++    ) -> std::io::Result<Option<usize>> {
++        let frame_len = (frame_iovec.len() as usize).saturating_sub(vnet_hdr_len());
++        scratch.vnet_hdr = [0u8; VNET_HDR_LEN];
++        let mut host_header_len = 0usize;
++
++        if acked_features & GUEST_TX_OFFLOAD_FEATURES == 0 {
++            if offload_guard::requests_offload(guest_vnet_hdr) {
++                net_metrics.tx_offload_metadata_ignored.inc();
++            }
++        } else if offload_guard::requests_offload(guest_vnet_hdr) {
++            let copy_len = frame_len.min(LEGACY_HEADER_COPY_LEN);
++            let copied = frame_iovec
++                .read_volatile_at(
++                    &mut &mut scratch.headers[..copy_len],
++                    vnet_hdr_len(),
++                    copy_len,
++                )
++                .unwrap_or(0);
++            let mut guest_hdr = [0u8; VNET_HDR_LEN];
++            guest_hdr.copy_from_slice(&guest_vnet_hdr[..VNET_HDR_LEN]);
++            match offload_guard::validate_legacy_offload(
++                &guest_hdr,
++                &scratch.headers[..copied],
++                frame_len,
++                acked_features,
++            ) {
++                Ok(None) => {}
++                Ok(Some(offload)) => {
++                    scratch.vnet_hdr = offload.vnet_hdr();
++                    host_header_len = usize::from(offload.header_len);
++                    net_metrics.tx_offload_legacy_accepted.inc();
++                }
++                Err(_) => {
++                    net_metrics.tx_offload_rejected.inc();
++                    return Ok(None);
++                }
++            }
++        }
++
++        scratch.iovecs.clear();
++        scratch.iovecs.push(iovec {
++            iov_base: scratch.vnet_hdr.as_mut_ptr().cast(),
++            iov_len: VNET_HDR_LEN,
++        });
++        if host_header_len > 0 {
++            scratch.iovecs.push(iovec {
++                iov_base: scratch.headers.as_mut_ptr().cast(),
++                iov_len: host_header_len,
++            });
++        }
++        frame_iovec.append_iovecs_from(vnet_hdr_len() + host_header_len, &mut scratch.iovecs);
++        let result = tap.write_iovecs(&scratch.iovecs);
++        scratch.iovecs.clear();
++        result.map(Some)
+     }
+ 
+     /// Process a single RX queue event.
+@@ -1189,6 +1299,116 @@ pub mod tests {
+         assert_eq!(frame_buf[vnet_hdr_len_], 15);
+     }
+ 
++    // vnet header + Ethernet + IPv4 (no options) + TCP (no options) + 64 bytes.
++    fn offload_test_frame(vnet: [u8; VNET_HDR_LEN]) -> Vec<u8> {
++        let mut f = vnet.to_vec();
++        f.extend_from_slice(&[0x22; 6]);
++        f.extend_from_slice(&[0x11; 6]);
++        f.extend_from_slice(&0x0800u16.to_be_bytes());
++        let mut ip = [0u8; 20];
++        ip[0] = 0x45;
++        ip[2..4].copy_from_slice(&(20u16 + 20 + 64).to_be_bytes());
++        ip[6] = 0x40;
++        ip[8] = 64;
++        ip[9] = 6;
++        ip[12..16].copy_from_slice(&[10, 0, 0, 2]);
++        ip[16..20].copy_from_slice(&[10, 0, 0, 1]);
++        f.extend_from_slice(&ip);
++        let mut tcp = [0u8; 20];
++        tcp[12] = 5 << 4;
++        f.extend_from_slice(&tcp);
++        f.extend_from_slice(&[0x5a; 64]);
++        f
++    }
++
++    fn vnet_csum(start: u16, offset: u16) -> [u8; VNET_HDR_LEN] {
++        let mut h = [0u8; VNET_HDR_LEN];
++        h[0] = offload_guard::VIRTIO_NET_HDR_F_NEEDS_CSUM;
++        h[6..8].copy_from_slice(&start.to_le_bytes());
++        h[8..10].copy_from_slice(&offset.to_le_bytes());
++        h
++    }
++
++    fn send_tx_frame(th: &mut TestHelper, frame: &[u8]) {
++        use crate::vstate::memory::Bytes;
++        let desc_list = [(0, u32::try_from(frame.len()).unwrap(), 0)];
++        th.add_desc_chain(NetQueue::Tx, 0, &desc_list);
++        th.mem
++            .write_slice(frame, GuestAddress::new(th.txq.dtable[0].addr.get()))
++            .unwrap();
++    }
++
++    #[test]
++    fn test_no_offload_features_offered() {
++        let net = default_net();
++        let offloads = (1u64 << VIRTIO_NET_F_GUEST_CSUM)
++            | (1 << VIRTIO_NET_F_GUEST_TSO4)
++            | (1 << VIRTIO_NET_F_GUEST_TSO6)
++            | (1 << VIRTIO_NET_F_GUEST_UFO)
++            | GUEST_TX_OFFLOAD_FEATURES;
++        assert_eq!(net.avail_features & offloads, 0);
++        assert_eq!(Net::build_tap_offload_features(net.avail_features), 0);
++    }
++
++    #[test]
++    fn test_tx_guest_offload_metadata_ignored() {
++        let mem = single_region_mem(2 * MAX_BUFFER_SIZE);
++        let mut th = TestHelper::get_default(&mem);
++        th.activate_net();
++        let sim = TapTrafficSimulator::new(if_index(&th.net().tap));
++
++        // PwnEscape-shaped header: the checksum would be written into the IPv4
++        // header. The device never negotiated CSUM, so the host sends a zero
++        // header and the frame bytes unchanged.
++        let frame = offload_test_frame(vnet_csum(14, 0));
++        send_tx_frame(&mut th, &frame);
++        check_metric_after_block!(
++            th.net().metrics.tx_offload_metadata_ignored,
++            1,
++            th.event_manager.run_with_timeout(100).unwrap()
++        );
++        assert_eq!(th.txq.used.idx.get(), 1);
++        let mut buf = vec![0u8; frame.len() - vnet_hdr_len()];
++        assert!(sim.pop_rx_packet(&mut buf));
++        assert_eq!(buf, frame[vnet_hdr_len()..]);
++    }
++
++    #[test]
++    fn test_tx_legacy_offload_validated() {
++        use crate::devices::virtio::generated::virtio_net::VIRTIO_NET_F_CSUM;
++
++        let mem = single_region_mem(2 * MAX_BUFFER_SIZE);
++        let mut th = TestHelper::get_default(&mem);
++        // As restored from a snapshot taken before offloads were removed.
++        th.net().avail_features |= 1 << VIRTIO_NET_F_CSUM;
++        th.net().acked_features |= 1 << VIRTIO_NET_F_CSUM;
++        th.activate_net();
++        let sim = TapTrafficSimulator::new(if_index(&th.net().tap));
++
++        // A correct TCP partial checksum is accepted and sent from host copies.
++        let frame = offload_test_frame(vnet_csum(34, 16));
++        send_tx_frame(&mut th, &frame);
++        check_metric_after_block!(
++            th.net().metrics.tx_offload_legacy_accepted,
++            1,
++            th.event_manager.run_with_timeout(100).unwrap()
++        );
++        let mut buf = vec![0u8; frame.len() - vnet_hdr_len()];
++        assert!(sim.pop_rx_packet(&mut buf));
++        assert_eq!(buf, frame[vnet_hdr_len()..]);
++
++        // csum_start into the IPv4 header is dropped before it reaches the tap.
++        let frame = offload_test_frame(vnet_csum(14, 0));
++        send_tx_frame(&mut th, &frame);
++        check_metric_after_block!(
++            th.net().metrics.tx_offload_rejected,
++            1,
++            th.event_manager.run_with_timeout(100).unwrap()
++        );
++        assert_eq!(th.txq.used.idx.get(), 2);
++        assert!(!sim.pop_rx_packet(&mut buf));
++    }
++
+     #[test]
+     fn test_virtio_device_type() {
+         let mut net = default_net();
+@@ -2087,6 +2307,8 @@ pub mod tests {
+                     &mut net.tap,
+                     Some(src_mac),
+                     &net.metrics,
++                    net.acked_features,
++                    &mut net.tx_scratch,
+                 )
+                 .unwrap()
+             )
+@@ -2126,6 +2348,8 @@ pub mod tests {
+                 &mut net.tap,
+                 Some(guest_mac),
+                 &net.metrics,
++                net.acked_features,
++                &mut net.tx_scratch,
+             )
+         );
+ 
+@@ -2141,6 +2365,8 @@ pub mod tests {
+                 &mut net.tap,
+                 Some(not_guest_mac),
+                 &net.metrics,
++                net.acked_features,
++                &mut net.tx_scratch,
+             )
+         );
+     }
+diff --git a/src/vmm/src/devices/virtio/net/metrics.rs b/src/vmm/src/devices/virtio/net/metrics.rs
+index ca916ca..2fa4ac6 100644
+--- a/src/vmm/src/devices/virtio/net/metrics.rs
++++ b/src/vmm/src/devices/virtio/net/metrics.rs
+@@ -193,6 +193,15 @@ pub struct NetDeviceMetrics {
+     pub tx_spoofed_mac_count: SharedIncMetric,
+     /// Number of remaining requests in the TX queue.
+     pub tx_remaining_reqs_count: SharedIncMetric,
++    /// Frames whose guest offload metadata was discarded because the device never
++    /// negotiated a guest-to-host offload (the host wrote a zero vnet header).
++    pub tx_offload_metadata_ignored: SharedIncMetric,
++    /// Offload frames from a device restored with legacy offloads that passed
++    /// host validation.
++    pub tx_offload_legacy_accepted: SharedIncMetric,
++    /// Offload frames from a device restored with legacy offloads that failed
++    /// host validation and were dropped.
++    pub tx_offload_rejected: SharedIncMetric,
+ }
+ 
+ impl NetDeviceMetrics {
+@@ -252,6 +261,12 @@ impl NetDeviceMetrics {
+             .add(other.tx_spoofed_mac_count.fetch_diff());
+         self.tx_remaining_reqs_count
+             .add(other.tx_remaining_reqs_count.fetch_diff());
++        self.tx_offload_metadata_ignored
++            .add(other.tx_offload_metadata_ignored.fetch_diff());
++        self.tx_offload_legacy_accepted
++            .add(other.tx_offload_legacy_accepted.fetch_diff());
++        self.tx_offload_rejected
++            .add(other.tx_offload_rejected.fetch_diff());
+     }
+ }
+ 
+diff --git a/src/vmm/src/devices/virtio/net/mod.rs b/src/vmm/src/devices/virtio/net/mod.rs
+index 371ae45..8cb1c5d 100644
+--- a/src/vmm/src/devices/virtio/net/mod.rs
++++ b/src/vmm/src/devices/virtio/net/mod.rs
+@@ -20,6 +20,7 @@ pub const TX_INDEX: usize = 1;
+ pub mod device;
+ mod event_handler;
+ pub mod metrics;
++pub mod offload_guard;
+ pub mod persist;
+ mod tap;
+ pub mod test_utils;
+diff --git a/src/vmm/src/devices/virtio/net/offload_guard.rs b/src/vmm/src/devices/virtio/net/offload_guard.rs
+new file mode 100644
+index 0000000..3d3f96a
+--- /dev/null
++++ b/src/vmm/src/devices/virtio/net/offload_guard.rs
+@@ -0,0 +1,672 @@
++// Copyright 2026 Gregale. All Rights Reserved.
++// SPDX-License-Identifier: Apache-2.0
++
++//! The host never trusts guest-supplied offload metadata.
++//!
++//! A guest's `virtio_net_hdr` reaches the host kernel through the TAP device:
++//! `flags`, `gso_type`, `gso_size`, `hdr_len`, `csum_start` and `csum_offset`
++//! drive `skb_partial_csum_set`, `skb_checksum_help` and GSO segmentation on
++//! the host. Bugs in those paths are guest-to-host bugs (CVE-2026-99999:
++//! `csum_start` pointing into the already parsed IPv4 header). Firecracker
++//! wrote the guest's header to the TAP unmodified and read it from guest
++//! memory, so the guest could also change it while the host was writing it.
++//!
++//! This module decides which header the host writes instead:
++//!
++//! * Devices no longer offer any offload feature. A driver that never acked a
++//!   guest-to-host offload gets an all-zero host header for every frame,
++//!   whatever its own header says.
++//! * A device restored from a snapshot taken before this change may still have
++//!   `VIRTIO_NET_F_CSUM` or `VIRTIO_NET_F_HOST_TSO*` acked, and its driver keeps
++//!   sending partial checksums and TSO frames. For those devices
++//!   [`validate_legacy_offload`] accepts exactly one shape: a TCP or UDP checksum
++//!   (and TCP segmentation) whose `csum_start` is the transport header that the
++//!   host itself found by parsing a host copy of the frame headers. The host then
++//!   writes its own header and the parsed headers from that copy, so the guest
++//!   cannot change what was validated.
++
++use crate::devices::virtio::generated::virtio_net::{
++    VIRTIO_NET_F_CSUM, VIRTIO_NET_F_HOST_TSO4, VIRTIO_NET_F_HOST_TSO6, VIRTIO_NET_F_HOST_UFO,
++};
++
++/// `virtio_net_hdr.flags`: the device must complete a partial checksum.
++pub const VIRTIO_NET_HDR_F_NEEDS_CSUM: u8 = 1;
++/// `virtio_net_hdr.gso_type` values (virtio 1.x, 5.1.6).
++pub const VIRTIO_NET_HDR_GSO_NONE: u8 = 0;
++/// TCP over IPv4 segmentation.
++pub const VIRTIO_NET_HDR_GSO_TCPV4: u8 = 1;
++/// UDP fragmentation offload (UFO).
++pub const VIRTIO_NET_HDR_GSO_UDP: u8 = 3;
++/// TCP over IPv6 segmentation.
++pub const VIRTIO_NET_HDR_GSO_TCPV6: u8 = 4;
++/// ECN bit OR-ed into a TCP `gso_type`.
++pub const VIRTIO_NET_HDR_GSO_ECN: u8 = 0x80;
++
++/// Size of `virtio_net_hdr_v1` (VIRTIO_F_VERSION_1 is always negotiated).
++pub const VNET_HDR_LEN: usize = 12;
++
++/// Guest-to-host offload features. Only a device restored from an older
++/// snapshot can have any of them acked.
++pub const GUEST_TX_OFFLOAD_FEATURES: u64 = (1 << VIRTIO_NET_F_CSUM)
++    | (1 << VIRTIO_NET_F_HOST_TSO4)
++    | (1 << VIRTIO_NET_F_HOST_TSO6)
++    | (1 << VIRTIO_NET_F_HOST_UFO);
++
++const ETH_HLEN: usize = 14;
++const ETH_P_IP: u16 = 0x0800;
++const ETH_P_IPV6: u16 = 0x86DD;
++const IPV4_MIN_HLEN: usize = 20;
++const IPV6_HLEN: usize = 40;
++const IPPROTO_TCP: u8 = 6;
++const IPPROTO_UDP: u8 = 17;
++const TCP_MIN_HLEN: usize = 20;
++const TCP_CSUM_OFFSET: u16 = 16;
++const UDP_HLEN: usize = 8;
++const UDP_CSUM_OFFSET: u16 = 6;
++
++/// Bytes after the vnet header that the host copies on the legacy path:
++/// Ethernet, an IPv4 header with the maximum options (IPv6 needs less) and a
++/// TCP header with the maximum options.
++pub const LEGACY_HEADER_COPY_LEN: usize = ETH_HLEN + 60 + 60;
++
++/// Why a legacy offload frame was refused. The frame is dropped.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum OffloadRejection {
++    /// A flag other than NEEDS_CSUM is set.
++    UnknownFlags,
++    /// The offload was never negotiated by this device.
++    NotNegotiated,
++    /// GSO without NEEDS_CSUM, ECN on non-TCP, UFO or an unknown GSO type.
++    UnsupportedGso,
++    /// The frame ends before the headers the offload needs.
++    Truncated,
++    /// Not an untagged Ethernet IPv4 or IPv6 frame.
++    UnsupportedL3,
++    /// Bad IPv4 version or header length, or an IPv4 fragment.
++    BadIpv4Header,
++    /// Bad IPv6 version, or extension headers before the transport header.
++    BadIpv6Header,
++    /// The IP length field does not fit the frame.
++    BadIpLength,
++    /// The transport protocol is not TCP or UDP.
++    UnsupportedL4,
++    /// Bad TCP data offset.
++    BadTcpHeader,
++    /// `csum_start` / `csum_offset` do not name the transport checksum field.
++    ChecksumPlacement,
++    /// The GSO type does not match the parsed protocols.
++    GsoMismatch,
++    /// `gso_size` is zero.
++    BadGsoSize,
++}
++
++/// A legacy offload the host accepted, with every field derived from the
++/// host's own parse of the frame.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct ValidatedOffload {
++    /// Always NEEDS_CSUM.
++    pub flags: u8,
++    /// GSO type, including the ECN bit for TCP.
++    pub gso_type: u8,
++    /// Segment size, 0 without GSO.
++    pub gso_size: u16,
++    /// Offset of the transport header from the start of the Ethernet frame.
++    pub csum_start: u16,
++    /// Offset of the checksum field inside the transport header.
++    pub csum_offset: u16,
++    /// Ethernet + IP + transport header length. The host writes these bytes
++    /// from its copy and the rest of the frame from guest memory.
++    pub header_len: u16,
++}
++
++impl ValidatedOffload {
++    /// The `virtio_net_hdr_v1` the host writes for this frame (little endian).
++    pub fn vnet_hdr(&self) -> [u8; VNET_HDR_LEN] {
++        let mut hdr = [0u8; VNET_HDR_LEN];
++        hdr[0] = self.flags;
++        hdr[1] = self.gso_type;
++        hdr[2..4].copy_from_slice(&self.header_len.to_le_bytes());
++        hdr[4..6].copy_from_slice(&self.gso_size.to_le_bytes());
++        hdr[6..8].copy_from_slice(&self.csum_start.to_le_bytes());
++        hdr[8..10].copy_from_slice(&self.csum_offset.to_le_bytes());
++        // num_buffers (10..12) stays 0 on transmit.
++        hdr
++    }
++}
++
++/// True when the guest header asks for any offload at all.
++pub fn requests_offload(guest_hdr: &[u8]) -> bool {
++    guest_hdr.len() >= 2 && (guest_hdr[0] != 0 || guest_hdr[1] != VIRTIO_NET_HDR_GSO_NONE)
++}
++
++fn be16(buf: &[u8], at: usize) -> u16 {
++    u16::from_be_bytes([buf[at], buf[at + 1]])
++}
++
++fn le16(buf: &[u8], at: usize) -> u16 {
++    u16::from_le_bytes([buf[at], buf[at + 1]])
++}
++
++/// Validates the offload request of a device that acked guest-to-host offloads.
++///
++/// * `guest_hdr`: host copy of the guest's `virtio_net_hdr_v1`.
++/// * `headers`: host copy of the first bytes of the Ethernet frame (up to
++///   [`LEGACY_HEADER_COPY_LEN`]).
++/// * `frame_len`: length of the whole Ethernet frame (without the vnet header).
++/// * `acked_features`: the device's acked virtio features.
++///
++/// Returns `Ok(None)` for a frame that requests no offload; the host then
++/// writes a zero header. Returns the accepted offload otherwise.
++pub fn validate_legacy_offload(
++    guest_hdr: &[u8; VNET_HDR_LEN],
++    headers: &[u8],
++    frame_len: usize,
++    acked_features: u64,
++) -> Result<Option<ValidatedOffload>, OffloadRejection> {
++    if !requests_offload(guest_hdr) {
++        return Ok(None);
++    }
++    let flags = guest_hdr[0];
++    let gso_type = guest_hdr[1];
++    let gso_size = le16(guest_hdr, 4);
++    let guest_csum_start = le16(guest_hdr, 6);
++    let guest_csum_offset = le16(guest_hdr, 8);
++
++    if flags & !VIRTIO_NET_HDR_F_NEEDS_CSUM != 0 {
++        return Err(OffloadRejection::UnknownFlags);
++    }
++    // Every legacy offload this device model ever produced carried a partial
++    // checksum; GSO without one is not something a Linux guest sends.
++    if flags & VIRTIO_NET_HDR_F_NEEDS_CSUM == 0 {
++        return Err(OffloadRejection::UnsupportedGso);
++    }
++    if acked_features & (1 << VIRTIO_NET_F_CSUM) == 0 {
++        return Err(OffloadRejection::NotNegotiated);
++    }
++    let ecn = gso_type & VIRTIO_NET_HDR_GSO_ECN != 0;
++    let gso_base = gso_type & !VIRTIO_NET_HDR_GSO_ECN;
++    match gso_base {
++        VIRTIO_NET_HDR_GSO_NONE if !ecn => {}
++        VIRTIO_NET_HDR_GSO_TCPV4 => {
++            if acked_features & (1 << VIRTIO_NET_F_HOST_TSO4) == 0 {
++                return Err(OffloadRejection::NotNegotiated);
++            }
++        }
++        VIRTIO_NET_HDR_GSO_TCPV6 => {
++            if acked_features & (1 << VIRTIO_NET_F_HOST_TSO6) == 0 {
++                return Err(OffloadRejection::NotNegotiated);
++            }
++        }
++        // UFO: Linux guests stopped generating it in 4.14; refuse it outright.
++        VIRTIO_NET_HDR_GSO_UDP => return Err(OffloadRejection::UnsupportedGso),
++        _ => return Err(OffloadRejection::UnsupportedGso),
++    }
++
++    let headers = &headers[..headers.len().min(frame_len)];
++    if headers.len() < ETH_HLEN {
++        return Err(OffloadRejection::Truncated);
++    }
++    let (l4_offset, protocol, ip_end, is_ipv4) = match be16(headers, 12) {
++        ETH_P_IP => {
++            if headers.len() < ETH_HLEN + IPV4_MIN_HLEN {
++                return Err(OffloadRejection::Truncated);
++            }
++            let ver_ihl = headers[ETH_HLEN];
++            if ver_ihl >> 4 != 4 {
++                return Err(OffloadRejection::BadIpv4Header);
++            }
++            let ihl = usize::from(ver_ihl & 0x0f) * 4;
++            if ihl < IPV4_MIN_HLEN {
++                return Err(OffloadRejection::BadIpv4Header);
++            }
++            // More-fragments or a fragment offset: offloads never apply.
++            if be16(headers, ETH_HLEN + 6) & 0x3fff != 0 {
++                return Err(OffloadRejection::BadIpv4Header);
++            }
++            let total_len = usize::from(be16(headers, ETH_HLEN + 2));
++            (
++                ETH_HLEN + ihl,
++                headers[ETH_HLEN + 9],
++                ETH_HLEN + total_len,
++                true,
++            )
++        }
++        ETH_P_IPV6 => {
++            if headers.len() < ETH_HLEN + IPV6_HLEN {
++                return Err(OffloadRejection::Truncated);
++            }
++            if headers[ETH_HLEN] >> 4 != 6 {
++                return Err(OffloadRejection::BadIpv6Header);
++            }
++            let next_header = headers[ETH_HLEN + 6];
++            if next_header != IPPROTO_TCP && next_header != IPPROTO_UDP {
++                // Extension headers (or anything else) before the transport
++                // header: refuse rather than walk a guest-built chain.
++                return Err(OffloadRejection::BadIpv6Header);
++            }
++            let payload_len = usize::from(be16(headers, ETH_HLEN + 4));
++            (
++                ETH_HLEN + IPV6_HLEN,
++                next_header,
++                ETH_HLEN + IPV6_HLEN + payload_len,
++                false,
++            )
++        }
++        _ => return Err(OffloadRejection::UnsupportedL3),
++    };
++    let (l4_len, csum_offset) = match protocol {
++        IPPROTO_TCP => {
++            if headers.len() < l4_offset + TCP_MIN_HLEN {
++                return Err(OffloadRejection::Truncated);
++            }
++            let doff = usize::from(headers[l4_offset + 12] >> 4) * 4;
++            if doff < TCP_MIN_HLEN {
++                return Err(OffloadRejection::BadTcpHeader);
++            }
++            (doff, TCP_CSUM_OFFSET)
++        }
++        IPPROTO_UDP => (UDP_HLEN, UDP_CSUM_OFFSET),
++        _ => return Err(OffloadRejection::UnsupportedL4),
++    };
++    let header_len = l4_offset + l4_len;
++    if headers.len() < header_len {
++        return Err(OffloadRejection::Truncated);
++    }
++    // The IP length must cover the headers and fit in the frame (trailing
++    // Ethernet padding is allowed).
++    if ip_end < header_len || ip_end > frame_len {
++        return Err(OffloadRejection::BadIpLength);
++    }
++    if usize::from(guest_csum_start) != l4_offset || guest_csum_offset != csum_offset {
++        return Err(OffloadRejection::ChecksumPlacement);
++    }
++    match gso_base {
++        VIRTIO_NET_HDR_GSO_TCPV4 if !(is_ipv4 && protocol == IPPROTO_TCP) => {
++            return Err(OffloadRejection::GsoMismatch);
++        }
++        VIRTIO_NET_HDR_GSO_TCPV6 if !(!is_ipv4 && protocol == IPPROTO_TCP) => {
++            return Err(OffloadRejection::GsoMismatch);
++        }
++        VIRTIO_NET_HDR_GSO_NONE => {}
++        _ if gso_size == 0 => return Err(OffloadRejection::BadGsoSize),
++        _ => {}
++    }
++
++    // header_len <= LEGACY_HEADER_COPY_LEN (134), l4_offset <= 74: both fit u16.
++    #[allow(clippy::cast_possible_truncation)]
++    Ok(Some(ValidatedOffload {
++        flags: VIRTIO_NET_HDR_F_NEEDS_CSUM,
++        gso_type,
++        gso_size: if gso_base == VIRTIO_NET_HDR_GSO_NONE {
++            0
++        } else {
++            gso_size
++        },
++        csum_start: l4_offset as u16,
++        csum_offset,
++        header_len: header_len as u16,
++    }))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    const ALL_LEGACY: u64 = GUEST_TX_OFFLOAD_FEATURES;
++
++    fn vnet(flags: u8, gso_type: u8, gso_size: u16, start: u16, offset: u16) -> [u8; 12] {
++        let mut h = [0u8; 12];
++        h[0] = flags;
++        h[1] = gso_type;
++        h[2..4].copy_from_slice(&0xffffu16.to_le_bytes()); // guest hdr_len is ignored
++        h[4..6].copy_from_slice(&gso_size.to_le_bytes());
++        h[6..8].copy_from_slice(&start.to_le_bytes());
++        h[8..10].copy_from_slice(&offset.to_le_bytes());
++        h
++    }
++
++    fn ipv4_frame(ihl_words: u8, protocol: u8, l4: &[u8], payload: usize) -> Vec<u8> {
++        let ihl = usize::from(ihl_words) * 4;
++        let mut f = vec![0u8; ETH_HLEN + ihl];
++        f[12..14].copy_from_slice(&ETH_P_IP.to_be_bytes());
++        f[ETH_HLEN] = 0x40 | ihl_words;
++        let total = u16::try_from(ihl + l4.len() + payload).unwrap();
++        f[ETH_HLEN + 2..ETH_HLEN + 4].copy_from_slice(&total.to_be_bytes());
++        f[ETH_HLEN + 6] = 0x40; // DF
++        f[ETH_HLEN + 9] = protocol;
++        f.extend_from_slice(l4);
++        f.extend(std::iter::repeat_n(0xab, payload));
++        f
++    }
++
++    fn ipv6_frame(next_header: u8, l4: &[u8], payload: usize) -> Vec<u8> {
++        let mut f = vec![0u8; ETH_HLEN + IPV6_HLEN];
++        f[12..14].copy_from_slice(&ETH_P_IPV6.to_be_bytes());
++        f[ETH_HLEN] = 0x60;
++        let plen = u16::try_from(l4.len() + payload).unwrap();
++        f[ETH_HLEN + 4..ETH_HLEN + 6].copy_from_slice(&plen.to_be_bytes());
++        f[ETH_HLEN + 6] = next_header;
++        f.extend_from_slice(l4);
++        f.extend(std::iter::repeat_n(0xcd, payload));
++        f
++    }
++
++    fn tcp(doff_words: u8) -> Vec<u8> {
++        let mut t = vec![0u8; usize::from(doff_words) * 4];
++        t[12] = doff_words << 4;
++        t
++    }
++
++    fn check(
++        hdr: [u8; 12],
++        frame: &[u8],
++        acked: u64,
++    ) -> Result<Option<ValidatedOffload>, OffloadRejection> {
++        let copy = &frame[..frame.len().min(LEGACY_HEADER_COPY_LEN)];
++        validate_legacy_offload(&hdr, copy, frame.len(), acked)
++    }
++
++    #[test]
++    fn plain_frame_needs_no_offload() {
++        let frame = ipv4_frame(5, IPPROTO_TCP, &tcp(5), 100);
++        assert_eq!(check([0; 12], &frame, ALL_LEGACY), Ok(None));
++        // Guest garbage in hdr_len / csum fields without a flag or GSO type is
++        // ignored: the host writes a zero header.
++        let mut hdr = vnet(0, 0, 1400, 2, 3);
++        hdr[2] = 0x77;
++        assert_eq!(check(hdr, &frame, ALL_LEGACY), Ok(None));
++        assert!(!requests_offload(&hdr));
++    }
++
++    #[test]
++    fn ipv4_tcp_checksum_accepted_with_host_values() {
++        let frame = ipv4_frame(5, IPPROTO_TCP, &tcp(8), 500);
++        let got = check(vnet(1, 0, 0, 34, 16), &frame, 1 << VIRTIO_NET_F_CSUM)
++            .unwrap()
++            .unwrap();
++        assert_eq!(
++            got,
++            ValidatedOffload {
++                flags: 1,
++                gso_type: 0,
++                gso_size: 0,
++                csum_start: 34,
++                csum_offset: 16,
++                header_len: 34 + 32,
++            }
++        );
++        let hdr = got.vnet_hdr();
++        assert_eq!(&hdr[2..4], &66u16.to_le_bytes()); // host hdr_len, not the guest's 0xffff
++        assert_eq!(&hdr[10..12], &[0, 0]);
++    }
++
++    #[test]
++    fn ipv4_options_move_the_transport_header() {
++        // IHL 15: transport at 14 + 60.
++        let frame = ipv4_frame(15, IPPROTO_UDP, &[0u8; 8], 64);
++        let got = check(vnet(1, 0, 0, 74, 6), &frame, ALL_LEGACY)
++            .unwrap()
++            .unwrap();
++        assert_eq!((got.csum_start, got.header_len), (74, 82));
++    }
++
++    #[test]
++    fn pwnescape_csum_start_into_ip_header_is_refused() {
++        // CVE-2026-99999: csum_start/offset pointing at the IPv4 header so the
++        // host's checksum write rewrites version/IHL after parsing.
++        let frame = ipv4_frame(5, IPPROTO_TCP, &tcp(5), 200);
++        for (start, offset) in [
++            (14u16, 0u16),
++            (12, 2),
++            (0, 14),
++            (34, 0),
++            (34, 6),
++            (35, 16),
++            (1000, 16),
++        ] {
++            assert_eq!(
++                check(vnet(1, 0, 0, start, offset), &frame, ALL_LEGACY),
++                Err(OffloadRejection::ChecksumPlacement),
++                "start {start} offset {offset}"
++            );
++        }
++    }
++
++    #[test]
++    fn tso_accepted_only_for_matching_protocols() {
++        let v4 = ipv4_frame(5, IPPROTO_TCP, &tcp(5), 9000);
++        let ok = check(
++            vnet(
++                1,
++                VIRTIO_NET_HDR_GSO_TCPV4 | VIRTIO_NET_HDR_GSO_ECN,
++                1448,
++                34,
++                16,
++            ),
++            &v4,
++            ALL_LEGACY,
++        )
++        .unwrap()
++        .unwrap();
++        assert_eq!((ok.gso_type, ok.gso_size, ok.header_len), (0x81, 1448, 54));
++
++        let v6 = ipv6_frame(IPPROTO_TCP, &tcp(5), 9000);
++        let ok6 = check(
++            vnet(1, VIRTIO_NET_HDR_GSO_TCPV6, 1428, 54, 16),
++            &v6,
++            ALL_LEGACY,
++        )
++        .unwrap()
++        .unwrap();
++        assert_eq!((ok6.csum_start, ok6.header_len), (54, 74));
++
++        assert_eq!(
++            check(
++                vnet(1, VIRTIO_NET_HDR_GSO_TCPV4, 1428, 54, 16),
++                &v6,
++                ALL_LEGACY
++            ),
++            Err(OffloadRejection::GsoMismatch)
++        );
++        assert_eq!(
++            check(
++                vnet(1, VIRTIO_NET_HDR_GSO_TCPV6, 1448, 34, 16),
++                &v4,
++                ALL_LEGACY
++            ),
++            Err(OffloadRejection::GsoMismatch)
++        );
++        assert_eq!(
++            check(
++                vnet(1, VIRTIO_NET_HDR_GSO_TCPV4, 0, 34, 16),
++                &v4,
++                ALL_LEGACY
++            ),
++            Err(OffloadRejection::BadGsoSize)
++        );
++        let udp = ipv4_frame(5, IPPROTO_UDP, &[0u8; 8], 9000);
++        assert_eq!(
++            check(
++                vnet(1, VIRTIO_NET_HDR_GSO_TCPV4, 1448, 34, 6),
++                &udp,
++                ALL_LEGACY
++            ),
++            Err(OffloadRejection::GsoMismatch)
++        );
++    }
++
++    #[test]
++    fn gso_shapes_refused() {
++        let frame = ipv4_frame(5, IPPROTO_UDP, &[0u8; 8], 9000);
++        for (flags, gso) in [
++            (1, VIRTIO_NET_HDR_GSO_UDP),
++            (0, VIRTIO_NET_HDR_GSO_TCPV4),
++            (1, VIRTIO_NET_HDR_GSO_ECN),
++            (1, 2),
++            (1, 5),
++            (1, 0x7f),
++        ] {
++            assert_eq!(
++                check(vnet(flags, gso, 1400, 34, 6), &frame, ALL_LEGACY),
++                Err(OffloadRejection::UnsupportedGso),
++                "flags {flags} gso {gso}"
++            );
++        }
++        assert_eq!(
++            check(vnet(1 | 2, 0, 0, 34, 6), &frame, ALL_LEGACY),
++            Err(OffloadRejection::UnknownFlags)
++        );
++        assert_eq!(
++            check(vnet(1 | 4, 0, 0, 34, 6), &frame, ALL_LEGACY),
++            Err(OffloadRejection::UnknownFlags)
++        );
++    }
++
++    #[test]
++    fn offloads_need_their_own_negotiated_feature() {
++        let frame = ipv4_frame(5, IPPROTO_TCP, &tcp(5), 9000);
++        let hdr = vnet(1, 0, 0, 34, 16);
++        assert_eq!(check(hdr, &frame, 0), Err(OffloadRejection::NotNegotiated));
++        assert_eq!(
++            check(hdr, &frame, 1 << VIRTIO_NET_F_HOST_TSO4),
++            Err(OffloadRejection::NotNegotiated)
++        );
++        let tso = vnet(1, VIRTIO_NET_HDR_GSO_TCPV4, 1448, 34, 16);
++        assert_eq!(
++            check(tso, &frame, 1 << VIRTIO_NET_F_CSUM),
++            Err(OffloadRejection::NotNegotiated)
++        );
++        check(
++            tso,
++            &frame,
++            (1 << VIRTIO_NET_F_CSUM) | (1 << VIRTIO_NET_F_HOST_TSO4),
++        )
++        .unwrap();
++        let tso6 = vnet(1, VIRTIO_NET_HDR_GSO_TCPV6, 1448, 54, 16);
++        let v6 = ipv6_frame(IPPROTO_TCP, &tcp(5), 9000);
++        assert_eq!(
++            check(
++                tso6,
++                &v6,
++                (1 << VIRTIO_NET_F_CSUM) | (1 << VIRTIO_NET_F_HOST_TSO4)
++            ),
++            Err(OffloadRejection::NotNegotiated)
++        );
++    }
++
++    #[test]
++    fn malformed_l3_and_l4_refused() {
++        let hdr = vnet(1, 0, 0, 34, 16);
++        // IHL below 5.
++        let mut f = ipv4_frame(5, IPPROTO_TCP, &tcp(5), 10);
++        f[ETH_HLEN] = 0x44;
++        assert_eq!(
++            check(hdr, &f, ALL_LEGACY),
++            Err(OffloadRejection::BadIpv4Header)
++        );
++        // Version 6 in an IPv4 ethertype.
++        let mut f = ipv4_frame(5, IPPROTO_TCP, &tcp(5), 10);
++        f[ETH_HLEN] = 0x65;
++        assert_eq!(
++            check(hdr, &f, ALL_LEGACY),
++            Err(OffloadRejection::BadIpv4Header)
++        );
++        // Fragments.
++        let mut f = ipv4_frame(5, IPPROTO_TCP, &tcp(5), 10);
++        f[ETH_HLEN + 6] = 0x20; // MF
++        assert_eq!(
++            check(hdr, &f, ALL_LEGACY),
++            Err(OffloadRejection::BadIpv4Header)
++        );
++        let mut f = ipv4_frame(5, IPPROTO_TCP, &tcp(5), 10);
++        f[ETH_HLEN + 7] = 1; // offset
++        assert_eq!(
++            check(hdr, &f, ALL_LEGACY),
++            Err(OffloadRejection::BadIpv4Header)
++        );
++        // IP total length beyond the frame, or shorter than the headers.
++        let mut f = ipv4_frame(5, IPPROTO_TCP, &tcp(5), 10);
++        f[ETH_HLEN + 2..ETH_HLEN + 4].copy_from_slice(&1000u16.to_be_bytes());
++        assert_eq!(
++            check(hdr, &f, ALL_LEGACY),
++            Err(OffloadRejection::BadIpLength)
++        );
++        let mut f = ipv4_frame(5, IPPROTO_TCP, &tcp(5), 10);
++        f[ETH_HLEN + 2..ETH_HLEN + 4].copy_from_slice(&30u16.to_be_bytes());
++        assert_eq!(
++            check(hdr, &f, ALL_LEGACY),
++            Err(OffloadRejection::BadIpLength)
++        );
++        // Trailing Ethernet padding is fine.
++        let mut f = ipv4_frame(5, IPPROTO_TCP, &tcp(5), 0);
++        f.extend_from_slice(&[0u8; 6]);
++        assert!(check(hdr, &f, ALL_LEGACY).unwrap().is_some());
++        // TCP data offset below 5.
++        let mut t = tcp(5);
++        t[12] = 4 << 4;
++        let f = ipv4_frame(5, IPPROTO_TCP, &t, 10);
++        assert_eq!(
++            check(hdr, &f, ALL_LEGACY),
++            Err(OffloadRejection::BadTcpHeader)
++        );
++        // ICMP.
++        let f = ipv4_frame(5, 1, &[0u8; 8], 10);
++        assert_eq!(
++            check(hdr, &f, ALL_LEGACY),
++            Err(OffloadRejection::UnsupportedL4)
++        );
++        // VLAN tag, ARP.
++        let mut f = ipv4_frame(5, IPPROTO_TCP, &tcp(5), 10);
++        f[12..14].copy_from_slice(&0x8100u16.to_be_bytes());
++        assert_eq!(
++            check(hdr, &f, ALL_LEGACY),
++            Err(OffloadRejection::UnsupportedL3)
++        );
++        // IPv6 extension header.
++        let f = ipv6_frame(0, &tcp(5), 10);
++        assert_eq!(
++            check(vnet(1, 0, 0, 54, 16), &f, ALL_LEGACY),
++            Err(OffloadRejection::BadIpv6Header)
++        );
++        // Truncated frames.
++        let f = ipv4_frame(5, IPPROTO_TCP, &tcp(5), 0);
++        for cut in [0, 13, 20, 33, 40, 53] {
++            assert_eq!(
++                check(hdr, &f[..cut], ALL_LEGACY),
++                Err(OffloadRejection::Truncated),
++                "cut {cut}"
++            );
++        }
++    }
++
++    #[test]
++    fn largest_headers_fit_the_host_copy() {
++        let f = ipv4_frame(15, IPPROTO_TCP, &tcp(15), 1000);
++        let got = check(vnet(1, 0, 0, 74, 16), &f, ALL_LEGACY)
++            .unwrap()
++            .unwrap();
++        assert_eq!(usize::from(got.header_len), LEGACY_HEADER_COPY_LEN);
++    }
++
++    #[test]
++    fn exhaustive_small_fuzz_never_places_checksum_outside_transport() {
++        // Any accepted offload must put the checksum field inside the
++        // transport header the host parsed.
++        let frames = [
++            ipv4_frame(5, IPPROTO_TCP, &tcp(5), 64),
++            ipv4_frame(7, IPPROTO_UDP, &[0u8; 8], 64),
++            ipv6_frame(IPPROTO_TCP, &tcp(10), 64),
++            ipv6_frame(IPPROTO_UDP, &[0u8; 8], 64),
++        ];
++        for frame in &frames {
++            for start in 0u16..140 {
++                for offset in 0u16..24 {
++                    if let Ok(Some(v)) = check(vnet(1, 0, 0, start, offset), frame, ALL_LEGACY) {
++                        assert!(v.csum_start >= 34);
++                        assert!(v.csum_start + v.csum_offset + 2 <= v.header_len);
++                    }
++                }
++            }
++        }
++    }
++}
+diff --git a/src/vmm/src/devices/virtio/net/tap.rs b/src/vmm/src/devices/virtio/net/tap.rs
+index 58bc82d..ff6cfc5 100644
+--- a/src/vmm/src/devices/virtio/net/tap.rs
++++ b/src/vmm/src/devices/virtio/net/tap.rs
+@@ -14,7 +14,6 @@ use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+ use vmm_sys_util::ioctl::{ioctl_with_mut_ref, ioctl_with_ref, ioctl_with_val};
+ use vmm_sys_util::ioctl_iow_nr;
+ 
+-use crate::devices::virtio::iovec::IoVecBuffer;
+ use crate::devices::virtio::net::generated;
+ 
+ // As defined in the Linux UAPI:
+@@ -180,14 +179,13 @@ impl Tap {
+         Ok(())
+     }
+ 
+-    /// Write an `IoVecBuffer` to tap
+-    pub(crate) fn write_iovec(&mut self, buffer: &IoVecBuffer) -> Result<usize, IoError> {
+-        let iovcnt = i32::try_from(buffer.iovec_count()).unwrap();
+-        let iov = buffer.as_iovec_ptr();
+-
+-        // SAFETY: `writev` is safe. Called with a valid tap fd, the iovec pointer and length
+-        // is provide by the `IoVecBuffer` implementation and we check the return value.
+-        let ret = unsafe { libc::writev(self.tap_file.as_raw_fd(), iov, iovcnt) };
++    /// Write a frame described by `iovecs` to tap. The caller guarantees every
++    /// entry points at readable memory of the given length for the whole call.
++    pub(crate) fn write_iovecs(&mut self, iovecs: &[libc::iovec]) -> Result<usize, IoError> {
++        let iovcnt = i32::try_from(iovecs.len()).unwrap();
++        // SAFETY: `writev` is safe. Called with a valid tap fd and an iovec array
++        // whose entries the caller keeps valid; we check the return value.
++        let ret = unsafe { libc::writev(self.tap_file.as_raw_fd(), iovecs.as_ptr(), iovcnt) };
+         if ret == -1 {
+             return Err(IoError::last_os_error());
+         }
+@@ -222,6 +220,7 @@ pub mod tests {
+     use std::os::unix::ffi::OsStrExt;
+ 
+     use super::*;
++    use crate::devices::virtio::iovec::IoVecBuffer;
+     use crate::devices::virtio::net::generated;
+     use crate::devices::virtio::net::test_utils::{TapTrafficSimulator, enable, if_index};
+ 
+@@ -313,7 +312,9 @@ pub mod tests {
+             fragment3.as_slice(),
+         ]);
+ 
+-        let num_bytes = tap.write_iovec(&scattered).unwrap();
++        let mut iovecs = Vec::new();
++        scattered.append_iovecs_from(0, &mut iovecs);
++        let num_bytes = tap.write_iovecs(&iovecs).unwrap();
+         assert_eq!(num_bytes, scattered.len() as usize);
+ 
+         let mut read_buf = vec![0u8; scattered.len() as usize];

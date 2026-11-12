@@ -78,6 +78,36 @@ func TestNativeTestHTTPWorkflowRejectsUnexpectedStatusAndRedirect(t *testing.T) 
 	}
 }
 
+func TestNativeTestHTTPJSONRequiresOneCompleteValue(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		pass bool
+	}{
+		{"valid with whitespace", "{\"ok\":true}\n\t ", true},
+		{"trailing data", `{"ok":true} private-invalid-tail`, false},
+		{"second object", `{"ok":true}{"ok":false}`, false},
+		{"second scalar", `{"ok":true} false`, false},
+		{"incomplete second value", `{"ok":true} {`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			steps := []main.TestHTTPRequest{{Name: "read", Method: "GET", Path: "/payload", Expect: main.TestHTTPExpect{Status: 200, JSON: map[string]any{"/ok": true}}, Capture: map[string]string{"ok": "/ok"}}}
+			captures := map[string]string{}
+			evidence, err := main.RunTestHTTPRequests(t.Context(), server.URL, "json-run", nil, steps, captures)
+			if (err == nil) != tc.pass || len(evidence) != 1 || evidence[0].Passed != tc.pass {
+				t.Fatalf("response result = %+v, %v; want passed=%t", evidence, err, tc.pass)
+			}
+			if !tc.pass && (len(captures) != 0 || strings.Contains(err.Error(), "private-invalid-tail")) {
+				t.Fatal("invalid JSON produced captures or exposed response content")
+			}
+		})
+	}
+}
+
 func TestNativeTestHTTPManifestValidationRejectsUnsafeOrUnknownReferences(t *testing.T) {
 	base := main.TestScenario{Requests: []main.TestHTTPRequest{{Name: "first", Method: "GET", Path: "/health", Expect: main.TestHTTPExpect{Status: 200}}}}
 	cases := []struct {

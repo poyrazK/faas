@@ -53,6 +53,10 @@ export type ReleaseGate = {
    */
   max_change_percent?: number;
   /**
+   * custom_metric and metric_change gates: the labelled series judged. Absent when the gate judges the aggregate.
+   */
+  labels?: Record<string, string>;
+  /**
    * Requests, probes, metric values or AI calls (on each side, for ai gates) needed before the gate is judged.
    */
   min_samples: number;

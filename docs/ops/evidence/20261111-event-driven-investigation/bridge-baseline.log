@@ -1,0 +1,42 @@
+=== RUN   TestStreamBridgeEnv_BasicFields
+--- PASS: TestStreamBridgeEnv_BasicFields (0.00s)
+=== RUN   TestStreamBridgeEnv_StripsHopByHopHeaders
+--- PASS: TestStreamBridgeEnv_StripsHopByHopHeaders (0.00s)
+=== RUN   TestStreamBridgeEnv_StripsCRLFInjectedHeaderSmuggling
+--- PASS: TestStreamBridgeEnv_StripsCRLFInjectedHeaderSmuggling (0.00s)
+=== RUN   TestStreamBridgeEnv_FirstHostWins
+--- PASS: TestStreamBridgeEnv_FirstHostWins (0.00s)
+=== RUN   TestStreamBridgeEnv_NewlineSeparatorPreservesCommas
+--- PASS: TestStreamBridgeEnv_NewlineSeparatorPreservesCommas (0.00s)
+=== RUN   TestNewForwardHTTPRequest_PreservesBodyFraming
+=== RUN   TestNewForwardHTTPRequest_PreservesBodyFraming/known-zero-uses-no-body
+=== RUN   TestNewForwardHTTPRequest_PreservesBodyFraming/known-positive-keeps-pipe-and-length
+=== RUN   TestNewForwardHTTPRequest_PreservesBodyFraming/legacy-unknown-keeps-streaming-pipe
+--- PASS: TestNewForwardHTTPRequest_PreservesBodyFraming (0.00s)
+    --- PASS: TestNewForwardHTTPRequest_PreservesBodyFraming/known-zero-uses-no-body (0.00s)
+    --- PASS: TestNewForwardHTTPRequest_PreservesBodyFraming/known-positive-keeps-pipe-and-length (0.00s)
+    --- PASS: TestNewForwardHTTPRequest_PreservesBodyFraming/legacy-unknown-keeps-streaming-pipe (0.00s)
+=== RUN   TestNewForwardHTTPRequest_RejectsNegativeKnownLength
+--- PASS: TestNewForwardHTTPRequest_RejectsNegativeKnownLength (0.00s)
+=== RUN   TestStreamBridgeEnv_SanitizesCRLF
+--- PASS: TestStreamBridgeEnv_SanitizesCRLF (0.00s)
+=== RUN   TestStreamBridgeEnv_AppProtocolWiring
+=== RUN   TestStreamBridgeEnv_AppProtocolWiring/empty-defaults-h1
+=== RUN   TestStreamBridgeEnv_AppProtocolWiring/http1-stays-h1
+=== RUN   TestStreamBridgeEnv_AppProtocolWiring/http2-promotes-h2c
+=== RUN   TestStreamBridgeEnv_AppProtocolWiring/grpc-promotes-h2c
+=== RUN   TestStreamBridgeEnv_AppProtocolWiring/unknown-falls-through-h1
+2026/11/11 13:25:16 WARN vmmdgrpc: unknown app_protocol from ForwardHTTPRequestInit; falling back to legacy h1+chunked bridge path app_protocol=websocket fallback=h1
+=== RUN   TestStreamBridgeEnv_AppProtocolWiring/garbage-falls-through-h1
+2026/11/11 13:25:16 WARN vmmdgrpc: unknown app_protocol from ForwardHTTPRequestInit; falling back to legacy h1+chunked bridge path app_protocol=HTTP2 fallback=h1
+--- PASS: TestStreamBridgeEnv_AppProtocolWiring (0.00s)
+    --- PASS: TestStreamBridgeEnv_AppProtocolWiring/empty-defaults-h1 (0.00s)
+    --- PASS: TestStreamBridgeEnv_AppProtocolWiring/http1-stays-h1 (0.00s)
+    --- PASS: TestStreamBridgeEnv_AppProtocolWiring/http2-promotes-h2c (0.00s)
+    --- PASS: TestStreamBridgeEnv_AppProtocolWiring/grpc-promotes-h2c (0.00s)
+    --- PASS: TestStreamBridgeEnv_AppProtocolWiring/unknown-falls-through-h1 (0.00s)
+    --- PASS: TestStreamBridgeEnv_AppProtocolWiring/garbage-falls-through-h1 (0.00s)
+=== RUN   TestGuestHTTPClientReturnsRedirectWithoutFollowing
+--- PASS: TestGuestHTTPClientReturnsRedirectWithoutFollowing (0.00s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/vmmdgrpc	0.050s

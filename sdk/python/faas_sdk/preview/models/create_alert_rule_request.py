@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -28,6 +28,10 @@ from ..models.create_alert_rule_request_window_spec import (
     check_create_alert_rule_request_window_spec,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.create_alert_rule_request_custom_metric_labels import CreateAlertRuleRequestCustomMetricLabels
+
 
 T = TypeVar("T", bound="CreateAlertRuleRequest")
 
@@ -82,6 +86,9 @@ class CreateAlertRuleRequest:
     custom_metric_name: str | Unset = UNSET
     """Required when metric is custom_metric; omit otherwise. A gauge is compared on its average over the window
     and a counter on its per-second rate. custom_metric rules support webhook action only and windows up to 24h."""
+    custom_metric_labels: CreateAlertRuleRequestCustomMetricLabels | Unset = UNSET
+    """custom_metric rules only: watch the one labelled series with exactly these labels instead of the aggregate
+    (counters summed, gauges max across series). Keys match ^[a-z_][a-z0-9_]{0,62}$."""
     log_query: str | Unset = UNSET
     """Required when metric is log_search_matches; omit otherwise. URL query string of log search filters (source,
     level, status, route, deployment_id, request_id, trace_id, q); the rule counts matching log events in its
@@ -143,6 +150,10 @@ class CreateAlertRuleRequest:
 
         custom_metric_name = self.custom_metric_name
 
+        custom_metric_labels: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.custom_metric_labels, Unset):
+            custom_metric_labels = self.custom_metric_labels.to_dict()
+
         log_query = self.log_query
 
         slo_id: str | Unset = UNSET
@@ -201,6 +212,8 @@ class CreateAlertRuleRequest:
             field_dict["failure_source"] = failure_source
         if custom_metric_name is not UNSET:
             field_dict["custom_metric_name"] = custom_metric_name
+        if custom_metric_labels is not UNSET:
+            field_dict["custom_metric_labels"] = custom_metric_labels
         if log_query is not UNSET:
             field_dict["log_query"] = log_query
         if slo_id is not UNSET:
@@ -222,6 +235,8 @@ class CreateAlertRuleRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.create_alert_rule_request_custom_metric_labels import CreateAlertRuleRequestCustomMetricLabels
+
         d = dict(src_dict)
         name = d.pop("name")
 
@@ -267,6 +282,13 @@ class CreateAlertRuleRequest:
             failure_source = check_create_alert_rule_request_failure_source(_failure_source)
 
         custom_metric_name = d.pop("custom_metric_name", UNSET)
+
+        _custom_metric_labels = d.pop("custom_metric_labels", UNSET)
+        custom_metric_labels: CreateAlertRuleRequestCustomMetricLabels | Unset
+        if isinstance(_custom_metric_labels, Unset):
+            custom_metric_labels = UNSET
+        else:
+            custom_metric_labels = CreateAlertRuleRequestCustomMetricLabels.from_dict(_custom_metric_labels)
 
         log_query = d.pop("log_query", UNSET)
 
@@ -322,6 +344,7 @@ class CreateAlertRuleRequest:
             enabled=enabled,
             failure_source=failure_source,
             custom_metric_name=custom_metric_name,
+            custom_metric_labels=custom_metric_labels,
             log_query=log_query,
             slo_id=slo_id,
             synthetic_check_id=synthetic_check_id,

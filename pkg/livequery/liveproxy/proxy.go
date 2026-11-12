@@ -213,6 +213,12 @@ func (s *Session) subscribe(ctx context.Context, f liveproto.ClientFrame) {
 		s.refuse(f.Subscription, code, msg, true)
 		return
 	}
+	// The hub applies the Data API's row-security gate with the app's own
+	// exemptions; whatever a client sent here is replaced.
+	f.AllowWithoutRLS = nil
+	if f.RLS() && route.Access != nil {
+		f.AllowWithoutRLS = route.Access.AllowWithoutRLS
+	}
 	up, err := s.proxy.upstream(route) //nolint:contextcheck // the upstream outlives the client frame that dialed it
 	if err != nil {
 		s.refuse(f.Subscription, liveproto.CodeUnavailable, err.Error(), true)
@@ -312,7 +318,7 @@ func loginFor(route Route, f liveproto.ClientFrame) (string, string, string) {
 // credential keeps what a subscribe or renew frame authorizes with.
 func credential(f liveproto.ClientFrame) liveproto.ClientFrame {
 	return liveproto.ClientFrame{Sealed: f.Sealed, Database: f.Database, Rest: f.Rest, Schema: f.Schema,
-		Claims: f.Claims, ClaimsExpires: f.ClaimsExpires, Role: f.Role, Access: f.Access}
+		Claims: f.Claims, ClaimsExpires: f.ClaimsExpires, Role: f.Role, Access: f.Access, AllowWithoutRLS: f.AllowWithoutRLS}
 }
 
 // upstream returns the database's upstream, dialing it when new.

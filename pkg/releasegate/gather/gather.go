@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/releasegate"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -23,7 +24,7 @@ type Window struct {
 // CustomMetricHistory reads the values an app pushed for a custom metric over
 // a window (ADR-745's exported history).
 type CustomMetricHistory interface {
-	CustomMetricWindow(ctx context.Context, appID, name string, since, until time.Time) (samples int64, average float64, err error)
+	CustomMetricWindow(ctx context.Context, appID, name, seriesKey string, since, until time.Time) (samples int64, average float64, err error)
 }
 
 // Request names whose evidence to gather. BaselineID may be empty when the
@@ -107,7 +108,7 @@ func Gather(ctx context.Context, store any, req Request) ([]releasegate.Gate, ma
 				continue
 			}
 			var err error
-			if ev.Metric, ev.PriorMetric, err = metricChangeEvidence(ctx, reader, req, row.MetricName); err != nil {
+			if ev.Metric, ev.PriorMetric, err = metricChangeEvidence(ctx, reader, req, row.MetricName, api.CustomMetricSeriesKey(row.MetricLabels)); err != nil {
 				note(fmt.Errorf("release gate %s: read metric: %w", row.Name, err))
 				ev.Unavailable = true
 			}
@@ -153,7 +154,7 @@ func Gather(ctx context.Context, store any, req Request) ([]releasegate.Gate, ma
 			if req.CustomMetrics != nil {
 				window = req.CustomMetrics.CustomMetricWindow
 			}
-			samples, average, err := window(ctx, req.AppID, row.MetricName, req.ReleaseWindow.Since, req.ReleaseWindow.Until)
+			samples, average, err := window(ctx, req.AppID, row.MetricName, api.CustomMetricSeriesKey(row.MetricLabels), req.ReleaseWindow.Since, req.ReleaseWindow.Until)
 			if err != nil {
 				note(fmt.Errorf("release gate %s: read metric: %w", row.Name, err))
 				ev.Unavailable = true
@@ -232,16 +233,16 @@ func probeEvidence(ctx context.Context, store any, reader state.ReleaseGateEvide
 // metricChangeEvidence reads a metric over the release's window and the
 // window before the rollout, from the metric's history when the request has
 // one (the store keeps only each metric's latest value).
-func metricChangeEvidence(ctx context.Context, reader state.ReleaseGateEvidenceStore, req Request, metric string) (releasegate.MetricWindow, releasegate.MetricWindow, error) {
+func metricChangeEvidence(ctx context.Context, reader state.ReleaseGateEvidenceStore, req Request, metric, seriesKey string) (releasegate.MetricWindow, releasegate.MetricWindow, error) {
 	window := reader.ReleaseGateCustomMetricWindow
 	if req.CustomMetrics != nil {
 		window = req.CustomMetrics.CustomMetricWindow
 	}
-	samples, average, err := window(ctx, req.AppID, metric, req.ReleaseWindow.Since, req.ReleaseWindow.Until)
+	samples, average, err := window(ctx, req.AppID, metric, seriesKey, req.ReleaseWindow.Since, req.ReleaseWindow.Until)
 	if err != nil {
 		return releasegate.MetricWindow{}, releasegate.MetricWindow{}, err
 	}
-	priorSamples, priorAverage, err := window(ctx, req.AppID, metric, req.PriorWindow.Since, req.PriorWindow.Until)
+	priorSamples, priorAverage, err := window(ctx, req.AppID, metric, seriesKey, req.PriorWindow.Since, req.PriorWindow.Until)
 	if err != nil {
 		return releasegate.MetricWindow{}, releasegate.MetricWindow{}, err
 	}

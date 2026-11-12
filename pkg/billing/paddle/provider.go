@@ -13,6 +13,7 @@ import (
 	"time"
 
 	paddle "github.com/PaddleHQ/paddle-go-sdk/v5"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -218,7 +219,7 @@ func NewProvider(apiKey, webhookSecret string, sandbox bool, log *slog.Logger) (
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("paddle: %w (set FAAS_PADDLE_API_KEY=… in sealed.env before selecting Paddle)", ErrNoAPIKey)
 	}
-	httpClient := &http.Client{Transport: NewIdempotencyRT(http.DefaultTransport)}
+	httpClient := &http.Client{Transport: NewIdempotencyRT(http.DefaultTransport), Timeout: api.InvoiceProviderRequestTimeout}
 	var client *paddle.SDK
 	var err error
 	if sandbox {

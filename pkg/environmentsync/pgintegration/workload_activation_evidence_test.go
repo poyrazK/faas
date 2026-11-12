@@ -25,14 +25,17 @@ func TestEnvironmentGitOpsActivationEvidenceRequiresWholeGraphAndSeparateProofs(
 			evidence, err := store.EnvironmentGitOpsActivationEvidence(t.Context(), lease, plan)
 			if err != nil || !evidence.ArtifactsPrepared || evidence.Candidates != 2 || evidence.CapturesRecorded != captures ||
 				evidence.GuestConfigAcknowledgementsRecorded != restores || evidence.RestoresRecorded != restores ||
-				evidence.FrameworkReadyAcknowledgementsRecorded != restores || evidence.SmokesRecorded != smokes ||
+				evidence.FrameworkReadyAcknowledgementsRecorded != 0 || evidence.SmokesRecorded != smokes ||
 				evidence.Qualified != qualified || evidence.Activated || evidence.Serving || evidence.PlanHash != plan.Hash {
 				t.Fatalf("preparation/capture became activation: %+v %v", evidence, err)
 			}
 			if slices.Contains(evidence.BlockingReasons, "environment_capture_evidence_missing") != (captures < 2) ||
 				slices.Contains(evidence.BlockingReasons, "environment_restore_evidence_missing") != (restores < 2) ||
 				slices.Contains(evidence.BlockingReasons, "environment_guest_config_acknowledgement_missing") != (restores < 2) ||
-				slices.Contains(evidence.BlockingReasons, "environment_framework_ready_evidence_missing") != (restores < 2) ||
+				// The fixture's image workloads have no runtime runner, so none of
+				// them owes a framework-ready signal (ADR 20261023093000).
+				slices.Contains(evidence.BlockingReasons, "environment_framework_ready_evidence_missing") ||
+				slices.Contains(evidence.BlockingReasons, "environment_worker_queue_smoke_contract_missing") != (smokes < 2) ||
 				slices.Contains(evidence.BlockingReasons, "environment_isolated_smoke_evidence_missing") != (smokes < 2) ||
 				!slices.Contains(evidence.BlockingReasons, "environment_activation_evidence_missing") ||
 				!slices.Contains(evidence.BlockingReasons, "environment_serving_evidence_missing") {

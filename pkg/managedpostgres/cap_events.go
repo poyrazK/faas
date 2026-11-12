@@ -73,6 +73,27 @@ func (s *PostgresStore) MostSevereCapEvent(ctx context.Context, subjectID string
 		Overage: row.OverageEnabled, Mailed: row.Mailed}, nil
 }
 
+// CapEvent implements CapEventReader.
+func (s *PostgresStore) CapEvent(ctx context.Context, subjectID string, periodStart time.Time, threshold string) (*CapEvent, error) {
+	subject, err := postgresUUID(subjectID)
+	if err != nil || periodStart.IsZero() || threshold == "" {
+		return nil, ErrInvalid
+	}
+	month := monthStart(periodStart)
+	row, err := sqlc.New().ManagedPostgresCapEvent(ctx, s.catalog, sqlc.ManagedPostgresCapEventParams{
+		SubjectID: subject, PeriodStart: pgtype.Timestamptz{Time: month, Valid: true}, Threshold: threshold,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, mapPostgresError(err)
+	}
+	return &CapEvent{SubjectID: subjectID, PeriodStart: month, Threshold: threshold, ReachedAt: row.ReachedAt.Time.UTC(),
+		Used: row.UsedUnitSeconds, Allowance: row.AllowanceUnitSeconds, Ceiling: row.CeilingUnitSeconds,
+		Overage: row.OverageEnabled, Mailed: row.Mailed}, nil
+}
+
 type memoryCapEventKey struct {
 	subject   string
 	period    time.Time
@@ -120,6 +141,19 @@ func (s *MemoryStore) MostSevereCapEvent(_ context.Context, subjectID string, pe
 	return nil, nil
 }
 
+// CapEvent implements CapEventReader.
+func (s *MemoryStore) CapEvent(_ context.Context, subjectID string, periodStart time.Time, threshold string) (*CapEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := memoryCapEventKey{subjectID, monthStart(periodStart), threshold}
+	event, ok := s.capEvents[key]
+	if !ok {
+		return nil, nil
+	}
+	event.Mailed = s.capEventsMailed[key]
+	return &event, nil
+}
+
 // markCapEventMailed stands in for the mail outbox linking an intent.
 func (s *MemoryStore) markCapEventMailed(event CapEvent) {
 	s.mu.Lock()
@@ -129,7 +163,7 @@ func (s *MemoryStore) markCapEventMailed(event CapEvent) {
 
 func validCapEvent(event CapEvent) bool {
 	switch event.Threshold {
-	case CapThresholdWarning, CapThresholdAllowance, CapThresholdCeilingWarning, CapThresholdSuspended:
+	case CapThresholdWarning, CapThresholdAllowance, CapThresholdCeilingWarning, CapThresholdSuspended, CapThresholdEgressHeld:
 	default:
 		return false
 	}

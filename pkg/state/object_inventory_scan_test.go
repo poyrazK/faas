@@ -181,6 +181,7 @@ func TestObjectInventoryScanFreshness(t *testing.T) {
 			name     string
 			observed time.Duration
 			scan     state.ObjectInventoryScan
+			held     bool
 			put      int64
 			want     error
 		}{
@@ -191,11 +192,16 @@ func TestObjectInventoryScanFreshness(t *testing.T) {
 			{name: "listing without a page does not", observed: 20 * time.Minute, scan: state.ObjectInventoryScan{StartedAt: now.Add(-time.Minute), ProgressAt: now.Add(-time.Minute)}, put: 1, want: state.ErrObjectUsageStale},
 			{name: "observation past the listing limit", observed: api.ObjectInventoryScanMaxAge + time.Minute, scan: state.ObjectInventoryScan{StartedAt: now.Add(-10 * time.Minute), ProgressAt: now.Add(-time.Minute), Pages: 4}, put: 1, want: state.ErrObjectUsageStale},
 			{name: "listing older than the observation does not", observed: 20 * time.Minute, scan: state.ObjectInventoryScan{StartedAt: now.Add(-30 * time.Minute), ProgressAt: now.Add(-time.Minute), Pages: 4}, put: 1, want: state.ErrObjectUsageStale},
+			// A versioning change outlasts the freshness window; the
+			// bucket's capacity is fenced, so its last observation holds.
+			{name: "held bucket keeps a stale observation", observed: api.ObjectBucketVersioningPropagation + 5*time.Minute, held: true},
+			{name: "held bucket still bounds capacity", observed: 20 * time.Minute, held: true, put: 1000, want: state.ErrObjectCapacity},
 			{name: "listed bytes count toward capacity", observed: 20 * time.Minute, scan: state.ObjectInventoryScan{StartedAt: now.Add(-10 * time.Minute), ProgressAt: now.Add(-time.Minute), Pages: 4, Bytes: 95, Keys: 1}, put: 10, want: state.ErrObjectCapacity},
 		} {
 			t.Run(mode.name+"/"+tc.name, func(t *testing.T) {
 				s := twoBucketSnapshot(now, 0, 0, now.Add(-tc.observed))
 				s.Buckets[1].InventoryScan = tc.scan
+				s.Buckets[1].InventoryHeld = tc.held
 				_, _, err := state.CheckObjectAdmission(s, "b", tc.put, 0, false, true, mode.policy(), now)
 				if !errors.Is(err, tc.want) && (tc.want != nil || err != nil) {
 					t.Fatalf("err = %v, want %v", err, tc.want)

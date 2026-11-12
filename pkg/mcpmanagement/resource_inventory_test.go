@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -125,6 +126,108 @@ func TestResourceChangesRecheckReviewedConfiguration(t *testing.T) {
 	defer mu.Unlock()
 	if writes != 1 {
 		t.Fatalf("completed resource receipt repeated a deletion: writes=%d", writes)
+	}
+}
+
+func TestMissingCronDoesNotProveThisPlanDeletedIt(t *testing.T) {
+	f := newLocalFixture(t, true, "release-base")
+	cron := api.CronResponse{ID: "cron-one", AppID: f.app.ID, Schedule: "*/15 * * * *", Path: "/tick", Enabled: true, Timezone: "UTC"}
+	var missing atomic.Bool
+	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/crons/cron-one" {
+			f.serveHTTP(w, r)
+			return
+		}
+		if missing.Load() {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(cron)
+	}))
+	defer b.Close()
+	_, m, err := newManagementServer(api.NewClient(b.URL, testToken), Options{APIBase: b.URL, AllowWrites: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := m.planCronChange(t.Context(), cronChangeArgs{App: "alpha", CronID: cron.ID, Delete: true, Reason: "retire cron"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := m.plans[value.(releasePlan).ID]
+	missing.Store(true)
+	if _, err := m.applyOperation(t.Context(), applyArgs{PlanID: p.ID}); err == nil {
+		t.Fatal("missing cron was attributed to this plan")
+	}
+	if p.localReceipt != nil || p.failure == nil || p.failure.Status != "outcome_unknown" {
+		t.Fatalf("missing cron produced a completion receipt: %+v", p.failure)
+	}
+	for _, kind := range []string{"cron_update", "cron_delete"} {
+		if safePlanRetry(&releasePlan{Operation: &operationPlan{Kind: kind}}, "gregale_apply_operation") {
+			t.Fatalf("%s recommended an unguarded retry", kind)
+		}
+	}
+}
+
+func TestAmbiguousCronWriteCannotBeReplayed(t *testing.T) {
+	for _, deletion := range []bool{false, true} {
+		t.Run(map[bool]string{false: "update", true: "delete"}[deletion], func(t *testing.T) {
+			f := newLocalFixture(t, true, "release-base")
+			cron := api.CronResponse{ID: "cron-one", AppID: f.app.ID, Schedule: "*/15 * * * *", Path: "/tick", Enabled: true, Timezone: "UTC"}
+			var writes atomic.Int32
+			b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/crons/cron-one" {
+					f.serveHTTP(w, r)
+					return
+				}
+				if r.Method == http.MethodGet {
+					_ = json.NewEncoder(w).Encode(cron)
+					return
+				}
+				writes.Add(1)
+				api.WriteProblem(w, api.NewProblem(502, "transport_error", "response lost", "inspect the original action"))
+			}))
+			defer b.Close()
+			store, statePath, key := testStateStore(t)
+			opts := Options{APIBase: b.URL, AllowWrites: true, planStore: store, planNamespace: "cron-recovery"}
+			_, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := "/new"
+			args := cronChangeArgs{App: "alpha", CronID: cron.ID, Delete: deletion, Reason: "reviewed change"}
+			if !deletion {
+				args.Path = &path
+			}
+			value, err := m.planCronChange(t.Context(), args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := value.(releasePlan).ID
+			for range 2 {
+				if _, err := m.applyOperation(t.Context(), applyArgs{PlanID: id}); err == nil {
+					t.Fatal("ambiguous attempt reported success")
+				}
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			reopened, err := OpenStateStore(statePath, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reopened.Close()
+			opts.planStore = reopened
+			_, restored, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := restored.applyOperation(t.Context(), applyArgs{PlanID: id}); err == nil {
+				t.Fatal("restart allowed an ambiguous operation to repeat")
+			}
+			if writes.Load() != 1 {
+				t.Fatalf("ambiguous operation repeated %d times", writes.Load())
+			}
+		})
 	}
 }
 

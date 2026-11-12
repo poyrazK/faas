@@ -17,15 +17,22 @@ import (
 // releases on-demand captures to an account (ADR-1155, ADR-20261023115741).
 const profileCapturesCapability = "profile-captures"
 
-// startProfileCapturesRelease keeps the platform flags current through the
-// runtime-config watcher and returns the per-account decision of
-// profile-captures, so imaged stamps on-demand collectors only into
-// deployments of accounts the preview is released to.
-func startProfileCapturesRelease(ctx context.Context, getenv func(string) string, store state.Store, pool *pgxpool.Pool, log *slog.Logger) (func(platformflags.Subject) bool, error) {
+// platformReleases are imaged's per-account platform-flag decisions.
+type platformReleases struct {
+	profileCaptures    func(platformflags.Subject) bool
+	postgresPoolSizing func(platformflags.Subject) bool
+}
+
+// startPlatformReleases keeps the platform flags current through the
+// runtime-config watcher and returns imaged's per-account decisions: the
+// profile-captures capability, so on-demand collectors are stamped only into
+// deployments of accounts the preview is released to (ADR-1155), and the
+// postgres_pool_sizing flag (ADR-20261104141122).
+func startPlatformReleases(ctx context.Context, getenv func(string) string, store state.Store, pool *pgxpool.Pool, log *slog.Logger) (platformReleases, error) {
 	flags := platformflags.NewSet(capflags.Bootstrap(getenv))
 	decider, err := capflags.Load(flags.Snapshot)
 	if err != nil {
-		return nil, fmt.Errorf("imaged: load capability catalog: %w", err)
+		return platformReleases{}, fmt.Errorf("imaged: load capability catalog: %w", err)
 	}
 	keys, apply := runtimeconfig.WithPlatformFlags(nil, nil, flags)
 	watcher := runtimeconfig.New(store, pool, keys, apply, log)
@@ -38,7 +45,12 @@ func startProfileCapturesRelease(ctx context.Context, getenv func(string) string
 			log.Error("imaged: platform flag watcher exited", "err", err)
 		}
 	}()
-	return func(subject platformflags.Subject) bool {
-		return decider.Enabled(profileCapturesCapability, subject)
+	return platformReleases{
+		profileCaptures: func(subject platformflags.Subject) bool {
+			return decider.Enabled(profileCapturesCapability, subject)
+		},
+		postgresPoolSizing: func(subject platformflags.Subject) bool {
+			return flags.Enabled(platformflags.PostgresPoolSizing, subject)
+		},
 	}, nil
 }

@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/netip"
+	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -117,6 +120,68 @@ func testLegacyRuntimeConfigFenceProjection(t *testing.T, store runtimeAppEnvTes
 		t.Fatalf("edited legacy settings published old captured inputs: %v", err)
 	}
 	assertRuntimePublicationUnchanged(t.Context(), t, store, p)
+}
+
+func TestMemFrozenRuntimeConfigFenceProjection(t *testing.T) {
+	store := state.NewMemStore()
+	testFrozenRuntimeConfigFenceProjection(t, store, func(_ *testing.T, id, raw string) { store.XFreezeDeploymentRuntime(id, raw) })
+}
+
+// A reviewed GitOps candidate boots from its frozen runtime. The app it
+// resolves to on an ordinary wake must be the app its value snapshot hashed;
+// otherwise every wake of the live candidate is refused with "deployment
+// runtime value owner or grants changed". Ordinary deployment creation
+// refuses a frozen runtime, so freeze stores it as candidate preparation does.
+func testFrozenRuntimeConfigFenceProjection(t *testing.T, store runtimeAppEnvTestStore, freeze func(t *testing.T, deploymentID, raw string)) {
+	f := seedRuntimeAppEnv(t, store)
+	for _, workloadSpec := range []bool{true, false} {
+		name := "legacy app"
+		if workloadSpec {
+			name = "environment workload spec"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			app := f.app
+			if !workloadSpec {
+				var err error
+				app, err = store.CreateApp(ctx, state.App{AccountID: f.account.ID, Slug: "frozen-legacy-" + uuid.NewString(),
+					Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker, RAMMB: 256, MaxConcurrency: 2})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			image := "registry.example/frozen@sha256:" + strings.Repeat("b", 64)
+			// The seeded apps are workers, whose reviewed runtime must run as one.
+			frozen := state.EnvironmentWorkloadRuntime{AppID: app.ID, AppType: state.AppTypeApp, WorkloadClass: app.WorkloadClass,
+				Scope: "production", SourceID: uuid.NewString(), EnvironmentID: "environment", RevisionID: "revision", Generation: 1,
+				Resource: "workload/api", PlanHash: strings.Repeat("a", 64), Source: &api.EnvironmentWorkloadSource{Kind: "image", Image: image},
+				StartCommand: "serve --reviewed", Runtime: map[string]json.RawMessage{"execution_mode": json.RawMessage(`"worker"`)}}
+			raw, err := json.Marshal(frozen)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "production", Kind: state.DeploymentKindImage,
+				ImageDigest: image})
+			if err != nil {
+				t.Fatal(err)
+			}
+			freeze(t, dep.ID, string(raw))
+			if dep, err = store.DeploymentByID(ctx, dep.ID); err != nil || dep.EnvironmentWorkloadRuntime == "" {
+				t.Fatalf("frozen runtime was not stored: %v", err)
+			}
+			resolved, err := state.ResolveAppForDeployment(ctx, store, app, dep)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resolved.StartCommand != frozen.StartCommand || resolved.Manifest.ExecutionMode != "worker" {
+				t.Fatalf("resolved app ignored the frozen runtime: start=%q mode=%q", resolved.StartCommand, resolved.Manifest.ExecutionMode)
+			}
+			snapshot, err := store.RuntimeAppValuesForDeployment(ctx, app.AccountID, app.ID, dep.ID)
+			if err != nil || !snapshot.MatchesRuntimeInputs(resolved, dep) {
+				t.Fatalf("frozen runtime projection rejected its resolved boot inputs: %v", err)
+			}
+		})
+	}
 }
 
 func testPausedRuntimeConfigProofCannotAdoptNewValues(t *testing.T, store runtimeAppEnvTestStore) {

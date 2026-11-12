@@ -40,6 +40,8 @@ class AccountResponse:
     app_count: int
     developer_app_count: int
     """Live `gregale dev` environments; these do not consume deployed_apps slots."""
+    display_name: str | Unset = UNSET
+    """Optional display name; absent when unset."""
     email_verification_grace_ends_at: datetime.datetime | Unset = UNSET
     """30-day verification deadline; present only while email_verified is false."""
     github_install_id: None | str | Unset = UNSET
@@ -85,6 +87,8 @@ class AccountResponse:
 
         developer_app_count = self.developer_app_count
 
+        display_name = self.display_name
+
         email_verification_grace_ends_at: str | Unset = UNSET
         if not isinstance(self.email_verification_grace_ends_at, Unset):
             email_verification_grace_ends_at = self.email_verification_grace_ends_at.isoformat()
@@ -118,6 +122,7 @@ class AccountResponse:
         key_app: dict[str, Any] | Unset = UNSET
         if not isinstance(self.key_app, Unset):
             key_app = self.key_app.to_dict()
+
         key_org: dict[str, Any] | Unset = UNSET
         if not isinstance(self.key_org, Unset):
             key_org = self.key_org.to_dict()
@@ -145,6 +150,8 @@ class AccountResponse:
                 "developer_app_count": developer_app_count,
             }
         )
+        if display_name is not UNSET:
+            field_dict["display_name"] = display_name
         if email_verification_grace_ends_at is not UNSET:
             field_dict["email_verification_grace_ends_at"] = email_verification_grace_ends_at
         if github_install_id is not UNSET:
@@ -200,6 +207,8 @@ class AccountResponse:
 
         developer_app_count = d.pop("developer_app_count")
 
+        display_name = d.pop("display_name", UNSET)
+
         _email_verification_grace_ends_at = d.pop("email_verification_grace_ends_at", UNSET)
         email_verification_grace_ends_at: datetime.datetime | Unset
         if isinstance(_email_verification_grace_ends_at, Unset):
@@ -246,6 +255,7 @@ class AccountResponse:
             key_app = UNSET
         else:
             key_app = AppAgentBinding.from_dict(_key_app)
+
         _key_org = d.pop("key_org", UNSET)
         key_org: KeyOrg | Unset
         if isinstance(_key_org, Unset):
@@ -272,6 +282,7 @@ class AccountResponse:
             usage_gb_hours=usage_gb_hours,
             app_count=app_count,
             developer_app_count=developer_app_count,
+            display_name=display_name,
             email_verification_grace_ends_at=email_verification_grace_ends_at,
             github_install_id=github_install_id,
             plan_change_status=plan_change_status,

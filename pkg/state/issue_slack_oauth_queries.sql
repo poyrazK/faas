@@ -10,8 +10,8 @@ WHERE f.state_hash=$1 AND f.account_id=$2 AND f.expires_at>clock_timestamp() AND
 -- name: IssueSlackOAuthFlowClaim :one
 UPDATE issue_slack_oauth_flows f SET phase='exchanging'
 WHERE f.state_hash=$1 AND f.account_id=$2 AND f.phase='authorizing' AND f.expires_at>clock_timestamp()
-AND EXISTS(SELECT 1 FROM apps a JOIN accounts owner ON owner.id=a.account_id
- WHERE a.id=f.app_id AND a.account_id=f.account_id AND a.deleted_at IS NULL AND owner.status='active' AND owner.abuse_hold_at IS NULL)
+AND EXISTS(SELECT 1 FROM apps a JOIN app_resource_accounts owner ON owner.app_id=a.id LEFT JOIN orgs issue_owner_org ON issue_owner_org.id=a.org_id
+ WHERE a.id=f.app_id AND a.account_id=f.account_id AND a.deleted_at IS NULL AND owner.status='active' AND owner.abuse_hold_at IS NULL AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id) OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL)))
 RETURNING f.*;
 -- name: IssueSlackOAuthFlowSave :one
 UPDATE issue_slack_oauth_flows SET phase='choosing',sealed=$3
@@ -43,8 +43,8 @@ SELECT i.app_id FROM issue_team_slack_deliveries d JOIN issue_team_slack_destina
 JOIN issue_slack_installations i ON i.app_id=dst.app_id AND i.status='connected' AND i.revision=dst.oauth_revision
 WHERE d.id=$1 AND i.slack_app_id=$2 AND i.workspace_id=$3;
 -- name: IssueSlackOAuthOwnerReady :one
-SELECT EXISTS(SELECT 1 FROM apps a JOIN accounts owner ON owner.id=a.account_id WHERE a.id=$1 AND a.account_id=$2
-AND a.deleted_at IS NULL AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY(sqlc.arg(entitled_plans)::text[]));
+SELECT EXISTS(SELECT 1 FROM apps a JOIN app_resource_accounts owner ON owner.app_id=a.id LEFT JOIN orgs issue_owner_org ON issue_owner_org.id=a.org_id WHERE a.id=$1 AND a.account_id=$2
+AND a.deleted_at IS NULL AND owner.status='active' AND owner.abuse_hold_at IS NULL AND (issue_owner_org.id IS NULL OR (issue_owner_org.personal_org AND issue_owner_org.personal_owner_account_id=a.account_id) OR (NOT issue_owner_org.personal_org AND issue_owner_org.status='active' AND NOT issue_owner_org.deleted_pending AND issue_owner_org.abuse_hold_at IS NULL)) AND owner.plan=ANY(sqlc.arg(entitled_plans)::text[]));
 -- name: IssueSlackOAuthExpiredCleanup :exec
 WITH expired AS (SELECT app_id FROM issue_slack_oauth_flows WHERE expires_at<=clock_timestamp() ORDER BY expires_at LIMIT $1 FOR UPDATE SKIP LOCKED)
 DELETE FROM issue_slack_oauth_flows f USING expired e WHERE f.app_id=e.app_id;

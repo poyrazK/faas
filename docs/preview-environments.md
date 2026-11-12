@@ -112,6 +112,13 @@ does not fit, no new preview rows are kept, no builds are queued, and the PR's
 `gregale-preview` check and status comment say which limit was reached.
 Existing rows for the same PR are preserved on retries.
 
+Each build of a preview workload uses one deploy from the PR preview share of
+the account's hourly deploy limit. Every push to the pull request rebuilds every
+workload in its preview, unless only ignored paths changed. When the share left
+this hour cannot build all of them, none is rebuilt: the preview stays on its
+previous commit, and the check says how many deploys it needs and when the
+window resets ([ADR-20261108140000](adr/20261108140000-previews-refuse-missing-datastores-and-partial-builds.md)).
+
 A closed PR's preview keeps serving through its 24-hour grace but no longer
 holds an environment, so the next pull request can be previewed at once.
 Reopening a PR takes an environment again. The 7-day default TTL and the
@@ -380,7 +387,35 @@ previews. It injects the PR's declared internal service bindings after source
 scan. A new PR push clears environment values left on older preview rows.
 `gregale preview create` follows the same rule: the preview gets the
 production app's service binding URLs and none of its environment values.
-Gregale does not provision isolated databases or buckets for the PR.
+Gregale does not provision isolated databases or buckets for the PR. A PR
+preview cannot own a bucket or a managed PostgreSQL binding: both answer
+`409 pr_preview_resource_unsupported`, because the preview runs unreviewed
+code and is torn down with its pull request. Give previews test credentials in
+the production app's `pr-preview` scope instead. Teardown deletes the buckets
+and removes the database bindings a preview was given before this rule; the
+databases themselves are kept
+([ADR-20261105090226](adr/20261105090226-previews-without-a-project-stay-in-their-set.md)).
+
+Apps bound to a repository without a project are previewed together, one
+preview set per pull request. A preview in such a set calls the other apps of
+the set by their production names and reaches their previews of the same pull
+request. It never reaches a production app: a call to an app the set does not
+preview answers `403 preview_production_dependency_denied`, and a preview of
+another pull request is refused. To let previews call a production
+dependency, put the apps in a project and use its `preview_service_policy`.
+
+A frontend's public build URLs (`VITE_…_URL`, `NEXT_PUBLIC_…_URL` and the other
+frontend prefixes) follow the pull request too. When a URL names the Gregale
+host of an app the pull request previews, its preview is built with that app's
+preview host instead, so the preview's browser calls reach the PR's own
+backend. URLs on other hosts, including custom domains, are built as they are
+([ADR-20261105090226](adr/20261105090226-previews-without-a-project-stay-in-their-set.md)).
+
+A preview service that reads a Compose datastore's address, such as
+`DATABASE_URL: postgres://app:secret@db:5432/app`, needs a value for previews:
+without one the preview is not built, and its `gregale-preview` check names
+the variable and the `gregale env set --app … --env pr-preview` command that
+gives previews a test datastore ([ADR-20261108140000](adr/20261108140000-previews-refuse-missing-datastores-and-partial-builds.md)).
 
 ## Configuration
 
@@ -408,8 +443,9 @@ A preview gets the rest of its configuration from two places
   They override the PR's Compose values. Anyone who can open a pull request
   runs code with these values, so they can read them: keep test credentials
   here, never production ones. Changing a value reaches each preview
-  at its next build. Removing one from `pr-preview` does not remove it from
-  open previews. Managed database and storage credentials are never given to
+  at its next build. Removing one from `pr-preview` also removes it from
+  each open preview that still holds the copy it was given, and a value you
+  changed on a preview itself stays. Managed database and storage credentials are never given to
   previews. `pr-preview` cannot be the name of a project environment.
 
 Previews keep their production app's access and egress gates: password,
@@ -430,6 +466,10 @@ project's organization, and the visibility production would give it, so a
 service without ports stays internal. It takes no declared-route contract: the
 bound app's routes are another service's. Preview apps cannot have custom
 domains; attach the domain to the production app.
+Under consumer auth, a preview accepts the production app's consumer keys, so
+clients call it with the keys they already hold. The preview app never sees
+those keys, nor a password or API key a gate verified: the gateway removes
+`Authorization` before the request reaches it.
 When a dependency preview is absent, the gateway considers the **production**
 service and its side effects are real if policy permits it.
 
@@ -457,9 +497,12 @@ A pull request's CI can read its preview without a stored key
 ([ADR-20261102203228](adr/20261102203228-ci-reads-its-preview-status.md)).
 With `permissions: id-token: write`, exchange the job's GitHub OIDC token for a
 preview-read bearer of the production app, then poll the environment until it
-is live:
+is live at the pull request's head. Compare `commit_sha` with that head: a
+push starts CI before the preview records the new commit, and until then the
+phase is the previous head's.
 
 ```bash
+HEAD_SHA=${{ github.event.pull_request.head.sha }}
 BEARER=$(curl -sf -X POST https://api.gregale.dev/v1/auth/oidc/exchange \
   -H 'Content-Type: application/json' \
   -d "{\"provider\":\"github\",\"token\":\"$OIDC_TOKEN\",\"aud\":\"gregale\",\"app\":\"shop-api\",\"capability\":\"preview-read\"}" \
@@ -467,17 +510,26 @@ BEARER=$(curl -sf -X POST https://api.gregale.dev/v1/auth/oidc/exchange \
 for _ in $(seq 90); do
   status=$(curl -sf -H "Authorization: Bearer $BEARER" \
     "https://api.gregale.dev/v1/preview/pr-$PR_NUMBER-shop-api/environment")
-  case "$(jq -r .phase <<<"$status")" in
-    live) exit 0 ;;
-    failed | closed) echo "$status"; exit 1 ;;
-  esac
+  [ "$(jq -r .phase <<<"$status")" = closed ] && { echo "$status"; exit 1; }
+  if [ "$(jq -r .commit_sha <<<"$status")" = "$HEAD_SHA" ]; then
+    case "$(jq -r .phase <<<"$status")" in
+      live) exit 0 ;;
+      failed) echo "$status"; exit 1 ;;
+    esac
+  fi
   sleep 10
 done
 exit 1
 ```
 
-`gregale preview wait` reads the preview app as well, so it needs an
-account-wide credential.
+`gregale preview wait` reads the same routes, so the bearer (as `FAAS_TOKEN`) or
+an app-bound deploy token is enough. Pass `--commit "$HEAD_SHA"` so it waits for
+that head rather than returning the previous one's result
+([ADR-20261105090226](adr/20261105090226-previews-without-a-project-stay-in-their-set.md)):
+
+```bash
+FAAS_TOKEN=$BEARER gregale preview wait "pr-$PR_NUMBER-shop-api" --commit "$HEAD_SHA" --timeout 15m
+```
 
 The bearer reads only the status of that app's previews, from any branch or
 pull request run. A per-app deploy token can read its app's previews too, but

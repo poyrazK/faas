@@ -47,9 +47,6 @@ func (s *Service) PublishEvent(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, AppSourceReservedProblem())
 		return
 	}
-	if !s.ValidateEventSchemaForIngress(w, r, acct.ID, envelope) {
-		return
-	}
 	producer, problem := s.accountProducer(r.Context(), acct)
 	if problem == nil {
 		problem = s.PublishRateProblem(acct, 1)
@@ -84,21 +81,26 @@ func (s *Service) persistPublishedEvent(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, api.ErrCapacity("failed to record event"))
 		return
 	}
-	if !api.WorkflowEventEnvelopeFits(payload) {
-		// Retained identities accepted before the envelope limit remain
-		// retryable with their original content.
-		if lookup, ok := s.Host.Store().(state.PublishedEventLookupStore); ok {
-			_, lookupErr := lookup.LookupPublishedEventAcceptance(r.Context(), acct.ID, payload)
-			if lookupErr == nil {
-				s.writePublishedEventReceipt(w, r, acct, envelope)
-				return
-			}
+	if lookup, ok := s.Host.Store().(state.PublishedEventLookupStore); ok {
+		_, lookupErr := lookup.LookupPublishedEventAcceptance(r.Context(), acct.ID, payload)
+		if lookupErr == nil {
+			s.writePublishedEventReceipt(w, r, acct, envelope)
+			return
+		}
+		if !errors.Is(lookupErr, state.ErrNotFound) {
 			if errors.Is(lookupErr, state.ErrConflict) {
 				api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 					"Event identity conflict", "source and id already identify an event with different type, schema version, or data"))
-				return
+			} else {
+				api.WriteProblem(w, api.ErrCapacity("failed to look up retained event acceptance"))
 			}
+			return
 		}
+	}
+	if !s.ValidateEventSchemaForIngress(w, r, acct.ID, envelope) {
+		return
+	}
+	if !api.WorkflowEventEnvelopeFits(payload) {
 		api.WriteProblem(w, api.ErrWorkflowEventEnvelopeTooLarge())
 		return
 	}

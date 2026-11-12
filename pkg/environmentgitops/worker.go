@@ -121,6 +121,12 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 		}
 		return true, cause
 	}
+	if plan.Hash == "" {
+		// Failed observations still identify the intent this attempt claimed.
+		// An empty hash continues to mean that no plan was established.
+		plan.Manager, plan.Revision, plan.Generation = lease.Source.ID, lease.Revision.ID, lease.Source.Generation
+		plan.CommitSHA, plan.DesiredDigest, plan.ObservedVersion = lease.Revision.CommitSHA, lease.Revision.Digest, lease.Source.IntentVersion
+	}
 	rawPlan, _ := json.Marshal(plan)
 	rawSteps, _ := json.Marshal(steps)
 	now := w.clock()

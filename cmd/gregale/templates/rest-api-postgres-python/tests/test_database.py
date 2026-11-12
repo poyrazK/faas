@@ -101,6 +101,8 @@ class Harness:
         self.snapshot = {"revision": "a" * 64, "secrets": {"DATABASE_URL": uri()}}
         self.pools, self.acks = [], []
         self.validate_gate = None
+        self.read_gate = None
+        self.read_entered = asyncio.Event()
         self.bad_validation = False
         self.ignore_cancel = False
 
@@ -112,6 +114,10 @@ class Harness:
 
     async def read(self, _path, cancel):
         cancel.check()
+        if self.read_gate is not None:
+            self.read_entered.set()
+            await self.read_gate.wait()
+            cancel.check()
         return json.dumps(self.snapshot)
 
     async def ready(self, _path, cancel):
@@ -203,23 +209,20 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([a["revision"] for a in self.h.acks], ["a" * 64, "a" * 64])
         await self.db.query(READINESS_SQL)
 
-    async def test_timed_out_validator_cannot_publish_or_ack_and_later_restore_recovers(self):
+    async def test_restore_stays_off_the_network_and_the_first_query_reports_unavailable(self):
+        # ADR-20261109180000: a scale-to-zero database must not hold the wake.
         await self.db.start()
-        self.h.validate_gate = asyncio.Event()
-        self.h.ignore_cancel = True
-        restore = asyncio.create_task(self.db.restore())
-        await self.h.validation_entered()
-        with self.assertRaises(DatabaseError):
-            await restore
-        self.assertEqual(len(self.h.acks), 1)
-        with self.assertRaises(DatabaseError):
-            await self.db.query(READINESS_SQL)
-        self.h.validate_gate.set()
-        await self.db.binding.wait_for_retirement(1)
-        self.assertEqual(self.h.pools[-1].closed, 1)
-        self.h.validate_gate = None
+        self.h.bad_validation = True
+        self.h.validate_gate = asyncio.Event()  # Any readiness SQL would hang here.
         await self.db.restore()
         self.assertEqual(self.db.generation, 1)
+        self.assertFalse(self.h.pools[-1].entered.is_set())
+        self.assertEqual([a["status"] for a in self.h.acks], ["applied", "applied"])
+        self.h.validate_gate = None
+        with self.assertRaises(DatabaseError) as raised:
+            await self.db.query(READINESS_SQL)
+        self.assertNotIn("private-", str(raised.exception))
+        self.h.bad_validation = False
         await self.db.query(READINESS_SQL)
 
     async def test_restore_queued_behind_rotation_times_out_without_late_adoption(self):
@@ -273,10 +276,16 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await client.post("/internal/after-restore")).status_code, 403)
                 self.assertEqual((await client.post("/internal/after-restore", headers={
                     "X-Faas-After-Restore": "1"})).status_code, 204)
+                # Restore readiness no longer depends on the database; health does.
                 self.h.bad_validation = True
                 self.assertEqual((await client.post("/internal/after-restore", headers={
-                    "X-Faas-After-Restore": "1"})).status_code, 503)
+                    "X-Faas-After-Restore": "1"})).status_code, 204)
                 self.assertEqual((await client.get("/healthz")).status_code, 503)
+                self.h.read_gate = asyncio.Event()
+                self.h.read_gate.set()
+                self.h.snapshot = {"revision": "b" * 64, "secrets": {}}
+                self.assertEqual((await client.post("/internal/after-restore", headers={
+                    "X-Faas-After-Restore": "1"})).status_code, 503)
 
     async def test_checkpoint_drains_every_session_and_refuses_work_until_restore(self):
         await self.db.start()
@@ -355,17 +364,16 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cancelled_restore_caller_is_fenced_and_does_not_stick_the_gate(self):
         await self.db.start()
-        self.h.validate_gate = asyncio.Event()
-        self.h.ignore_cancel = True
+        self.h.read_gate = asyncio.Event()
         task = asyncio.create_task(self.db.restore())
-        await self.h.validation_entered()
+        await asyncio.wait_for(self.h.read_entered.wait(), 1)
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await task
-        self.h.validate_gate.set()
+        self.h.read_gate.set()
         await self.db.binding.wait_for_retirement(1)
         self.assertEqual(len(self.h.acks), 1)
-        self.h.validate_gate = None
+        self.h.read_gate = None
         await self.db.restore()
         self.assertEqual(self.db.generation, 1)
 
@@ -399,9 +407,9 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_close_during_restore_drains_failed_recovery_and_is_terminal(self):
         await self.db.start()
-        self.h.validate_gate = asyncio.Event()
+        self.h.read_gate = asyncio.Event()
         task = asyncio.create_task(self.db.restore())
-        await self.h.validation_entered()
+        await asyncio.wait_for(self.h.read_entered.wait(), 1)
         await self.db.close()
         await asyncio.gather(task, return_exceptions=True)
         self.assertTrue(all(pool.closed == 1 for pool in self.h.pools))

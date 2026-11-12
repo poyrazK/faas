@@ -49,9 +49,10 @@ things and no HTTP readiness or request rate.
    - No attached trigger: not applicable; Gregale cannot see that backlog.
    - A failed read: unknown, never an empty queue.
 
-The phases reuse the existing enum, so the API response shape and the OpenAPI
-spec do not change; check codes and actions are existing free-form codes and
-enum values.
+The phases reuse the existing enum, so the API response shape does not change.
+The check codes are new values of the OpenAPI `AppHealthCheck.code` enum; they
+were added to it in ADR-20261102124306 amendment 1, before either flag was
+released.
 
 Jobs stay `unsupported`.
 

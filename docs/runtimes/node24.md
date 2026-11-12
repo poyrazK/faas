@@ -17,6 +17,9 @@ default for new function apps. A future PR may flip once fleet-wide
 
 ## Function contract
 
+The [handler API](../handler-api.md) lists everything a handler receives
+and can return.
+
 The customer's source is a Node module exporting either `default async
 function handler(event, ctx)` or a Fetch API object (`export default {
 fetch(request, env, ctx) { ... } }`), served at `/app/node24.js`.
@@ -53,29 +56,44 @@ the newly live revision. Returning a 4xx is terminal.
 
 ### Minimal handler
 
+Write a Fetch API handler. It is the recommended shape: the same code runs
+on Gregale, in tests with a plain `new Request(...)`, and on other
+Fetch-style platforms.
+
 ```js
-// /app/node24.js
-export default async function handler(req) {
+// handler.js
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    return Response.json({ hello: "world", path: url.pathname });
+  },
+};
+```
+
+`request` is a standard WHATWG `Request` (origin `http://faas.local`),
+`env` is the process environment, and `ctx.signal` aborts when the client
+goes away or the request runs out of time.
+
+### Event handler
+
+The older shape takes a parsed event and returns a plain object:
+
+```js
+// handler.js
+export async function handler(event, ctx) {
+  // event: { method, path, headers, query, body, body_b64 }
+  // body is parsed JSON when the request was JSON, else a string.
   return {
-    status: 200,
+    status: 200,                                  // or statusCode
     headers: { "content-type": "application/json" },
-    body_b64: Buffer.from(JSON.stringify({ hello: "world" })).toString("base64"),
+    body: { hello: "world" },                     // objects are sent as JSON
   };
 }
 ```
 
-### Fetch API handler
-
-```js
-// /app/handler.js
-export default {
-  async fetch(request) {
-    return new Response(`hello ${new URL(request.url).pathname}`, {
-      headers: { "content-type": "text/plain" },
-    });
-  },
-};
-```
+A string or `Buffer` body is sent as is; any other value is JSON-encoded.
+Returning an object without a `body` key sends the whole object as JSON.
+`event.body_b64` holds the exact request bytes, for signature checks.
 
 ### Streaming
 
@@ -118,18 +136,27 @@ and the gateway carries it to the client on Hobby, Pro and Scale (Free
 buffers it). Every `Set-Cookie` header is sent, and an event handler may
 give any header a list of values.
 
-### Local smoke test
+### Testing locally
 
-The §4.9 envelope round-trips with bash and `base64` — the runner
-starts `node /app/node24.js` and pipes newline-framed envelope JSON over stdin:
+A Fetch API handler is a plain object, so a test calls it directly with
+Node's built-in test runner and no Gregale tooling:
 
+```js
+// handler.test.js — run with `node --test`
+import test from "node:test";
+import assert from "node:assert/strict";
+import handler from "./handler.js";
+
+test("says hello", async () => {
+  const res = await handler.fetch(new Request("http://faas.local/hello"), {}, {});
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { hello: "world", path: "/hello" });
+});
 ```
-echo '{"method":"GET","path":"/hello","headers":{},"query":"","body_b64":""}' \
-  | node /app/node24.js
-```
 
-prints a JSON response envelope on stdout. The platform runs the same
-binary in production; nothing else differs.
+To send a real request through the platform, use
+`gregale invoke APP --path /hello`, or `gregale dev` for a live
+edit-and-reload loop.
 
 ### CGO
 

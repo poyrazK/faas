@@ -26,7 +26,7 @@ func TestRunImageRequestedByPositionalImage(t *testing.T) {
 		"disposable run with a value":  {[]string{"--dir", "src", "--entrypoint", "main.js"}, false},
 		"flags only":                   {[]string{"--help"}, false},
 		"nothing":                      {nil, false},
-		"positional after separator":   {[]string{"--", "alpine"}, false},
+		"positional after separator":   {[]string{"--", "alpine"}, true},
 		"--image beats positional":     {[]string{"--image", "alpine", "echo"}, true},
 		"disposable flag after --wait": {[]string{"--wait", "x"}, false},
 	}

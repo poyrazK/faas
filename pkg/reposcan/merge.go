@@ -103,6 +103,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		serviceBindingTransport   ServiceBindingTransport
 		serviceReliability        map[string]api.ServiceReliabilityPolicy
 		previewServiceCallsPolicy PreviewServiceCallsPolicy
+		appProtocol               string
 		allowedServiceCallers     *[]string
 		allowedServiceCallScopes  *api.ServiceCallerScopes
 		platformTenantRequired    *bool
@@ -242,6 +243,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			b.previewServiceCallsPolicy = s.previewServiceCallsPolicy
 			b.previewServiceCallsPolicySet = true
 		}
+		if b.appProtocol == "" {
+			b.appProtocol = s.appProtocol
+		}
 		if !b.allowedServiceCallersSet && s.allowedServiceCallers != nil {
 			callers := append([]string{}, (*s.allowedServiceCallers)...)
 			b.allowedServiceCallers = &callers
@@ -330,6 +334,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			ServiceBindingTransport:   b.serviceBindingTransport,
 			ServiceReliability:        b.serviceReliability,
 			PreviewServiceCallsPolicy: b.previewServiceCallsPolicy,
+			AppProtocol:               b.appProtocol,
 			AllowedServiceCallers:     b.allowedServiceCallers,
 			AllowedServiceCallScopes:  b.allowedServiceCallScopes,
 			PlatformTenantRequired:    b.platformTenantRequired,

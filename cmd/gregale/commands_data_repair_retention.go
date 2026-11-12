@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/datarepair"
+	dbbounds "github.com/onebox-faas/faas/pkg/db"
 )
 
 // This owner/maintenance connection stays local. Hosted customer credentials
@@ -72,7 +72,7 @@ func cmdDataRepairRetention(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(api.DataRepairPurgeTimeoutSeconds)*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, os.Getenv(*databaseEnv))
+	pool, err := dbbounds.NewBoundedPool(ctx, os.Getenv(*databaseEnv), 2)
 	if err != nil {
 		return printErr("Cannot configure the repair maintenance connection", datarepair.ErrUnavailable)
 	}

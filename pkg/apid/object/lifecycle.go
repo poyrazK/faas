@@ -2,8 +2,10 @@ package object
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -102,11 +104,36 @@ func (s *Service) CreateObjectLifecycleScan(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	j, err := svc.Store.StartObjectLifecycleScan(r.Context(), b.AccountID, b.AppID, b.ID)
+	if errors.Is(err, state.ErrConflict) {
+		lifecycleScanRefused(w, r, svc.Store, b)
+		return
+	}
 	if err != nil {
 		BucketProblem(w, err)
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusAccepted, j.ObjectLifecycleScan)
+}
+
+// lifecycleScanRefused says why a scan cannot start.
+func lifecycleScanRefused(w http.ResponseWriter, r *http.Request, st state.ObjectLifecycleStore, b state.ObjectBucket) {
+	p, err := st.GetObjectBucketLifecycle(r.Context(), b.AccountID, b.AppID, b.ID)
+	if err != nil {
+		BucketProblem(w, err)
+		return
+	}
+	api.WriteProblem(w, lifecycleScanRefusal(p))
+}
+
+// lifecycleScanRefusal names the reason StartObjectLifecycleScan conflicts: the
+// policy has no enabled rule, or the last discovery ran too recently.
+func lifecycleScanRefusal(p state.ObjectLifecyclePolicy) *api.Problem {
+	for _, rule := range p.Rules {
+		if rule.Status == "Enabled" {
+			return api.NewProblem(http.StatusConflict, "lifecycle_scan_not_due", http.StatusText(http.StatusConflict), "Discovery ran recently; the next scan can start at "+p.NextScanAt.UTC().Format(time.RFC3339)+".")
+		}
+	}
+	return api.NewProblem(http.StatusConflict, "lifecycle_no_enabled_rules", http.StatusText(http.StatusConflict), "The bucket has no enabled lifecycle rule to scan for; set rules with `gregale bucket lifecycle set` first.")
 }
 func (s *Service) GetObjectLifecycleScan(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	b, svc, ok := s.lifecyclePolicyService(w, r, acct)

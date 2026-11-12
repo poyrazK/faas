@@ -186,9 +186,24 @@ func decideProfileCanaryGate(d Deployment, p api.ProfileDeploymentPolicy, signal
 		out.Reason = "A unique current stable predecessor is required for profile gating."
 	}
 	if !now.Before(deadline) {
-		out.Status, out.Reason = "timed_out", "Profile evidence did not qualify for the current stage before its deadline."
+		out.Status, out.Reason = "timed_out", profileGateTimeoutReason(signal, contextMatches, gate.OnTimeout)
 	}
 	return out
+}
+
+// profileGateTimeoutReason tells a held release apart from a slow one: when
+// no profiling data reached the gate at all (profiling unavailable, the
+// candidate never uploaded), the reason says so and names the ways forward,
+// instead of the generic "did not qualify" (profiling review round 4, R4-6).
+func profileGateTimeoutReason(signal *api.CanaryProfileSignal, contextMatches bool, onTimeout string) string {
+	reason := "Profile evidence did not qualify for the current stage before its deadline."
+	if !contextMatches || signal.CandidateCoverage == nil || !signal.CandidateCoverage.Available || signal.CandidateCoverage.ReceivedProfiles == 0 {
+		reason = "No profiling data reached the gate for the current stage before its deadline; profiling may be unavailable for this deployment."
+	}
+	if onTimeout != "continue" {
+		reason += " The gate holds on timeout: override it with a reason, or set on_timeout to continue."
+	}
+	return reason
 }
 
 func authorizeProfileGate(decision api.ProfileCanaryGateDecision, params *CanaryAdvanceParams) error {

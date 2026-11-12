@@ -9,7 +9,7 @@ from ...client import AuthenticatedClient, Client
 from ...models.inbound_webhook_receipt_response import InboundWebhookReceiptResponse
 from ...models.problem import Problem
 from ...models.receive_inbound_webhook_body import ReceiveInboundWebhookBody
-from ...models.webhook_automation_receipt_response import WebhookAutomationReceiptResponse
+from ...models.webhook_workflow_receipt_response import WebhookWorkflowReceiptResponse
 from ...models.workflow_callback_webhook_receipt_response import WorkflowCallbackWebhookReceiptResponse
 from ...types import UNSET, Response, Unset
 
@@ -59,7 +59,7 @@ def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
 ) -> (
     InboundWebhookReceiptResponse
-    | WebhookAutomationReceiptResponse
+    | WebhookWorkflowReceiptResponse
     | WorkflowCallbackWebhookReceiptResponse
     | Problem
     | None
@@ -68,11 +68,11 @@ def _parse_response(
 
         def _parse_response_202(
             data: object,
-        ) -> InboundWebhookReceiptResponse | WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse:
+        ) -> InboundWebhookReceiptResponse | WebhookWorkflowReceiptResponse | WorkflowCallbackWebhookReceiptResponse:
             try:
                 if not isinstance(data, dict):
                     raise TypeError()
-                response_202_type_0 = WebhookAutomationReceiptResponse.from_dict(data)
+                response_202_type_0 = WebhookWorkflowReceiptResponse.from_dict(data)
 
                 return response_202_type_0
             except (TypeError, ValueError, AttributeError, KeyError):
@@ -129,7 +129,7 @@ def _parse_response(
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
 ) -> Response[
-    InboundWebhookReceiptResponse | WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
+    InboundWebhookReceiptResponse | WebhookWorkflowReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
 ]:
     return Response(
         status_code=HTTPStatus(response.status_code),
@@ -150,7 +150,7 @@ def sync_detailed(
     x_gregale_timestamp: str | Unset = UNSET,
     x_gregale_signature: str | Unset = UNSET,
 ) -> Response[
-    InboundWebhookReceiptResponse | WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
+    InboundWebhookReceiptResponse | WebhookWorkflowReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
 ]:
     """Verify and durably accept a Stripe or generic signed webhook.
 
@@ -164,7 +164,7 @@ def sync_detailed(
     durably instead of enqueuing an app invocation. Unmatched events keep
     the ordinary invocation path.
     Terminal callbacks are acknowledged as ignored after verification.
-    An automation-bound endpoint captures its published definition in durable
+    A stored-workflow-bound endpoint captures its published definition in durable
     fanout work. Paused, unpublished or type-unmatched events are durably ignored;
     content filters are evaluated by the scheduler. Provider retries return the
     original receipt; changed content for the same event ID returns 409.
@@ -188,7 +188,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[InboundWebhookReceiptResponse | WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem]
+        Response[InboundWebhookReceiptResponse | WebhookWorkflowReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -220,7 +220,7 @@ def sync(
     x_gregale_signature: str | Unset = UNSET,
 ) -> (
     InboundWebhookReceiptResponse
-    | WebhookAutomationReceiptResponse
+    | WebhookWorkflowReceiptResponse
     | WorkflowCallbackWebhookReceiptResponse
     | Problem
     | None
@@ -237,7 +237,7 @@ def sync(
     durably instead of enqueuing an app invocation. Unmatched events keep
     the ordinary invocation path.
     Terminal callbacks are acknowledged as ignored after verification.
-    An automation-bound endpoint captures its published definition in durable
+    A stored-workflow-bound endpoint captures its published definition in durable
     fanout work. Paused, unpublished or type-unmatched events are durably ignored;
     content filters are evaluated by the scheduler. Provider retries return the
     original receipt; changed content for the same event ID returns 409.
@@ -261,7 +261,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        InboundWebhookReceiptResponse | WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
+        InboundWebhookReceiptResponse | WebhookWorkflowReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
     """
 
     return sync_detailed(
@@ -287,7 +287,7 @@ async def asyncio_detailed(
     x_gregale_timestamp: str | Unset = UNSET,
     x_gregale_signature: str | Unset = UNSET,
 ) -> Response[
-    InboundWebhookReceiptResponse | WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
+    InboundWebhookReceiptResponse | WebhookWorkflowReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
 ]:
     """Verify and durably accept a Stripe or generic signed webhook.
 
@@ -301,7 +301,7 @@ async def asyncio_detailed(
     durably instead of enqueuing an app invocation. Unmatched events keep
     the ordinary invocation path.
     Terminal callbacks are acknowledged as ignored after verification.
-    An automation-bound endpoint captures its published definition in durable
+    A stored-workflow-bound endpoint captures its published definition in durable
     fanout work. Paused, unpublished or type-unmatched events are durably ignored;
     content filters are evaluated by the scheduler. Provider retries return the
     original receipt; changed content for the same event ID returns 409.
@@ -325,7 +325,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[InboundWebhookReceiptResponse | WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem]
+        Response[InboundWebhookReceiptResponse | WebhookWorkflowReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -355,7 +355,7 @@ async def asyncio(
     x_gregale_signature: str | Unset = UNSET,
 ) -> (
     InboundWebhookReceiptResponse
-    | WebhookAutomationReceiptResponse
+    | WebhookWorkflowReceiptResponse
     | WorkflowCallbackWebhookReceiptResponse
     | Problem
     | None
@@ -372,7 +372,7 @@ async def asyncio(
     durably instead of enqueuing an app invocation. Unmatched events keep
     the ordinary invocation path.
     Terminal callbacks are acknowledged as ignored after verification.
-    An automation-bound endpoint captures its published definition in durable
+    A stored-workflow-bound endpoint captures its published definition in durable
     fanout work. Paused, unpublished or type-unmatched events are durably ignored;
     content filters are evaluated by the scheduler. Provider retries return the
     original receipt; changed content for the same event ID returns 409.
@@ -396,7 +396,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        InboundWebhookReceiptResponse | WebhookAutomationReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
+        InboundWebhookReceiptResponse | WebhookWorkflowReceiptResponse | WorkflowCallbackWebhookReceiptResponse | Problem
     """
 
     return (

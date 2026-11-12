@@ -323,7 +323,7 @@ func cmdDebugRequestsEvidence(args []string) int {
 func cmdDebugRequestsList(args []string) int {
 	fs := newFlagSet("debug requests list", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
-	route := fs.String("route", "", "route filter (exact match)")
+	route := fs.String("route", "", "route filter: /path matches every method, \"METHOD /path\" one")
 	deploymentID := fs.String("deployment-id", "", "deployment UUID filter")
 	status := fs.Int("status", 0, "exact HTTP status filter (100..599)")
 	coldBoot := fs.String("cold-boot", "", "cold-start filter (true or false)")
@@ -391,18 +391,30 @@ func cmdDebugRequestsList(args []string) int {
 func cmdDebugRequestsExport(args []string) int {
 	fs := newFlagSet("debug requests export", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
-	route := fs.String("route", "", "route filter (exact match)")
+	route := fs.String("route", "", "route filter: /path matches every method, \"METHOD /path\" one")
+	deploymentID := fs.String("deployment-id", "", "deployment UUID filter")
+	status := fs.Int("status", 0, "exact HTTP status filter (100..599)")
+	coldBoot := fs.String("cold-boot", "", "cold-start filter (true or false)")
+	consumerID := fs.String("consumer-id", "", "consumer UUID or __anonymous__")
+	minLatencyMS := fs.Int("min-latency-ms", 0, "minimum latency bucket in milliseconds")
 	format := fs.String("format", "ndjson", "export format (ndjson or csv)")
 	limit := fs.Int("limit", 10000, "max rows (1..10000)")
 	output := fs.String("output", "", "write to PATH instead of stdout (use - for stdout)")
 	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{
 		"since": true, "route": true, "format": true, "limit": true, "output": true,
+		"deployment-id": true, "status": true, "cold-boot": true,
+		"consumer-id": true, "min-latency-ms": true,
 	})
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
 	if len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale debug requests export [--since D] [--route P] [--format ndjson|csv] [--limit N] [--output PATH] <slug>", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug requests export [--since D] [--route P] [--release UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] [--format ndjson|csv] [--limit N] [--output PATH] <slug>", debugCmdDocsTopic)
+		return 1
+	}
+	filters, err := debugTelemetryOptionsFromFlags(*since, *route, *deploymentID, *status, *coldBoot, *consumerID, *minLatencyMS, "", 1)
+	if err != nil {
+		printCommandValidation(os.Stderr, "%v\n", err)
 		return 1
 	}
 	if *format != "ndjson" && *format != "csv" {
@@ -415,11 +427,18 @@ func cmdDebugRequestsExport(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	data, err := client.ExportAppDebugRequests(context.Background(), positional[0], api.DebugTelemetryExportOptions{
+	export, err := client.ExportAppDebugRequestsWithInfo(context.Background(), positional[0], api.DebugTelemetryExportOptions{
 		Since: *since, Route: *route, Format: *format, Limit: *limit,
+		DeploymentID: filters.DeploymentID, Status: filters.Status, ColdBoot: filters.ColdBoot,
+		ConsumerID: filters.ConsumerID, MinLatencyMS: filters.MinLatencyMS,
 	})
 	if err != nil {
 		return printErr("Could not export debug requests", err)
+	}
+	data := export.Data
+	if export.Truncated {
+		// stderr, so a piped export stays a clean document.
+		_, _ = fmt.Fprintf(os.Stderr, "warning: the export stopped at %d rows; narrow --since or the filters to get the rest\n", *limit)
 	}
 	if *output == "" || *output == "-" {
 		_, err = osStdout.Write(data)
@@ -433,7 +452,7 @@ func cmdDebugRequestsExport(args []string) int {
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{
-			"path": *output, "format": *format, "bytes": len(data),
+			"path": *output, "format": *format, "bytes": len(data), "truncated": export.Truncated,
 		}))
 	}
 	PrintOK(osStdout, "Wrote %s debug request export (%d bytes) to %s.", *format, len(data), *output)
@@ -789,7 +808,7 @@ func cmdDebugCompare(args []string) int {
 	fs := newFlagSet("debug compare", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
 	until := fs.String("until", "", "end of comparison window (RFC3339; default now)")
-	route := fs.String("route", "", "route filter (exact match)")
+	route := fs.String("route", "", "route filter: /path matches every method, \"METHOD /path\" one")
 	source := fs.String("source", "", "source deployment id")
 	mirror := fs.String("mirror", "", "mirror deployment id")
 	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{
@@ -931,6 +950,9 @@ func renderDebugCoverage(w io.Writer, resp api.DebugCoverageResponse) {
 	_, _ = fmt.Fprintf(w, "Debugger coverage · window %s → %s\n", resp.WindowStart, resp.WindowEnd)
 	_, _ = fmt.Fprintf(w, "app %s · since %s · plan retention %d days\n", resp.AppID, resp.Since, resp.PlanRetentionDays)
 	_, _ = fmt.Fprintf(w, "telemetry rows: %d · represented requests: %d · errors: %d\n", resp.TelemetryRows, resp.RepresentedRequests, resp.ErrorRequests)
+	if resp.RequestsNotRetained != nil && *resp.RequestsNotRetained > 0 {
+		_, _ = fmt.Fprintf(w, "not kept: at least %d requests counted by analytics; the plan's per-minute debugger limit turned them away\n", *resp.RequestsNotRetained)
+	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "SIGNAL\tROWS\tREQUESTS\tRATE")
 	for _, item := range []struct {

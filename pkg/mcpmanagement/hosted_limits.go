@@ -20,6 +20,16 @@ const (
 	// H40).
 	hostedAuthorizeLimit   = 60
 	registrationWindowSize = time.Hour
+	// Agent key connections (bug hunt H101): at most hostedKeyConnsPerAccount
+	// per account, like grants. At capacity only connections idle for
+	// keyConnIdleFloor are dropped, or for keyConnPlanIdle when they hold a
+	// release or environment plan, which lives only in memory.
+	hostedKeyConnsPerAccount = 10
+	keyConnIdleFloor         = time.Minute
+	keyConnPlanIdle          = 30 * time.Minute
+	// hostedCLIPerAccount is the share of the bridge's CLI slots one account
+	// may hold at once; further calls are refused, not queued.
+	hostedCLIPerAccount = 1
 )
 
 type registrationWindow struct {

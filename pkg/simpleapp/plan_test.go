@@ -1,6 +1,10 @@
 package simpleapp
 
-import "testing"
+import (
+	"slices"
+	"strings"
+	"testing"
+)
 
 func TestResolveUsesStatelessDefaults(t *testing.T) {
 	got, err := Resolve(Spec{Slug: "hello"})
@@ -72,5 +76,26 @@ func TestResolveRejectsUnsafeInputs(t *testing.T) {
 		if _, err := Resolve(tc); err == nil {
 			t.Errorf("Resolve(%+v) succeeded, want validation error", tc)
 		}
+	}
+}
+
+// An explicit request mode is the simple plan's own mode and is no longer
+// listed as a default; any other mode is not a simple app (#6632).
+func TestResolveExecutionMode(t *testing.T) {
+	plan, err := Resolve(Spec{Slug: "demo", ExecutionMode: "request"})
+	if err != nil || plan.ExecutionMode != "request" {
+		t.Fatalf("explicit request: %+v %v", plan, err)
+	}
+	for _, d := range plan.DefaultsApplied {
+		if strings.HasPrefix(d, "execution_mode=") {
+			t.Fatalf("explicit request listed as default: %v", plan.DefaultsApplied)
+		}
+	}
+	plan, err = Resolve(Spec{Slug: "demo"})
+	if err != nil || !slices.Contains(plan.DefaultsApplied, "execution_mode=request") {
+		t.Fatalf("default request: %+v %v", plan, err)
+	}
+	if _, err := Resolve(Spec{Slug: "demo", ExecutionMode: "worker"}); err == nil {
+		t.Fatal("worker accepted as a simple app")
 	}
 }

@@ -51,13 +51,11 @@ func verifyProjectEnvironmentPromotionQualificationTx(ctx context.Context, tx pg
 	if err != nil {
 		return err
 	}
-	projectSecrets, err := projectEnvironmentSecretsDB(ctx, tx, promotion.AccountID, promotion.ProjectID, promotion.FromEnvironment)
+	sharedRevision, err := projectEnvironmentSharedSecretRevisionDB(ctx, tx, promotion.AccountID, promotion.ProjectID, promotion.FromEnvironment)
 	if err != nil {
 		return err
 	}
-	if secretHashes, err = WithProjectSecretRevision(secretHashes, projectSecrets); err != nil {
-		return err
-	}
+	secretHashes = sharedRevision.WithWorkloads(secretHashes)
 	if !sameProjectEnvironmentSecretRevisionHashes(secretHashes, qualification.SecretRevisionHashes) {
 		return ErrConflict
 	}
@@ -97,9 +95,11 @@ func (m *MemStore) verifyProjectEnvironmentPromotionQualificationLocked(promotio
 	if err != nil {
 		return err
 	}
-	if secretHashes, err = WithProjectSecretRevision(secretHashes, m.projectEnvironmentSecretsLocked(promotion.ProjectID, promotion.FromEnvironment)); err != nil {
+	sharedRevision, err := m.projectEnvironmentSharedSecretRevisionLocked(promotion.AccountID, promotion.ProjectID, promotion.FromEnvironment)
+	if err != nil {
 		return err
 	}
+	secretHashes = sharedRevision.WithWorkloads(secretHashes)
 	if !sameProjectEnvironmentSecretRevisionHashes(secretHashes, qualification.SecretRevisionHashes) {
 		return ErrConflict
 	}

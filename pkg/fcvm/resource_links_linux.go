@@ -33,9 +33,27 @@ func resourceNetworkContext() (*resourceMountIdentity, error) {
 	return &id, nil
 }
 
+// resourceLinkDumpAttempts bounds re-reads of a link dump the kernel marked
+// interrupted (NLM_F_DUMP_INTR: the table changed while it was read).
+const resourceLinkDumpAttempts = 5
+
+var errInterruptedLinkInventory = errors.New("interrupted link inventory")
+
 // Query rtnetlink in the actual calling network namespace. sysfs may still
 // expose another namespace's links after setns/unshare and is not authority.
+// An interrupted dump is read again: on a busy host another VM's veth
+// changes the table mid-dump, and failing on the first one left an app task's
+// teardown unconfirmed (Hunt 33 H33-7).
 func resourceNetworkLinkAt(name string, index int) (*resourceLinkIdentity, error) {
+	for attempt := 1; ; attempt++ {
+		link, err := resourceNetworkLinkDump(name, index)
+		if !errors.Is(err, errInterruptedLinkInventory) || attempt == resourceLinkDumpAttempts {
+			return link, err
+		}
+	}
+}
+
+func resourceNetworkLinkDump(name string, index int) (*resourceLinkIdentity, error) {
 	data, err := syscall.NetlinkRIB(unix.RTM_GETLINK, unix.AF_UNSPEC)
 	if err != nil {
 		return nil, err
@@ -47,7 +65,7 @@ func resourceNetworkLinkAt(name string, index int) (*resourceLinkIdentity, error
 	var byName, byIndex *resourceLinkIdentity
 	for _, msg := range messages {
 		if msg.Header.Flags&unix.NLM_F_DUMP_INTR != 0 {
-			return nil, errors.New("interrupted link inventory")
+			return nil, errInterruptedLinkInventory
 		}
 		if msg.Header.Type != unix.RTM_NEWLINK {
 			continue

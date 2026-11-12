@@ -85,8 +85,19 @@ func NewClient(baseURL, token string) *Client {
 	return &Client{
 		baseURL: baseURL,
 		token:   token,
-		http:    &http.Client{Timeout: 30 * time.Second},
+		http:    &http.Client{Timeout: 30 * time.Second, Transport: newClientTransport()},
 	}
+}
+
+// Stream clients retain caller-controlled lifetimes while bounding the wait
+// for response headers. The transport is private to this SDK client.
+func newClientTransport() http.RoundTripper {
+	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+		clone := transport.Clone()
+		clone.ResponseHeaderTimeout = 30 * time.Second
+		return clone
+	}
+	return http.DefaultTransport
 }
 
 // NewClientWithDeployTimeout is like NewClient but configures a

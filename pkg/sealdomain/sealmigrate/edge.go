@@ -19,8 +19,13 @@ const logDrainNamespace = "APP_LOG_DRAIN_AUTH_HEADER"
 
 // EdgeStore is the slice of *state.PgStore the edge re-seal uses.
 type EdgeStore interface {
-	ListEdgeSealedCredentials(ctx context.Context, afterKind, afterID string, limit int) ([]state.EdgeSealedCredential, error)
+	EdgeLister
 	ResealEdgeCredential(ctx context.Context, c state.EdgeSealedCredential, sealed []byte) (bool, error)
+}
+
+// EdgeLister is the slice of *state.PgStore the edge check reads.
+type EdgeLister interface {
+	ListEdgeSealedCredentials(ctx context.Context, afterKind, afterID string, limit int) ([]state.EdgeSealedCredential, error)
 }
 
 // MigrateEdge re-seals app basic-auth credentials and log drain headers to
@@ -35,6 +40,25 @@ func MigrateEdge(ctx context.Context, store EdgeStore, domain *age.X25519Identit
 	if store == nil || domain == nil || len(legacy) == 0 {
 		return MigrationReport{}, errors.New("sealmigrate: edge migration needs the store, the domain identity and the legacy identities")
 	}
+	return walkEdge(ctx, store, domain, legacy, store.ResealEdgeCredential)
+}
+
+// CheckEdge counts, without writing, the edge credentials that legacy
+// identities still open (ADR 20261022111812, the contract step's
+// precondition): gatewayd-internal may drop the fleet and host identities
+// only once Pending and Skipped are zero. A managed row the domain does not
+// open is Skipped: only a new version of its application standard's log
+// destination replaces it.
+func CheckEdge(ctx context.Context, store EdgeLister, domain *age.X25519Identity, legacy []*age.X25519Identity) (MigrationReport, error) {
+	if store == nil || domain == nil {
+		return MigrationReport{}, errors.New("sealmigrate: edge check needs the store and the domain identity")
+	}
+	return walkEdge(ctx, store, domain, legacy, nil)
+}
+
+// walkEdge visits every listed edge credential. With reseal nil it only
+// counts.
+func walkEdge(ctx context.Context, store EdgeLister, domain *age.X25519Identity, legacy []*age.X25519Identity, reseal func(ctx context.Context, c state.EdgeSealedCredential, sealed []byte) (bool, error)) (MigrationReport, error) {
 	report := MigrationReport{Domain: sealdomain.Edge, Target: domain.Recipient().String()}
 	afterKind, afterID := "", ""
 	for {
@@ -54,16 +78,23 @@ func MigrateEdge(ctx context.Context, store EdgeStore, domain *age.X25519Identit
 				continue
 			}
 			namespace, maxBytes := logDrainNamespace, api.AppLogDrainAuthHeaderMaxBytes
-			if c.Kind == state.EdgeSealedCredentialBasicAuth {
+			switch c.Kind {
+			case state.EdgeSealedCredentialBasicAuth:
 				namespace, maxBytes = api.AppPublicAuthBasicSealNamespace, api.AppPublicAuthBasicMaxBytes
+			case state.EdgeSealedCredentialHeaderSecret:
+				namespace, maxBytes = api.EdgeRuleHeaderSecretSealNamespace, api.EdgeRuleHeaderSecretMaxBytes
 			}
 			sealed, outcome, err := resealBlob(c.Sealed, namespace, maxBytes, domain, legacy)
 			if err != nil {
 				return report, fmt.Errorf("sealmigrate: reseal edge credential %s %s: %w", c.Kind, c.ID, err)
 			}
+			if reseal == nil {
+				report.checked(outcome)
+				continue
+			}
 			replaced := false
 			if outcome == resealWrite {
-				if replaced, err = store.ResealEdgeCredential(ctx, c, sealed); err != nil {
+				if replaced, err = reseal(ctx, c, sealed); err != nil {
 					return report, err
 				}
 			}

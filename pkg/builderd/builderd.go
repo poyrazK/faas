@@ -1473,18 +1473,28 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// emitted) — that's the path the `failure_class` UX copy
 		// already covers; markFailedEx is the typed-code addition.
 		failureCode, failurePkg := out.FailureCode, out.FailurePkg
+		failureMsg := fmt.Sprintf("build exited %d", out.ExitCode)
 		if fc == state.FailureUserError && failureCode == "" && platformBaseFetchFailed(out.LogTail, runtimeBaseRef) {
 			// The builder could not fetch Gregale's own runtime base: the
 			// customer's source never ran, so this is not their failure.
 			fc = state.FailureInfra
 		}
+		if fc == state.FailureUserError && failureCode == "" {
+			// A toolchain, build-tool or default-registry download the build
+			// tooling chose failed upstream: deploying again is the fix, not
+			// editing source (#6666).
+			if host := upstreamFetchFailed(out.LogTail, fw == FrameworkDocker); host != "" {
+				fc = state.FailureInfra
+				failureMsg += ": a download from " + host + " failed upstream"
+			}
+		}
 		if failureCode == "" && fc == state.FailureUserError {
 			failureCode, failurePkg = classifyBuildOutput(out.LogTail)
 		}
 		if failureCode != "" {
-			b.markFailedEx(ctx, build, fc, failureCode, failurePkg, fmt.Sprintf("build exited %d", out.ExitCode), buildStart)
+			b.markFailedEx(ctx, build, fc, failureCode, failurePkg, failureMsg, buildStart)
 		} else {
-			b.markFailed(ctx, build, fc, fmt.Sprintf("build exited %d", out.ExitCode), buildStart)
+			b.markFailed(ctx, build, fc, failureMsg, buildStart)
 		}
 		return BuildResult{}, fmt.Errorf("builderd: vm exit %d", out.ExitCode)
 	}

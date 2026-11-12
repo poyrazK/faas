@@ -268,13 +268,17 @@ SELECT sr.id, sr.account_id, sr.app_id, sr.deployment_id, sr.release_at, sr.cana
   FROM scheduled_releases sr
   JOIN deployments d ON d.id = sr.deployment_id
  WHERE sr.state = 'scheduled' AND sr.release_at <= $1::timestamptz
+   AND ($2::timestamptz IS NULL OR
+        (sr.release_at, sr.id) > ($2::timestamptz, $3::uuid))
  ORDER BY sr.release_at, sr.id
- LIMIT $2::integer
+ LIMIT $4::integer
 `
 
 type ListDueScheduledReleasesParams struct {
-	Now     pgtype.Timestamptz
-	MaxRows int32
+	Now            pgtype.Timestamptz
+	AfterReleaseAt pgtype.Timestamptz
+	AfterID        pgtype.UUID
+	MaxRows        int32
 }
 
 type ListDueScheduledReleasesRow struct {
@@ -283,7 +287,12 @@ type ListDueScheduledReleasesRow struct {
 }
 
 func (q *Queries) ListDueScheduledReleases(ctx context.Context, db DBTX, arg ListDueScheduledReleasesParams) ([]ListDueScheduledReleasesRow, error) {
-	rows, err := db.Query(ctx, listDueScheduledReleases, arg.Now, arg.MaxRows)
+	rows, err := db.Query(ctx, listDueScheduledReleases,
+		arg.Now,
+		arg.AfterReleaseAt,
+		arg.AfterID,
+		arg.MaxRows,
+	)
 	if err != nil {
 		return nil, err
 	}

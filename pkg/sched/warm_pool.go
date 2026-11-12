@@ -30,9 +30,7 @@ func (e *Engine) ReconcileWarmPool(ctx context.Context, appID string) error {
 		return nil
 	}
 	ctx = detachedServiceContext(ctx)
-	mu := e.serviceAppMutex(appID)
-	mu.Lock()
-	defer mu.Unlock()
+	defer e.lockServiceApp(appID)()
 	budget := warmPoolRestoreMaxPerTick
 	return e.reconcileWarmPoolLocked(ctx, appID, &budget)
 }
@@ -45,9 +43,7 @@ func (e *Engine) ReconcileEnvironmentWarmPools(ctx context.Context, appID string
 		return nil
 	}
 	ctx = detachedServiceContext(ctx)
-	mu := e.serviceAppMutex(appID)
-	mu.Lock()
-	defer mu.Unlock()
+	defer e.lockServiceApp(appID)()
 	deployments, err := e.store.LiveDeployments(ctx, appID)
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: environment inventory: %w", err)
@@ -152,10 +148,7 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 	if err != nil {
 		return err
 	}
-	desired := app.WarmPoolSize
-	if desired < 0 {
-		desired = 0
-	}
+	desired := warmPoolTarget(app, acct.Plan)
 	// A missing stage release cannot borrow the shared App's production target.
 	// Only proven orphaned owners enter obsolete without a selected deployment.
 	if depErr != nil && !reaperProductionScope(scope) && app.Status == state.AppActive && acct.Active() && api.Plan(acct.Plan).WarmPoolAllowed() {
@@ -363,8 +356,9 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	// is the correct outcome for a warm fill (ADR-193).
 	restoreSnap := snap
 	placementRequest := Request{
-		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
+		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: appVCPUs(app), CPUMillicores: appCPUBookingMillicores(app),
 		MaxConcurrency: app.MaxConcurrency, PreferredNodeID: warmHint, restoreSnapshot: &restoreSnap,
+		BookedCPUMillicores: appCPUBookingMillicores(app),
 	}
 	wakeID := uuid.NewString()
 	ins, placement, _, err := e.createWithNodePlacement(ctx, placementRequest, false, func(admitCtx context.Context, p Placement) (state.Instance, error) {
@@ -411,7 +405,7 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 		Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		EnvironmentKey:        runtimeEnvironmentAdmissionKey(owner.Scope, owner.EnvironmentID),
 		ProductionEnvironment: reaperProductionScope(owner.Scope),
-		RAMMB:                 app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+		RAMMB:                 app.RAMMB, VCPU: appVCPUs(app), CPUMillicores: appCPUBookingMillicores(app), MaxConcurrency: app.MaxConcurrency,
 		NodeID: placement.NodeID, NodeCeilingMB: placement.CeilingMB,
 		VCPUBudget: placement.VCPUBudget, CPUBudgetMillicores: placement.CPUBudgetMillicores, Kind: KindWarmPool,
 	}); err != nil {
@@ -428,7 +422,7 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 		cleanup("ephemeral_secret")
 		return fmt.Errorf("warm restore selected ephemeral secrets: %w", state.ErrConflict)
 	}
-	if int(spec.MemSizeMiB) != ins.RAMMB || int(spec.CPUMillicores) != effectiveAppCPUMillicores(app) {
+	if int(spec.MemSizeMiB) != ins.RAMMB || int(spec.CPUMillicores) != appCPUMillicores(app) {
 		cleanup("resource_shape_changed")
 		return fmt.Errorf("warm restore resource shape changed: %w", state.ErrConflict)
 	}
@@ -477,4 +471,16 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	}
 	e.recordCommittedInstanceTransition(ctx, fresh, state.StateWaking, state.StateWarm, app.ID, "warm_pool_restore", "")
 	return nil
+}
+
+// warmPoolTarget is how many paused VMs app keeps under plan. apid checks
+// warm_pool_size against max_concurrency only when it is written, so a pool
+// saved under a larger plan is capped here by the current plan's
+// concurrency (ADR-20261105120000). An unknown plan keeps no pool.
+func warmPoolTarget(app state.App, plan api.Plan) int {
+	limits, ok := api.LimitsFor(plan)
+	if !ok || app.WarmPoolSize <= 0 {
+		return 0
+	}
+	return min(app.WarmPoolSize, effectiveMaxConcurrency(app, limits))
 }

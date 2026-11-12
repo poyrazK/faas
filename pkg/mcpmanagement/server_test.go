@@ -148,8 +148,8 @@ func TestManagementMCPJourney(t *testing.T) {
 			defer backend.Close()
 			cs, ctx := connectTestServer(t, backend, 0, version)
 			catalog, err := cs.ListTools(ctx, nil)
-			if err != nil || len(catalog.Tools) < 49 {
-				t.Fatalf("catalog=%+v error=%v", catalog, err)
+			if err != nil || len(catalog.Tools) != 79 {
+				t.Fatalf("catalog count=%d catalog=%+v error=%v", len(catalog.Tools), catalog, err)
 			}
 			for _, tool := range catalog.Tools {
 				if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint || tool.InputSchema == nil || tool.OutputSchema == nil {

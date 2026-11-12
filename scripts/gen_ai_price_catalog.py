@@ -19,16 +19,7 @@ so a budget never under-counts:
 - built-in tool prices (ADR-1433): per web search from LiteLLM's
   search_context_cost_per_query (the dearest context size), and for
   OpenAI and Azure OpenAI models the file search price and the price per GB
-  code-interpreter container session;
-- long-context prices (ADR 20261027132936 amendment 2): the lowest prompt
-  size LiteLLM prices apart (input_cost_per_token_above_<N>k_tokens, the
-  standard tier) and the input, cached input, cache write and output prices
-  above it, which then apply to the whole call;
-- the 1-hour cache write price (cache_creation_input_token_cost_above_1hr),
-  and above the long-context threshold its own price when LiteLLM lists one;
-- the model's largest output in tokens (max_output_tokens), which a
-  translated call to a provider that requires a limit asks for when the
-  caller set none (ADR 20261027132936 amendment 2).
+  code-interpreter container session.
 
 Run it with an isolated interpreter on a downloaded file kept in its own
 directory, for example:
@@ -86,17 +77,6 @@ MAX_UNIT_PRICE = 10_000_000  # api.MaxOutboundAIPriceMillicentsPerImage, ...PerA
 MILLICENTS_PER_USD = Decimal(10) ** 5
 MAX_MODEL_BYTES = 128  # api.OutboundAIModelNameMaxBytes
 MILLICENTS_PER_MTOK_PER_USD_PER_TOKEN = Decimal(10) ** 11
-# Prompt sizes LiteLLM prices apart, in tokens (ADR 20261027132936
-# amendment 2); the lowest one a model lists is its long-context threshold.
-LONG_CONTEXT_THRESHOLDS = ((100, 100_000), (200, 200_000), (272, 272_000))
-MAX_THRESHOLD = 10_000_000  # api.MaxOutboundAILongContextThresholdTokens
-
-
-def max_output(entry):
-    value = entry.get("max_output_tokens")
-    if value is None or isinstance(value, (dict, list, str, bool)) or int(value) <= 0:
-        return None
-    return min(int(value), MAX_THRESHOLD)
 
 
 def convert(usd_per_token):
@@ -174,29 +154,8 @@ def audio_prices(entry):
     ]
 
 
-def long_context_prices(entry):
-    """long_context_threshold, input_long, cached_input_long, cache_write_long, output_long,
-    cache_write_1h, cache_write_1h_long (ADR 20261027132936 amendment 2)."""
-    write_1h = optional(entry, "cache_creation_input_token_cost_above_1hr", convert)
-    for size, tokens in LONG_CONTEXT_THRESHOLDS:
-        suffix = f"_above_{size}k_tokens"
-        if entry.get("input_cost_per_token" + suffix) is None:
-            continue
-        return [
-            tokens,
-            optional(entry, "input_cost_per_token" + suffix, convert),
-            optional(entry, "cache_read_input_token_cost" + suffix, convert),
-            optional(entry, "cache_creation_input_token_cost" + suffix, convert),
-            optional(entry, "output_cost_per_token" + suffix, convert),
-            write_1h,
-            optional(entry, "cache_creation_input_token_cost_above_1hr" + suffix, convert),
-        ]
-    return [None, None, None, None, None, write_1h, None]
-
-
 def within_limits(row):
-    limits = [MAX_PRICE] * 6 + [MAX_UNIT_PRICE, MAX_UNIT_PRICE, MAX_PRICE, MAX_UNIT_PRICE] + [MAX_UNIT_PRICE] * 3 + [MAX_PRICE] * 3 + \
-        [MAX_THRESHOLD] + [MAX_PRICE] * 6 + [MAX_THRESHOLD]
+    limits = [MAX_PRICE] * 6 + [MAX_UNIT_PRICE, MAX_UNIT_PRICE, MAX_PRICE, MAX_UNIT_PRICE] + [MAX_UNIT_PRICE] * 3 + [MAX_PRICE] * 3
     return all(value is None or 0 <= value <= limit for value, limit in zip(row, limits))
 
 
@@ -244,7 +203,7 @@ def build(data):
                 input_price if cached is None else convert(cached),
                 input_price if write is None else convert(write),
                 0 if output is None else convert(output),
-            ] + media + tool_prices(entry, gateway, container_usd) + audio_prices(entry) + long_context_prices(entry) + [max_output(entry)]
+            ] + media + tool_prices(entry, gateway, container_usd) + audio_prices(entry)
             # Free experimental entries say nothing about spend; without a
             # row the call stays unpriced exactly as before the catalog.
             if not within_limits(row) or not any(row):
@@ -256,7 +215,7 @@ def build(data):
             if video:
                 for resolution, price in video_tiers(entry).items():
                     tier_name = name + "@" + resolution
-                    tier_row = [0, 0, 0, 0, None, None, None, None, None, price, None, None, None, None, None, None] + [None] * 8
+                    tier_row = [0, 0, 0, 0, None, None, None, None, None, price, None, None, None, None, None, None]
                     if len(tier_name) <= MAX_MODEL_BYTES and within_limits(tier_row) and (
                             tier_name not in models or price_weight(tier_row) > price_weight(models[tier_name])):
                         models[tier_name] = tier_row
@@ -265,8 +224,7 @@ def build(data):
 
 
 def price_weight(row):
-    # The long-context threshold is a token count, not a price.
-    return sum(value for index, value in enumerate(row) if value is not None and index not in (16, 23))
+    return sum(value for value in row if value is not None)
 
 
 def render(meta, providers):
@@ -302,12 +260,9 @@ def main():
         "generated": args.generated,
         "currency": "USD",
         "unit": "USD millicents, rounded up: per million tokens or characters, per image, per audio minute, per second of video, "
-                "per web search, per file search, per GB container session, per million audio tokens; "
-                "long_context_threshold is a prompt size and max_output_tokens an answer size, in tokens",
+                "per web search, per file search, per GB container session, per million audio tokens",
         "fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters",
-                   "video_second", "web_search", "file_search", "code_session_gb", "input_audio", "cached_input_audio", "output_audio",
-                   "long_context_threshold", "input_long", "cached_input_long", "cache_write_long", "output_long",
-                   "cache_write_1h", "cache_write_1h_long", "max_output_tokens"],
+                   "video_second", "web_search", "file_search", "code_session_gb", "input_audio", "cached_input_audio", "output_audio"],
     }
     with open(args.output, "w", encoding="utf-8") as handle:
         handle.write(render(meta, build(data)))

@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"net"
 	"net/http"
@@ -406,5 +407,47 @@ func TestHostsLimitEachHostname(t *testing.T) {
 	clock.advance(time.Second)
 	if got := do("shop.gregale.dev").Code; got != http.StatusNoContent {
 		t.Fatalf("after a second = %d, want the refilled host served", got)
+	}
+}
+
+// The Host header is the client's to choose. A flood of distinct random
+// hostnames filled the table and drained the one overflow bucket every
+// untracked hostname shared, so the node answered 429 for every other
+// tenant's host. An untracked hostname now passes; tracked ones stay limited.
+func TestHostsRandomHostnamesDoNotRefuseOtherHosts(t *testing.T) {
+	clock := newFakeClock()
+	var refused refusals
+	h := Hosts(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }),
+		RequestLimits{PerSecond: 1, Burst: 2, TrackedAddrsMax: 3},
+		func(r *http.Request) (string, bool) { return r.Host, r.Host != "" }, refused.add, clock.Now)
+	do := func(host string) int {
+		req := httptest.NewRequest(http.MethodGet, "https://x/", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	// Fill the table with hot hosts whose buckets are empty, so no sweep
+	// can free a slot.
+	for i := range 3 {
+		host := fmt.Sprintf("random-%d.gregale.dev", i)
+		for range 2 {
+			if got := do(host); got != http.StatusNoContent {
+				t.Fatalf("%s = %d, want it served within its burst", host, got)
+			}
+		}
+	}
+	for i := range 10 {
+		if got := do(fmt.Sprintf("flood-%d.gregale.dev", i)); got != http.StatusNoContent {
+			t.Fatalf("untracked random host %d = %d, want it passed", i, got)
+		}
+	}
+	for i := range 5 {
+		if got := do("shop.gregale.dev"); got != http.StatusNoContent {
+			t.Fatalf("tenant host request %d = %d while the table is full, want it served", i, got)
+		}
+	}
+	if got := do("random-0.gregale.dev"); got != http.StatusTooManyRequests {
+		t.Fatalf("tracked hot host = %d, want it still limited", got)
 	}
 }

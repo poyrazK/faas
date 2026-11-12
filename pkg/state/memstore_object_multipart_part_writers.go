@@ -78,10 +78,7 @@ func (m *MemStore) dispatchMultipartPart(ctx context.Context, b ObjectBucket, id
 	}
 	d.dispatched = true
 	m.objectMultipartPartWriters[key] = d
-	if m.objectMutations == nil {
-		m.objectMutations = map[string]ObjectBucketMutation{}
-	}
-	m.objectMutations[d.receipt.ID] = d.receipt
+	m.putObjectMutationLocked(d.receipt)
 	return d.receipt, nil
 }
 
@@ -110,7 +107,7 @@ func (m *MemStore) FinishObjectMultipartPartMutation(ctx context.Context, r Obje
 		d.settled = true
 		m.objectMultipartPartWriters[key] = d
 		m.settleMultipartPartLocked(key.upload, key.part)
-		delete(m.objectMutations, r.ID)
+		m.dropObjectMutationLocked(r.ID)
 		return nil
 	}
 	return ErrConflict
@@ -143,4 +140,32 @@ func (m *MemStore) validMultipartPartPutSizeLocked(u ObjectMultipartUpload, part
 		return validFixedMultipartLayout(u) && part <= u.PartCount && size == min(u.PartSizeBytes, u.SizeBytes-int64(part-1)*u.PartSizeBytes)
 	}
 	return size <= m.objectMultipartPartGrants[u.ID][part]
+}
+
+func (m *MemStore) SettleAbandonedObjectMultipartPartWriters(ctx context.Context, id, token string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return 0, err
+	}
+	u := m.objectMultipartUploads[id]
+	if token == "" || u.LeaseToken != token || u.State != ObjectMultipartAborting {
+		return 0, ErrConflict
+	}
+	settled := 0
+	for key, d := range m.objectMultipartPartWriters {
+		if key.upload != id || !d.dispatched || d.settled {
+			continue
+		}
+		t := m.objectMultipartTransfers[id][key.part]
+		if t.token != key.token || t.unsafeUntil.IsZero() || t.unsafeUntil.After(m.clock()) {
+			continue
+		}
+		d.settled = true
+		m.objectMultipartPartWriters[key] = d
+		m.settleMultipartPartLocked(id, key.part)
+		m.dropObjectMutationLocked(d.receipt.ID)
+		settled++
+	}
+	return settled, nil
 }

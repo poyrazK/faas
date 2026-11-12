@@ -1189,8 +1189,12 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 			return o.failWorkflowStepBeforeStart(ctx, run, step, spec, failureContext, "workflow outbound attempt limit exhausted after recovery")
 		}
 	}
-	if (step.ForEachParent != nil || run.ResumeCount > 0) && step.Attempt-step.RetryBase >= workflowStepAttemptLimit(step, spec) {
-		return o.failWorkflowStepBeforeStart(ctx, run, step, spec, nil, "for_each item attempt limit exhausted after recovery")
+	if step.Attempt-step.RetryBase >= workflowStepAttemptLimit(step, spec) {
+		message := "workflow step attempt limit exhausted after recovery"
+		if step.ForEachParent != nil {
+			message = "for_each item attempt limit exhausted after recovery"
+		}
+		return o.failWorkflowStepBeforeStart(ctx, run, step, spec, nil, message)
 	}
 	start := time.Now()
 	persistedInput, err := o.store.StartWorkflowStep(ctx, run.ID, step.StepName, step.Attempt+1, inputBytes)
@@ -1283,14 +1287,15 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 	}
 
 	if err == nil && statusCode >= 200 && statusCode < 300 {
+		// Step outputs are persisted as JSON, including ordinary text handlers.
+		if len(body) > 0 && !json.Valid(body) {
+			body, _ = json.Marshal(string(body))
+		}
 		// Bound item outputs before persisting them as a collected for_each result.
 		if step.ForEachParent != nil {
 			if int64(len(body)) > api.WorkflowForEachMaxOutputBytes {
 				message := state.ErrWorkflowForEachOutputLimit.Error()
 				return true, o.store.MarkWorkflowStepAttemptStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusFailed, step.Attempt+1, workflowHTTPStatus(statusCode, nil), nil, &message)
-			}
-			if len(body) > 0 && !json.Valid(body) {
-				body, _ = json.Marshal(string(body))
 			}
 		}
 		if !workflowHasOutbound(workflowSpecs) {

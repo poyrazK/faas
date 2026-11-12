@@ -31,6 +31,15 @@ before migrations can alter them. Revocation refuses to drop a login that owns
 objects, disables login, terminates its sessions, and removes its grants before
 role deletion. Legacy API-created identities remain recoverably revocable.
 
+Amendment 2026-11-05: revocation on an explicit branch retires the identity's
+branch-scoped names and its older project-scoped names, including the preview
+API administrator aliases. A verified dataset-identity backfill must not leave
+the credentials issued before that backfill usable. All SQL and API retirement
+stays on the explicit branch; the project alias is used only to derive the
+historical names, never to select today's default branch. Existing ownership
+markers and object-ownership guards still apply, failures remain retryable, and
+other credential generations retain their distinct names.
+
 A restored branch disables inherited managed logins before becoming ready.
 New target bindings receive identities scoped to that branch. Qualification
 must verify runtime permissions, RLS enforcement, migration ownership, and

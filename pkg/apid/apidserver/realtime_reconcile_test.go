@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,7 +19,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// The reconciler registers endpoints in parallel (#6497), so the fake
+// serializes its writes.
 type reconcileRealtimeRegistrar struct {
+	mu         sync.Mutex
 	registered []realtime.Endpoint
 	removed    []string
 	fail       map[string]error
@@ -30,6 +34,8 @@ func (r *reconcileRealtimeRegistrar) ListEndpointInventory(context.Context) (rea
 }
 
 func (r *reconcileRealtimeRegistrar) RegisterEndpoint(_ context.Context, endpoint realtime.Endpoint) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if err := r.fail[endpoint.ID]; err != nil {
 		return err
 	}
@@ -38,6 +44,8 @@ func (r *reconcileRealtimeRegistrar) RegisterEndpoint(_ context.Context, endpoin
 }
 
 func (r *reconcileRealtimeRegistrar) RemoveEndpoint(_ context.Context, endpointID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.removed = append(r.removed, endpointID)
 	return nil
 }

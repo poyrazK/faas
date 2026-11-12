@@ -89,7 +89,7 @@ func validatePlatformTenantAccessTokenInput(in PlatformTenantAccessTokenInput) e
 			scope != api.ScopePlatformTenantInvocationsRead && scope != api.ScopePlatformTenantInvocationsManage &&
 			scope != api.ScopePlatformTenantOperationsRead && scope != api.ScopePlatformTenantOperationsManage &&
 			scope != api.ScopePlatformTenantEventsRead && scope != api.ScopePlatformTenantEventsManage &&
-			scope != api.ScopePlatformTenantAutomationsRead && scope != api.ScopePlatformTenantAutomationsManage) || seen[scope] {
+			scope != api.ScopePlatformTenantStoredWorkflowsRead && scope != api.ScopePlatformTenantStoredWorkflowsManage) || seen[scope] {
 			return ErrInvalidArgument
 		}
 		seen[scope] = true

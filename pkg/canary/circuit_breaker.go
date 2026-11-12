@@ -231,8 +231,31 @@ func LowTrafficAdvanceAllowed(d CircuitBreakerDecision, o CircuitBreakerObservat
 		return false
 	}
 	// A probe 5xx is negative evidence too; the probe path below decides once
-	// enough probes arrive.
-	return o.Candidate.ServerErrors == 0 && o.Candidate.ProbeServerErrors == 0 && quietSignalsClean(o)
+	// enough probes arrive. So is a candidate that answered none of the probes
+	// its predecessor answered: a deployment that cannot wake sends no
+	// attributed response at all (ADR-20261028110044 amendment 7).
+	return o.Candidate.ServerErrors == 0 && o.Candidate.ProbeServerErrors == 0 && !CandidateProbeSilent(o) && quietSignalsClean(o)
+}
+
+// CandidateProbeSilent reports whether the predecessor answered synthetic
+// probes in the stage while the candidate answered none. The prober sends
+// both sides the same probes in the same round, so the silence is the
+// candidate's: holding lets the stuck-rollout guard abort it rather than
+// promote a deployment that never served.
+func CandidateProbeSilent(o CircuitBreakerObservation) bool {
+	return o.Stable.ProbeRequests > 0 && o.Candidate.ProbeRequests == 0
+}
+
+// NoTrafficStage reports whether neither the candidate nor its predecessor
+// answered a single request, organic or probe, during the stage. Holding such
+// a stage for api.CanaryLowTrafficMaxHold gathers no evidence and protects no
+// request: an internal service is never probed through the public edge, so
+// every stage of its rollout used to wait the full bound (ChronoLake report:
+// a four-stage rollout outlasted the 20-minute deploy wait). The bounded
+// advance's other conditions still apply (LowTrafficAdvanceAllowed).
+func NoTrafficStage(o CircuitBreakerObservation) bool {
+	return o.Candidate.Requests == 0 && o.Candidate.ProbeRequests == 0 &&
+		o.Stable.Requests == 0 && o.Stable.ProbeRequests == 0
 }
 
 // ProbeEvidenceAdvanceAllowed reports whether synthetic probes cover a

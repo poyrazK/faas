@@ -37,6 +37,7 @@ func TestWorkerpoolMuxHelperProcess(t *testing.T) {
 	ackDelay, _ := strconv.Atoi(os.Getenv("HELPER_CANCEL_ACK_DELAY_MS"))
 	completionVersion, _ := strconv.Atoi(os.Getenv("HELPER_COMPLETION_VERSION"))
 	resourceVersion, _ := strconv.Atoi(os.Getenv("HELPER_RESOURCE_VERSION"))
+	hooksVersion, _ := strconv.Atoi(os.Getenv("HELPER_FUNCTION_HOOKS"))
 	var mu sync.Mutex
 	write := func(v any) {
 		body, _ := json.Marshal(v)
@@ -44,7 +45,7 @@ func TestWorkerpoolMuxHelperProcess(t *testing.T) {
 		_, _ = os.Stdout.Write(append(body, '\n'))
 		mu.Unlock()
 	}
-	write(map[string]any{"__faas_ready": true, "concurrency": slots, "completion_version": completionVersion, "resource_lifecycle_version": resourceVersion})
+	write(map[string]any{"__faas_ready": true, "concurrency": slots, "completion_version": completionVersion, "resource_lifecycle_version": resourceVersion, "function_hooks_version": hooksVersion})
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		line, err := reader.ReadBytes('\n')
@@ -56,6 +57,7 @@ func TestWorkerpoolMuxHelperProcess(t *testing.T) {
 			Cancel     *string `json:"__faas_cancel"`
 			Value      string  `json:"value"`
 			Completion bool    `json:"completion"`
+			Hook       string  `json:"function_hook"`
 		}
 		if err := json.Unmarshal(line, &req); err != nil {
 			os.Exit(2)
@@ -69,6 +71,14 @@ func TestWorkerpoolMuxHelperProcess(t *testing.T) {
 			} else {
 				write(map[string]string{"__faas_cancelled": *req.Cancel})
 			}
+			continue
+		}
+		if req.Hook != "" {
+			status := 204
+			if req.Hook == "fail" {
+				status = 500
+			}
+			write(map[string]any{"__faas_id": req.ID, "status": status, "pid": os.Getpid()})
 			continue
 		}
 		switch value := req.Value; {

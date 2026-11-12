@@ -226,6 +226,56 @@ func TestInspectSummaryNoLiveDeploymentIsActionableDespiteHistory(t *testing.T) 
 	}
 }
 
+// While an app's first deployment is still in flight, inspect recommended
+// redeploying, which only queues a duplicate (CLI journey 2026-11-05, #6626).
+func TestInspectNoLiveDeploymentDependsOnLatestAttempt(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		deployment *api.DeploymentResponse
+		live       bool
+		want       string
+		notWant    string
+	}{
+		{name: "queued", deployment: &api.DeploymentResponse{ID: inspectDepID, AppID: inspectAppID, Status: "pending"}, want: "deployment_in_progress", notWant: "no_live_deployment"},
+		{name: "building", deployment: &api.DeploymentResponse{ID: inspectDepID, AppID: inspectAppID, Status: "building"}, want: "deployment_in_progress", notWant: "no_live_deployment"},
+		{name: "imaging", deployment: &api.DeploymentResponse{ID: inspectDepID, AppID: inspectAppID, Status: "imaging"}, want: "deployment_in_progress", notWant: "no_live_deployment"},
+		{name: "no attempt", want: "no_live_deployment", notWant: "deployment_in_progress"},
+		{name: "terminal failure", deployment: &api.DeploymentResponse{ID: inspectDepID, AppID: inspectAppID, Status: "failed"}, want: "no_live_deployment", notWant: "deployment_in_progress"},
+		{name: "new build beside a live revision", deployment: &api.DeploymentResponse{ID: inspectDepID, AppID: inspectAppID, Status: "building"}, live: true, notWant: "no_live_deployment"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app, _ := inspectSummaryFixtures(t)
+			if !tc.live {
+				app.DeploymentAvailability = api.AppDeploymentAvailabilityMissing
+			}
+			summary := main.BuildInspectSummary(app, main.InspectSummaryInputs{Deployment: tc.deployment})
+			codes := map[string]main.InspectRecommendation{}
+			for _, r := range summary.Recommendations {
+				codes[r.Code] = r
+			}
+			if _, ok := codes[tc.notWant]; ok {
+				t.Fatalf("recommendations include %s: %+v", tc.notWant, summary.Recommendations)
+			}
+			if tc.want == "" {
+				if _, ok := codes["deployment_in_progress"]; ok {
+					t.Fatalf("a live app read as a first deployment in progress: %+v", summary.Recommendations)
+				}
+				return
+			}
+			got, ok := codes[tc.want]
+			if !ok {
+				t.Fatalf("recommendations omit %s: %+v", tc.want, summary.Recommendations)
+			}
+			if tc.want == "deployment_in_progress" {
+				if got.Severity != "info" || !strings.Contains(got.Next, "release wait "+inspectDepID) ||
+					!strings.Contains(got.Next, "--deployment "+inspectDepID+" --follow") || strings.Contains(got.Next, "Redeploy") {
+					t.Fatalf("in-progress recommendation = %+v", got)
+				}
+			}
+		})
+	}
+}
+
 func TestInspectRecommendations_DistinguishSmokeVerifierFromHealthEndpoint(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

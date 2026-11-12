@@ -105,7 +105,7 @@ func (m *MemStore) ListServiceRecoveryApps(_ context.Context, owner string, now 
 	defer m.mu.Unlock()
 	var ids []string
 	for id, app := range m.apps {
-		if app.Status != AppActive || app.Manifest.ExecutionMode != api.ExecutionModeService || (owner != "" && app.NodeID != "" && app.NodeID != owner) {
+		if app.Status != AppActive || !m.hasServiceDeploymentLocked(app) || (owner != "" && app.NodeID != "" && app.NodeID != owner) {
 			continue
 		}
 		account, ok := m.accounts[app.AccountID]
@@ -144,7 +144,7 @@ func (m *MemStore) ClaimServiceRecovery(_ context.Context, id, revision, token s
 	if !ok {
 		return ServiceRecovery{}, false, nil
 	}
-	if app.Status != AppActive || app.Manifest.ExecutionMode != api.ExecutionModeService {
+	if app.Status != AppActive || !m.hasServiceDeploymentLocked(app) {
 		return ServiceRecovery{}, false, nil
 	}
 	account, ok := m.accounts[app.AccountID]

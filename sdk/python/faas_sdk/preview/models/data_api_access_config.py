@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
@@ -18,8 +19,9 @@ T = TypeVar("T", bound="DataAPIAccessConfig")
 
 @_attrs_define
 class DataAPIAccessConfig:
-    """Access settings the runtime reports for live reads without a user token, sent after start and hourly. It replaces
-    the stored settings; turning usage reporting off forgets them. Holds key hashes, never keys.
+    """Access settings the runtime reports for live reads, sent after start and hourly. It replaces the stored settings
+    unless the stored ones come from a runtime process that started later; turning usage reporting off forgets them.
+    Holds key hashes, never keys.
 
     """
 
@@ -30,6 +32,11 @@ class DataAPIAccessConfig:
     with the same settings."""
     public_read: list[str] | Unset = UNSET
     server_keys: list[DataAPIServerKey] | Unset = UNSET
+    allow_without_rls: list[str] | Unset = UNSET
+    """Relations signed-in users may read without row-level security; live reads apply the same exemptions."""
+    started_at: datetime.datetime | Unset = UNSET
+    """When the reporting runtime process started. A report never replaces settings from a process that started
+    later."""
 
     def to_dict(self) -> dict[str, Any]:
         version: int = self.version
@@ -51,6 +58,14 @@ class DataAPIAccessConfig:
                 server_keys_item = server_keys_item_data.to_dict()
                 server_keys.append(server_keys_item)
 
+        allow_without_rls: list[str] | Unset = UNSET
+        if not isinstance(self.allow_without_rls, Unset):
+            allow_without_rls = self.allow_without_rls
+
+        started_at: str | Unset = UNSET
+        if not isinstance(self.started_at, Unset):
+            started_at = self.started_at.isoformat()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -65,6 +80,10 @@ class DataAPIAccessConfig:
             field_dict["public_read"] = public_read
         if server_keys is not UNSET:
             field_dict["server_keys"] = server_keys
+        if allow_without_rls is not UNSET:
+            field_dict["allow_without_rls"] = allow_without_rls
+        if started_at is not UNSET:
+            field_dict["started_at"] = started_at
 
         return field_dict
 
@@ -96,12 +115,23 @@ class DataAPIAccessConfig:
 
                 server_keys.append(server_keys_item)
 
+        allow_without_rls = cast(list[str], d.pop("allow_without_rls", UNSET))
+
+        _started_at = d.pop("started_at", UNSET)
+        started_at: datetime.datetime | Unset
+        if isinstance(_started_at, Unset):
+            started_at = UNSET
+        else:
+            started_at = datetime.datetime.fromisoformat(_started_at)
+
         data_api_access_config = cls(
             version=version,
             schemas=schemas,
             auth=auth,
             public_read=public_read,
             server_keys=server_keys,
+            allow_without_rls=allow_without_rls,
+            started_at=started_at,
         )
 
         return data_api_access_config

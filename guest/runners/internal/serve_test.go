@@ -54,7 +54,6 @@ func serveTestServer(t *testing.T, spec workerpool.Spec) *httptest.Server {
 // adr: 999
 func TestServeStreamsChunksAsTheyArrive(t *testing.T) {
 	srv := serveTestServer(t, serveHelperSpec(t, true))
-	started := time.Now()
 	resp, err := http.Get(srv.URL + "/stream")
 	if err != nil {
 		t.Fatal(err)
@@ -72,13 +71,15 @@ func TestServeStreamsChunksAsTheyArrive(t *testing.T) {
 		t.Fatalf("first chunk = %q, %v", first, err)
 	}
 	// The helper waits 800 ms before its second chunk; the first must not
-	// wait for it.
-	if elapsed := time.Since(started); elapsed > 600*time.Millisecond {
-		t.Fatalf("first chunk arrived after %v; the runner buffered the stream", elapsed)
-	}
+	// wait for it. Timed from the first chunk, not the request, so starting
+	// the worker process on a loaded runner does not count.
+	firstAt := time.Now()
 	rest, err := io.ReadAll(reader)
 	if err != nil || string(rest) != "data: two\n" {
 		t.Fatalf("rest = %q, %v", rest, err)
+	}
+	if gap := time.Since(firstAt); gap < 400*time.Millisecond {
+		t.Fatalf("second chunk arrived %v after the first; the runner buffered the stream", gap)
 	}
 	// A cleanly ended stream returns its worker for reuse.
 	if count := serveCount(t, srv); count != 2 {

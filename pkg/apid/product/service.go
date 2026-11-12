@@ -52,6 +52,8 @@ type Service struct {
 	DocumentInvoice func(context.Context, string, string) (*api.StatementInvoiceExportResponse, error)
 	// Now pins the overdue recomputation clock in tests.
 	Now func() time.Time
+	// signIns limits failed portal sign-ins per product and email.
+	signIns customerSignInLimiter
 	// BillingDetails and PutBillingDetails reach a customer's billing details
 	// in the owner's Paddle by provider customer ID (ADR-20261020120000);
 	// the put also returns the parts it changed.

@@ -4,7 +4,7 @@ import http from 'node:http'
 import { createHash } from 'node:crypto'
 import { createServer } from '../server.mjs'
 import { runtimeConfig, publicReadConfig, publicRpcConfig, serverKeyConfig, serverKeyPermissions, publicReadMaxAge, limits } from '../config.mjs'
-import { selectEmbeddings, clientKey, anonymousClient, matchServerKey, serverKeyAllows, serverSubject, unsafePublicRelations, unsafePublicFunctions, publicReadTarget, publicRpcTarget, publicReadCache, rowSecured, rowSecurityDenial } from '../access.mjs'
+import { selectEmbeddings, clientKey, anonymousClient, matchServerKey, serverKeyAllows, serverSubject, unsafePublicRelations, unsafePublicFunctions, publicReadTarget, publicRpcTarget, publicReadCache, rowSecured, rowSecurityDenial, createAccessSafety } from '../access.mjs'
 
 const keyA = 'gdsk_' + 'A'.repeat(43)
 const keyB = 'gdsk_' + 'b'.repeat(42) + '-'
@@ -416,6 +416,44 @@ test('only listed functions called by GET or HEAD can be anonymous, with publicl
   const rpcOnly = runtimeConfig({ ...baseEnv, DATA_API_PUBLIC_RPC: 'api.search_products' })
   assert.equal(publicRpcTarget({ url: '/rest/v1/rpc/search_products?select=*,products(id)', method: 'GET', headers: {} }, rpcOnly, { schema: 'api', name: 'search_products' }).code, 'public_read_not_allowed')
   assert.equal(publicReadTarget({ url: '/rest/v1/products', method: 'GET', headers: {} }, rpcOnly).code, 'token_required', 'public RPCs do not open relations')
+})
+
+test('a public relation or function made unsafe after boot is closed to anonymous callers', () => {
+  const config = runtimeConfig({ ...baseEnv, DATA_API_PUBLIC_READ: 'api.products,api.categories', DATA_API_PUBLIC_RPC: 'api.search_products' })
+  config.unsafePublicRead = new Set(['api.categories'])
+  config.unsafePublicRpc = new Set(['api.search_products'])
+  const read = url => publicReadTarget({ url, method: 'GET', headers: {} }, config)
+  assert.deepEqual(read('/rest/v1/products'), { schema: 'api', relation: 'products', embedded: [] })
+  assert.equal(read('/rest/v1/categories').code, 'data_api_public_read_unsafe')
+  assert.equal(read('/rest/v1/products?select=*,categories(name)').code, 'data_api_public_read_unsafe', 'embeddings too')
+  assert.equal(publicRpcTarget({ url: '/rest/v1/rpc/search_products', method: 'GET', headers: {} }, config, { schema: 'api', name: 'search_products' }).code, 'data_api_public_rpc_unsafe')
+})
+
+test('the access gate is reread while serving and after a restore (ADR 20261026140223 amendment 1)', async () => {
+  const config = runtimeConfig({ ...baseEnv, DATA_API_PUBLIC_READ: 'api.products' })
+  config.rowSecurity = new Map([['api.notes', true]])
+  let mono = 0, reads = 0, answer = { rowSecurity: new Map([['api.notes', false]]), unsafePublicRead: new Set(['api.products']), unsafePublicRpc: new Set() }
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  const read = async () => { reads++; await gate; if (answer instanceof Error) throw answer; return answer }
+  const safety = createAccessSafety(config, { read, monotonic: () => mono })
+  safety.maybeRefresh()
+  assert.equal(reads, 0, 'not before the interval')
+  mono += limits.accessRecheckMs
+  safety.maybeRefresh()
+  safety.maybeRefresh()
+  assert.equal(reads, 1, 'one reread at a time')
+  assert.equal(await safety.ready(1000), true, 'a periodic reread never holds a request')
+  release()
+  await safety.refresh()
+  assert.equal(config.rowSecurity.get('api.notes'), false, 'RLS disabled by a migration closes the relation')
+  assert.equal(rowSecurityDenial({ url: '/rest/v1/notes', method: 'GET', headers: {} }, config, null).code, 'rls_required')
+  assert.ok(config.unsafePublicRead.has('api.products'))
+  answer = new Error('database unreachable')
+  safety.restored()
+  assert.equal(await safety.ready(1000), true)
+  assert.equal(reads, 2, 'a restore rereads at once')
+  assert.equal(config.rowSecurity.get('api.notes'), false, 'a failed reread keeps the last state')
 })
 
 test('public RPCs must be approved STABLE or IMMUTABLE security-invoker functions', () => {

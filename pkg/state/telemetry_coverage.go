@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,12 +24,29 @@ type TelemetryCoverage struct {
 	AppScoped                bool
 	UnattributedDroppedTotal int64
 	AppGaps                  []TelemetryAppGap
+	// Analytics is set by a gateway that counts its own requests into
+	// analytics rollups (ADR-20261103113952 amendments 5 and 6); nil from
+	// any other.
+	Analytics *AnalyticsCoverage
+}
+
+// AnalyticsCoverage is a heartbeat's analytics part: whether the gateway
+// counts every request it records, and the cumulative analytics losses it
+// could not attribute to an app.
+type AnalyticsCoverage struct {
+	Counting                 bool
+	UnattributedDroppedTotal int64
 }
 
 type TelemetryAppGap struct {
 	AppID        string `json:"app_id"`
 	DroppedCount int64  `json:"dropped_count"`
 	PendingCount int32  `json:"pending_count"`
+	// AnalyticsDroppedCount is the requests lost to analytics since the last
+	// acknowledged heartbeat; AnalyticsPendingCount the requests in rollups
+	// past their send time and not yet acknowledged.
+	AnalyticsDroppedCount int64 `json:"analytics_dropped_count,omitempty"`
+	AnalyticsPendingCount int32 `json:"analytics_pending_count,omitempty"`
 }
 
 type TelemetryCoverageStore interface {
@@ -43,11 +61,15 @@ func ValidateTelemetryCoverage(c TelemetryCoverage) error {
 	if !c.AppScoped && len(c.AppGaps) > 0 {
 		return ErrInvalidArgument
 	}
+	if c.Analytics != nil && (c.Analytics.UnattributedDroppedTotal < 0 || !c.AppScoped) {
+		return ErrInvalidArgument
+	}
 	seen := map[string]bool{}
 	var pending int64
 	for _, gap := range c.AppGaps {
 		app, err := uuid.Parse(gap.AppID)
-		if err != nil || app == uuid.Nil || app.String() != gap.AppID || seen[gap.AppID] || gap.DroppedCount < 0 || gap.PendingCount < 0 {
+		if err != nil || app == uuid.Nil || app.String() != gap.AppID || seen[gap.AppID] || gap.DroppedCount < 0 || gap.PendingCount < 0 ||
+			gap.AnalyticsDroppedCount < 0 || gap.AnalyticsPendingCount < 0 {
 			return ErrInvalidArgument
 		}
 		seen[gap.AppID] = true
@@ -72,10 +94,56 @@ func (s *PgStore) RecordTelemetryCoverage(ctx context.Context, c TelemetryCovera
 	if err != nil {
 		return err
 	}
-	return sqlc.New().RecordTelemetryCoverage(ctx, s.pool, sqlc.RecordTelemetryCoverageParams{
+	raw := sqlc.RecordTelemetryCoverageParams{
 		NodeName: c.NodeName, BootID: NewPgtypeUUID(boot), Sequence: c.Sequence, Enabled: c.Enabled,
 		SamplingBasisPoints: c.SamplingBasisPoints, DroppedTotal: c.DroppedTotal, PendingCount: c.PendingCount,
 		SourceAt:  pgtype.Timestamptz{Time: c.SourceAt, Valid: true},
 		AppScoped: c.AppScoped, UnattributedDroppedTotal: c.UnattributedDroppedTotal, AppGaps: body,
+	}
+	if c.Analytics == nil {
+		return sqlc.New().RecordTelemetryCoverage(ctx, s.pool, raw)
+	}
+	// The analytics part commits with the raw heartbeat or not at all: the
+	// gateway forgets the loss deltas a receipt acknowledges.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin telemetry coverage: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	if err := q.RecordTelemetryCoverage(ctx, tx, raw); err != nil {
+		return err
+	}
+	if err := q.RecordRequestAnalyticsCoverage(ctx, tx, sqlc.RecordRequestAnalyticsCoverageParams{
+		NodeName: c.NodeName, BootID: NewPgtypeUUID(boot), Counting: c.Analytics.Counting,
+		UnattributedDroppedTotal: c.Analytics.UnattributedDroppedTotal, AppGaps: body,
+	}); err != nil {
+		return fmt.Errorf("record analytics coverage: %w", mapErr(err))
+	}
+	return tx.Commit(ctx)
+}
+
+// RequestAnalyticsCompleteness lists why analytics answered by rollups may
+// miss requests of an app in [from, until): RequestTelemetryCompleteness's
+// reasons, except that a node counting analytics itself over the window is
+// judged by its analytics gaps instead of raw delivery (ADR-20261103113952
+// amendment 6).
+func (s *PgStore) RequestAnalyticsCompleteness(ctx context.Context, appID string, from, until time.Time) ([]string, error) {
+	id, err := uuid.Parse(appID)
+	if err != nil {
+		return nil, fmt.Errorf("request analytics completeness: app id: %w", err)
+	}
+	body, err := sqlc.New().RequestAnalyticsCompletenessBlockers(ctx, s.pool, sqlc.RequestAnalyticsCompletenessBlockersParams{
+		AppID:       NewPgtypeUUID(id),
+		WindowFrom:  pgtype.Timestamptz{Time: from, Valid: true},
+		WindowUntil: pgtype.Timestamptz{Time: until, Valid: true},
 	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	gaps := []string{}
+	if err := json.Unmarshal(body, &gaps); err != nil {
+		return nil, fmt.Errorf("request analytics completeness: decode: %w", err)
+	}
+	return gaps, nil
 }

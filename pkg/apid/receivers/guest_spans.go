@@ -58,6 +58,9 @@ type GuestSpansIngester struct {
 	// logs, when set by WithLogs, ingests guest OTLP log exports (ADR-213
 	// runtime adapter); nil reports log exports unavailable.
 	logs *guestLogsIngester
+	// metrics, when set by WithMetrics, ingests guest OTLP metric exports
+	// (ADR-20261108160000 slice B); nil reports them unavailable.
+	metrics *guestMetricsIngester
 	// binding, when set by WithPeerNodes, accepts a mutual-TLS caller's
 	// frames only for instances on its node.
 	binding *guestBinding

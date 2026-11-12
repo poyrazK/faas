@@ -95,7 +95,7 @@ func RenderGo(contract dataapi.Contract, pkg string) ([]byte, error) {
 	}
 	g := &goRenderer{m: buildModel(contract)}
 	g.printf("%s\npackage %s\n\n", header("//", g.m.Fingerprint), pkg)
-	g.printf("import (\n\t\"bytes\"\n\t\"context\"\n\t\"encoding/json\"\n\t\"fmt\"\n\t\"io\"\n\t\"net/http\"\n\t\"net/url\"\n\t\"strconv\"\n\t\"strings\"\n)\n\n")
+	g.printf("import (\n\t\"bytes\"\n\t\"context\"\n\t\"encoding/json\"\n\t\"fmt\"\n\t\"io\"\n\t\"net/http\"\n\t\"net/url\"\n\t\"strconv\"\n\t\"strings\"\n\t\"time\"\n)\n\n")
 	g.printf("// SchemaFingerprint identifies the database contract this file was generated from.\nconst SchemaFingerprint = %q\n\n", g.m.Fingerprint)
 	for _, e := range g.m.Enums {
 		g.printf("// %s is the PostgreSQL enum %s.\ntype %s string\n\nconst (\n", e.Name, e.Key, e.Name)
@@ -738,7 +738,7 @@ func (c *Client) do(ctx context.Context, method, schema, path string, params url
 	}
 	httpClient := c.HTTPClient
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {

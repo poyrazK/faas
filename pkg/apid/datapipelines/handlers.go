@@ -27,6 +27,8 @@ func problem(w http.ResponseWriter, err error) {
 		status, code, detail = 400, "data_pipeline_invalid", "Check the request fields and supported pipeline configuration."
 	case errors.Is(err, datapipeline.ErrNotFound):
 		status, code, detail = 404, "data_pipeline_not_found", "The data resource was not found."
+	case errors.Is(err, datapipeline.ErrCheckBusy):
+		status, code, detail = 409, "data_connection_check_busy", "Another check or setup is using this connection. Wait for it to finish, then retry the check."
 	case errors.Is(err, datapipeline.ErrConflict):
 		status, code, detail = 409, "data_pipeline_conflict", "The resource changed, is already configured differently, or is still in use. Refresh its state before retrying."
 	case errors.Is(err, datapipeline.ErrCheckRequired):

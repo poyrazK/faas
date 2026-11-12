@@ -126,11 +126,22 @@ class StateCoverageWorkflowTest(unittest.TestCase):
         self.assertIn("STATEPKG=$(go list ./pkg/state)", api_job)
         self.assertIn('"$PKGS" "$STATEPKG"', api_job)
         self.assertIn('-coverpkg="$COVERPKGS"', api_job)
+        self.assertIn("part: [1, 2, 3, 4]", api_job)
+        self.assertIn("fail-fast: false", api_job)
+        self.assertIn('-list . "$APIDPKG"', api_job)
+        self.assertIn("-all-tests -shards=4 -check -list-file=coverage/api-inventory-${{ matrix.part }}.txt", api_job)
+        self.assertIn('-run="$API_RUN"', api_job)
         self.assertIn("normalize_go_cover_profile.py coverage/cover-shard1.out", api_job)
+        self.assertIn("normalize_go_cover_profile.py coverage/cover-shard1-api-${{ matrix.part }}.out", api_job)
         self.assertIn("name: coverage-state-api", api_job)
         upload = api_job.split("- name: upload public API state-adapter coverage", 1)[1].split("- name: sdk-check", 1)[0]
         self.assertIn("if-no-files-found: error", upload)
         self.assertNotRegex(upload, r"(?m)^\s+if:")
+        api_gate = jobs["unit-tests-pg-1-gate"]
+        self.assertIn("name: unit tests (pg shard 1 — apid/meter/migrations)", api_gate)
+        self.assertIn("if: always()", api_gate)
+        self.assertIn("needs: [unit-tests-pg-1]", api_gate)
+        self.assertIn('if [[ "$API_RESULT" != success ]]', api_gate)
         aggregate = jobs["state-coverage"]
         self.assertIn("needs: [unit-tests-state, unit-tests-pg-2, unit-tests-pg-1, unit-tests-pg-1-pgclone]", aggregate)
         clone_job = jobs["unit-tests-pg-1-pgclone"]
@@ -143,9 +154,10 @@ class StateCoverageWorkflowTest(unittest.TestCase):
         self.assertEqual(set(profiles), {
             *(f"coverage/cover-shard-state-{shard}.out" for shard in range(1, 9)),
             "coverage/cover-shard2a.out", "coverage/cover-shard1.out",
+            *(f"coverage/cover-shard1-api-{part}.out" for part in range(1, 5)),
             *(f"coverage/cover-shard1-pgclone-{part}.out" for part in range(1, 5)),
         })
-        self.assertEqual(len(profiles), 14)
+        self.assertEqual(len(profiles), 18)
 
 
 if __name__ == "__main__":

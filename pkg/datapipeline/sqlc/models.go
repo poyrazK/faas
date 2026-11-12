@@ -158,6 +158,18 @@ type ManagedPostgresBinding struct {
 	State      string
 }
 
+type NotificationOutbox struct {
+	ID          int64
+	Channel     string
+	Payload     string
+	AvailableAt pgtype.Timestamptz
+	State       string
+	Attempts    int32
+	LastError   pgtype.Text
+	CreatedAt   pgtype.Timestamptz
+	DeliveredAt pgtype.Timestamptz
+}
+
 type Snapshot struct {
 	ID           pgtype.UUID
 	DeploymentID pgtype.UUID

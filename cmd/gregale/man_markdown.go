@@ -30,7 +30,7 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Earlier names: commands keep working under the names they had before the command tree (`gregale crons list` is `gregale cron list`); `gregale help --all --operator` lists them, and [The CLI command tree](cli-command-tree.md) maps each one.")
 	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintln(w, "Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.")
+	_, _ = fmt.Fprintln(w, "Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. With an agent key, put `--wait-for-approval` before the command to wait for a person to decide a request that needs approval, then retry it once, and `--agent-reason TEXT` (or `GREGALE_AGENT_REASON`) to tell that person what the request is for. Company projects: `gregale --org <slug> <command>` sends project commands to that organization's projects; command-local `--org` options keep their meaning. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "| Command | What it does |")
 	_, _ = fmt.Fprintln(w, "|---|---|")
@@ -114,7 +114,7 @@ func mdSubSynopsis(command cliCommand, names, positionals []string, flags []cliF
 	}
 	parts := []string{path}
 	if found && len(terminal.Subcommands) > 0 && !terminal.SubcommandsAfterPositionals {
-		parts = append(parts, "<"+terminal.subcommandChoice()+">")
+		parts = append(parts, terminal.subcommandSynopsis())
 	}
 	appendPositionals := !found || !terminal.SubcommandsAfterPositionals
 	if appendPositionals && found && terminal.FlagsAfterPositionals {

@@ -43,7 +43,7 @@ func (m *Manager) PromoteAdmitted(ctx context.Context, p runtimeadmission.Promot
 		return nil, runtimeadmission.Receipt{}, err
 	}
 	defer m.finishRuntimeAdmissionFlight(p.Binding.InstanceID, flight)
-	r, err := m.resumeAdmittedRuntime(flightCtx, inst.Lease, p)
+	r, err := m.resumeAdmittedRuntime(withResumeIdentity(flightCtx, inst.resumeIdentity), inst.Lease, p)
 	if err == nil {
 		m.mu.Lock()
 		if m.live[p.Binding.InstanceID] != inst || !inst.Paused || !inst.runtimeAdmissionReceipt.Equal(p.Parent) {

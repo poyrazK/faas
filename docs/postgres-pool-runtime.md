@@ -23,6 +23,31 @@ remain prompt even when an application callback ignores cancellation; cleanup
 must wait until that callback returns. Direct Node reloads await their callbacks,
 and direct synchronous Python reloads run on the caller's thread.
 
+## Pool size
+
+Where Gregale has released it to your account, a deployment carries
+`GREGALE_POSTGRES_POOL_MAX`: how many database connections one instance can
+use, which is its per-instance concurrency (`scaling_policy.per_instance_concurrency`,
+else the plan's `concurrency_per_vm`) capped at 10 (ADR-20261104141122). The
+whole app then opens at most `(max_concurrency + 1) × GREGALE_POSTGRES_POOL_MAX`
+connections, the extra instance being the one a rollout may run beside the
+serving release. The value is set when the deployment is built, so a changed
+plan or scaling policy applies from the next deploy; your own environment
+variable of the same name wins.
+
+The binding hands it to your factory as the pool configuration's `max`
+(Node, the `pg.Pool` option, so `new pg.Pool({...config})` uses it),
+`MaxConnections` (Go, for `db.SetMaxOpenConns`) or `max_size` (Python). It is
+unset when the variable is absent or outside 1–1000, and a size you set in
+the factory always wins.
+
+`gregale app binding verify <app> --postgres <KEY>` reports that total on a
+`Connections` line once the canary passes. Where the database has a qualified
+connection allocation, the line says whether the total fits in it; a total
+above it is a warning (lower `GREGALE_POSTGRES_POOL_MAX` or the app's
+`max_concurrency`), and it never fails the verification. The allocation is
+shared with the database's other consumers.
+
 ## Node
 
 Import the server-only `@gregale/sdk-node/postgres/runtime` entrypoint. It adds no
@@ -244,7 +269,12 @@ lifecycle:
 - **after_restore** (also called on frozen thaw) cancels captured work,
   invalidates, rereads the latest secret snapshot even at the same revision
   (`coordinator.reload(...)`), waits for retirement, and only then reopens
-  admission.
+  admission. Keep it off the network: build the new pool lazily and let the
+  first query connect and report `database_unavailable` itself. A scale-to-zero
+  database can take seconds to answer, and a hook that waits for it misses the
+  restore deadline and turns every wake into a cold boot (ADR-20261109180000).
+  An app with a managed Postgres or object storage binding may raise
+  `after_restore.timeout_ms` to 4000; other apps are capped at 2000.
 
 Declaring `before_checkpoint` disables warm captures for the app (ADR-351). If
 you omit it, `after_restore` still replaces captured pools, but a capture can

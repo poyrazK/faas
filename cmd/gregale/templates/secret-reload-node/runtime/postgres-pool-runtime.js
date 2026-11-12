@@ -3,6 +3,16 @@ import { ClientBinding } from './binding-client-runtime.js';
 export class PostgresPoolBindingError extends Error {
     constructor(message) { super(message); this.name = 'PostgresPoolBindingError'; }
 }
+/** Carries the pool size Gregale derives from the instance's concurrency. */
+export const POSTGRES_POOL_MAX_ENV = 'GREGALE_POSTGRES_POOL_MAX';
+/** Reads POSTGRES_POOL_MAX_ENV, ignoring a value outside 1–1000. */
+export function postgresPoolMax(value = globalThis.process?.env?.[POSTGRES_POOL_MAX_ENV]) {
+    const text = value?.trim() ?? '';
+    if (!/^[0-9]{1,4}$/.test(text))
+        return undefined;
+    const n = Number(text);
+    return n >= 1 && n <= 1000 ? n : undefined;
+}
 function configuration(key, values) {
     const value = values[key];
     const invalid = () => new PostgresPoolBindingError('Postgres binding connection URI is incomplete or invalid');
@@ -23,7 +33,8 @@ function configuration(key, values) {
     catch {
         throw invalid();
     }
-    const config = { connectionString: value };
+    const max = postgresPoolMax();
+    const config = max === undefined ? { connectionString: value } : { connectionString: value, max };
     Object.defineProperty(config, 'toJSON', { value: () => '[PostgresPoolConfig redacted]' });
     Object.defineProperty(config, Symbol.for('nodejs.util.inspect.custom'), { value: () => '[PostgresPoolConfig redacted]' });
     return Object.freeze(config);

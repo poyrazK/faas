@@ -213,11 +213,13 @@ func (s *PgStore) ApproveRouteRemoval(ctx context.Context, accountID, appID, act
 	}
 	// Count every production deployment and every identity before any output
 	// caps. A disappeared customer or route cannot be hidden by pagination.
+	// The removed route counts under every label the gateway can give it: its
+	// template, the inferred {id} form, its raw path, and HEAD for a GET
+	// (ADR-20261028110044 amendment 6). Operations the candidate keeps are not
+	// the removed route.
 	body, _ := json.Marshal(mappings)
 	var active bool
-	err = tx.QueryRow(ctx, `select exists(select 1 from request_telemetry rt join deployments d on d.id=rt.deployment_id
- join jsonb_to_recordset($3::jsonb) as m(method text,path text) on rt.method=m.method and rt.route IN (m.path,m.method||' '||m.path)
- where rt.app_id=$1 and rt.account_id=$2 and coalesce(nullif(d.scope,''),'default') IN ('default','prod','production') and rt.received_at>=$4 and rt.count>0)`, appID, accountID, body, from).Scan(&active)
+	err = tx.QueryRow(ctx, `select route_removal_route_observed($1,$2,$3::jsonb,$4::jsonb,$5)`, appID, accountID, body, c.Document, from).Scan(&active)
 	if err != nil {
 		return a, err
 	}

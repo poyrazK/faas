@@ -47,3 +47,31 @@ func TestFrozenChargeMB(t *testing.T) {
 		}
 	}
 }
+
+// adr: 20261027090015 — agent run VMs book from their version's peak and are
+// charged at least that peak, never more than the plan reservation.
+func TestAgentReservationAndCharge(t *testing.T) {
+	nan := math.NaN()
+	for _, tc := range []struct {
+		name             string
+		ram, peak        int
+		rss              float64
+		reserve, charged int
+	}{
+		{name: "no history books and charges the plan", ram: 2048, peak: 0, rss: 300, reserve: 2048, charged: 2056},
+		{name: "the peak with headroom", ram: 2048, peak: 300, rss: nan, reserve: 450, charged: 308},
+		{name: "a larger sample raises the charge", ram: 2048, peak: 300, rss: 900.2, reserve: 450, charged: 909},
+		{name: "a smaller sample keeps the peak", ram: 2048, peak: 300, rss: 120, reserve: 450, charged: 308},
+		{name: "the floors", ram: 2048, peak: 10, rss: 5, reserve: 128, charged: 72},
+		{name: "capped at the plan", ram: 1024, peak: 900, rss: 5000, reserve: 1024, charged: 1032},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AgentReservationMB(tc.ram, tc.peak); got != tc.reserve {
+				t.Errorf("reservation %d, want %d", got, tc.reserve)
+			}
+			if got := AgentChargeMB(tc.ram, tc.peak, tc.rss); got != tc.charged {
+				t.Errorf("charge %d, want %d", got, tc.charged)
+			}
+		})
+	}
+}

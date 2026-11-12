@@ -118,6 +118,8 @@ func (r *BindingReconciler) Sweep(ctx context.Context) (BindingReconcileSummary,
 		} else if binding.RotationCleanupReady {
 			operation = BindingStateRetiring
 			result, err = r.service.ReconcileRotationCleanup(ctx, binding.AccountID, binding.ID)
+		} else if bindingRotationNeedsRefresh(binding) {
+			result, err = r.service.reconcileRotationRefresh(ctx, binding)
 		} else {
 			result, err = r.service.Reconcile(ctx, binding.AccountID, binding.ID)
 		}

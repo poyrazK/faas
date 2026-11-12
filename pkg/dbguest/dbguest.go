@@ -74,7 +74,9 @@ const (
 	UpgradeFromArgKey = "gregale.upgrade_from"
 
 	// MinMajor and MaxMajor bound the supported PostgreSQL majors.
-	MinMajor = 14
+	// PostgreSQL 14 reached upstream end of life in November 2026 and is
+	// not supported (owner, 2026-11-12).
+	MinMajor = 15
 	MaxMajor = 18
 
 	// MaxRequestBytes bounds one control request line.

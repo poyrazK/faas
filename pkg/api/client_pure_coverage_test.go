@@ -97,7 +97,7 @@ func TestClient_SetCompletionCache_ReturnsReceiver(t *testing.T) {
 
 func TestClient_Do_CookieOnlyPathReturns403(t *testing.T) {
 	c := NewClient("https://api.example.com", "tok")
-	err := c.do(context.Background(), "GET", "/v1/auth/sessions", nil, nil)
+	err := c.do(context.Background(), "GET", "/v1/auth/capabilities", nil, nil)
 	if err == nil {
 		t.Fatal("cookie-only path: err = nil, want 403")
 	}
@@ -129,11 +129,11 @@ func TestClient_Do_CookieOnlyPathSubpathAlsoRejected(t *testing.T) {
 	}
 }
 
-func TestClient_Do_CookieOnlyPathBareSessionsRejected(t *testing.T) {
-	// /v1/auth/sessions with NO trailing subpath must also match
+func TestClient_Do_CookieOnlyPathBareCapabilitiesRejected(t *testing.T) {
+	// /v1/auth/capabilities with NO trailing subpath must also match
 	// (the regex's optional subpath group captures both).
 	c := NewClient("https://api.example.com", "tok")
-	err := c.do(context.Background(), "GET", "/v1/auth/sessions", nil, nil)
+	err := c.do(context.Background(), "GET", "/v1/auth/capabilities", nil, nil)
 	var p *Problem
 	if !errors.As(err, &p) {
 		t.Fatalf("not a *Problem: %T %v", err, err)

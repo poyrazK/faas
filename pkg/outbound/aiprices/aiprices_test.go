@@ -64,7 +64,7 @@ func TestDefaultCatalogCoversEveryProvider(t *testing.T) {
 func TestLookup(t *testing.T) {
 	catalog, err := Parse([]byte(`{
 		"source": "test", "generated": "2026-10-12", "currency": "USD",
-		"fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters", "video_second", "web_search", "file_search", "code_session_gb", "input_audio", "cached_input_audio", "output_audio", "long_context_threshold", "input_long", "cached_input_long", "cache_write_long", "output_long", "cache_write_1h", "cache_write_1h_long", "max_output_tokens"],
+		"fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters", "video_second", "web_search", "file_search", "code_session_gb", "input_audio", "cached_input_audio", "output_audio"],
 		"providers": {
 			"openai": {"gpt-4o": [1, 1, 1, 4], "gpt-4o-mini": [2, 2, 2, 8], "o1": [3, 3, 3, 12]},
 			"bedrock": {"anthropic.claude-3-5-sonnet-20241022-v2:0": [5, 5, 5, 20], "anthropic.claude-3-5-haiku": [6, 6, 6, 24]},
@@ -97,7 +97,7 @@ func TestLookup(t *testing.T) {
 }
 
 func TestParseRejectsInvalidCatalogs(t *testing.T) {
-	header := `"source": "s", "generated": "g", "currency": "USD", "fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters", "video_second", "web_search", "file_search", "code_session_gb", "input_audio", "cached_input_audio", "output_audio", "long_context_threshold", "input_long", "cached_input_long", "cache_write_long", "output_long", "cache_write_1h", "cache_write_1h_long", "max_output_tokens"]`
+	header := `"source": "s", "generated": "g", "currency": "USD", "fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters", "video_second", "web_search", "file_search", "code_session_gb", "input_audio", "cached_input_audio", "output_audio"]`
 	for name, body := range map[string]string{
 		"unknown provider": `{` + header + `, "providers": {"mistral": {"m": [1, 1, 1, 1]}}}`,
 		"negative price":   `{` + header + `, "providers": {"openai": {"m": [-1, 1, 1, 1]}}}`,

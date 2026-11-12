@@ -378,6 +378,16 @@ the private carrier removed. A synchronous handler can use
 the parent deadline. Complete-path acceptance remains pending; see
 [the deadline contract](../../docs/ops/traffic-total-deadline.md).
 
+The middleware and `with_gregale_request_context` also capture
+`X-Faas-Deadline-Ms`, the time Gregale gives the request to run, and the
+transports send the time still left on each managed call, so the service proxy
+ends a downstream call when the caller's request runs out
+(ADR-20261102082606). It only shortens: a smaller value you set on the call is
+kept, and a request with no time left sends `1`, which the proxy refuses
+without waking the target. `gregale_request_time_remaining_ms()` returns the
+time left inside the handler. The proxy honours the header once the platform
+enables service-call deadlines.
+
 ## Advanced customizations
 
 There are more settings on the generated `Client` class which let you control more runtime behavior, check out the docstring on that class for more info. You can also customize the underlying `httpx.Client` or `httpx.AsyncClient` (depending on your use-case):

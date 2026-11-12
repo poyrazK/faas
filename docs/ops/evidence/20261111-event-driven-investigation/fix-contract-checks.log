@@ -1,0 +1,12 @@
+go run ./scripts/ci/versionskew -base HEAD
+::warning::versionskew: no v* release tag is an ancestor of 46aad2a12e4d (fetch tags?); comparing against the base instead
+versionskew: previous release 46aad2a12e4d1be39d0948b6942cb18d8e71d0b2, base 46aad2a12e4d, head = working tree
+versionskew proto: 46aad2a12e4d1be39d0948b6942cb18d8e71d0b2 has 12 services, 432 messages, 8 enums; head has 12 services, 432 messages, 8 enums
+versionskew guest: 46aad2a12e4d1be39d0948b6942cb18d8e71d0b2 has 209 JSON keys under AppManifest, BuildManifest, BuildDone; head has 209 JSON keys under AppManifest, BuildManifest, BuildDone
+versionskew: OK against 46aad2a12e4d1be39d0948b6942cb18d8e71d0b2
+docs-links-check: OK
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.531s
+
+OK

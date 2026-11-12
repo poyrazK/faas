@@ -83,7 +83,7 @@ func TestEvaluateQueuePollBoundaryAndCoverage(t *testing.T) {
 	}
 	inventory.Bindings[0].Access = "pull"
 	report, err = Evaluate(inventory, policy, now.Add(time.Hour))
-	if err != nil || !report.Passed || report.Coverage != "partial" || report.Bindings[0].Status != "unsupported" {
+	if err != nil || !report.Passed || report.Coverage != "none" || report.Bindings[0].Status != "skipped" || report.Bindings[0].Reason != "pull_consumer_external" {
 		t.Fatalf("external pull consumer claimed readiness or blocked: %+v %v", report, err)
 	}
 	inventory.Bindings[0].Access, inventory.Bindings[0].State = "push", "disabled"

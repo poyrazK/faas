@@ -63,7 +63,7 @@ func insertObjectS3CredentialTx(ctx context.Context, tx pgx.Tx, credential Objec
 		ID: mustPgUUID(credential.ID), AccountID: mustPgUUID(credential.AccountID), BucketID: mustPgUUID(credential.BucketID),
 		AccessKeyID: credential.AccessKeyID, SecretSealed: credential.SecretSealed, Kid: credential.KID, Label: credential.Label, Permission: credential.Permission,
 		IssuerAccountID: mustPgUUID(credential.IssuerAccountID), IssuerAccessRevision: pgtype.Int8{Int64: credential.IssuerAccessRevision, Valid: credential.IssuerAccessRevision != 0},
-		Column9: credential.ManagedAppID, Column10: credential.ManagedScope, Column11: credential.ManagedPrefix,
+		Column9: credential.ManagedAppID, Column10: credential.ManagedScope, Column11: credential.ManagedPrefix, KeyPrefix: credential.KeyPrefix,
 	})
 	if err != nil {
 		return ObjectS3Credential{}, mapErr(err)
@@ -111,14 +111,14 @@ func insertObjectS3ComputeBindingTx(ctx context.Context, tx pgx.Tx, req ObjectS3
 	if err != nil {
 		return ObjectS3Credential{}, mapErr(err)
 	}
-	if credentialCount >= int64(req.MaxCredentialsPerBucket) || secretCount+int64(len(req.Secrets)) > int64(req.MaxSecretsPerApp) {
+	if credentialCount >= int64(req.MaxCredentialsPerBucket) || secretCount > int64(req.MaxSecretsPerApp) {
 		return ObjectS3Credential{}, ErrConflict
 	}
 	row, err := q.ObjectS3CredentialInsert(ctx, tx, sqlc.ObjectS3CredentialInsertParams{
 		ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID),
 		AccessKeyID: c.AccessKeyID, SecretSealed: c.SecretSealed, Kid: c.KID, Label: c.Label, Permission: c.Permission,
 		IssuerAccountID: mustPgUUID(c.IssuerAccountID), IssuerAccessRevision: pgtype.Int8{Int64: c.IssuerAccessRevision, Valid: c.IssuerAccessRevision != 0},
-		Column9: c.ManagedAppID, Column10: c.ManagedScope, Column11: c.ManagedPrefix,
+		Column9: c.ManagedAppID, Column10: c.ManagedScope, Column11: c.ManagedPrefix, KeyPrefix: c.KeyPrefix,
 	})
 	if err != nil {
 		return ObjectS3Credential{}, mapErr(err)
@@ -234,6 +234,20 @@ func (s *PgStore) PendingObjectS3CredentialRotation(ctx context.Context, account
 	return wakeID, mapErr(err)
 }
 
+func (s *PgStore) PendingObjectS3CredentialRotations(ctx context.Context, accountID, bucketID string) (map[string]string, error) {
+	rows, err := sqlc.New().ObjectS3CredentialRotationsPendingForBucket(ctx, s.pool, sqlc.ObjectS3CredentialRotationsPendingForBucketParams{
+		AccountID: mustPgUUID(accountID), BucketID: mustPgUUID(bucketID),
+	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := make(map[string]string, len(rows))
+	for _, row := range rows {
+		out[row.BindingID] = row.WakeID
+	}
+	return out, nil
+}
+
 func (s *PgStore) StageObjectS3CredentialRotation(ctx context.Context, req ObjectS3CredentialRotationRequest) (ObjectS3Credential, error) {
 	if !validObjectS3CredentialRotationRequest(req) {
 		return ObjectS3Credential{}, ErrInvalidArgument
@@ -270,7 +284,7 @@ func (s *PgStore) StageObjectS3CredentialRotation(ctx context.Context, req Objec
 	_, err = q.ObjectS3CredentialRotationStage(ctx, tx, sqlc.ObjectS3CredentialRotationStageParams{
 		ID: mustPgUUID(uuid.NewString()), AccountID: parent.AccountID, BucketID: parent.BucketID,
 		AccessKeyID: parent.AccessKeyID, SecretSealed: parent.SecretSealed, Kid: parent.Kid,
-		Label: parent.Label, Permission: parent.Permission,
+		Label: parent.Label, Permission: parent.Permission, KeyPrefix: parent.KeyPrefix,
 		RotationParentID: parent.ID, RotationWakeID: mustPgUUID(req.WakeID),
 	})
 	if err != nil {
@@ -349,7 +363,7 @@ func (s *PgStore) ResolveObjectS3Credential(ctx context.Context, accessKeyID str
 		AccessKeyID: row.AccessKeyID, SecretSealed: append([]byte(nil), row.SecretSealed...), KID: row.Kid,
 		Label: row.Label, Permission: row.Permission, Status: row.Status, CreatedAt: row.CreatedAt.Time,
 		LastUsedAt: optionalObjectS3Time(row.LastUsedAt), RevokedAt: optionalObjectS3Time(row.RevokedAt),
-		ManagedAppID: pgUUIDStringNullable(row.ManagedAppID), ManagedScope: row.ManagedScope.String, ManagedPrefix: row.ManagedPrefix.String,
+		ManagedAppID: pgUUIDStringNullable(row.ManagedAppID), ManagedScope: row.ManagedScope.String, ManagedPrefix: row.ManagedPrefix.String, KeyPrefix: row.KeyPrefix.String,
 		RotationParentID: pgUUIDStringNullable(row.RotationParentID), RotationWakeID: pgUUIDStringNullable(row.RotationWakeID),
 		RotationStampedAt: optionalObjectS3Time(row.RotationStampedAt),
 	}
@@ -416,7 +430,7 @@ func objectS3CredentialFromSQL(row sqlc.ObjectStorageS3Credential) ObjectS3Crede
 		AccessKeyID: row.AccessKeyID, SecretSealed: append([]byte(nil), row.SecretSealed...), KID: row.Kid,
 		Label: row.Label, Permission: row.Permission, Status: row.Status, CreatedAt: row.CreatedAt.Time,
 		LastUsedAt: optionalObjectS3Time(row.LastUsedAt), RevokedAt: optionalObjectS3Time(row.RevokedAt),
-		ManagedAppID: pgUUIDStringNullable(row.ManagedAppID), ManagedScope: row.ManagedScope.String, ManagedPrefix: row.ManagedPrefix.String,
+		ManagedAppID: pgUUIDStringNullable(row.ManagedAppID), ManagedScope: row.ManagedScope.String, ManagedPrefix: row.ManagedPrefix.String, KeyPrefix: row.KeyPrefix.String,
 		RotationParentID: pgUUIDStringNullable(row.RotationParentID), RotationWakeID: pgUUIDStringNullable(row.RotationWakeID),
 		RotationStampedAt: optionalObjectS3Time(row.RotationStampedAt),
 	}

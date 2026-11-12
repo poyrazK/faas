@@ -23,11 +23,11 @@ func (h nativeLinearCreationHost) Prepare(ctx context.Context) (issuetrackers.Pr
 	if err != nil {
 		return issuetrackers.Prepared{}, err
 	}
-	account, err := h.server.store.AccountByID(ctx, h.account.ID)
+	account, err := state.AppResourceAccount(ctx, h.server.store, app)
 	if err != nil {
 		return issuetrackers.Prepared{}, err
 	}
-	if app.AccountID != account.ID || app.DeletedAt != nil || app.Status == state.AppDeleted || !account.MayDeploy() || !account.Plan.IssueLimits().Enabled {
+	if app.AccountID != h.account.ID || app.AccountID != account.ID || app.DeletedAt != nil || app.Status == state.AppDeleted || !account.MayDeploy() || !account.Plan.IssueLimits().Enabled {
 		return issuetrackers.Prepared{}, issuetrackers.LinearConnectionRequired()
 	}
 	st, ok := h.server.store.(state.IssueStore)

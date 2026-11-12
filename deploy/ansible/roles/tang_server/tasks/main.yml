@@ -1,0 +1,93 @@
+---
+# tang_server — the key server half of encrypted data volumes
+# (ADR-20261109120000). Tang holds no per-volume secret: a client derives its
+# volume key with Tang's public key at bind time and needs Tang's private key
+# to recover it at boot. The nftables role admits faas_tang_port from the
+# private network only.
+
+# Tang must never answer on the public card: anyone holding a copy of a
+# fleet disk could unlock it from anywhere. The socket binds to the private
+# address itself, so the boundary holds even before the nftables role runs on
+# a fresh host; nftables then admits only the private network.
+- name: tang_server — require a private listen address
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -I
+      - -c
+      - |
+        import ipaddress, sys
+        try:
+            addr = ipaddress.ip_address(sys.argv[1])
+        except ValueError:
+            sys.exit(f"{sys.argv[1]!r} is not an IP address")
+        if not addr.is_private or addr.is_loopback:
+            sys.exit(f"Tang must listen on the private network only; {addr} is not a private address. Set faas_private_address for this host.")
+      - "{{ faas_tang_listen_address }}"
+  changed_when: false
+  check_mode: false
+  when: faas_disk_encryption | bool
+
+- name: tang_server — install Tang
+  ansible.builtin.apt:
+    name: tang
+    state: present
+  when: faas_disk_encryption | bool
+
+- name: tang_server — create the socket drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/tangd.socket.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: faas_disk_encryption | bool
+
+- name: tang_server — listen on the fleet's Tang port
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/tangd.socket.d/10-faas-port.conf
+    content: |
+      # Managed by Gregale (tang_server, ADR-20261109120000).
+      [Socket]
+      ListenStream=
+      ListenStream={{ faas_tang_listen_hostport }}:{{ faas_tang_port }}
+      FreeBind=yes
+    owner: root
+    group: root
+    mode: "0644"
+  register: faas_tang_socket_dropin
+  when: faas_disk_encryption | bool
+
+- name: tang_server — generate the server keys once
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if compgen -G "{{ faas_tang_key_dir }}/*.jwk" > /dev/null; then exit 0; fi
+    install -d -m 0700 "{{ faas_tang_key_dir }}"
+    for keygen in /usr/libexec/tangd-keygen /usr/lib/x86_64-linux-gnu/tangd-keygen; do
+      if [ -x "$keygen" ]; then "$keygen" "{{ faas_tang_key_dir }}"; echo generated; exit 0; fi
+    done
+    echo "tangd-keygen not found" >&2
+    exit 1
+  args:
+    executable: /bin/bash
+  register: faas_tang_keygen
+  changed_when: "'generated' in faas_tang_keygen.stdout"
+  when: faas_disk_encryption | bool
+
+- name: tang_server — enable the socket
+  ansible.builtin.systemd_service:
+    name: tangd.socket
+    enabled: true
+    state: "{{ 'restarted' if (faas_tang_socket_dropin is changed) else 'started' }}"
+    daemon_reload: true
+  when: faas_disk_encryption | bool
+
+- name: tang_server — prove the server advertises its keys
+  ansible.builtin.uri:
+    url: "http://{{ faas_tang_listen_hostport }}:{{ faas_tang_port }}/adv"
+    return_content: true
+  register: faas_tang_adv
+  retries: 5
+  delay: 2
+  until: faas_tang_adv.status == 200 and ('payload' in faas_tang_adv.content)
+  when: faas_disk_encryption | bool

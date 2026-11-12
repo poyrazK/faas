@@ -63,8 +63,10 @@ func (m OutboundAIModeration) normalized(keep bool) OutboundAIModeration {
 		m.Action = OutboundAIModerationOff
 	}
 	if m.OnError == "" {
-		// ADR 20261027132936 amendment 2: a check that blocks fails closed
-		// unless the policy says otherwise; one that flags lets calls by.
+		// A blocking check fails closed unless told otherwise: allowing
+		// every call while the check is down defeats a block policy
+		// (AI gateway review round 3, finding 7). A flag check is advisory
+		// and keeps failing open. Stored integrations keep their value.
 		m.OnError = OutboundAIModerationOnErrorAllow
 		if m.Action == OutboundAIModerationBlock {
 			m.OnError = OutboundAIModerationOnErrorBlock

@@ -48,7 +48,8 @@ releases at COMMIT by definition.
 `max_prepared_statements = 0` on purpose. pgx defaults to named `PREPARE`s
 that a pooled transaction can outlive; rather than depend on pgbouncer's
 version to track them, `pkg/db` switches the pooled path to
-`QueryExecModeExec` whenever `FAAS_DATABASE_URL_DIRECT` is set. The
+`QueryExecModeCacheDescribe` (unnamed statements, server-described parameter
+types) whenever `FAAS_DATABASE_URL_DIRECT` is set. The
 client-side guarantee is stronger and holds against any pooler, or none.
 
 ## Auth
