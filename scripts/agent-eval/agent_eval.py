@@ -219,7 +219,10 @@ def agent_ready(agent: str) -> str:
         return "gemini needs GEMINI_API_KEY (or GOOGLE_API_KEY / Vertex AI); the personal Code Assist login no longer serves this client"
     if agent == "cursor" and not os.environ.get("CURSOR_API_KEY"):
         status = subprocess.run(["cursor-agent", "status"], capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
-        if status.returncode != 0 or re.search(r"not (logged|authenticated)|login required", status.stdout + status.stderr, re.IGNORECASE):
+        # A stale login still prints "Logged in (unable to fetch user details)"
+        # while headless runs answer "Authentication required" (2026-11-12).
+        if status.returncode != 0 or re.search(r"not (logged|authenticated)|login required|unable to fetch user details",
+                                               status.stdout + status.stderr, re.IGNORECASE):
             return "cursor-agent is not logged in: run `cursor-agent login` or set CURSOR_API_KEY"
     return ""
 

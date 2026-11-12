@@ -60,7 +60,7 @@ CODEX_FAILURE = [
 class TaskTests(unittest.TestCase):
     def test_shipped_tasks_load(self):
         tasks = ev.load_tasks()
-        self.assertEqual([t["id"] for t in tasks], ["deploy-starter", "fix-failed-deploy", "rollback-bad-release", "diagnose-failure", "deploy-retail-store"])
+        self.assertEqual([t["id"] for t in tasks], ["deploy-starter", "fix-failed-deploy", "rollback-bad-release", "diagnose-failure", "deploy-retail-store", "deploy-voting-app"])
 
     def test_invalid_tasks_are_refused(self):
         good = {"id": "ok-task", "prompt": "deploy {app}", "template": "hello-node", "checks": [{"kind": "answer", "pattern": "x"}], "budget_usd": 1, "timeout_s": 60}
@@ -325,6 +325,11 @@ class NewAgentTests(unittest.TestCase):
             self.assertIn("GEMINI_API_KEY", ev.agent_ready("gemini"))
         with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "k"}):
             self.assertEqual(ev.agent_ready("gemini"), "")
+
+    def test_stale_cursor_login_is_not_ready(self):
+        stale = mock.Mock(returncode=0, stdout="✓ Login successful!\nLogged in (unable to fetch user details)\n", stderr="")
+        with mock.patch.dict(os.environ, {"CURSOR_API_KEY": ""}), mock.patch.object(ev.subprocess, "run", return_value=stale):
+            self.assertIn("cursor-agent login", ev.agent_ready("cursor"))
 
     def test_agent_markers_do_not_leak_into_the_agent(self):
         with mock.patch.dict(os.environ, {"CLAUDECODE": "1", "GEMINI_CLI": "1", "PATH": "/bin"}):
