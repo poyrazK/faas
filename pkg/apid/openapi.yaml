@@ -110495,7 +110495,8 @@ components:
         deployment_id: { type: string }
         source_deployment_id: { type: string, description: The parent deployment whose build the branch reuses. }
         status: { type: string }
-        url: { type: string, description: "The workload's address in the branch. Its first request starts it." }
+        url: { type: string, description: "The workload's stable address in the branch, which a reset keeps. Its first request starts it." }
+        environment_url: { type: string, description: "The address of this incarnation of the branch; a reset gives it a new one." }
 
     ProjectEnvironmentBranchDatabase:
       description: "One managed PostgreSQL copy a branch owns."

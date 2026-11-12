@@ -529,11 +529,23 @@ or `production` (refused for branches).
     branch's. A branch whose data is pending is refused: its copies' TTL is fixed from the
     expiry when they are made, and a retry must adopt the same copy;
   - `POST .../reset` deletes the branch and creates it again from its parent with its slug,
-    egress, private-network mode and lifetime. The workloads get new URLs: a workload's host
-    is derived from its environment ID, and reusing an ID after a delete would let about 20
-    tables keyed by environment ID without a cascading foreign key (workload heads, queue
-    bindings, runtime proofs, …) carry the old branch's state into the new one. Stable
-    names would need slug-based hosts, which this does not add.
+    egress, private-network mode and lifetime. The environment gets a new ID: reusing an ID
+    after a delete would let about 20 tables keyed by environment ID without a cascading
+    foreign key (workload heads, queue bindings, runtime proofs, …) carry the old branch's
+    state into the new one.
+- **Stable branch URLs** (amended 2026-11-12, owner decision: opaque but stable, branches
+  only). A branch holds a slot, `project_environment_branches.slot_id`, a UUIDv5 of the
+  project ID and the branch slug (`state.EnvironmentBranchSlotID`), unique while the branch
+  exists. A workload's `url` is `env-<slot>-<app>` in the same 57-character shape as the
+  environment host, so it needs no new DNS name, certificate or allocation table; a branch
+  deleted and made again under its name (reset, or by hand) holds the same slot, so its URLs
+  survive. `ProjectEnvironmentByID`, and the gateway snapshot query `ReadPublicHostEnvironment`,
+  fall back from an environment ID to the branch holding that slot; v5 slots never collide
+  with v4 environment IDs. `environment_url` keeps the incarnation's own host. Branches made
+  before the column have no slot and keep their environment URL. The gateway caches edge
+  rules by host, so for a short time after a reset a slot host may apply the old
+  incarnation's rules; they are the parent's rules copied at both creations. The dev bridge
+  takes environment hosts only.
 - **Organizations** (amended 2026-11-12, owner decision). Company projects branch through
   the reviewed project-access table (`pkg/apid/projectaccess/routes.go`):
   - listing branches needs the read action; creating one needs the configure action

@@ -10080,7 +10080,13 @@ SELECT jsonb_build_object(
     'AccountID', account_id,
     'ProjectID', project_id,
     'Slug', slug
-)::jsonb AS data FROM project_environments WHERE id = sqlc.arg(environment_id)::uuid;
+)::jsonb AS data FROM project_environments
+-- A branch's slot names the environment of the branch holding it
+-- (ADR-20261031193635 stable branch URLs).
+WHERE id = sqlc.arg(environment_id)::uuid
+   OR id = (SELECT environment_id FROM project_environment_branches WHERE slot_id = sqlc.arg(environment_id)::uuid)
+ORDER BY (id = sqlc.arg(environment_id)::uuid) DESC
+LIMIT 1;
 
 -- name: ReadPublicHostEnvironmentPolicy :one
 WITH policy AS (SELECT jsonb_build_object(

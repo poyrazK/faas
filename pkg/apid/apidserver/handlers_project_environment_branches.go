@@ -172,12 +172,25 @@ func (s *server) publishEnvironmentBranchWorkloads(ctx context.Context, store st
 				s.log.Warn("environment branch activation notification failed; prime recovery will retry", "deployment_id", d.ID, "err", err)
 			}
 		}
-		workloads = append(workloads, api.ProjectEnvironmentBranchWorkload{
+		workload := api.ProjectEnvironmentBranchWorkload{
 			Workload: parent.WorkloadSlug, DeploymentID: d.ID, SourceDeployment: parent.SourceDeploymentID, Status: string(d.Status),
-			URL: projectEnvironmentWorkloadURL(branch.EnvironmentID, parent.AppID),
-		})
+		}
+		workload.URL, workload.EnvironmentURL = environmentBranchWorkloadURLs(branch, parent.AppID)
+		workloads = append(workloads, workload)
 	}
 	return workloads, nil
+}
+
+// environmentBranchWorkloadURLs returns a branch workload's stable URL,
+// built from the branch's slot so a reset keeps it, and the URL of this
+// incarnation, built from its environment ID. A branch made before slots has
+// only the environment URL.
+func environmentBranchWorkloadURLs(branch state.ProjectEnvironmentBranch, appID string) (url, environmentURL string) {
+	environmentURL = projectEnvironmentWorkloadURL(branch.EnvironmentID, appID)
+	if branch.SlotID == "" {
+		return environmentURL, ""
+	}
+	return projectEnvironmentWorkloadURL(branch.SlotID, appID), environmentURL
 }
 
 func (s *server) environmentBranchCreateProblem(ctx context.Context, acct state.Account, project state.Project, parent, slug string, limits api.Limits, err error) *api.Problem {

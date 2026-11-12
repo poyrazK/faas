@@ -103,8 +103,8 @@ func (s *server) environmentBranchWorkloadStatus(ctx context.Context, store stat
 	}
 	out := make([]api.ProjectEnvironmentBranchWorkload, 0, len(parents))
 	for _, parent := range parents {
-		workload := api.ProjectEnvironmentBranchWorkload{Workload: parent.WorkloadSlug, Status: "starting",
-			URL: projectEnvironmentWorkloadURL(branch.EnvironmentID, parent.AppID)}
+		workload := api.ProjectEnvironmentBranchWorkload{Workload: parent.WorkloadSlug, Status: "starting"}
+		workload.URL, workload.EnvironmentURL = environmentBranchWorkloadURLs(branch, parent.AppID)
 		live, err := s.store.LiveDeploymentForScope(ctx, parent.AppID, branch.Slug)
 		switch {
 		case err == nil:

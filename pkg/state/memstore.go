@@ -4290,6 +4290,16 @@ func (m *MemStore) ProjectEnvironmentByID(_ context.Context, id string) (Project
 		environment, ok = m.projectEnvironments[strings.ReplaceAll(id, "-", "")]
 	}
 	if !ok {
+		// A branch's slot names the environment of the branch holding it.
+		slot := canonicalUUID(id)
+		for _, branch := range m.projectEnvironmentBranches {
+			if branch.SlotID != "" && branch.SlotID == slot {
+				environment, ok = m.projectEnvironments[branch.EnvironmentID]
+				break
+			}
+		}
+	}
+	if !ok {
 		return ProjectEnvironment{}, ErrNotFound
 	}
 	return environment, nil
