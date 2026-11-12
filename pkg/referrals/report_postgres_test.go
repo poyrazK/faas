@@ -68,7 +68,7 @@ func TestManagerReportCountsCollectionsAndCredit(t *testing.T) {
 	policy := referrals.Policy{Currency: "usd", CommissionBPS: 1000, ConversionDays: 90}
 	add := func(link referrals.Link, currency string, paid, refunded, pending int64, missing bool) string {
 		t.Helper()
-		account := attribute(t, pool, link, policy)
+		account := attribute(ctx, t, pool, link, policy)
 		if paid > 0 || missing {
 			invoice := uuid.NewString()
 			if !missing {
@@ -171,7 +171,7 @@ func TestManagerReportUsesLocalCalendarDates(t *testing.T) {
 				if _, err = pool.Exec(ctx, "UPDATE sales_leads SET created_at=$2::text::timestamptz WHERE id=$1", id, at); err != nil {
 					t.Fatal(err)
 				}
-				account := attribute(t, pool, link, referrals.Policy{Currency: "usd", ConversionDays: 90})
+				account := attribute(ctx, t, pool, link, referrals.Policy{Currency: "usd", ConversionDays: 90})
 				if _, err = pool.Exec(ctx, "UPDATE referral_attributions SET created_at=$2::text::timestamptz WHERE account_id=$1", account, at); err != nil {
 					t.Fatal(err)
 				}

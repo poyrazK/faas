@@ -1,6 +1,7 @@
 package referrals_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -59,10 +60,9 @@ CREATE TABLE invoices(id uuid PRIMARY KEY,account_id uuid NOT NULL,status text N
 	return pool, referrals.NewPostgresStore(pool), owner, other
 }
 
-func attribute(t *testing.T, pool *pgxpool.Pool, link referrals.Link, policy referrals.Policy) string {
+func attribute(ctx context.Context, t *testing.T, pool *pgxpool.Pool, link referrals.Link, policy referrals.Policy) string {
 	t.Helper()
 	id := uuid.NewString()
-	ctx := t.Context()
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ func TestAttributionOwnershipAndRetry(t *testing.T) {
 		t.Fatal("link retries must return the same link", err)
 	}
 	policy := referrals.Policy{Currency: "usd", CommissionBPS: 1250, HoldDays: 30, ConversionDays: 90}
-	id := attribute(t, pool, link, policy)
+	id := attribute(ctx, t, pool, link, policy)
 	customerRows, err := store.List(ctx, referrals.Scope{OwnerID: owner, Kind: "customer"}, "", 25)
 	if err != nil || len(customerRows) != 0 {
 		t.Fatal("sales data escaped into customer program", customerRows, err)
@@ -140,7 +140,7 @@ func TestRewardsFollowPaidInvoiceAndRefunds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := attribute(t, pool, link, referrals.Policy{Currency: "usd", CommissionBPS: 1250, HoldDays: 0, ConversionDays: 90})
+	id := attribute(ctx, t, pool, link, referrals.Policy{Currency: "usd", CommissionBPS: 1250, HoldDays: 0, ConversionDays: 90})
 	assert := func(status string, paid bool, reward int64) {
 		t.Helper()
 		rows, err := store.List(ctx, referrals.Scope{OwnerID: owner}, "", 25)
@@ -191,7 +191,7 @@ func TestCustomerTermsHoldPauseAndAtomicRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy := referrals.Policy{Currency: "usd", CustomerRewardCents: 2500, ReferredRewardCents: 1000, HoldDays: 30, ConversionDays: 90}
-	id := attribute(t, pool, link, policy)
+	id := attribute(ctx, t, pool, link, policy)
 	if _, err = pool.Exec(ctx, `INSERT INTO invoices(id,account_id,status,currency,amount_paid_cents,subtotal_cents,tax_cents) VALUES ($1,$2,'paid','usd',5000,5000,0)`, uuid.NewString(), id); err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestCustomerTermsHoldPauseAndAtomicRollback(t *testing.T) {
 	if _, err = store.SetLinkActive(ctx, referrals.Scope{OwnerID: owner}, link.Code, false); err != nil {
 		t.Fatal(err)
 	}
-	_ = attribute(t, pool, link, policy)
+	_ = attribute(ctx, t, pool, link, policy)
 	rows, err = store.List(ctx, referrals.Scope{OwnerID: owner}, "", 25)
 	if err != nil || len(rows) != 1 {
 		t.Fatal("paused link attributed", rows, err)
