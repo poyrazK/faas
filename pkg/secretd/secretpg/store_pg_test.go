@@ -178,6 +178,23 @@ func TestReferenceLookupsOnPostgres(t *testing.T) {
 		t.Fatalf("bad drain id = %v", err)
 	}
 
+	// Registry credentials (slice 3j): the app's own, by exact host.
+	if err := st.UpsertAppRegistryCredential(ctx, account.ID, appA.ID, "ghcr.io", "robot", []byte("sealed-pw")); err != nil {
+		t.Fatal(err)
+	}
+	if user, sealed, err := store.RegistryCredential(ctx, appA.ID, "ghcr.io"); err != nil || user != "robot" || string(sealed) != "sealed-pw" {
+		t.Fatalf("own registry credential = %q %q %v", user, sealed, err)
+	}
+	for name, args := range map[string][2]string{
+		"another app":      {appB.ID, "ghcr.io"},
+		"another registry": {appA.ID, "registry.example.com"},
+		"bad app id":       {"not-a-uuid", "ghcr.io"},
+	} {
+		if _, _, err := store.RegistryCredential(ctx, args[0], args[1]); !errors.Is(err, secretd.ErrUnknownRegistryCredential) {
+			t.Errorf("%s = %v", name, err)
+		}
+	}
+
 	// Crash captures: a live sealed capture's app and key. The fixture row
 	// skips foreign keys and the status-transition trigger.
 	captureID := uuid.NewString()

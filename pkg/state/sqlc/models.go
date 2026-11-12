@@ -3177,6 +3177,12 @@ type ComputeNode struct {
 	CpuPressureUntil        pgtype.Timestamptz
 }
 
+type ComputeNodeDbLogin struct {
+	Login     string
+	NodeID    pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
 type ComputeNodeHeartbeat struct {
 	ID              int64
 	NodeID          pgtype.UUID

@@ -33,6 +33,20 @@ type fakeStore struct {
 	drains      map[[2]string][]byte // {app, drain} -> sealed header
 	triggers    map[[2]string]fakeTrigger
 	edgeHeaders map[[2]string][]byte // {app, secret} -> sealed value
+	registries  map[[2]string]fakeRegistryCredential
+}
+
+type fakeRegistryCredential struct {
+	username string
+	sealed   []byte
+}
+
+func (f *fakeStore) RegistryCredential(_ context.Context, appID, registry string) (string, []byte, error) {
+	c, ok := f.registries[[2]string{appID, registry}]
+	if !ok {
+		return "", nil, secretd.ErrUnknownRegistryCredential
+	}
+	return c.username, c.sealed, nil
 }
 
 func (f *fakeStore) EdgeHeaderSecret(_ context.Context, appID, secretID string) ([]byte, error) {

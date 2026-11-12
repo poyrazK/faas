@@ -224,6 +224,23 @@ func (s *Store) EdgeHeaderSecret(ctx context.Context, appID, secretID string) ([
 	return sealed, nil
 }
 
+// RegistryCredential implements secretd.Store: appID's own credential for
+// registry.
+func (s *Store) RegistryCredential(ctx context.Context, appID, registry string) (string, []byte, error) {
+	app, err := pgUUID(appID)
+	if err != nil || registry == "" {
+		return "", nil, secretd.ErrUnknownRegistryCredential
+	}
+	row, err := s.q.RegistryCredentialSealed(ctx, s.db, sqlc.RegistryCredentialSealedParams{AppID: app, Registry: registry})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil, secretd.ErrUnknownRegistryCredential
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("secretpg: registry credential: %w", err)
+	}
+	return row.Username, row.PasswordEncrypted, nil
+}
+
 // TriggerConfig implements secretd.Store: a trigger of appID only.
 func (s *Store) TriggerConfig(ctx context.Context, appID, triggerID string) (string, []byte, error) {
 	app, err := pgUUID(appID)

@@ -124,6 +124,29 @@ func (q *Queries) LogDrainHeaderSealed(ctx context.Context, db DBTX, arg LogDrai
 	return auth_header_sealed, err
 }
 
+const registryCredentialSealed = `-- name: RegistryCredentialSealed :one
+SELECT username, password_encrypted FROM app_registry_credentials
+ WHERE app_id = $1::uuid AND registry = $2::text
+`
+
+type RegistryCredentialSealedParams struct {
+	AppID    pgtype.UUID
+	Registry string
+}
+
+type RegistryCredentialSealedRow struct {
+	Username          string
+	PasswordEncrypted []byte
+}
+
+// The app's own credential for one registry host (ADR-20261110210000 slice 3j).
+func (q *Queries) RegistryCredentialSealed(ctx context.Context, db DBTX, arg RegistryCredentialSealedParams) (RegistryCredentialSealedRow, error) {
+	row := db.QueryRow(ctx, registryCredentialSealed, arg.AppID, arg.Registry)
+	var i RegistryCredentialSealedRow
+	err := row.Scan(&i.Username, &i.PasswordEncrypted)
+	return i, err
+}
+
 const secretGrantValid = `-- name: SecretGrantValid :one
 SELECT EXISTS (
     SELECT 1 FROM secret_grants

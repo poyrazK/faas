@@ -29,6 +29,7 @@ const (
 	Secretd_OpenLogDrainHeader_FullMethodName   = "/onebox.faas.secretd.v1.Secretd/OpenLogDrainHeader"
 	Secretd_OpenTriggerConfig_FullMethodName    = "/onebox.faas.secretd.v1.Secretd/OpenTriggerConfig"
 	Secretd_OpenEdgeHeaderSecret_FullMethodName = "/onebox.faas.secretd.v1.Secretd/OpenEdgeHeaderSecret"
+	Secretd_RegistryFetch_FullMethodName        = "/onebox.faas.secretd.v1.Secretd/RegistryFetch"
 )
 
 // SecretdClient is the client API for Secretd service.
@@ -70,6 +71,15 @@ type SecretdClient interface {
 	// secret_app_id's headers rules still references the value. secretd reads
 	// edge_rule_header_secrets itself and opens it with the edge seal domain.
 	OpenEdgeHeaderSecret(ctx context.Context, in *OpenEdgeHeaderSecretRequest, opts ...grpc.CallOption) (*OpenEdgeHeaderSecretResponse, error)
+	// RegistryFetch makes one read request to an app's private registry on
+	// the caller's behalf and streams the answer back (ADR-20261110210000
+	// slice 3j). secretd opens the app's registry password with the build seal
+	// domain, answers the registry's auth challenge itself and follows its
+	// redirects, so the password and the tokens it buys never leave the
+	// control plane. Only GET and HEAD of https://<registry>/v2/... for a
+	// registry the app holds a credential for; owner or grant authorizes.
+	// The first frame is the head, then body chunks.
+	RegistryFetch(ctx context.Context, in *RegistryFetchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RegistryFetchResponse], error)
 }
 
 type secretdClient struct {
@@ -150,6 +160,25 @@ func (c *secretdClient) OpenEdgeHeaderSecret(ctx context.Context, in *OpenEdgeHe
 	return out, nil
 }
 
+func (c *secretdClient) RegistryFetch(ctx context.Context, in *RegistryFetchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RegistryFetchResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Secretd_ServiceDesc.Streams[0], Secretd_RegistryFetch_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[RegistryFetchRequest, RegistryFetchResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Secretd_RegistryFetchClient = grpc.ServerStreamingClient[RegistryFetchResponse]
+
 // SecretdServer is the server API for Secretd service.
 // All implementations must embed UnimplementedSecretdServer
 // for forward compatibility.
@@ -189,6 +218,15 @@ type SecretdServer interface {
 	// secret_app_id's headers rules still references the value. secretd reads
 	// edge_rule_header_secrets itself and opens it with the edge seal domain.
 	OpenEdgeHeaderSecret(context.Context, *OpenEdgeHeaderSecretRequest) (*OpenEdgeHeaderSecretResponse, error)
+	// RegistryFetch makes one read request to an app's private registry on
+	// the caller's behalf and streams the answer back (ADR-20261110210000
+	// slice 3j). secretd opens the app's registry password with the build seal
+	// domain, answers the registry's auth challenge itself and follows its
+	// redirects, so the password and the tokens it buys never leave the
+	// control plane. Only GET and HEAD of https://<registry>/v2/... for a
+	// registry the app holds a credential for; owner or grant authorizes.
+	// The first frame is the head, then body chunks.
+	RegistryFetch(*RegistryFetchRequest, grpc.ServerStreamingServer[RegistryFetchResponse]) error
 	mustEmbedUnimplementedSecretdServer()
 }
 
@@ -219,6 +257,9 @@ func (UnimplementedSecretdServer) OpenTriggerConfig(context.Context, *OpenTrigge
 }
 func (UnimplementedSecretdServer) OpenEdgeHeaderSecret(context.Context, *OpenEdgeHeaderSecretRequest) (*OpenEdgeHeaderSecretResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method OpenEdgeHeaderSecret not implemented")
+}
+func (UnimplementedSecretdServer) RegistryFetch(*RegistryFetchRequest, grpc.ServerStreamingServer[RegistryFetchResponse]) error {
+	return status.Error(codes.Unimplemented, "method RegistryFetch not implemented")
 }
 func (UnimplementedSecretdServer) mustEmbedUnimplementedSecretdServer() {}
 func (UnimplementedSecretdServer) testEmbeddedByValue()                 {}
@@ -367,6 +408,17 @@ func _Secretd_OpenEdgeHeaderSecret_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Secretd_RegistryFetch_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(RegistryFetchRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(SecretdServer).RegistryFetch(m, &grpc.GenericServerStream[RegistryFetchRequest, RegistryFetchResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Secretd_RegistryFetchServer = grpc.ServerStreamingServer[RegistryFetchResponse]
+
 // Secretd_ServiceDesc is the grpc.ServiceDesc for Secretd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -403,6 +455,12 @@ var Secretd_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Secretd_OpenEdgeHeaderSecret_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "RegistryFetch",
+			Handler:       _Secretd_RegistryFetch_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "onebox/faas/secretd/v1/secretd.proto",
 }

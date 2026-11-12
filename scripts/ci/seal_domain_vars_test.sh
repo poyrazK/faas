@@ -104,6 +104,15 @@ listed="$(env -i PATH="$PATH" "${all[@]}" SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE=true
 grep -qxF edge <<<"$listed" || fail "--identities control-plane omits edge with secretd: $listed"
 ! grep -qxF edge <<<"$(env -i PATH="$PATH" "${all[@]}" bash "$script" --identities control-plane)" || fail "--identities control-plane lists edge without secretd"
 
+# ADR-20261110210000 slice 3j: the build identity reaches the control plane
+# only with SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE, for secretd's registry pulls.
+run control-plane buildcp "${all[@]}" SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE=true || fail "control-plane build staging failed"
+grep -qxF "faas_seal_domain_build_identity_src: \"$work/buildcp/out/build.age\"" "$work/buildcp/vars.yml" || fail "control plane is missing the build identity for secretd"
+grep -qxF "faas_seal_domain_build_recipient_src: \"$work/buildcp/out/build.age.pub\"" "$work/buildcp/vars.yml" || fail "control plane lost the build recipient"
+listed="$(env -i PATH="$PATH" "${all[@]}" SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE=true bash "$script" --identities control-plane)"
+grep -qxF build <<<"$listed" || fail "--identities control-plane omits build with secretd: $listed"
+! grep -qxF build <<<"$(env -i PATH="$PATH" "${all[@]}" bash "$script" --identities control-plane)" || fail "--identities control-plane lists build without secretd"
+
 # ADR-20261110210000 slice 3e: retired compute nodes get the runtime
 # recipient alone, CD is not handed the runtime key, and the escrow list
 # leaves runtime out.

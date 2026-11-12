@@ -236,8 +236,8 @@ func TestRegistry_BuildIsWiredToImagedAndVmmd(t *testing.T) {
 	if !ok || !s.Wired {
 		t.Fatalf("build domain = %+v, %v; want wired", s, ok)
 	}
-	if len(s.Readers) != 2 || s.Readers[0] != "imaged" || s.Readers[1] != "vmmd" {
-		t.Fatalf("build readers = %v, want [imaged vmmd]", s.Readers)
+	if len(s.Readers) != 3 || s.Readers[0] != "imaged" || s.Readers[1] != "vmmd" || s.Readers[2] != "secretd" {
+		t.Fatalf("build readers = %v, want [imaged vmmd secretd]", s.Readers)
 	}
 	if got := sealdomain.ReaderDomains("apid"); containsDomain(got, sealdomain.Build) {
 		t.Fatalf("apid reads %v; it must only seal registry passwords", got)

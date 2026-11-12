@@ -48,6 +48,11 @@ SELECT s.ciphertext FROM edge_rule_header_secrets s
          THEN r.action->'headers'->'request_headers' ELSE '[]'::jsonb END) op
       WHERE r.app_id = s.app_id AND r.kind = 'headers' AND op->>'secret_id' = s.id::text);
 
+-- name: RegistryCredentialSealed :one
+-- The app's own credential for one registry host (ADR-20261110210000 slice 3j).
+SELECT username, password_encrypted FROM app_registry_credentials
+ WHERE app_id = sqlc.arg(app_id)::uuid AND registry = sqlc.arg(registry)::text;
+
 -- name: TriggerConfig :one
 -- A trigger of the named app only (ADR-20261110210000 slice 3g).
 SELECT kind, config FROM triggers

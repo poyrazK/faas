@@ -144,6 +144,14 @@ func (ownedBy) LogDrainHeader(context.Context, string, string) ([]byte, error) {
 	return nil, secretd.ErrUnknownDrain
 }
 
+func (ownedBy) EdgeHeaderSecret(context.Context, string, string) ([]byte, error) {
+	return nil, secretd.ErrUnknownEdgeHeaderSecret
+}
+
+func (ownedBy) RegistryCredential(context.Context, string, string) (string, []byte, error) {
+	return "", nil, secretd.ErrUnknownRegistryCredential
+}
+
 func (ownedBy) TriggerConfig(context.Context, string, string) (string, []byte, error) {
 	return "", nil, secretd.ErrUnknownTrigger
 }

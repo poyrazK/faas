@@ -69,3 +69,12 @@ CREATE TABLE edge_rules (
     kind   text  NOT NULL,
     action jsonb NOT NULL
 );
+
+-- Projection of app_registry_credentials: the sealed password RegistryFetch
+-- opens on the control plane (ADR-20261110210000 slice 3j).
+CREATE TABLE app_registry_credentials (
+    app_id             uuid  NOT NULL,
+    registry           text  NOT NULL,
+    username           text  NOT NULL,
+    password_encrypted bytea NOT NULL
+);

@@ -132,7 +132,9 @@ var registry = []Spec{
 		cols("outbound_integration_credentials", "authorization_sealed"),
 		cols("outbound_integration_credential_keys", "authorization_sealed"),
 	)},
-	{Domain: Build, Readers: []string{"imaged", "vmmd"}, Roles: computeOnly, Wired: true, Columns: join(
+	// ADR-20261110210000 slice 3j: the control plane's secretd pulls from
+	// apps' private registries with it.
+	{Domain: Build, Readers: []string{"imaged", "vmmd", "secretd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("app_registry_credentials", "password_encrypted"),
 		cols("job_registry_credentials", "password_encrypted"),
 	)},

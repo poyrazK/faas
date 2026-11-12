@@ -73,6 +73,10 @@ type Store interface {
 	// edge_rule_header_secrets row of appID that one of appID's headers
 	// rules references, or ErrUnknownEdgeHeaderSecret.
 	EdgeHeaderSecret(ctx context.Context, appID, secretID string) ([]byte, error)
+	// RegistryCredential returns the username and sealed password of
+	// appID's credential for registry (the request URL's host), or
+	// ErrUnknownRegistryCredential.
+	RegistryCredential(ctx context.Context, appID, registry string) (username string, sealed []byte, err error)
 }
 
 // ErrUnknownEdgeHeaderSecret is returned by Store.EdgeHeaderSecret.
@@ -136,6 +140,10 @@ type Server struct {
 	// deliveryIdentities open the delivery seal domain (slice 3g): broker
 	// trigger credentials. Empty refuses OpenTriggerConfig.
 	deliveryIdentities []*age.X25519Identity
+	// buildIdentities open registry passwords (slice 3j). Empty refuses
+	// RegistryFetch.
+	buildIdentities []*age.X25519Identity
+	registry        *registryFetcher
 }
 
 // WithDeliveryIdentities lets secretd open delivery seal-domain values
@@ -173,11 +181,13 @@ func NewServer(store Store, identities []*age.X25519Identity, appsPerNodeHour in
 	if appsPerNodeHour <= 0 {
 		appsPerNodeHour = DefaultAppsPerNodeHour
 	}
-	return &Server{
+	s := &Server{
 		store: store, identities: identities, log: log,
 		peerNode: wire.PeerCN, now: time.Now,
 		budget: newAppBudget(appsPerNodeHour, time.Hour),
 	}
+	s.registry = newRegistryFetcher(nil, func() time.Time { return s.now() })
+	return s
 }
 
 // WithPeerNode replaces the caller identity source (tests).

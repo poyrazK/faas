@@ -168,6 +168,20 @@ current vmmd without the opener refuses the request (503 at the edge).
 `faas_gateway_edge_header_secrets: local` while the edge identity is still on
 compute.
 
+## Private-registry pulls through the control plane (slice 3j)
+
+secretd pulls from an app's private registry for the node (and later the
+builder VM) that needs the image, so the password and the tokens it buys stay
+on the control plane. Every byte of a private image crosses the control
+plane: watch its network and `faas_secretd_opens_total{rpc="RegistryFetch"}`.
+
+1. **Build identity on the control plane:** set the GitHub variable
+   `SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE=true` and run CD for the control plane;
+   `journalctl -u faas-secretd` reports `build_identities` 1 (2 during a
+   rotation).
+2. **Compute switches** come with slices 3j-2 (imaged) and 3j-3 (builder
+   VMs). Until then nothing calls `RegistryFetch`.
+
 ## Rotation
 
 The runtime domain rotates as before (`docs/runbooks/seal-domain-key-escrow.md`).

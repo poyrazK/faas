@@ -14,6 +14,13 @@ type AppLogDrain struct {
 	AuthHeaderSealed []byte
 }
 
+type AppRegistryCredential struct {
+	AppID             pgtype.UUID
+	Registry          string
+	Username          string
+	PasswordEncrypted []byte
+}
+
 type AppSecret struct {
 	AppID      pgtype.UUID
 	Scope      string

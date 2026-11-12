@@ -49,8 +49,11 @@ type config struct {
 	// deliveryIdentityPath is optional (slice 3g): set, secretd also opens
 	// broker trigger credentials with the delivery seal domain.
 	deliveryIdentityPath string
-	appsPerNodeHour      int
-	requireReferences    bool
+	// buildIdentityPath is optional (slice 3j): set, secretd also pulls
+	// from apps' private registries with the build seal domain.
+	buildIdentityPath string
+	appsPerNodeHour   int
+	requireReferences bool
 }
 
 func configFromEnv(getenv func(string) string) (config, error) {
@@ -66,6 +69,8 @@ func configFromEnv(getenv func(string) string) (config, error) {
 		edgeIdentityPath: getenv("FAAS_SECRETD_EDGE_IDENTITY"),
 		// Optional too: without it OpenTriggerConfig refuses.
 		deliveryIdentityPath: getenv("FAAS_SECRETD_DELIVERY_IDENTITY"),
+		// Optional too: without it RegistryFetch refuses.
+		buildIdentityPath: getenv("FAAS_SECRETD_BUILD_IDENTITY"),
 	}
 	if cfg.metricsAddr != "" {
 		host, _, err := net.SplitHostPort(cfg.metricsAddr)
@@ -123,7 +128,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	var edgeIdentities, deliveryIdentities []*age.X25519Identity
+	var edgeIdentities, deliveryIdentities, buildIdentities []*age.X25519Identity
 	if cfg.edgeIdentityPath != "" {
 		if edgeIdentities, err = sealdomain.LoadReaderIdentities(cfg.edgeIdentityPath); err != nil {
 			return fmt.Errorf("secretd: edge identity: %w", err)
@@ -132,6 +137,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if cfg.deliveryIdentityPath != "" {
 		if deliveryIdentities, err = sealdomain.LoadReaderIdentities(cfg.deliveryIdentityPath); err != nil {
 			return fmt.Errorf("secretd: delivery identity: %w", err)
+		}
+	}
+	if cfg.buildIdentityPath != "" {
+		if buildIdentities, err = sealdomain.LoadReaderIdentities(cfg.buildIdentityPath); err != nil {
+			return fmt.Errorf("secretd: build identity: %w", err)
 		}
 	}
 	pool, err := db.OpenWithAppName(ctx, "", "faas-secretd")
@@ -179,13 +189,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	srv := grpc.NewServer(wire.ServerCredsOrEmpty(tlsCfg)...)
 	secretdpb.RegisterSecretdServer(srv, secretd.NewServer(store, identities, cfg.appsPerNodeHour, log).
 		RequireReferences(cfg.requireReferences).WithMetrics(metrics).WithEdgeIdentities(edgeIdentities).
-		WithDeliveryIdentities(deliveryIdentities))
+		WithDeliveryIdentities(deliveryIdentities).WithBuildIdentities(buildIdentities))
 	go func() {
 		<-ctx.Done()
 		srv.GracefulStop()
 	}()
 	log.Info("secretd: serving", "listen", cfg.listen, "identities", len(identities), "edge_identities", len(edgeIdentities),
-		"delivery_identities", len(deliveryIdentities))
+		"delivery_identities", len(deliveryIdentities), "build_identities", len(buildIdentities))
 	if err := srv.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 		return fmt.Errorf("secretd: serve: %w", err)
 	}
