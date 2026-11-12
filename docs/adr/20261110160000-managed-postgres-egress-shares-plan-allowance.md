@@ -187,8 +187,39 @@ stops at its allowance and never costs extra.
 - **Slice 2:** dropped by the per-database amendment: apps and databases no
   longer share an allowance.
 - **Slice 3:** built, see the amendments above.
-- **Slice 4:** a Neon per-project `data_transfer_bytes` quota at the hold
-  ceiling as a backstop, like the compute quota.
+- **Slice 4:** built, see the amendment below.
+
+## Amendment 2026-11-12: slice 4, a provider egress quota backstop
+
+The sweep holds a database that sent its egress allowance. Since database
+egress is billed, a sweep that stops running would let a database keep
+sending, and Neon bill Gregale for it. Neon enforces its own per-project
+quota, `settings.quota.data_transfer_bytes`: once the project's
+`data_transfer_bytes` counter for the consumption period reaches it, Neon
+suspends every compute in the project until the quota is raised or the
+period ends.
+
+- **Target.** Each sweep sets a provider object's quota to the hold ceiling
+  (the allowance, or twice it while overage is billed live) times the
+  databases sharing that object. A restore is a branch in its source's
+  project, so a project with a restore gets two allowances, as the two
+  databases each have one.
+- **Backstop only.** The quota is written after the holds and never skips
+  one; a failed write fails the subject for that sweep. A provider without
+  the capability (`managedpostgres.EgressCapProvider`), or one whose period
+  does not start within an hour of the UTC month, is skipped. A subject
+  without an allowance keeps its quota as it is, because zero means no
+  quota to Neon.
+- **Writes keep each other.** The compute, storage and transfer quota writes
+  each send the project's other quotas as read and confirm all three by
+  reading the project again.
+- **Mode.** It follows cap enforcement: `shadow` logs the decision, `on`
+  writes it. `apid_managed_postgres_egress_quota_decisions_total{outcome}`
+  counts `applied`, `shadowed`, `unchanged` and `failed`.
+- **Owed.** A native Neon check that `data_transfer_bytes` counts public
+  transfer only, as the usage meter does since the 2026-11-11 amendment; if
+  it also counts private transfer, a project using Private Link reaches the
+  quota before the sweep's hold.
 
 ## Consequences
 

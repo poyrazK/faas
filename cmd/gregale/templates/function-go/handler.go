@@ -12,7 +12,7 @@
 // pools, caches) is reused across requests. Older runners that start the handler once per
 // request still work: they send one envelope and close stdin.
 //
-// Once the Go SDK is published, github.com/poyrazK/faas/sdk/go/function.Serve
+// Once the Go SDK is published, github.com/gregale-dev/gregale-go/function.Serve
 // runs a standard net/http handler instead of envelopes.
 //
 // No go.mod is shipped on purpose: Go's //go:embed refuses to descend

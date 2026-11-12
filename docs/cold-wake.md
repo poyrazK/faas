@@ -88,16 +88,14 @@ before running `after_restore`, but cannot refresh application-held values.
 
 The Go, Node and Python SDKs serve both hooks for you. They answer only
 loopback `POST`s with the marker header, run your callbacks in order within
-1.5 s (under the 2-second limit), and run overlapping deliveries once
-([ADR-20261106105015](adr/20261106105015-declarative-resources-connect-and-lifecycle-helpers.md)).
+1.5 s (under the 2-second limit), and run overlapping deliveries once.
 Each has a helper that closes a pool's idle connections on both hooks. Those
 sockets point at connections the database closed while the instance was
 parked or frozen; closing them is local and fast, and the pool opens fresh
 ones on demand. Gregale itself resets an app's outbound connections before it
 takes a snapshot and again on a restore, so a restored instance's inherited
 sockets fail at once instead of hanging, and the database frees the
-snapshot's sessions immediately
-([ADR-20261110160000](adr/20261110160000-reset-connections-around-captures-and-restores.md)). A full reconnect inside `after_restore` can take longer than
+snapshot's sessions immediately. A full reconnect inside `after_restore` can take longer than
 the limit.
 
 ```go
@@ -221,8 +219,7 @@ files under `/tmp`, which lives in memory. Every woken instance starts from
 that same state, and anything written after the capture is lost at each park.
 Opt in only when your app keeps no per-user or per-request state in memory or
 `/tmp`. Apps created before 2026-11-10 on Pro or Scale were opted in by
-default and keep that setting; `--no-warm-snapshot` turns it off
-([ADR-20261110180000](adr/20261110180000-warm-snapshots-are-opt-in.md)).
+default and keep that setting; `--no-warm-snapshot` turns it off.
 
 ## Opting out: keep N instances warm (Pro, Scale)
 
