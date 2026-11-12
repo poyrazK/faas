@@ -1218,7 +1218,7 @@ SELECT EXISTS(SELECT 1 FROM own_constraint c
     WHERE position('managed_postgres_plan_excess' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
 
 -- name: ManagedPostgresPlanExcessSchemaReady :exec
-SELECT n.database_id,n.reason,n.mail_intent_id FROM managed_postgres_plan_excess_notices n LIMIT 0;
+SELECT n.database_id,n.reason,n.mail_intent_id,n.reminder_mail_intent_id FROM managed_postgres_plan_excess_notices n LIMIT 0;
 
 -- name: ManagedPostgresPlanExcessKeyReferences :many
 SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
@@ -1234,6 +1234,13 @@ VALUES($1,$2,$3,$4,$5,$6,'managed_postgres_plan_excess',1,$7,$8,$9,$10);
 -- database is deleted only on a date its owner was mailed.
 UPDATE managed_postgres_plan_excess_notices SET mail_intent_id=sqlc.arg(intent_id)::uuid,delete_at=sqlc.narg(delete_at)::timestamptz
 WHERE database_id=sqlc.arg(database_id)::uuid AND mail_intent_id IS NULL;
+
+-- name: LinkManagedPostgresPlanExcessReminder :execrows
+-- ADR-20261110184700 amendment 2026-11-12: the reminder names the deletion
+-- date the first email named, and is queued once per notice.
+UPDATE managed_postgres_plan_excess_notices SET reminder_mail_intent_id=sqlc.arg(intent_id)::uuid
+WHERE database_id=sqlc.arg(database_id)::uuid AND reminder_mail_intent_id IS NULL
+    AND mail_intent_id IS NOT NULL AND delete_at=sqlc.arg(delete_at)::timestamptz;
 
 -- name: ShareManagedPostgresPlanExcessSubmissionAccount :one
 SELECT a.email,a.status,a.deletion_requested_at,o.from_address,m.sender_address

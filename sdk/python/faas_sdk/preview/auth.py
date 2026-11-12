@@ -3,7 +3,7 @@
 Install the SDK with the extra that brings ES256 verification (see
 https://gregale.dev/docs/sdks; ``faas_sdk`` on PyPI is not Gregale's)::
 
-    pip install 'gregale-sdk[auth] @ git+https://github.com/poyrazK/faas@<commit>#subdirectory=sdk/python'
+    pip install 'gregale-sdk[auth] @ git+https://github.com/gregale-dev/gregale-python@<commit>'
 
 Then verify tokens and check permissions::
 

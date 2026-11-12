@@ -53207,6 +53207,60 @@ func (q *Queries) ListManagedPostgresLifecycleUsageDatabases(ctx context.Context
 	return items, nil
 }
 
+const listManagedPostgresPlanExcessRemindersDue = `-- name: ListManagedPostgresPlanExcessRemindersDue :many
+SELECT n.database_id,n.reason,n.delete_at,d.account_id,d.name,d.service_class
+FROM managed_postgres_plan_excess_notices n JOIN managed_postgres_databases d ON d.id=n.database_id
+WHERE n.delete_at IS NOT NULL AND n.mail_intent_id IS NOT NULL AND n.reminder_mail_intent_id IS NULL
+    AND n.delete_at>$1::timestamptz AND n.delete_at<=$2::timestamptz
+    AND d.state NOT IN ('deleting','deleted')
+ORDER BY n.delete_at,n.database_id LIMIT $3
+`
+
+type ListManagedPostgresPlanExcessRemindersDueParams struct {
+	Now         pgtype.Timestamptz
+	RemindUntil pgtype.Timestamptz
+	BatchSize   int32
+}
+
+type ListManagedPostgresPlanExcessRemindersDueRow struct {
+	DatabaseID   pgtype.UUID
+	Reason       string
+	DeleteAt     pgtype.Timestamptz
+	AccountID    pgtype.UUID
+	Name         string
+	ServiceClass string
+}
+
+// ADR-20261110184700 amendment 2026-11-12: notices whose mailed deletion date
+// is between now and remind_until and whose reminder no intent has claimed,
+// for databases not being deleted.
+func (q *Queries) ListManagedPostgresPlanExcessRemindersDue(ctx context.Context, db DBTX, arg ListManagedPostgresPlanExcessRemindersDueParams) ([]ListManagedPostgresPlanExcessRemindersDueRow, error) {
+	rows, err := db.Query(ctx, listManagedPostgresPlanExcessRemindersDue, arg.Now, arg.RemindUntil, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListManagedPostgresPlanExcessRemindersDueRow{}
+	for rows.Next() {
+		var i ListManagedPostgresPlanExcessRemindersDueRow
+		if err := rows.Scan(
+			&i.DatabaseID,
+			&i.Reason,
+			&i.DeleteAt,
+			&i.AccountID,
+			&i.Name,
+			&i.ServiceClass,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listManagedPostgresPlanExcessSince = `-- name: ListManagedPostgresPlanExcessSince :many
 SELECT database_id,recorded_at,delete_at FROM managed_postgres_plan_excess_notices
 WHERE database_id=ANY($1::uuid[])
@@ -102901,6 +102955,8 @@ SET state = 'resolved',
 WHERE app_id = $1
   AND last_detected_at < $2
   AND state <> 'resolved'
+  AND (deployment_id <> $3::uuid
+       OR route = ANY($4::text[]))
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
@@ -102909,8 +102965,10 @@ RETURNING app_id, deployment_id, route,
 `
 
 type ResolveRegressionObservationsNotSeenSinceParams struct {
-	AppID          pgtype.UUID
-	LastDetectedAt pgtype.Timestamptz
+	AppID               pgtype.UUID
+	LastDetectedAt      pgtype.Timestamptz
+	CurrentDeploymentID pgtype.UUID
+	MeasuredRoutes      []string
 }
 
 // An app's complete detector pass reconfirms every regression it still sees
@@ -102919,8 +102977,19 @@ type ResolveRegressionObservationsNotSeenSinceParams struct {
 // rollback included. Resolving here, rather than 24 hours later through
 // ResolveStaleRegressionObservations, keeps the banner, status and the
 // resolved webhook current. $2 is the pass start (with clock slack).
+// Only what the pass could judge resolves: an observation of a deployment
+// the pass no longer compares (superseded or rolled back), or of a route the
+// current deployment served in this pass's window. A route that merely went
+// quiet stays open (the stale sweep closes it after the lookback): on prod an
+// unfixed 15x slowdown resolved five minutes after it was found, once its
+// traffic aged out of the window.
 func (q *Queries) ResolveRegressionObservationsNotSeenSince(ctx context.Context, db DBTX, arg ResolveRegressionObservationsNotSeenSinceParams) ([]DebugRegressionObservation, error) {
-	rows, err := db.Query(ctx, resolveRegressionObservationsNotSeenSince, arg.AppID, arg.LastDetectedAt)
+	rows, err := db.Query(ctx, resolveRegressionObservationsNotSeenSince,
+		arg.AppID,
+		arg.LastDetectedAt,
+		arg.CurrentDeploymentID,
+		arg.MeasuredRoutes,
+	)
 	if err != nil {
 		return nil, err
 	}

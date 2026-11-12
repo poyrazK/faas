@@ -47,6 +47,7 @@ type devSetupReceipt struct {
 	Warnings                []string               `json:"warnings,omitempty"`
 	ConfigPresent           bool                   `json:"config_present"`
 	Doctor                  *devSetupDoctorSummary `json:"doctor,omitempty"`
+	Configuration           *devConfiguration      `json:"configuration,omitempty"`
 	SavedConfig             *devSetupSavedConfig   `json:"saved_config,omitempty"`
 	Development             *devModeSelection      `json:"development,omitempty"`
 }
@@ -181,7 +182,11 @@ func cmdDevSetup(args []string) int {
 	if err != nil {
 		return printErr("Could not prepare developer setup", err)
 	}
-	receipt := buildDevSetupReceipt(cwd, sourceDir, project, config, envFilePath, envKeyCount, serviceOverrideFilePath, serviceOverrideKeyCount, *start, *once, *noLogs, *open, *withPostgres, *postgresRegion, lease)
+	configuration, err := loadDevConfiguration(sourceDir, envFilePath, serviceOverrideFilePath, *withPostgres, buckets)
+	if err != nil {
+		return printErr("Invalid developer configuration", err)
+	}
+	receipt := buildDevSetupReceipt(cwd, sourceDir, project, config, envFilePath, envKeyCount, serviceOverrideFilePath, serviceOverrideKeyCount, *start, *once, *noLogs, *open, *withPostgres, *postgresRegion, lease, configuration.evaluate(nil))
 	mode, err := resolveDevMode(sourceDir, config, manifest, nil, false, "")
 	if err != nil {
 		return printErr("Invalid developer mode", err)
@@ -212,6 +217,7 @@ func cmdDevSetup(args []string) int {
 		}
 	}
 	localSaveReady := *save && !*start && receipt.Doctor.Errors == 0
+	canVerifyAtStart := *start && receipt.Authenticated && receipt.Doctor.Errors == 0
 
 	if jsonOutput {
 		if *start {
@@ -221,7 +227,7 @@ func cmdDevSetup(args []string) int {
 		} else if err := writeJSON(receipt); err != nil {
 			return jsonOut(err)
 		}
-		if !receipt.Ready && !localSaveReady {
+		if !receipt.Ready && !localSaveReady && !canVerifyAtStart {
 			return 1
 		}
 		if *start {
@@ -240,7 +246,7 @@ func cmdDevSetup(args []string) int {
 		data, _ := yaml.Marshal(receipt.SavedConfig.Values)
 		_, _ = fmt.Fprint(osStdout, string(data))
 	}
-	if !receipt.Ready && !localSaveReady {
+	if !receipt.Ready && !localSaveReady && !canVerifyAtStart {
 		return 1
 	}
 	if !*start {
@@ -293,7 +299,7 @@ func resolveSetupServiceOverrideFile(cwd, raw string) (string, int, error) {
 	return path, len(pairs), nil
 }
 
-func buildDevSetupReceipt(cwd, sourceDir, project string, config devSourceConfig, envFile string, envKeyCount int, serviceOverrideFile string, serviceOverrideKeyCount int, start, once, noLogs, open, postgres bool, postgresRegion string, lease time.Duration) devSetupReceipt {
+func buildDevSetupReceipt(cwd, sourceDir, project string, config devSourceConfig, envFile string, envKeyCount int, serviceOverrideFile string, serviceOverrideKeyCount int, start, once, noLogs, open, postgres bool, postgresRegion string, lease time.Duration, configuration ...*devConfiguration) devSetupReceipt {
 	receipt := devSetupReceipt{
 		Version:                 1,
 		Path:                    sourceDir,
@@ -322,8 +328,14 @@ func buildDevSetupReceipt(cwd, sourceDir, project string, config devSourceConfig
 		}
 	}
 	receipt.StartCommand = devSetupDevArgsForDisplay(cwd, sourceDir, project, envFile, serviceOverrideFile, once, noLogs, open, postgres, postgresRegion, lease)
-	receipt.Doctor = buildDevSetupDoctorSummary(sourceDir, config.shape)
+	if len(configuration) > 0 {
+		receipt.Configuration = configuration[0]
+	}
+	receipt.Doctor = buildDevSetupDoctorSummary(sourceDir, config.shape, receipt.Configuration)
 	receipt.Ready = receipt.Authenticated && receipt.Doctor.Errors == 0
+	if receipt.Configuration != nil {
+		receipt.Ready = receipt.Ready && receipt.Configuration.ready()
+	}
 	return receipt
 }
 
@@ -334,8 +346,11 @@ func devSetupShapeName(s shape) string {
 	return "app"
 }
 
-func buildDevSetupDoctorSummary(sourceDir string, deploymentShape shape) *devSetupDoctorSummary {
+func buildDevSetupDoctorSummary(sourceDir string, deploymentShape shape, configuration *devConfiguration) *devSetupDoctorSummary {
 	report := runDoctorChecksForShape(sourceDir, deploymentShape)
+	if configuration != nil {
+		setStartConfigurationCheck(&report, configuration.doctorCheck())
+	}
 	summary := &devSetupDoctorSummary{Checks: report.Checks}
 	for _, check := range report.Checks {
 		switch check.Status {
@@ -496,6 +511,9 @@ func renderDevSetup(stdout, stderr io.Writer, receipt devSetupReceipt) {
 		detected += " / " + receipt.Runtime
 	}
 	PrintProgress(stdout, "detected: %s", detected)
+	if receipt.Configuration != nil {
+		receipt.Configuration.render(stdout)
+	}
 	if receipt.Development != nil {
 		receipt.Development.render(stdout)
 		if receipt.Development.Mode == "watch" {

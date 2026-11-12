@@ -20,27 +20,25 @@ source root and served by the Go runner. Start from the `function-rust`
 template. A handler returns one response or streams it: server-sent
 events, generated text and large downloads reach the client as they are
 produced ([Node](runtimes/node24.md#streaming),
-[Python](runtimes/python313.md#streaming), [Go](runtimes/go124.md#streaming);
-ADR-999). Gateway streaming is on for Hobby, Pro and Scale; Free buffers the
+[Python](runtimes/python313.md#streaming), [Go](runtimes/go124.md#streaming)). Gateway streaming is on for Hobby, Pro and Scale; Free buffers the
 response. Every `Set-Cookie` header is sent. Node and Python handlers, and Go and `binary` handlers that
 speak the [persistent protocol](runtimes/go124.md#persistent-handlers), stay
 loaded between requests. Node and Python handlers are also captured warm in
 the init snapshot; a Go or `binary` handler is restarted after a snapshot restore. For ordinary framework APIs, omit `--function`
 and let source detection select the app profile.
 
-A function request must start its response within 30 seconds by default
-([ADR-20261107190000](adr/20261107190000-function-request-default-30s.md)).
+A function request must start its response within 30 seconds by default.
 Set a shorter timeout when callers need a fast failure, or a longer one for
 slower work:
 `gregale app APP --request-timeout SECONDS`, up to 30 s on Free, 1 min on
-Hobby, 5 min on Pro and 15 min on Scale (ADR-1150). The whole invocation,
+Hobby, 5 min on Pro and 15 min on Scale. The whole invocation,
 a streamed response included, may run for the longer of that timeout and
 30 s. The runner passes the time left to the handler in the
 `X-Faas-Deadline-Ms` request header. In an event handler, `event.headers` has
 lowercase names and ignores case on lookup (`event.headers["x-faas-deadline-ms"]`);
 repeated request headers arrive joined into one value. Async, queue and cron invocations
 of the function may run just as long: the longer of its request timeout
-and 30 s (ADR-1180).
+and 30 s.
 
 A Node or Python function that loads the Gregale SDK runs each call inside
 the SDK's request context, with no wrapper of its own. Service calls made
@@ -121,8 +119,7 @@ build includes the workspace, so functions can share packages.
 ### Config in code
 
 A Node or Python handler can declare its own settings, so a new function is
-one file. `gregale deploy` reads the config without running your code
-([ADR-20261107193000](adr/20261107193000-function-config-in-code.md)):
+one file. `gregale deploy` reads the config without running your code:
 
 ```js
 // functions/digest/handler.js
@@ -316,9 +313,7 @@ function after deploying. `functions:` is applied by `gregale deploy`, and by
 pushes to a connected repository where your account can
 [deploy functions from GitHub](#deploy-a-functions-project-from-github);
 otherwise a repository deploy ignores it for a function app and refuses it for
-any other app. The design is recorded in
-[ADR-985](adr/985-multi-function-projects.md); per-function settings and
-routes in [ADR-1342](adr/1342-function-settings-and-concurrent-workers.md).
+any other app.
 
 ### Deploy a functions project from GitHub
 
@@ -372,8 +367,7 @@ from your shell, and Gregale never reads secrets from the repository).
 Existing webhooks, bucket notifications and secrets stay as they are. The
 push's deploy activity lists each step left, and running `gregale deploy` from
 a checkout completes them; `gregale org activity` and the dashboard's
-activity feed show it. The design is recorded in
-[ADR-20261108160000](adr/20261108160000-functions-projects-from-repository-pushes.md).
+activity feed show it.
 
 ## Call another function
 
@@ -514,8 +508,7 @@ rejects the restored instance and Gregale cold-boots a fresh one. A failing
 captures for the function. A throwing `init` fails the deployment with
 `function_init_failed` and its error ([errors](errors.md)); an `init` that
 does not finish within the startup deadline fails it with
-`app_startup_timeout`. The design is recorded in
-[ADR-20261110190000](adr/20261110190000-function-snapshot-hooks-in-code.md).
+`app_startup_timeout`.
 
 ## Concurrent requests per worker
 
@@ -552,10 +545,9 @@ The value can be up to your plan's per-instance concurrency (`gregale app
   five seconds causes its worker to restart, failing its other in-flight
   requests too.
 - Go SDK functions keep one request per process. A `binary` function's
-  handler can serve several by advertising them in its ready line, as the
-  shared worker protocol in ADR-1342 describes.
+  handler can serve several by advertising them in its ready line (see the
+  [`binary` runtime](runtimes/binary.md)).
 
-See [ADR-1342](adr/1342-function-settings-and-concurrent-workers.md).
 
 ### Database requests and cancellation
 

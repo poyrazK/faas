@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	faas "github.com/gregale-dev/gregale-go"
 )
 
 func TestPostgresPoolCoordinatedACK(t *testing.T) {

@@ -79,6 +79,77 @@ func TestAdoptGuestProcessSignalsAndWatchesThroughPidfds(t *testing.T) {
 	}
 }
 
+// A jail the previous vmmd recorded carries that vmmd's mount namespace, and
+// under systemd ProtectSystem=strict every vmmd start has its own: teardown of
+// an adopted guest refused its jail forever ("jail mount namespace context
+// changed"), leaving the guest draining and the node's drain, and so its
+// rollouts, held (production 2026-11-12). Adoption re-anchors the jail to this
+// vmmd only within the same boot and for the same directory.
+func TestAnchorAdoptedJailAcceptsTheSuccessorMountNamespace(t *testing.T) {
+	jailAt := func(t *testing.T) (string, resourceAsset) {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), idLive)
+		if err := os.Mkdir(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		identity, err := resourceDirectoryID(path)
+		if err != nil || identity == nil {
+			t.Fatalf("directory identity: %v %v", identity, err)
+		}
+		predecessor, err := resourceMountNamespace()
+		if err != nil {
+			t.Fatal(err)
+		}
+		predecessor.Namespace++ // the previous vmmd's private mount namespace
+		return path, resourceAsset{Kind: "jail", Path: path, File: identity, Namespace: &predecessor}
+	}
+
+	_, recorded := jailAt(t)
+	if err := checkJailAsset(recorded); err == nil {
+		t.Fatal("the recorded jail of a previous vmmd passed the namespace check; the regression no longer reproduces")
+	}
+	anchored, err := anchorAdoptedJail(recorded)
+	if err != nil {
+		t.Fatalf("anchor an adopted jail: %v", err)
+	}
+	if err := checkJailAsset(anchored); err != nil {
+		t.Fatalf("teardown check after adoption: %v", err)
+	}
+	if recorded.Namespace == anchored.Namespace {
+		t.Fatal("anchoring rewrote the journal record's namespace in place")
+	}
+
+	_, earlierBoot := jailAt(t)
+	other := *earlierBoot.Namespace
+	other.BootID = "00000000-0000-4000-8000-000000000000"
+	earlierBoot.Namespace = &other
+	if _, err := anchorAdoptedJail(earlierBoot); err == nil {
+		t.Fatal("re-anchored a jail recorded in another boot")
+	}
+
+	// Make the replacement while the recorded directory still exists, so it
+	// cannot reuse the recorded inode, then swap it in.
+	path, replaced := jailAt(t)
+	swap := path + ".other"
+	if err := os.Mkdir(swap, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(swap, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := anchorAdoptedJail(replaced); err == nil {
+		t.Fatal("re-anchored a jail directory that was replaced")
+	}
+
+	unrecorded := resourceAsset{Kind: "jail", Path: "/srv/fc/jail/firecracker/" + idLive + "/root"}
+	if got, err := anchorAdoptedJail(unrecorded); err != nil || got.Namespace != nil {
+		t.Fatalf("a jail without a recorded namespace = %+v, %v; want it unchanged", got, err)
+	}
+}
+
 func TestAdoptGuestProcessRefusesAnotherIncarnation(t *testing.T) {
 	v := NewJailerVMM(t.TempDir(), time.Second)
 	l := leaseForSlot(idLive, 3)

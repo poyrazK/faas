@@ -122,6 +122,34 @@ func TestGitHubEventsPublish(t *testing.T) {
 	}
 }
 
+// adr: 20261030125501 §4 — a published event also goes to the threads
+// subscribed with gregale_github_subscribe, a repeated delivery too, since
+// their failure makes githubd retry it.
+func TestGitHubEventsPublishReachesSubscriptions(t *testing.T) {
+	store := newFakeGitHubEventStore(state.AccountActive)
+	var calls []string
+	var fail error
+	events := agents.GitHubEvents{Store: store, Allowed: func(state.Account) bool { return true },
+		Subscriptions: func(_ context.Context, accountID, deliveryID string, event api.GitHubPullRequestEvent) error {
+			calls = append(calls, accountID+" "+deliveryID+" "+event.Type()+" "+event.Repository.FullName)
+			return fail
+		}}
+	ctx := context.Background()
+	for range 2 {
+		if _, err := events.Publish(ctx, gitHubEventDelivery, 7, "pull_request.opened", gitHubEventData(t, nil)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := gitHubEventAccount + " " + gitHubEventDelivery + " pull_request.opened octo/api"
+	if len(calls) != 2 || calls[0] != want || calls[1] != want {
+		t.Fatalf("subscription calls %v", calls)
+	}
+	fail = errors.New("connection refused")
+	if _, err := events.Publish(ctx, gitHubEventDelivery, 7, "pull_request.opened", gitHubEventData(t, nil)); err == nil {
+		t.Fatal("a failed subscription delivery was not reported, so githubd would not retry it")
+	}
+}
+
 func TestGitHubEventsPublishSkips(t *testing.T) {
 	cases := []struct {
 		name         string

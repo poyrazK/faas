@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/poyrazK/faas/sdk/go/preview"
+	"github.com/gregale-dev/gregale-go/preview"
 )
 
 // RecoveryAlertHost belongs to the application. Hold one fenced writer across
