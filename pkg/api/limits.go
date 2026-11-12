@@ -1669,6 +1669,13 @@ const RollbackOn5xxTelemetryGrace = 2 * time.Minute
 const RollbackOn5xxCheckIntervalSeconds = 15
 const RollbackOn5xxBatchSize = 100
 
+// RollbackOn5xxKnownErrorLookback is how far before a release the first-wake
+// guard and the post-release watch's quiet-predecessor bar look for 5xx its
+// predecessor already returned on the same method, route and status. Those
+// responses do not count toward an automatic rollback: a route that failed
+// before the release cannot roll it back (Hunt 34 H34-17).
+const RollbackOn5xxKnownErrorLookback = 24 * time.Hour
+
 // Post-release watch (ADR-1445). For PostReleaseWatchWindow after a release
 // reaches 100%, apid compares it with its predecessor's traffic in the
 // PostReleaseWatchBaseline before the rollout started, and rolls back a
@@ -9673,6 +9680,8 @@ const (
 	// an OTLP data point may be stamped. A later stamp would keep the value
 	// fresh after its pusher stopped (ADR-20261031144636).
 	CustomMetricMaxFutureSkewSeconds = 300
+	// Accepted producer skew is clamped to receipt time.
+	CustomMetricClockSkew = CustomMetricMaxFutureSkewSeconds * time.Second
 
 	// CustomMetricExportMaxSeries caps one ADR-745 exporter scrape. The
 	// per-app name cap already bounds the table; this bounds a scrape even
@@ -15656,6 +15665,7 @@ const (
 	RequestAnalyticsRollupDimensionsBufferMax = 10 * RequestAnalyticsRollupDimensionsMax
 	// App minutes whose lost rollups wait to be recorded as gaps.
 	RequestAnalyticsRollupPendingGapsMax = 100_000
+	RequestAnalyticsDimensionMaxBytes    = 512
 	RequestAnalyticsRollupSeenEventsMax  = 200_000
 	RequestAnalyticsRollupPendingRowsMax = 200_000
 )

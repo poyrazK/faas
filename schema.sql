@@ -26324,6 +26324,82 @@ $$;
 
 
 --
+-- Name: request_analytics_method(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.request_analytics_method(method text) RETURNS text
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    AS $$
+ SELECT CASE WHEN method IN ('GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS','OTHER') THEN method ELSE 'OTHER' END
+$$;
+
+
+--
+-- Name: request_analytics_record_counting_interval(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.request_analytics_record_counting_interval() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE previous_stamp timestamptz:=NEW.heartbeat_at; until_stamp timestamptz;
+BEGIN
+ IF TG_OP='UPDATE' THEN previous_stamp:=least(OLD.heartbeat_at,NEW.heartbeat_at); END IF;
+ INSERT INTO request_analytics_coverage_watermarks(node_name,source_kind,registered_at,previous_source_at,source_at)
+ VALUES(NEW.node_name,'analytics',coalesce((SELECT created_at FROM compute_nodes WHERE name=NEW.node_name),previous_stamp),previous_stamp,NEW.heartbeat_at)
+ ON CONFLICT(node_name,source_kind) DO UPDATE SET previous_source_at=EXCLUDED.previous_source_at,source_at=EXCLUDED.source_at;
+ SELECT least(NEW.heartbeat_at,c.source_at) INTO until_stamp FROM request_telemetry_coverage c
+ WHERE c.node_name=NEW.node_name AND c.boot_id=NEW.boot_id AND c.enabled AND c.sampling_basis_points=10000;
+ IF NEW.counting_since IS NOT NULL AND until_stamp>=NEW.counting_since THEN
+ INSERT INTO request_analytics_coverage_intervals(node_name,source_kind,covered_since,covered_until)
+ VALUES(NEW.node_name,'analytics',NEW.counting_since,until_stamp)
+ ON CONFLICT(node_name,source_kind,covered_since) DO UPDATE SET covered_until=greatest(request_analytics_coverage_intervals.covered_until,EXCLUDED.covered_until);
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: request_analytics_record_coverage_gap(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.request_analytics_record_coverage_gap() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE first_gap timestamptz:=NEW.last_gap_at; kind text:=CASE WHEN TG_TABLE_NAME='request_analytics_app_gaps' THEN 'analytics' ELSE 'raw' END;
+BEGIN
+ SELECT least(first_gap,previous_source_at) INTO first_gap FROM request_analytics_coverage_watermarks WHERE node_name=NEW.node_name AND source_kind=kind;
+ first_gap:=coalesce(first_gap,NEW.last_gap_at);
+ IF TG_OP='UPDATE' AND OLD.pending_count>0 THEN first_gap:=least(first_gap,OLD.last_gap_at); END IF;
+ INSERT INTO request_analytics_coverage_gaps(node_name,source_kind,app_id,gap_from,gap_until)
+ VALUES(NEW.node_name,kind,NEW.app_id,first_gap,greatest(first_gap,NEW.updated_at))
+ ON CONFLICT(node_name,source_kind,app_id,gap_from) DO UPDATE SET gap_until=greatest(request_analytics_coverage_gaps.gap_until,EXCLUDED.gap_until);
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: request_analytics_record_coverage_interval(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.request_analytics_record_coverage_interval() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE previous_stamp timestamptz:=NEW.source_at;
+BEGIN
+ IF TG_OP='UPDATE' THEN previous_stamp:=least(OLD.source_at,NEW.source_at); END IF;
+ INSERT INTO request_analytics_coverage_watermarks(node_name,registered_at,previous_source_at,source_at)
+ VALUES(NEW.node_name,coalesce((SELECT created_at FROM compute_nodes WHERE name=NEW.node_name),previous_stamp),previous_stamp,NEW.source_at)
+ ON CONFLICT(node_name,source_kind) DO UPDATE SET previous_source_at=EXCLUDED.previous_source_at,source_at=EXCLUDED.source_at;
+ IF NEW.healthy_since IS NOT NULL AND NEW.source_at>=NEW.healthy_since THEN
+  INSERT INTO request_analytics_coverage_intervals(node_name,covered_since,covered_until)
+  VALUES(NEW.node_name,NEW.healthy_since,NEW.source_at)
+  ON CONFLICT(node_name,source_kind,covered_since) DO UPDATE SET covered_until=greatest(request_analytics_coverage_intervals.covered_until,EXCLUDED.covered_until);
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: require_deployment_layer_artifacts(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -35839,6 +35915,42 @@ CREATE TABLE public.custom_domains (
     CONSTRAINT custom_domains_cert_retry_at_check CHECK (((cert_retry_at IS NULL) OR isfinite(cert_retry_at))),
     CONSTRAINT custom_domains_cert_status_chk CHECK ((cert_status = ANY (ARRAY['pending'::text, 'issued'::text, 'renewing'::text, 'failed'::text, 'dns_drifted'::text]))),
     CONSTRAINT custom_domains_manual_check_at_check CHECK (((verification_manual_check_at IS NULL) OR isfinite(verification_manual_check_at)))
+);
+
+
+--
+-- Name: customer_api_errors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_api_errors (
+    id bigint NOT NULL,
+    account_id uuid NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    route text NOT NULL,
+    code text NOT NULL,
+    app_slug text DEFAULT ''::text NOT NULL,
+    request_id text DEFAULT ''::text NOT NULL,
+    trace_id text DEFAULT ''::text NOT NULL,
+    CONSTRAINT customer_api_errors_app_slug_check CHECK ((octet_length(app_slug) <= 63)),
+    CONSTRAINT customer_api_errors_code_check CHECK (((octet_length(code) >= 1) AND (octet_length(code) <= 80))),
+    CONSTRAINT customer_api_errors_occurred_at_check CHECK (isfinite(occurred_at)),
+    CONSTRAINT customer_api_errors_request_id_check CHECK ((octet_length(request_id) <= 128)),
+    CONSTRAINT customer_api_errors_route_check CHECK (((octet_length(route) >= 1) AND (octet_length(route) <= 200))),
+    CONSTRAINT customer_api_errors_trace_id_check CHECK (((trace_id = ''::text) OR (trace_id ~ '^[0-9a-f]{32}$'::text)))
+);
+
+
+--
+-- Name: customer_api_errors_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.customer_api_errors ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.customer_api_errors_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
 );
 
 
@@ -56061,6 +56173,54 @@ COMMENT ON TABLE public.request_analytics_app_gaps IS 'Per gateway node and app:
 
 
 --
+-- Name: request_analytics_coverage_gaps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_analytics_coverage_gaps (
+    node_name text NOT NULL,
+    source_kind text DEFAULT 'raw'::text NOT NULL,
+    app_id uuid NOT NULL,
+    gap_from timestamp with time zone NOT NULL,
+    gap_until timestamp with time zone NOT NULL,
+    history_incomplete boolean DEFAULT false NOT NULL,
+    CONSTRAINT request_analytics_coverage_gaps_check CHECK ((gap_until >= gap_from)),
+    CONSTRAINT request_analytics_coverage_gaps_node_name_check CHECK ((node_name <> ''::text)),
+    CONSTRAINT request_analytics_coverage_gaps_source_kind_check CHECK ((source_kind = ANY (ARRAY['raw'::text, 'analytics'::text])))
+);
+
+
+--
+-- Name: request_analytics_coverage_intervals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_analytics_coverage_intervals (
+    node_name text NOT NULL,
+    source_kind text DEFAULT 'raw'::text NOT NULL,
+    covered_since timestamp with time zone NOT NULL,
+    covered_until timestamp with time zone NOT NULL,
+    CONSTRAINT request_analytics_coverage_intervals_check CHECK ((covered_until >= covered_since)),
+    CONSTRAINT request_analytics_coverage_intervals_node_name_check CHECK ((node_name <> ''::text)),
+    CONSTRAINT request_analytics_coverage_intervals_source_kind_check CHECK ((source_kind = ANY (ARRAY['raw'::text, 'analytics'::text])))
+);
+
+
+--
+-- Name: request_analytics_coverage_watermarks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_analytics_coverage_watermarks (
+    node_name text NOT NULL,
+    source_kind text DEFAULT 'raw'::text NOT NULL,
+    registered_at timestamp with time zone NOT NULL,
+    previous_source_at timestamp with time zone NOT NULL,
+    source_at timestamp with time zone NOT NULL,
+    CONSTRAINT request_analytics_coverage_watermarks_check CHECK ((source_at >= previous_source_at)),
+    CONSTRAINT request_analytics_coverage_watermarks_node_name_check CHECK ((node_name <> ''::text)),
+    CONSTRAINT request_analytics_coverage_watermarks_source_kind_check CHECK ((source_kind = ANY (ARRAY['raw'::text, 'analytics'::text])))
+);
+
+
+--
 -- Name: request_analytics_hours; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -56171,6 +56331,16 @@ COMMENT ON TABLE public.request_analytics_node_coverage IS 'Per gateway node: si
 
 
 --
+-- Name: request_analytics_rollup_audit; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_analytics_rollup_audit (
+    app_id uuid NOT NULL,
+    audited_since timestamp with time zone NOT NULL
+);
+
+
+--
 -- Name: request_analytics_rollup_batches; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -56225,6 +56395,19 @@ CREATE TABLE public.request_analytics_rollup_gaps (
 --
 
 COMMENT ON TABLE public.request_analytics_rollup_gaps IS 'App minutes whose analytics rollups apid lost; written only by apid, swept only by meterd (ADR-20261103113952 amendment 1).';
+
+
+--
+-- Name: request_analytics_rollup_windows; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_analytics_rollup_windows (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    bucket_start timestamp with time zone NOT NULL,
+    state text NOT NULL,
+    CONSTRAINT request_analytics_rollup_windows_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'lost'::text])))
+);
 
 
 --
@@ -63413,6 +63596,14 @@ ALTER TABLE ONLY public.custom_domain_tls_hosts
 
 ALTER TABLE ONLY public.custom_domains
     ADD CONSTRAINT custom_domains_pkey PRIMARY KEY (domain);
+
+
+--
+-- Name: customer_api_errors customer_api_errors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_api_errors
+    ADD CONSTRAINT customer_api_errors_pkey PRIMARY KEY (id);
 
 
 --
@@ -72248,6 +72439,30 @@ ALTER TABLE ONLY public.request_analytics_app_gaps
 
 
 --
+-- Name: request_analytics_coverage_gaps request_analytics_coverage_gaps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_analytics_coverage_gaps
+    ADD CONSTRAINT request_analytics_coverage_gaps_pkey PRIMARY KEY (node_name, source_kind, app_id, gap_from);
+
+
+--
+-- Name: request_analytics_coverage_intervals request_analytics_coverage_intervals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_analytics_coverage_intervals
+    ADD CONSTRAINT request_analytics_coverage_intervals_pkey PRIMARY KEY (node_name, source_kind, covered_since);
+
+
+--
+-- Name: request_analytics_coverage_watermarks request_analytics_coverage_watermarks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_analytics_coverage_watermarks
+    ADD CONSTRAINT request_analytics_coverage_watermarks_pkey PRIMARY KEY (node_name, source_kind);
+
+
+--
 -- Name: request_analytics_hours request_analytics_hours_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -72272,6 +72487,14 @@ ALTER TABLE ONLY public.request_analytics_node_coverage
 
 
 --
+-- Name: request_analytics_rollup_audit request_analytics_rollup_audit_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_analytics_rollup_audit
+    ADD CONSTRAINT request_analytics_rollup_audit_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: request_analytics_rollup_batches request_analytics_rollup_batches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -72293,6 +72516,14 @@ ALTER TABLE ONLY public.request_analytics_rollup_coverage
 
 ALTER TABLE ONLY public.request_analytics_rollup_gaps
     ADD CONSTRAINT request_analytics_rollup_gaps_pkey PRIMARY KEY (app_id, bucket_start);
+
+
+--
+-- Name: request_analytics_rollup_windows request_analytics_rollup_windows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_analytics_rollup_windows
+    ADD CONSTRAINT request_analytics_rollup_windows_pkey PRIMARY KEY (id);
 
 
 --
@@ -76668,6 +76899,34 @@ CREATE INDEX custom_domains_unverified_idx ON public.custom_domains USING btree 
 --
 
 CREATE INDEX custom_domains_verification_due_idx ON public.custom_domains USING btree (verification_next_check_at, app_id) WHERE (verified_at IS NULL);
+
+
+--
+-- Name: customer_api_errors_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_api_errors_account_idx ON public.customer_api_errors USING btree (account_id, occurred_at DESC);
+
+
+--
+-- Name: customer_api_errors_age_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_api_errors_age_idx ON public.customer_api_errors USING btree (occurred_at);
+
+
+--
+-- Name: customer_api_errors_request_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_api_errors_request_idx ON public.customer_api_errors USING btree (request_id) WHERE (request_id <> ''::text);
+
+
+--
+-- Name: customer_api_errors_trace_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_api_errors_trace_idx ON public.customer_api_errors USING btree (trace_id) WHERE (trace_id <> ''::text);
 
 
 --
@@ -83538,6 +83797,27 @@ CREATE INDEX request_analytics_app_gaps_app_idx ON public.request_analytics_app_
 
 
 --
+-- Name: request_analytics_coverage_gaps_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_analytics_coverage_gaps_app_idx ON public.request_analytics_coverage_gaps USING btree (app_id, gap_from, gap_until);
+
+
+--
+-- Name: request_analytics_coverage_gaps_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_analytics_coverage_gaps_retention_idx ON public.request_analytics_coverage_gaps USING btree (gap_until);
+
+
+--
+-- Name: request_analytics_coverage_intervals_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_analytics_coverage_intervals_retention_idx ON public.request_analytics_coverage_intervals USING btree (covered_until);
+
+
+--
 -- Name: request_analytics_hours_bucket_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -83563,6 +83843,20 @@ CREATE INDEX request_analytics_rollup_batches_applied_idx ON public.request_anal
 --
 
 CREATE INDEX request_analytics_rollup_gaps_bucket_idx ON public.request_analytics_rollup_gaps USING btree (bucket_start);
+
+
+--
+-- Name: request_analytics_rollup_windows_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_analytics_rollup_windows_app_idx ON public.request_analytics_rollup_windows USING btree (app_id, bucket_start);
+
+
+--
+-- Name: request_analytics_rollup_windows_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_analytics_rollup_windows_retention_idx ON public.request_analytics_rollup_windows USING btree (bucket_start);
 
 
 --
@@ -91581,6 +91875,34 @@ CREATE TRIGGER release_secret_snapshot_owned BEFORE INSERT OR DELETE OR UPDATE O
 
 
 --
+-- Name: request_analytics_app_gaps request_analytics_record_counting_gap; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER request_analytics_record_counting_gap AFTER INSERT OR UPDATE ON public.request_analytics_app_gaps FOR EACH ROW EXECUTE FUNCTION public.request_analytics_record_coverage_gap();
+
+
+--
+-- Name: request_analytics_node_coverage request_analytics_record_counting_interval; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER request_analytics_record_counting_interval AFTER INSERT OR UPDATE ON public.request_analytics_node_coverage FOR EACH ROW EXECUTE FUNCTION public.request_analytics_record_counting_interval();
+
+
+--
+-- Name: request_telemetry_app_gaps request_analytics_record_coverage_gap; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER request_analytics_record_coverage_gap AFTER INSERT OR UPDATE ON public.request_telemetry_app_gaps FOR EACH ROW EXECUTE FUNCTION public.request_analytics_record_coverage_gap();
+
+
+--
+-- Name: request_telemetry_coverage request_analytics_record_coverage_interval; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER request_analytics_record_coverage_interval AFTER INSERT OR UPDATE ON public.request_telemetry_coverage FOR EACH ROW EXECUTE FUNCTION public.request_analytics_record_coverage_interval();
+
+
+--
 -- Name: reserved_ip_inventory reserved_ip_inventory_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -96288,6 +96610,14 @@ ALTER TABLE ONLY public.custom_domains
 
 ALTER TABLE ONLY public.custom_domains
     ADD CONSTRAINT custom_domains_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: customer_api_errors customer_api_errors_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_api_errors
+    ADD CONSTRAINT customer_api_errors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
@@ -107051,11 +107381,35 @@ ALTER TABLE ONLY public.request_analytics_app_gaps
 
 
 --
+-- Name: request_analytics_coverage_gaps request_analytics_coverage_gaps_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_analytics_coverage_gaps
+    ADD CONSTRAINT request_analytics_coverage_gaps_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: request_analytics_rollup_audit request_analytics_rollup_audit_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_analytics_rollup_audit
+    ADD CONSTRAINT request_analytics_rollup_audit_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: request_analytics_rollup_coverage request_analytics_rollup_coverage_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.request_analytics_rollup_coverage
     ADD CONSTRAINT request_analytics_rollup_coverage_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: request_analytics_rollup_windows request_analytics_rollup_windows_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_analytics_rollup_windows
+    ADD CONSTRAINT request_analytics_rollup_windows_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

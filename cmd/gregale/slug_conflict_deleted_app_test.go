@@ -101,3 +101,52 @@ func TestAppScaleMinOnParkedAppSaysWakeStartsFloor(t *testing.T) {
 		})
 	}
 }
+
+// Hunt 34 H34-11: `app update --min 1` on a parked app printed only the cost
+// echo, and `app park` on a floored app parked it with no word that the floor
+// stops holding.
+func TestParkedFloorNotices(t *testing.T) {
+	for _, status := range []string{"evicted_cold", "active"} {
+		t.Run(status, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(r.URL.Path, "/v1/apps/demo") {
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: "demo", Status: status, MinInstances: 1, RAMMB: 512})
+					return
+				}
+				api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", ""))
+			}))
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+			stdout, readStderr, restore := main.SwapIO(t)
+			code := main.Run([]string{"app", "update", "demo", "--min", "1"})
+			restore()
+			if code != 0 {
+				t.Fatalf("app update exit = %d, stderr = %s", code, readStderr())
+			}
+			hasNote := strings.Contains(stdout.String(), "Run gregale app wake demo to start it now")
+			if hasNote != (status == "evicted_cold") {
+				t.Fatalf("app update, status %s: wake note present = %v, stdout = %s", status, hasNote, stdout)
+			}
+		})
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/apps/demo") {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: "demo", Status: "evicted_cold", MinInstances: 2, RAMMB: 512})
+			return
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", ""))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	_, readStderr, restore := main.SwapIO(t)
+	code := main.Run([]string{"app", "park", "demo"})
+	restore()
+	stderr := readStderr()
+	if code != 0 || !strings.Contains(stderr, "its floor of 2 is neither held nor billed until its next request or `gregale app wake demo`") {
+		t.Fatalf("app park exit = %d, stderr = %s", code, stderr)
+	}
+}
