@@ -448,9 +448,21 @@ type AppSpec struct {
 	// cpu_millicores still sizes guest workload partitions. vmmd runs every
 	// app instance this way whatever the field says (ADR-20261109172421 step
 	// 6.3); it stays for an older schedd.
-	CpuUncapped   bool `protobuf:"varint,42,opt,name=cpu_uncapped,json=cpuUncapped,proto3" json:"cpu_uncapped,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	CpuUncapped bool `protobuf:"varint,42,opt,name=cpu_uncapped,json=cpuUncapped,proto3" json:"cpu_uncapped,omitempty"`
+	// identity_reload (ADR-20261031193635) restores an environment branch
+	// from its parent's credential-free capture: the resume hook asks the
+	// guest to reload the branch's identity through after_restore and to echo
+	// the digest vmmd served; any mismatch is after_restore_failed and the
+	// branch cold-boots. Ignored on cold boot.
+	IdentityReload bool `protobuf:"varint,43,opt,name=identity_reload,json=identityReload,proto3" json:"identity_reload,omitempty"`
+	// environment_branch_contained asks for the contained environment branch
+	// profile (ADR-20261031193635 section 7). vmmd reads the deployment's
+	// durable branch egress on every wake regardless; the field can only add
+	// containment, and a mismatch refuses the wake. An older vmmd ignores it
+	// and returns no acknowledgement, which the scheduler treats as refusal.
+	EnvironmentBranchContained bool `protobuf:"varint,44,opt,name=environment_branch_contained,json=environmentBranchContained,proto3" json:"environment_branch_contained,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *AppSpec) Reset() {
@@ -773,6 +785,20 @@ func (x *AppSpec) GetCpuWeight() int32 {
 func (x *AppSpec) GetCpuUncapped() bool {
 	if x != nil {
 		return x.CpuUncapped
+	}
+	return false
+}
+
+func (x *AppSpec) GetIdentityReload() bool {
+	if x != nil {
+		return x.IdentityReload
+	}
+	return false
+}
+
+func (x *AppSpec) GetEnvironmentBranchContained() bool {
+	if x != nil {
+		return x.EnvironmentBranchContained
 	}
 	return false
 }
@@ -1593,8 +1619,11 @@ type WakeResponse struct {
 	ImageHealthcheckVerified           bool `protobuf:"varint,16,opt,name=image_healthcheck_verified,json=imageHealthcheckVerified,proto3" json:"image_healthcheck_verified,omitempty"`
 	SupportsImageHealthcheck           bool `protobuf:"varint,17,opt,name=supports_image_healthcheck,json=supportsImageHealthcheck,proto3" json:"supports_image_healthcheck,omitempty"`
 	SupportsImageHealthcheckMonitoring bool `protobuf:"varint,18,opt,name=supports_image_healthcheck_monitoring,json=supportsImageHealthcheckMonitoring,proto3" json:"supports_image_healthcheck_monitoring,omitempty"`
-	unknownFields                      protoimpl.UnknownFields
-	sizeCache                          protoimpl.SizeCache
+	// The contained environment branch profile was installed before guest
+	// execution (ADR-20261031193635).
+	EnvironmentBranchContained bool `protobuf:"varint,20,opt,name=environment_branch_contained,json=environmentBranchContained,proto3" json:"environment_branch_contained,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *WakeResponse) Reset() {
@@ -1756,6 +1785,13 @@ func (x *WakeResponse) GetSupportsImageHealthcheck() bool {
 func (x *WakeResponse) GetSupportsImageHealthcheckMonitoring() bool {
 	if x != nil {
 		return x.SupportsImageHealthcheckMonitoring
+	}
+	return false
+}
+
+func (x *WakeResponse) GetEnvironmentBranchContained() bool {
+	if x != nil {
+		return x.EnvironmentBranchContained
 	}
 	return false
 }
@@ -16239,6 +16275,8 @@ type AllowResolvedEgressRequest struct {
 	// name is the answered name. vmmd admits a registries-mode sandbox
 	// session's addresses only for names it allows (ADR-20261027090013 §6);
 	// an older resolver leaves it empty, which admits none for such a VM.
+	// A contained environment branch instance also reaches only its branch's
+	// own databases, which vmmd matches by this name (ADR-20261031193635).
 	Name          string `protobuf:"bytes,7,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -21658,7 +21696,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xb5\x0f\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xa0\x10\n" +
 	"\aAppSpec\x12(\n" +
 	"\x10rehearsal_run_id\x18! \x01(\tR\x0erehearsalRunId\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
@@ -21709,7 +21747,9 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x19idle_ladder_guarded_pause\x18' \x01(\bR\x16idleLadderGuardedPause\x12\x1d\n" +
 	"\n" +
 	"cpu_weight\x18) \x01(\x05R\tcpuWeight\x12!\n" +
-	"\fcpu_uncapped\x18* \x01(\bR\vcpuUncapped\"\x92\b\n" +
+	"\fcpu_uncapped\x18* \x01(\bR\vcpuUncapped\x12'\n" +
+	"\x0fidentity_reload\x18+ \x01(\bR\x0eidentityReload\x12@\n" +
+	"\x1cenvironment_branch_contained\x18, \x01(\bR\x1aenvironmentBranchContained\"\x92\b\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +
@@ -21785,7 +21825,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"capture_id\x18\t \x01(\tR\tcaptureId\x12\x1d\n" +
 	"\n" +
 	"sealed_key\x18\n" +
-	" \x01(\fR\tsealedKeyJ\x04\b\x02\x10\x03\"\xfd\x06\n" +
+	" \x01(\fR\tsealedKeyJ\x04\b\x02\x10\x03\"\xbf\a\n" +
 	"\fWakeResponse\x12(\n" +
 	"\x10rehearsal_run_id\x18\x13 \x01(\tR\x0erehearsalRunId\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
@@ -21808,7 +21848,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x17supports_secret_aliases\x18\x0f \x01(\bR\x15supportsSecretAliases\x12<\n" +
 	"\x1aimage_healthcheck_verified\x18\x10 \x01(\bR\x18imageHealthcheckVerified\x12<\n" +
 	"\x1asupports_image_healthcheck\x18\x11 \x01(\bR\x18supportsImageHealthcheck\x12Q\n" +
-	"%supports_image_healthcheck_monitoring\x18\x12 \x01(\bR\"supportsImageHealthcheckMonitoring\"\xc8\x02\n" +
+	"%supports_image_healthcheck_monitoring\x18\x12 \x01(\bR\"supportsImageHealthcheckMonitoring\x12@\n" +
+	"\x1cenvironment_branch_contained\x18\x14 \x01(\bR\x1aenvironmentBranchContained\"\xc8\x02\n" +
 	"\x19CreateFromSnapshotRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12.\n" +
 	"\x03app\x18\x02 \x01(\v2\x1c.onebox.faas.vmmd.v1.AppSpecR\x03app\x12<\n" +

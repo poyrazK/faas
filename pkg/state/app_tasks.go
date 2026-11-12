@@ -202,6 +202,17 @@ type NodeScopedAppTaskClaimer interface {
 	ClaimNextAppTaskForNode(ctx context.Context, owner, nodeID string, claimedAt time.Time, leaseDuration time.Duration) (AppTask, error)
 }
 
+// AppTaskCapacityDeferrer returns a release command whose placement node
+// budgets refused to the queue (ADR-20261029103512 amendment 3). The wait is
+// measured from the task's first such refusal: inside maxWait the restoring
+// lease is released, the task is queued until retryAt and deferred is true;
+// once the wait is over deferred is false and the task is unchanged, so the
+// caller fails it. A task that is not a release command is never deferred. A
+// lost lease or a requested cancellation yields ErrAppTaskLeaseLost.
+type AppTaskCapacityDeferrer interface {
+	DeferAppTaskForCapacity(ctx context.Context, taskID, leaseToken string, at, retryAt time.Time, maxWait time.Duration) (waitStartedAt time.Time, deferred bool, err error)
+}
+
 // ScheduledCronOccurrenceStore creates one command-cron occurrence and its
 // durable task atomically, or records an explained skip without a task.
 type ScheduledCronOccurrenceStore interface {

@@ -585,6 +585,10 @@ type Instance struct {
 	// the dispatch path is tolerant of "" and skips the flip.
 	DeploymentID         string
 	StaticEgressExcluded bool // non-production deployments never use the app pin
+	// PrivateNetworkExcluded keeps an environment branch instance off its
+	// app's private networks: replays of the app's attachment skip it
+	// (ADR-20261031193635 section 6).
+	PrivateNetworkExcluded bool
 
 	// LivenessProbe preserves the per-deployment probe override across a
 	// migration pause/resume cycle. It is copied from WakeRequest so ResumeVM
@@ -731,6 +735,11 @@ type Instance struct {
 	// databaseEgress is when each address . port pair in this instance's
 	// egress_db set expires (ADR 20261026150000), on the same rule.
 	databaseEgress map[databaseEgressKey]time.Time
+	// environmentBranch names the branch databases a contained branch
+	// instance may reach; branchDatabaseEgress is when each pair in its
+	// branch_db set expires (ADR-20261031193635).
+	environmentBranch    *environmentBranchContainment
+	branchDatabaseEgress map[databaseEgressKey]time.Time
 	// TailCount (issue #667 / ADR-078) is the in-memory
 	// mirror of the per-instance `tail_count` SQL column.
 	// Incremented by the runner's WaitGroup each time a
@@ -880,7 +889,12 @@ type Manager struct {
 	computeBypassGuard              func(context.Context, string) error
 	dataRepair                      *dataRepairRuntime
 	rehearsalNetworkPolicies        RehearsalNetworkPolicyStore
-	rehearsalRecorders              map[string]*rehearsalrecorder.Session
+	// environmentBranchEgress is the durable contained-branch authority
+	// (ADR-20261031193635); environmentBranchPolicies caches deployments
+	// read as uncontained.
+	environmentBranchEgress   EnvironmentBranchEgressAuthority
+	environmentBranchPolicies environmentBranchPolicyCache
+	rehearsalRecorders        map[string]*rehearsalrecorder.Session
 	// outboundRelayEnabled advertises vmmd's streaming relay to
 	// outbound-enabled Runs (ADR-990).
 	outboundRelayEnabled      atomic.Bool
@@ -3109,9 +3123,15 @@ type wakingInstance struct {
 	appID        string
 	accountID    string
 	contained    bool // a rehearsal run contains it (ADR-20261017201005)
+	// branchContained: a contained environment branch (ADR-20261031193635).
+	branchContained bool
 	// qualification marks a held GitOps qualification candidate (ADR-568):
 	// it boots with its app's identity but takes no external action.
 	qualification bool
+	// restoreIdentity is set while an identity-reload restore runs
+	// (ADR-20261031193635); the runtime-config receiver records the served
+	// identity digest on it.
+	restoreIdentity *RestoreIdentityExpectation
 }
 
 // WorkloadTokenIdentity resolves the identity a workload-identity token is
@@ -3934,7 +3954,17 @@ type WakeRequest struct {
 	// drive1 before boot (Lease.SandboxManifest). It holds that file.
 	sandboxManifest string
 	RehearsalRunID  string // exact durable containment run; ordinary legacy callers may omit it
-	Instance        string
+	// EnvironmentBranchContained asks for the contained branch profile
+	// (ADR-20261031193635). It can only add containment: vmmd reads the
+	// deployment's policy either way, and refuses a mismatch.
+	EnvironmentBranchContained bool
+	// environmentBranch is set by applyEnvironmentBranchEgress for a
+	// contained branch wake.
+	environmentBranch *environmentBranchContainment
+	// privateNetworkExcluded is set by applyEnvironmentBranchEgress for a
+	// branch that stays off its app's private networks.
+	privateNetworkExcluded bool
+	Instance               string
 	// Set only by WakeAdmitted after validating and consuming its grant.
 	admission *runtimeadmission.Binding
 	// Complete approved source identities; only WakeAdmitted accepts them.
@@ -4159,6 +4189,11 @@ type WakeRequest struct {
 	// (allowlist, private network, static egress IP, operator bundle) so
 	// no other path can add reachability.
 	Quarantine bool
+	// IdentityReload (ADR-20261031193635) restores an environment branch
+	// from its parent's credential-free capture: the resume hook asks the
+	// guest to reload the branch's identity and requires the digest it was
+	// served back. Meaningful only for a snapshot restore.
+	IdentityReload bool
 	// StaticEgressIP (ADR-119) is the customer-supplied IPv4
 	// (BYOIP, Scale-only) the host MASQUERADE-sibling rule
 	// rewrites tenant source traffic to. Empty string = no
@@ -4854,6 +4889,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if err := m.applyRehearsalNetwork(ctx, &req); err != nil {
 		return nil, err
 	}
+	if err := m.applyEnvironmentBranchEgress(ctx, &req); err != nil {
+		return nil, err
+	}
 	qualificationOnly := false
 	if permit, authorized := ctx.Value(nativeQualificationContextKey{}).(nativeQualificationRecord); authorized {
 		if req.RehearsalRunID != "" {
@@ -5011,6 +5049,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.AgentSized = req.sandboxRegistries
 	lease.SandboxManifest = req.sandboxManifest
 	lease.Quarantine = req.Quarantine && !req.ExecutionOnly
+	if req.IdentityReload && !req.ExecutionOnly {
+		lease.restoreIdentity = newRestoreIdentityExpectation()
+	}
 	lease.IsBuilder = req.ExportDir != ""
 	m.stampCgroupParent(&lease)
 	lease.BuildTimeoutSec = req.BuildTimeoutSec
@@ -5027,7 +5068,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		m.waking = make(map[string]wakingInstance)
 	}
 	m.waking[req.Instance] = wakingInstance{deploymentID: req.DeploymentID, appID: req.AppID, accountID: req.AccountID,
-		contained: req.RehearsalRunID != "", qualification: qualificationOnly}
+		contained: req.RehearsalRunID != "", branchContained: req.environmentBranch != nil, qualification: qualificationOnly, restoreIdentity: lease.restoreIdentity}
 	m.mu.Unlock()
 	lease = m.beginProcessAttempt(lease)
 	m.beginFunctionExecutionBoot(lease, req)
@@ -5141,6 +5182,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// netns.Config omits the rule when ConntrackCap <= 0 so a vmmd that
 	// hasn't been rebuilt still wakes cleanly.
 	nc.RehearsalRunID = req.RehearsalRunID
+	nc.EnvironmentBranchContained = req.environmentBranch != nil
 	nc.ConntrackCap = m.conntrackCap
 	// ADR-361: default-deny guest egress (base ports + per-plan rate).
 	switch {
@@ -5643,8 +5685,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
 		AppID:                           req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
-		StaticEgressExcluded: req.StaticEgressExcluded,
-		WakeID:               wakeID, NodeID: fields.NodeID,
+		environmentBranch:      req.environmentBranch,
+		StaticEgressExcluded:   req.StaticEgressExcluded,
+		PrivateNetworkExcluded: req.privateNetworkExcluded,
+		WakeID:                 wakeID, NodeID: fields.NodeID,
 		Plan: req.Plan, RequestConcurrency: req.RequestConcurrency, Port: req.Port, HealthcheckPath: req.HealthcheckPath, HealthcheckGRPC: req.HealthcheckGRPC,
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
@@ -7841,7 +7885,7 @@ func (m *Manager) updatePrivateNetworkForTargets(ctx context.Context, appID stri
 	var targets []target
 	m.mu.Lock()
 	for id, inst := range m.live {
-		if inst.AppID != appID || inst.QualificationOnly {
+		if inst.AppID != appID || inst.QualificationOnly || inst.PrivateNetworkExcluded {
 			continue
 		}
 		if originalTargets != nil && originalTargets[id] != inst {
@@ -8047,7 +8091,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 	var targets []target
 	m.mu.Lock()
 	for id, inst := range m.live {
-		if inst.AppID == appID && !inst.QualificationOnly {
+		if inst.AppID == appID && !inst.QualificationOnly && !inst.PrivateNetworkExcluded {
 			targets = append(targets, target{instance: inst, generation: inst.nativeGeneration, id: id, account: inst.AccountID, slot: inst.Lease.Slot, net: inst.Net})
 		}
 	}

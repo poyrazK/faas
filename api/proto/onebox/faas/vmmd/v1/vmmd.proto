@@ -1006,6 +1006,18 @@ message AppSpec {
   // app instance this way whatever the field says (ADR-20261109172421 step
   // 6.3); it stays for an older schedd.
   bool cpu_uncapped = 42;
+  // identity_reload (ADR-20261031193635) restores an environment branch
+  // from its parent's credential-free capture: the resume hook asks the
+  // guest to reload the branch's identity through after_restore and to echo
+  // the digest vmmd served; any mismatch is after_restore_failed and the
+  // branch cold-boots. Ignored on cold boot.
+  bool identity_reload = 43;
+  // environment_branch_contained asks for the contained environment branch
+  // profile (ADR-20261031193635 section 7). vmmd reads the deployment's
+  // durable branch egress on every wake regardless; the field can only add
+  // containment, and a mismatch refuses the wake. An older vmmd ignores it
+  // and returns no acknowledgement, which the scheduler treats as refusal.
+  bool environment_branch_contained = 44;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -1255,6 +1267,9 @@ message WakeResponse {
   bool image_healthcheck_verified = 16;
   bool supports_image_healthcheck = 17;
   bool supports_image_healthcheck_monitoring = 18;
+  // The contained environment branch profile was installed before guest
+  // execution (ADR-20261031193635).
+  bool environment_branch_contained = 20;
 }
 
 // WakeMethod is whether a wake was a snapshot restore or a cold boot.
@@ -3610,6 +3625,8 @@ message AllowResolvedEgressRequest {
   // name is the answered name. vmmd admits a registries-mode sandbox
   // session's addresses only for names it allows (ADR-20261027090013 §6);
   // an older resolver leaves it empty, which admits none for such a VM.
+  // A contained environment branch instance also reaches only its branch's
+  // own databases, which vmmd matches by this name (ADR-20261031193635).
   string name = 7;
 }
 

@@ -55,11 +55,13 @@ type runtimeConfigResponse struct {
 	Generation string             `json:"generation,omitempty"`
 	Env        map[string]string  `json:"env,omitempty"`
 	Secrets    *map[string]string `json:"secrets,omitempty"`
-	Revision   string             `json:"revision,omitempty"`
-	Unchanged  bool               `json:"unchanged,omitempty"`
-	Accepted   bool               `json:"accepted,omitempty"`
-	Error      string             `json:"error,omitempty"`
-	DevPatch   *runtimeDevPatch   `json:"dev_patch,omitempty"`
+	// Digest is the restore identity document's digest (kind "identity").
+	Digest    string           `json:"digest,omitempty"`
+	Revision  string           `json:"revision,omitempty"`
+	Unchanged bool             `json:"unchanged,omitempty"`
+	Accepted  bool             `json:"accepted,omitempty"`
+	Error     string           `json:"error,omitempty"`
+	DevPatch  *runtimeDevPatch `json:"dev_patch,omitempty"`
 }
 
 type runtimeConfigStore interface {
@@ -191,6 +193,13 @@ func (r *runtimeConfigReceiver) handleGuestStream(instance string, conn net.Conn
 		}
 		return r.handleRuntimeSecrets(instance, req.WorkloadName, req.Revision, conn)
 	}
+	if req.Kind == api.RuntimeConfigKindIdentity {
+		if req.Scope != "" || req.WorkloadName != "" || req.Revision != "" || req.Projection != "" || req.Signal != "" || req.ErrorCode != "" ||
+			req.ApplicationAck != "" || req.ApplicationAckErrorCode != "" || req.Generation != "" || req.PreviousGeneration != "" {
+			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
+		}
+		return r.handleRestoreIdentity(instance, conn)
+	}
 	if req.Kind == "secret_reload_status" {
 		if req.Scope != "" || !state.ValidSecretRuntimeWorkloadName(req.WorkloadName) || !validRuntimeSecretRevision(req.Revision) || req.Revision == "" || !validRuntimeSecretReloadRequest(req) ||
 			req.ApplicationAck != "" || req.ApplicationAckErrorCode != "" || req.Generation != "" || req.PreviousGeneration != "" {
@@ -228,6 +237,57 @@ func (r *runtimeConfigReceiver) handleRuntimeEnv(instance string, conn net.Conn)
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "config_unavailable"})
 	}
 	return responseRuntimeConfig(r.log, conn, response)
+}
+
+// handleRestoreIdentity serves an environment branch restored from its
+// parent's credential-free capture its own identity (ADR-20261031193635):
+// the env and main-workload secrets a cold boot of the instance's deployment
+// would receive. Only an instance in an identity-reload restore is answered,
+// and the digest served is what its resume hook must see acknowledged.
+func (r *runtimeConfigReceiver) handleRestoreIdentity(instance string, conn net.Conn) (string, error) {
+	store, ok := r.store.(runtimeSecretsStore)
+	if !ok || r.store == nil || r.mgr == nil {
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "identity_unavailable"})
+	}
+	if !r.mgr.RestoreIdentityPending(instance) {
+		// Checked before any secret is unsealed.
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "identity_not_expected"})
+	}
+	deploymentID, appID, accountID, err := r.mgr.InstanceRuntimeSecretIdentity(instance)
+	if err != nil || deploymentID == "" || appID == "" || accountID == "" {
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "identity_unavailable"})
+	}
+	requestCtx, cancel := context.WithTimeout(r.ctx, 4*time.Second)
+	defer cancel()
+	identity, err := loadRestoreIdentity(requestCtx, r.store, store, r.mgr, deploymentID, appID, accountID)
+	if err != nil {
+		r.log.Debug("restore identity unavailable", "instance", instance, "err_kind", "load_failed")
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "identity_unavailable"})
+	}
+	if err := r.mgr.ServeRestoreIdentity(instance, identity.Digest); err != nil {
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "identity_not_expected"})
+	}
+	return responseRuntimeConfig(r.log, conn, identity)
+}
+
+func loadRestoreIdentity(ctx context.Context, envStore runtimeConfigStore, secretStore runtimeSecretsStore, mgr *fcvm.Manager, deploymentID, appID, accountID string) (runtimeConfigResponse, error) {
+	env, err := loadRuntimeConfig(ctx, envStore, deploymentID, appID, accountID)
+	if err != nil {
+		return runtimeConfigResponse{}, fmt.Errorf("load restore identity env: %w", err)
+	}
+	secrets, err := loadRuntimeSecretsForWorkloadIfChanged(ctx, secretStore, mgr, deploymentID, appID, accountID, "", "")
+	if err != nil {
+		return runtimeConfigResponse{}, fmt.Errorf("load restore identity secrets: %w", err)
+	}
+	values := map[string]string{}
+	if secrets.Secrets != nil {
+		values = *secrets.Secrets
+	}
+	_, digest, err := api.RestoreIdentityDocument(env.Env, values)
+	if err != nil {
+		return runtimeConfigResponse{}, err
+	}
+	return runtimeConfigResponse{Env: env.Env, Secrets: &values, Digest: digest}, nil
 }
 
 func (r *runtimeConfigReceiver) handleRuntimeSecrets(instance, workloadName, knownRevision string, conn net.Conn) (string, error) {

@@ -82,6 +82,9 @@ func (m *Manager) AllowResolvedEgress(ctx context.Context, source netip.Addr, ow
 }
 
 // AllowResolvedEgressNamed is AllowResolvedEgress for an answer to name. A
+// contained environment branch instance (ADR-20261031193635) reaches a
+// database only when name is one of its branch's own databases on
+// databasePort: those pairs also enter its branch_db set. A
 // registries-mode sandbox session's VM admits addresses only for a name
 // api.SandboxRegistryHost allows (ADR-20261027090013 §6), so a resolver bug
 // cannot open another destination to it; an empty name admits none.
@@ -112,6 +115,7 @@ func (m *Manager) AllowResolvedEgressNamed(ctx context.Context, source netip.Add
 		gated = false
 	}
 	database := databasePort != 0 && inst.Net.DatabaseEgress && inst.Net.Netns != ""
+	branch := database && inst.Net.EnvironmentBranchContained && inst.environmentBranch.allows(name, databasePort)
 	if !gated && !database {
 		m.mu.Unlock()
 		return nil
@@ -120,7 +124,7 @@ func (m *Manager) AllowResolvedEgressNamed(ctx context.Context, source netip.Add
 	pruneTimedGrants(inst.resolvedEgress, now)
 	pruneTimedGrants(inst.databaseEgress, now)
 	var add []netip.Addr
-	var addDatabase []netip.Addr
+	var addDatabase, addBranch []netip.Addr
 	seen := make(map[netip.Addr]bool, len(addrs))
 	for _, a := range addrs {
 		a = a.Unmap()
@@ -133,6 +137,9 @@ func (m *Manager) AllowResolvedEgressNamed(ctx context.Context, source netip.Add
 		}
 		if until, ok := inst.databaseEgress[databaseEgressKey{a, databasePort}]; database && (!ok || until.Sub(now) <= ttl/2) {
 			addDatabase = append(addDatabase, a)
+		}
+		if until, ok := inst.branchDatabaseEgress[databaseEgressKey{a, databasePort}]; branch && a.Is4() && (!ok || until.Sub(now) <= ttl/2) {
+			addBranch = append(addBranch, a)
 		}
 	}
 	until := now.Add(ttl)
@@ -154,7 +161,7 @@ func (m *Manager) AllowResolvedEgressNamed(ctx context.Context, source netip.Add
 	}
 	nc, appID, generation, booting := inst.Net, inst.AppID, inst.nativeGeneration, inst.booting
 	m.mu.Unlock()
-	if len(add) == 0 && len(addDatabase) == 0 {
+	if len(add) == 0 && len(addDatabase) == 0 && len(addBranch) == 0 {
 		return nil
 	}
 	if booting && generation == "" {
@@ -173,6 +180,13 @@ func (m *Manager) AllowResolvedEgressNamed(ctx context.Context, source netip.Add
 	if err := m.refreshTimedEgress(ctx, id, nc, resolved, pairs); err != nil {
 		return fmt.Errorf("fcvm: allow resolved egress for %s: %w", id, err)
 	}
+	// A contained branch instance is never adopted, so its branch_db pairs
+	// need no rebuild path; a failed write leaves the database unreachable.
+	if len(addBranch) > 0 {
+		if err := m.runAtomicNetworkPolicy(ctx, nc.Netns, nc.EnvironmentBranchDatabaseAddCommands(addBranch, databasePort, ttl)); err != nil {
+			return fmt.Errorf("fcvm: allow branch database egress for %s: %w", id, err)
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if cur := m.resolvedEgressOwnerLocked(id); cur == inst {
@@ -187,6 +201,12 @@ func (m *Manager) AllowResolvedEgressNamed(ctx context.Context, source netip.Add
 		}
 		for _, a := range addDatabase {
 			inst.databaseEgress[databaseEgressKey{a, databasePort}] = until
+		}
+		if inst.branchDatabaseEgress == nil && len(addBranch) > 0 {
+			inst.branchDatabaseEgress = make(map[databaseEgressKey]time.Time, len(addBranch))
+		}
+		for _, a := range addBranch {
+			inst.branchDatabaseEgress[databaseEgressKey{a, databasePort}] = until
 		}
 	}
 	m.rememberAppResolvedLocked(appID, add, until, now)

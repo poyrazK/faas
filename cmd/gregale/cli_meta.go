@@ -5451,6 +5451,8 @@ var cliCommands = []cliCommand{
 					{Name: "capabilities", Short: "comma-separated capabilities agents may get: deploy:write, secrets:request, storage:manage, postgres:manage; empty for read-only", Value: "LIST"},
 					{Name: "approvals", Short: "kinds of action every agent must have a person approve: delete, production, credentials, billing, all or none", Value: "LIST"},
 					{Name: "approval-channels", Short: "comma-separated names of your notification channels that also get the org's agents' approval requests; empty for none", Value: "NAMES"},
+					{Name: "max-budget", Short: "ceiling on every agent's monthly budget for always-on capacity, in US dollars", Value: "USD"},
+					{Name: "clear-max-budget", Short: "remove the ceiling on agents' budgets", Bool: true},
 				}},
 			}},
 			{Name: "transfer-ownership", Short: "Transfer org ownership", Flags: []cliFlag{
@@ -6538,6 +6540,13 @@ var cliCommands = []cliCommand{
 					{Name: "share-resources", Short: "explicitly share managed database and object-storage data", Bool: true},
 				}},
 				{Name: "delete", Short: "Delete a non-production environment", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "yes", Bool: true, Req: true, Short: "confirm environment deletion"}}},
+				{Name: "branch", Short: "Branch an environment; workloads start on first request", Notes: []string{"Deleted at its TTL or with `environment delete`."}, Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{
+					{Name: "from", Value: "ENV", Short: "parent environment (default production)"},
+					{Name: "ttl", Value: "DURATION", Short: "time to live, 1h to 720h (default 168h)"},
+					{Name: "list", Bool: true, Short: "list the parent's branches"},
+					{Name: "egress", Value: "MODE", Short: "live (default), contained or simulated"},
+					{Name: "private-networks", Value: "MODE", Short: "off (default) or join"},
+				}},
 				{Name: "protect", Short: "Protect an environment"},
 				{Name: "unprotect", Short: "Remove environment protection"},
 				{Name: "inspect", Short: "Inspect the active graph and environment deployments"},
@@ -6874,6 +6883,21 @@ var cliCommands = []cliCommand{
 		Name:    "version",
 		DocSlug: "version",
 		Short:   "Print the CLI version",
+	},
+	{
+		Name:     "update",
+		DocSlug:  "update",
+		Short:    "Update the CLI to the newest release",
+		Examples: []string{"gregale update", "gregale update --check", "gregale update --version v0.1.18"},
+		HelpNotes: []string{
+			"Stable installs follow the newest stable release; prerelease installs follow the newest release.",
+			"The download is verified against the release's CLI-SHA256SUMS and must run before it replaces this binary.",
+			"An npm install prints the npm command instead of replacing files npm owns.",
+		},
+		Flags: []cliFlag{
+			{Name: "check", Bool: true, Short: "report whether a newer release exists without installing it"},
+			{Name: "version", Value: "TAG", Short: "install this exact release tag, including an older one"},
+		},
 	},
 	{
 		Name:     "config",

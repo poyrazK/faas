@@ -38,6 +38,15 @@ type ProjectEnvironmentClone struct {
 	capturedValues         map[string]projectCloneWorkloadValues
 	capturedValueScopes    map[string]string
 	capturedPolicies       map[string]projectCloneScopedPolicies
+	// branch makes the target an environment branch of the source, recorded in
+	// the same transaction (ADR-20261031193635); branchOut receives its row.
+	branch    *ProjectEnvironmentBranchCreate
+	branchOut *ProjectEnvironmentBranch
+	// branchManagedPostgres counts the source's managed PostgreSQL and
+	// object-storage secrets. The branch's data reconciler copies the
+	// databases and overlays the buckets, so they leave the branch's data
+	// pending instead of refusing it.
+	branchManagedPostgres int
 }
 
 // ProjectEnvironmentCloneResult contains non-secret copy counts.
@@ -224,6 +233,13 @@ func (m *MemStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnv
 			}
 		}
 	}
+	if clone.branch != nil && managed > 0 && !clone.ShareResources && !clone.ManagedBindingsPrepared {
+		postgres, objects := m.projectCloneManagedSecretKindsLocked(apps, valueScopes)
+		if objects > 0 && environmentBranchEgressContained(clone.branch.EgressMode) && !clone.branch.ContainedObjects {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrProjectEnvironmentBranchContainedObjects
+		}
+		clone.branchManagedPostgres, managed = postgres+objects, 0
+	}
 	if managed > 0 && !clone.ShareResources && !clone.ManagedBindingsPrepared {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, &ProjectEnvironmentCloneManagedBindingsError{ManagedSecretCount: managed}
 	}
@@ -289,6 +305,13 @@ func (m *MemStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnv
 		}
 	}
 	now := time.Now().UTC()
+	var branch ProjectEnvironmentBranch
+	if clone.branch != nil {
+		branch, err = m.prepareProjectEnvironmentBranchLocked(*clone.branch, source, now, clone.branchManagedPostgres > 0)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+	}
 	created := ProjectEnvironment{
 		ID: newID(), AccountID: clone.AccountID, ProjectID: clone.ProjectID,
 		Slug: clone.TargetSlug, Protected: clone.TargetProtected,
@@ -305,8 +328,18 @@ func (m *MemStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnv
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
 	m.projectEnvironments[created.ID] = created
+	if clone.branch != nil {
+		branch.EnvironmentID, branch.Slug = created.ID, created.Slug
+		m.projectEnvironmentBranches[created.ID] = branch
+		if clone.branchOut != nil {
+			*clone.branchOut = branch
+		}
+	}
 	m.copyCloneFeatureFlagsLocked(created, flagSnapshot)
 	for appID, captured := range settings {
+		if clone.branch != nil {
+			captured.MinInstances = 0 // a branch keeps no warm floor (ADR-20261031193635)
+		}
 		hash, _ := WorkloadSettingsHash(captured) // validated before any target writes
 		spec := ProjectEnvironmentWorkloadSpec{
 			ID: newID(), AccountID: clone.AccountID, ProjectID: clone.ProjectID,

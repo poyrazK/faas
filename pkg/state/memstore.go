@@ -466,6 +466,7 @@ type MemStore struct {
 	syntheticRuns                 map[string][]SyntheticCheckRun
 	objectBuckets                 map[string]ObjectBucket
 	objectMutations               map[string]ObjectBucketMutation
+	objectBucketActivity          map[string]objectBucketActivity // ADR-20261110151628 §2
 	objectNodeSettlements         map[string]ObjectNodeSettlement
 	objectWriteFences             map[string]ObjectBucketWriteFence
 	objectUploadGrants            map[string]ObjectUploadGrant
@@ -1069,11 +1070,14 @@ type MemStore struct {
 	executionUsageLedger map[string]executionUsageLedgerRow
 	// executionEvents is the bounded control-plane replay log for the agent
 	// runtime stream. It is deliberately separate from guest scratch storage.
-	executionEvents      map[string][]ExecutionEvent
-	nextExecutionEventID int64
+	executionEvents             map[string][]ExecutionEvent
+	executionEventPrunedThrough map[string]int64
+	nextExecutionEventID        int64
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
+	// appTaskCapacityWaits mirrors app_tasks.capacity_wait_started_at.
+	appTaskCapacityWaits map[string]time.Time
 	// releaseOutcomeChecks mirrors release_outcome_checks (ADR-1448
 	// amendment 1), keyed by task id.
 	releaseOutcomeChecks map[string]ReleaseOutcomeCheck
@@ -1346,6 +1350,9 @@ type MemStore struct {
 	// objectStorageCeilingGrants mirrors object_storage_ceiling_grants by
 	// owner id (ADR-20261101214152); nil until the first grant.
 	objectStorageCeilingGrants map[string]ObjectStorageCeilingGrant
+	// objectStorageOverCeiling mirrors object_storage_over_ceiling by
+	// subject id (ADR-20261111123000); nil until the first clock.
+	objectStorageOverCeiling map[string]ObjectStorageOverCeiling
 	// complimentaryAccounts mirrors complimentary_accounts by account ID
 	// (ADR-20261111140000).
 	complimentaryAccounts map[string]ComplimentaryAccount
@@ -1434,9 +1441,12 @@ type MemStore struct {
 	agentApprovalChannelBindings []memApprovalChannelBinding
 	// ADR-20261107220000: agent keys' write requests.
 	agentActivity []AgentActivity
-	orgsBySlug    map[string]string // lower(slug) -> id
-	memberships   map[orgAccountKey]OrgMembership
-	invitations   map[string]OrgInvitation // hex(hash) -> OrgInvitation
+	// ADR-20261111114059: agent keys' budgets and monthly spend.
+	agentKeyBudgets  map[string]AgentKeyBudget
+	agentBudgetSpend map[agentBudgetSpendKey]int64
+	orgsBySlug       map[string]string // lower(slug) -> id
+	memberships      map[orgAccountKey]OrgMembership
+	invitations      map[string]OrgInvitation // hex(hash) -> OrgInvitation
 	// computeNodes mirrors the compute_nodes table; keyed by id (issue
 	// #97 / ADR-025 axis 3). The synthetic 'default-local' row is
 	// seeded by NewMemStore so tests don't have to call
@@ -1506,6 +1516,14 @@ type MemStore struct {
 	projectAppStageAdmissions                 map[string]string
 	projectEnvironmentRoutePolicies           map[string]ProjectEnvironmentRoutePolicy
 	projectEnvironmentEdgePolicies            map[string]ProjectEnvironmentEdgePolicy
+	projectEnvironmentBranches                map[string]ProjectEnvironmentBranch           // environment ID
+	projectEnvironmentBranchDeployments       map[string]projectEnvironmentBranchDeployment // deployment ID
+	projectEnvironmentBranchDatabases         map[string]ProjectEnvironmentBranchDatabase   // copy row ID
+	projectEnvironmentBranchBuckets           map[string]ProjectEnvironmentBranchBucket     // copy row ID
+	environmentBranchCaptures                 map[string]EnvironmentBranchCapture           // parent deployment ID
+	environmentBranchCaptureObjects           map[string]EnvironmentBranchCaptureObject     // storage key
+	objectBucketOverlays                      map[string]ObjectBucketOverlay                // bucket ID
+	objectBucketOverlayTombstones             map[string]map[string]bool                    // bucket ID -> key
 	projectEnvironmentPromotions              map[string]ProjectEnvironmentPromotion
 	projectEnvironmentPromotionFlags          map[string]promotionFeatureFlags
 	projectEnvironmentQualifications          map[string][]ProjectEnvironmentQualification
@@ -2121,6 +2139,13 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		projectEnvironmentConfigs:                 map[string][]ProjectEnvironmentConfig{},
 		projectEnvironmentRoutePolicies:           map[string]ProjectEnvironmentRoutePolicy{},
 		projectEnvironmentEdgePolicies:            map[string]ProjectEnvironmentEdgePolicy{},
+		projectEnvironmentBranches:                map[string]ProjectEnvironmentBranch{},
+		projectEnvironmentBranchDeployments:       map[string]projectEnvironmentBranchDeployment{},
+		projectEnvironmentBranchDatabases:         map[string]ProjectEnvironmentBranchDatabase{},
+		projectEnvironmentBranchBuckets:           map[string]ProjectEnvironmentBranchBucket{},
+		environmentBranchCaptures:                 map[string]EnvironmentBranchCapture{},
+		objectBucketOverlays:                      map[string]ObjectBucketOverlay{},
+		objectBucketOverlayTombstones:             map[string]map[string]bool{},
 		projectEnvironmentPromotions:              map[string]ProjectEnvironmentPromotion{},
 		projectEnvironmentQualifications:          map[string][]ProjectEnvironmentQualification{},
 		projectEnvironmentPromotionWorkloads:      map[string][]ProjectEnvironmentPromotionWorkload{},
@@ -4373,6 +4398,9 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	if slug == "production" || slug == DefaultEnvScope || environment.Protected {
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
 	}
+	if m.projectEnvironmentHasBranchesLocked(environmentID) {
+		return ProjectEnvironmentCleanupJob{}, ErrProjectEnvironmentBranchChildren
+	}
 	for _, site := range m.hostingSites {
 		if site.ProjectID == projectID && site.Environment == slug {
 			return ProjectEnvironmentCleanupJob{}, ErrConflict
@@ -4448,6 +4476,7 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	m.deleteEnvironmentSecretRefsLocked("", environmentID)
 	m.deleteEnvironmentWorkloadIntentsLocked("", environmentID)
 	m.deleteEnvironmentBudgetConfigsLocked(environmentID)
+	m.deleteProjectEnvironmentBranchLocked(environmentID)
 	delete(m.projectEnvironments, environmentID)
 	for sourceID, memory := range m.environmentGitOps {
 		if memory.source.EnvironmentID == environmentID {
@@ -8635,6 +8664,21 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 			return d, 0, nil
 		}
 	}
+	branchInput, branchSourceID := d.branchInput, ""
+	if branchInput != nil {
+		if len(cloneInputs) > 0 || promotionInput != nil || activity != nil {
+			return Deployment{}, 0, ErrInvalidArgument
+		}
+		branchDeployment, existing, sourceID, err := m.prepareBranchDeploymentLocked(d)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		if existing != nil {
+			return *existing, 0, nil
+		}
+		d, branchSourceID = branchDeployment, sourceID
+		d.branchInput = nil
+	}
 	var prepared ProjectEnvironmentWorkloadSpec
 	var capture ProjectEnvironmentPromotionWorkloadSpec
 	if promotionInput != nil {
@@ -8888,6 +8932,9 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	}
 	if len(cloneInputs) > 0 {
 		m.attachCloneDeploymentLocked(*cloneInputs[0], cloneRecord, d)
+	}
+	if branchInput != nil {
+		m.attachBranchDeploymentLocked(*branchInput, branchSourceID, d)
 	}
 	if app.ProjectID != "" {
 		if env, err := m.workloadSpecEnvironmentLocked(app.AccountID, app.ProjectID, workloadEnvironmentSlug(d.Scope), app.ID); err == nil {
