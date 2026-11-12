@@ -23,7 +23,9 @@ WHERE o.account_id=$3::uuid
   AND o.created_at >= $4::timestamptz AND o.created_at < $5::timestamptz
   AND (o.created_at,o.id) > ($6::timestamptz,$7::bigint)
   AND event_app_in_producer_reach(o.account_id, o.payload->>'producer', $2::text)
-ORDER BY o.created_at, o.id LIMIT $8::integer
+  -- ADR-20261104120000: a subscription replays only its environment's events.
+  AND coalesce(o.payload->>'environmentid','') = $8::text
+ORDER BY o.created_at, o.id LIMIT $9::integer
 `
 
 type EventReplayPreviewCandidatesParams struct {
@@ -34,6 +36,7 @@ type EventReplayPreviewCandidatesParams struct {
 	CutoffAt       pgtype.Timestamptz
 	AfterAt        pgtype.Timestamptz
 	AfterID        int64
+	EnvironmentID  string
 	PageLimit      int32
 }
 
@@ -53,6 +56,7 @@ func (q *Queries) EventReplayPreviewCandidates(ctx context.Context, db DBTX, arg
 		arg.CutoffAt,
 		arg.AfterAt,
 		arg.AfterID,
+		arg.EnvironmentID,
 		arg.PageLimit,
 	)
 	if err != nil {
@@ -197,6 +201,8 @@ WHERE o.account_id=$3::uuid
   AND o.created_at >= $4::timestamptz AND o.created_at < $5::timestamptz
   AND (o.created_at,o.id) > ($6::timestamptz,$7::bigint)
   AND event_app_in_producer_reach(o.account_id, o.payload->>'producer', $1::text)
+  -- Workflows are production's (ADR-20261104120000).
+  AND coalesce(o.payload->>'environmentid','') = ''
 ORDER BY o.created_at, o.id LIMIT $8::integer
 `
 

@@ -1730,6 +1730,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if err != nil {
 				return err
 			}
+			// A stage's events stay in its stage (ADR-20261104120000).
+			deploymentID, deploymentApp, deploymentAccount, identityErr := mgr.InstanceRuntimeSecretIdentity(instance)
+			if identityErr != nil || deploymentApp != appID || deploymentAccount != accountID {
+				return errors.New("in-guest event publish: instance identity changed")
+			}
+			if envelope.EnvironmentID, err = guestEventEnvironment(publishCtx, store, accountID, appID, deploymentID, body); err != nil {
+				return err
+			}
 			// Fanout keeps the app's company boundary (ADR-20261025211616).
 			envelope.Producer = eventcontract.AppProducer(appID)
 			// A capture-only rehearsal keeps its ordinary network, but its

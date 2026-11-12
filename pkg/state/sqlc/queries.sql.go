@@ -16545,6 +16545,30 @@ func (q *Queries) DeploymentClearSnapshotBackoff(ctx context.Context, db DBTX, i
 	return err
 }
 
+const deploymentEventEnvironment = `-- name: DeploymentEventEnvironment :one
+SELECT COALESCE((SELECT e.id::text FROM project_environments e
+                 WHERE e.project_id = a.project_id AND e.slug = d.scope
+                   AND d.scope NOT IN ('default', 'production')), '')::text AS environment_id
+FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE a.account_id = $1::uuid AND a.id = $2::uuid
+  AND d.id = $3::uuid
+`
+
+type DeploymentEventEnvironmentParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+// The environment an in-guest publish belongs to: the publishing
+// deployment's stage, or ” for production and project-less apps.
+func (q *Queries) DeploymentEventEnvironment(ctx context.Context, db DBTX, arg DeploymentEventEnvironmentParams) (string, error) {
+	row := db.QueryRow(ctx, deploymentEventEnvironment, arg.AccountID, arg.AppID, arg.DeploymentID)
+	var environment_id string
+	err := row.Scan(&environment_id)
+	return environment_id, err
+}
+
 const deploymentReadinessConfigs = `-- name: DeploymentReadinessConfigs :many
 SELECT CAST(id AS text) AS deployment_id, CAST(app_id AS text) AS app_id,
        override_readiness_probe,
@@ -19997,6 +20021,51 @@ func (q *Queries) EventConsumerProcessingHealth(ctx context.Context, db DBTX, ar
 		&i.AcknowledgmentLatencyMaxSeconds,
 	)
 	return i, err
+}
+
+const eventEnvironmentForAccount = `-- name: EventEnvironmentForAccount :one
+SELECT e.id::text AS id, e.slug
+FROM project_environments e
+WHERE e.account_id = $1::uuid AND e.id = $2::uuid
+`
+
+type EventEnvironmentForAccountParams struct {
+	AccountID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
+type EventEnvironmentForAccountRow struct {
+	ID   string
+	Slug string
+}
+
+// ADR-20261104120000: the project environment a published event belongs to.
+// Production is the empty environment, so its row reports production = true.
+func (q *Queries) EventEnvironmentForAccount(ctx context.Context, db DBTX, arg EventEnvironmentForAccountParams) (EventEnvironmentForAccountRow, error) {
+	row := db.QueryRow(ctx, eventEnvironmentForAccount, arg.AccountID, arg.EnvironmentID)
+	var i EventEnvironmentForAccountRow
+	err := row.Scan(&i.ID, &i.Slug)
+	return i, err
+}
+
+const eventEnvironmentForApp = `-- name: EventEnvironmentForApp :one
+SELECT e.id::text AS id
+FROM apps a JOIN project_environments e ON e.project_id = a.project_id
+WHERE a.account_id = $1::uuid AND a.id = $2::uuid
+  AND e.slug = $3::text
+`
+
+type EventEnvironmentForAppParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Slug      string
+}
+
+func (q *Queries) EventEnvironmentForApp(ctx context.Context, db DBTX, arg EventEnvironmentForAppParams) (string, error) {
+	row := db.QueryRow(ctx, eventEnvironmentForApp, arg.AccountID, arg.AppID, arg.Slug)
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
 const eventRoutingSubscriptionEnabled = `-- name: EventRoutingSubscriptionEnabled :one

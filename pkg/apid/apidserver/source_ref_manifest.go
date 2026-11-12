@@ -716,6 +716,12 @@ func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Acc
 		if convertErr != nil {
 			return manifestValidationProblem(convertErr)
 		}
+		// Work policies are the app's production configuration; a stage's
+		// event deliveries run as plain stage invocations for now.
+		if scope != "" && (declaration.WorkPolicy != "" || declaration.Ordered) {
+			return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest",
+				"triggers.event work_policy and ordered are not yet available in environment "+scope+"; deploy them to production")
+		}
 		key, keyErr := eventSubscriptionManifestKey(subscription.Source, subscription.Type, subscription.Filter)
 		if keyErr != nil {
 			return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", keyErr.Error())
@@ -794,7 +800,9 @@ func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Acc
 			FairnessSelector: declaration.WorkFairnessKey,
 			Action:           declaration.EffectiveWorkAction(), Ordered: declaration.Ordered}
 	}
-	reconcile := sourceManifestReconcilesEvents(ctx) && s.manifestEventTriggersNameKnownApps(ctx, app, m)
+	// Only production records the app's declared set: the intent is applied
+	// to production subscriptions, never a stage's.
+	reconcile := scope == "" && sourceManifestReconcilesEvents(ctx) && s.manifestEventTriggersNameKnownApps(ctx, app, m)
 	if reconcile {
 		staged.eventSubscriptionIntent = make([]string, 0, len(declared))
 		for id := range declared {

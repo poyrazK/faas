@@ -30165,3 +30165,26 @@ WHERE b.account_id = sqlc.arg(account_id) AND b.app_id = sqlc.arg(app_id)
   AND d.previews IN ('empty', 'copy') AND d.preview_pr_number IS NULL
   AND d.state NOT IN ('deleting', 'deleted')
 ORDER BY b.environment_key;
+
+-- ADR-20261104120000: the project environment a published event belongs to.
+-- Production is the empty environment, so its row reports production = true.
+-- name: EventEnvironmentForAccount :one
+SELECT e.id::text AS id, e.slug
+FROM project_environments e
+WHERE e.account_id = sqlc.arg(account_id)::uuid AND e.id = sqlc.arg(environment_id)::uuid;
+
+-- name: EventEnvironmentForApp :one
+SELECT e.id::text AS id
+FROM apps a JOIN project_environments e ON e.project_id = a.project_id
+WHERE a.account_id = sqlc.arg(account_id)::uuid AND a.id = sqlc.arg(app_id)::uuid
+  AND e.slug = sqlc.arg(slug)::text;
+
+-- The environment an in-guest publish belongs to: the publishing
+-- deployment's stage, or '' for production and project-less apps.
+-- name: DeploymentEventEnvironment :one
+SELECT COALESCE((SELECT e.id::text FROM project_environments e
+                 WHERE e.project_id = a.project_id AND e.slug = d.scope
+                   AND d.scope NOT IN ('default', 'production')), '')::text AS environment_id
+FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE a.account_id = sqlc.arg(account_id)::uuid AND a.id = sqlc.arg(app_id)::uuid
+  AND d.id = sqlc.arg(deployment_id)::uuid;
