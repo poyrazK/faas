@@ -929,6 +929,9 @@ func renderHotPathVars(h manifest.HotPath, host manifest.Host) string {
 			b.WriteString(name + ": true\n")
 		}
 	}
+	if h.InvocationDispatchConcurrency > 0 {
+		fmt.Fprintf(&b, "faas_schedd_invocation_dispatch_concurrency: %d\n", h.InvocationDispatchConcurrency)
+	}
 	return b.String()
 }
 

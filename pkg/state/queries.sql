@@ -5042,12 +5042,20 @@ RETURNING app_id, deployment_id, route,
 -- rollback included. Resolving here, rather than 24 hours later through
 -- ResolveStaleRegressionObservations, keeps the banner, status and the
 -- resolved webhook current. $2 is the pass start (with clock slack).
+-- Only what the pass could judge resolves: an observation of a deployment
+-- the pass no longer compares (superseded or rolled back), or of a route the
+-- current deployment served in this pass's window. A route that merely went
+-- quiet stays open (the stale sweep closes it after the lookback): on prod an
+-- unfixed 15x slowdown resolved five minutes after it was found, once its
+-- traffic aged out of the window.
 UPDATE debug_regression_observations
 SET state = 'resolved',
     resolved_at = COALESCE(resolved_at, now())
 WHERE app_id = $1
   AND last_detected_at < $2
   AND state <> 'resolved'
+  AND (deployment_id <> sqlc.arg('current_deployment_id')::uuid
+       OR route = ANY(sqlc.arg('measured_routes')::text[]))
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
@@ -16216,6 +16224,17 @@ WHERE database_id=ANY(sqlc.arg(database_ids)::uuid[]);
 UPDATE managed_postgres_plan_excess_notices SET recorded_at=sqlc.arg(now)::timestamptz,mail_intent_id=NULL
 WHERE database_id=ANY(sqlc.arg(database_ids)::uuid[]) AND delete_at IS NULL
     AND (mail_intent_id IS NOT NULL OR recorded_at<=sqlc.arg(stale_before)::timestamptz);
+
+-- name: ListManagedPostgresPlanExcessRemindersDue :many
+-- ADR-20261110184700 amendment 2026-11-12: notices whose mailed deletion date
+-- is between now and remind_until and whose reminder no intent has claimed,
+-- for databases not being deleted.
+SELECT n.database_id,n.reason,n.delete_at,d.account_id,d.name,d.service_class
+FROM managed_postgres_plan_excess_notices n JOIN managed_postgres_databases d ON d.id=n.database_id
+WHERE n.delete_at IS NOT NULL AND n.mail_intent_id IS NOT NULL AND n.reminder_mail_intent_id IS NULL
+    AND n.delete_at>sqlc.arg(now)::timestamptz AND n.delete_at<=sqlc.arg(remind_until)::timestamptz
+    AND d.state NOT IN ('deleting','deleted')
+ORDER BY n.delete_at,n.database_id LIMIT sqlc.arg(batch_size);
 
 -- name: ListUnmailedManagedPostgresPlanExcessNotices :many
 -- The notices still to mail: recorded after since, not yet linked to an

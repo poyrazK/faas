@@ -488,6 +488,24 @@ type AgentRunUsage struct {
 	RecordedAt          pgtype.Timestamptz
 }
 
+type AgentUndoRecord struct {
+	ID                pgtype.UUID
+	ActivityID        pgtype.UUID
+	KeyID             pgtype.UUID
+	AccountID         pgtype.UUID
+	OrgID             pgtype.UUID
+	Method            string
+	Path              string
+	Kind              string
+	Summary           string
+	Inverse           []byte
+	Guard             []byte
+	NotUndoableReason pgtype.Text
+	CreatedAt         pgtype.Timestamptz
+	UndoneAt          pgtype.Timestamptz
+	UndoneBy          pgtype.UUID
+}
+
 // ADR-20261027090010 immutable agent versions: harness descriptor, prompt template, size and timeout.
 type AgentVersion struct {
 	AgentID               pgtype.UUID
@@ -8880,11 +8898,12 @@ type ManagedPostgresOveragePending struct {
 
 // Notices for managed PostgreSQL databases suspended past their plan; written only by apid (ADR-20261102125208).
 type ManagedPostgresPlanExcessNotice struct {
-	DatabaseID   pgtype.UUID
-	Reason       string
-	RecordedAt   pgtype.Timestamptz
-	MailIntentID pgtype.UUID
-	DeleteAt     pgtype.Timestamptz
+	DatabaseID           pgtype.UUID
+	Reason               string
+	RecordedAt           pgtype.Timestamptz
+	MailIntentID         pgtype.UUID
+	DeleteAt             pgtype.Timestamptz
+	ReminderMailIntentID pgtype.UUID
 }
 
 type ManagedPostgresResize struct {
@@ -15550,22 +15569,24 @@ type ScheduleOccurrence struct {
 }
 
 type ScheduledRelease struct {
-	ID                pgtype.UUID
-	AccountID         pgtype.UUID
-	AppID             pgtype.UUID
-	DeploymentID      pgtype.UUID
-	ReleaseAt         pgtype.Timestamptz
-	Canary            []byte
-	NotifyChannelIds  []pgtype.UUID
-	OverrideFreeze    string
-	OverrideFreezeIds []pgtype.UUID
-	State             string
-	OutcomeCode       string
-	OutcomeDetail     string
-	ScheduledBy       string
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
-	StartedAt         pgtype.Timestamptz
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	DeploymentID         pgtype.UUID
+	ReleaseAt            pgtype.Timestamptz
+	Canary               []byte
+	NotifyChannelIds     []pgtype.UUID
+	OverrideFreeze       string
+	OverrideFreezeIds    []pgtype.UUID
+	State                string
+	OutcomeCode          string
+	OutcomeDetail        string
+	ScheduledBy          string
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	StartedAt            pgtype.Timestamptz
+	ScheduledByAccountID pgtype.UUID
+	ScheduledByKeyID     pgtype.UUID
 }
 
 // One non-secret secretbox probe per seal domain, sealed to the domain recipient alone (ADR 20261022111812).
@@ -15916,6 +15937,122 @@ type StripePushDedupe struct {
 	Hour      pgtype.Timestamptz
 	PushedAt  pgtype.Timestamptz
 	OrgID     pgtype.UUID
+}
+
+type SupportAdminEvent struct {
+	ID         pgtype.UUID
+	Sequence   int64
+	ActorID    pgtype.UUID
+	Kind       string
+	ResourceID pgtype.UUID
+	Data       []byte
+	CreatedAt  pgtype.Timestamptz
+}
+
+type SupportEngineering struct {
+	TicketID pgtype.UUID
+	Revision int64
+	Data     []byte
+}
+
+type SupportEpisode struct {
+	ID        pgtype.UUID
+	TicketID  pgtype.UUID
+	StartedAt pgtype.Timestamptz
+	Data      []byte
+}
+
+type SupportEvent struct {
+	ID        pgtype.UUID
+	Sequence  int64
+	TicketID  pgtype.UUID
+	ActorID   pgtype.UUID
+	Kind      string
+	Data      []byte
+	CreatedAt pgtype.Timestamptz
+}
+
+type SupportMessage struct {
+	ID        pgtype.UUID
+	Sequence  int64
+	TicketID  pgtype.UUID
+	ActorID   pgtype.UUID
+	Author    string
+	Body      string
+	Redacted  bool
+	CreatedAt pgtype.Timestamptz
+}
+
+type SupportOutbox struct {
+	ID          pgtype.UUID
+	TicketID    pgtype.UUID
+	State       string
+	Attempts    int32
+	LeaseID     pgtype.UUID
+	AvailableAt pgtype.Timestamptz
+	LeaseUntil  pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+}
+
+type SupportPreview struct {
+	ID        pgtype.UUID
+	TicketID  pgtype.UUID
+	ActorID   pgtype.UUID
+	Kind      string
+	Snapshot  []byte
+	ExpiresAt pgtype.Timestamptz
+}
+
+type SupportReceipt struct {
+	ID          pgtype.UUID
+	ActorID     pgtype.UUID
+	TicketID    pgtype.UUID
+	Operation   string
+	ResourceID  pgtype.UUID
+	RequestHash []byte
+	Result      []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+type SupportResource struct {
+	ID        pgtype.UUID
+	Kind      string
+	Revision  int64
+	Data      []byte
+	UpdatedAt pgtype.Timestamptz
+}
+
+type SupportSatisfaction struct {
+	EpisodeID pgtype.UUID
+	ActorID   pgtype.UUID
+	Rating    int32
+	CreatedAt pgtype.Timestamptz
+}
+
+type SupportStaff struct {
+	AccountID pgtype.UUID
+	Revision  int64
+	Role      string
+	Profile   []byte
+}
+
+type SupportTicket struct {
+	ID         pgtype.UUID
+	ScopeKey   string
+	AccountID  pgtype.UUID
+	OrgID      pgtype.UUID
+	CreatedBy  pgtype.UUID
+	Subject    string
+	Category   string
+	Status     string
+	Revision   int64
+	Priority   string
+	TeamID     pgtype.UUID
+	AssigneeID pgtype.UUID
+	State      []byte
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+	ResolvedAt pgtype.Timestamptz
 }
 
 type SyntheticCheck struct {

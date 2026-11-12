@@ -32,7 +32,7 @@ clean image cannot be promoted when its publisher provenance is unknown. This
 does not replace dependency patching or application review.
 
 When a trusted publisher is removed or its key no longer validates a live
-image, imaged rechecks the active deployment and quarantines the enforce-mode
+image, Gregale rechecks the active deployment and quarantines the enforce-mode
 app instead of grandfathering the old provenance. A fresh image signed by an
 active trusted publisher is required before recovery.
 
@@ -44,8 +44,7 @@ The gateway can rate-limit each client address after hostname routing and
 before consumer-key lookup, JWT verification, body admission, or VM wake.
 
 New apps start with this guard in `observe` mode at 10 requests/s and burst 20
-per source, clamped to the plan's request rate and burst
-([ADR-829](adr/829-default-pre-auth-observe.md)). Observe never rejects a
+per source, clamped to the plan's request rate and burst. Observe never rejects a
 request, so check the recorded would-block traffic before switching to
 `enforce`. `GET /v1/apps/{slug}/pre-auth-observations?range=24h` includes a
 `suggestion` (`ready`, `review`, or `insufficient_data`), also shown on the
@@ -68,8 +67,8 @@ To choose different values, or to opt out with `{"mode":"off"}`, set
 `observe` records requests that would exceed the source limit without
 rejecting them. Change `mode` to `enforce` to return `429` with
 `Retry-After: 1` and `x-faas-rate-limit-scope: pre-auth`. Set `mode` to `off`
-to disable the guard. Apps created before ADR-829 keep their stored setting;
-on those apps the field is absent and the guard is disabled until set.
+to disable the guard. Apps created before the guard existed keep their stored
+setting; on those apps the field is absent and the guard is disabled until set.
 The rate and burst must be positive and no greater than the app plan's
 request rate and burst.
 If the app moves to a lower plan, the gateway clamps an existing setting to
@@ -657,7 +656,7 @@ unknown findings. The operation requires deploy-write scope and MFA and emits
 an audit event when the app returns to `active`.
 
 After recovery, enforce-mode apps keep a bounded security-evidence lease. A
-lightweight imaged sweep checks the live deployment between full rescans and
+lightweight sweep checks the live deployment between full rescans and
 parks the app if the evidence expires, the image digest changes, scanner
 metadata becomes invalid, or the result contains a blocking finding. The
 quarantine audit and notification include the specific evidence reason.

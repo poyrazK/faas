@@ -1,6 +1,6 @@
 package preview
 
-import "github.com/poyrazK/faas/sdk/go/internal/api"
+import "github.com/gregale-dev/gregale-go/internal/api"
 
 // Public lifecycle wire types used by the embedded Client's configuration and
 // discovery methods. Completed discovery does not imply completed cleanup.

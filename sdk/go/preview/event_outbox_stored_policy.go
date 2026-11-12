@@ -10,7 +10,7 @@ import (
 	"errors"
 	"time"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	faas "github.com/gregale-dev/gregale-go"
 )
 
 // EventOutboxStoredRetryPolicySchema upgrades application-owned policy/control

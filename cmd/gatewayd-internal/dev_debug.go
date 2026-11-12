@@ -36,6 +36,7 @@ type devDebugTunnel struct {
 	targets  atomic.Pointer[devDebugTargets]
 	forward  func(context.Context, net.Conn, gateway.Target) error
 	sessions devDebugSessions
+	audits   devDebugAudits
 	log      *slog.Logger
 	// traffic enrolls the tunnel under the app's security scopes
 	// (admitPlatformTraffic); nil only in legacy fixtures.
@@ -94,7 +95,7 @@ func (h *devDebugTunnel) attach(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	if !state.IsDeveloperApp(app) {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeDevDebugNotDeveloperEnvironment,
 			"Debugging unavailable", "a debugger can attach only to a `gregale dev` environment"))
 		return
 	}
@@ -141,21 +142,22 @@ func (h *devDebugTunnel) attach(w http.ResponseWriter, r *http.Request, acct sta
 	// attached (account and key, including agent keys), to which environment
 	// and instance, and for how long.
 	auditData := map[string]any{"app_id": app.ID, "app_slug": app.Slug, "instance_id": target.InstanceID}
+	keyID := ""
 	if _, key, ok := mwauth.AccountFromCtx(r.Context()); ok && key != nil {
+		keyID = key.ID
 		auditData["key_id"] = key.ID
 	}
-	h.emitAudit(r.Context(), "dev.debugger.attached", acct.ID, auditData)
-	started := time.Now()
+	// The session's events outlive this request (detached fires after the
+	// grace), so they carry a context that is not cancelled with it.
+	endAudit := h.audits.open(context.WithoutCancel(r.Context()), devDebugAuditKey{accountID: acct.ID, appID: app.ID, keyID: keyID}, auditData,
+		func(ctx context.Context, kind string, data map[string]any) {
+			h.emitAudit(ctx, kind, acct.ID, data)
+		})
+	defer endAudit()
 	h.log.Info("developer debugger attached", "account_id", acct.ID, "app_id", app.ID, "instance_id", target.InstanceID)
 	if err := h.forward(ctx, conn, target); err != nil && ctx.Err() == nil {
 		h.log.Info("developer debugger session ended", "app_id", app.ID, "err", err)
 	}
-	detached := make(map[string]any, len(auditData)+1)
-	for k, v := range auditData {
-		detached[k] = v
-	}
-	detached["duration_ms"] = time.Since(started).Milliseconds()
-	h.emitAudit(context.WithoutCancel(r.Context()), "dev.debugger.detached", acct.ID, detached)
 }
 
 func (h *devDebugTunnel) emitAudit(ctx context.Context, kind, accountID string, data map[string]any) {
@@ -163,6 +165,101 @@ func (h *devDebugTunnel) emitAudit(ctx context.Context, kind, accountID string, 
 		return
 	}
 	h.auth.Audit.Emit(ctx, kind, &accountID, data)
+}
+
+// devDebugAuditGrace is how long the last tunnel of a debugging session may
+// be closed before the session counts as detached. Debuggers poll target
+// discovery about every second, and each poll the CLI's two-second cache
+// misses opens a short tunnel: auditing each one wrote an attached/detached
+// pair per poll, about two rows a second for as long as chrome://inspect was
+// open (found on prod 2026-11-11).
+const devDebugAuditGrace = 60 * time.Second
+
+type devDebugAuditKey struct{ accountID, appID, keyID string }
+
+type devDebugAuditSession struct {
+	open, tunnels int
+	started       time.Time
+	attached      map[string]any
+	ctx           context.Context
+	emit          func(ctx context.Context, kind string, data map[string]any)
+	detach        func() bool // stops the pending detached event
+}
+
+// devDebugAudits coalesces tunnels into debugging sessions per account, app
+// and key: dev.debugger.attached when the first tunnel opens, and
+// dev.debugger.detached once none has been open for devDebugAuditGrace, with
+// the session's duration and tunnel count.
+type devDebugAudits struct {
+	mu       sync.Mutex
+	sessions map[devDebugAuditKey]*devDebugAuditSession
+	now      func() time.Time
+	after    func(time.Duration, func()) func() bool
+}
+
+func (a *devDebugAudits) clock() (func() time.Time, func(time.Duration, func()) func() bool) {
+	now, after := a.now, a.after
+	if now == nil {
+		now = time.Now
+	}
+	if after == nil {
+		after = func(d time.Duration, f func()) func() bool { return time.AfterFunc(d, f).Stop }
+	}
+	return now, after
+}
+
+// open records one tunnel and returns the function its close calls.
+func (a *devDebugAudits) open(ctx context.Context, key devDebugAuditKey, data map[string]any, emit func(ctx context.Context, kind string, data map[string]any)) func() {
+	now, after := a.clock()
+	a.mu.Lock()
+	if a.sessions == nil {
+		a.sessions = map[devDebugAuditKey]*devDebugAuditSession{}
+	}
+	s := a.sessions[key]
+	fresh := s == nil
+	if fresh {
+		s = &devDebugAuditSession{started: now(), attached: data, ctx: ctx, emit: emit}
+		a.sessions[key] = s
+	} else if s.detach != nil {
+		s.detach()
+		s.detach = nil
+	}
+	s.open++
+	s.tunnels++
+	a.mu.Unlock()
+	if fresh {
+		emit(ctx, "dev.debugger.attached", data)
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			if s.open--; s.open > 0 {
+				return
+			}
+			s.detach = after(devDebugAuditGrace, func() { a.finish(key, s) })
+		})
+	}
+}
+
+func (a *devDebugAudits) finish(key devDebugAuditKey, s *devDebugAuditSession) {
+	now, _ := a.clock()
+	a.mu.Lock()
+	if a.sessions[key] != s || s.open > 0 {
+		a.mu.Unlock()
+		return
+	}
+	delete(a.sessions, key)
+	detached := make(map[string]any, len(s.attached)+2)
+	for k, v := range s.attached {
+		detached[k] = v
+	}
+	// The session ended when its last tunnel closed, a grace period ago.
+	detached["duration_ms"] = now().Add(-devDebugAuditGrace).Sub(s.started).Milliseconds()
+	detached["tunnels"] = s.tunnels
+	a.mu.Unlock()
+	s.emit(s.ctx, "dev.debugger.detached", detached)
 }
 
 // newDevDebugTunnel returns nil when the gateway lacks the API-key

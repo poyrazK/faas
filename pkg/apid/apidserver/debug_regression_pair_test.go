@@ -27,6 +27,8 @@ func TestChooseRegressionComparison(t *testing.T) {
 	rolledOut := dep("new", now.Add(-5*time.Hour), now.Add(-5*time.Hour), now.Add(-time.Second))
 	stable := dep("stable", now.Add(-48*time.Hour), now.Add(-23*time.Hour), now.Add(-2*time.Second))
 	canary := dep("canary", now.Add(-10*time.Minute), now.Add(-9*time.Minute), now.Add(-3*time.Second))
+	replaced := dep("replaced", now.Add(-20*time.Minute), now.Add(-16*time.Minute), now.Add(-12*time.Minute))
+	replacement := dep("replacement", now.Add(-11*time.Minute), now.Add(-10*time.Minute), now.Add(-9*time.Minute))
 
 	tests := []struct {
 		name              string
@@ -52,12 +54,23 @@ func TestChooseRegressionComparison(t *testing.T) {
 			name: "stable answered last", deps: []sqlc.ListDeploymentsForCompareRow{stable, canary}, ok: true,
 			cur: "canary", prev: "stable", curStart: now.Add(-9 * time.Minute), prevStart: now.Add(-9 * time.Minute), prevEnd: now,
 		},
+		{
+			// Replaced minutes ago, so both answered within the serving
+			// window, but one after the other: the predecessor is compared
+			// over its own last traffic, not the new deployment's window
+			// where it has no rows (found on prod 2026-11-11: a 15x slowdown
+			// went unreported for 28 minutes).
+			name: "replaced minutes ago", deps: []sqlc.ListDeploymentsForCompareRow{replacement, replaced}, ok: true,
+			cur: "replacement", prev: "replaced", curStart: now.Add(-10 * time.Minute),
+			prevStart: now.Add(-12*time.Minute - 30*time.Minute + time.Millisecond), prevEnd: now.Add(-12*time.Minute + time.Millisecond),
+		},
 		{name: "only one deployment", deps: []sqlc.ListDeploymentsForCompareRow{rolledOut}},
 		{name: "nothing serving", deps: []sqlc.ListDeploymentsForCompareRow{old}},
 	}
 	names := map[string]string{
 		old.DeploymentID.String(): "old", rolledOut.DeploymentID.String(): "new",
 		stable.DeploymentID.String(): "stable", canary.DeploymentID.String(): "canary",
+		replaced.DeploymentID.String(): "replaced", replacement.DeploymentID.String(): "replacement",
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

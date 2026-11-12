@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid"
 	"github.com/onebox-faas/faas/pkg/apid/agentconnections"
 	"github.com/onebox-faas/faas/pkg/apid/agentinspect"
+	"github.com/onebox-faas/faas/pkg/apid/agentundo"
 	"github.com/onebox-faas/faas/pkg/apid/aiconsole"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
@@ -43,6 +44,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
+	"github.com/onebox-faas/faas/pkg/apid/support"
+
 	"github.com/onebox-faas/faas/pkg/apid/storedworkflowconsole"
 
 	"github.com/onebox-faas/faas/pkg/apid/agents"
@@ -124,6 +127,8 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
+	customerSupport *support.Service
+
 	domainChecks domainverify.Checker
 	// requestIDLookups resolves request IDs kept on compute nodes
 	// (ADR-20261101085552); nil in tests that do not wire it.
@@ -746,6 +751,9 @@ type server struct {
 	//
 	// ADR-044.
 	authMw *authmw.Middleware
+	// agentUndo captures agent writes and undoes them (ADR-20261112080601);
+	// nil when the store keeps no undo records.
+	agentUndo *agentundo.Engine
 	// oidcHandler is the POST /v1/auth/oidc/exchange handler
 	// (issue #270 / ADR-101). Wired from newServerWithDeps so
 	// the mutating handler state (the JWKS cache, the trust-policy
@@ -1688,6 +1696,9 @@ func newServerWithDeps(
 	// ADR-20261104140058: a person decides an agent's approval request on the
 	// session-authenticated /cli-auth surface.
 	s.authMw.ApprovalReviewURL = s.agentApprovalReviewURL
+	// ADR-20261112080601: record how to reverse each agent write.
+	s.agentUndo = s.agentUndoEngine()
+	s.wireAgentUndo(s.agentUndo)
 	s.authMw.HostingAutomationEnabled = func() bool { return (hostingHost{s}).HostingEnabled() && (hostingHost{s}).HostingAutomationEnabled() }
 	s.hosting.Host = hostingHost{s}
 	s.hosting.OIDCVerifier = oidc.NewVerifier(s.log)
@@ -1802,6 +1813,8 @@ func (noopNotifier) WaitFor(_ context.Context, _ string, _ func(payload string) 
 // New routes append here; do not introduce per-feature sub-muxes.
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
+	s.registerCustomerSupportRoutes(mux)
+
 	// Company project operations registered only under /v1/projects/{slug}
 	// (apps/projects review 2026-11-10, P1); see orgProjectMirror.
 	var orgProjectInner http.Handler
@@ -4444,6 +4457,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/agent-connections/self/budget", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.SelfBudget(agentConnections))))
 	mux.HandleFunc("GET /v1/agent-connections/{id}/budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(agentconnections.Budget(agentConnections)))))
 	mux.HandleFunc("PUT /v1/agent-connections/{id}/budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(agentconnections.SetBudget(agentConnections)))))
+	// ADR-20261112080601: a person undoes what one of their agents changed.
+	// The agent's own undo: planning is free, applying always waits for a
+	// person's approval (category undo, agentapproval.Classify).
+	mux.HandleFunc("POST /v1/agent-connections/self/undo/plan", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.SelfUndoPlan(agentConnections))))
+	mux.HandleFunc("POST /v1/agent-connections/self/undo", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.SelfUndo(agentConnections))))
+	mux.HandleFunc("POST /v1/agent-connections/{id}/undo/plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(agentconnections.UndoPlan(agentConnections)))))
+	mux.HandleFunc("POST /v1/agent-connections/{id}/undo", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(agentconnections.Undo(agentConnections)))))
 	// ADR-20261104140058: an agent polls its approval requests; a person lists
 	// the ones they may decide. Deciding happens only on the review page.
 	mux.HandleFunc("GET /v1/agent-approvals", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.ListApprovals(agentConnections))))
@@ -4488,6 +4508,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/orgs/{slug}/agent-connections/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(agentconnections.OrgRevoke(orgAgents))))))
 	mux.HandleFunc("POST /v1/orgs/{slug}/agent-connections/revoke_all", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(agentconnections.OrgRevokeAll(orgAgents))))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/agent-connections/{id}/activity", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(agentconnections.OrgActivity(orgAgents))))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/agent-connections/{id}/undo/plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(agentconnections.OrgUndoPlan(orgAgents))))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/agent-connections/{id}/undo", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(agentconnections.OrgUndo(orgAgents))))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/agent-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(agentconnections.GetPolicy(orgAgents))))))
 	mux.HandleFunc("PUT /v1/orgs/{slug}/agent-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(agentconnections.PutPolicy(orgAgents))))))
 

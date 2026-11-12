@@ -6,7 +6,7 @@ for the current install paths and what is still blocking release.
 
 | Language | Install name            | Import as        | Source                    | Generator                          |
 |----------|-------------------------|------------------|---------------------------|------------------------------------|
-| Go       | `github.com/poyrazK/faas/sdk/go` | `faas`  | `sdk/go/internal/`        | hand-written (extracted from `pkg/api/` in PR 2) |
+| Go       | `github.com/gregale-dev/gregale-go` | `faas`  | `sdk/go/internal/`        | hand-written (extracted from `pkg/api/` in PR 2) |
 | Node     | `@gregale/sdk-node`     | `@gregale/sdk-node` | `sdk/node/src/generated/` | `openapi-typescript-codegen@0.72.1` |
 | Python   | `gregale-sdk`           | `faas_sdk`       | `sdk/python/faas_sdk/`    | `openapi-python-client==0.29.0`     |
 

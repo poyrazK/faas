@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	faas "github.com/gregale-dev/gregale-go"
 )
 
 // EventOutboxReconciliationOptions optionally supplies a renamed app's current

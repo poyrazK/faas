@@ -136,7 +136,7 @@ The single `target:` form is still accepted and behaves as a one-element
 
 ### See a custom metric's history
 
-Where custom metric history is enabled (preview, ADR-745), every fresh value
+Where custom metric history is enabled (preview), every fresh value
 you push is recorded for 15 days, so you can watch the number over time as
 well as scale on it:
 
