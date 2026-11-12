@@ -122,8 +122,8 @@ func (a *advisoryReceiver) ForwardStatelessAdvisory(ctx context.Context, req *ap
 	// `data.severity` field and the counter increment use the same
 	// value so they can't drift if severityForPath ever gains a new
 	// branch (e.g. a future "low" tier). advisoryBatchSeverity's
-	// vocabulary is the receiver-internal set (severityHigh /
-	// severityWarn / severityInfo) and is exactly the wire-side
+	// vocabulary is pkg/api's StatelessAdvisorySeverity{High,Warn,Info}
+	// and is exactly the wire-side
 	// counter vocabulary (AdvisorySeverity{High,Warn,Info}) so no
 	// translation is needed.
 	severity := advisoryBatchSeverity(req.Events)
@@ -216,22 +216,16 @@ func joinMasksForJSON(masks []string) string {
 	return out
 }
 
-// Severity labels written into the stateless.advisory audit row's
-// "severity" field. pkg/api owns the vocabulary and the classifier so vmmd,
-// which writes the row on compute nodes (ADR-047 amendment 2026-11-12),
-// stamps the same value.
-const (
-	severityHigh = api.StatelessAdvisorySeverityHigh
-	severityWarn = api.StatelessAdvisorySeverityWarn
-	severityInfo = api.StatelessAdvisorySeverityInfo
-)
+// Severity labels on the stateless.advisory audit row ("high", "warn",
+// "info") live in pkg/api so vmmd, which writes the row on compute nodes
+// (ADR-047 amendment 2026-11-12), stamps the same value.
 
-// severityForPath returns severityHigh for a high root or any path under one
-// (/data/foo matches /data), else severityWarn.
+// severityForPath returns "high" for a high root or any path under one
+// (/data/foo matches /data), else "warn".
 func severityForPath(p string) string { return api.StatelessAdvisoryPathSeverity(p) }
 
-// advisoryBatchSeverity returns the highest severity in the batch;
-// severityInfo for an empty one.
+// advisoryBatchSeverity returns the highest severity in the batch; "info"
+// for an empty one.
 func advisoryBatchSeverity(events []*apidpb.AdvisoryEvent) string {
 	paths := make([]string, 0, len(events))
 	for _, e := range events {

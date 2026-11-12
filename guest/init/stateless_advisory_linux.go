@@ -182,10 +182,10 @@ func runStatelessAdvisory(log *slog.Logger, workingDir string) error {
 	for _, root := range roots {
 		w.watchRoot(root)
 	}
+	log.Info("stateless advisory started", "roots", len(roots), "watches", len(w.dirs), "vsock_port", VsockStatelessAdvisoryPort)
 	pipe := newAdvisoryPipe()
 	go w.run(pipe)
 	go advisoryShipper(pipe, sendAdvisoryFrame, log)
-	log.Info("stateless advisory started", "roots", len(roots), "watches", len(w.dirs), "vsock_port", VsockStatelessAdvisoryPort)
 	return nil
 }
 
