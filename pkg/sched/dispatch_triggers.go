@@ -464,7 +464,20 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	// 1. Poller lookup. Cached on the Loop. A poller that cannot be built
 	// (unreachable broker, credentials that do not open) is the trigger's
 	// health error too, so the customer sees it, not only the scheduler log.
-	poller, _, err := l.pollerForTrigger(t)
+	var poller triggerSource
+	var err error
+	if replays, ok := store.(state.ExternalTriggerReplayStore); ok {
+		records, replayErr := replays.ListDueExternalTriggerReplays(ctx, t.ID.String(), min(100, max(1, int(t.BatchSizeMax))))
+		if replayErr != nil {
+			return fmt.Errorf("load stored trigger replays: %w", replayErr)
+		}
+		if len(records) > 0 {
+			poller = &storedTriggerReplaySource{records: records, kind: t.Kind}
+		}
+	}
+	if poller == nil {
+		poller, _, err = l.pollerForTrigger(t)
+	}
 	if err != nil {
 		l.recordTriggerConsumerHealth(ctx, store, t, PollResult{Error: err})
 		return err
@@ -494,7 +507,10 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		attribute.String("gregale.trigger.kind", t.Kind))
 	res := poller.Poll(pollCtx, t)
 	settleRate(len(res.Records))
-	l.recordTriggerConsumerHealth(ctx, store, t, res)
+	_, storedReplay := poller.(*storedTriggerReplaySource)
+	if !storedReplay {
+		l.recordTriggerConsumerHealth(ctx, store, t, res)
+	}
 	pollSpan.SetAttributes(attribute.Int("gregale.trigger.records", len(res.Records)))
 	if res.Error != nil {
 		pollSpan.SetAttributes(attribute.String("gregale.trigger.outcome", "error"))
@@ -535,8 +551,10 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	}
 	// ADR-1322 amendment: a realtime trigger's group claims are renewed while
 	// the batch is delivered, so its invocations run for the app's timeout.
-	if realtime, ok := poller.(*realtimePoller); ok {
-		defer realtime.keepLeases(ctx, batchItemIDs(res.Records))()
+	if keeper, ok := poller.(interface {
+		keepLeases(context.Context, []string) func()
+	}); ok {
+		defer keeper.keepLeases(ctx, batchItemIDs(res.Records))()
 	}
 
 	// 3. Batch close: batch_size_max / payload_max_bytes. A broker record
@@ -584,7 +602,9 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	// explicitly excluded via filter should NOT consume a wake
 	// slot from the rate-limit bucket. The gate sees only the
 	// filtered subset.
-	if len(t.FilterCriteria) > 0 {
+	// Stored replays resume work already admitted by the original filter.
+	// Reapplying a changed intake filter would strand the pending replay.
+	if len(t.FilterCriteria) > 0 && !storedReplay {
 		filtered, filterErrCount, filterErr := l.filterBatch(ctx, t, batch)
 		if filterErr != nil {
 			// Catastrophic filter decode error (the JSONB on
@@ -2515,6 +2535,9 @@ func (l *Loop) filterBatch(
 // the Loop and a per-tick snapshot would race the cache
 // invalidation on enable/disable transitions.
 func ackSingle(ctx context.Context, t sqlc.Trigger, rec SourceRecord, l *Loop) error {
+	if rec.StoredReplay {
+		return nil
+	}
 	if l == nil {
 		return nil
 	}
