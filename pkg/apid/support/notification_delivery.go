@@ -72,17 +72,16 @@ func (s *Service) deliverNotification(ctx context.Context, queries *q.Queries, r
 	if s.EmailAllowed != nil {
 		allowed, err := s.EmailAllowed(ctx, id(current.RecipientID), current.Plan, id(current.OrgID), staff)
 		if err != nil {
-			return notificationRetryState(row, now), nil
+			return "", err
 		}
 		if !allowed {
 			return "skipped", nil
 		}
 	}
-	address, err := mail.ParseAddress(current.RecipientEmail)
-	if err != nil || address.Address != current.RecipientEmail {
+	to, valid := notificationAddress(current.RecipientEmail)
+	if !valid {
 		return "skipped", nil
 	}
-	to := strings.ToLower(address.Address)
 	digest := sha256.Sum256([]byte(to))
 	bound, err := queries.NotificationBindDestination(ctx, s.Pool, q.NotificationBindDestinationParams{ID: row.ID, LeaseID: lease, DestinationHash: digest[:]})
 	if err != nil {
@@ -98,10 +97,21 @@ func (s *Service) deliverNotification(ctx context.Context, queries *q.Queries, r
 		path = "/dashboard/orgs/" + url.PathEscape(current.OrgSlug) + "/support"
 	}
 	message := NotificationEmail{To: to, Kind: current.Kind, TicketID: id(current.TicketID), Path: path + "/" + id(current.TicketID), MessageID: "support-notification:" + id(row.ID)}
-	if err := s.Notify(ctx, message); err != nil {
+	if s.Notify(ctx, message) != nil {
 		return notificationRetryState(row, now), nil
 	}
 	return "accepted", nil
+}
+
+func notificationAddress(value string) (string, bool) {
+	address, err := mail.ParseAddress(value)
+	if err != nil {
+		return "", false
+	}
+	if address.Address != value {
+		return "", false
+	}
+	return strings.ToLower(address.Address), true
 }
 
 func notificationRetryState(row q.SupportNotification, now time.Time) string {

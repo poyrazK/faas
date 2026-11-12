@@ -67,7 +67,9 @@ provider idempotency keys, fenced leases and bounded backoff (eight attempts wit
 is not promised. Read, expired, ineligible and disabled-preview notifications are
 skipped. Membership, verification, staff access and assignment are rechecked before
 delivery; an address changed after an ambiguous handoff is not retried at the new
-address. In-app history remains for 90 days even when email fails.
+address. Temporary eligibility-lookup outages remain retryable. Fanout is limited
+to 1,000 recipients per event; over-limit writes return 429 before committing.
+In-app history remains for 90 days even when email fails.
 
 Use `GET /v1/support/notifications` or
 `GET /v1/orgs/{org}/support/notifications` with optional `before` sequence and

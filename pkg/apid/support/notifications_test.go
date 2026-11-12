@@ -284,15 +284,15 @@ func TestSupportNotificationPermissionLookupOutageIsRetried(t *testing.T) {
 		}
 		return true, nil
 	}
-	if err := f.s.DispatchNotification(t.Context()); err != nil {
-		t.Fatal(err)
+	if err := f.s.DispatchNotification(t.Context()); err == nil {
+		t.Fatal("permission lookup outage was not reported")
 	}
 	var state string
-	if err := f.pool.QueryRow(t.Context(), `SELECT email_state FROM support_notifications`).Scan(&state); err != nil || state != "queued" || calls != 0 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT email_state FROM support_notifications`).Scan(&state); err != nil || state != "inflight" || calls != 0 {
 		t.Fatalf("lookup outage dropped notification: %s %d %v", state, calls, err)
 	}
 	available = true
-	f.now = f.now.Add(api.SupportWorkerInterval)
+	f.now = f.now.Add(api.SupportNotificationLease)
 	if err := f.s.DispatchNotification(t.Context()); err != nil {
 		t.Fatal(err)
 	}
