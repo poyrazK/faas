@@ -1988,6 +1988,10 @@ const (
 	QueueSendBatchMaxBytes    = 8 << 20
 )
 
+// QueueGroupKeyMaxBytes bounds a queue message's group_key
+// (ADR-20261112193306).
+const QueueGroupKeyMaxBytes = 128
+
 // Pull leases (ADR-1140). One call leases at most QueueLeaseMaxMessages and
 // takes at most QueueLeaseMaxReceipts receipts. A lease without an explicit
 // timeout hides its message for QueueLeaseDefaultVisibilitySeconds; the

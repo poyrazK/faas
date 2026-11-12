@@ -1574,6 +1574,7 @@ func cmdQueueSend(args []string) int {
 	workPolicy := fs.String("work-policy", "", "named app work policy (requires --work-key and an unnamed queue)")
 	workKey := fs.String("work-key", "", "JSON scalar identifying related work")
 	workFairnessKey := fs.String("work-fairness-key", "", "JSON scalar shared by related work keys")
+	groupKey := fs.String("group-key", "", "deliver messages with this key one at a time, in send order (preview)")
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -1583,12 +1584,15 @@ func cmdQueueSend(args []string) int {
 		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale queue send <slug> --payload <json|@file|-> [--queue-name QUEUE] [--environment ENV] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue send <slug> --payload <json|@file|-> [--queue-name QUEUE] [--environment ENV] [--group-key KEY | --work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "queue")
 		return 1
 	}
 	work, err := queueWorkFromFlags(*workPolicy, *workKey, *workFairnessKey)
 	if err != nil {
 		return printErr("Invalid queue work", err)
+	}
+	if *groupKey != "" && work != nil {
+		return printErr("Invalid queue work", errors.New("--group-key cannot be combined with --work-policy"))
 	}
 	slug := pos[0]
 	body, err := resolveQueuePayload(*payload)
@@ -1603,7 +1607,7 @@ func cmdQueueSend(args []string) int {
 	if *environment == "" {
 		warning = unconsumedQueueWarning(context.Background(), client, slug, *queueName)
 	}
-	resp, err := client.QueueSend(context.Background(), slug, api.QueueSendRequest{Environment: *environment, Payload: body, QueueName: *queueName, Work: work})
+	resp, err := client.QueueSend(context.Background(), slug, api.QueueSendRequest{Environment: *environment, Payload: body, QueueName: *queueName, Work: work, GroupKey: *groupKey})
 	if err != nil {
 		return printErr("Queue send failed", err)
 	}

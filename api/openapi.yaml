@@ -121653,6 +121653,7 @@ components:
         work:
           allOf: [{ $ref: '#/components/schemas/InvokeWork' }]
           description: "Optional keyed ordering policy for a queue message. Scoped environment bindings reject this option until their policy adapter is available."
+        group_key: { type: string, minLength: 1, maxLength: 128, description: "Messages with the same group_key are delivered one at a time, in send order, on push and pull consumers; a message waiting to retry holds later ones with its key. Cannot be combined with work. Preview: refused with queue_groups_unavailable until released to the account." }
 
     QueueSendBatchRequest:
       description: "Body for POST /v1/apps/{slug}/queues/send-batch: up to 100 messages for one queue, sent in order. The body is at most 8 MiB; each message meets its plan's message size."
@@ -121676,6 +121677,7 @@ components:
       type: object
       properties:
         payload: { type: object, additionalProperties: true }
+        group_key: { type: string, minLength: 1, maxLength: 128, description: "Messages with the same group_key are delivered one at a time, in send order, on push and pull consumers; a message waiting to retry holds later ones with its key. Cannot be combined with work. Preview: refused with queue_groups_unavailable until released to the account." }
 
     QueueSendBatchResult:
       description: "The outcome of one message by its zero-based input index: accepted, rejected with the problem, or not attempted after an earlier rejection."

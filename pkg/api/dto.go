@@ -6054,6 +6054,9 @@ type QueueSendBatchRequest struct {
 // QueueSendBatchMessage is one message of a batch send.
 type QueueSendBatchMessage struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
+	// GroupKey orders this message after earlier ones with the same key
+	// (ADR-20261112193306); see QueueSendRequest.GroupKey.
+	GroupKey string `json:"group_key,omitempty"`
 }
 
 // QueueSendBatchResult reports one message by its zero-based input index:
@@ -6343,6 +6346,11 @@ type QueueSendRequest struct {
 	QueueName   string          `json:"queue_name,omitempty"`
 	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
 	Work        *InvokeWork     `json:"work,omitempty"`
+	// GroupKey delivers messages with the same key one at a time, in send
+	// order; a message waiting to retry holds later ones of its key
+	// (ADR-20261112193306). It is the work key of the built-in
+	// gregale-ordered policy, so it cannot be combined with Work.
+	GroupKey string `json:"group_key,omitempty"`
 }
 
 // DelayedTaskRequest is the body for POST /v1/apps/{slug}/delayed-tasks.

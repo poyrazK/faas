@@ -224,5 +224,9 @@ func decodeWorkPolicy(w http.ResponseWriter, r *http.Request) (workpolicy.Policy
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return workpolicy.Policy{}, false
 	}
+	if err := workpolicy.ValidateDeclaredName(policy.Name); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return workpolicy.Policy{}, false
+	}
 	return policy, true
 }

@@ -328,7 +328,12 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !decodeJSONLimit(w, r, &req, int64(limits.MaxSourceBytesPerInvocation)) {
 		return
 	}
-	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, req.Payload, req.FlagContext, req.QueueName, req.Environment, req.RetryPolicy, req.Work)
+	work, problem := s.queueGroupKeyWork(acct, req.GroupKey, req.Work)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, req.Payload, req.FlagContext, req.QueueName, req.Environment, req.RetryPolicy, work)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -380,7 +385,12 @@ func (s *server) queueSendBatch(w http.ResponseWriter, r *http.Request, acct sta
 			resp.Results[i] = api.QueueSendBatchResult{Index: i, Status: "rejected", Problem: refused}
 			continue
 		}
-		inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, message.Payload, "", req.QueueName, req.Environment, req.RetryPolicy, nil)
+		work, problem := s.queueGroupKeyWork(acct, message.GroupKey, nil)
+		var inv state.Invocation
+		var traceID string
+		if problem == nil {
+			inv, traceID, problem = s.enqueueAppMessage(r.Context(), r.Header, acct, app, message.Payload, "", req.QueueName, req.Environment, req.RetryPolicy, work)
+		}
 		if problem != nil {
 			refused = problem
 			resp.Results[i] = api.QueueSendBatchResult{Index: i, Status: "rejected", Problem: problem}

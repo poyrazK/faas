@@ -2403,6 +2403,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		if err := declaration.ToPolicy().Validate(); err != nil {
 			return fmt.Errorf("work_policies[%d]: %w", i, err)
 		}
+		if err := workpolicy.ValidateDeclaredName(declaration.Name); err != nil {
+			return fmt.Errorf("work_policies[%d]: %w", i, err)
+		}
 		key := declaration.App + "\x00" + declaration.Name
 		if _, duplicate := seenWorkPolicies[key]; duplicate {
 			return fmt.Errorf("work_policies[%d]: duplicate (app, name)", i)

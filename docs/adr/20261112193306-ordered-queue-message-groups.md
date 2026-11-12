@@ -1,6 +1,6 @@
 # ADR-20261112193306: Ordered message groups for worker queues
 
-- Status: accepted (owner decisions 2026-11-12); slice 1 built dark
+- Status: accepted (owner decisions 2026-11-12); slices 1–2 built, 2 dark
 - Amends: ADR-374 (application keyed work policy), ADR-20261022105723 (pull
   leases), ADR-20261112140000 (Postgres change workers)
 - Related: ADR-795 (keyed event delivery ordering), ADR-972 (parallel push)
@@ -63,16 +63,21 @@ That would have duplicated lanes; this version builds on them.
   pull binding, as it did for push.
 - MemStore applies the same rule (`keyedClaimAllowedLocked`).
 
-### Slice 2: a key per message without a policy
+### Slice 2: a key per message without a policy (built, dark)
 
 `group_key` on a send (and on each `send-batch` message) is shorthand for
-`work: {policy: "ordered", key: <group_key>}` against a built-in policy every
-app has, `ordered` (`max_running_per_key: 1`, `pending_updates: all`, no
-debounce or expiry, no fairness cap). The name is reserved: declaring a policy
-called `ordered` is refused. The store provisions its row on first use, so no
-manifest or migration of existing apps is needed. `gregale queue send
---group-key`, SDK and OpenAPI follow. Key rules are the work-key rules
-(bounded JSON scalar; a string key is sent as given).
+`work: {policy: "gregale-ordered", key: "<group_key>"}` against a built-in
+policy every app has (`max_running_per_key: 1`, `pending_updates: all`, no
+debounce, expiry or fairness cap). apid creates its row on first use, so no
+manifest or migration of existing apps is needed. Policy names starting with
+`gregale-` are now reserved for declarations (API and manifest); an app that
+already declared `gregale-ordered` with other settings gets
+`work_policy_reserved` on a group_key send rather than a reinterpretation. A
+group_key is 1–128 bytes of printable UTF-8 (`api.QueueGroupKeyMaxBytes`) and
+cannot be combined with `work`. `gregale queue send --group-key` is parsed
+but kept out of help, completions and the reference while the
+`queue_message_groups` flag is dark; without the flag apid answers
+`queue_groups_unavailable`. Queue sends are not in the published SDK spec.
 
 ### Slice 3: Postgres change workers
 
