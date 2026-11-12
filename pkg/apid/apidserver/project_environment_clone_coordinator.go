@@ -150,6 +150,8 @@ func cloneCoordinatorErrorCode(err error) string {
 		return "source_changed_during_capture"
 	case errors.Is(err, state.ErrObjectCapacity):
 		return state.CloneFailureObjectCapacity
+	case errors.Is(err, state.ErrCronQuotaExceeded):
+		return state.CloneFailureCronLimit
 	case errors.Is(err, state.ErrObjectUsageStale):
 		return "object_storage_usage_stale"
 	case errors.Is(err, state.ErrConflict), errors.Is(err, state.ErrInvalidArgument):

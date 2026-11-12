@@ -63,7 +63,7 @@ func (s *PostgresStore) SetLinkActive(ctx context.Context, scope Scope, code str
 }
 
 // Attribute runs in the account-creation transaction. No existing-account
-// endpoint can claim or change attribution; retries cannot replace its owner.
+// endpoint can change attribution; checkout claims use AttributeCheckout.
 func Attribute(ctx context.Context, tx sqlc.DBTX, account string, input Attribution) error {
 	p := input.Policy
 	_, err := sqlc.New().AttributeSignup(ctx, tx, sqlc.AttributeSignupParams{AccountID: pgID(account), Code: input.Code, Currency: p.Currency,
@@ -94,7 +94,7 @@ func (s *PostgresStore) List(ctx context.Context, scope Scope, after string, lim
 	out := make([]Record, 0, len(rows))
 	for _, r := range rows {
 		record := Record{AccountID: uuid.UUID(r.AccountID.Bytes).String(), OwnerID: uuid.UUID(r.OwnerID.Bytes).String(), Kind: r.Kind, Email: r.Email, Plan: r.Plan, AccountStatus: r.AccountStatus,
-			CreatedAt: r.CreatedAt.Time, Stage: r.Stage, Note: r.Note, Apps: r.Apps, Paid: r.Paid, RewardStatus: r.RewardStatus, Currency: r.Currency, RewardCents: r.RewardCents, ReferredRewardCents: r.ReferredRewardCents, PaidCents: r.PaidCents}
+			CreatedAt: r.CreatedAt.Time, AttributionSource: r.AttributionSource, Stage: r.Stage, Note: r.Note, Apps: r.Apps, Paid: r.Paid, RewardStatus: r.RewardStatus, Currency: r.Currency, RewardCents: r.RewardCents, ReferredRewardCents: r.ReferredRewardCents, PaidCents: r.PaidCents}
 		if r.FollowUp.Valid {
 			record.FollowUp = r.FollowUp.Time.Format(time.DateOnly)
 		}

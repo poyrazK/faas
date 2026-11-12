@@ -4870,10 +4870,24 @@ type CronResponse struct {
 	// Environment is the project environment the cron runs in; omitted for
 	// the app's production environment (ADR-20261104120000).
 	Environment string `json:"environment,omitempty"`
+	// ClonePaused marks a cron a full environment clone copied disabled
+	// although the source ran it; resuming the environment's automation
+	// enables it (ADR-20261104120000).
+	ClonePaused bool `json:"clone_paused,omitempty"`
 	// Labels are the cron's key/value labels (ADR-20261031100025), on its
 	// list and read while the resource-labels capability is on for the
 	// caller. Labels are not secret.
 	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// ResumeEnvironmentAutomationResponse reports the automation a resume
+// enabled in one project environment: the crons a full clone copied paused
+// that the source ran (ADR-20261104120000). A cron the source had disabled,
+// or one already enabled or disabled since, is left as it is.
+type ResumeEnvironmentAutomationResponse struct {
+	Environment  string   `json:"environment"`
+	CronsResumed int      `json:"crons_resumed"`
+	CronIDs      []string `json:"cron_ids"`
 }
 
 // CreateCronRequest creates either a scheduled HTTP request or a
@@ -6560,6 +6574,11 @@ type QueueStateResponse struct {
 	OldestPendingAt         *time.Time `json:"oldest_pending_at,omitempty"`
 	OldestPendingAgeSeconds *int64     `json:"oldest_pending_age_seconds,omitempty"`
 	GeneratedAt             time.Time  `json:"generated_at"`
+	// BacklogBySource is every pending or in-delivery invocation of the app
+	// per source (async_invoke, inbound_webhook, queue, ...), so async work
+	// waiting for the scheduler is visible beside the queue's depth. Omitted
+	// when nothing waits or the server cannot read it.
+	BacklogBySource map[string]int64 `json:"backlog_by_source,omitempty"`
 }
 
 // QueuePeekMessage is one pending row returned by GET .../queues/peek.

@@ -42,6 +42,14 @@ const FunctionInputSchemaEnv = "FAAS_FUNCTION_INPUT_SCHEMA"
 // other HTTP traffic is unaffected.
 const FunctionCallHeader = "X-Gregale-Function-Call"
 
+// FunctionInvokeHeader set to FunctionInvokeAsync on a service call (an SDK
+// functions client's send()) asks the service proxy to enqueue the call as a
+// durable async invocation and answer 202 with its id instead of forwarding it.
+const (
+	FunctionInvokeHeader = "X-Gregale-Invoke"
+	FunctionInvokeAsync  = "async"
+)
+
 // FunctionInputSchemaMaxBytes caps a function's input schema.
 const FunctionInputSchemaMaxBytes = 64 << 10
 

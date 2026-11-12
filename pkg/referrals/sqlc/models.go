@@ -9,12 +9,13 @@ import (
 )
 
 type Account struct {
-	ID              pgtype.UUID
-	Email           string
-	Plan            string
-	Status          string
-	EmailVerifiedAt pgtype.Timestamptz
-	MfaEnrolledAt   pgtype.Timestamptz
+	ID                     pgtype.UUID
+	Email                  string
+	Plan                   string
+	Status                 string
+	EmailVerifiedAt        pgtype.Timestamptz
+	MfaEnrolledAt          pgtype.Timestamptz
+	StripeSubscriptionItem pgtype.Text
 }
 
 type App struct {
@@ -52,6 +53,7 @@ type ReferralAttribution struct {
 	UpdatedBy           pgtype.UUID
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
+	AttributionSource   string
 }
 
 type ReferralLink struct {

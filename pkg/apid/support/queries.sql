@@ -94,3 +94,69 @@ SELECT * FROM support_admin_events WHERE sequence>$1 ORDER BY sequence LIMIT $2;
 SELECT id FROM orgs WHERE id=$1 AND personal_org AND personal_owner_account_id=$2 AND NOT deleted_pending AND status='active' FOR SHARE;
 -- name: OutboxEvent :one
 SELECT kind FROM support_events WHERE id=$1;
+
+-- name: NotificationQueue :exec
+INSERT INTO support_notifications(id,event_id,ticket_id,recipient_id,audience,kind,created_at,email_state,available_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,'queued',$7) ON CONFLICT(event_id,recipient_id,audience) DO NOTHING;
+-- name: NotificationCustomers :many
+SELECT a.id FROM accounts a JOIN support_tickets t ON t.id=sqlc.arg(ticket_id)
+WHERE a.id<>sqlc.arg(actor_id) AND a.status='active' AND a.email_verified_at IS NOT NULL
+AND (t.org_id IS NULL AND t.account_id=a.id OR t.org_id IS NOT NULL AND EXISTS(
+ SELECT 1 FROM orgs o JOIN org_memberships m ON m.org_id=o.id WHERE o.id=t.org_id AND o.status='active' AND NOT o.deleted_pending
+ AND m.account_id=a.id AND m.removed_at IS NULL AND m.role IN ('owner','admin')))
+ORDER BY a.id LIMIT sqlc.arg(page_limit);
+-- name: NotificationStaff :many
+SELECT a.id FROM accounts a JOIN support_tickets t ON t.id=sqlc.arg(ticket_id)
+LEFT JOIN support_staff s ON s.account_id=a.id LEFT JOIN support_resources team ON team.id=t.team_id
+WHERE a.id<>sqlc.arg(actor_id) AND a.status='active' AND a.email_verified_at IS NOT NULL AND a.mfa_enrolled_at IS NOT NULL
+AND (s.role IN ('agent','manager') OR s.account_id IS NULL AND lower(a.email::text)=ANY(sqlc.arg(bootstrap_emails)::text[]))
+AND (t.assignee_id=a.id OR t.assignee_id IS NULL AND (
+ s.role='manager' OR s.account_id IS NULL OR t.team_id IS NULL OR
+ team.kind='team' AND team.data->>'enabled'='true' AND team.data->'members' @> jsonb_build_array(a.id::text)))
+ORDER BY a.id LIMIT sqlc.arg(page_limit);
+-- name: NotificationList :many
+SELECT n.* FROM support_notifications n JOIN support_tickets t ON t.id=n.ticket_id
+WHERE n.recipient_id=sqlc.arg(recipient_id) AND n.audience=sqlc.arg(audience)
+AND (sqlc.arg(staff)::boolean OR t.scope_key=sqlc.arg(scope_key)) AND n.created_at>=sqlc.arg(since)
+AND (NOT sqlc.arg(unread_only)::boolean OR n.read_at IS NULL)
+AND (sqlc.narg(before_sequence)::bigint IS NULL OR n.sequence<sqlc.narg(before_sequence))
+ORDER BY n.sequence DESC LIMIT sqlc.arg(page_limit);
+-- name: NotificationCount :one
+SELECT count(*) FROM support_notifications n JOIN support_tickets t ON t.id=n.ticket_id
+WHERE n.recipient_id=sqlc.arg(recipient_id) AND n.audience=sqlc.arg(audience) AND n.read_at IS NULL
+AND (sqlc.arg(staff)::boolean OR t.scope_key=sqlc.arg(scope_key)) AND n.created_at>=sqlc.arg(since)
+AND (sqlc.narg(ticket_id)::uuid IS NULL OR n.ticket_id=sqlc.narg(ticket_id));
+-- name: NotificationTicketState :one
+SELECT count(*) AS unread_count,coalesce(max(sequence),0)::bigint AS through_sequence FROM support_notifications
+WHERE recipient_id=$1 AND audience=$2 AND ticket_id=$3 AND read_at IS NULL AND created_at>=$4;
+-- name: NotificationTicketCounts :many
+SELECT ticket_id,count(*) AS unread_count FROM support_notifications
+WHERE recipient_id=$1 AND audience=$2 AND ticket_id=ANY(sqlc.arg(ticket_ids)::uuid[]) AND read_at IS NULL AND created_at>=$3 GROUP BY ticket_id;
+-- name: NotificationRead :exec
+UPDATE support_notifications SET read_at=sqlc.arg(read_at),email_state=CASE WHEN email_state='queued' THEN 'skipped' ELSE email_state END
+WHERE recipient_id=sqlc.arg(recipient_id) AND audience=sqlc.arg(audience) AND ticket_id=sqlc.arg(ticket_id)
+AND sequence<=sqlc.arg(through_sequence) AND read_at IS NULL;
+-- name: NotificationClaim :one
+WITH ready AS(SELECT n.id FROM support_notifications n WHERE n.email_state='queued' AND n.available_at<=$1 OR n.email_state='inflight' AND n.lease_until<=$1
+ORDER BY n.available_at,n.id FOR UPDATE SKIP LOCKED LIMIT 1)
+UPDATE support_notifications SET email_state='inflight',attempts=attempts+1,lease_id=$2,lease_until=$3 WHERE id IN(SELECT id FROM ready) RETURNING *;
+-- name: NotificationDelivery :one
+SELECT n.*,a.email::text AS recipient_email,a.plan,t.org_id,coalesce(o.slug,'')::text AS org_slug FROM support_notifications n
+JOIN accounts a ON a.id=n.recipient_id JOIN support_tickets t ON t.id=n.ticket_id
+LEFT JOIN orgs o ON o.id=t.org_id LEFT JOIN support_staff s ON s.account_id=a.id LEFT JOIN support_resources team ON team.id=t.team_id
+WHERE n.id=sqlc.arg(id) AND n.lease_id=sqlc.arg(lease_id) AND n.email_state='inflight' AND n.read_at IS NULL
+AND a.status='active' AND a.email_verified_at IS NOT NULL AND (
+ n.audience='customer' AND (t.org_id IS NULL AND t.account_id=a.id OR o.status='active' AND NOT o.deleted_pending AND EXISTS(
+ SELECT 1 FROM org_memberships m WHERE m.org_id=o.id AND m.account_id=a.id AND m.removed_at IS NULL AND m.role IN ('owner','admin')))
+ OR n.audience='staff' AND a.mfa_enrolled_at IS NOT NULL AND t.status<>'resolved'
+ AND (s.role IN ('agent','manager') OR s.account_id IS NULL AND lower(a.email::text)=ANY(sqlc.arg(bootstrap_emails)::text[]))
+ AND (t.assignee_id=a.id OR t.assignee_id IS NULL AND n.kind<>'assigned' AND (
+ s.role='manager' OR s.account_id IS NULL OR t.team_id IS NULL OR
+ team.kind='team' AND team.data->>'enabled'='true' AND team.data->'members' @> jsonb_build_array(a.id::text))));
+-- name: NotificationBindDestination :execrows
+UPDATE support_notifications SET destination_hash=$3 WHERE id=$1 AND lease_id=$2 AND email_state='inflight'
+AND (destination_hash IS NULL OR destination_hash=$3) AND read_at IS NULL;
+-- name: NotificationFinish :exec
+UPDATE support_notifications SET email_state=$3,available_at=$4,lease_id=NULL,lease_until=NULL WHERE id=$1 AND lease_id=$2 AND email_state='inflight';
+-- name: NotificationExpire :exec
+DELETE FROM support_notifications WHERE id IN(SELECT n.id FROM support_notifications n WHERE n.created_at<$1 ORDER BY n.created_at,n.id LIMIT $2);

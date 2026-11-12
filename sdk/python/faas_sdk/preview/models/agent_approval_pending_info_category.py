@@ -1,6 +1,6 @@
 from typing import Literal
 
-AgentApprovalPendingInfoCategory = Literal["billing", "budget", "credentials", "delete", "production"]
+AgentApprovalPendingInfoCategory = Literal["billing", "budget", "credentials", "delete", "production", "undo"]
 
 AGENT_APPROVAL_PENDING_INFO_CATEGORY_VALUES: set[AgentApprovalPendingInfoCategory] = {
     "billing",
@@ -8,6 +8,7 @@ AGENT_APPROVAL_PENDING_INFO_CATEGORY_VALUES: set[AgentApprovalPendingInfoCategor
     "credentials",
     "delete",
     "production",
+    "undo",
 }
 
 

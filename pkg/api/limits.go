@@ -314,6 +314,15 @@ const (
 	MaxAgentActivityPage     = 200
 )
 
+// Agent undo (ADR-20261112080601): an undo covers DefaultAgentUndoWindow of a
+// key's changes unless it names a window or entries; records are kept as
+// long as activity (AgentActivityRetention), and one plan holds at most
+// MaxAgentUndoRecords of them.
+const (
+	DefaultAgentUndoWindow = 24 * time.Hour
+	MaxAgentUndoRecords    = 500
+)
+
 // Agent approval outcomes (ADR-20261107140000 §6): an agent repeating a
 // request denied, or expired, within AgentApprovalOutcomeWindow is told so
 // instead of asking again; a denial note holds at most
@@ -951,6 +960,11 @@ const ManagedPostgresDeleteGracePeriod = 7 * 24 * time.Hour
 // scheduled, with ManagedPostgresDeleteGracePeriod still to undo it
 // (ADR-20261110184700).
 const ManagedPostgresPlanExcessDeleteAfter = 30 * 24 * time.Hour
+
+// ManagedPostgresPlanExcessDeleteReminder is how long before a database past
+// its plan is deleted its owner is reminded, once (ADR-20261110184700
+// amendment 2026-11-12).
+const ManagedPostgresPlanExcessDeleteReminder = 7 * 24 * time.Hour
 
 // ManagedPostgresUsageWaiverPeriod bounds the usage waiver of a scheduled
 // delete (ADR-20261029174950 decision 6, amendment 1): a database's waiver
@@ -8587,6 +8601,24 @@ const (
 	// WakeAdmissionPolicyForPlan in pkg/gateway; this is the cross-app bound.
 	GatewayWakeAdmissionQueueCap = 128
 
+	// BuildKitSeedCheckEvery is how often builderd, with
+	// FAAS_BUILD_BUILDKIT_SEED on, checks whether this node's BuildKit seed
+	// matches the current builder base and creates it in an idle builder slot
+	// when it does not (ADR-20261030122204).
+	BuildKitSeedCheckEvery = time.Minute
+	// BuildKitSeedReserveBytes is the free space above the build-drive floor a
+	// node needs before builderd creates a seed. A seed holds about 1.5-2 GB
+	// of unpacked platform images; builds keep priority on the disk.
+	BuildKitSeedReserveBytes int64 = 4 << 30
+	// BuildKitSeedRetryMin and BuildKitSeedRetryMax bound how long builderd
+	// waits after a failed seed run before it boots another. The wait starts
+	// short, because a seed is due right after a builder base change, when
+	// the new base's scan may still be pending, and doubles per failure up to
+	// the max, because each run takes the builder slot for a cold Railpack
+	// build.
+	BuildKitSeedRetryMin = 2 * time.Minute
+	BuildKitSeedRetryMax = 30 * time.Minute
+
 	// GatewayAwaitingResponseMax bounds the app requests one gatewayd-internal
 	// process holds before their response head is written: waiting for a
 	// wake, a concurrency slot or the guest's first byte. Past it the gateway
@@ -11380,6 +11412,17 @@ const MaxAgentBudgetCents int64 = 100_000_000
 // AgentBudgetHoursPerMonth prices committed cost over an average month
 // (8,760 h / 12).
 const AgentBudgetHoursPerMonth = 730
+
+// ManagedPostgresMinimumQuarterComputeUnits is each managed Postgres service
+// class's smallest compute size, in quarter compute units: what a database
+// that never scales to zero keeps running, so what an agent's budget pays
+// for it (ADR-20261111114059 slice 3). It mirrors the Neon class profiles
+// (pkg/managedpostgres/neon/config.go; a test there keeps them equal).
+var ManagedPostgresMinimumQuarterComputeUnits = map[string]int64{
+	"development": 1,
+	"burstable":   1,
+	"production":  4,
+}
 
 // Self-service spend cap ceilings per paid plan, in cents (ADR-20261105120000,
 // owner's numbers 2026-11-07): Hobby $75, Pro $200, Scale $1,000. A larger
@@ -18999,6 +19042,11 @@ const (
 	SupportDispatchTimeout        = 10 * time.Second
 	SupportWebhookMaxAttempts     = 10
 	SupportWebhookLease           = 30 * time.Second
+	SupportNotificationRetention  = 90 * 24 * time.Hour
+	SupportNotificationEmailTTL   = 24 * time.Hour
+	SupportNotificationRecipients = 1000
+	SupportNotificationAttempts   = 8
+	SupportNotificationLease      = time.Minute
 )
 
 // MaxObjectKeyScopeBytes bounds a bucket binding's key_prefix

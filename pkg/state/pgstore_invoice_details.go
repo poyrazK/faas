@@ -138,6 +138,9 @@ func (s *PgStore) upsertInvoiceWithLifecycle(ctx context.Context, params sqlc.Up
 		return fmt.Errorf("begin invoice upsert: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err = referrals.LockBillingAccount(ctx, tx, pgUUIDString(params.AccountID)); err != nil {
+		return err
+	}
 	q := sqlc.New()
 	row, err := q.UpsertInvoiceSnapshot(ctx, tx, params)
 	if err != nil {

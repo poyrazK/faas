@@ -91,6 +91,7 @@ type Record struct {
 	Plan                string     `json:"plan,omitempty"`
 	AccountStatus       string     `json:"account_status,omitempty"`
 	CreatedAt           time.Time  `json:"created_at"`
+	AttributionSource   string     `json:"attribution_source,omitempty"`
 	Stage               string     `json:"stage,omitempty"`
 	Note                string     `json:"note,omitempty"`
 	FollowUp            string     `json:"follow_up,omitempty"`

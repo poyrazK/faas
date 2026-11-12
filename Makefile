@@ -8,7 +8,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd edgednsd signd hostage-gen
+DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd edgednsd signd neond hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -1554,7 +1554,7 @@ spec-check: spec-install spec-lint spec-sync denylist-md subprocessor-md pricing
 	# No -race: the AST tests are pure CPU (no I/O, no goroutines). -race
 	# would double the wall time without adding signal.
 	@$(GO) test -count=1 -run TestSpecCompliance ./scripts/ci/speccompliance
-	@git diff --exit-code -- $(SPEC) $(SPEC_EMBED) $(VACUUM_RULES) docs/denylist.md docs/compliance/subprocessors.md docs/plans.md || \
+	@git diff --exit-code -- $(SPEC) $(SPEC_EMBED) $(VACUUM_RULES) docs/denylist.md docs/egress-denylist.md docs/compliance/subprocessors.md docs/plans.md || \
 	  (echo "spec-check: drift (spec or generated docs) — re-run 'make spec-check' or hand-fix to match"; exit 1)
 	@echo "spec-check: OK"
 
@@ -1589,12 +1589,13 @@ images-lock-update: ## Operator-only: resolve current registry digests, update D
 	@echo "images-lock-update: not implemented in CI; run scripts/ci/images_lock_update.py locally"
 
 .PHONY: denylist-md
-denylist-md: ## Regenerate docs/denylist.md from the shared egress catalog (ADR-034 §Consequences)
+denylist-md: ## Regenerate docs/denylist.md (operators) and docs/egress-denylist.md (customers) from the shared egress catalog
 	# Pure-Go generator — no template strings, no timestamps. Deterministic
 	# order (v4 by prefix asc, v6 by prefix asc, SMTP by port asc) so the
 	# git diff stays reviewable.
 	@$(GO) run ./cmd/denylist-md > docs/denylist.md
-	@echo "denylist-md: docs/denylist.md regenerated"
+	@$(GO) run ./cmd/denylist-md -customer > docs/egress-denylist.md
+	@echo "denylist-md: docs/denylist.md and docs/egress-denylist.md regenerated"
 
 .PHONY: subprocessor-md
 subprocessor-md: ## Regenerate docs/compliance/subprocessors.md from docs/compliance/subprocessors.json

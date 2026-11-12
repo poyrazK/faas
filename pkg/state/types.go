@@ -3470,6 +3470,11 @@ type Cron struct {
 	RetryMax              int // additional attempts after the first failed/timed-out execution
 	RetryBackoffSeconds   int // base delay; later retries double it, capped at 24 hours
 	Enabled               bool
+	// ClonePaused marks a cron a full environment clone copied disabled
+	// although the source ran it; resuming the environment's automation
+	// enables it. Any explicit enable or disable clears it
+	// (ADR-20261104120000 amendment 2026-11-12).
+	ClonePaused bool
 	// SuspendedReason is set by the scheduler when customer intent remains
 	// enabled but the app has no live deployment (a later successful deploy
 	// clears it without re-enabling a cron the customer disabled
@@ -7325,6 +7330,12 @@ type CliAuthDeviceCodeStore interface {
 	// ConsumeCliAuthDeviceCode has ConsumeCliAuthCode's contract, keyed by
 	// the device code's hash.
 	ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error)
+	// ClaimCliAuthCodeForDevice is ClaimCliAuthCode that also replaces the
+	// row's device hash in the same statement. The one-click loopback login
+	// (ADR-20261111170000) hands the new device code to the approving
+	// browser's own machine, so the CLI that minted the code (possibly a
+	// phisher's) can no longer exchange it.
+	ClaimCliAuthCodeForDevice(ctx context.Context, tokenHash []byte, accountID string, deviceHash []byte) error
 }
 
 // AccountPassword is one row of the account_passwords table

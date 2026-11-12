@@ -11921,6 +11921,26 @@ func (q *Queries) CountProjectEnvironmentClonePostgresVerificationReadBudgets(ct
 	return i, err
 }
 
+const countProjectEnvironmentCloneUncapturedCrons = `-- name: CountProjectEnvironmentCloneUncapturedCrons :one
+SELECT count(*)::bigint FROM crons c JOIN apps a ON a.id = c.app_id
+WHERE a.project_id = $1::uuid AND a.status <> 'deleted'
+  AND c.deployment_scope = $2::text AND NOT (c.app_id = ANY($3::uuid[]))
+`
+
+type CountProjectEnvironmentCloneUncapturedCronsParams struct {
+	ProjectID pgtype.UUID
+	Scope     string
+	AppIds    []pgtype.UUID
+}
+
+// Crons of the source environment on project apps the clone does not copy.
+func (q *Queries) CountProjectEnvironmentCloneUncapturedCrons(ctx context.Context, db DBTX, arg CountProjectEnvironmentCloneUncapturedCronsParams) (int64, error) {
+	row := db.QueryRow(ctx, countProjectEnvironmentCloneUncapturedCrons, arg.ProjectID, arg.Scope, arg.AppIds)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countProjectWorkerHealthPending = `-- name: CountProjectWorkerHealthPending :one
 SELECT COUNT(*)::bigint AS pending, COALESCE(EXTRACT(epoch FROM clock_timestamp()-MIN(created_at))*1000,0)::bigint AS oldest_age_ms FROM invocations WHERE app_id=$1::uuid AND queue_binding_id=$2::uuid
  AND deployment_scope='production' AND source='queue' AND state='pending' AND due_at<=clock_timestamp()
@@ -36716,6 +36736,59 @@ func (q *Queries) InsertProjectEnvironmentCloneConfigurationCapture(ctx context.
 	return err
 }
 
+const insertProjectEnvironmentCloneCron = `-- name: InsertProjectEnvironmentCloneCron :exec
+INSERT INTO crons(app_id, schedule, path, command, command_shell, command_timeout_seconds, command_max_output_bytes,
+    retry_max, retry_backoff_seconds, enabled, clone_paused, timezone, skip_if_running, schedule_policy, failure_rules,
+    labels, deployment_scope)
+VALUES($1::uuid, $2::text, $3::text, $4::text[],
+    $5::boolean, $6::integer, $7::integer,
+    $8::integer, $9::integer, false, $10::boolean,
+    $11::text, $12::boolean, $13::jsonb,
+    $14::jsonb, $15::jsonb, $16::text)
+`
+
+type InsertProjectEnvironmentCloneCronParams struct {
+	AppID                 pgtype.UUID
+	Schedule              string
+	Path                  string
+	Command               []string
+	CommandShell          bool
+	CommandTimeoutSeconds int32
+	CommandMaxOutputBytes int32
+	RetryMax              int32
+	RetryBackoffSeconds   int32
+	ClonePaused           bool
+	Timezone              string
+	SkipIfRunning         bool
+	SchedulePolicy        []byte
+	FailureRules          []byte
+	Labels                []byte
+	Scope                 string
+}
+
+// A copied cron starts disabled; clone_paused marks one the source ran.
+func (q *Queries) InsertProjectEnvironmentCloneCron(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCronParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentCloneCron,
+		arg.AppID,
+		arg.Schedule,
+		arg.Path,
+		arg.Command,
+		arg.CommandShell,
+		arg.CommandTimeoutSeconds,
+		arg.CommandMaxOutputBytes,
+		arg.RetryMax,
+		arg.RetryBackoffSeconds,
+		arg.ClonePaused,
+		arg.Timezone,
+		arg.SkipIfRunning,
+		arg.SchedulePolicy,
+		arg.FailureRules,
+		arg.Labels,
+		arg.Scope,
+	)
+	return err
+}
+
 const insertProjectEnvironmentCloneDatabase = `-- name: InsertProjectEnvironmentCloneDatabase :one
 INSERT INTO managed_postgres_databases(id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero,
     storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, restore_source_database_id, restore_source_resource_id,
@@ -52012,6 +52085,42 @@ func (q *Queries) ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype
 	return items, nil
 }
 
+const listInvocationBacklogPendingBySource = `-- name: ListInvocationBacklogPendingBySource :many
+SELECT source, coalesce(sum(pending), 0)::bigint AS pending
+FROM invocation_backlog_counters
+WHERE app_id=$1::uuid
+GROUP BY source
+ORDER BY source
+`
+
+type ListInvocationBacklogPendingBySourceRow struct {
+	Source  string
+	Pending int64
+}
+
+// The app's pending and dispatching rows per source from the backlog
+// counters (ADR-20261022105723), so `queue status` shows async invocations,
+// inbound webhooks and event deliveries waiting beside queue messages.
+func (q *Queries) ListInvocationBacklogPendingBySource(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInvocationBacklogPendingBySourceRow, error) {
+	rows, err := db.Query(ctx, listInvocationBacklogPendingBySource, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListInvocationBacklogPendingBySourceRow{}
+	for rows.Next() {
+		var i ListInvocationBacklogPendingBySourceRow
+		if err := rows.Scan(&i.Source, &i.Pending); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listInvoiceSnapshots = `-- name: ListInvoiceSnapshots :many
 SELECT id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
        period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
@@ -53196,6 +53305,60 @@ func (q *Queries) ListManagedPostgresLifecycleUsageDatabases(ctx context.Context
 			&i.PreviewEnvironmentID,
 			&i.PreviewPrNumber,
 			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listManagedPostgresPlanExcessRemindersDue = `-- name: ListManagedPostgresPlanExcessRemindersDue :many
+SELECT n.database_id,n.reason,n.delete_at,d.account_id,d.name,d.service_class
+FROM managed_postgres_plan_excess_notices n JOIN managed_postgres_databases d ON d.id=n.database_id
+WHERE n.delete_at IS NOT NULL AND n.mail_intent_id IS NOT NULL AND n.reminder_mail_intent_id IS NULL
+    AND n.delete_at>$1::timestamptz AND n.delete_at<=$2::timestamptz
+    AND d.state NOT IN ('deleting','deleted')
+ORDER BY n.delete_at,n.database_id LIMIT $3
+`
+
+type ListManagedPostgresPlanExcessRemindersDueParams struct {
+	Now         pgtype.Timestamptz
+	RemindUntil pgtype.Timestamptz
+	BatchSize   int32
+}
+
+type ListManagedPostgresPlanExcessRemindersDueRow struct {
+	DatabaseID   pgtype.UUID
+	Reason       string
+	DeleteAt     pgtype.Timestamptz
+	AccountID    pgtype.UUID
+	Name         string
+	ServiceClass string
+}
+
+// ADR-20261110184700 amendment 2026-11-12: notices whose mailed deletion date
+// is between now and remind_until and whose reminder no intent has claimed,
+// for databases not being deleted.
+func (q *Queries) ListManagedPostgresPlanExcessRemindersDue(ctx context.Context, db DBTX, arg ListManagedPostgresPlanExcessRemindersDueParams) ([]ListManagedPostgresPlanExcessRemindersDueRow, error) {
+	rows, err := db.Query(ctx, listManagedPostgresPlanExcessRemindersDue, arg.Now, arg.RemindUntil, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListManagedPostgresPlanExcessRemindersDueRow{}
+	for rows.Next() {
+		var i ListManagedPostgresPlanExcessRemindersDueRow
+		if err := rows.Scan(
+			&i.DatabaseID,
+			&i.Reason,
+			&i.DeleteAt,
+			&i.AccountID,
+			&i.Name,
+			&i.ServiceClass,
 		); err != nil {
 			return nil, err
 		}
@@ -65739,6 +65902,35 @@ func (q *Queries) ManagedPostgresFleetTotals(ctx context.Context, db DBTX, arg M
 	var i ManagedPostgresFleetTotalsRow
 	err := row.Scan(&i.Databases, &i.CostMillicents)
 	return i, err
+}
+
+const managedPostgresLiveResourcesInProject = `-- name: ManagedPostgresLiveResourcesInProject :many
+SELECT provider_resource_id::text AS provider_resource_id FROM managed_postgres_databases
+WHERE (provider_resource_id=$1::text OR provider_resource_id LIKE $1::text || '/%')
+    AND state NOT IN ('deleting','deleted') AND deleted_at IS NULL
+`
+
+// ADR-20261112160000: neond refuses deleting a Neon project or branch that a
+// live managed PostgreSQL database runs on. A provider resource is the
+// project ID, or "<project>/<branch>" for a database on a branch.
+func (q *Queries) ManagedPostgresLiveResourcesInProject(ctx context.Context, db DBTX, project string) ([]string, error) {
+	rows, err := db.Query(ctx, managedPostgresLiveResourcesInProject, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var provider_resource_id string
+		if err := rows.Scan(&provider_resource_id); err != nil {
+			return nil, err
+		}
+		items = append(items, provider_resource_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const managedPostgresPersonalBindingReference = `-- name: ManagedPostgresPersonalBindingReference :one
@@ -88358,6 +88550,77 @@ func (q *Queries) ReadProjectEnvironmentCloneCoverageSchema(ctx context.Context,
 	return items, nil
 }
 
+const readProjectEnvironmentCloneCrons = `-- name: ReadProjectEnvironmentCloneCrons :many
+SELECT schedule, path, command, command_shell, command_timeout_seconds, command_max_output_bytes,
+       retry_max, retry_backoff_seconds, (enabled OR clone_paused)::boolean AS enabled, enabled AS stored_enabled,
+       timezone, skip_if_running, schedule_policy, failure_rules, labels
+FROM crons
+WHERE app_id = $1::uuid AND deployment_scope = $2::text
+ORDER BY schedule, path, command
+`
+
+type ReadProjectEnvironmentCloneCronsParams struct {
+	AppID pgtype.UUID
+	Scope string
+}
+
+type ReadProjectEnvironmentCloneCronsRow struct {
+	Schedule              string
+	Path                  string
+	Command               []string
+	CommandShell          bool
+	CommandTimeoutSeconds int32
+	CommandMaxOutputBytes int32
+	RetryMax              int32
+	RetryBackoffSeconds   int32
+	Enabled               bool
+	StoredEnabled         bool
+	Timezone              string
+	SkipIfRunning         bool
+	SchedulePolicy        []byte
+	FailureRules          []byte
+	Labels                []byte
+}
+
+// The configuration of an app's crons in one environment, without the
+// scheduler's own columns (ADR-20261104120000 amendment 2026-11-12). A cron a
+// clone paused counts as enabled: resuming it would.
+func (q *Queries) ReadProjectEnvironmentCloneCrons(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneCronsParams) ([]ReadProjectEnvironmentCloneCronsRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneCrons, arg.AppID, arg.Scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneCronsRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneCronsRow
+		if err := rows.Scan(
+			&i.Schedule,
+			&i.Path,
+			&i.Command,
+			&i.CommandShell,
+			&i.CommandTimeoutSeconds,
+			&i.CommandMaxOutputBytes,
+			&i.RetryMax,
+			&i.RetryBackoffSeconds,
+			&i.Enabled,
+			&i.StoredEnabled,
+			&i.Timezone,
+			&i.SkipIfRunning,
+			&i.SchedulePolicy,
+			&i.FailureRules,
+			&i.Labels,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readProjectEnvironmentCloneDatabaseByName = `-- name: ReadProjectEnvironmentCloneDatabaseByName :one
 SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at FROM managed_postgres_databases d WHERE d.account_id=$1 AND d.name=$2 ORDER BY d.created_at,d.id LIMIT 1 FOR UPDATE OF d
 `
@@ -103180,6 +103443,39 @@ func (q *Queries) RestrictApplicationStandardWorkerEvidence(ctx context.Context,
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const resumeEnvironmentClonePausedCrons = `-- name: ResumeEnvironmentClonePausedCrons :many
+UPDATE crons SET enabled = true
+WHERE environment_id = $1::uuid AND clone_paused AND NOT enabled
+RETURNING id, app_id
+`
+
+type ResumeEnvironmentClonePausedCronsRow struct {
+	ID    pgtype.UUID
+	AppID pgtype.UUID
+}
+
+// Enables the crons a clone paused in one environment; the enable clears
+// clone_paused and anchors the schedule.
+func (q *Queries) ResumeEnvironmentClonePausedCrons(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]ResumeEnvironmentClonePausedCronsRow, error) {
+	rows, err := db.Query(ctx, resumeEnvironmentClonePausedCrons, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ResumeEnvironmentClonePausedCronsRow{}
+	for rows.Next() {
+		var i ResumeEnvironmentClonePausedCronsRow
+		if err := rows.Scan(&i.ID, &i.AppID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const resumeStoredWorkflowFailurePause = `-- name: ResumeStoredWorkflowFailurePause :exec

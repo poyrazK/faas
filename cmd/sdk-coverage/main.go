@@ -48,6 +48,7 @@ const (
 // intentionally absent from OpenAPI also belong in
 // scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
 var routeExclude = map[string]bool{
+	"GET /v1/referrals/checkout":                              true, // private browser checkout hint; mounted in sales.go
 	"GET /v1/sales/templates":                                 true, // private sales message tools; session authentication
 	"POST /v1/sales/templates":                                true,
 	"GET /v1/sales/templates/{template}":                      true,
@@ -62,6 +63,9 @@ var routeExclude = map[string]bool{
 	"GET /v1/sales/leads/{lead}/activities":  true,
 	"POST /v1/sales/leads/{lead}/activities": true,
 
+	// ADR-20261112134100: private staff inbox metadata, outside the customer SDK.
+	"GET /v1/admin/support/notifications":          true,
+	"POST /v1/admin/support/tickets/{ticket}/read": true,
 	// ADR-202610171453: default-off internal hosting is absent from public OpenAPI/SDK discovery.
 	"DELETE /v1/internal/hosting/sites/{site}":                                     true,
 	"DELETE /v1/internal/hosting/sites/{site}/automation-credentials/{credential}": true,
@@ -607,6 +611,10 @@ var sdkMethodExclude = map[string]bool{
 var methodRouteMap = map[string]string{
 	// Customer support uses typed personal and organization methods.
 	"GET /v1/support/tickets":                                   "ListSupportTickets",
+	"GET /v1/support/notifications":                             "ListSupportNotifications",
+	"POST /v1/support/tickets/{ticket}/read":                    "MarkSupportTicketRead",
+	"GET /v1/orgs/{org}/support/notifications":                  "ListOrgSupportNotifications",
+	"POST /v1/orgs/{org}/support/tickets/{ticket}/read":         "MarkOrgSupportTicketRead",
 	"POST /v1/support/tickets":                                  "CreateSupportTicket",
 	"GET /v1/support/tickets/{ticket}":                          "GetSupportTicket",
 	"GET /v1/support/tickets/{ticket}/messages":                 "ListSupportMessages",
@@ -1053,6 +1061,7 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/projects/{slug}/environments/{environment}/flags":                        "PublishProjectFlags",
 	"GET /v1/projects/{slug}/environments/{environment}/flags/versions":               "ProjectFlagVersions",
 	"POST /v1/projects/{slug}/environments/{environment}/flags/rollback":              "RollbackProjectFlags",
+	"POST /v1/projects/{slug}/environments/{environment}/automation/resume":           "ResumeEnvironmentAutomation",
 	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect":         "InspectProjectFlag",
 	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/requests":         "ProjectFlagRequests",
 	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/outcomes":         "ProjectFlagOutcomes",
@@ -1338,6 +1347,12 @@ var methodRouteMap = map[string]string{
 	"GET /v1/agent-connections/self/budget":                                                      "AgentConnectionSelfBudget",
 	"GET /v1/agent-connections/{id}/budget":                                                      "AgentConnectionBudget",
 	"PUT /v1/agent-connections/{id}/budget":                                                      "SetAgentConnectionBudget",
+	"POST /v1/agent-connections/self/undo/plan":                                                  "PlanSelfAgentUndo",
+	"POST /v1/agent-connections/self/undo":                                                       "ApplySelfAgentUndo",
+	"POST /v1/agent-connections/{id}/undo/plan":                                                  "PlanAgentUndo",
+	"POST /v1/agent-connections/{id}/undo":                                                       "ApplyAgentUndo",
+	"POST /v1/orgs/{slug}/agent-connections/{id}/undo/plan":                                      "PlanOrgAgentUndo",
+	"POST /v1/orgs/{slug}/agent-connections/{id}/undo":                                           "ApplyOrgAgentUndo",
 	"GET /v1/orgs/{slug}/agent-connections/{id}/activity":                                        "OrgAgentConnectionActivity",
 	"GET /v1/orgs/{slug}/agent-connections":                                                      "ListOrgAgentConnections",
 	"DELETE /v1/orgs/{slug}/agent-connections/{id}":                                              "RevokeOrgAgentConnection",

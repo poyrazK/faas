@@ -29,14 +29,43 @@ SET first_paid_invoice_id=i.id,first_paid_at=now()
 FROM invoices i
 WHERE i.id=sqlc.arg(invoice_id)::uuid AND i.account_id=r.account_id
  AND i.status='paid' AND i.amount_paid_cents>0 AND r.first_paid_at IS NULL
- AND now()<=r.created_at+make_interval(days=>r.conversion_days);
+ AND now()<=r.created_at+make_interval(days=>r.conversion_days)
+ AND (r.attribution_source='signup' OR
+  (i.created_at>=r.created_at AND NOT EXISTS (
+   SELECT 1 FROM invoices previous WHERE previous.account_id=r.account_id AND previous.id<>i.id
+    AND (previous.amount_paid_cents>0 OR previous.amount_refunded_cents>0 OR previous.amount_refund_pending_cents>0))));
+
+-- name: LockReferralBillingAccount :exec
+SELECT pg_advisory_xact_lock(hashtextextended('gregale:referral:first-purchase:'||sqlc.arg(account_id)::uuid::text,0));
+
+-- name: CheckoutReferralState :one
+SELECT a.plan,a.status,COALESCE(a.stripe_subscription_item,'')::text AS subscription,
+ (r.account_id IS NOT NULL)::boolean AS attributed,COALESCE(l.share_code,'')::text AS code,
+ COALESCE(l.kind,'')::text AS kind,
+ EXISTS (SELECT 1 FROM invoices i WHERE i.account_id=a.id
+  AND (i.amount_paid_cents>0 OR i.amount_refunded_cents>0 OR i.amount_refund_pending_cents>0))::boolean AS paid
+FROM accounts a LEFT JOIN referral_attributions r ON r.account_id=a.id
+ LEFT JOIN referral_links l ON l.code=r.code
+WHERE a.id=sqlc.arg(account_id)::uuid;
+
+-- name: AttributeCheckout :execrows
+INSERT INTO referral_attributions(account_id,code,currency,customer_reward_cents,referred_reward_cents,commission_bps,hold_days,conversion_days,attribution_source)
+SELECT sqlc.arg(account_id)::uuid,l.code,sqlc.arg(currency)::text,
+ sqlc.arg(customer_reward_cents)::bigint,sqlc.arg(referred_reward_cents)::bigint,
+ sqlc.arg(commission_bps)::integer,sqlc.arg(hold_days)::integer,sqlc.arg(conversion_days)::integer,'checkout'
+FROM referral_links l JOIN accounts owner ON owner.id=l.owner_id
+WHERE l.share_code=sqlc.arg(code)::text AND l.kind='sales' AND l.active
+ AND owner.status='active' AND owner.email_verified_at IS NOT NULL AND owner.mfa_enrolled_at IS NOT NULL
+ AND lower(owner.email)=ANY(sqlc.arg(member_emails)::text[]) AND l.owner_id<>sqlc.arg(account_id)::uuid
+ON CONFLICT (account_id) DO NOTHING;
 
 -- name: ListReferrals :many
-SELECT * FROM sales_referral_overview
-WHERE (owner_id=sqlc.arg(owner_id)::uuid OR sqlc.arg(all_owners)::boolean)
- AND (sqlc.arg(kind)::text='' OR kind=sqlc.arg(kind)::text)
- AND account_id>sqlc.arg(after_id)::uuid
-ORDER BY account_id LIMIT sqlc.arg(row_limit)::integer;
+SELECT v.*,r.attribution_source FROM sales_referral_overview v
+JOIN referral_attributions r ON r.account_id=v.account_id
+WHERE (v.owner_id=sqlc.arg(owner_id)::uuid OR sqlc.arg(all_owners)::boolean)
+ AND (sqlc.arg(kind)::text='' OR v.kind=sqlc.arg(kind)::text)
+ AND v.account_id>sqlc.arg(after_id)::uuid
+ORDER BY v.account_id LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: ReferralSummary :many
 SELECT kind,currency,count(*)::bigint AS signups,

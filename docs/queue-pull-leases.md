@@ -2,7 +2,7 @@
 
 A push binding delivers each message to the app over HTTP, so the app must
 listen for deliveries. A worker or job that runs its own loop with no HTTP
-listener consumes a queue by leasing its messages instead (ADR-1140): it asks
+listener consumes a queue by leasing its messages instead: it asks
 for messages when it has capacity, and acks or nacks each one.
 
 [Organization queues](organization-queues.md) use the same lease contract and

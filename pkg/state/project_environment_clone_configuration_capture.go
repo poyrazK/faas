@@ -40,6 +40,12 @@ type ProjectEnvironmentCloneCaptureRequest struct {
 	// capture. Admission uses it to refuse a clone whose copy would take the
 	// account past its object storage limits.
 	CheckObjectCapacity func(ctx context.Context, bucketIDs []string) error
+	// CronLimits, with RequireCompleteInventory, are the plan limits the
+	// source's crons are counted against: the clone copies them paused, and
+	// copies count like any other cron (ADR-20261104120000 amendment
+	// 2026-11-12). A copy past a limit refuses the capture with a
+	// CronQuotaError.
+	CronLimits *api.Limits
 }
 
 // ErrProjectEnvironmentCloneAdmissionClosed refuses a capture whose admission

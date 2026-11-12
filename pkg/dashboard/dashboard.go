@@ -3434,7 +3434,9 @@ type UpgradeOption struct {
 // (mirrors the account delete confirmation) instead of sharing the
 // billing page with the spend-cap form.
 type UpgradeData struct {
-	CurrentPlan string
+	CurrentPlan              string
+	SalespersonCodeAvailable bool
+	ExistingReferralCode     string
 	// Target is nil when ?plan= is missing or not an eligible upgrade;
 	// the template then renders Options as a chooser.
 	Target  *UpgradeOption

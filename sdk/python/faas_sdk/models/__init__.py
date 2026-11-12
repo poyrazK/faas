@@ -59,6 +59,13 @@ from .agent_connection_response_approvals_item import AgentConnectionResponseApp
 from .agent_connection_response_kind import AgentConnectionResponseKind
 from .agent_connections_response import AgentConnectionsResponse
 from .agent_connections_revoke_all_response import AgentConnectionsRevokeAllResponse
+from .agent_undo_item import AgentUndoItem
+from .agent_undo_item_kind import AgentUndoItemKind
+from .agent_undo_item_result import AgentUndoItemResult
+from .agent_undo_item_status import AgentUndoItemStatus
+from .agent_undo_plan import AgentUndoPlan
+from .agent_undo_request import AgentUndoRequest
+from .agent_undo_result import AgentUndoResult
 from .alert_delivery_response import AlertDeliveryResponse
 from .alert_delivery_response_readiness_destination import AlertDeliveryResponseReadinessDestination
 from .alert_delivery_response_readiness_failover_reason import AlertDeliveryResponseReadinessFailoverReason
@@ -362,6 +369,8 @@ from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
 from .change_plan_request_plan import ChangePlanRequestPlan
 from .check_account_workflow_readiness_body import CheckAccountWorkflowReadinessBody
+from .checkout_referral_status_response_200 import CheckoutReferralStatusResponse200
+from .checkout_referral_status_response_200_reason import CheckoutReferralStatusResponse200Reason
 from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
@@ -2759,6 +2768,13 @@ __all__ = (
     "AgentConnectionResponseKind",
     "AgentConnectionsResponse",
     "AgentConnectionsRevokeAllResponse",
+    "AgentUndoItem",
+    "AgentUndoItemKind",
+    "AgentUndoItemResult",
+    "AgentUndoItemStatus",
+    "AgentUndoPlan",
+    "AgentUndoRequest",
+    "AgentUndoResult",
     "AlertDeliveryResponse",
     "AlertDeliveryResponseReadinessDestination",
     "AlertDeliveryResponseReadinessFailoverReason",
@@ -3060,6 +3076,8 @@ __all__ = (
     "ChangePlanRequest",
     "ChangePlanRequestPlan",
     "CheckAccountWorkflowReadinessBody",
+    "CheckoutReferralStatusResponse200",
+    "CheckoutReferralStatusResponse200Reason",
     "ClearObsoleteDeploymentsBody",
     "ClearObsoleteReport",
     "CompleteWorkflowCallbackResponse",

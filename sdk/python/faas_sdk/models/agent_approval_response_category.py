@@ -1,6 +1,6 @@
 from typing import Literal
 
-AgentApprovalResponseCategory = Literal["billing", "budget", "credentials", "delete", "production"]
+AgentApprovalResponseCategory = Literal["billing", "budget", "credentials", "delete", "production", "undo"]
 
 AGENT_APPROVAL_RESPONSE_CATEGORY_VALUES: set[AgentApprovalResponseCategory] = {
     "billing",
@@ -8,6 +8,7 @@ AGENT_APPROVAL_RESPONSE_CATEGORY_VALUES: set[AgentApprovalResponseCategory] = {
     "credentials",
     "delete",
     "production",
+    "undo",
 }
 
 

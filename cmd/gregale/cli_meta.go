@@ -4738,6 +4738,9 @@ var cliCommands = []cliCommand{
 				{Name: "wait", Short: "wait for the same durable clone operation to finish"},
 				{Name: "timeout", Value: "SECONDS", Short: "maximum local wait time"},
 			}},
+			{Name: "resume-automation", Short: "Enable the crons a full clone copied paused into a stage", Notes: []string{"Only crons the source ran are enabled; ones the source had disabled, or changed since, stay as they are."}, Positionals: []string{"<stage>"}, Examples: []string{"gregale env resume-automation staging --project shop"}, Flags: []cliFlag{
+				{Name: "project", Value: "SLUG", Short: "project slug (defaults to linked project)"},
+			}},
 			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Examples: []string{"gregale env pull --app my-api", "gregale env pull --app my-api --env staging"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"},
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
@@ -5079,8 +5082,9 @@ var cliCommands = []cliCommand{
 		Name:     "login",
 		DocSlug:  "auth",
 		Short:    "Authenticate this machine",
-		Examples: []string{"gregale login", "printf '%s' \"$GREGALE_TOKEN\" | gregale login --token-stdin"},
+		Examples: []string{"gregale login", "gregale login --device", "printf '%s' \"$GREGALE_TOKEN\" | gregale login --token-stdin"},
 		Flags: []cliFlag{
+			{Name: "device", Short: "sign in with a code typed in a browser on another computer (SSH, headless)"},
 			{Name: "token", Short: "use a pre-minted token (CI)", Value: "TOKEN"},
 			{Name: "token-stdin", Short: "read a pre-minted token from stdin (CI)"},
 			{Name: "insecure-storage", Short: "save the key to a plaintext file instead of the OS keychain (WSL, containers, SSH)", Bool: true},
@@ -6885,6 +6889,23 @@ var cliCommands = []cliCommand{
 		Name:    "version",
 		DocSlug: "version",
 		Short:   "Print the CLI version",
+	},
+	{
+		Name:    "functions",
+		DocSlug: "functions",
+		Short:   "Generate typed clients for calls between a project's functions",
+		Subcommands: []cliSub{
+			{Name: "types", Short: "Write each function's typed client from its project's schemas",
+				Examples: []string{"gregale function types", "gregale function types --check"},
+				Notes: []string{
+					"Node functions get gregale-functions.d.ts and Python functions get gregale_functions.py in their root, typed for the functions they may call.",
+					"gregale deploy refreshes files that already exist when a schema changed; --check fails without writing, for CI.",
+				},
+				Flags: []cliFlag{
+					{Name: "path", Value: "DIR", Short: "functions project directory (default: the current one)"},
+					{Name: "check", Bool: true, Short: "write nothing; exit 1 when a generated file is missing or out of date"},
+				}},
+		},
 	},
 	{
 		Name:     "update",

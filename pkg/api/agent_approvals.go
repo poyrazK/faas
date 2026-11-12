@@ -22,6 +22,10 @@ const (
 // connection chooses: the budget itself decides when it applies.
 const AgentApprovalBudget = "budget"
 
+// AgentApprovalUndo is an agent applying an undo of its own changes
+// (ADR-20261112080601 §4). It always asks; a connection cannot opt out.
+const AgentApprovalUndo = "undo"
+
 // AgentApprovalCategories lists every category, in display order. An agent
 // connection that chose none gets all of them.
 var AgentApprovalCategories = []string{AgentApprovalDelete, AgentApprovalProduction, AgentApprovalCredentials, AgentApprovalBilling}

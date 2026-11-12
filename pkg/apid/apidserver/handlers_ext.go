@@ -2287,7 +2287,16 @@ func (s *server) updateDeploymentMinInstances(w http.ResponseWriter, r *http.Req
 		return
 	}
 	prev := d.MinInstances
+	// ADR-20261111114059: an agent's raise of a deployment's floor is
+	// charged to its budget before the write.
+	commitBudget, answered := s.chargeDeploymentFloor(w, r, acct, app, d, v)
+	if answered {
+		return
+	}
 	updated, err := s.store.UpdateDeploymentMinInstances(r.Context(), id, v)
+	if err == nil {
+		commitBudget()
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such deployment")
@@ -5594,7 +5603,8 @@ func (s *server) getUsage(w http.ResponseWriter, r *http.Request, acct state.Acc
 // only legitimate path to land on a paid plan locally.
 func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req struct {
-		Plan string `json:"plan"`
+		Plan            string `json:"plan"`
+		SalespersonCode string `json:"salesperson_code"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
@@ -5604,6 +5614,9 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 	if !plan.Valid() {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Bad plan", "plan must be free|hobby|pro|scale"))
+		return
+	}
+	if !s.prepareSalesCheckout(w, r, acct, plan, req.SalespersonCode) {
 		return
 	}
 	// Any paid tier increase must be confirmed by the billing provider. A
@@ -7144,6 +7157,7 @@ func cronResponse(c state.Cron) api.CronResponse {
 		resp.LastFiredAt = c.LastFiredAt.UTC().Format(time.RFC3339)
 	}
 	resp.Environment = c.DeploymentScope
+	resp.ClonePaused = c.ClonePaused
 	return resp
 }
 

@@ -1443,6 +1443,8 @@ type MemStore struct {
 	// ADR-20261111114059: agent keys' budgets and monthly spend.
 	agentKeyBudgets  map[string]AgentKeyBudget
 	agentBudgetSpend map[agentBudgetSpendKey]int64
+	// agentUndoRecords: ADR-20261112080601.
+	agentUndoRecords []AgentUndoRecord
 	orgsBySlug       map[string]string // lower(slug) -> id
 	memberships      map[orgAccountKey]OrgMembership
 	invitations      map[string]OrgInvitation // hex(hash) -> OrgInvitation
@@ -14193,6 +14195,11 @@ func anchorCronSchedule(before, after Cron, now time.Time) Cron {
 		(after.Enabled && !before.Enabled) || (after.SuspendedReason == "" && before.SuspendedReason != "") {
 		after.ScheduleAnchorAt = now.UTC()
 	}
+	// Mirrors clear_cron_clone_pause: an explicit enable or disable is the
+	// customer's decision about a cron a clone paused.
+	if after.Enabled != before.Enabled {
+		after.ClonePaused = false
+	}
 	return after
 }
 
@@ -22715,6 +22722,18 @@ func (m *MemStore) PeekCliAuthCode(_ context.Context, tokenHash []byte) (api.Cli
 // would short-circuit the CAS that the CLI's exchange relies on to
 // mint exactly one API key per code (review finding F4).
 func (m *MemStore) ClaimCliAuthCode(_ context.Context, tokenHash []byte, accountID string) error {
+	return m.claimCliAuthCode(tokenHash, accountID, nil)
+}
+
+// ClaimCliAuthCodeForDevice implements CliAuthDeviceCodeStore.
+func (m *MemStore) ClaimCliAuthCodeForDevice(_ context.Context, tokenHash []byte, accountID string, deviceHash []byte) error {
+	if len(deviceHash) == 0 {
+		return errors.New("claim cli auth code: empty device hash")
+	}
+	return m.claimCliAuthCode(tokenHash, accountID, storedCredential(credTagCLIDeviceCode, deviceHash))
+}
+
+func (m *MemStore) claimCliAuthCode(tokenHash []byte, accountID string, storedDevice []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key, _ := rawCredentialKey(m.cliAuthCodes, credTagCLIAuthCode, tokenHash)
@@ -22734,6 +22753,9 @@ func (m *MemStore) ClaimCliAuthCode(_ context.Context, tokenHash []byte, account
 		return ErrConflict
 	}
 	row.AccountID = accountID
+	if storedDevice != nil {
+		row.DeviceHash = append([]byte(nil), storedDevice...)
+	}
 	m.cliAuthCodes[key] = row
 	return nil
 }

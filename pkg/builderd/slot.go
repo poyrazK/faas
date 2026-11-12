@@ -88,6 +88,29 @@ func (b *Builderd) acquireSlot() (SlotDecision, func(), bool) {
 	return decision, release, true
 }
 
+// acquireIdleSlot takes the builder slot only when no build holds it, for
+// platform work that must never take a slot from a build: the BuildKit seed
+// run (ADR-20261030122204). It records no admission metric, since no build
+// asked for it.
+func (b *Builderd) acquireIdleSlot() (func(), bool) {
+	b.slotMu.Lock()
+	defer b.slotMu.Unlock()
+	if b.activeSlots != 0 {
+		return nil, false
+	}
+	b.activeSlots++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			b.slotMu.Lock()
+			if b.activeSlots > 0 {
+				b.activeSlots--
+			}
+			b.slotMu.Unlock()
+		})
+	}, true
+}
+
 // DecideSlot computes whether a builder spawn is allowed, given the current
 // tenant residency. residentMB and ceilingMB are in megabytes; a nil
 // residencyProbe is treated as "always allow 1 guaranteed slot only".

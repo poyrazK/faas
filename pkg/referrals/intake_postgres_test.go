@@ -17,7 +17,7 @@ import (
 func intakeFixture(t *testing.T) (*pgxpool.Pool, *referrals.PostgresStore, string, string, referrals.IntakeOptions) {
 	t.Helper()
 	pool, store, owner, other := pipelineFixture(t)
-	raw, err := migrations.FS.ReadFile("20261112123849707_sales_intake.sql")
+	raw, err := migrations.FS.ReadFile("20261112165232343_sales_intake.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

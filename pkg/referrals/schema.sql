@@ -1,5 +1,5 @@
 -- Projection of account/invoice fields read by the referral view.
-CREATE TABLE accounts (id uuid PRIMARY KEY, email text NOT NULL, plan text NOT NULL, status text NOT NULL, email_verified_at timestamptz, mfa_enrolled_at timestamptz);
+CREATE TABLE accounts (id uuid PRIMARY KEY, email text NOT NULL, plan text NOT NULL, status text NOT NULL, email_verified_at timestamptz, mfa_enrolled_at timestamptz, stripe_subscription_item text);
 CREATE TABLE apps (id uuid PRIMARY KEY, account_id uuid NOT NULL);
 CREATE TABLE invoices (id uuid PRIMARY KEY, account_id uuid NOT NULL, status text NOT NULL, currency text NOT NULL, amount_paid_cents bigint NOT NULL, subtotal_cents bigint NOT NULL, tax_cents bigint NOT NULL, amount_refunded_cents bigint NOT NULL, amount_refund_pending_cents bigint NOT NULL, created_at timestamptz NOT NULL);
 
@@ -34,6 +34,8 @@ CREATE TABLE referral_attributions (
  created_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(created_at)),
  updated_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(updated_at))
 );
+ALTER TABLE referral_attributions ADD COLUMN attribution_source text NOT NULL DEFAULT 'signup'
+ CHECK (attribution_source IN ('signup','checkout'));
 CREATE INDEX referral_attributions_link ON referral_attributions(code,account_id);
 
 -- The first observed paid invoice is retained by the invoice writer in the

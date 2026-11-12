@@ -86,6 +86,7 @@ func (s *server) salesRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /v1/sales/codes/{code}", s.authLimited(s.requireSessionPrincipal(s.sales.SetLinkActive)))
 	mux.HandleFunc("PATCH /v1/sales/customers/{account}", s.authLimited(s.requireSessionPrincipal(s.sales.UpdateLead)))
 	mux.HandleFunc("GET /v1/referrals/me", s.authLimited(s.requireSessionPrincipal(s.sales.CustomerData)))
+	mux.HandleFunc("GET /v1/referrals/checkout", s.authLimited(s.requireSessionPrincipal(s.sales.CheckoutStatus)))
 	mux.HandleFunc("POST /v1/referrals/codes", s.authLimited(s.requireSessionPrincipal(s.sales.CustomerLink)))
 	mux.HandleFunc("PATCH /v1/referrals/codes/{code}", s.authLimited(s.requireSessionPrincipal(s.sales.SetLinkActive)))
 }

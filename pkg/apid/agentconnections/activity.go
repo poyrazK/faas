@@ -158,13 +158,19 @@ func activityPage(r *http.Request) (int, state.AgentActivityCursor, *api.Problem
 const activitySweepBatch = 5000
 
 // SweepActivity deletes activity rows older than api.AgentActivityRetention
-// (ADR-20261107220000 §2) and reports how many it removed.
+// (ADR-20261107220000 §2), and the undo records kept as long
+// (ADR-20261112080601), and reports how many activity rows it removed.
 func SweepActivity(ctx context.Context, store state.Store, now time.Time) (int64, error) {
+	cutoff := now.Add(-api.AgentActivityRetention)
+	if undo, ok := store.(state.AgentUndoStore); ok {
+		if _, err := undo.DeleteAgentUndoRecordsBefore(ctx, cutoff); err != nil {
+			return 0, err
+		}
+	}
 	activity, ok := store.(state.AgentActivityStore)
 	if !ok {
 		return 0, nil
 	}
-	cutoff := now.Add(-api.AgentActivityRetention)
 	var total int64
 	for {
 		n, err := activity.DeleteAgentActivityBefore(ctx, cutoff, activitySweepBatch)
