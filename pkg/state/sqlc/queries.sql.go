@@ -28762,6 +28762,23 @@ func (q *Queries) GetInstanceTailCount(ctx context.Context, db DBTX, id pgtype.U
 	return tail_count, err
 }
 
+const getInvocationSend = `-- name: GetInvocationSend :one
+SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id
+FROM invocation_sends WHERE invocation_id = $1::uuid
+`
+
+type GetInvocationSendRow struct {
+	SenderAppID     string
+	OnCompleteAppID string
+}
+
+func (q *Queries) GetInvocationSend(ctx context.Context, db DBTX, invocationID pgtype.UUID) (GetInvocationSendRow, error) {
+	row := db.QueryRow(ctx, getInvocationSend, invocationID)
+	var i GetInvocationSendRow
+	err := row.Scan(&i.SenderAppID, &i.OnCompleteAppID)
+	return i, err
+}
+
 const getInvoiceSnapshot = `-- name: GetInvoiceSnapshot :one
 SELECT id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
        period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
@@ -35655,6 +35672,24 @@ func (q *Queries) InsertInstanceApplicationStandardPromotion(ctx context.Context
 		arg.ParentToken,
 		arg.Binding,
 	)
+	return err
+}
+
+const insertInvocationSend = `-- name: InsertInvocationSend :exec
+INSERT INTO invocation_sends (invocation_id, sender_app_id, on_complete_app_id)
+VALUES ($1::uuid, $2::uuid, $3::uuid)
+`
+
+type InsertInvocationSendParams struct {
+	InvocationID    pgtype.UUID
+	SenderAppID     pgtype.UUID
+	OnCompleteAppID pgtype.UUID
+}
+
+// ADR-20261112160000: the app that sent this invocation with send(), and the
+// app its completion goes to, written with the invocation row.
+func (q *Queries) InsertInvocationSend(ctx context.Context, db DBTX, arg InsertInvocationSendParams) error {
+	_, err := db.Exec(ctx, insertInvocationSend, arg.InvocationID, arg.SenderAppID, arg.OnCompleteAppID)
 	return err
 }
 
