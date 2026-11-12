@@ -57,7 +57,7 @@ func TestEnvironmentBranchStatusExtendAndReset(t *testing.T) {
 	rec = e.Do(t, http.MethodGet, base+"pr-1/branch", nil, nil)
 	status := decode(t, rec.Code, rec.Body.Bytes(), http.StatusOK)
 	if status.ID != created.ID || status.Branch.Parent != "production" || status.Branch.CreatedAt == "" || len(status.Branch.Workloads) != 1 ||
-		status.Branch.Workloads[0].URL != created.Branch.Workloads[0].URL || status.Branch.Workloads[0].Workload != "web" {
+		status.Branch.Workloads[0].URL != created.Branch.Workloads[0].URL || status.Branch.Workloads[0].Workload != created.Branch.Workloads[0].Workload {
 		t.Fatalf("status = %+v; want the branch with its one workload at %s", status.Branch, created.Branch.Workloads[0].URL)
 	}
 	if rec := e.Do(t, http.MethodGet, base+"production/branch", nil, nil); rec.Code != http.StatusNotFound {
@@ -69,12 +69,6 @@ func TestEnvironmentBranchStatusExtendAndReset(t *testing.T) {
 	expires, err := time.Parse(time.RFC3339Nano, extended.Branch.ExpiresAt)
 	if err != nil || expires.Before(time.Now().Add(47*time.Hour)) || expires.After(time.Now().Add(49*time.Hour)) {
 		t.Fatalf("extended expiry = %q, %v; want about 48h from now", extended.Branch.ExpiresAt, err)
-	}
-	// 720h from now is past 720h from the branch's creation.
-	rec = e.Do(t, http.MethodPost, base+"pr-1/branch/extend", api.ExtendProjectEnvironmentBranchRequest{TTL: "720h"}, nil)
-	var problem api.Problem
-	if rec.Code != http.StatusConflict || json.Unmarshal(rec.Body.Bytes(), &problem) != nil || problem.Code != api.CodeEnvironmentBranchLifetime {
-		t.Fatalf("extend past the lifetime = %d %s; want 409 %s", rec.Code, rec.Body, api.CodeEnvironmentBranchLifetime)
 	}
 	if rec := e.Do(t, http.MethodPost, base+"pr-1/branch/extend", api.ExtendProjectEnvironmentBranchRequest{TTL: "10m"}, nil); rec.Code != http.StatusBadRequest {
 		t.Fatalf("extend below the minimum TTL = %d %s; want 400", rec.Code, rec.Body)
@@ -94,5 +88,35 @@ func TestEnvironmentBranchStatusExtendAndReset(t *testing.T) {
 	branches, err := store.ListProjectEnvironmentBranches(ctx, acct.ID, project.ID)
 	if err != nil || len(branches) != 1 || branches[0].EnvironmentID != reset.ID {
 		t.Fatalf("branches after reset = %+v, %v; want only the new pr-1", branches, err)
+	}
+}
+
+// A branch lives at most 30 days after its creation, and at most 7 with
+// database copies; the refusal names the limit and the requested lifetime.
+func TestEnvironmentBranchLifetime(t *testing.T) {
+	created := time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC)
+	branch := state.ProjectEnvironmentBranch{Slug: "pr-1", CreatedAt: created}
+	for _, tc := range []struct {
+		name      string
+		hasCopies bool
+		lifetime  time.Duration
+		refused   bool
+	}{
+		{"thirty days", false, api.EnvironmentBranchMaxTTL, false},
+		{"past thirty days", false, api.EnvironmentBranchMaxTTL + time.Second, true},
+		{"seven days with copies", true, api.EnvironmentBranchWithDatabasesMaxLifetime, false},
+		{"past seven days with copies", true, api.EnvironmentBranchWithDatabasesMaxLifetime + time.Second, true},
+		{"eight days without copies", false, 8 * 24 * time.Hour, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			problem := apidserver.EnvironmentBranchLifetimeProblem(branch, tc.hasCopies, created.Add(tc.lifetime))
+			if (problem != nil) != tc.refused {
+				t.Fatalf("problem = %+v; want refused=%v", problem, tc.refused)
+			}
+			if problem != nil && (problem.Code != api.CodeEnvironmentBranchLifetime || problem.Status != http.StatusConflict ||
+				problem.Limit == nil || problem.Observed == nil || *problem.Observed <= *problem.Limit) {
+				t.Fatalf("problem = %+v; want 409 %s with the limit below the observed lifetime", problem, api.CodeEnvironmentBranchLifetime)
+			}
+		})
 	}
 }
