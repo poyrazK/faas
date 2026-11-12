@@ -49,10 +49,10 @@ permissions:
 env:
   # Pinned to a patch (not a minor) so the govulncheck supply-chain gate
   # and the go.mod toolchain directive resolve to the same Go runtime.
-  # Go 1.26.10 fixes the reachable stdlib advisories reported by the
-  # October 2026 supply-chain gate (latest: GO-2026-6809, crypto/x509).
+  # Go 1.26.11 fixes the reachable stdlib advisories reported by the
+  # supply-chain gate (latest: GO-2026-6859, net/http MaxBytesReader race).
   # Keep all runtime/build pins aligned with the go.mod toolchain directive.
-  GO_VERSION: "1.26.10"
+  GO_VERSION: "1.26.11"
   # Bound cold CLI compilation just as the apid compiler guard below does.
   GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
   # vacuum is the OpenAPI ruleset linter used by `make spec-check`.

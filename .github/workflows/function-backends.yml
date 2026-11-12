@@ -88,7 +88,7 @@ jobs:
             ~/go/pkg/mod
           key: go-function-backends-${{ runner.os }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            go-light-test-1-${{ runner.os }}-go1.26.10-${{ hashFiles('go.sum') }}-
+            go-light-test-1-${{ runner.os }}-go1.26.11-${{ hashFiles('go.sum') }}-
             go-e2e-${{ runner.os }}-
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
