@@ -1,0 +1,2 @@
+after 8.008s without pulls or inspection: consumerInfo=<nil> error=nats: API error: code=404 err_code=10014 description=consumer not found
+next Fetch batch error=nats: no responders available for request

@@ -1,0 +1,64 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
+)
+
+func main() {
+	ctx := context.Background()
+	connection, err := nats.Connect("nats://127.0.0.1:14222")
+	if err != nil {
+		panic(err)
+	}
+	defer connection.Close()
+	js, err := jetstream.New(connection)
+	if err != nil {
+		panic(err)
+	}
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{Name: "IDLEAUDIT", Subjects: []string{"idleaudit.>"}})
+	if err != nil {
+		panic(err)
+	}
+	defer js.DeleteStream(ctx, "IDLEAUDIT")
+	// Same fields as sched.natsConsumerConfig.
+	consumer, err := js.CreateOrUpdateConsumer(ctx, "IDLEAUDIT", jetstream.ConsumerConfig{
+		Name: "idle-consumer", FilterSubject: "idleaudit.>", AckPolicy: jetstream.AckExplicitPolicy,
+		DeliverPolicy: jetstream.DeliverAllPolicy, MaxDeliver: -1,
+	})
+	if err != nil {
+		panic(err)
+	}
+	_, err = js.Publish(ctx, "idleaudit.order", []byte(`{"id":1}`))
+	if err != nil {
+		panic(err)
+	}
+	batch, err := consumer.Fetch(1, jetstream.FetchMaxWait(250*time.Millisecond))
+	if err != nil {
+		panic(err)
+	}
+	for message := range batch.Messages() {
+		if err := message.DoubleAck(ctx); err != nil {
+			panic(err)
+		}
+	}
+	if err := batch.Error(); err != nil {
+		panic(err)
+	}
+	start := time.Now()
+	time.Sleep(8 * time.Second)
+	info, infoErr := consumer.Info(ctx)
+	fmt.Printf("after %v without pulls or inspection: consumerInfo=%v error=%v\n", time.Since(start).Round(time.Millisecond), info, infoErr)
+	batch, err = consumer.Fetch(1, jetstream.FetchMaxWait(250*time.Millisecond))
+	if err != nil {
+		fmt.Printf("next Fetch error=%v\n", err)
+		return
+	}
+	for range batch.Messages() {
+	}
+	fmt.Printf("next Fetch batch error=%v\n", batch.Error())
+}

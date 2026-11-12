@@ -19718,6 +19718,7 @@
       "last_error",
       "metadata",
       "next_fire_at",
+      "operator_replay",
       "payload",
       "received_at",
       "result_retention_until",
