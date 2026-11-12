@@ -808,6 +808,9 @@ type LogDrainPageItem struct {
 	LastFailureAt           string
 	LastError               string
 	UpdatedAt               string
+	AnalyticsComplete       bool
+	AnalyticsFrom           string
+	AnalyticsTo             string
 	AnalyticsAvailable      bool
 	AnalyticsDelivered      int64
 	AnalyticsFailed         int64
@@ -2425,6 +2428,7 @@ type AppMetricsView struct {
 // request analytics API. It deliberately mirrors only aggregate fields;
 // request IDs and trace data belong to the debugger surface.
 type RequestAnalyticsView struct {
+	Omitted               []string
 	GroupBy               string
 	Since                 string
 	From                  string

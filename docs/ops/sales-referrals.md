@@ -355,8 +355,8 @@ establish referral attribution, account access, rewards or commission.
 ## Lead qualification and closing reasons
 
 Apply `20261112165235631_sales_qualification.sql` before deploying the new apid.
-The embedded sales portal ships in the same binary; no `faas-web` release or new
-flag is required. Existing sales access, email verification, session MFA and
+Deploy the matching standalone `faas-sales` frontend; no `faas-web` release or
+new flag is required. Existing sales access, email verification, session MFA and
 origin checks apply. Drain the old apid writer when rolling out mandatory closing
 reasons: older binaries do not enforce this rule. Older tabs must refresh if a
 close request is rejected for lacking a reason.
