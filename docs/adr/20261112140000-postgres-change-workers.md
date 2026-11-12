@@ -49,19 +49,26 @@ fencing, receipts, blocked events, replay and cleanup are Commit's.
 `gregale_changes_install_feed(table, config)` and
 `gregale_changes_remove_feed(table, name)`. It follows the realtime changefeed
 rules: ordinary tables with a primary key only, every emitted column (and every
-key column) explicitly allowlisted, no `SECURITY DEFINER`, identifiers and
-literals quoted with `format(%I/%L)`, `search_path` pinned. Operations can be
-narrowed (`insert`, `update`, `delete`); an update that changes no allowlisted
-column emits nothing.
+key column) explicitly allowlisted, identifiers and literals quoted with
+`format(%I/%L)`, `search_path` pinned to `pg_catalog` with every customer
+object schema-qualified. Operations can be narrowed (`insert`, `update`,
+`delete`); an update that changes no allowlisted column emits nothing.
+`TRUNCATE` is not captured.
 
 Each change becomes one outbox row:
 
 - `event_type`: `database.<feed>.<operation>`, e.g. `database.orders.update`
 - `payload`: `{"feed","table","operation","key","before","after"}`
 
-The trigger function runs with the writing role's privileges, so every role
-that writes a tracked table needs `INSERT` on `gregale_outbox`. Managed installs
-grant it; BYO install output says so.
+Unlike the realtime changefeed function, the capture function is `SECURITY
+DEFINER`, owned by the installing role. With invoker rights every role that
+writes a tracked table would need `INSERT` on `gregale_outbox`, and a role
+created after install (a new managed binding, say) would fail every write to
+the table: capture must never break the customer's writes. A trigger function
+cannot be called directly, its arguments are fixed by the installer, and its
+pinned `search_path` plus qualified names leave nothing for a caller to
+redirect. No customer role needs a grant on the outbox, so no customer role can
+forge a change event.
 
 ### 3. Delivery into a worker queue
 
@@ -100,8 +107,9 @@ Non-worker destinations keep today's behavior.
 
 The install creates (or rotates) a dedicated login role
 `gregale_changes_<source>` with a random 32-byte password and only `USAGE` on
-`public`, `SELECT, UPDATE, DELETE` on `gregale_outbox` and `SELECT` on
-`gregale_commit_binding`. Its `sslmode=verify-full` URL is sealed to the
+`public`, `SELECT` and `DELETE` on `gregale_outbox`, `UPDATE` on its delivery
+columns only (lease, attempt and acceptance columns, never `event_type` or
+`payload`), and `SELECT` on `gregale_commit_binding`. Its `sslmode=verify-full` URL is sealed to the
 delivery domain with the existing Commit credential sealing
 (`PUT /v1/commit-sources/{id}/connection`). The owner credential is never
 stored. Re-running install rotates the password.
