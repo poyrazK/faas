@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
-"""Run coding agents against Gregale tasks and score them (ADR-20261026152009).
+"""Run coding agents against Gregale tasks and score them (ADR-20261026152009,
+ADR-20261112223000).
 
-Each run scaffolds a starter into a fresh directory, applies the task's setup
-(edits and deploys), starts the agent headless with the Gregale CLI and,
-optionally, the management MCP server at one toolset, then checks the result
-(HTTP response, serving release, untouched files, the agent's answer). It
+Each run scaffolds a starter, or checks out a pinned commit of a public
+repository, into a fresh directory, applies the task's setup (edits and
+deploys), starts the agent headless with the Gregale CLI and, optionally, the
+management MCP server at one toolset, then checks the result (HTTP response,
+serving release, untouched files, the agent's answer, the apps it created).
+It grades how the agent worked (features used, anti-patterns, traps hit),
 records success, turns, tool calls, tokens, cost and time per run, deletes
-the run's app, and appends one JSON line per run.
+every app and project the run created, and appends one JSON line per run.
 
     agent_eval.py list
-    agent_eval.py run --agents claude --toolsets core,all,none [--tasks ID,...] [--repeat N]
+    agent_eval.py run --agents claude,codex,gemini,cursor --toolsets core,all,none [--tasks ID,...] [--repeat N]
     agent_eval.py summarize results.jsonl
 
 `run` deploys real apps. It requires GREGALE_EVAL_TOKEN, an API key of a
 dedicated evaluation account, and never uses your own login. GREGALE_EVAL_API
-selects the API (default https://api.gregale.dev).
+selects the API (default https://api.gregale.dev). Runs are sequential: apps
+and projects that appear in the account during a run are attributed to it.
 """
 
 from __future__ import annotations
@@ -36,14 +40,32 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 TASKS = HERE / "tasks.json"
-AGENTS = ("claude", "codex")
+AGENTS = ("claude", "codex", "gemini", "cursor")
+AGENT_BINARIES = {"claude": "claude", "codex": "codex", "gemini": "gemini", "cursor": "cursor-agent"}
 TOOLSETS = ("core", "release", "diagnose", "all", "none")
 SETUP_KINDS = ("deploy", "replace")
-CHECK_KINDS = ("http", "serving", "file_contains", "answer")
+CHECK_KINDS = ("http", "serving", "file_contains", "answer", "apps_created", "apps_serving", "app_http", "no_traps")
+FEATURE_KINDS = ("command", "file", "state")
+FEATURE_STATES = ("project_created",)
 DEFAULT_API = "https://api.gregale.dev"
+# Failure codes that mean the agent walked into a known platform trap.
+DEFAULT_TRAPS = ("liveness_exhausted", "app_startup_timeout")
+# Ways of working around the CLI that count against a run.
+ANTI_PATTERNS = {
+    "raw_api_call": re.compile(r"\b(curl|wget|https?|xh)\b[^\n]*(api\.gregale\.dev|/v1/(apps|projects|deployments))"),
+    "manual_tarball": re.compile(r"\btar\s+(-\S*c|c\S*\s)"),
+    "app_delete": re.compile(r"\bgregale\b[^\n|;&]*\b(app|apps|project)\s+(delete|rm)\b"),
+    "api_key_minted": re.compile(r"\bgregale\b[^\n|;&]*\bkey\s+create\b"),
+}
+REPEATED_COMMAND_LIMIT = 3
+# Variables an agent sets for the commands it runs. The eval's caller may be an
+# agent itself; its markers must not leak into the agent under test.
+AGENT_MARKERS = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "GEMINI_CLI", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "CURSOR_AGENT")
 # Shell commands a Claude run may use without asking; everything else is
 # denied in headless mode.
 CLAUDE_ALLOWED_TOOLS = ["Bash(gregale *)", "Bash(curl *)", "Read", "Edit", "Write", "Glob", "Grep", "mcp__gregale"]
+# A foreign-repository task runs as a person's agent would: any shell command.
+CLAUDE_ANY_SHELL = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "mcp__gregale"]
 
 
 class EvalError(Exception):
@@ -58,7 +80,16 @@ def load_tasks(path: Path = TASKS) -> list[dict]:
         if not re.fullmatch(r"[a-z][a-z0-9-]{1,30}", tid) or tid in seen:
             raise EvalError(f"task id {tid!r} must be a unique lowercase slug of at most 31 characters")
         seen.add(tid)
-        if "{app}" not in task.get("prompt", ""):
+        repo = task.get("repo")
+        if repo is not None:
+            if task.get("template") or not re.fullmatch(r"https://github\.com/[\w.-]+/[\w.-]+", repo.get("url", "")) \
+                    or not re.fullmatch(r"[0-9a-f]{40}", repo.get("commit", "")):
+                raise EvalError(f"{tid}: repo needs a github.com url and a full commit SHA, and excludes template")
+            if task.get("setup"):
+                raise EvalError(f"{tid}: repo tasks take no setup")
+        elif not task.get("template"):
+            raise EvalError(f"{tid}: a task needs a template or a repo")
+        elif "{app}" not in task.get("prompt", ""):
             raise EvalError(f"{tid}: prompt must name the app with {{app}}")
         for step in task.get("setup", []):
             if step.get("kind") not in SETUP_KINDS:
@@ -68,6 +99,16 @@ def load_tasks(path: Path = TASKS) -> list[dict]:
         for check in task["checks"]:
             if check.get("kind") not in CHECK_KINDS:
                 raise EvalError(f"{tid}: unknown check kind {check.get('kind')!r}")
+        for feature in task.get("features", []):
+            if not re.fullmatch(r"[a-z][a-z0-9-]{1,40}", feature.get("id", "")) or feature.get("kind") not in FEATURE_KINDS:
+                raise EvalError(f"{tid}: feature {feature.get('id')!r} needs a slug id and a kind in {FEATURE_KINDS}")
+            if feature["kind"] == "state" and feature.get("state") not in FEATURE_STATES:
+                raise EvalError(f"{tid}: unknown state feature {feature.get('state')!r}")
+            if feature["kind"] != "state":
+                try:
+                    re.compile(feature["pattern"])
+                except (KeyError, re.error) as error:
+                    raise EvalError(f"{tid}: feature {feature['id']} needs a valid pattern: {error}") from None
         if task.get("budget_usd", 0) <= 0 or task.get("timeout_s", 0) <= 0:
             raise EvalError(f"{tid}: budget_usd and timeout_s must be positive")
     return tasks
@@ -91,6 +132,24 @@ def replace_once(path: Path, old: str, new: str) -> None:
     path.write_text(text.replace(old, new))
 
 
+def checkout(url: str, commit: str, project: Path) -> None:
+    """A shallow checkout of exactly one commit, without the caller's git config."""
+    project.mkdir(parents=True)
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0"}
+    for args in (["init", "-q"], ["fetch", "-q", "--depth", "1", url, commit], ["-c", "advice.detachedHead=false", "checkout", "-q", "FETCH_HEAD"]):
+        done = subprocess.run(["git", *args], cwd=project, env=env, capture_output=True, text=True, timeout=600)
+        if done.returncode != 0:
+            raise EvalError(f"checkout {url}@{commit[:12]}: git {args[0]}: {done.stderr[-300:]}")
+
+
+def task_prompt(task: dict, slug: str, toolset: str) -> str:
+    if task.get("repo"):
+        # The person's own words; nothing about Gregale is added.
+        return task["prompt"].format(repo_url=task["repo"]["url"])
+    return task["prompt"].format(app=slug) + " The gregale CLI is installed and logged in" + (
+        " and the Gregale MCP server is connected." if toolset != "none" else ".")
+
+
 # --- agent commands ---------------------------------------------------------
 
 
@@ -99,9 +158,10 @@ def mcp_args(toolset: str, writes: bool) -> list[str]:
     return args + ["--allow-writes"] if writes else args
 
 
-def claude_command(prompt: str, run_dir: Path, gregale: str, toolset: str, budget: float, model: str | None, writes: bool) -> list[str]:
+def claude_command(prompt: str, run_dir: Path, gregale: str, toolset: str, budget: float, model: str | None, writes: bool, any_shell: bool = False) -> list[str]:
+    allowed = CLAUDE_ANY_SHELL if any_shell else CLAUDE_ALLOWED_TOOLS
     command = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose", "--no-session-persistence",
-               "--max-budget-usd", f"{budget:.2f}", "--permission-mode", "dontAsk", "--allowedTools", *CLAUDE_ALLOWED_TOOLS, "--strict-mcp-config"]
+               "--max-budget-usd", f"{budget:.2f}", "--permission-mode", "dontAsk", "--allowedTools", *allowed, "--strict-mcp-config"]
     if toolset != "none":
         config = {"mcpServers": {"gregale": {"command": gregale, "args": mcp_args(toolset, writes)}}}
         path = run_dir / "mcp.json"
@@ -125,6 +185,45 @@ def codex_command(prompt: str, project: Path, gregale: str, toolset: str, model:
     return command + [prompt]
 
 
+def gemini_command(prompt: str, run_dir: Path, gregale: str, toolset: str, model: str | None, writes: bool) -> tuple[list[str], dict]:
+    """Gemini CLI headless, and the environment it needs. MCP servers come from
+    a settings file the run points GEMINI_CLI_SYSTEM_SETTINGS_PATH at."""
+    command = ["gemini", "-p", prompt, "--output-format", "stream-json", "--approval-mode", "yolo", "--skip-trust"]
+    env = {}
+    if toolset != "none":
+        path = run_dir / "gemini-settings.json"
+        path.write_text(json.dumps({"mcpServers": {"gregale": {"command": gregale, "args": mcp_args(toolset, writes), "trust": True}}}))
+        env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = str(path)
+        command += ["--allowed-mcp-server-names", "gregale"]
+    if model:
+        command += ["-m", model]
+    return command, env
+
+
+def cursor_command(prompt: str, project: Path, gregale: str, toolset: str, model: str | None, writes: bool) -> list[str]:
+    """cursor-agent headless; MCP servers come from the workspace's .cursor/mcp.json."""
+    command = ["cursor-agent", "-p", prompt, "--output-format", "stream-json", "--force", "--trust", "--workspace", str(project)]
+    if toolset != "none":
+        config = project / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(json.dumps({"mcpServers": {"gregale": {"command": gregale, "args": mcp_args(toolset, writes)}}}))
+        command += ["--approve-mcps"]
+    if model:
+        command += ["--model", model]
+    return command
+
+
+def agent_ready(agent: str) -> str:
+    """Why an installed agent cannot run headless here, or "" when it can."""
+    if agent == "gemini" and not any(os.environ.get(k) for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI")):
+        return "gemini needs GEMINI_API_KEY (or GOOGLE_API_KEY / Vertex AI); the personal Code Assist login no longer serves this client"
+    if agent == "cursor" and not os.environ.get("CURSOR_API_KEY"):
+        status = subprocess.run(["cursor-agent", "status"], capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        if status.returncode != 0 or re.search(r"not (logged|authenticated)|login required", status.stdout + status.stderr, re.IGNORECASE):
+            return "cursor-agent is not logged in: run `cursor-agent login` or set CURSOR_API_KEY"
+    return ""
+
+
 # --- transcript parsing -----------------------------------------------------
 
 
@@ -139,17 +238,28 @@ def _events(lines):
             continue
 
 
+def _metrics(cost) -> dict:
+    return {"completed": False, "turns": 0, "cost_usd": cost, "input_tokens": 0, "output_tokens": 0,
+            "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": {}, "commands": [], "answer": "", "error": ""}
+
+
+def _count(metrics: dict, name: str) -> None:
+    metrics["tool_calls"][name] = metrics["tool_calls"].get(name, 0) + 1
+
+
 def parse_claude(lines) -> dict:
     """Metrics from `claude -p --output-format stream-json` lines."""
-    metrics = {"completed": False, "turns": 0, "cost_usd": 0.0, "input_tokens": 0, "output_tokens": 0,
-               "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": {}, "answer": "", "error": ""}
+    metrics = _metrics(cost=0.0)
     for event in _events(lines):
         kind = event.get("type")
         if kind == "assistant":
             for block in (event.get("message") or {}).get("content") or []:
                 if block.get("type") == "tool_use":
                     name = block.get("name", "?")
-                    metrics["tool_calls"][name] = metrics["tool_calls"].get(name, 0) + 1
+                    _count(metrics, name)
+                    command = (block.get("input") or {}).get("command")
+                    if name == "Bash" and command:
+                        metrics["commands"].append(command)
                 elif block.get("type") == "text":
                     metrics["answer"] = block.get("text", "")
         elif kind == "result":
@@ -171,8 +281,7 @@ def parse_claude(lines) -> dict:
 
 def parse_codex(lines) -> dict:
     """Metrics from `codex exec --json` lines."""
-    metrics = {"completed": False, "turns": 0, "cost_usd": None, "input_tokens": 0, "output_tokens": 0,
-               "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": {}, "answer": "", "error": ""}
+    metrics = _metrics(cost=None)
     failed = False
     for event in _events(lines):
         kind = event.get("type")
@@ -191,14 +300,84 @@ def parse_codex(lines) -> dict:
             if item.get("type") == "agent_message":
                 metrics["answer"] = item.get("text", "")
             elif item.get("type") == "mcp_tool_call":
-                name = f"mcp__{item.get('server', '?')}__{item.get('tool', '?')}"
-                metrics["tool_calls"][name] = metrics["tool_calls"].get(name, 0) + 1
+                _count(metrics, f"mcp__{item.get('server', '?')}__{item.get('tool', '?')}")
             elif item.get("type") == "command_execution":
-                metrics["tool_calls"]["shell"] = metrics["tool_calls"].get("shell", 0) + 1
+                _count(metrics, "shell")
+                if item.get("command"):
+                    metrics["commands"].append(item["command"])
             elif item.get("type") == "file_change":
-                metrics["tool_calls"]["file_change"] = metrics["tool_calls"].get("file_change", 0) + 1
+                _count(metrics, "file_change")
     metrics["completed"] = metrics["turns"] > 0 and not failed
     return metrics
+
+
+def parse_gemini(lines) -> dict:
+    """Metrics from `gemini -p --output-format stream-json` lines (Gemini CLI 0.45).
+
+    Gemini reports no turn count; turns are tool calls plus the final answer."""
+    metrics = _metrics(cost=None)
+    answer, saw_result = [], False
+    for event in _events(lines):
+        kind = event.get("type")
+        if kind == "message" and event.get("role") == "assistant":
+            answer.append(event.get("content") or "")
+        elif kind == "tool_use":
+            answer = []
+            name = event.get("tool_name", "?")
+            _count(metrics, name)
+            command = (event.get("parameters") or {}).get("command")
+            if name == "run_shell_command" and command:
+                metrics["commands"].append(command)
+        elif kind == "error":
+            metrics["error"] = str(event.get("message") or event.get("error") or "error")[:500]
+        elif kind == "result":
+            saw_result = True
+            metrics["completed"] = event.get("status") == "success"
+            if not metrics["completed"]:
+                metrics["error"] = str((event.get("error") or {}).get("message") or metrics["error"] or "error")[:500]
+            stats = event.get("stats") or {}
+            metrics["cache_read_tokens"] = stats.get("cached", 0)
+            metrics["input_tokens"] = max(stats.get("input_tokens", 0) - metrics["cache_read_tokens"], 0)
+            metrics["output_tokens"] = stats.get("output_tokens", 0)
+    metrics["turns"] = sum(metrics["tool_calls"].values()) + 1 if saw_result else 0
+    metrics["answer"] = "".join(answer).strip()
+    return metrics
+
+
+def parse_cursor(lines) -> dict:
+    """Metrics from `cursor-agent -p --output-format stream-json` lines (2026.04.17)."""
+    metrics = _metrics(cost=None)
+    model_calls = set()
+    for event in _events(lines):
+        kind = event.get("type")
+        if event.get("model_call_id"):
+            model_calls.add(event["model_call_id"])
+        if kind == "assistant":
+            for block in (event.get("message") or {}).get("content") or []:
+                if block.get("type") == "text":
+                    metrics["answer"] = block.get("text", "")
+        elif kind == "tool_call" and event.get("subtype") == "started":
+            for name, body in (event.get("tool_call") or {}).items():
+                _count(metrics, name)
+                command = ((body or {}).get("args") or {}).get("command") if isinstance(body, dict) else None
+                if name == "shellToolCall" and command:
+                    metrics["commands"].append(command)
+        elif kind == "result":
+            metrics["completed"] = event.get("subtype") == "success" and not event.get("is_error")
+            if event.get("result"):
+                metrics["answer"] = event["result"]
+            if not metrics["completed"]:
+                metrics["error"] = str(event.get("result") or event.get("subtype") or "error")[:500]
+            usage = event.get("usage") or {}
+            metrics["input_tokens"] = usage.get("inputTokens", 0)
+            metrics["output_tokens"] = usage.get("outputTokens", 0)
+            metrics["cache_read_tokens"] = usage.get("cacheReadTokens", 0)
+            metrics["cache_write_tokens"] = usage.get("cacheWriteTokens", 0)
+    metrics["turns"] = len(model_calls)
+    return metrics
+
+
+PARSERS = {"claude": parse_claude, "codex": parse_codex, "gemini": parse_gemini, "cursor": parse_cursor}
 
 
 # --- Gregale access ---------------------------------------------------------
@@ -211,7 +390,7 @@ class Gregale:
         self.binary, self.api, self.token = binary, api.rstrip("/"), token
 
     def env(self) -> dict:
-        env = {k: v for k, v in os.environ.items() if not k.startswith("FAAS_")}
+        env = {k: v for k, v in os.environ.items() if not k.startswith("FAAS_") and k not in AGENT_MARKERS}
         env.update(FAAS_TOKEN=self.token, FAAS_API=self.api)
         return env
 
@@ -219,10 +398,22 @@ class Gregale:
         return subprocess.run([self.binary, "--non-interactive", "--json", *args], cwd=cwd, env=self.env(),
                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout)
 
-    def get(self, path: str) -> dict:
+    def get(self, path: str):
         request = urllib.request.Request(self.api + path, headers={"Authorization": f"Bearer {self.token}"})
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.loads(response.read())
+
+    def inventory(self) -> dict:
+        """Slugs of the account's apps and projects."""
+        def slugs(path):
+            body = self.get(path)
+            items = body if isinstance(body, list) else (body.get("items") or body.get("apps") or body.get("projects") or [])
+            return {item["slug"] for item in items if isinstance(item, dict) and item.get("slug")}
+        return {"apps": slugs("/v1/apps"), "projects": slugs("/v1/projects")}
+
+
+def created_since(before: dict, after: dict) -> dict:
+    return {kind: sorted(after.get(kind, set()) - before.get(kind, set())) for kind in ("apps", "projects")}
 
 
 def http_check(url: str, check: dict, deadline_s: float = 120, fetch=None) -> tuple[bool, str]:
@@ -249,7 +440,23 @@ def _fetch(url: str) -> tuple[int, str]:
         return 0, str(error)
 
 
-def run_checks(task: dict, slug: str, project: Path, answer: str, gregale: Gregale | None, fetch=None, http_deadline_s: float = 120) -> list[dict]:
+def _app_url(app: dict) -> str:
+    return (app.get("canonical_url") or app.get("url") or "").rstrip("/")
+
+
+def _app_evidence(gregale, slug: str) -> str:
+    """Health and recent deployments of one app as text, for trap codes."""
+    parts = []
+    for path in (f"/v1/apps/{slug}/health", f"/v1/apps/{slug}/deployments?limit=20"):
+        try:
+            parts.append(json.dumps(gregale.get(path)))
+        except (OSError, ValueError, urllib.error.URLError) as error:
+            parts.append(f"unreadable {path}: {error}")
+    return "\n".join(parts)
+
+
+def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch=None, http_deadline_s: float = 120, created: dict | None = None) -> list[dict]:
+    created_apps = (created or {}).get("apps", [])
     results = []
     for check in task["checks"]:
         kind, ok, detail = check["kind"], False, ""
@@ -260,32 +467,120 @@ def run_checks(task: dict, slug: str, project: Path, answer: str, gregale: Grega
             elif kind == "file_contains":
                 ok = check["text"] in (project / check["file"]).read_text()
             elif kind == "http":
-                app = gregale.get(f"/v1/apps/{slug}")
-                url = (app.get("canonical_url") or app.get("url") or "").rstrip("/") + check.get("path", "/")
+                url = _app_url(gregale.get(f"/v1/apps/{slug}")) + check.get("path", "/")
                 ok, detail = http_check(url, check, deadline_s=http_deadline_s, fetch=fetch)
             elif kind == "serving":
                 health = gregale.get(f"/v1/apps/{slug}/health")
                 serving, latest = health.get("serving_deployment_ids") or [], health.get("latest_deployment_id", "")
                 ok = bool(serving) and (latest not in serving if check["expect"] == "not_latest" else latest in serving)
                 detail = f"serving={serving} latest={latest}"
+            elif kind == "apps_created":
+                ok = len(created_apps) >= check.get("min", 1)
+                detail = ",".join(created_apps)
+            elif kind == "apps_serving":
+                idle = [app for app in created_apps if not gregale.get(f"/v1/apps/{app}/health").get("serving_deployment_ids")]
+                ok, detail = bool(created_apps) and not idle, f"not serving: {','.join(idle)}" if idle else f"{len(created_apps)} serving"
+            elif kind == "app_http":
+                matches = [app for app in created_apps if re.search(check["match"], app)]
+                urls = [_app_url(gregale.get(f"/v1/apps/{app}")) for app in matches]
+                urls = [url for url in urls if url]
+                if not urls:
+                    detail = f"no created public app matches {check['match']!r}"
+                else:
+                    ok, detail = http_check(urls[0] + check.get("path", "/"), check, deadline_s=http_deadline_s, fetch=fetch)
+            elif kind == "no_traps":
+                codes = check.get("codes") or list(DEFAULT_TRAPS)
+                hit = sorted({f"{app}:{code}" for app in created_apps for code in codes if code in _app_evidence(gregale, app)})
+                ok, detail = not hit, ",".join(hit)
         except (OSError, KeyError, ValueError, urllib.error.URLError) as error:
             detail = f"check error: {error}"
         results.append({"kind": kind, "ok": ok, "detail": detail})
     return results
 
 
+# --- how the agent worked ---------------------------------------------------
+
+
+def _project_files_text(project: Path, glob: str, limit: int = 2_000_000) -> str:
+    text, total = [], 0
+    for path in sorted(project.glob(glob)):
+        if path.is_file() and ".git" not in path.parts:
+            body = path.read_text(errors="replace")[:200_000]
+            total += len(body)
+            if total > limit:
+                break
+            text.append(body)
+    return "\n".join(text)
+
+
+def grade_features(task: dict, commands: list[str], project: Path, created: dict) -> dict:
+    """Which of the task's applicable Gregale features the run used."""
+    used, missed = [], []
+    joined = "\n".join(commands)
+    for feature in task.get("features", []):
+        if feature["kind"] == "command":
+            hit = re.search(feature["pattern"], joined, re.MULTILINE) is not None
+        elif feature["kind"] == "file":
+            hit = re.search(feature["pattern"], _project_files_text(project, feature.get("glob", "**/*")), re.MULTILINE) is not None
+        else:  # state
+            hit = bool(created.get("projects"))
+        (used if hit else missed).append(feature["id"])
+    total = len(used) + len(missed)
+    return {"features_used": used, "features_missed": missed, "feature_score": round(len(used) / total, 2) if total else None}
+
+
+def grade_anti_patterns(commands: list[str]) -> list[str]:
+    found = [name for name, pattern in ANTI_PATTERNS.items() if any(pattern.search(command) for command in commands)]
+    counts: dict[str, int] = {}
+    for command in commands:
+        key = " ".join(command.split())
+        counts[key] = counts.get(key, 0) + 1
+    if any(count > REPEATED_COMMAND_LIMIT for count in counts.values()):
+        found.append("repeated_command")
+    return found
+
+
 # --- runs -------------------------------------------------------------------
 
 
+def agent_command(agent: str, prompt: str, task: dict, run_dir: Path, project: Path, gregale: Gregale, toolset: str, options) -> tuple[list[str], dict]:
+    model = getattr(options, f"{agent}_model", None)
+    if agent == "claude":
+        return claude_command(prompt, run_dir, gregale.binary, toolset, task["budget_usd"], model, options.mcp_writes, any_shell=bool(task.get("repo"))), {}
+    if agent == "codex":
+        return codex_command(prompt, project, gregale.binary, toolset, model, options.mcp_writes), {}
+    if agent == "gemini":
+        return gemini_command(prompt, run_dir, gregale.binary, toolset, model, options.mcp_writes)
+    return cursor_command(prompt, project, gregale.binary, toolset, model, options.mcp_writes), {}
+
+
+def cleanup(gregale: Gregale, created: dict, slug: str | None) -> list[str]:
+    """Delete what the run created; returns what could not be deleted."""
+    left = []
+    for project_slug in created.get("projects", []):
+        if gregale.cli("project", "delete", "--yes", "--detach-services", project_slug, timeout=300).returncode != 0:
+            left.append(f"project:{project_slug}")
+    for app in sorted(set(created.get("apps", [])) | ({slug} if slug else set())):
+        if gregale.cli("app", "delete", "--yes", "--delete-bindings", app, timeout=300).returncode != 0:
+            left.append(f"app:{app}")
+    return left
+
+
 def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> dict:
-    slug = app_slug(task["id"])
+    slug = None if task.get("repo") else app_slug(task["id"])
     run_dir = Path(tempfile.mkdtemp(prefix=f"agent-eval-{task['id']}-"))
     project = run_dir / "project"
     record = {"task": task["id"], "agent": agent, "toolset": toolset, "app": slug, "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    created: dict = {"apps": [], "projects": []}
+    before = None
     try:
-        init = gregale.cli("init", "--template", task["template"], "--path", str(project), "--name", slug)
-        if init.returncode != 0:
-            raise EvalError(f"init failed: {init.stderr[-300:]}")
+        before = gregale.inventory()
+        if task.get("repo"):
+            checkout(task["repo"]["url"], task["repo"]["commit"], project)
+        else:
+            init = gregale.cli("init", "--template", task["template"], "--path", str(project), "--name", slug)
+            if init.returncode != 0:
+                raise EvalError(f"init failed: {init.stderr[-300:]}")
         for step in task.get("setup", []):
             if step["kind"] == "replace":
                 replace_once(project / step["file"], step["old"], step["new"])
@@ -293,40 +588,48 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
                 result = gregale.cli("deploy", "--path", str(project), "--name", slug, "--app", "--yes", cwd=project, timeout=1200)
                 if (result.returncode == 0) != (step.get("expect", "success") == "success"):
                     raise EvalError(f"setup deploy exit {result.returncode}: {result.stderr[-300:]}")
-        prompt = task["prompt"].format(app=slug) + " The gregale CLI is installed and logged in" + (" and the Gregale MCP server is connected." if toolset != "none" else ".")
-        model = options.claude_model if agent == "claude" else options.codex_model
-        if agent == "claude":
-            command = claude_command(prompt, run_dir, gregale.binary, toolset, task["budget_usd"], model, options.mcp_writes)
-        else:
-            command = codex_command(prompt, project, gregale.binary, toolset, model, options.mcp_writes)
-        env = gregale.env()
+        command, extra_env = agent_command(agent, task_prompt(task, slug, toolset), task, run_dir, project, gregale, toolset, options)
+        env = {**gregale.env(), **extra_env}
         # The agent's shell `gregale` must be the binary under test.
         (run_dir / "bin").mkdir()
         (run_dir / "bin" / "gregale").symlink_to(Path(gregale.binary).resolve())
         env["PATH"] = str(run_dir / "bin") + os.pathsep + env.get("PATH", "")
+        record["isolation"] = "user-config"
         if agent == "claude" and env.get("ANTHROPIC_API_KEY"):
             # A fresh config keeps your settings, memory and plugins out of the run.
             env["CLAUDE_CONFIG_DIR"] = str(run_dir / "claude-config")
             record["isolation"] = "fresh-config"
-        else:
-            record["isolation"] = "user-config"
+        elif agent == "gemini" and env.get("GEMINI_API_KEY"):
+            env["GEMINI_CLI_HOME"] = str(run_dir / "gemini-home")
+            record["isolation"] = "fresh-config"
         started = time.monotonic()
         try:
             done = subprocess.run(command, cwd=project, env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=task["timeout_s"])
             lines, record["timed_out"] = _text(done.stdout).splitlines(), False
+            record["agent_stderr"] = _text(done.stderr)[-500:]
         except subprocess.TimeoutExpired as expired:
             lines, record["timed_out"] = _text(expired.stdout).splitlines(), True
         record["duration_s"] = round(time.monotonic() - started, 1)
         (run_dir / f"{agent}.jsonl").write_text("\n".join(lines))
-        metrics = parse_claude(lines) if agent == "claude" else parse_codex(lines)
+        metrics = PARSERS[agent](lines)
         record.update(metrics)
-        record["checks"] = run_checks(task, slug, project, metrics["answer"], gregale)
+        created = created_since(before, gregale.inventory())
+        record["created"] = created
+        record["checks"] = run_checks(task, slug, project, metrics["answer"], gregale, created=created)
         record["success"] = all(check["ok"] for check in record["checks"])
-    except (EvalError, subprocess.TimeoutExpired, OSError) as error:
+        record.update(grade_features(task, metrics["commands"], project, created))
+        record["anti_patterns"] = grade_anti_patterns(metrics["commands"])
+        record["traps"] = [c["detail"] for c in record["checks"] if c["kind"] == "no_traps" and not c["ok"]]
+    except (EvalError, subprocess.TimeoutExpired, OSError, ValueError, urllib.error.URLError) as error:
         record.update(success=False, error=str(error))
     finally:
         if not options.keep_apps:
-            gregale.cli("apps", "rm", "--yes", slug, timeout=120)
+            if before is not None and not created.get("apps") and not created.get("projects"):
+                try:
+                    created = created_since(before, gregale.inventory())
+                except (OSError, ValueError, urllib.error.URLError):
+                    pass
+            record["left_behind"] = cleanup(gregale, created, slug)
         if not options.keep_dirs:
             shutil.rmtree(run_dir, ignore_errors=True)
         else:
@@ -339,8 +642,8 @@ def summarize(records: list[dict]) -> str:
     groups: dict[tuple, list[dict]] = {}
     for record in records:
         groups.setdefault((record["task"], record["agent"], record["toolset"]), []).append(record)
-    rows = ["| task | agent | toolset | runs | success | turns (median) | tool calls (median) | input tokens (median) | cost USD (mean) | time s (median) |",
-            "|---|---|---|---|---|---|---|---|---|---|"]
+    rows = ["| task | agent | toolset | runs | success | turns (median) | tool calls (median) | input tokens (median) | cost USD (mean) | time s (median) | features (mean) | anti-patterns | traps |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for (task, agent, toolset), runs in sorted(groups.items()):
         def median(key):
             values = [r[key] for r in runs if isinstance(r.get(key), (int, float))]
@@ -349,9 +652,17 @@ def summarize(records: list[dict]) -> str:
         calls = [sum((r.get("tool_calls") or {}).values()) for r in runs]
         tokens = [r.get("input_tokens", 0) + r.get("cache_read_tokens", 0) + r.get("cache_write_tokens", 0) for r in runs]
         success = sum(1 for r in runs if r.get("success"))
+        scores = [r["feature_score"] for r in runs if isinstance(r.get("feature_score"), (int, float))]
+        patterns: dict[str, int] = {}
+        for r in runs:
+            for name in r.get("anti_patterns") or []:
+                patterns[name] = patterns.get(name, 0) + 1
+        traps = sum(1 for r in runs if r.get("traps"))
         rows.append(f"| {task} | {agent} | {toolset} | {len(runs)} | {success}/{len(runs)} | {median('turns')} | "
                     f"{statistics.median(calls) if calls else '—'} | {statistics.median(tokens) if tokens else '—'} | "
-                    f"{round(statistics.mean(costs), 3) if costs else '—'} | {median('duration_s')} |")
+                    f"{round(statistics.mean(costs), 3) if costs else '—'} | {median('duration_s')} | "
+                    f"{round(statistics.mean(scores), 2) if scores else '—'} | "
+                    f"{', '.join(f'{k}×{v}' for k, v in sorted(patterns.items())) or '—'} | {traps}/{len(runs)} |")
     return "\n".join(rows)
 
 
@@ -376,8 +687,10 @@ def main(argv=None) -> int:
     run.add_argument("--gregale", default=shutil.which("gregale") or "gregale", help="gregale binary under test")
     run.add_argument("--claude-model")
     run.add_argument("--codex-model")
+    run.add_argument("--gemini-model")
+    run.add_argument("--cursor-model")
     run.add_argument("--no-mcp-writes", dest="mcp_writes", action="store_false", help="serve MCP without --allow-writes")
-    run.add_argument("--keep-apps", action="store_true", help="do not delete the run's app")
+    run.add_argument("--keep-apps", action="store_true", help="do not delete the apps and projects the run created")
     run.add_argument("--keep-dirs", action="store_true", help="keep run directories and transcripts")
     summary = sub.add_parser("summarize", help="print a Markdown summary of a results file")
     summary.add_argument("results")
@@ -401,8 +714,11 @@ def main(argv=None) -> int:
         if not selected or options.repeat < 1:
             raise EvalError("no tasks selected, or --repeat below 1")
         for agent in agents:
-            if not shutil.which(agent):
-                raise EvalError(f"{agent} is not installed")
+            if not shutil.which(AGENT_BINARIES[agent]):
+                raise EvalError(f"{agent} is not installed ({AGENT_BINARIES[agent]} not on PATH)")
+            problem = agent_ready(agent)
+            if problem:
+                raise EvalError(problem)
         gregale = Gregale(options.gregale, os.environ.get("GREGALE_EVAL_API", DEFAULT_API), token)
         with open(options.out, "a") as out:
             for task in selected:
@@ -413,7 +729,8 @@ def main(argv=None) -> int:
                             out.write(json.dumps(record) + "\n")
                             out.flush()
                             print(f"{task['id']:22} {agent:6} {toolset:8} success={record.get('success')} "
-                                  f"turns={record.get('turns')} cost={record.get('cost_usd')}", file=sys.stderr)
+                                  f"turns={record.get('turns')} cost={record.get('cost_usd')} features={record.get('feature_score')} "
+                                  f"anti={record.get('anti_patterns')}", file=sys.stderr)
         print(summarize([json.loads(line) for line in Path(options.out).read_text().splitlines() if line.strip()]))
         return 0
     except EvalError as error:

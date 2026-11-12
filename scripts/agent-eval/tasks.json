@@ -58,5 +58,26 @@
     ],
     "budget_usd": 2.0,
     "timeout_s": 600
+  },
+  {
+    "id": "deploy-retail-store",
+    "title": "Deploy a foreign five-service Compose repo from the owner's own words",
+    "repo": {"url": "https://github.com/aws-containers/retail-store-sample-app", "commit": "d7a380b843e0759e58754f74188ea18252a51415"},
+    "prompt": "Deploy {repo_url} into gregale via gregale cli in this mac, use my already authed account for it. The repository is already cloned in the current directory.",
+    "checks": [
+      {"kind": "apps_created", "min": 5},
+      {"kind": "apps_serving"},
+      {"kind": "app_http", "match": "ui", "path": "/", "status": 200},
+      {"kind": "app_http", "match": "ui", "path": "/catalog", "status": 200},
+      {"kind": "no_traps"}
+    ],
+    "features": [
+      {"id": "deploy-as-project", "kind": "state", "state": "project_created"},
+      {"id": "preflight", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(--dry-run|--diff|\\bdoctor\\b|\\bdeploy\\s+check\\b)"},
+      {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b"},
+      {"id": "secrets-through-cli", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(\\benv\\s+(set|push)\\b|\\bsecrets\\b|--release-secrets-file)"}
+    ],
+    "budget_usd": 15.0,
+    "timeout_s": 3600
   }
 ]
