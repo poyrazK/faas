@@ -7525,6 +7525,13 @@ type InvocationQueueLeaseReceipt struct {
 	LeaseExpiresAt   pgtype.Timestamptz
 }
 
+type InvocationSend struct {
+	InvocationID    pgtype.UUID
+	SenderAppID     pgtype.UUID
+	OnCompleteAppID pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+}
+
 type InvocationWorkCancellation struct {
 	ID             pgtype.UUID
 	AppID          pgtype.UUID

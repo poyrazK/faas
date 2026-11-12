@@ -43616,6 +43616,19 @@ CREATE TABLE public.invocation_queue_lease_receipts (
 
 
 --
+-- Name: invocation_sends; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_sends (
+    invocation_id uuid NOT NULL,
+    sender_app_id uuid NOT NULL,
+    on_complete_app_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT invocation_sends_created_at_check CHECK (isfinite(created_at))
+);
+
+
+--
 -- Name: invocation_work_cancellations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -67448,6 +67461,14 @@ ALTER TABLE ONLY public.invocation_queue_lease_receipts
 
 
 --
+-- Name: invocation_sends invocation_sends_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_sends
+    ADD CONSTRAINT invocation_sends_pkey PRIMARY KEY (invocation_id);
+
+
+--
 -- Name: invocation_work_cancellations invocation_work_cancellations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -80116,6 +80137,13 @@ CREATE INDEX invocation_backlog_counters_account_idx ON public.invocation_backlo
 --
 
 CREATE INDEX invocation_environment_queue_domain_idx ON public.invocation_environment_queue_admissions USING btree (environment_id, app_id, queue_name);
+
+
+--
+-- Name: invocation_sends_sender_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocation_sends_sender_idx ON public.invocation_sends USING btree (sender_app_id, created_at);
 
 
 --
@@ -101245,6 +101273,30 @@ ALTER TABLE ONLY public.invocations
 
 ALTER TABLE ONLY public.invocation_queue_lease_receipts
     ADD CONSTRAINT invocation_queue_lease_receipts_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocation_sends invocation_sends_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_sends
+    ADD CONSTRAINT invocation_sends_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocation_sends invocation_sends_on_complete_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_sends
+    ADD CONSTRAINT invocation_sends_on_complete_app_id_fkey FOREIGN KEY (on_complete_app_id) REFERENCES public.apps(id) ON DELETE SET NULL;
+
+
+--
+-- Name: invocation_sends invocation_sends_sender_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_sends
+    ADD CONSTRAINT invocation_sends_sender_app_id_fkey FOREIGN KEY (sender_app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
