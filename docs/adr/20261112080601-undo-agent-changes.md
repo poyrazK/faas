@@ -60,8 +60,8 @@ deleted apps (ADR-022) and managed PostgreSQL databases (ADR-20261029174950).
 |---|---|---|
 | Settings and capacity | `PATCH /v1/apps/{slug}`, scaling, prewarms, env vars, cron changes | Restore the before values; cancel a prewarm |
 | Deploys and traffic | new deployments, promote, canary advance, traffic, rollback | Make the deployment that served before the agent's first change serve again, with its traffic split (the existing rollback path) |
-| Things it created | apps, buckets, crons, domains, managed PostgreSQL databases | Delete them. An app's delete is the soft delete (restorable for 7 days); a bucket that holds objects or a database is listed as needing `--delete-data` |
-| Things it deleted | apps, PostgreSQL databases (restorable 7 days); env vars, secrets, crons, domains (re-created from the captured row) | Restore or re-create. A deleted bucket's objects, or anything past its restore window, is reported `not_undoable` |
+| Things it created | apps, buckets, crons, domains, managed PostgreSQL databases | Delete them through their own delete routes, which keep their safety: an app's delete parks it (restorable for 7 days), a bucket that holds objects is refused, a database's delete can be undone for 7 days. One already gone counts as undone. (An earlier draft asked for a `--delete-data` flag; the routes' own safety made it unnecessary.) |
+| Things it deleted | apps and PostgreSQL databases (restore routes, within their 7-day windows); crons and custom domains (created again from what they read as before the delete; a domain verifies again) | Restore or re-create. A deleted bucket, and anything past its restore window, is not undoable |
 
 Settings and capacity in detail (slice 1):
 
@@ -142,8 +142,7 @@ it since, the record is skipped as `changed_since` unless the person passes
   (org variants under `/v1/orgs/{slug}/agent-connections/{id}/…`); slice 5
   adds `…/self/undo/plan` + `…/self/undo` for the agent's own key.
 - `gregale mcp connection undo <id> [--since D | --entry ID…] [--force] [--org SLUG] [--plan] [--yes]`:
-  prints the plan; applies after confirmation or with `--yes`. Slice 3 adds
-  `--delete-data`.
+  prints the plan; applies after confirmation or with `--yes`.
 - MCP tools `gregale_plan_undo` and `gregale_apply_undo` (slice 5; the apply
   returns the approval to wait on with `gregale_wait_for_approval`).
 - The plan lists each change with its activity entry id, so a person can

@@ -482,6 +482,103 @@ func TestHandlers_AgentUndoCreated(t *testing.T) {
 	}
 }
 
+// Undoing what an agent deleted restores an app within its window and
+// creates a cron again from what it was.
+func TestHandlers_AgentUndoDeleted(t *testing.T) {
+	srv, store := apidserver.NewCliAuthTestServer(t)
+	ctx := t.Context()
+	acct, err := store.CreateAccount(ctx, "undo-delete@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "keep-host", Type: state.AppTypeApp, Status: state.AppActive, RAMMB: 512, MaxConcurrency: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "doomed", Type: state.AppTypeApp, Status: state.AppActive, RAMMB: 512, MaxConcurrency: 5}); err != nil {
+		t.Fatal(err)
+	}
+	mint := func(label string, scopes ...string) (string, state.APIKey) {
+		t.Helper()
+		plaintext, hash, err := api.GenerateAPIKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		key, err := store.CreateAPIKey(ctx, acct.ID, hash, label, scopes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return plaintext, key
+	}
+	agent, agentKey := mint("delete-agent", api.ScopeAgent, api.ScopeAppsRead, api.ScopeDeployWrite)
+	if err := store.SetAPIKeyApprovalCategories(ctx, agentKey.ID, []string{}); err != nil {
+		t.Fatal(err)
+	}
+	owner, _ := mint("delete-admin", api.ScopeAdmin)
+	call := func(key, method, path, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+key)
+		if body != "" {
+			r.Header.Set("Content-Type", "application/json")
+		}
+		srv.ServeHTTP(rec, r)
+		return rec
+	}
+	cron := call(owner, http.MethodPost, "/v1/crons", `{"app_id":"`+host.ID+`","schedule":"15 4 * * *","path":"/jobs/nightly"}`)
+	var cronOut api.CronResponse
+	if cron.Code < 200 || cron.Code > 299 || json.Unmarshal(cron.Body.Bytes(), &cronOut) != nil {
+		t.Fatalf("owner creates a cron = %d %s", cron.Code, cron.Body)
+	}
+	if rec := call(agent, http.MethodDelete, "/v1/crons/"+cronOut.ID, ""); rec.Code < 200 || rec.Code > 299 {
+		t.Fatalf("agent deletes the cron = %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(agent, http.MethodDelete, "/v1/apps/doomed", ""); rec.Code < 200 || rec.Code > 299 {
+		t.Fatalf("agent deletes the app = %d %s", rec.Code, rec.Body)
+	}
+
+	undoPath := "/v1/agent-connections/" + agentKey.ID + "/undo"
+	var plan api.AgentUndoPlan
+	if rec := call(owner, http.MethodPost, undoPath+"/plan", `{}`); rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &plan) != nil {
+		t.Fatalf("plan = %d %s", rec.Code, rec.Body)
+	}
+	if len(plan.Items) != 2 || plan.Undoable != 2 || plan.Items[0].Kind != api.AgentUndoKindDelete {
+		t.Fatalf("plan = %+v; want the app and the cron, both undoable", plan.Items)
+	}
+	body, _ := json.Marshal(api.AgentUndoRequest{PlanDigest: plan.PlanDigest})
+	var res api.AgentUndoResult
+	if rec := call(owner, http.MethodPost, undoPath, string(body)); rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &res) != nil {
+		t.Fatalf("apply = %d %s", rec.Code, rec.Body)
+	}
+	if res.Undone != 2 || res.Failed != 0 {
+		t.Fatalf("apply = %+v", res.Items)
+	}
+	if app, err := store.AppBySlug(ctx, "doomed"); err != nil || app.Status != state.AppActive {
+		t.Fatalf("the deleted app after undo = %+v, %v; want restored", app.Status, err)
+	}
+	var crons []api.CronResponse
+	rec := call(owner, http.MethodGet, "/v1/crons?app_id="+host.ID, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list crons = %d %s", rec.Code, rec.Body)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &crons); err != nil {
+		var page struct {
+			Items []api.CronResponse `json:"items"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &page)
+		crons = page.Items
+	}
+	found := false
+	for _, c := range crons {
+		if c.Schedule == "15 4 * * *" && c.Path == "/jobs/nightly" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("crons after undo = %s; want the nightly cron again", rec.Body)
+	}
+}
+
 func newUUID(t *testing.T) string {
 	t.Helper()
 	return uuid.NewString()
