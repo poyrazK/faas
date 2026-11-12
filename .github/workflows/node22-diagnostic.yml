@@ -1,0 +1,51 @@
+name: Node 22 identity-map diagnostic
+
+on:
+  pull_request:
+    paths:
+      - scripts/diagnostics/node22/**
+      - .github/workflows/node22-diagnostic.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: node22-diagnostic-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build paired Linux musl Node diagnostics
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+      - name: Stage the repository function adapter
+        run: python3 scripts/diagnostics/node22/stage-fixture.py
+      - name: Build and validate stock and labeled runtimes
+        uses: docker/build-push-action@v6
+        with:
+          context: scripts/diagnostics/node22
+          file: scripts/diagnostics/node22/Dockerfile
+          platforms: linux/amd64
+          push: false
+          outputs: type=local,dest=${{ runner.temp }}/node22-diagnostic
+          provenance: false
+      - name: Record source identity
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/node22-diagnostic
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$SOURCE_SHA" > "$ARTIFACT_DIR/gregale-source-commit.txt"
+          cd "$ARTIFACT_DIR"
+          sha256sum node22-diagnostic.tar.gz build-manifest.json gregale-source-commit.txt > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node22-callsite-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/node22-diagnostic/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
