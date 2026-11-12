@@ -327,7 +327,10 @@ class QueueConsumer:
         assert self._identity_url is not None
         response = await self._http_client().get(self._identity_url, timeout=5.0)
         if not response.is_success:
-            raise RuntimeError("Queue workload identity unavailable")
+            raise RuntimeError(
+                f"Queue workload identity unavailable ({response.status_code}): this platform may not issue "
+                "workload tokens; pass api_key (a key with queues:consume) instead"
+            )
         token = response.json()
         access = token.get("access_token") if isinstance(token, Mapping) else None
         if not isinstance(access, str) or not access or len(access) > 8192:

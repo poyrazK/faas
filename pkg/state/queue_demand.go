@@ -3,6 +3,7 @@ package state
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -175,8 +176,34 @@ func (m *MemStore) QueueDepthInScope(ctx context.Context, appID, scope string, l
 	if _, err := queueDepthLimit(limit); err != nil {
 		return 0, err
 	}
-	stats, err := m.QueueStateInScope(ctx, appID, scope)
-	return min(stats.Depth, limit), err
+	if !validQueueStatsScope(scope) {
+		return 0, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	consumed := map[string]bool{"": true}
+	canonicalAppID := canonicalMemUUID(appID)
+	for _, t := range m.triggers {
+		if t.AppID.String() == canonicalAppID && t.Kind == "queue" && t.Enabled && t.Source.Valid && t.Source.String == string(InvocationQueue) {
+			consumed[t.Slug] = true
+		}
+	}
+	for _, b := range m.queueBindings {
+		if canonicalMemUUID(b.AppID) == canonicalAppID && b.RetiredAt == nil {
+			consumed[b.QueueName] = true
+		}
+	}
+	now := time.Now()
+	depth := 0
+	for _, inv := range m.invocations {
+		if inv.AppID != appID || inv.DeploymentScope != scope || inv.Source != InvocationQueue || inv.QueueBindingID == "" && !consumed[inv.QueueName] {
+			continue
+		}
+		if inv.State == InvocationDispatching || inv.State == InvocationPending && !inv.DueAt.After(now) {
+			depth++
+		}
+	}
+	return min(depth, limit), nil
 }
 
 func (m *MemStore) QueueDepthForBindingInScope(_ context.Context, appID, bindingID, scope string, limit int) (int, error) {

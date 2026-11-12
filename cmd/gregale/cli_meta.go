@@ -6235,7 +6235,7 @@ var cliCommands = []cliCommand{
 			{Name: "setup", Short: "Configure a simple push workload with queue-depth scaling", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "queue-name", Short: "logical queue name", Value: "QUEUE"},
 				{Name: "target-depth", Short: "messages per worker before scaling out", Value: "N"},
-				{Name: "max-concurrency", Short: "maximum concurrent deliveries per worker", Value: "N"},
+				{Name: "max-concurrency", Short: "maximum concurrent deliveries across the worker pool (default: keep the current value; 10 for a new binding)", Value: "N"},
 				{Name: "max-attempts", Short: "maximum delivery attempts (0 uses the plan default)", Value: "N"},
 				{Name: "retry-base-seconds", Short: "base retry delay in seconds", Value: "N"},
 				{Name: "retry-max-seconds", Short: "maximum retry delay in seconds", Value: "N"},

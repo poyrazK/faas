@@ -65,8 +65,26 @@ func TestQueueBindingHTTPRetirementRetainsEvidenceAndRejectsNewWork(t *testing.T
 	}
 	rec = e.Do(t, http.MethodPost, "/v1/apps/queue-http-retire/queues/send", map[string]any{"queue_name": "orders", "payload": map[string]any{"new": "work"}}, nil)
 	apidserver.AssertProblem(t, rec, http.StatusConflict, "queue_binding_retired")
-	rec = e.Do(t, http.MethodPost, base, request, nil)
+	// ADR-20261112200000: another binding still cannot take the retired
+	// queue name, but re-creating the same binding revives it.
+	other := request
+	other.Name = "orders-2"
+	rec = e.Do(t, http.MethodPost, base, other, nil)
 	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeValidation)
+	rec = e.Do(t, http.MethodPost, base, request, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("re-create retired binding: %d %s", rec.Code, rec.Body.String())
+	}
+	var revived api.QueueBindingResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &revived); err != nil {
+		t.Fatal(err)
+	}
+	if revived.ID != binding.ID || !revived.Enabled {
+		t.Fatalf("revived binding = %+v; want %s enabled", revived, binding.ID)
+	}
+	if row, err := (*e.Store()).InvocationByID(ctx, inv.ID); err != nil || row.State != state.InvocationPending {
+		t.Fatalf("revive lost held backlog: %+v %v", row, err)
+	}
 }
 
 // adr: 231 — an HTTP function can consume push deliveries, but an HTTP app

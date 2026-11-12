@@ -1740,6 +1740,7 @@ func newServerWithDeps(
 	s.edgeRules.EnvironmentPolicyHost = s.environmentPolicyHost
 	s.profileCaptures.Host = profileCaptureHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}
+	s.queueLeases.Waiters = &queueleases.WaiterSlots{}
 	s.realtime.Host = realtimeHost{s}
 	s.realtime.AuthLimiter = s.apiAuthLimiter
 	s.realtime.DrainWake = make(chan struct{}, 1)
