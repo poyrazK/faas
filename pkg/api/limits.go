@@ -8574,6 +8574,20 @@ const (
 	// WakeAdmissionPolicyForPlan in pkg/gateway; this is the cross-app bound.
 	GatewayWakeAdmissionQueueCap = 128
 
+	// BuildKitSeedCheckEvery is how often builderd, with
+	// FAAS_BUILD_BUILDKIT_SEED on, checks whether this node's BuildKit seed
+	// matches the current builder base and creates it in an idle builder slot
+	// when it does not (ADR-20261030122204).
+	BuildKitSeedCheckEvery = time.Minute
+	// BuildKitSeedReserveBytes is the free space above the build-drive floor a
+	// node needs before builderd creates a seed. A seed holds about 1.5-2 GB
+	// of unpacked platform images; builds keep priority on the disk.
+	BuildKitSeedReserveBytes int64 = 4 << 30
+	// BuildKitSeedRetryAfter is how long builderd waits after a failed seed
+	// run before it boots another: each run takes the builder slot for a
+	// cold Railpack build.
+	BuildKitSeedRetryAfter = 30 * time.Minute
+
 	// GatewayAwaitingResponseMax bounds the app requests one gatewayd-internal
 	// process holds before their response head is written: waiting for a
 	// wake, a concurrency slot or the guest's first byte. Past it the gateway
