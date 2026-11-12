@@ -21,7 +21,7 @@ func TestSharedBudgetSerializesReplicasAndSurvivesNewStore(t *testing.T) {
 	if _, err := pool.Exec(ctx, `CREATE TABLE apps(id uuid PRIMARY KEY,account_id uuid NOT NULL,deleted_at timestamptz); INSERT INTO apps(id,account_id) VALUES('22222222-2222-4222-8222-222222222222','11111111-1111-4111-8111-111111111111')`); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := migrations.FS.ReadFile("20261112121000000_data_api_shared_budgets.sql")
+	raw, err := migrations.FS.ReadFile("20261112141015358_data_api_shared_budgets.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
