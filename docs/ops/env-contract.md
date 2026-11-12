@@ -665,7 +665,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_NEOND_DESTRUCTIVE_PER_HOUR` | neond | `default` |  | 300 | `` | ADR-20261112160000: Neon project, branch, endpoint, snapshot and role deletes neond forwards per hour, fleet-wide; past it neond refuses with RESOURCE_EXHAUSTED |
 | `FAAS_NEOND_LISTEN` | neond | `dropin` |  |  | `` | ADR-20261112160000: neond's socket, unix:///run/faas/neond.sock; neond listens on a unix socket only |
 | `FAAS_NEOND_METRICS_ADDR` | neond | `default` |  |  | `` | ADR-20261112160000: optional host:port for neond's /metrics and /healthz; unset serves none |
+| `FAAS_NEOND_ORG_ID` | neond | `dropin` |  |  | `` | ADR-20261112160000 decision 3: the Neon organization the admin key's service user administers; with FAAS_NEOND_SEAL_IDENTITY_FILE it turns on project keys (minted on project create, revoked on delete). Unset, every call uses the admin key |
 | `FAAS_NEOND_ROLE` | neond | `dropin` |  |  | `` | ADR-20261112160000: the box role neond checks it runs on (control-plane or single-box) |
+| `FAAS_NEOND_SEAL_IDENTITY_FILE` | neond | `dropin` |  |  | `` | ADR-20261112160000 decision 3: neond's age identity (credential), which seals the project keys in neon_project_keys; neond_service creates /etc/faas/secrets/neond-seal.age once with `neond keygen`. Losing it leaves projects on the admin key until their keys are re-minted |
 | `FAAS_NODE_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, realtimed, schedd, vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_NODE_PUBLIC_IP` | gatewayd-public | `default` |  |  | `` |  |

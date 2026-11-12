@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -29,7 +30,9 @@ import (
 	neondpb "github.com/onebox-faas/faas/api/proto/onebox/faas/neond/v1"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/neond"
+	"github.com/onebox-faas/faas/pkg/neond/neondpg"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -43,11 +46,36 @@ const neonAPIBase = "https://console.neon.tech/api/v2"
 const defaultDestructivePerHour = 300
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "keygen" {
+		if err := keygen(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	wire.Daemon("neond", run)
+}
+
+// keygen writes neond's sealing identity (mode 0400). The neond_service
+// role runs it once, before the first start with project keys; an existing
+// file is never replaced, because the keys sealed to it would stop opening.
+func keygen(args []string) error {
+	if len(args) != 1 || args[0] == "" {
+		return errors.New("usage: neond keygen <identity path>")
+	}
+	if _, err := os.Stat(args[0]); err == nil {
+		return fmt.Errorf("neond keygen: %s already exists", args[0])
+	}
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		return err
+	}
+	return secretbox.WriteHostKeyAtPath(args[0], id)
 }
 
 type config struct {
 	listen, adminKeyFile, metricsAddr string
+	org, sealIdentityFile             string
 	callers                           []string
 	destructivePerHour                int
 }
@@ -57,7 +85,12 @@ func configFromEnv(getenv func(string) string) (config, error) {
 		listen:             getenv("FAAS_NEOND_LISTEN"),
 		adminKeyFile:       getenv("FAAS_NEOND_ADMIN_KEY_FILE"),
 		metricsAddr:        getenv("FAAS_NEOND_METRICS_ADDR"),
+		org:                strings.TrimSpace(getenv("FAAS_NEOND_ORG_ID")),
+		sealIdentityFile:   getenv("FAAS_NEOND_SEAL_IDENTITY_FILE"),
 		destructivePerHour: defaultDestructivePerHour,
+	}
+	if (cfg.org == "") != (cfg.sealIdentityFile == "") {
+		return config{}, errors.New("neond: project keys need both FAAS_NEOND_ORG_ID and FAAS_NEOND_SEAL_IDENTITY_FILE, or neither")
 	}
 	target, err := wire.ParseTarget(cfg.listen)
 	if err != nil || target.Scheme != wire.SchemeUnix {
@@ -118,6 +151,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	if cfg.org != "" {
+		identity, err := secretbox.LoadHostKey(cfg.sealIdentityFile)
+		if err != nil {
+			return fmt.Errorf("neond: load sealing identity: %w", err)
+		}
+		if err := server.UseProjectKeys(neond.ProjectKeys{Org: cfg.org, Identity: identity, Store: neondpg.New(pool)}); err != nil {
+			return err
+		}
+	}
 	if err := serveMetrics(ctx, cfg.metricsAddr, reg, log); err != nil {
 		return err
 	}
@@ -132,7 +174,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		<-ctx.Done()
 		srv.GracefulStop()
 	}()
-	log.Info("neond: serving", "listen", cfg.listen, "callers", cfg.callers, "destructive_per_hour", cfg.destructivePerHour)
+	log.Info("neond: serving", "listen", cfg.listen, "callers", cfg.callers, "destructive_per_hour", cfg.destructivePerHour, "project_keys", cfg.org != "")
 	if err := srv.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 		return fmt.Errorf("neond: serve: %w", err)
 	}

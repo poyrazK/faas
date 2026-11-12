@@ -13,6 +13,16 @@
       must be a positive integer.
   when: faas_neond_enabled | bool
 
+- name: neond_service — require a Neon organization ID shape
+  ansible.builtin.assert:
+    that:
+      - faas_neond_org_id is match('^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$')
+    fail_msg: >-
+      faas_neond_org_id is {{ faas_neond_org_id }}: set it to the Neon
+      organization ID (org-...), or leave it empty to keep every call on the
+      admin key.
+  when: faas_neond_enabled | bool and faas_neond_org_id | length > 0
+
 - name: neond_service — refuse the apid broker without neond
   ansible.builtin.assert:
     that:
@@ -67,6 +77,42 @@
     owner: root
     group: root
     mode: "0755"
+
+# neond's sealing identity: created once, from the release's own neond, and
+# never replaced, because the project keys sealed to it would stop opening.
+# A release without neond skips this; the drop-in then waits for the next
+# converge (neond refuses to start without the identity it names).
+- name: neond_service — inspect neond's sealing identity
+  ansible.builtin.stat:
+    path: /etc/faas/secrets/neond-seal.age
+  register: faas_neond_seal_identity
+  when: faas_neond_enabled | bool and faas_neond_org_id | length > 0
+
+- name: neond_service — inspect the release's neond for keygen
+  ansible.builtin.stat:
+    path: /opt/faas/current/bin/neond
+  register: faas_neond_keygen_binary
+  when: faas_neond_enabled | bool and faas_neond_org_id | length > 0
+
+- name: neond_service — create neond's sealing identity
+  ansible.builtin.command:
+    argv: [/opt/faas/current/bin/neond, keygen, /etc/faas/secrets/neond-seal.age]
+    creates: /etc/faas/secrets/neond-seal.age
+  when:
+    - faas_neond_enabled | bool and faas_neond_org_id | length > 0
+    - not faas_neond_seal_identity.stat.exists
+    - faas_neond_keygen_binary.stat.exists
+  register: faas_neond_keygen
+  notify: restart faas-neond
+
+# The drop-in names the identity only once it exists, so neond never starts
+# against a credential file that is missing.
+- name: neond_service — decide whether project keys are on
+  ansible.builtin.set_fact:
+    faas_neond_project_keys: >-
+      {{ (faas_neond_enabled | bool) and (faas_neond_org_id | length > 0)
+         and ((faas_neond_seal_identity.stat.exists | default(false))
+              or (faas_neond_keygen is changed)) }}
 
 - name: neond_service — install configuration drop-in
   ansible.builtin.template:
