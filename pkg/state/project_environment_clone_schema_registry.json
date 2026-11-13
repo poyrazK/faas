@@ -10,6 +10,17 @@
     "kind": "account_identity"
   },
   {
+    "table": "account_abuse_strikes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "id",
+      "reason",
+      "struck_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "account_billing_connections",
     "columns": [
       "account_id",
@@ -1254,6 +1265,15 @@
     }
   },
   {
+    "table": "app_basic_auth_verifiers",
+    "columns": [
+      "created_at",
+      "sealed_sha256",
+      "verifier"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_binding_promotion_revisions",
     "columns": [
       "app_id",
@@ -1951,6 +1971,39 @@
     "clone": {
       "owner": "app"
     }
+  },
+  {
+    "table": "app_owner_authority",
+    "columns": [
+      "mode",
+      "singleton",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_owner_release_requests",
+    "columns": [
+      "app_id",
+      "from_node_id",
+      "reason",
+      "requested_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_owner_writes",
+    "columns": [
+      "app_id",
+      "authorized",
+      "from_node_id",
+      "id",
+      "login_role",
+      "mode",
+      "to_node_id",
+      "written_at"
+    ],
+    "kind": "operational"
   },
   {
     "table": "app_park_transitions",
@@ -3962,6 +4015,15 @@
     }
   },
   {
+    "table": "compute_node_db_logins",
+    "columns": [
+      "created_at",
+      "login",
+      "node_name"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "compute_node_heartbeat_hourly",
     "columns": [
       "bucket_at",
@@ -4332,6 +4394,25 @@
       "app_slug",
       "request_id",
       "trace_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "customer_attention_signals",
+    "columns": [
+      "id",
+      "account_id",
+      "kind",
+      "subject",
+      "detail",
+      "state",
+      "observed",
+      "first_seen_at",
+      "last_seen_at",
+      "resolved_at",
+      "dismissed_at",
+      "dismissed_by",
+      "dismiss_reason"
     ],
     "kind": "operational"
   },
@@ -4969,6 +5050,7 @@
       "change_id",
       "created_at",
       "pipeline_id",
+      "read_gate",
       "wake_id"
     ],
     "kind": "operational"
@@ -5029,7 +5111,8 @@
       "verification",
       "verification_progress",
       "verified_at",
-      "verify_requested"
+      "verify_requested",
+      "wal_retention"
     ],
     "kind": "configuration",
     "capabilities": [],
@@ -14687,6 +14770,7 @@
       "ai_response_moderation",
       "ai_response_payment_card",
       "ai_response_secret",
+      "ai_semantic_cache",
       "ai_trace_max_calls",
       "ai_trace_max_cost_millicents",
       "ai_trace_max_repeated_tool_calls",
@@ -19317,6 +19401,30 @@
       "updated_at"
     ],
     "kind": "platform_configuration"
+  },
+  {
+    "table": "secret_grants",
+    "columns": [
+      "app_id",
+      "expires_at",
+      "granted_at",
+      "granted_by_node_id",
+      "node_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "secret_open_audit",
+    "columns": [
+      "app_id",
+      "entries",
+      "id",
+      "job_id",
+      "node_id",
+      "opened_at",
+      "via"
+    ],
+    "kind": "operational"
   },
   {
     "table": "service_caller_key_history",

@@ -565,11 +565,14 @@ type Account struct {
 	AbuseHoldReason string
 }
 
-// Account abuse-hold reasons (ADR-361); the accounts_abuse_hold_valid
+// Account abuse-hold reasons (ADR-361); the accounts_abuse_hold_v2_valid
 // CHECK accepts exactly these.
 const (
 	AccountAbuseHoldEgressFanout = "egress_fanout"
 	AccountAbuseHoldEgressFlood  = "egress_flood"
+	// AccountAbuseHoldCPUSustained: the tipping recycle was a Free
+	// instance pinned at its CPU quota (ADR-20261112120603).
+	AccountAbuseHoldCPUSustained = "cpu_sustained"
 	AccountAbuseHoldOperator     = "operator"
 )
 
@@ -617,6 +620,18 @@ type AccountAbuseHoldStore interface {
 	// ReleaseAccountAbuseHold clears the hold. released reports whether one
 	// was set.
 	ReleaseAccountAbuseHold(ctx context.Context, accountID string) (released bool, err error)
+}
+
+// AccountAbuseStrikeStore records abuse recycles against a resource owner
+// (account or organization) for the account abuse hold escalation
+// (ADR-20261113133500). The count is shared by every schedd and survives
+// restarts. Both PgStore and MemStore implement it.
+type AccountAbuseStrikeStore interface {
+	// RecordAccountAbuseStrike records a strike at at and returns the number
+	// of the owner's strikes after at-window, this one included. reason is
+	// an automatic hold reason (egress_fanout, egress_flood, cpu_sustained);
+	// appID may be empty.
+	RecordAccountAbuseStrike(ctx context.Context, accountID, reason, appID string, at time.Time, window time.Duration) (int, error)
 }
 
 // EmailVerified reports whether the account has proved control of its email.

@@ -495,6 +495,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/tenants":                 true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/360":        true, // operator-only tenant 360 projection
 	"GET /v1/admin/obs/lookup":                  true, // operator-only identifier lookup (ADR-20261112170000)
+	"GET /v1/admin/obs/attention":               true, // operator-only customer attention signals (ADR-20261113123000)
 	"GET /v1/admin/obs/tenants/{id}":            true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/activity":   true, // operator-only tenant activity drill-down
 	"GET /v1/admin/obs/apps/{id}":               true, // operator-only app workload drill-down
@@ -2009,10 +2010,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "outbound_ai_moderation.go"), // ADR-1340 moderation checks
 		filepath.Join(root, "pkg", "api", "outbound_ai_evaluations.go"),
 		filepath.Join(root, "pkg", "api", "outbound_ai_access_tokens.go"),
-		filepath.Join(root, "pkg", "api", "outbound_ai_tags.go"),        // ADR-1436 usage tags and tag limits
-		filepath.Join(root, "pkg", "api", "outbound_ai_traces.go"),      // ADR 20261020202035 AI traces
-		filepath.Join(root, "pkg", "api", "outbound_ai_quality.go"),     // ADR 20261021171712 quality signals
-		filepath.Join(root, "pkg", "api", "outbound_ai_deployments.go"), // ADR 20261022153155 AI calls by deployment
+		filepath.Join(root, "pkg", "api", "outbound_ai_tags.go"),           // ADR-1436 usage tags and tag limits
+		filepath.Join(root, "pkg", "api", "outbound_ai_traces.go"),         // ADR 20261020202035 AI traces
+		filepath.Join(root, "pkg", "api", "outbound_ai_quality.go"),        // ADR 20261021171712 quality signals
+		filepath.Join(root, "pkg", "api", "outbound_ai_deployments.go"),    // ADR 20261022153155 AI calls by deployment
+		filepath.Join(root, "pkg", "api", "outbound_ai_semantic_cache.go"), // ADR 20261112194947 semantic cache
 		filepath.Join(root, "pkg", "api", runtimeReleasesFile),
 		filepath.Join(root, "pkg", "api", rolloutDecisionFile),
 		filepath.Join(root, "pkg", "api", releaseRollbackFile),

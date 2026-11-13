@@ -186,6 +186,13 @@ prom_targets:
     port: 9109
     box_roles: [control-plane, single-box]
     enabled: "{{ faas_agentd_managed | default(false) | bool }}"
+  # Control-plane secret opener (ADR-20261110210000); on while
+  # faas_secretd_listen is set. Its refusals are a compromise signal.
+  - job: secretd
+    host: 127.0.0.1
+    port: 9114
+    box_roles: [control-plane, single-box]
+    enabled: "{{ (faas_secretd_listen | default('')) | length > 0 }}"
   - job: edgednsd
     host: 127.0.0.1
     port: 9113

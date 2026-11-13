@@ -62,3 +62,28 @@ func (s *Store) MarkProjectKeyRevoked(ctx context.Context, keyID int64) error {
 	}
 	return nil
 }
+
+// LiveProjectKeys implements neond.KeyStore.
+func (s *Store) LiveProjectKeys(ctx context.Context) ([]neond.LiveKey, error) {
+	rows, err := s.q.LiveProjectKeys(ctx, s.db)
+	if err != nil {
+		return nil, fmt.Errorf("neondpg: list live project keys: %w", err)
+	}
+	out := make([]neond.LiveKey, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, neond.LiveKey{KeyID: row.KeyID, Project: row.ProjectID, CreatedAt: row.CreatedAt.Time})
+	}
+	return out, nil
+}
+
+// ReplaceProjectKey implements neond.KeyStore.
+func (s *Store) ReplaceProjectKey(ctx context.Context, project string, oldKeyID, newKeyID int64, sealed []byte) error {
+	n, err := s.q.ReplaceProjectKey(ctx, s.db, sqlc.ReplaceProjectKeyParams{NewKeyID: newKeyID, SealedKey: sealed, OldKeyID: oldKeyID, ProjectID: project})
+	if err != nil {
+		return fmt.Errorf("neondpg: replace project key %d of %s: %w", oldKeyID, project, err)
+	}
+	if n != 1 {
+		return fmt.Errorf("neondpg: replace project key %d of %s: %w", oldKeyID, project, neond.ErrKeyNotLive)
+	}
+	return nil
+}

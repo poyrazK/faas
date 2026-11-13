@@ -2864,3 +2864,9 @@ var RenderDeploymentHostingReceiptFor = renderDeploymentHostingReceiptFor
 var ParseAppPortsFlag = parseAppPortsFlag
 
 var RenderThrottleSuggestions = renderThrottleSuggestions
+
+// Runtime OOM doctor check (2026-11-13).
+var DoctorRuntimeOOMFromSummary = doctorRuntimeOOMFromSummary
+var DoctorRuntimeOOMForApp = doctorRuntimeOOMForApp
+var ReplaceDoctorCheck = replaceDoctorCheck
+var DoctorCheckRuntimeOOM = doctorCheckRuntimeOOM

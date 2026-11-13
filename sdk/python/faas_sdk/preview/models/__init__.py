@@ -1154,6 +1154,7 @@ from .data_pipeline_health_state import DataPipelineHealthState
 from .data_pipeline_list import DataPipelineList
 from .data_pipeline_state import DataPipelineState
 from .data_pipeline_verification import DataPipelineVerification
+from .data_pipeline_wal_retention import DataPipelineWALRetention
 from .data_repair_health import DataRepairHealth
 from .data_repair_health_item import DataRepairHealthItem
 from .data_repair_health_item_node_status import DataRepairHealthItemNodeStatus
@@ -2095,6 +2096,7 @@ from .failure_rules_version import FailureRulesVersion
 from .feature_flag import FeatureFlag
 from .feature_flag_type import FeatureFlagType
 from .feature_flag_version import FeatureFlagVersion
+from .feature_hint import FeatureHint
 from .field_error import FieldError
 from .filter_criteria import FilterCriteria
 from .filter_criteria_clause import FilterCriteriaClause
@@ -4177,6 +4179,7 @@ from .outbound_ai_route_stats_strategy import OutboundAIRouteStatsStrategy
 from .outbound_ai_route_strategy import OutboundAIRouteStrategy
 from .outbound_ai_route_target import OutboundAIRouteTarget
 from .outbound_ai_route_target_stats import OutboundAIRouteTargetStats
+from .outbound_ai_semantic_cache import OutboundAISemanticCache
 from .outbound_ai_tag_limit import OutboundAITagLimit
 from .outbound_ai_tag_limits import OutboundAITagLimits
 from .outbound_ai_tag_usage_export_row import OutboundAITagUsageExportRow
@@ -7595,6 +7598,7 @@ __all__ = (
     "DataPipelineList",
     "DataPipelineState",
     "DataPipelineVerification",
+    "DataPipelineWALRetention",
     "DataRepairHealth",
     "DataRepairHealthItem",
     "DataRepairHealthItemNodeStatus",
@@ -8494,6 +8498,7 @@ __all__ = (
     "FeatureFlag",
     "FeatureFlagType",
     "FeatureFlagVersion",
+    "FeatureHint",
     "FieldError",
     "FilterCriteria",
     "FilterCriteriaClause",
@@ -10396,6 +10401,7 @@ __all__ = (
     "OutboundAIRouteStrategy",
     "OutboundAIRouteTarget",
     "OutboundAIRouteTargetStats",
+    "OutboundAISemanticCache",
     "OutboundAITagLimit",
     "OutboundAITagLimits",
     "OutboundAITagUsageExportRow",

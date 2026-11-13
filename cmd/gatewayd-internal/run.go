@@ -2581,6 +2581,17 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 			deps.edgeRulesMatcher.headerSecretOpener = newEdgeRuleHeaderSecretOpener(identities)
 		}
 	}
+	injectEdgeHeaderSecrets, err := edgeHeaderSecretsInjectFromEnv(osGetenv)
+	if err != nil {
+		return err
+	}
+	if injectEdgeHeaderSecrets && deps.edgeRulesMatcher != nil {
+		// ADR-20261110210000 slice 3i: this gateway never opens a sealed
+		// request header value; the instance's vmmd does.
+		deps.edgeRulesMatcher.headerSecretsInject = true
+		deps.edgeRulesMatcher.headerSecretOpener = nil
+		log.Info("edge rule header values are added by the instance's vmmd")
+	}
 	log.Info("edge seal domain", "domain_identity", len(edgeDomainIdentities) > 0, "identities", len(deps.edgeIdentities))
 	// PR-3 / ADR-125 fleet-wide signing key: try the
 	// cluster_signing_keys PG row FIRST so a JWT minted by
@@ -3282,6 +3293,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// cmd/apid uses). nil-safe: tests + dev boxes that don't
 	// wire either pass through the per-request unseal path.
 	handler.WithPublicAuth(deps.publicAuthCache, deps.publicAuthUnsealer)
+	// ADR-20261110210000 slice 3h: verify-only basic auth.
+	basicVerifiers, basicErr := basicAuthVerifiersFromEnv(osGetenv, deps.pgStore, metricsRegisterer)
+	if basicErr != nil {
+		return basicErr
+	}
+	if basicVerifiers != nil {
+		handler.WithBasicAuthVerifiers(basicVerifiers)
+	}
 	// ADR-119 — wire the per-service public-key allowlist into
 	// the Handler so applyIngressInternalSvc (handler.go:~4586
 	// area) can validate Authorization: Bearer JWTs on apps
@@ -3848,6 +3867,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			deps.metrics,
 			log,
 		)
+		// ADR-20261110210000 slice 3f: with FAAS_GATEWAY_LOG_DRAIN_OPENER=secretd
+		// drain headers open on the control plane, for the owner node only.
+		openHeader, closeOpener, openerErr := logDrainHeaderOpenerFromEnv(ctx, osGetenv, cfg.NodeName, log)
+		if openerErr != nil {
+			return openerErr
+		}
+		defer closeOpener()
+		manager.openHeader = openHeader
 		manager.standardNode = newLocalNodeID(deps.pgStore, cfg.NodeName)
 		manager.capabilityAllowed = deps.capabilityAllowed
 		manager.edgeEgress = egressSink.RecordEdgeBytes
@@ -4868,7 +4895,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			ManagedHTTP:        managedHTTP, ManagedCircuit: managedHTTP && managedCircuitWired,
 			// apid seals edge-rule header values only while every serving
 			// gateway reports that it opens them (ADR-20261108110000).
-			EdgeHeaderSecrets: deps.edgeRulesMatcher != nil && deps.edgeRulesMatcher.headerSecretOpener != nil,
+			EdgeHeaderSecrets: deps.edgeRulesMatcher != nil &&
+				(deps.edgeRulesMatcher.headerSecretOpener != nil || deps.edgeRulesMatcher.headerSecretsInject),
 		}, readyProbe.ReadyFunc(), log)
 		defer stopTrafficObserver()
 	}

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"filippo.io/age"
 	"github.com/prometheus/client_golang/prometheus"
@@ -37,6 +38,35 @@ type keyRow struct {
 	project string
 	sealed  []byte
 	revoked bool
+	created time.Time
+}
+
+func (m *memKeys) LiveProjectKeys(context.Context) ([]LiveKey, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []LiveKey
+	for id, row := range m.rows {
+		if !row.revoked {
+			out = append(out, LiveKey{KeyID: id, Project: row.project, CreatedAt: row.created})
+		}
+	}
+	return out, nil
+}
+
+func (m *memKeys) ReplaceProjectKey(_ context.Context, project string, oldKeyID, newKeyID int64, sealed []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.failPut {
+		return errors.New("database unavailable")
+	}
+	old, ok := m.rows[oldKeyID]
+	if !ok || old.revoked || old.project != project {
+		return ErrKeyNotLive
+	}
+	old.revoked = true
+	m.rows[oldKeyID] = old
+	m.rows[newKeyID] = keyRow{project: project, sealed: sealed, created: time.Now()}
+	return nil
 }
 
 func (m *memKeys) LiveProjectKey(_ context.Context, project string) (StoredKey, bool, error) {
@@ -56,7 +86,12 @@ func (m *memKeys) InsertProjectKey(_ context.Context, project string, keyID int6
 	if m.failPut {
 		return errors.New("database unavailable")
 	}
-	m.rows[keyID] = keyRow{project: project, sealed: sealed}
+	for _, row := range m.rows {
+		if row.project == project && !row.revoked {
+			return errors.New("duplicate live key")
+		}
+	}
+	m.rows[keyID] = keyRow{project: project, sealed: sealed, created: time.Now()}
 	return nil
 }
 
@@ -81,15 +116,18 @@ func (m *memKeys) MarkProjectKeyRevoked(_ context.Context, keyID int64) error {
 	return nil
 }
 
-// keyedNeon is Neon with org keys: it mints and revokes keys and accepts a
-// project key only on its own project.
+// keyedNeon is Neon with org keys: it mints and revokes keys, lists and
+// creates projects and accepts a project key only on its own project.
 type keyedNeon struct {
-	mu       sync.Mutex
-	next     int64
-	keys     map[string]string // key -> project
-	revoked  []int64
-	requests []string
-	failMint bool
+	mu          sync.Mutex
+	next        int64
+	keys        map[string]string // key -> project
+	projects    map[string]bool
+	revoked     []int64
+	requests    []string
+	failMint    bool
+	failRevoke  bool
+	unavailable bool
 }
 
 func (n *keyedNeon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +158,10 @@ func (n *keyedNeon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": n.next, "key": key, "name": body.Name})
 			return
 		}
+		if n.failRevoke {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		id, _ := strconv.ParseInt(path[strings.LastIndex(path, "/")+1:], 10, 64)
 		n.revoked = append(n.revoked, id)
 		for key := range n.keys {
@@ -129,7 +171,25 @@ func (n *keyedNeon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "revoked": true})
 	case r.Method == http.MethodPost && path == "/projects":
+		n.projects["p-new"] = true
 		_ = json.NewEncoder(w).Encode(map[string]any{"project": map[string]any{"id": "p-new"}})
+	case r.Method == http.MethodGet && path == "/projects":
+		if auth != "admin-key" || r.URL.Query().Get("org_id") != "org-1" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		list := []map[string]any{}
+		for project := range n.projects {
+			list = append(list, map[string]any{"id": project})
+		}
+		reply := map[string]any{"projects": list, "pagination": map[string]any{}}
+		if n.unavailable {
+			reply["unavailable_project_ids"] = []string{"p-hidden"}
+		}
+		_ = json.NewEncoder(w).Encode(reply)
+	case r.Method == http.MethodDelete && strings.Count(path, "/") == 2:
+		delete(n.projects, strings.TrimPrefix(path, "/projects/"))
+		_, _ = io.WriteString(w, `{}`)
 	default:
 		project := strings.Split(strings.TrimPrefix(path, "/projects/"), "/")[0]
 		if auth != "admin-key" && n.keys[auth] != project {
@@ -148,12 +208,12 @@ func (n *keyedNeon) last() string {
 
 func newKeyedServer(t *testing.T) (*Server, *keyedNeon, *memKeys, *age.X25519Identity, *prometheus.Registry) {
 	t.Helper()
-	neon := &keyedNeon{keys: map[string]string{}}
+	neon := &keyedNeon{keys: map[string]string{}, projects: map[string]bool{}}
 	ts := httptest.NewServer(neon)
 	t.Cleanup(ts.Close)
 	base, _ := url.Parse(ts.URL + "/api/v2")
 	reg := prometheus.NewRegistry()
-	server, err := NewServer(base, ts.Client(), "admin-key", fakeLive{}, 100, reg, slog.New(slog.DiscardHandler))
+	server, err := NewServer(base, ts.Client(), "admin-key", fakeLive{}, Limits{PerHour: 100, PerSubjectPerHour: 100}, reg, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

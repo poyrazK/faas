@@ -29,7 +29,7 @@ func TestVerificationLargeRowsCommitBoundedRangeProgress(t *testing.T) {
 	}
 	defer conn.Release()
 	intent, spec := verificationID(p, []relation{r})
-	storage, err := verificationSourceStorage(ctx, pool, []relation{r})
+	_, storage, err := verificationStorage(ctx, p, pool, conn.Conn(), []relation{r})
 	if err != nil {
 		t.Fatal(err)
 	}

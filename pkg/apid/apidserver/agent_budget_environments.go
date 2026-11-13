@@ -80,7 +80,7 @@ func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter 
 // agent keys are charged, so other callers skip reading the workloads.
 func (s *server) chargeEnvironmentClone(w http.ResponseWriter, r *http.Request, acct state.Account, project state.Project, source string, branch bool) (func(), bool) {
 	if source == "" || s.authMw == nil || !s.authMw.ChargesAgentBudget(r) {
-		return func() {}, false
+		return s.noCharge(w, r, acct.Plan)
 	}
 	cost, err := s.environmentCloneStanding(r, acct, project, source, branch)
 	if err != nil {

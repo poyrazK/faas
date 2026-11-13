@@ -7,7 +7,7 @@ SET LOCAL lock_timeout = '5s';
 -- wakes the run. Both columns are set together or not at all.
 ALTER TABLE invocation_sends ADD COLUMN IF NOT EXISTS workflow_run_id uuid;
 ALTER TABLE invocation_sends ADD COLUMN IF NOT EXISTS workflow_op text;
--- NOT VALID: new writes are checked at once; 20261113124939000 validates.
+-- NOT VALID: new writes are checked at once; 20261113165639200 validates.
 ALTER TABLE invocation_sends ADD CONSTRAINT invocation_sends_workflow_call_check
  CHECK ((workflow_run_id IS NULL) = (workflow_op IS NULL)
   AND (workflow_op IS NULL OR length(workflow_op) BETWEEN 1 AND 160)) NOT VALID;

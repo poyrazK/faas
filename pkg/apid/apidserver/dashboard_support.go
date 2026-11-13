@@ -24,6 +24,7 @@ func (s *server) registerSupportPortalRoutes(mux *http.ServeMux) {
 		mux.Handle("GET "+path, s.dashboardChain(s.sessionAuth(s.supportPortal(true))))
 		mux.Handle("POST "+path, s.dashboardChain(s.sessionAuth(s.supportPortal(true))))
 	}
+	s.registerSupportAttentionRoutes(mux)
 }
 
 func (s *server) supportPortal(staff bool) http.HandlerFunc {

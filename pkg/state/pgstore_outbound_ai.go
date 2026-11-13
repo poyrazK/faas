@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -45,6 +46,10 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		}
 		judge = &id
 	}
+	semantic, err := s.checkOutboundAISemanticCache(ctx, accountID, integrationID, policy)
+	if err != nil {
+		return err
+	}
 	command, err := s.pool.Exec(ctx, `
 		UPDATE outbound_integrations
 		   SET ai_provider = NULLIF($3, ''), ai_daily_token_limit = $4,
@@ -55,6 +60,7 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		       ai_trace_max_calls = $14, ai_trace_max_cost_millicents = $15, ai_trace_max_repeated_tool_calls = $16,
 		       ai_online_eval_percent = $17, ai_online_eval_judge_integration_id = $18,
 		       ai_online_eval_model = NULLIF($19, ''), ai_online_eval_rubric = NULLIF($20, ''), ai_quality_alerts = $21,
+		       ai_semantic_cache = $22::jsonb,
 		       -- ADR-997: turning AI handling off also clears the content policy,
 		       -- its moderation check (ADR-1340) and its response checks (ADR-1435).
 		       ai_moderation_action = CASE WHEN $3 = '' THEN 'off' ELSE ai_moderation_action END,
@@ -80,7 +86,7 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		policy.DailyCostLimit, policy.MonthlyCostLimit, policy.RequestLogEnabled,
 		policy.UserDailyTokenLimit, policy.UserDailyCostLimit, policy.RequestLogContent, policy.LogExport,
 		policy.AllowUnmetered, policy.AutoPromptCache, policy.TraceMaxCalls, policy.TraceMaxCost, policy.TraceMaxRepeatedToolCalls,
-		policy.OnlineEvalPercent, judge, policy.OnlineEvalModel, policy.OnlineEvalRubric, policy.QualityAlerts)
+		policy.OnlineEvalPercent, judge, policy.OnlineEvalModel, policy.OnlineEvalRubric, policy.QualityAlerts, semantic)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -88,6 +94,40 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		return ErrNotFound
 	}
 	return nil
+}
+
+// checkOutboundAISemanticCache returns the stored JSON of the policy's
+// semantic cache (nil when off) after checking that the integration has the
+// response cache on and that the embedding integration is one of the
+// account's enabled OpenAI or Gemini integrations (ADR 20261112194947).
+func (s *PgStore) checkOutboundAISemanticCache(ctx context.Context, accountID, integrationID string, policy OutboundAIPolicy) ([]byte, error) {
+	semantic := policy.semanticCache()
+	if semantic == nil {
+		return nil, nil
+	}
+	if _, err := uuid.Parse(semantic.EmbeddingIntegrationID); err != nil {
+		return nil, ErrInvalidArgument
+	}
+	var ok bool
+	if err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM outbound_integrations integration
+		                WHERE integration.account_id = $1 AND integration.id = $2 AND integration.response_cache_ttl_seconds > 0)
+		   AND EXISTS (SELECT 1 FROM outbound_integrations embedding
+		                WHERE embedding.account_id = $1 AND embedding.id = $3 AND embedding.enabled
+		                  AND embedding.owner_kind = 'customer' AND embedding.provider_auth_mode = 'managed'
+		                  AND embedding.ai_provider = ANY($4::text[]))`,
+		mustPgUUID(accountID), mustPgUUID(integrationID), mustPgUUID(semantic.EmbeddingIntegrationID),
+		api.OutboundAISemanticCacheEmbeddingProviders).Scan(&ok); err != nil {
+		return nil, mapErr(err)
+	}
+	if !ok {
+		return nil, ErrInvalidArgument
+	}
+	encoded, err := json.Marshal(semantic)
+	if err != nil {
+		return nil, err
+	}
+	return encoded, nil
 }
 
 // GetOutboundAIUsage reads one UTC day of the rollups outboundd writes, plus

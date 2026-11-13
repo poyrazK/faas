@@ -11,10 +11,18 @@ On app and API requests, Gregale sends its own timeouts and failed
 connections to your app as 503 rather than 502 or 504. The response carries
 its `code` and the `X-Faas-Error-Code` header, so the problem body and request
 id reach you through Cloudflare, which replaces 502 and 504 bodies with its
-own page. A 502
-or 504 that your app returns itself is passed on unchanged, and Cloudflare
+own page. A 502 or 504 that your app returns itself keeps its status, and Cloudflare
 then shows its own error page in place of your body. Key automation on `code`
 or `X-Faas-Error-Code`, not on the status.
+
+On the Free Cloudflare front, a customer-originated 502/504 JSON body can
+therefore arrive as plain `error code: 502` or `error code: 504`.
+Customer-originated 500 and 503 bodies pass through. If your client needs a
+structured body for temporary unavailability, your app can deliberately use
+503 with its own stable error code. Gregale does not change customer status
+codes. Preserving arbitrary origin 502/504 bodies requires a separately
+supported front; Cloudflare documents origin error page pass-through as an
+Enterprise feature.
 
 | Code family | Meaning | Next step |
 |---|---|---|
@@ -22,7 +30,7 @@ or `X-Faas-Error-Code`, not on the status.
 | `app_not_listening`, `app_loopback_bound` | The process did not expose a reachable listener | Bind `0.0.0.0:$PORT`; rerun `gregale deploy --dry-run`. |
 | `dep_install_failed` | Dependencies could not be installed | Pin the lockfile and inspect `gregale logs APP`. |
 | `app_startup_timeout` | Readiness budget was exceeded | Run `gregale doctor` and select a compatible profile. |
-| `app_runtime_oom` | The kernel killed the app for using more memory than its plan allows (the detail carries the peak). A deployment that is starting or rolling out fails and the previous release keeps serving; a live release is not failed and the instance is replaced | Lower the app's peak memory or move to a plan with at least the reported peak plus 8 MB. |
+| `app_runtime_oom` | The kernel killed the app for using more memory than its plan allows (the detail carries the peak). A deployment that is starting or rolling out fails and the previous release keeps serving; a live release is not failed and the instance is replaced | Raise the app's memory to at least the reported peak plus 8 MB with `gregale app <app> --ram <MB>` (your account plan sets the per-app maximum), or lower its peak memory. `gregale inspect <app>` lists kills from the last 24 hours. |
 | `app_startup_crash` | The app process exited before it became ready (the detail carries its last output lines) | Fix the error in that output; `gregale logs APP` has the full startup log. |
 | `function_init_failed` | A function's `init` hook threw, so its worker never became ready (the detail carries its error). An `init` that never finishes fails as `app_startup_timeout` | Fix the error in that output; `gregale dev --local` runs `init` the same way. See [functions](functions.md). |
 | `function_input_invalid` | 422 from a function: an SDK functions client called it with input that does not match the function's `input` schema in `gregale.yaml` (the detail names the failing field, e.g. `input.email is required`). Only calls from the SDK's `functions` client are checked | Fix the caller's input, or change the callee's `input` schema and redeploy it. See [functions](functions.md). |

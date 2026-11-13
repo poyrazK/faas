@@ -87,10 +87,13 @@ SELECT EXISTS(
 )::boolean AS pinned;
 
 -- name: ReadProjectServiceGraph :one
--- A pinned caller with declared bindings is graph-routed once its project
--- environment has published a release set; until then a stage deployed with
+-- A pinned caller with declared bindings is graph-routed while its project
+-- environment has an active release set, or while the caller belongs to a
+-- release set still retained for rollback. Otherwise a stage deployed with
 -- "deploy --env" routes in its own environment lane (ADR-20261027120000,
--- Hunt 34 H34-33). Promotion candidates stay graph-routed regardless.
+-- Hunt 34 H34-33), including once every release set of the environment is
+-- deactivated and past retention (ADR-20261019120024 amendment 2026-11-13).
+-- Promotion candidates stay graph-routed regardless.
 WITH owner AS MATERIALIZED (
  SELECT a.id,a.account_id,a.project_id,d.scope FROM apps a JOIN deployments d ON d.app_id=a.id
  JOIN project_environment_workload_deployment_specs pin ON pin.deployment_id=d.id
@@ -98,7 +101,10 @@ WITH owner AS MATERIALIZED (
  WHERE a.id=sqlc.arg(caller_app_id)::text::uuid AND d.id=sqlc.arg(caller_deployment_id)::text::uuid
  AND d.environment_workload_runtime IS NULL
  AND ((jsonb_array_length(coalesce(spec.settings::jsonb#>'{manifest,service_bindings}','[]'::jsonb))>0
-   AND EXISTS(SELECT 1 FROM project_release_sets env_release WHERE env_release.project_id=a.project_id AND env_release.environment_slug=d.scope AND env_release.account_id=a.account_id))
+   AND (EXISTS(SELECT 1 FROM project_release_sets env_release WHERE env_release.project_id=a.project_id AND env_release.environment_slug=d.scope AND env_release.account_id=a.account_id AND env_release.active)
+     OR EXISTS(SELECT 1 FROM project_release_members kept_member JOIN project_release_sets kept ON kept.id=kept_member.release_id
+       WHERE kept_member.app_id=a.id AND kept_member.deployment_id=d.id AND kept.project_id=a.project_id AND kept.environment_slug=d.scope AND kept.account_id=a.account_id
+       AND (kept.expires_at>now() OR EXISTS(SELECT 1 FROM customer_operation_retained_release_refs ref WHERE ref.release_id=kept.id)))))
  OR EXISTS(SELECT 1 FROM project_environment_promotions p JOIN project_environment_promotion_release_config capture ON capture.promotion_id=p.id
    WHERE p.account_id=a.account_id AND p.project_id=a.project_id AND p.to_environment=d.scope AND capture.payload ? 'destination_config'
    AND (EXISTS(SELECT 1 FROM project_environment_promotion_workload_specs prepared WHERE prepared.promotion_id=p.id AND prepared.app_id=a.id AND prepared.deployment_id=d.id)

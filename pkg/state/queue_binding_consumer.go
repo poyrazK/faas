@@ -14,6 +14,23 @@ var ErrQueueBindingEnvironmentUnavailable = fmt.Errorf("%w: captured queue bindi
 // ErrQueueBindingRetired rejects new work or claims for a retained queue.
 var ErrQueueBindingRetired = fmt.Errorf("%w: queue binding is retired", ErrConflict)
 
+// revivePatch is the update a revived binding takes: every setting of the
+// create that revived it (ADR-20261112200000).
+func revivePatch(want QueueBinding) *UpdateQueueBindingParams {
+	class := want.WorkloadClass
+	policy := []byte(want.RetryPolicyJSON)
+	if len(policy) == 0 {
+		policy = []byte(`{}`)
+	}
+	return &UpdateQueueBindingParams{QueueName: &want.QueueName, Mode: &want.Mode, WorkloadClass: &class,
+		Enabled: &want.Enabled, MaxConcurrency: &want.MaxConcurrency, RetryPolicyJSON: &policy}
+}
+
+// ErrQueueBindingKeyedWork refuses a push binding's switch to pull while
+// work-policy (keyed) messages it accepted are queued: pull leases never take
+// keyed work, so they would be stranded (ADR-20261112200000).
+var ErrQueueBindingKeyedWork = fmt.Errorf("%w: queue binding holds keyed work only push delivers", ErrConflict)
+
 // QueueBindingConsumerStore publishes binding intent and its private consumer
 // in one commit. A failed projection leaves both previous intents intact.
 type QueueBindingConsumerStore interface {

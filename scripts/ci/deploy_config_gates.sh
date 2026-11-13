@@ -93,6 +93,8 @@ syntax() {
   # checking does not cover their task bodies.
   ansible-playbook --syntax-check node_join.yml
   ansible-playbook --syntax-check node_join_control_plane.yml
+  # Operator-run drained kernel patch reboot (docs/runbooks/host-kernel-patch.md).
+  ansible-playbook --syntax-check kernel_patch_reboot.yml
 }
 
 # Syntax-check does not evaluate Jinja, so it would not catch a template

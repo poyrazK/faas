@@ -75,7 +75,7 @@ func TestSchemaBackfillCopiesTypedSourceValuesAndFencesConstraints(t *testing.T)
 		t.Fatal(err)
 	}
 	intent, spec := verificationID(p, after)
-	storage, err := verificationSourceStorage(ctx, source, after)
+	_, storage, err := verificationStorage(ctx, p, source, target, after)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -49,7 +49,22 @@ type KeyStore interface {
 	LiveProjectKeyIDs(ctx context.Context, project string) ([]int64, error)
 	// MarkProjectKeyRevoked records that Neon revoked the key.
 	MarkProjectKeyRevoked(ctx context.Context, keyID int64) error
+	// LiveProjectKeys lists every unrevoked key.
+	LiveProjectKeys(ctx context.Context) ([]LiveKey, error)
+	// ReplaceProjectKey retires oldKeyID and records newKeyID for the
+	// project in one step. ErrKeyNotLive: oldKeyID is not its live key.
+	ReplaceProjectKey(ctx context.Context, project string, oldKeyID, newKeyID int64, sealed []byte) error
 }
+
+// LiveKey is an unrevoked key, as the sweep sees it.
+type LiveKey struct {
+	KeyID     int64
+	Project   string
+	CreatedAt time.Time
+}
+
+// ErrKeyNotLive is a rotation of a key that is no longer the project's.
+var ErrKeyNotLive = errors.New("neond: key is not the project's live key")
 
 // ProjectKeys is what neond needs to mint, store and open project keys.
 type ProjectKeys struct {
@@ -106,28 +121,44 @@ func (k *projectKeys) forget(project string) {
 	k.mu.Unlock()
 }
 
-// mintProjectKey creates a key scoped to project with the admin key, seals
-// it and stores it. A failure leaves the project on the admin key.
-func (s *Server) mintProjectKey(ctx context.Context, project string) error {
+// mintedKey is a key Neon just created, before neond stores it.
+type mintedKey struct {
+	ID  int64  `json:"id"`
+	Key string `json:"key"`
+}
+
+// mintAtNeon creates a key scoped to project with the admin key.
+func (s *Server) mintAtNeon(ctx context.Context, project string) (mintedKey, error) {
 	body, err := json.Marshal(map[string]string{"key_name": "gregale-neond-" + project, "project_id": project})
 	if err != nil {
-		return err
+		return mintedKey{}, err
 	}
 	code, payload, _, err := s.call(ctx, s.adminKey, http.MethodPost, "/organizations/"+s.keys.Org+"/api_keys", "", body)
 	if err != nil {
-		return err
+		return mintedKey{}, err
 	}
 	if code != http.StatusOK && code != http.StatusCreated {
-		return fmt.Errorf("neond: mint key for %s: Neon status %d", project, code)
+		return mintedKey{}, fmt.Errorf("neond: mint key for %s: Neon status %d", project, code)
 	}
-	var minted struct {
-		ID  int64  `json:"id"`
-		Key string `json:"key"`
-	}
+	var minted mintedKey
 	if len(payload) > MaxResponseBytes || json.Unmarshal(payload, &minted) != nil || minted.ID <= 0 || minted.Key == "" {
-		return fmt.Errorf("neond: mint key for %s: unreadable Neon reply", project)
+		return mintedKey{}, fmt.Errorf("neond: mint key for %s: unreadable Neon reply", project)
 	}
-	sealed, err := secretbox.SealBytes(s.keys.Identities[0].Recipient(), sealNamespace, []byte(minted.Key), maxKeyBytes)
+	return minted, nil
+}
+
+func (s *Server) seal(key string) ([]byte, error) {
+	return secretbox.SealBytes(s.keys.Identities[0].Recipient(), sealNamespace, []byte(key), maxKeyBytes)
+}
+
+// mintProjectKey creates a key scoped to project with the admin key, seals
+// it and stores it. A failure leaves the project on the admin key.
+func (s *Server) mintProjectKey(ctx context.Context, project string) error {
+	minted, err := s.mintAtNeon(ctx, project)
+	if err != nil {
+		return err
+	}
+	sealed, err := s.seal(minted.Key)
 	if err == nil {
 		err = s.keys.Store.InsertProjectKey(ctx, project, minted.ID, sealed)
 	}

@@ -86240,6 +86240,8 @@ components:
         ai_auto_prompt_cache:
           type: boolean
           description: Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none.
+        ai_semantic_cache:
+          $ref: '#/components/schemas/OutboundAISemanticCache'
         ai_trace_max_calls:
           type: integer
           format: int64
@@ -86362,6 +86364,8 @@ components:
             none: after a system prompt or tool list seen again within five minutes, and after the last message of a
             conversation that carries earlier turns or names X-Gregale-AI-Session. Prompts under about 1,024 tokens are not
             marked; the response names the added breakpoints in X-Gregale-AI-Prompt-Cache. Requires ai_provider.
+        semantic_cache:
+          $ref: '#/components/schemas/OutboundAISemanticCache'
         trace_max_calls:
           type: integer
           format: int64
@@ -87438,6 +87442,27 @@ components:
         judge_integration_id: { type: string, format: uuid }
         judge_model: { type: string, minLength: 1, maxLength: 200 }
         rubric: { type: string, maxLength: 1000, description: What a good answer does for this app, given to the judge. }
+    OutboundAISemanticCache:
+      type: object
+      description: >-
+        Answer a call from the response cache when its last user turn means the same as a cached call's and everything
+        else matches exactly. Pro and Scale plans; needs ai_provider and a response cache TTL. The
+        embedding integration, one of the account's enabled OpenAI or Gemini integrations, embeds each candidate call on
+        its own key, metered under the caller semantic_cache. A hit carries X-Gregale-AI-Cache semantic and
+        X-Gregale-AI-Similarity.
+      required: [enabled, embedding_integration_id, embedding_model]
+      properties:
+        enabled: { type: boolean }
+        threshold_basis_points:
+          type: integer
+          minimum: 8500
+          maximum: 9900
+          description: Cosine similarity a hit needs, in basis points. Absent or 0 means 9500.
+        embedding_integration_id: { type: string, format: uuid }
+        embedding_model: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$' }
+        share_across_users:
+          type: boolean
+          description: Let calls of different end users (X-Gregale-AI-User) share answers. Off, each end user has their own.
     PutOutboundAIFeedbackRequest:
       type: object
       description: A rating of one logged call. A later rating replaces the earlier one.
@@ -90538,7 +90563,7 @@ components:
       type: object
       required: [reason, held_at]
       properties:
-        reason: { type: string, enum: [egress_fanout, egress_flood, operator] }
+        reason: { type: string, enum: [cpu_sustained, egress_fanout, egress_flood, operator] }
         held_at: { type: string, format: date-time }
 
     AccountAbuseHoldAction:
@@ -113179,6 +113204,16 @@ components:
         observed: { type: integer, format: int64 }
         docs_url: { type: string }
 
+    FeatureHint:
+      description: "One Gregale behavior or feature that applies to the scanned source: what the plan will do, how to change it, and the exact CLI commands. IDs are stable."
+      type: object
+      required: [id, applied]
+      properties:
+        id: { type: string, description: "Stable hint ID, such as health-default-path or public-needs-api-key" }
+        workloads: { type: array, items: { type: string }, description: "Workloads the hint is about" }
+        applied: { type: string, description: "What Gregale will do with this source" }
+        change: { type: string, description: "How to change it" }
+        commands: { type: array, items: { type: string }, description: "Exact gregale commands; <placeholders> need a value" }
     PlanResponse:
       description: "Dry-run scan response."
       type: object
@@ -113222,6 +113257,10 @@ components:
         warnings:
           type: array
           items: { type: string }
+        feature_hints:
+          type: array
+          description: "Gregale behaviors and features that apply to the scanned source, with the commands that change them."
+          items: { $ref: '#/components/schemas/FeatureHint' }
         detection_warnings:
           type: array
           description: "Structured skipped/merged detector decisions available to explain-mode clients."
@@ -138650,6 +138689,17 @@ components:
       required:
       - expected_revision
       properties:
+        tables:
+          type: array
+          maxItems: 16
+          uniqueItems: true
+          description: Exact public table names to inspect, bypassing the default discovery page. Mutually exclusive with search.
+          items: { type: string, pattern: "^[a-z][a-z0-9_]{0,62}$" }
+        search:
+          type: string
+          maxLength: 63
+          pattern: "^[a-z0-9_]*$"
+          description: Discover names containing this literal text before applying the metadata limit. Mutually exclusive with tables.
         expected_revision:
           type: integer
           format: int64
@@ -138672,6 +138722,14 @@ components:
       - tables
       - created_at
       properties:
+        requested_tables:
+          type: array
+          maxItems: 16
+          items: { type: string }
+          description: Exact discovery selection retained across queueing and worker completion.
+        search:
+          type: string
+          description: Literal discovery name filter.
         capacity:
           $ref: '#/components/schemas/DataPipelineCapacity'
         id:
@@ -138963,6 +139021,8 @@ components:
       - verification
       - created_at
       properties:
+        wal_retention:
+          $ref: '#/components/schemas/DataPipelineWALRetention'
         applied_through_at:
           type: string
           format: date-time
@@ -139006,7 +139066,7 @@ components:
             type: string
             minLength: 1
             maxLength: 256
-          minItems: 1
+          minItems: 0
           maxItems: 32
           uniqueItems: true
         desired_state:
@@ -139062,6 +139122,15 @@ components:
         created_at:
           type: string
           format: date-time
+    DataPipelineWALRetention:
+      description: Fresh source-specific WAL headroom. The remaining-time estimate uses sampled cluster WAL generation and does not guarantee when a slot will be invalidated.
+      type: object
+      additionalProperties: false
+      required: [limit_bytes, remaining_bytes]
+      properties:
+        limit_bytes: { type: integer, format: int64, minimum: 1 }
+        remaining_bytes: { type: integer, format: int64, minimum: 0 }
+        estimated_seconds_remaining: { type: integer, format: int64, minimum: 0 }
     DataPipelineHealth:
       description: Read-time freshness assessment and safe recovery guidance. Unconfirmed checkpoints can occur on idle sources.
       type: object

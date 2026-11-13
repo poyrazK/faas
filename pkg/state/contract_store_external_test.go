@@ -21,6 +21,7 @@ type contractTestStore interface {
 	cloneFlagFixtureStore
 	projectEnvironmentQualificationStore
 	state.AccountAbuseHoldStore
+	state.AccountAbuseStrikeStore
 	state.AgentClientStore
 	state.OrgAgentStore
 	state.KeyProjectLimitStore
