@@ -33,7 +33,7 @@ func TestErrorRequestIDAfterReadRetries(t *testing.T) {
 				w.Header().Set("Retry-After", "0")
 				w.Header().Set("Content-Type", "application/problem+json")
 				w.WriteHeader(http.StatusServiceUnavailable)
-				_ = json.NewEncoder(w).Encode(api.Problem{Status: 503, Code: "upstream_busy", Title: "Try later"})
+				_ = json.NewEncoder(w).Encode(api.Problem{Status: 503, Code: "service_unavailable", Title: "Try later"})
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
@@ -43,7 +43,7 @@ func TestErrorRequestIDAfterReadRetries(t *testing.T) {
 				RequestID string `json:"request_id"`
 				ExitCode  int    `json:"exit_code"`
 			}
-			if code != 3 || requests.Load() != 2 || stdout != "" || json.Unmarshal([]byte(stderr), &got) != nil || got.RequestID != finalID || got.Code != "upstream_busy" || got.ExitCode != 3 {
+			if code != 3 || requests.Load() != 2 || stdout != "" || json.Unmarshal([]byte(stderr), &got) != nil || got.RequestID != finalID || got.Code != "service_unavailable" || got.ExitCode != 3 {
 				t.Fatalf("wrong final-attempt diagnostic: exit=%d requests=%d stdout=%q stderr=%q", code, requests.Load(), stdout, stderr)
 			}
 			if finalID == "" && strings.Contains(stderr, `"request_id"`) {
