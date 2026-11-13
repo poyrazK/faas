@@ -800,11 +800,14 @@ With a switch ID in place of --operation, it shows a rollback that restores the 
 
 Call an app or function once to smoke-test it
 
-`gregale invoke [<slug>] [--async] [--payload <J|@file|->] [--method <METHOD>] [--path <PATH>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>]`
+`gregale invoke [<slug>] [--async] [--idempotency-key <KEY>] [--payload <J|@file|->] [--method <METHOD>] [--path <PATH>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>]`
+
+Reuse an idempotency key only with the same async request within the server&#39;s 24-hour replay window. Use a new key for new work.
 
 | Flag | Meaning | |
 |---|---|---|
 | `--async` | return immediately with status_url |  |
+| `--idempotency-key <KEY>` | stable key for retrying the same submission within server retention; requires --async |  |
 | `--payload <J|@file|->` | JSON payload (inline \| @file \| -) |  |
 | `--method <METHOD>` | HTTP method (default POST, or the function handler&#39;s) |  |
 | `--path <PATH>` | URL path (default /, or the function handler&#39;s) |  |

@@ -4828,6 +4828,7 @@ var cliCommands = []cliCommand{
 		Short:   "Call an app or function once to smoke-test it",
 		Flags: []cliFlag{
 			{Name: "async", Short: "return immediately with status_url"},
+			{Name: "idempotency-key", Short: "stable key for retrying the same submission within server retention; requires --async", Value: "KEY"},
 			{Name: "payload", Short: "JSON payload (inline | @file | -)", Value: "J|@file|-"},
 			{Name: "method", Short: "HTTP method (default POST, or the function handler's)", Value: "METHOD"},
 			{Name: "path", Short: "URL path (default /, or the function handler's)", Value: "PATH"},
@@ -4838,6 +4839,7 @@ var cliCommands = []cliCommand{
 			{Name: "work-fairness-key", Short: "JSON scalar fairness group for async invocation", Value: "JSON"},
 		},
 		Positionals: []string{"[<slug>]"},
+		HelpNotes:   []string{"Reuse an idempotency key only with the same async request within the server's 24-hour replay window. Use a new key for new work."},
 	},
 	{
 		Name:    "run",

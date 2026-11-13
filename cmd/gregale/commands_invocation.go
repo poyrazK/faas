@@ -28,6 +28,7 @@ import (
 func cmdInvoke(args []string) int {
 	fs := newFlagSet("invoke", flag.ContinueOnError)
 	async := fs.Bool("async", false, "fire-and-forget via /invoke/async; returns the status_url")
+	idempotencyKey := fs.String("idempotency-key", "", "stable key for retrying the same async submission (requires --async)")
 	payload := fs.String("payload", "", "JSON payload (or @file for file body, - for stdin)")
 	method := fs.String("method", "", "HTTP method override (defaults to handler's)")
 	path := fs.String("path", "", "URL path override (defaults to handler's)")
@@ -43,8 +44,12 @@ func cmdInvoke(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
+	key, err := invokeIdempotencyKey(fs, *async, *idempotencyKey)
+	if err != nil {
+		return printErr("Invalid --idempotency-key", err)
+	}
 	if len(positional) > 1 {
-		PrintUsage(os.Stderr, "usage: gregale invoke [--async] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>]", "invoke")
+		PrintUsage(os.Stderr, "usage: gregale invoke [--async [--idempotency-key KEY]] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>]", "invoke")
 		return 1
 	}
 	slug := ""
@@ -55,7 +60,7 @@ func cmdInvoke(args []string) int {
 		slug, resolveErr = resolveRequiredAppSlug("")
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, "usage: gregale invoke [--async] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>] (or run `gregale link <project-slug>`)", "invoke")
+				PrintUsage(os.Stderr, "usage: gregale invoke [--async [--idempotency-key KEY]] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>] (or run `gregale link <project-slug>`)", "invoke")
 				return 1
 			}
 			return printErr("Could not read local project context", resolveErr)
@@ -96,7 +101,7 @@ func cmdInvoke(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if *async {
-		resp, err := client.InvokeAppAsync(context.Background(), slug, req)
+		resp, err := client.InvokeAppAsync(api.ContextWithIdempotencyKey(context.Background(), key), slug, req)
 		if err != nil {
 			return printErr("Invoke (async) failed", err)
 		}
