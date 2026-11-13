@@ -104,7 +104,10 @@ type AgentApprovalResponse struct {
 	Status    string `json:"status"`
 	ReviewURL string `json:"review_url,omitempty"`
 	// Agent names the connection: its client name or key label.
-	Agent     string `json:"agent,omitempty"`
+	Agent string `json:"agent,omitempty"`
+	// ConnectionID is the id of the agent connection that asked, as
+	// GET /v1/agent-connections lists it.
+	ConnectionID string `json:"connection_id,omitempty"`
 	CreatedAt string `json:"created_at"`
 	ExpiresAt string `json:"expires_at"`
 	DecidedAt string `json:"decided_at,omitempty"`
