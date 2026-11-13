@@ -46,9 +46,11 @@ func enqueueBacklogMessage(t *testing.T, store state.Store, app state.App, sourc
 		Payload: json.RawMessage(`{"message":"` + uuid.NewString() + `"}`), DueAt: time.Now().UTC(), AdmissionMaxBacklogBytes: maxBytes})
 }
 
-// The byte cap covers the account's pending queue messages across its apps:
-// a send is refused while they hold the cap, and admitted again once one
-// settles. Other accounts and other sources are unaffected.
+// The byte cap covers the account's pending queue messages, async
+// invocations and delayed tasks across its apps (ADR-20261022105723
+// amendment 2026-11-13): a send is refused while they hold the cap, and
+// admitted again once one settles. Other accounts and sources outside the
+// pool (cron) are unaffected.
 func testQueueBacklogBytesCap(t *testing.T, store state.Store) {
 	ctx := t.Context()
 	account := seedQueueBacklogAccount(t, store, api.PlanPro)
@@ -67,14 +69,58 @@ func testQueueBacklogBytesCap(t *testing.T, store state.Store) {
 	if _, err := enqueueBacklogMessage(t, store, foreign, state.InvocationQueue, 1); err != nil {
 		t.Fatalf("another account's send: %v", err)
 	}
-	if _, err := enqueueBacklogMessage(t, store, sibling, state.InvocationDelayedTask, 1); err != nil {
-		t.Fatalf("a delayed task does not count queue bytes: %v", err)
+	for _, source := range []state.InvocationSource{state.InvocationDelayedTask, state.InvocationAsyncInvoke} {
+		if _, err := enqueueBacklogMessage(t, store, sibling, source, 1); !errors.As(err, &backlog) {
+			t.Fatalf("%s into a full account = %v, want InvocationBacklogBytesError", source, err)
+		}
+	}
+	if _, err := enqueueBacklogMessage(t, store, sibling, state.InvocationCron, 1); err != nil {
+		t.Fatalf("a cron run is outside the byte pool: %v", err)
 	}
 	if err := store.CancelInvocation(ctx, first.ID); err != nil {
 		t.Fatal(err)
 	}
+	async, err := enqueueBacklogMessage(t, store, sibling, state.InvocationAsyncInvoke, 1)
+	if err != nil {
+		t.Fatalf("async invoke after the backlog drained: %v", err)
+	}
+	// The async invocation's bytes now hold the pool for queue sends too.
+	if _, err := enqueueBacklogMessage(t, store, app, state.InvocationQueue, 1); !errors.As(err, &backlog) {
+		t.Fatalf("send behind a pending async invocation = %v, want InvocationBacklogBytesError", err)
+	}
+	if err := store.CancelInvocation(ctx, async.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := enqueueBacklogMessage(t, store, sibling, state.InvocationQueue, 1); err != nil {
 		t.Fatalf("send after the backlog drained: %v", err)
+	}
+}
+
+func TestMemAsyncInvocationDepthCap(t *testing.T) {
+	testAsyncInvocationDepthCap(t, state.NewMemStore())
+}
+
+// Unlocked admission still applies the per-app pending cap to async
+// invocations, per source: the app's queue messages do not count against it.
+func testAsyncInvocationDepthCap(t *testing.T, store state.Store) {
+	app := seedQueueBacklogApp(t, store, seedQueueBacklogAccount(t, store, api.PlanPro))
+	enqueue := func(source state.InvocationSource) error {
+		t.Helper()
+		_, err := store.EnqueueInvocation(t.Context(), state.Invocation{AppID: app.ID, AccountID: app.AccountID, Source: source,
+			Payload: json.RawMessage(`{}`), DueAt: time.Now().UTC(), AdmissionMaxPending: 2, AdmissionUnlocked: true})
+		return err
+	}
+	for range 2 {
+		if err := enqueue(state.InvocationAsyncInvoke); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var depth *state.InvocationDepthError
+	if err := enqueue(state.InvocationAsyncInvoke); !errors.As(err, &depth) || depth.Limit != 2 || depth.Observed != 2 {
+		t.Fatalf("third async invocation = %v, want InvocationDepthError 2/2", err)
+	}
+	if err := enqueue(state.InvocationQueue); err != nil {
+		t.Fatalf("a queue message is counted separately: %v", err)
 	}
 }
 

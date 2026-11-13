@@ -8077,8 +8077,11 @@ type Querier interface {
 	StoredWorkflowLiveRunState(ctx context.Context, db DBTX, id pgtype.UUID) (StoredWorkflowLiveRunStateRow, error)
 	StoredWorkflowLiveStep(ctx context.Context, db DBTX, arg StoredWorkflowLiveStepParams) ([]StoredWorkflowLiveStepRow, error)
 	StoredWorkflowManifest(ctx context.Context, db DBTX, appID pgtype.UUID) (StoredWorkflowManifestRow, error)
+	// ADR-20261022105723 (amended 2026-11-13): the account's pending queue,
+	// async and delayed-task payload bytes, one pool against
+	// MaxQueueBacklogBytesPerAccount.
+	SumAccountBacklogBytes(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	SumAccountCreditRefundReversal(ctx context.Context, db DBTX, arg SumAccountCreditRefundReversalParams) (int64, error)
-	SumAccountQueueBacklogBytes(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	// ADR-20261022105723: every pending and dispatching row of the app and
 	// source, production or not, so the sum bounds the production backlog from
 	// above.

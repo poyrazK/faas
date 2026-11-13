@@ -8805,9 +8805,12 @@ WHERE app_id=sqlc.arg(app_id)::uuid
 GROUP BY source
 ORDER BY source;
 
--- name: SumAccountQueueBacklogBytes :one
+-- name: SumAccountBacklogBytes :one
+-- ADR-20261022105723 (amended 2026-11-13): the account's pending queue,
+-- async and delayed-task payload bytes, one pool against
+-- MaxQueueBacklogBytesPerAccount.
 SELECT coalesce(sum(bytes), 0)::bigint FROM invocation_backlog_counters
-WHERE account_id=sqlc.arg(account_id)::uuid AND source='queue';
+WHERE account_id=sqlc.arg(account_id)::uuid AND source IN ('queue','async_invoke','delayed_task');
 
 -- name: ExpirePendingQueueMessages :many
 -- ADR-20261022105723: a pending queue message past its plan's retention

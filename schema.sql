@@ -20261,7 +20261,8 @@ $$;
 CREATE FUNCTION public.invocation_backlog_bytes(source text, payload jsonb) RETURNS bigint
     LANGUAGE sql IMMUTABLE
     AS $$
-    SELECT CASE WHEN source = 'queue' THEN octet_length(payload::text)::bigint ELSE 0 END
+    SELECT CASE WHEN source IN ('queue', 'async_invoke', 'delayed_task')
+        THEN octet_length(payload::text)::bigint ELSE 0 END
 $$;
 
 

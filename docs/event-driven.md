@@ -538,8 +538,24 @@ A send to an app whose pending messages are at its plan's limit fails with
 
 A send while the account's pending messages hold its plan's byte limit fails
 with `403 plan_queue_backlog_bytes`, carrying the limit and the observed bytes.
-The limit counts every app of the account. Two sends to different apps at the
+The limit counts every app of the account, and pending async invocations and
+delayed tasks share it with queue messages. Two sends to different apps at the
 same moment may pass it by their own sizes.
+
+### Async backlog
+
+Async invocations (`gregale invoke --async`, async routes and a function's
+`send()`) wait in the same kind of backlog as queue messages, so they meet the
+same plan limits: an app holds at most its plan's queue depth of pending async
+invocations, and their payload bytes count towards the account's queue backlog.
+At either limit a new async invocation fails with `429 plan_async_backlog` or
+`plan_queue_backlog_bytes` and `Retry-After: 60`; nothing is queued. Retrying an
+async route request with the same `Idempotency-Key` still answers with the
+invocation it already accepted. The count is taken without serializing the
+app's enqueues, so concurrent requests may pass the limit by the requests in
+flight. A function's `send()` is also held to the target app's plan request
+rate (`429 function_send_rate_limited`). Delayed tasks keep their own count
+limit and share the account's byte limit.
 
 ### Message expiry
 

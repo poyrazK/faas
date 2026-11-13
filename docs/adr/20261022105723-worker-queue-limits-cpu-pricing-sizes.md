@@ -144,3 +144,32 @@ pending and 100,000 dead-lettered messages:
   `invocations_queue_pending_created_idx` (6 ms). The legacy poller for
   triggers without a binding, shared with delayed tasks, still sorts the
   app's unbound pending rows (309 ms at 20,000); new queues use bindings.
+
+## Amendment 2026-11-13: async work meets the queue limits
+
+Event-driven hunts #7 and #15 found that plain async invocations (API async
+invoke, async routes, a function's `send()`) had no pending cap at all, and
+delayed tasks only a count cap: a function sending to itself, or a public async
+route, could grow the backlog without bound. The owner chose to reuse the queue
+limits rather than add new numbers.
+
+- **Per-app depth.** Async invocations are admitted against `MaxQueueDepth`
+  for source `async_invoke` (Hobby 10,000, Pro 100,000, Scale 1,000,000) and
+  answer `429 plan_async_backlog` with `Retry-After: 60` at the cap. Event
+  deliveries, which are `async_invoke` rows too, count towards the app's
+  backlog but keep their own event caps; they are not refused here.
+- **Account bytes.** `invocation_backlog_bytes` now counts `async_invoke` and
+  `delayed_task` payloads as well as `queue`, and the account's pending bytes
+  across the three are one pool against `MaxQueueBacklogBytesPerAccount`.
+  Migration `20261113190512417` holds writers off while it changes the
+  function and recounts the newly counted sources' pending rows, so a later
+  decrement never takes a counter below the table.
+- **No serialization.** Async producers count without the app lock queue
+  sends take (`Invocation.AdmissionUnlocked`); concurrent requests may pass
+  the cap by the requests in flight. An idempotent async route retry at the
+  cap answers with the invocation it already accepted.
+- **`send()` rate.** Sends enter from inside the platform, past the edge's
+  account and app limiters, so the gateway holds each target app's sends to
+  its plan's `RateLimitRPS`/`RateLimitBurst` (`429 function_send_rate_limited`).
+  A send's completion invocation is enqueued with its terminal transition and
+  is not capped: there is at most one per admitted send.

@@ -35,7 +35,7 @@ func (e *InvocationBacklogBytesError) Unwrap() error { return ErrQuotaExceeded }
 // KEY SHARE on the row, and two transactions upgrading it to FOR UPDATE
 // would deadlock.
 func lockInvocationAdmissionAppDB(ctx context.Context, tx pgx.Tx, inv Invocation) error {
-	if inv.AdmissionMaxPending <= 0 {
+	if inv.AdmissionMaxPending <= 0 || inv.AdmissionUnlocked {
 		return nil
 	}
 	app, err := productionWorkUUID(inv.AppID)
@@ -70,7 +70,7 @@ func checkInvocationAdmissionDepthDB(ctx context.Context, tx pgx.Tx, inv Invocat
 		if err != nil {
 			return err
 		}
-		held, err := q.SumAccountQueueBacklogBytes(ctx, tx, account)
+		held, err := q.SumAccountBacklogBytes(ctx, tx, account)
 		if err != nil {
 			return err
 		}
@@ -100,14 +100,20 @@ func checkInvocationAdmissionDepthDB(ctx context.Context, tx pgx.Tx, inv Invocat
 }
 
 // backlogBytesCapApplies reports whether inv's producer set the account
-// backlog-bytes cap for a source that honours it. Queue messages count
-// towards the backlog. Inbound webhooks (ADR-20261101093517) are refused
-// while it is full but do not add to it: the backlog counter carries queue
-// payload bytes only, and an inbound body is at most api.WebhookMaxBodyBytes,
-// so the app's pending cap bounds their bytes.
+// backlog-bytes cap for a source that honours it. Queue messages, async
+// invocations and delayed tasks count towards the backlog (ADR-20261022105723
+// amendment 2026-11-13). Inbound webhooks (ADR-20261101093517) are refused
+// while it is full but do not add to it: an inbound body is at most
+// api.WebhookMaxBodyBytes, so the app's pending cap bounds their bytes.
 func backlogBytesCapApplies(inv Invocation) bool {
 	return inv.AdmissionMaxBacklogBytes > 0 &&
-		(inv.Source == InvocationQueue || inv.Source == InvocationInboundWebhook)
+		(backlogBytesSource(inv.Source) || inv.Source == InvocationInboundWebhook)
+}
+
+// backlogBytesSource reports whether a source's pending payload bytes count
+// towards the account backlog (invocation_backlog_bytes).
+func backlogBytesSource(source InvocationSource) bool {
+	return source == InvocationQueue || source == InvocationAsyncInvoke || source == InvocationDelayedTask
 }
 
 // invocationAdmissionBytes refuses a queue message or an inbound webhook
@@ -120,13 +126,14 @@ func invocationAdmissionBytes(inv Invocation, held int64) error {
 	return nil
 }
 
-// queueBacklogBytesLocked mirrors SumAccountQueueBacklogBytes under m.mu:
-// the payload bytes of the account's pending and dispatching queue rows.
-// superseded excludes rows a keep_latest admission is about to replace.
+// queueBacklogBytesLocked mirrors SumAccountBacklogBytes under m.mu: the
+// payload bytes of the account's pending and dispatching queue, async and
+// delayed-task rows. superseded excludes rows a keep_latest admission is
+// about to replace.
 func (m *MemStore) queueBacklogBytesLocked(accountID string, superseded func(Invocation) bool) int64 {
 	var held int64
 	for _, inv := range m.invocations {
-		if inv.AccountID != accountID || inv.Source != InvocationQueue ||
+		if inv.AccountID != accountID || !backlogBytesSource(inv.Source) ||
 			(inv.State != InvocationPending && inv.State != InvocationDispatching) {
 			continue
 		}
