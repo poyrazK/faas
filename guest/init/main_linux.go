@@ -97,8 +97,18 @@ func main() {
 	}
 	if err := boot(); err != nil {
 		fmt.Fprintf(os.Stderr, "guest-init: %v\n", err)
+		drainConsole(os.Stderr)
 		os.Exit(1)
 	}
+}
+
+// drainConsole waits until the console has transmitted what guest-init wrote
+// to f (tcdrain). PID 1's exit panics the kernel at once, and the panic dump
+// cut guest-init's reason line short on the serial console: "guest-init: app
+// [    3.600487] Kernel panic - not syncing: Attempted to kill init!" (Hunt 34
+// H34-35). Not a terminal: nothing to wait for.
+func drainConsole(f *os.File) {
+	_ = unix.IoctlSetInt(int(f.Fd()), unix.TCSBRK, 1)
 }
 
 func boot() error {
