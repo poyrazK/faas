@@ -13,6 +13,9 @@ Environment=FAAS_NEOND_ROLE={{ faas_box_role | default('single-box') }}
 # Project keys, sealed to the neon seal domain (its identity arrives in the
 # seal_domains role's 60-faas-seal-domain-neon.conf).
 Environment=FAAS_NEOND_ORG_ID={{ faas_neond_org_id }}
+{% if faas_neond_project_key_max_age | length > 0 %}
+Environment=FAAS_NEOND_PROJECT_KEY_MAX_AGE={{ faas_neond_project_key_max_age }}
+{% endif %}
 {% endif %}
 # neond logs in only as faas_neond (pg_ident: faas-neond -> faas_neond), which
 # reads managed_postgres_databases and nothing else.

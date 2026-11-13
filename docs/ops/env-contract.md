@@ -667,6 +667,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_NEOND_LISTEN` | neond | `dropin` |  |  | `` | ADR-20261112160000: neond's socket, unix:///run/faas/neond.sock; neond listens on a unix socket only |
 | `FAAS_NEOND_METRICS_ADDR` | neond | `default` |  |  | `` | ADR-20261112160000: optional host:port for neond's /metrics and /healthz; unset serves none |
 | `FAAS_NEOND_ORG_ID` | neond | `dropin` |  |  | `` | ADR-20261112160000 decision 3: the Neon organization the admin key's service user administers; with FAAS_SEAL_DOMAIN_NEON_IDENTITY_PATH (the neon seal domain) it turns on project keys (minted on project create, revoked on delete). Unset, every call uses the admin key |
+| `FAAS_NEOND_PROJECT_KEY_MAX_AGE` | neond | `default` |  | 2160h | `` | ADR-20261112160000 decision 3: neond's key sweep re-mints a project key once it is this old (Go duration, at least 1h). Lower it and restart neond to rotate every key on the next passes |
 | `FAAS_NEOND_ROLE` | neond | `dropin` |  |  | `` | ADR-20261112160000: the box role neond checks it runs on (control-plane or single-box) |
 | `FAAS_NODE_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, realtimed, schedd, vmmd, shared | `dropin` |  |  | `` |  |

@@ -4,9 +4,11 @@ package neondpg_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/neond"
 	"github.com/onebox-faas/faas/pkg/neond/neondpg"
 )
 
@@ -45,5 +47,30 @@ func TestStoreProjectKeys(t *testing.T) {
 	}
 	if ids, err := store.LiveProjectKeyIDs(ctx, "p-1"); err != nil || len(ids) != 1 || ids[0] != 12 {
 		t.Fatalf("live ids = %v %v", ids, err)
+	}
+
+	// Rotation swaps the live key in one statement under the one-live-key
+	// index.
+	if err := store.ReplaceProjectKey(ctx, "p-1", 12, 14, []byte("sealed-14")); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	got, ok, err = store.LiveProjectKey(ctx, "p-1")
+	if err != nil || !ok || got.KeyID != 14 || string(got.Sealed) != "sealed-14" {
+		t.Fatalf("live key after rotation = %+v %v %v", got, ok, err)
+	}
+	// Replacing a key that is no longer live, or another project's, changes
+	// nothing.
+	if err := store.ReplaceProjectKey(ctx, "p-1", 12, 15, []byte("x")); !errors.Is(err, neond.ErrKeyNotLive) {
+		t.Fatalf("stale replace = %v", err)
+	}
+	if err := store.InsertProjectKey(ctx, "p-2", 21, []byte("sealed-21")); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplaceProjectKey(ctx, "p-1", 21, 16, []byte("x")); !errors.Is(err, neond.ErrKeyNotLive) {
+		t.Fatalf("cross-project replace = %v", err)
+	}
+	live, err := store.LiveProjectKeys(ctx)
+	if err != nil || len(live) != 2 || live[0].Project != "p-1" || live[0].KeyID != 14 || live[1].KeyID != 21 || live[0].CreatedAt.IsZero() {
+		t.Fatalf("live keys = %+v %v", live, err)
 	}
 }

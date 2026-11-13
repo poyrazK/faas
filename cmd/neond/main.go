@@ -55,6 +55,7 @@ const sealIdentityEnv = "FAAS_SEAL_DOMAIN_NEON_IDENTITY_PATH"
 type config struct {
 	listen, adminKeyFile, metricsAddr string
 	org, sealIdentityFile             string
+	keyMaxAge                         time.Duration
 	callers                           []string
 	destructivePerHour                int
 }
@@ -67,6 +68,14 @@ func configFromEnv(getenv func(string) string) (config, error) {
 		org:                strings.TrimSpace(getenv("FAAS_NEOND_ORG_ID")),
 		sealIdentityFile:   getenv(sealIdentityEnv),
 		destructivePerHour: defaultDestructivePerHour,
+		keyMaxAge:          neond.DefaultSweepConfig.MaxAge,
+	}
+	if raw := getenv("FAAS_NEOND_PROJECT_KEY_MAX_AGE"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil || d < time.Hour {
+			return config{}, fmt.Errorf("neond: FAAS_NEOND_PROJECT_KEY_MAX_AGE=%q: want a duration of at least 1h", raw)
+		}
+		cfg.keyMaxAge = d
 	}
 	if (cfg.org == "") != (cfg.sealIdentityFile == "") {
 		return config{}, errors.New("neond: project keys need both FAAS_NEOND_ORG_ID and " + sealIdentityEnv + " (the neon seal domain), or neither")
@@ -139,6 +148,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if err := server.UseProjectKeys(neond.ProjectKeys{Org: cfg.org, Identities: identities, Store: neondpg.New(pool)}); err != nil {
 			return err
 		}
+		sweep := neond.DefaultSweepConfig
+		sweep.MaxAge = cfg.keyMaxAge
+		go server.RunKeySweep(ctx, sweep)
 	}
 	if err := serveMetrics(ctx, cfg.metricsAddr, reg, log); err != nil {
 		return err
