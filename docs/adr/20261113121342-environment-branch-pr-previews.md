@@ -62,11 +62,16 @@ githubd stages each previewed workload's PR head as for an app preview and calls
 field `environment_branch = true`. apid then:
 
 - checks that the scope is a live branch of the app's project made for this PR;
-- builds it as a deployment of kind `github` in that scope, so the branch's copied
-  configuration applies, exactly as for a push to a named environment;
+- builds it as a deployment of kind `preview` in that scope, so it queues behind
+  production builds, deploys no workflows or crons, and counts against the PR preview
+  share of the deploy rate, like an app preview build;
+- runs with the branch's copied configuration and does **not** apply the PR's
+  `gregale.yaml` app settings, which are stored on the production app;
 - skips the preview-app steps (`pr-preview` value sync, preview databases), which would
-  otherwise act on the production app;
-- counts it against the PR preview share of the deploy rate.
+  otherwise act on the production app.
+
+githubd's check sync reports such a build (kind `preview` on an app that is not a preview
+app, in a non-default scope) with the branch's stable URL.
 
 A PR whose project switches back to `app` mode keeps its branch until it expires.
 
