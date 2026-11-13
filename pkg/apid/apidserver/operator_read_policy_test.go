@@ -145,6 +145,7 @@ func sessionOnlyOperatorReads(tenantID string) []string {
 		"/v1/admin/obs/tenants/" + tenantID + "/360",
 		"/v1/admin/obs/tenants/" + tenantID + "/activity",
 		"/v1/admin/obs/lookup?q=" + tenantID,
+		"/v1/admin/obs/attention",
 		"/v1/admin/obs/apps/" + id,
 		"/v1/admin/obs/nodes/node-1/detail",
 		"/v1/admin/obs/nodes/events",
