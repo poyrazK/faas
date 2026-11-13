@@ -57,6 +57,10 @@ type QueueLeaseStore interface {
 	ExtendQueueLeases(ctx context.Context, accountID, appID, queueName string, receipts []string, visibilitySeconds int) (QueueLeaseOutcome, error)
 	// QueueLeasesByInstance counts unexpired leases per leasing instance.
 	QueueLeasesByInstance(ctx context.Context, appID string) (map[string]int, error)
+	// ReleaseQueueLeases returns leases whose consumer never received them
+	// to pending with their unused attempt (ADR-20261112200000). A lease
+	// that moved on since is left alone.
+	ReleaseQueueLeases(ctx context.Context, appID string, leases []QueueLease) error
 }
 
 // queueLeaseLimits validates a lease request against the account's plan and
@@ -124,13 +128,35 @@ type queueLeaseReceipt struct {
 	Attempt          int
 	ReplayGeneration int64
 	TokenHash        string
+	IssuedAt         time.Time
+}
+
+// queueLeaseExtension is how far an extend may move a lease issued at
+// issuedAt: the requested visibility, but never past the plan's async
+// deadline from the lease's issue. Consumers extend while their handler runs,
+// so without the ceiling a hung handler held its message and a concurrency
+// slot forever (queue review 2026-11-12, ADR-20261112200000). It reports
+// false once the lease has used its whole lifetime.
+func queueLeaseExtension(issuedAt, now time.Time, visibilitySeconds int, lifetime time.Duration) (int, bool) {
+	if lifetime <= 0 || issuedAt.IsZero() {
+		return visibilitySeconds, true
+	}
+	left := int(issuedAt.Add(lifetime).Sub(now) / time.Second)
+	if left <= 0 {
+		return 0, false
+	}
+	return min(visibilitySeconds, left), true
 }
 
 // queueLeaseOwned reports whether the receipt still owns the message: same
 // app and queue, the current attempt and replay generation, and a lease that
-// has not expired.
-func queueLeaseOwned(inv Invocation, accountID, appID, queueName string, r queueLeaseReceipt, digest string, now time.Time) bool {
-	return inv.AccountID == accountID && inv.AppID == appID && inv.Source == InvocationQueue && inv.QueueName == queueName &&
+// has not expired. The queue matches by the name the message was sent under,
+// or by bindingID, the production binding the path's queue name names now: a
+// lease selects a binding's messages by its identity, so messages sent before
+// the binding's queue_name was renamed must settle under the new name too.
+func queueLeaseOwned(inv Invocation, accountID, appID, queueName, bindingID string, r queueLeaseReceipt, digest string, now time.Time) bool {
+	sameQueue := inv.QueueName == queueName || (bindingID != "" && inv.QueueBindingID == bindingID)
+	return inv.AccountID == accountID && inv.AppID == appID && inv.Source == InvocationQueue && sameQueue &&
 		credentialHexMatches(credTagQueueLeaseReceipt, digest, r.TokenHash) &&
 		r.Attempt == inv.Attempts && r.ReplayGeneration == inv.ReplayGeneration &&
 		inv.State == InvocationDispatching && inv.LeaseExpiresAt != nil && inv.LeaseExpiresAt.After(now)

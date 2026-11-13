@@ -18891,6 +18891,12 @@ BEGIN
   AND environment_gitops_queue_recovery_authorized(OLD.id) THEN
   RETURN NEW;
  END IF;
+ IF OLD.retired_at IS NOT NULL AND NEW.retired_at IS NULL
+  AND (to_jsonb(NEW)-'retired_at'-'updated_at')=(to_jsonb(OLD)-'retired_at'-'updated_at')
+  AND OLD.environment_id IS NULL
+  AND current_setting('gregale.queue_binding_revive', true)=OLD.id::text THEN
+  RETURN NEW;
+ END IF;
  IF OLD.retired_at IS NOT NULL AND
   (NEW.retired_at IS DISTINCT FROM OLD.retired_at OR NEW.id IS DISTINCT FROM OLD.id
    OR NEW.account_id IS DISTINCT FROM OLD.account_id OR NEW.app_id IS DISTINCT FROM OLD.app_id

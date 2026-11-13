@@ -547,6 +547,9 @@ func writeQueueBindingMutationError(w http.ResponseWriter, acct state.Account, e
 	switch {
 	case errors.As(err, &quota):
 		api.WriteProblem(w, api.ErrPlanTriggerQuota(acct.Plan, string(quota.Scope), quota.Limit, quota.Observed))
+	case errors.Is(err, state.ErrQueueBindingKeyedWork):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "queue_binding_keyed_work", "Keyed work still queued",
+			"this push binding still holds work-policy messages, which pull leases never take; let them drain before switching to pull"))
 	case errors.Is(err, state.ErrConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Queue binding conflicts", "binding or consumer identity is already in use"))
 	case errors.Is(err, state.ErrNotFound):
