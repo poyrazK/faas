@@ -118,3 +118,12 @@ inventory assertions while native fixtures were running concurrently and a
 missing local Chromium binary. It did not pass as a complete suite; hosted CI
 provides the final integration result. These results supplement the original
 qualification above rather than replacing its historical evidence.
+
+Later integration checks reconciled the clone registry's column lists for
+`data_pipeline_schema_refreshes.read_gate` and `data_pipelines.wal_retention`,
+and regenerated the Data API runtime version from the combined deployable files.
+`TestCanonicalSchemaTablesAreCloneClassified` and the `DataAPIRuntime` contract
+tests passed after those corrections. Existing clone classifications are retained.
+Management SDK drift introduced by main's semantic-cache API was refreshed using
+the exact output of CI's pinned generators; the Node build and Python model
+round trip passed.
