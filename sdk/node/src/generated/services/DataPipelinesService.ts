@@ -246,7 +246,7 @@ export class DataPipelinesService {
   /**
    * Preview or approve an exact tenant membership change
    * @returns Problem Problem returned by changeDataPipelineTenantReaders after account, credential or pipeline validation.
-   * @returns DataPipeline Updated intent revision accepted for worker reconciliation.
+   * @returns DataPipeline Tenant membership preview saved or approved for atomic mirror policy reconciliation.
    * @throws ApiError
    */
   public static changeDataPipelineTenantReaders({
@@ -254,7 +254,7 @@ export class DataPipelinesService {
     requestBody,
   }: {
     /**
-     * Managed table mirror receiving the lifecycle request.
+     * Pipeline whose tenant membership preview or approval is being managed.
      */
     id: string,
     requestBody: DataPipelineTenantReadersRequest,

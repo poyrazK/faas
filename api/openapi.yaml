@@ -71489,7 +71489,7 @@ paths:
       schema:
         type: string
         format: uuid
-      description: Managed table mirror receiving the lifecycle request.
+      description: Pipeline whose tenant membership preview or approval is being managed.
     post:
       summary: Preview or approve an exact tenant membership change
       operationId: changeDataPipelineTenantReaders
@@ -71503,7 +71503,7 @@ paths:
               $ref: '#/components/schemas/DataPipelineTenantReadersRequest'
       responses:
         '202':
-          description: Updated intent revision accepted for worker reconciliation.
+          description: Tenant membership preview saved or approved for atomic mirror policy reconciliation.
           content:
             application/json:
               schema:
