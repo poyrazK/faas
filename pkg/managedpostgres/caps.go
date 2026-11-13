@@ -228,6 +228,13 @@ type CapLimits struct {
 	// apps are parked; data is kept, and the next sweep after reactivation
 	// lifts the suspension. No cap threshold is recorded or mailed for it.
 	Inactive bool
+
+	// SpendCapReached marks a subject whose month reached its spend cap
+	// (meterd's spend-cap hold, which counts the managed PostgreSQL charge
+	// too). Its computes are held as at the compute ceiling, as its apps are
+	// parked; a $0 cap holds them at once (billing review 2026-11-13, R7-1:
+	// ADR-20261031110037 decision 7 amended).
+	SpendCapReached bool
 }
 
 // CapCeiling returns a usage subject's limits: an account, or an
@@ -411,7 +418,7 @@ func (e *CapEnforcer) egressSpent(ctx context.Context, subjectID string, snapsho
 	}
 	billed := allowance.OverageLifted && e.egressBillingLive
 	check := egressCheck{allowance: allowance.CeilingBytes, ceiling: EgressHoldCeiling(allowance.CeilingBytes, billed), billed: billed}
-	for id, egress := range snapshot.DatabaseEgress {
+	for id, egress := range snapshot.ScopedDatabaseEgress() {
 		if egressAllowanceReached(egress, check.ceiling) {
 			if check.held == nil {
 				check.held = map[string]bool{}
@@ -802,7 +809,7 @@ func capEnforceable(database Database) bool {
 func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, databases []Database, limits CapLimits, summary *CapSweepSummary) error {
 	ceiling := limits.Ceiling
 	switch {
-	case limits.Inactive:
+	case limits.Inactive, limits.SpendCapReached:
 		// One compute-unit second: nothing remains once any is used, and a
 		// quiet database is held to a single second.
 		ceiling = 1
@@ -846,7 +853,7 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 	}
 	suspended := e.suspendPlanExcess(accountID, databases, limits, &plan, summary)
 	var failures []error
-	if e.mode == CapEnforcementOn && !limits.Inactive {
+	if e.mode == CapEnforcementOn && !limits.Inactive && !limits.SpendCapReached {
 		if err := e.recordCapEvents(ctx, accountID, now, plan, limits, summary); err != nil {
 			failures = append(failures, err)
 		}
@@ -882,7 +889,7 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 	switch {
 	case limits.Inactive:
 		all = capHoldInactive
-	case plan.suspended():
+	case plan.suspended(), limits.SpendCapReached:
 		all = capHoldCeiling
 	}
 	reasons := withEgressHolds(capHeldDatabases(databases, plan, suspended), egress)
@@ -893,7 +900,7 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 	if err := e.applyEgressQuotas(ctx, accountID, databases, egress, now, summary); err != nil {
 		failures = append(failures, err)
 	}
-	if e.mode == CapEnforcementOn && len(failures) == 0 && !limits.Inactive {
+	if e.mode == CapEnforcementOn && len(failures) == 0 && !limits.Inactive && !limits.SpendCapReached {
 		e.notifyCapEvent(ctx, accountID, now, summary)
 		if all == capHoldNone {
 			e.noticeEgressHold(ctx, accountID, now, egress, summary)

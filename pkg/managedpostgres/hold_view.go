@@ -12,6 +12,9 @@ type HoldInputs struct {
 	// Mode is the compute cap enforcement mode; only on holds anything.
 	Mode     CapEnforcementMode
 	Inactive bool
+	// SpendCapReached holds every database at the compute ceiling while the
+	// subject's month is at its spend cap (CapLimits.SpendCapReached).
+	SpendCapReached bool
 	// ComputeUsed and ComputeCeiling are the subject's month-to-date compute
 	// and the ceiling its running databases stop at (zero: none).
 	ComputeUsed, ComputeCeiling int64
@@ -51,7 +54,7 @@ func SubjectHold(in HoldInputs) string {
 	switch {
 	case in.Inactive:
 		return api.ManagedPostgresHoldInactive
-	case in.ComputeCeiling > 0 && in.ComputeUsed >= in.ComputeCeiling:
+	case in.SpendCapReached, in.ComputeCeiling > 0 && in.ComputeUsed >= in.ComputeCeiling:
 		return api.ManagedPostgresHoldComputeCeiling
 	default:
 		return ""

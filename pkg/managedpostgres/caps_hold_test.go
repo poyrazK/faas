@@ -88,6 +88,8 @@ func TestCapEnforcerHoldsAndReleases(t *testing.T) {
 			held: map[string]bool{"proj-a": true, "proj-b": true}, wantChanges: map[string]bool{"proj-a": false, "proj-b": false}, wantSummary: [4]int{0, 0, 2, 0}},
 		{name: "an inactive subject is held", mode: CapEnforcementOn, limits: CapLimits{Allowance: 5 * hour, Ceiling: 5 * hour, Inactive: true},
 			wantChanges: map[string]bool{"proj-a": true, "proj-b": true}, wantSummary: [4]int{2, 2, 0, 0}},
+		{name: "a subject at its spend cap is held", mode: CapEnforcementOn, limits: CapLimits{Allowance: 5 * hour, Ceiling: 10 * hour, Overage: true, SpendCapReached: true},
+			wantChanges: map[string]bool{"proj-a": true, "proj-b": true}, wantSummary: [4]int{2, 2, 0, 0}},
 		{name: "an uncapped subject is released", mode: CapEnforcementOn, limits: CapLimits{},
 			held: map[string]bool{"proj-a": true}, wantChanges: map[string]bool{"proj-a": false}, wantSummary: [4]int{0, 0, 1, 0}},
 		{name: "only the database past its plan is held", mode: CapEnforcementOn, planExcess: CapEnforcementOn,

@@ -83,6 +83,37 @@ func (q *Queries) ListManagedPostgresOveragePending(ctx context.Context, db DBTX
 	return items, nil
 }
 
+const managedPostgresLiveOverageMillicents = `-- name: ManagedPostgresLiveOverageMillicents :one
+SELECT
+    COALESCE((SELECT sum(d.delivered_millicents) FROM managed_postgres_overage_deliveries d
+        WHERE d.subject_id = $1::uuid AND d.period_start = $2::timestamptz
+          AND d.live), 0)::bigint AS delivered_millicents,
+    COALESCE((SELECT sum(greatest(p.target_millicents - p.from_millicents, 0)) FROM managed_postgres_overage_pending p
+        WHERE p.subject_id = $1::uuid AND p.period_start = $2::timestamptz
+          AND p.live), 0)::bigint AS pending_millicents
+`
+
+type ManagedPostgresLiveOverageMillicentsParams struct {
+	SubjectID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+}
+
+type ManagedPostgresLiveOverageMillicentsRow struct {
+	DeliveredMillicents int64
+	PendingMillicents   int64
+}
+
+// Billing review 2026-11-13 (R7-1): the subject's live managed PostgreSQL
+// overage charge for the month, which the spend cap counts like compute,
+// egress and object storage: delivered, and reserved in steps not yet
+// finished (their target past their starting point).
+func (q *Queries) ManagedPostgresLiveOverageMillicents(ctx context.Context, db DBTX, arg ManagedPostgresLiveOverageMillicentsParams) (ManagedPostgresLiveOverageMillicentsRow, error) {
+	row := db.QueryRow(ctx, managedPostgresLiveOverageMillicents, arg.SubjectID, arg.PeriodStart)
+	var i ManagedPostgresLiveOverageMillicentsRow
+	err := row.Scan(&i.DeliveredMillicents, &i.PendingMillicents)
+	return i, err
+}
+
 const managedPostgresOverageDelivered = `-- name: ManagedPostgresOverageDelivered :one
 SELECT d.live, d.billed_unit_seconds, d.delivered_millicents, d.updated_at, d.billed_storage_byte_seconds,
     d.billed_egress_bytes
