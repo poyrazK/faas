@@ -3937,6 +3937,7 @@ type DataPipeline struct {
 	SchemaChange         []byte
 	VerificationProgress []byte
 	ReaderChange         []byte
+	WalRetention         []byte
 }
 
 type DataPipelineAlert struct {
@@ -3990,6 +3991,7 @@ type DataPipelineSchemaRefresh struct {
 	Attempt    int32
 	WakeID     pgtype.UUID
 	CreatedAt  pgtype.Timestamptz
+	ReadGate   bool
 }
 
 type DataPipelineSetup struct {

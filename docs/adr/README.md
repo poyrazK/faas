@@ -2108,6 +2108,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1500: Source-built apps run on the shared runtime base](1500-shared-runtime-source-apps.md)
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
 - [ADR-1591: Managed Postgres data pipelines](1591-managed-postgres-data-pipelines.md)
+- [ADR-20261112220000: Pipeline findings remediation](20261112220000-pipeline-findings-remediation.md) — implemented and locally verified; atomic read-hook grants and runtime refresh, pause and copy monitoring, final-reader revocation, queued cancellation, ordered verification and CLI recovery safeguards; production disabled
+- [ADR-20261112202000: Pipeline retention, read availability and selected discovery](20261112202000-pipeline-retention-read-availability-and-discovery.md) — source-specific WAL warning windows, explicit unavailable mirror reads and bounded discovery of exact table selections; production disabled
 - [ADR-20261105103642: Pipeline health and verification pause handling](20261105103642-pipeline-health-and-verification-pause.md) — local/staging; catch-up health stays pending, verification admission honors pause intent, and key-limit recovery is actionable
 - [ADR-20261105110155: Pipeline worker deployment and recovery](20261105110155-pipeline-worker-deployment-recovery.md) — optional workers converge on deployment and recover from catalog outages
 - [ADR-20261105115244: Pipeline check contention and pilot refresh](20261105115244-pipeline-check-contention-and-pilot-refresh.md) — serialize shared checks, normalize UUIDs, retain poll state, and refresh alert scope

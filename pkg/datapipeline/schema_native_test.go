@@ -39,7 +39,7 @@ func assertNativeSchemaEvolution(t *testing.T, ctx context.Context, store *Postg
 		t.Fatalf("missing supported preview: %+v", p)
 	}
 	first := pending.SchemaChange.ID
-	if status, body := old.request("GET", "alice", "id=eq.1&select=id,total", ""); status != 200 || strings.TrimSpace(body) != "[]" {
+	if status, body := old.request("GET", "alice", "id=eq.1&select=id,total", ""); status != 503 || !strings.Contains(body, "mirror_unavailable") {
 		t.Fatalf("pending schema exposed rows: %d %s", status, body)
 	}
 	var added bool
@@ -152,7 +152,7 @@ func assertNativeSchemaEvolution(t *testing.T, ctx context.Context, store *Postg
 	if fresh.fingerprint == "" || fresh.fingerprint == old.fingerprint {
 		t.Fatal("runtime contract did not refresh")
 	}
-	if status, body := fresh.request("GET", "alice", "id=eq.1&select=id,extra_note,also_note,during_refresh", ""); status != 200 || strings.TrimSpace(body) != "[]" {
+	if status, body := fresh.request("GET", "alice", "id=eq.1&select=id,extra_note,also_note,during_refresh", ""); status != 503 || !strings.Contains(body, "mirror_unavailable") {
 		t.Fatalf("reads reopened before refresh acknowledgement: %d %s", status, body)
 	}
 	ready = true

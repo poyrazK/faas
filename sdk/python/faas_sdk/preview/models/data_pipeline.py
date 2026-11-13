@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.data_pipeline_capacity import DataPipelineCapacity
     from ..models.data_pipeline_health import DataPipelineHealth
+    from ..models.data_pipeline_wal_retention import DataPipelineWALRetention
 
 
 T = TypeVar("T", bound="DataPipeline")
@@ -41,6 +42,9 @@ class DataPipeline:
     tables_ready: int
     verification: DataPipelineVerification
     created_at: datetime.datetime
+    wal_retention: DataPipelineWALRetention | Unset = UNSET
+    """Fresh source-specific WAL headroom. The remaining-time estimate uses sampled cluster WAL generation and does
+    not guarantee when a slot will be invalidated."""
     applied_through_at: datetime.datetime | Unset = UNSET
     """Conservative source checkpoint time confirmed applied by the destination replication origin. Historical
     evidence, not measured time lag."""
@@ -85,6 +89,10 @@ class DataPipeline:
         verification: str = self.verification
 
         created_at = self.created_at.isoformat()
+
+        wal_retention: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.wal_retention, Unset):
+            wal_retention = self.wal_retention.to_dict()
 
         applied_through_at: str | Unset = UNSET
         if not isinstance(self.applied_through_at, Unset):
@@ -131,6 +139,8 @@ class DataPipeline:
                 "created_at": created_at,
             }
         )
+        if wal_retention is not UNSET:
+            field_dict["wal_retention"] = wal_retention
         if applied_through_at is not UNSET:
             field_dict["applied_through_at"] = applied_through_at
         if health is not UNSET:
@@ -152,6 +162,7 @@ class DataPipeline:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.data_pipeline_capacity import DataPipelineCapacity
         from ..models.data_pipeline_health import DataPipelineHealth
+        from ..models.data_pipeline_wal_retention import DataPipelineWALRetention
 
         d = dict(src_dict)
         observed_revision = d.pop("observed_revision")
@@ -183,6 +194,13 @@ class DataPipeline:
         verification = check_data_pipeline_verification(d.pop("verification"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _wal_retention = d.pop("wal_retention", UNSET)
+        wal_retention: DataPipelineWALRetention | Unset
+        if isinstance(_wal_retention, Unset):
+            wal_retention = UNSET
+        else:
+            wal_retention = DataPipelineWALRetention.from_dict(_wal_retention)
 
         _applied_through_at = d.pop("applied_through_at", UNSET)
         applied_through_at: datetime.datetime | Unset
@@ -239,6 +257,7 @@ class DataPipeline:
             tables_ready=tables_ready,
             verification=verification,
             created_at=created_at,
+            wal_retention=wal_retention,
             applied_through_at=applied_through_at,
             health=health,
             capacity=capacity,

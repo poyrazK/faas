@@ -6,6 +6,7 @@ import { SignJWT, jwtVerify } from 'jose'
 import { runtimeConfig } from '../config.mjs'
 import { inspect, fingerprint } from '../types.mjs'
 import { createServer } from '../server.mjs'
+import { configurePipelineReadGate } from '../pipeline-read-gate.mjs'
 
 const reserve = async () => {
   const listener = net.createServer()
@@ -15,16 +16,29 @@ const reserve = async () => {
   return port
 }
 const config = runtimeConfig(process.env)
+await configurePipelineReadGate(config)
 config.snapshot = await inspect(config.connection, config.schemas)
 config.functions = config.snapshot.functions
 config.fingerprint = fingerprint(config.snapshot)
 const port = await reserve(), adminPort = await reserve()
 const engine = spawn(process.env.POSTGREST_BINARY, [], { env: { ...process.env, ...config.postgrestEnv, PGRST_SERVER_PORT: String(port), PGRST_ADMIN_SERVER_PORT: String(adminPort) }, stdio: ['ignore', 'ignore', 'pipe'] })
 engine.stderr.resume()
-const stop = () => { engine.kill('SIGTERM'); gateway?.closeAllConnections(); gateway?.close(); setTimeout(() => process.exit(0), 200).unref() }
 let gateway
-process.on('SIGTERM', stop)
-process.on('SIGINT', stop)
+let stopping = false
+const stop = (code = 0) => {
+  if (stopping) return
+  stopping = true
+  gateway?.closeAllConnections()
+  gateway?.close()
+  if (engine.exitCode !== null || engine.signalCode !== null) process.exit(code)
+  // A restart must reap PostgREST before exiting, including slow shutdowns.
+  const force = setTimeout(() => engine.kill('SIGKILL'), 1500)
+  force.unref()
+  engine.once('exit', () => { clearTimeout(force); process.exit(code) })
+  engine.kill('SIGTERM')
+}
+process.on('SIGTERM', () => stop())
+process.on('SIGINT', () => stop())
 try {
   let ready = false
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -43,8 +57,7 @@ try {
   await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve))
   process.stdout.write(`${JSON.stringify({ port: gateway.address().port, fingerprint: config.fingerprint, ...tokens })}\n`)
 } catch {
-  engine.kill('SIGTERM')
   // Do not echo engine diagnostics: database errors may contain credentials.
   process.stderr.write('Native pipeline HTTP fixture failed to start\n')
-  process.exitCode = 1
+  stop(1)
 }

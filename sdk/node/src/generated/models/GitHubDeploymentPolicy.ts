@@ -38,5 +38,14 @@ export type GitHubDeploymentPolicy = {
    * The single production deploy authority; GitHub App PR previews continue in either mode.
    */
   production_trigger: 'webhook' | 'actions';
+  /**
+   * How pull requests are previewed. `app` gives each previewed
+   * workload its own preview app. `branch` makes environment branch
+   * `pr-{N}` of production for each pull request and deploys the PR
+   * head into it. Choosing `branch` needs the
+   * platform to enable branch previews.
+   *
+   */
+  preview_mode?: 'app' | 'branch';
 };
 

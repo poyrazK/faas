@@ -1,0 +1,9 @@
+✔ repeated column aliases remain distinct join paths and expansion is bounded (30.92259ms)
+ℹ tests 199
+ℹ suites 0
+ℹ pass 198
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 1
+ℹ todo 0
+ℹ duration_ms 32106.96286

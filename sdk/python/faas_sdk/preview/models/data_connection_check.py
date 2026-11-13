@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -35,6 +35,10 @@ class DataConnectionCheck:
     checks: list[DataConnectionIssue]
     tables: list[DataSourceTable]
     created_at: datetime.datetime
+    requested_tables: list[str] | Unset = UNSET
+    """Exact discovery selection retained across queueing and worker completion."""
+    search: str | Unset = UNSET
+    """Literal discovery name filter."""
     capacity: DataPipelineCapacity | Unset = UNSET
     """New-allocation readiness at observation time. Admission atomically rechecks and reserves capacity;
     observations alone reserve nothing."""
@@ -67,6 +71,12 @@ class DataConnectionCheck:
 
         created_at = self.created_at.isoformat()
 
+        requested_tables: list[str] | Unset = UNSET
+        if not isinstance(self.requested_tables, Unset):
+            requested_tables = self.requested_tables
+
+        search = self.search
+
         capacity: dict[str, Any] | Unset = UNSET
         if not isinstance(self.capacity, Unset):
             capacity = self.capacity.to_dict()
@@ -98,6 +108,10 @@ class DataConnectionCheck:
                 "created_at": created_at,
             }
         )
+        if requested_tables is not UNSET:
+            field_dict["requested_tables"] = requested_tables
+        if search is not UNSET:
+            field_dict["search"] = search
         if capacity is not UNSET:
             field_dict["capacity"] = capacity
         if database_id is not UNSET:
@@ -144,6 +158,10 @@ class DataConnectionCheck:
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
+        requested_tables = cast(list[str], d.pop("requested_tables", UNSET))
+
+        search = d.pop("search", UNSET)
+
         _capacity = d.pop("capacity", UNSET)
         capacity: DataPipelineCapacity | Unset
         if isinstance(_capacity, Unset):
@@ -182,6 +200,8 @@ class DataConnectionCheck:
             checks=checks,
             tables=tables,
             created_at=created_at,
+            requested_tables=requested_tables,
+            search=search,
             capacity=capacity,
             database_id=database_id,
             observed_at=observed_at,
