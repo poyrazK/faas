@@ -133,17 +133,25 @@ func (s *server) branchProjectEnvironment(ctx context.Context, store state.Proje
 // (projectaccess.BranchParent). A missing parent is left to the create, which
 // reports it.
 func (s *server) environmentBranchParentProblem(r *http.Request, acct state.Account, project state.Project, parent string) *api.Problem {
+	return s.protectedEnvironmentChangeProblem(r, acct, project.ID, parent, "branch a protected project environment")
+}
+
+// protectedEnvironmentChangeProblem refuses a company-project member who may
+// not make a change that a protected environment reserves for approvers
+// (projectaccess.ProtectedEnvironmentChange). A missing environment is left to
+// the operation, which reports it.
+func (s *server) protectedEnvironmentChangeProblem(r *http.Request, acct state.Account, projectID, environment, what string) *api.Problem {
 	if _, shared := projectaccess.From(r.Context()); !shared {
 		return nil
 	}
-	env, err := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, project.ID, parent)
+	env, err := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, projectID, environment)
 	if errors.Is(err, state.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
 		return api.ErrCapacity("could not load project environment")
 	}
-	return projectaccess.BranchParent(r, env)
+	return projectaccess.ProtectedEnvironmentChange(r, env, what)
 }
 
 // publishEnvironmentBranchWorkloads creates one branch deployment per parent

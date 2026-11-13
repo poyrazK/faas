@@ -8068,6 +8068,23 @@ func (e *Engine) RecycleForEgressAbuse(ctx context.Context, instanceID string, r
 }
 
 func (e *Engine) recycleForEgressAbuse(ctx context.Context, instanceID string, reason EgressAbuseReason, observed, limit int64) (string, error) {
+	kind := "egress_" + string(reason)
+	return e.recycleForAbuse(ctx, instanceID, kind, fmt.Sprintf("%s observed_per_min=%d limit=%d", kind, observed, limit), func(ins *state.Instance) {
+		e.log.Warn("egress abuse: recycled instance", "instance", instanceID, "app", ins.AppID, "node", ins.NodeID,
+			"signal", reason, "observed_per_min", observed, "limit", limit)
+		if e.ops != nil {
+			e.ops.EgressAbuseRecycled(ins.AppID, string(reason)).Inc()
+		}
+	})
+}
+
+// recycleForAbuse destroys a running instance for an abuse signal: it marks
+// the deployment's warm snapshots stale (captured after traffic, they may
+// carry the offending process; the pre-traffic init snapshot is kept),
+// destroys the VM and records a STOPPED transition of the given kind.
+// recycled runs after the destroy, under the app lock. It returns the app ID,
+// or "" when the instance is no longer running.
+func (e *Engine) recycleForAbuse(ctx context.Context, instanceID, kind, detail string, recycled func(*state.Instance)) (string, error) {
 	ins, err := e.lockedRunning(ctx, instanceID)
 	if err != nil || ins == nil {
 		return "", err
@@ -8078,23 +8095,19 @@ func (e *Engine) recycleForEgressAbuse(ctx context.Context, instanceID string, r
 	if rows, snapErr := state.LiveSnapshotsForTier(ctx, e.store, ins.DeploymentID, state.SnapshotTierWarm); snapErr == nil {
 		for _, snap := range rows {
 			if markErr := e.store.MarkSnapshotStale(ctx, snap.ID); markErr != nil {
-				e.log.Warn("egress abuse: mark warm snapshot stale", "instance", instanceID, "snap_id", snap.ID, "err", markErr)
+				e.log.Warn("abuse recycle: mark warm snapshot stale", "instance", instanceID, "kind", kind, "snap_id", snap.ID, "err", markErr)
 			}
 		}
 	}
 
 	if err := e.timedDestroy(context.WithoutCancel(ctx), ins.NodeID, instanceID, DestroyTimeout); err != nil {
-		return "", fmt.Errorf("sched: egress abuse: destroy %s: %w", instanceID, err)
+		return "", fmt.Errorf("sched: %s: destroy %s: %w", kind, instanceID, err)
 	}
 	e.ledger.Release(instanceID)
-	e.log.Warn("egress abuse: recycled instance", "instance", instanceID, "app", ins.AppID, "node", ins.NodeID,
-		"signal", reason, "observed_per_min", observed, "limit", limit)
-	if e.ops != nil {
-		e.ops.EgressAbuseRecycled(ins.AppID, string(reason)).Inc()
+	if recycled != nil {
+		recycled(ins)
 	}
-	kind := "egress_" + string(reason)
-	e.transitionWithKind(ctx, instanceID, ins.AppID, state.StateStopped, kind,
-		fmt.Sprintf("%s observed_per_min=%d limit=%d", kind, observed, limit))
+	e.transitionWithKind(ctx, instanceID, ins.AppID, state.StateStopped, kind, detail)
 	if ins.Mode == string(state.InstanceModeWorker) {
 		e.scheduleWorkerReconcile(ctx, ins.DeploymentID)
 	}

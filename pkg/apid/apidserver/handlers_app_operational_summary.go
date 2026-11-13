@@ -42,7 +42,9 @@ func (s *server) appOperationalSummary(ctx context.Context, acct state.Account, 
 	defer cancel()
 	out := api.AppOperationalSummary{Version: 1, AppID: app.ID, CheckedAt: time.Now().UTC()}
 	var wg sync.WaitGroup
-	wg.Add(2)
+	var oom api.AppOperationalRecommendation
+	var oomFound bool
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		out.Monitoring = s.appOperationalMonitoring(ctx, acct, app)
@@ -51,8 +53,16 @@ func (s *server) appOperationalSummary(ctx context.Context, acct state.Account, 
 		defer wg.Done()
 		out.Recovery = s.appOperationalRecovery(ctx, acct, app)
 	}()
+	go func() {
+		defer wg.Done()
+		oom, oomFound = s.appOperationalOOMRecommendation(ctx, app)
+	}()
 	wg.Wait()
 	out.Recommendations = appOperationalRecommendations(app.Slug, out)
+	if oomFound {
+		// Ahead of the monitor's generic advice: a kill names the cause.
+		out.Recommendations = append([]api.AppOperationalRecommendation{oom}, out.Recommendations...)
+	}
 	return out
 }
 

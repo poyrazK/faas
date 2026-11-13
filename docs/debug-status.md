@@ -50,9 +50,13 @@ and what to change:
 Out of memory     11:50:02  peak 600 MB, plan 512 MB  deployment 3f2a9c41  (instance replaced)
 
 Memory:
-  • upgrade from a 512 MB plan to a plan with at least 608 MB of RAM
+  • raise the app's memory from 512 MB to at least 608 MB, e.g. `gregale app <app> --ram 1024` (your account plan sets the per-app maximum)
   • trim in-memory state (caches, buffers, large request bodies held in memory)
 ```
+
+`gregale inspect <app>` and `gregale doctor --app <app>` report the same
+kills from the last 24 hours on every plan, as the `app_runtime_oom`
+recommendation of `GET /v1/apps/{slug}/operational-summary`.
 
 A live release keeps serving after an out-of-memory kill: the instance is
 replaced and the next request starts a new one. A deployment that is still
