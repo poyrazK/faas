@@ -85,6 +85,10 @@ def sync_detailed(
     comments are never read or returned. A disabled or invalidly configured
     local Alertmanager reader is explicit. Source failures produce a partial
     HTTP 200 observation with null unavailable values.
+    Optional receiver_health is a separate assessment of deployment intent,
+    collector freshness and completed transport requests for reviewed receiver
+    roles. The top-level state and existing signals retain their aggregate
+    meaning. Cold baselines never invent successful historical delivery.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -125,6 +129,10 @@ def sync(
     comments are never read or returned. A disabled or invalidly configured
     local Alertmanager reader is explicit. Source failures produce a partial
     HTTP 200 observation with null unavailable values.
+    Optional receiver_health is a separate assessment of deployment intent,
+    collector freshness and completed transport requests for reviewed receiver
+    roles. The top-level state and existing signals retain their aggregate
+    meaning. Cold baselines never invent successful historical delivery.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -161,6 +169,10 @@ async def asyncio_detailed(
     comments are never read or returned. A disabled or invalidly configured
     local Alertmanager reader is explicit. Source failures produce a partial
     HTTP 200 observation with null unavailable values.
+    Optional receiver_health is a separate assessment of deployment intent,
+    collector freshness and completed transport requests for reviewed receiver
+    roles. The top-level state and existing signals retain their aggregate
+    meaning. Cold baselines never invent successful historical delivery.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -199,6 +211,10 @@ async def asyncio(
     comments are never read or returned. A disabled or invalidly configured
     local Alertmanager reader is explicit. Source failures produce a partial
     HTTP 200 observation with null unavailable values.
+    Optional receiver_health is a separate assessment of deployment intent,
+    collector freshness and completed transport requests for reviewed receiver
+    roles. The top-level state and existing signals retain their aggregate
+    meaning. Cold baselines never invent successful historical delivery.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

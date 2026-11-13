@@ -7,16 +7,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/datapipeline"
 )
 
 // Valid app slugs fit the database name limit with either form. A distinct
 // suffix keeps digit-led slugs from colliding with existing NAME-mirror names.
-func pipelineMirrorName(name string) string {
-	if name[0] >= '0' && name[0] <= '9' {
-		return "p-" + name + "-mirror-db"
-	}
-	return name + "-mirror"
-}
+func pipelineMirrorName(name string) string { return datapipeline.MirrorName(name) }
 
 func samePipelineSelection(a, b []string) bool {
 	a, b = slices.Clone(a), slices.Clone(b)

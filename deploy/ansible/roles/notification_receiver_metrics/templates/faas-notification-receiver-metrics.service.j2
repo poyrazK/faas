@@ -1,0 +1,29 @@
+[Unit]
+Description=Observe completed Alertmanager requests per receiver
+After=alertmanager.service
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+User=faas-notification-receiver-metrics
+SupplementaryGroups=node_exporter
+StateDirectory=faas-notification-receiver-metrics
+ExecStart=/usr/local/sbin/faas-notification-receiver-metrics
+TimeoutStartSec=20
+UMask=0022
+Slice=faas-obs.slice
+CPUQuota=20%
+MemoryMax=64M
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/etc/faas
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+ReadWritePaths=/var/lib/node_exporter/textfile_collector

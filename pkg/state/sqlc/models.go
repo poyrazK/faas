@@ -1152,6 +1152,12 @@ type AppApplicationStandard struct {
 	ObservationRevision       int64
 }
 
+type AppBasicAuthVerifier struct {
+	SealedSha256 []byte
+	Verifier     string
+	CreatedAt    pgtype.Timestamptz
+}
+
 type AppBindingPromotionRevision struct {
 	AppID           pgtype.UUID
 	Epoch           pgtype.UUID
@@ -1639,6 +1645,30 @@ type AppOpenapiDoc struct {
 	OpenapiVersion string
 	CapturedAt     pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+}
+
+type AppOwnerAuthority struct {
+	Singleton bool
+	Mode      string
+	UpdatedAt pgtype.Timestamptz
+}
+
+type AppOwnerReleaseRequest struct {
+	AppID       pgtype.UUID
+	FromNodeID  pgtype.UUID
+	Reason      string
+	RequestedAt pgtype.Timestamptz
+}
+
+type AppOwnerWrite struct {
+	ID         int64
+	AppID      pgtype.UUID
+	FromNodeID pgtype.UUID
+	ToNodeID   pgtype.UUID
+	LoginRole  string
+	Authorized bool
+	Mode       string
+	WrittenAt  pgtype.Timestamptz
 }
 
 type AppParkTransition struct {
@@ -3201,6 +3231,12 @@ type ComputeNode struct {
 	CpuPressureUntil        pgtype.Timestamptz
 }
 
+type ComputeNodeDbLogin struct {
+	Login     string
+	NodeName  string
+	CreatedAt pgtype.Timestamptz
+}
+
 type ComputeNodeHeartbeat struct {
 	ID              int64
 	NodeID          pgtype.UUID
@@ -3951,6 +3987,7 @@ type DataPipeline struct {
 	SchemaChange         []byte
 	VerificationProgress []byte
 	ReaderChange         []byte
+	WalRetention         []byte
 }
 
 type DataPipelineAlert struct {
@@ -4004,6 +4041,7 @@ type DataPipelineSchemaRefresh struct {
 	Attempt    int32
 	WakeID     pgtype.UUID
 	CreatedAt  pgtype.Timestamptz
+	ReadGate   bool
 }
 
 type DataPipelineSetup struct {
@@ -15869,6 +15907,24 @@ type SealDomainProbe struct {
 	Recipient  string
 	SealedBlob []byte
 	UpdatedAt  pgtype.Timestamptz
+}
+
+type SecretGrant struct {
+	AppID           pgtype.UUID
+	NodeID          pgtype.UUID
+	GrantedByNodeID pgtype.UUID
+	GrantedAt       pgtype.Timestamptz
+	ExpiresAt       pgtype.Timestamptz
+}
+
+type SecretOpenAudit struct {
+	ID       int64
+	NodeID   pgtype.UUID
+	AppID    pgtype.UUID
+	Via      string
+	Entries  int32
+	OpenedAt pgtype.Timestamptz
+	JobID    pgtype.UUID
 }
 
 type ServiceCallerKey struct {

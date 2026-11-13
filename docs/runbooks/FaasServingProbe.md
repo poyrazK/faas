@@ -1,7 +1,8 @@
 # FaasServingProbe
 
-Covers `FaasServingProbeFailing` and `FaasServingProbeStale` (family
-`serving_probe`, ADR-20261023124955 §5). Setup and configuration live in
+Covers `FaasServingProbeFailing`, `FaasServingProbeStale`,
+`FaasServingProbeCoverageDegraded` and `FaasServingProbeInventoryUnavailable`
+(families `serving_probe` and `serving_probe_coverage`). Setup and configuration live in
 `docs/ops/serving-probe.md`.
 
 `faas-serving-probe.timer` on each compute node requests the platform-owned
@@ -15,11 +16,17 @@ probe app through the public edge every 5 minutes.
 
 ## Symptom
 
-- **`FaasServingProbeFailing`.** For 10 minutes, every run on that node missed
-  a 2xx on two attempts 30 s apart. A customer request through the public edge
-  to a parked app is likely failing the same way.
+- **`FaasServingProbeFailing`.** For 10 minutes, every run on that node failed
+  status, configured body or first-byte checks on two attempts 30 s apart.
+  A customer request through the public edge to a parked app may be failing
+  or slow in the same way.
 - **`FaasServingProbeStale`.** The node has not completed a probe run for 15
   minutes. An outage seen from there would go unreported.
+- **`FaasServingProbeCoverageDegraded`.** An expected node/URL has been missing,
+  stale, invalid, misconfigured or failing for ten minutes. Its numeric state
+  matches the status table in the fleet dashboard and setup guide.
+- **`FaasServingProbeInventoryUnavailable`.** The independent inventory cannot
+  establish expected coverage. An empty coverage table does not imply health.
 
 ## Check
 
@@ -28,6 +35,9 @@ probe app through the public edge every 5 minutes.
    ```promql
    faas_serving_probe_success
    faas_serving_probe_http_status
+   faas_serving_probe_content_check_enabled
+   faas_serving_probe_first_byte_seconds
+   faas_serving_probe_first_byte_budget_seconds
    ```
 
    - All compute nodes failing points at the public edge, Cloudflare or the
@@ -38,6 +48,10 @@ probe app through the public edge every 5 minutes.
      failure. The node's journal has the error.
    - `5xx` came from the edge or the gateway.
    - `3xx` means the hostname is misrouted.
+   - `2xx` with a failed probe means the configured body did not match or
+     the first-byte/body deadline was exceeded. The journal names the failed
+     check without recording response content. A content-check gauge of `0`
+     means this node still uses status-only content validation.
 
    ```bash
    journalctl -u faas-serving-probe.service -n 30 --no-pager
@@ -54,6 +68,16 @@ probe app through the public edge every 5 minutes.
 
    The service refuses to start without `/etc/faas/serving-probe.env`.
    The role removes that file when `faas_serving_probe_urls` is empty.
+5. **Coverage or configuration drift:** compare `faas_serving_probe_fleet` on
+   the control plane and compute node. Check the registry node name and exact
+   URL, then the content-check flag and budget. Missing validation metadata
+   can mean the node still runs an older probe helper.
+6. **Inventory unavailable:** check control-plane node_exporter and
+   `/var/lib/node_exporter/textfile_collector/serving-probe-inventory.prom`.
+   Converge the `prometheus` role with the shared policy; it installs
+   `serving_probe_inventory`. The configured flag must be unique and fresh,
+   and the declared pair count must match the inventory. `null` means
+   unconfigured; `{}` explicitly expects zero probes.
 
 ## Recover
 

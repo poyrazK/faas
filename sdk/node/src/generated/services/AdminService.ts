@@ -33,6 +33,7 @@ import type { ObsNotificationHealth } from '../models/ObsNotificationHealth.js';
 import type { ObsRecordingCoverage } from '../models/ObsRecordingCoverage.js';
 import type { ObsRuleCoverage } from '../models/ObsRuleCoverage.js';
 import type { ObsRuleHealthResponse } from '../models/ObsRuleHealthResponse.js';
+import type { ObsServingHealth } from '../models/ObsServingHealth.js';
 import type { ObsWakeTimeline } from '../models/ObsWakeTimeline.js';
 import type { OperatorIntentAcceptedResponse } from '../models/OperatorIntentAcceptedResponse.js';
 import type { OperatorIntentResponse } from '../models/OperatorIntentResponse.js';
@@ -1305,6 +1306,45 @@ export class AdminService {
     });
   }
   /**
+   * Inspect fleet serving-probe coverage against deployment intent.
+   * Requires operator read scope, MFA and the operator allowlist. Accepts no
+   * query parameters and performs no writes or direct HTTP probe. Four strict
+   * Prometheus queries share one pinned evaluation time and three-second
+   * budget. Independent inventory identifies expected node/URL pairs; missing,
+   * stale, inconsistent or unconfigured inventory never becomes healthy empty
+   * coverage. An explicitly configured empty fleet is not_applicable.
+   * Fresh deployed coverage-rule evaluations distinguish healthy, missing,
+   * stale, invalid telemetry, disabled content validation, latency budget
+   * mismatch and failing probes. Missing or old evaluations remain unknown.
+   * Recorded policy must match current intent and evaluation timestamps must
+   * agree. A healthy evaluation cannot hold green beyond its run age budget.
+   * Known faults take precedence over unknown peer evaluations.
+   * Returns at most 1000 expected pairs ordered by stable node name and URL
+   * fingerprint. URL IDs are lowercase SHA-256 of exact configured URL bytes.
+   * Raw URLs, response bodies, scrape addresses, source labels and provider
+   * errors are excluded. Recording-rule semantics are trusted; this read does
+   * not qualify notification delivery or independent watchdog receipt.
+   *
+   * @returns ObsServingHealth Bounded expected serving-probe coverage with explicit unknown evidence.
+   * @throws ApiError
+   */
+  public static getObsServingHealth(): CancelablePromise<ObsServingHealth> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/serving-health',
+      errors: {
+        400: `Serving health accepts no query parameters.`,
+        401: `code: unauthorized`,
+        403: `Serving health read denied by operator scope or MFA or allowlist policy.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * Inspect critical telemetry inputs for an explicitly selected role.
    * Requires operator read scope, MFA and the operator allowlist. Without an
    * explicit expected_role, returns unknown with choices and reads no source.
@@ -1437,6 +1477,10 @@ export class AdminService {
    * comments are never read or returned. A disabled or invalidly configured
    * local Alertmanager reader is explicit. Source failures produce a partial
    * HTTP 200 observation with null unavailable values.
+   * Optional receiver_health is a separate assessment of deployment intent,
+   * collector freshness and completed transport requests for reviewed receiver
+   * roles. The top-level state and existing signals retain their aggregate
+   * meaning. Cold baselines never invent successful historical delivery.
    *
    * @returns ObsNotificationHealth Independent notification signals and integration counters with evidence quality.
    * @throws ApiError

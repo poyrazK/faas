@@ -150,6 +150,12 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	// ownerReleaseRequests are app_owner_release_requests by app id
+	// (ADR-20261110210000 §4); allocated on first use under mu.
+	ownerReleaseRequests map[string]AppOwnerReleaseRequest
+	// basicAuthVerifiers are app_basic_auth_verifiers by hex sealed digest
+	// (ADR-20261110210000 slice 3h); allocated on first use under mu.
+	basicAuthVerifiers          map[string]string
 	privateNetworkScopes        map[string]*semaphore.Weighted
 	privateNetworkTransportIDs  map[string]privateNetworkTransportIdentity
 	privateNetworkServiceOwners map[string]privateNetworkServiceOwner

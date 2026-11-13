@@ -1,0 +1,177 @@
+package main_test
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	main "github.com/onebox-faas/faas/cmd/gregale"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
+)
+
+type investigationPipelineReader struct{ calls int }
+
+func (f *investigationPipelineReader) GetDataPipeline(context.Context, string) (api.DataPipeline, error) {
+	f.calls++
+	return api.DataPipeline{State: "live", ObservationFresh: true, Revision: 2, ObservedRevision: 2}, nil
+}
+func TestInvestigationWaitRejectsStaleFailure(t *testing.T) {
+	reader := &investigationPipelineReader{}
+	p := api.DataPipeline{ID: uuid.NewString(), DesiredState: "running", State: "blocked", Reason: "source_authentication_failed", Revision: 2, ObservedRevision: 1, ObservationFresh: false}
+	_, err := main.WaitDataPipeline(t.Context(), reader, p, "live", time.Millisecond)
+	if err == nil || reader.calls != 0 {
+		t.Fatalf("finding changed: err=%v polls=%d", err, reader.calls)
+	}
+	t.Logf("resume response has stale revision-1 failure; wait returns %q after %d polls despite next observation being live", err, reader.calls)
+}
+
+func TestInvestigationResyncSkipsConfirmation(t *testing.T) {
+	main.ResetJSONOut(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FAAS_TOKEN", "local-test")
+	id := uuid.NewString()
+	mutations := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/data/pipelines/" + id:
+			main.WriteJSONTest(w, api.DataPipeline{ID: id, State: "live", Revision: 1, ObservedRevision: 1, ObservationFresh: true})
+		case "POST /v1/data/pipelines/" + id + "/control":
+			var body api.ControlDataPipelineRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if body.Action != "resync" {
+				t.Errorf("unexpected action %s", body.Action)
+			}
+			mutations++
+			main.WriteJSONTest(w, api.DataPipeline{ID: id, State: "validating", Revision: 2, Generation: 2})
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	code := main.Run([]string{"--non-interactive", "--json", "pipeline", "resync", id})
+	if code != 0 || mutations != 1 {
+		t.Fatalf("finding changed: exit=%d mutations=%d", code, mutations)
+	}
+	t.Logf("non-interactive JSON resync without confirmation -> exit=%d destructive control requests=%d", code, mutations)
+}
+
+func TestInvestigationDigitLedMirrorName(t *testing.T) {
+	main.ResetJSONOut(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FAAS_TOKEN", "local-test")
+	source := uuid.NewString()
+	generated := ""
+	checks := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/data/connections":
+			main.WriteJSONTest(w, api.DataConnectionList{Items: []api.DataConnection{{ID: source, Revision: 1}}})
+		case "POST /v1/data/connections/" + source + "/check":
+			checks++
+			main.WriteJSONTest(w, api.DataConnectionCheck{ID: uuid.NewString(), ConnectionID: source, State: "passed", Fresh: true, Capacity: fixtureReadyPipelineCapacity(), Tables: []api.DataSourceTable{{Name: "orders", Supported: true}}})
+		case "POST /v1/postgres/databases":
+			var body api.CreateManagedPostgresDatabaseRequest
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			generated = body.Name
+			http.Error(w, "invalid database name", 400)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	code := main.CmdPipeline([]string{"create", "123-orders", "--connection", source, "--region", "test-region", "--tables", "orders", "--read-subjects", "alice"})
+	if code != 1 || generated != "123-orders-mirror" || managedpostgres.ValidName(generated) || checks != 1 {
+		t.Fatalf("finding changed: exit=%d name=%s checks=%d", code, generated, checks)
+	}
+	t.Logf("valid pipeline slug=%v generated mirror=%q valid database name=%v; failed after %d source check", api.ValidAppSlug("123-orders"), generated, managedpostgres.ValidName(generated), checks)
+}
+
+func TestInvestigationSourceNameCollision(t *testing.T) {
+	main.ResetJSONOut(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FAAS_TOKEN", "local-test")
+	source := uuid.NewString()
+	names := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "POST /v1/data/connections":
+			var body api.CreateDataConnectionRequest
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			names = append(names, body.Name)
+			main.WriteJSONTest(w, api.DataConnection{ID: source, Revision: 1})
+		case "GET /v1/data/connections":
+			main.WriteJSONTest(w, api.DataConnectionList{Items: []api.DataConnection{{ID: source, Revision: 1}}})
+		case "POST /v1/data/connections/" + source + "/check":
+			main.WriteJSONTest(w, api.DataConnectionCheck{ID: uuid.NewString(), ConnectionID: source, State: "blocked", Fresh: true})
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	for _, suffix := range []string{"-north", "-south"} {
+		file := filepath.Join(t.TempDir(), "source-url")
+		if err := os.WriteFile(file, []byte("postgres://r:local-test@"+suffix[1:]+".example/db?sslmode=verify-full"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		_ = main.CmdPipeline([]string{"create", strings.Repeat("a", 32) + suffix, "--url-file", file, "--region", "test-region", "--tables", "orders", "--read-subjects", "alice"})
+	}
+	if len(names) != 2 || names[0] != names[1] {
+		t.Fatalf("finding changed: %v", names)
+	}
+	t.Logf("different valid pipeline names and URLs generate identical account-unique source names: %q", names[0])
+}
+
+func TestInvestigationAuthPreflightAfterProvisioning(t *testing.T) {
+	main.ResetJSONOut(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FAAS_TOKEN", "local-test")
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
+	source, database, pipeline := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	databases, pipelines, authLookups := 0, 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/data/connections":
+			main.WriteJSONTest(w, api.DataConnectionList{Items: []api.DataConnection{{ID: source, Revision: 1}}})
+		case "POST /v1/data/connections/" + source + "/check":
+			main.WriteJSONTest(w, api.DataConnectionCheck{ID: uuid.NewString(), ConnectionID: source, State: "passed", Fresh: true, Capacity: fixtureReadyPipelineCapacity(), Tables: []api.DataSourceTable{{Name: "orders", Supported: true}}})
+		case "POST /v1/postgres/databases":
+			databases++
+			main.WriteJSONTest(w, api.ManagedPostgresDatabase{ID: database, Name: "orders-mirror", Region: "test-region", State: "ready"})
+		case "POST /v1/data/pipelines":
+			pipelines++
+			main.WriteJSONTest(w, api.DataPipeline{ID: pipeline, State: "live", ObservationFresh: true, Revision: 1, ObservedRevision: 1})
+		case "GET /v1/apps/missing-auth":
+			authLookups++
+			if databases != 1 || pipelines != 1 {
+				t.Errorf("finding changed: auth preflight occurred before database and pipeline creation")
+			}
+			http.Error(w, "Auth app not found", 404)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	code := main.CmdPipeline([]string{"create", "orders", "--connection", source, "--region", "test-region", "--tables", "orders", "--read-subjects", "alice", "--api", "orders-api", "--auth", "missing-auth"})
+	if code == 0 || databases != 1 || pipelines != 1 || authLookups != 1 {
+		t.Fatalf("finding changed: exit=%d databases=%d pipelines=%d auth lookups=%d", code, databases, pipelines, authLookups)
+	}
+	t.Logf("missing Auth app is first checked after creating %d mirror database and %d live pipeline; CLI exits %d retaining both", databases, pipelines, code)
+}
