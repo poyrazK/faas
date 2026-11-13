@@ -565,11 +565,14 @@ type Account struct {
 	AbuseHoldReason string
 }
 
-// Account abuse-hold reasons (ADR-361); the accounts_abuse_hold_valid
+// Account abuse-hold reasons (ADR-361); the accounts_abuse_hold_v2_valid
 // CHECK accepts exactly these.
 const (
 	AccountAbuseHoldEgressFanout = "egress_fanout"
 	AccountAbuseHoldEgressFlood  = "egress_flood"
+	// AccountAbuseHoldCPUSustained: the tipping recycle was a Free
+	// instance pinned at its CPU quota (ADR-20261112120603).
+	AccountAbuseHoldCPUSustained = "cpu_sustained"
 	AccountAbuseHoldOperator     = "operator"
 )
 
