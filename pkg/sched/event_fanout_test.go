@@ -438,10 +438,13 @@ func TestEventFanoutClassifiesTerminalRecipientFailures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		subscription, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "orders", "created", json.RawMessage(`{"data":{"missing":{"$unsupported":1}}}`))
+		subscription, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "orders", "created", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Upserts now refuse unsupported operators (#6783); a row an older
+		// release stored can still hold one.
+		store.SetEventSubscriptionFilterForTest(subscription.ID, json.RawMessage(`{"data":{"missing":{"$unsupported":1}}}`))
 		if err := store.AppendEvent(ctx, "apid", "event.published", &accountID,
 			[]byte(`{"specversion":"1.0","id":"evt-invalid-filter","source":"orders","type":"created","time":"2026-09-28T00:00:00Z","datacontenttype":"application/json","accountid":"`+accountID+`","data":{}}`)); err != nil {
 			t.Fatal(err)

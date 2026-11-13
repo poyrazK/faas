@@ -486,3 +486,16 @@ func cloneEventSubscription(s EventSubscription) EventSubscription {
 	s.RoutingRetryPolicy = cloneEventRoutingRetryPolicy(s.RoutingRetryPolicy)
 	return s
 }
+
+// SetEventSubscriptionFilterForTest stores a filter without validation, as a
+// row written before the current filter bounds would hold one.
+func (m *MemStore) SetEventSubscriptionFilterForTest(id string, filter json.RawMessage) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, subscription := range m.eventSubscriptions {
+		if subscription.ID == id {
+			subscription.Filter = append(json.RawMessage(nil), filter...)
+			m.eventSubscriptions[key] = subscription
+		}
+	}
+}
