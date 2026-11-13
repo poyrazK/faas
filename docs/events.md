@@ -340,6 +340,11 @@ usage, the budgets and the window (`limits.settled_retention_seconds`).
 Unsettled receipts and receipts that a recovery or backfill holds are kept past
 the window.
 
+Events Gregale publishes for you (`gregale.*` sources, such as object-storage
+`gregale.storage` events) keep a receipt only when a subscription, workflow or
+bucket notification receives them at publish time. A subscription created later
+cannot backfill or replay platform events nobody received.
+
 ### Routing failures in the dead-letter queue
 
 A recipient whose routing fails for good (its retries run out, its delivery
@@ -449,7 +454,12 @@ While it is paused:
   Nothing is accepted, so resend the same events after the back-off; the SDK
   outbox does this for you.
 - Events already accepted are kept and wait to be routed; routing resumes when
-  the pause ends. Delivery-age limits keep counting while they wait.
+  the pause ends. Delivery-age limits keep counting while they wait. A delivery
+  held for 7 days (because events or workflows stay off for its app, or its
+  plan no longer includes workflows) moves to the dead-letter queue with code
+  `delivery_held_expired`; replay it once events are back on. While held, a
+  delivery is checked again after a tenth of its wait, between one minute and
+  one hour.
 - Deliveries that already became invocations run as usual.
 - Object-storage notifications, inbound webhook stored workflow and other events
   Gregale publishes for you are still accepted and wait with the rest.

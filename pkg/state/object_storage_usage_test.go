@@ -40,6 +40,11 @@ func seedAccounting(t *testing.T, st accountingStore) (state.ObjectBucket, api.O
 	if err := st.RecordObjectUsageReport(ctx, r); err != nil {
 		t.Fatal(err)
 	}
+	// A storage event nobody receives is not kept (ADR-614 amendment
+	// 2026-11-13); the bucket's app receives them so tests can read them.
+	if _, _, err := st.(state.EventSubscriptionStore).UpsertEventSubscription(ctx, b.AccountID, b.AppID, api.ObjectEventSource, "*", nil); err != nil {
+		t.Fatal(err)
+	}
 	return b, r
 }
 

@@ -16821,6 +16821,18 @@ const EventCircuitEvaluationInterval = time.Second
 // Maximum wall-clock age before application event routing admission.
 const EventDeliveryAgeMaxMS int64 = 30 * 24 * 60 * 60 * 1000
 
+// EventDeliveryHoldMax is how long an event delivery may be held because
+// events or workflows are switched off for its app, or its plan lost
+// workflows, before it moves to the dead-letter queue as
+// delivery_held_expired. While held it is re-checked every
+// EventDeliveryHoldRecheckMin, backing off to EventDeliveryHoldRecheckMax
+// (ADR-20261027125625 amendment 2026-11-13).
+const (
+	EventDeliveryHoldMax        = 7 * 24 * time.Hour
+	EventDeliveryHoldRecheckMin = time.Minute
+	EventDeliveryHoldRecheckMax = time.Hour
+)
+
 // Maximum explicit schema versions selected by one event subscription.
 const EventSubscriptionSchemaVersionsMax = 16
 

@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"github.com/google/uuid"
@@ -73,7 +74,7 @@ func publishObjectEventTx(ctx context.Context, db sqlc.DBTX, account, identity, 
 		AccountID: mustPgUUID(account), Payload: payload, At: objectUsageTime(now)}); err != nil {
 		return mapErr(err)
 	}
-	return captureObjectNotifications(ctx, db, account, identity, typ, data)
+	return captureObjectNotifications(ctx, db, account, identity, typ, data, payload)
 }
 
 func (m *MemStore) publishObjectEventLocked(account, identity, typ string, data api.ObjectStorageEvent, now time.Time) error {
@@ -101,8 +102,21 @@ func (m *MemStore) publishObjectEventLocked(account, identity, typ string, data 
 	if err = m.appendEventLocked("objectstorage", "event.published", &account, payload, nil, now); err != nil {
 		return err
 	}
-	if previous == nil {
-		m.eventFanout[key].RecipientSnapshot = append(m.eventFanout[key].RecipientSnapshot, recipients...)
+	if previous != nil || len(recipients) == 0 {
+		return nil
 	}
+	if work := m.eventFanout[key]; work != nil {
+		work.RecipientSnapshot = append(work.RecipientSnapshot, recipients...)
+		return nil
+	}
+	// No subscription received the event, so no entry was kept; the
+	// notification keeps one, as ObjectNotificationsCapture inserts it.
+	if m.eventFanout == nil {
+		m.eventFanout = make(map[string]*PublishedEventWork)
+	}
+	m.eventFanoutNextID++
+	m.eventFanout[key] = &PublishedEventWork{ID: m.eventFanoutNextID, Payload: bytes.Clone(payload), RecipientSnapshot: recipients,
+		SnapshotCaptured: true, RecipientProgress: make(map[string]PublishedEventRecipientProgress),
+		AvailableAt: now, CreatedAt: time.Now().UTC()}
 	return nil
 }

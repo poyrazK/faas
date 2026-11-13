@@ -73637,22 +73637,35 @@ func (q *Queries) ObjectNotificationTargetQueue(ctx context.Context, db DBTX, ar
 }
 
 const objectNotificationsCapture = `-- name: ObjectNotificationsCapture :execrows
-UPDATE event_fanout_outbox SET recipient_snapshot=recipient_snapshot ||
- event_recipients_in_producer_reach(account_id, payload->>'producer', $1::jsonb)
-WHERE account_id=$2::uuid AND source='gregale.storage' AND event_id=$3::text
-AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(recipient_snapshot) r WHERE r ? 'object_notification')
+INSERT INTO event_fanout_outbox AS o
+    (account_id, source, event_id, event_type, schema_version, event_data, payload, recipient_snapshot)
+SELECT $1::uuid, 'gregale.storage', $2::text,
+    e.p->>'type', e.p->>'schemaversion', e.p->'data', e.p,
+    event_recipients_in_producer_reach($1::uuid, e.p->>'producer', $3::jsonb)
+FROM (SELECT $4::jsonb AS p) e
+ON CONFLICT (account_id, source, event_id) DO UPDATE SET recipient_snapshot = o.recipient_snapshot || EXCLUDED.recipient_snapshot
+WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements(o.recipient_snapshot) r WHERE r ? 'object_notification')
 `
 
 type ObjectNotificationsCaptureParams struct {
-	Recipients []byte
 	AccountID  pgtype.UUID
 	EventID    string
+	Recipients []byte
+	Payload    []byte
 }
 
 // Notification recipients meet the same company reach as subscriptions
 // (ADR-20261025211616): a rule cannot route a company bucket's events past it.
+// enqueue_event_fanout keeps no row for a platform event without subscribers
+// (ADR-614 amendment 2026-11-13), so the capture inserts it from the event
+// envelope when it is missing and appends to it otherwise.
 func (q *Queries) ObjectNotificationsCapture(ctx context.Context, db DBTX, arg ObjectNotificationsCaptureParams) (int64, error) {
-	result, err := db.Exec(ctx, objectNotificationsCapture, arg.Recipients, arg.AccountID, arg.EventID)
+	result, err := db.Exec(ctx, objectNotificationsCapture,
+		arg.AccountID,
+		arg.EventID,
+		arg.Recipients,
+		arg.Payload,
+	)
 	if err != nil {
 		return 0, err
 	}

@@ -5381,6 +5381,9 @@ type Querier interface {
 	ObjectNotificationTargetQueue(ctx context.Context, db DBTX, arg ObjectNotificationTargetQueueParams) ([]QueueBinding, error)
 	// Notification recipients meet the same company reach as subscriptions
 	// (ADR-20261025211616): a rule cannot route a company bucket's events past it.
+	// enqueue_event_fanout keeps no row for a platform event without subscribers
+	// (ADR-614 amendment 2026-11-13), so the capture inserts it from the event
+	// envelope when it is missing and appends to it otherwise.
 	ObjectNotificationsCapture(ctx context.Context, db DBTX, arg ObjectNotificationsCaptureParams) (int64, error)
 	ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectNotificationsGetRow, error)
 	ObjectNotificationsSave(ctx context.Context, db DBTX, arg ObjectNotificationsSaveParams) error
