@@ -55,8 +55,7 @@ class PlanResponse:
     no route actions need to be shown."""
     warnings: list[str] | Unset = UNSET
     feature_hints: list[FeatureHint] | Unset = UNSET
-    """Gregale behaviors and features that apply to the scanned source, with the commands that change them
-    (ADR-20261112223000)."""
+    """Gregale behaviors and features that apply to the scanned source, with the commands that change them."""
     detection_warnings: list[PlanDetectionWarning] | Unset = UNSET
     """Structured skipped/merged detector decisions available to explain-mode clients."""
     crons_not_allowed: bool | Unset = UNSET

@@ -40,7 +40,7 @@ export type PlanResponse = {
   async_routes?: Array<PlanAsyncRoute>;
   warnings?: Array<string>;
   /**
-   * Gregale behaviors and features that apply to the scanned source, with the commands that change them (ADR-20261112223000).
+   * Gregale behaviors and features that apply to the scanned source, with the commands that change them.
    */
   feature_hints?: Array<FeatureHint>;
   /**

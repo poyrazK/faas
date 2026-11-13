@@ -113180,7 +113180,7 @@ components:
         docs_url: { type: string }
 
     FeatureHint:
-      description: "One Gregale behavior or feature that applies to the scanned source: what the plan will do, how to change it, and the exact CLI commands (ADR-20261112223000). IDs are stable."
+      description: "One Gregale behavior or feature that applies to the scanned source: what the plan will do, how to change it, and the exact CLI commands. IDs are stable."
       type: object
       required: [id, applied]
       properties:
@@ -113234,7 +113234,7 @@ components:
           items: { type: string }
         feature_hints:
           type: array
-          description: "Gregale behaviors and features that apply to the scanned source, with the commands that change them (ADR-20261112223000)."
+          description: "Gregale behaviors and features that apply to the scanned source, with the commands that change them."
           items: { $ref: '#/components/schemas/FeatureHint' }
         detection_warnings:
           type: array

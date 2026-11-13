@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One Gregale behavior or feature that applies to the scanned source: what the plan will do, how to change it, and the exact CLI commands (ADR-20261112223000). IDs are stable.
+ * One Gregale behavior or feature that applies to the scanned source: what the plan will do, how to change it, and the exact CLI commands. IDs are stable.
  */
 export type FeatureHint = {
   /**

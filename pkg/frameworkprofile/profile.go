@@ -348,7 +348,7 @@ var nonHTTPServers = map[string]int{
 	"redis": 6379, "valkey": 6379, "keydb": 6379,
 	"postgres": 5432, "mysql": 3306, "mariadb": 3306, "mongo": 27017,
 	"memcached": 11211, "rabbitmq": 5672, "nats": 4222,
-	"eclipse-mosquitto": 1883, "cassandra": 9042,
+	"eclipse-mosquitto": 1883, "cassandra": 9042, //nolint:misspell // the official image name
 }
 
 // nonHTTPPorts are those servers' ports, plus Kafka's.
