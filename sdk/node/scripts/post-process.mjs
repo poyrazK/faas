@@ -25,11 +25,13 @@ export async function patchClientCore(dir) {
     await writeFile(path, source);
   };
   await replace('OpenAPI.ts', [
-    ['  BASE: string;', '  FETCH?: typeof fetch;\n  BASE: string;'],
+    ["import type { ApiRequestOptions } from './ApiRequestOptions.js';", "import type { ApiRequestOptions } from './ApiRequestOptions.js';\nimport type { CancelablePromise } from './CancelablePromise.js';"],
+    ['  BASE: string;', '  FETCH?: typeof fetch;\n  REQUEST?: <T>(options: ApiRequestOptions) => CancelablePromise<T>;\n  BASE: string;'],
     ['export const OpenAPI: OpenAPIConfig = {', 'export const createOpenAPIConfig = (): OpenAPIConfig => ({'],
     ["  ENCODE_PATH: undefined,\n};", "  ENCODE_PATH: undefined,\n});\n\nexport const OpenAPI: OpenAPIConfig = createOpenAPIConfig();"],
   ]);
   await replace('request.ts', [
+    ['export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions): CancelablePromise<T> => {', 'export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions): CancelablePromise<T> => {\n  if (config.REQUEST) return config.REQUEST<T>(options);'],
     ['return await fetch(url, request);', 'return await (config.FETCH ?? fetch)(url, request);'],
   ]);
 }

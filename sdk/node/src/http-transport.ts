@@ -2,6 +2,7 @@
 import timers from 'node:timers/promises';
 import { isFaasError, problemToError, type FaasError, type Problem } from './errors.js';
 import { isMutating, mintIdempotencyKey } from './idempotency.js';
+import type { RequestOptions, ResponseInfo, ResponseObserver } from './request-options.js';
 
 // Capture the platform transport before a legacy FaaSClient can install its wrapper.
 const platformFetch = globalThis.fetch;
@@ -87,16 +88,33 @@ export interface FaaSClientOptions {
   /** Optional override for the underlying fetch. Used by tests to
    *  inject a stub. Production callers leave this unset. */
   fetch?: typeof globalThis.fetch;
+  /** Observe each HTTP response, including retry attempts. Callback failures
+   * and asynchronous completion never change the request's outcome. */
+  onResponse?: ResponseObserver;
+}
+
+function observe(observer: ResponseObserver | undefined, info: ResponseInfo): void {
+  try { Promise.resolve(observer?.(info)).catch(() => undefined); } catch { /* observer only */ }
+}
+
+function responseInfo(response: Response, attempt: number, start: number): ResponseInfo {
+  const id = response.headers.get('X-Request-ID');
+  return Object.freeze({
+    requestId: id && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ? id : null,
+    status: response.status, attempt, durationMs: Math.max(0, performance.now() - start),
+  });
 }
 
 export function createHttpTransport(
   options: FaaSClientOptions,
   defaultIdempotencyKey?: () => string | undefined,
+  requestOptions?: RequestOptions,
 ): typeof globalThis.fetch {
   const userFetch = options.fetch ?? platformFetch;
-  const retry = { ...(options.retry ?? { maxAttempts: 1, backoffMs: 0 }) };
+  const retry = requestOptions?.retry === false ? { maxAttempts: 1, backoffMs: 0 }
+    : { ...(requestOptions?.retry ?? options.retry ?? { maxAttempts: 1, backoffMs: 0 }) };
   const logger = options.logger ?? noopLogger;
-  const timeoutMs = options.timeoutMs;
+  const timeoutMs = requestOptions?.timeoutMs ?? options.timeoutMs;
   // Prepare request identity once, outside the per-attempt transport.
   const idempotencyLayer: typeof globalThis.fetch = async (input, init) => {
     const reqInit = init ? { ...init } : {};
@@ -118,14 +136,22 @@ export function createHttpTransport(
   };
 
   // logger layer — one log line per attempt.
-  const loggerLayer: typeof globalThis.fetch = async (input, init) => {
+  const loggerLayer = async (input: Parameters<typeof fetch>[0], init: RequestInit | undefined, attempt: number): Promise<Response> => {
     const start = Date.now();
+    const monotonicStart = performance.now();
     const url = typeof input === 'string'
       ? input
       : input instanceof URL ? input.toString() : input.url;
     logger.debug('faas http request', { method: init?.method ?? 'GET', url });
     try {
       const resp = await userFetch(input, init);
+      if (requestOptions?.signal?.aborted) {
+        // A custom fetch can resolve after cancellation. Retire its body and
+        // suppress late observer delivery for the completed call.
+        void resp.body?.cancel().catch(() => undefined);
+        throw requestOptions.signal.reason;
+      }
+      const info = options.onResponse || requestOptions?.onResponse ? responseInfo(resp, attempt, monotonicStart) : undefined;
       const elapsed = Date.now() - start;
       logger.debug('faas http response', {
         method: init?.method ?? 'GET',
@@ -133,6 +159,18 @@ export function createHttpTransport(
         status: resp.status,
         elapsed_ms: elapsed,
       });
+      if (info) {
+        observe(options.onResponse, info);
+        observe(requestOptions?.onResponse, info);
+      }
+      // Only scoped generated calls wrap bodies. A custom fetch may ignore its
+      // signal; piping with the scope signal still cancels a blocked body read.
+      // Legacy global fetch retains the original Response object and metadata.
+      if (requestOptions?.signal && resp.body) {
+        return new Response(resp.body.pipeThrough(new TransformStream(), { signal: init?.signal ?? requestOptions.signal }), {
+          status: resp.status, statusText: resp.statusText, headers: resp.headers,
+        });
+      }
       return resp;
     } catch (err) {
       const elapsed = Date.now() - start;
@@ -210,7 +248,7 @@ export function createHttpTransport(
       signal?.throwIfAborted();
       // Transport errors propagate unchanged; only HTTP 429/5xx and a
       // timed-out traffic policy check retry.
-      const response = await loggerLayer(input, init);
+      const response = await loggerLayer(input, init, attempt + 1);
       const retryable = response.status >= 500 || response.status === 429 || await policyCheckTimedOut(response);
       if (!retryable || attempt + 1 === attempts) return response;
       const base = retry.backoffMs > 0 ? retry.backoffMs : 100;
