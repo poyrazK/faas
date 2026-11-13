@@ -91,3 +91,26 @@ test('wait raises FunctionCallError for a failed invocation', async () => {
   const invocation = await fns.mailer.send({});
   await assert.rejects(invocation.wait(), (err: unknown) => err instanceof FunctionCallError && err.code === 'function_invocation_failed');
 });
+
+// ADR-20261113120824 §3: start() posts to the platform API and returns a run
+// handle whose wait long-polls the run and signal sends it an event.
+test('start returns a workflow run handle', async () => {
+  const { fetch, calls } = fakeFetch([
+    Response.json({ id: 'run-1', status: 'pending', done: false }, { status: 201 }),
+    new Response(null, { status: 202 }),
+    Response.json({ id: 'run-1', status: 'succeeded', done: true, output: { shipped: true } }),
+    Response.json({ error: 'nope' }, { status: 201 }),
+  ]);
+  type Fns = { orders: { input: { id: number }; output: { shipped: boolean } } };
+  const fns = createFunctions<Fns>({ functions: { orders: 'shop-orders' }, env: {}, fetch });
+  const run = await fns.orders.start({ id: 1 }, { idempotencyKey: 'order-1' });
+  assert.equal(run.runId, 'run-1');
+  assert.equal(calls[0]?.url, 'http://api.svc.gregale:10081/v1/workflow-runs');
+  assert.equal(new Headers(calls[0]?.init.headers).get('idempotency-key'), 'order-1');
+  assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), { function: 'orders', input: { id: 1 } });
+  await run.signal('approved', { ok: true });
+  assert.equal(calls[1]?.url, 'http://api.svc.gregale:10081/v1/workflow-runs/run-1/events');
+  assert.deepEqual(await run.wait({ timeoutMs: 5_000 }), { shipped: true });
+  assert.match(calls[2]?.url ?? '', /\/v1\/workflow-runs\/run-1\?wait=\d+$/);
+  await assert.rejects(fns.orders.start({ id: 2 }), FunctionCallError);
+});

@@ -508,6 +508,22 @@ In Python, write `async def handler(input, wf)` with the same operations
   holds no VM; the callee checks its `input` schema and keeps its own
   retries. A failed call throws `WorkflowCallError`. Wrapping
   `functions.name.call()` in a `wf.step` still works for quick calls.
+- Another function starts a run with `start()` and gets a handle back:
+
+  ```js
+  import { functions } from '@gregale/sdk-node';
+  const run = await functions['order-followup'].start(order, { idempotencyKey: order.id });
+  await run.signal('refund_approval', { approved: true });   // a wf.waitForEvent takes it
+  const result = await run.wait({ timeoutMs: 30_000 });      // or run.status()
+  ```
+
+  Python: `run = await functions.order_followup.start(order, idempotency_key=...)`,
+  then `await run.wait()`, `await run.status()`, `await run.signal(event, payload)`.
+  Go: `run, err := functions.Start(ctx, "order-followup", order)`, then
+  `run.Wait`, `run.Status`, `run.Signal`. Generated types give `start()` the
+  workflow's input and `wait()` its output. The run starts in the caller's
+  environment under the plan's run quotas; only the function that started a
+  run can read or signal it.
 - The workflow is named after the function and runs on the function's app.
   Start a run with
   `gregale workflow run order-followup --app <project>-order-followup --input '{...}'`;
