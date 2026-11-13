@@ -16342,6 +16342,15 @@ SELECT provider_resource_id::text AS provider_resource_id FROM managed_postgres_
 WHERE (provider_resource_id=sqlc.arg(project)::text OR provider_resource_id LIKE sqlc.arg(project)::text || '/%')
     AND state NOT IN ('deleting','deleted') AND deleted_at IS NULL;
 
+-- name: ManagedPostgresAccountsInProject :many
+-- ADR-20261112160000 slice 2c: the accounts whose managed PostgreSQL
+-- databases, in any state, name a Neon project. neond counts a destructive
+-- call against each for the per-subject limit, and refuses quota writes and
+-- role deletes on a project no database names.
+SELECT DISTINCT account_id::text AS account_id FROM managed_postgres_databases
+WHERE provider_resource_id=sqlc.arg(project)::text OR provider_resource_id LIKE sqlc.arg(project)::text || '/%'
+ORDER BY 1;
+
 -- name: ListManagedPostgresPlanExcessRemindersDue :many
 -- ADR-20261110184700 amendment 2026-11-12: notices whose mailed deletion date
 -- is between now and remind_until and whose reminder no intent has claimed,

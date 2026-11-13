@@ -6,15 +6,17 @@ Severity: page.
 
 ## Symptom
 
-A scheduled synthetic deploy failed. Something between `gregale deploy` and a
-200 from the app's health path is broken **right now**, on the release that is
-currently serving.
+A scheduled synthetic deploy failed, or it passed but could not report success
+to its independent heartbeat monitor. The alert summary and failing workflow
+step distinguish these cases. An acceptance failure means something between
+`gregale deploy` and a 200 from the app's health path is broken on the release
+that is currently serving.
 
 Unlike every other page in this directory, this alert is not derived from a
-metric. It is the outcome of
+metric. It comes from the workflow that runs
 `deploy/scripts/production-release-acceptance.sh` — the same script
-`cd-platform` runs as its final release gate — executed against production on
-a six-hourly schedule.
+`cd-platform` runs as its final release gate — against production every six
+hours and reports successful scheduled runs to an external monitor.
 
 ## Why this alert exists
 
@@ -36,14 +38,22 @@ The precedent is PR #1286: `FAAS_FUNCTION_RUNNER_*` was unset on imaged, so
 every function deploy failed platform-wide while warm instances kept serving
 existing traffic. No passive metric could see it.
 
-So: **a green dashboard does not contradict this alert.** If the two disagree,
-this one is the one describing a customer's experience.
+When acceptance failed, **a green dashboard does not contradict this alert**:
+the canary directly exercises a customer's deploy path. A heartbeat-only
+failure means that path passed but its independent monitoring needs repair.
 
 ## First moves
 
 The annotation carries a `run_url`. Open it — the failing step's log is the
 tail that was also embedded in the alert description, and it names which phase
 failed.
+
+If the heartbeat step failed, use the
+[missing-run monitor procedure](../ops/synthetic-canary-heartbeat.md). Its
+fixed error code identifies missing configuration, an invalid URL or failed
+delivery. Do not print the secret URL or repeat an ad-hoc success ping. An
+external missed-ping alarm can also arrive without any failed workflow run;
+check for a disabled schedule, queued job, runner loss or cancellation.
 
 The script covers several phases; the log tells you which one:
 

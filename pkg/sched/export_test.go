@@ -581,7 +581,7 @@ func (r *Loop) GatewayHTTPClient() **http.Client          { return &r.gatewayHTT
 func (r *Loop) Pool() **pgxpool.Pool                      { return &r.pool }
 func (r *Loop) TriggerPollers() *map[string]triggerSource { return &r.triggerPollers }
 func (r *Loop) PollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
-	return r.pollerForTrigger(t)
+	return r.pollerForTrigger(context.Background(), t)
 }
 func (r *Loop) EvictTriggerPollers(enabled []sqlc.Trigger) { r.evictTriggerPollers(enabled) }
 func (r *Loop) BeatMain()                                  { r.beatMain() }

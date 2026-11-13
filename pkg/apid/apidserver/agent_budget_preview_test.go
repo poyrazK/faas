@@ -162,11 +162,12 @@ func TestAgentBudgetPreviewWritesNothing(t *testing.T) {
 		unchanged(t)
 	})
 	t.Run("routes that cannot be previewed refuse the header", func(t *testing.T) {
-		if rec := call(agent, http.MethodPost, "/v1/apps", `{"slug":"not-made"}`, true); rec.Code != http.StatusBadRequest {
-			t.Fatalf("create preview = %d %s; want 400", rec.Code, rec.Body)
+		// A cron is not priced, so it cannot be previewed.
+		if rec := call(agent, http.MethodPost, "/v1/crons", `{"app":"preview-svc","schedule":"* * * * *","path":"/tick"}`, true); rec.Code != http.StatusBadRequest {
+			t.Fatalf("cron preview = %d %s; want 400", rec.Code, rec.Body)
 		}
-		if _, err := store.AppBySlug(ctx, "not-made"); err == nil {
-			t.Fatal("a refused preview created the app")
+		if crons, err := store.ListCronsForApp(ctx, app.ID); err != nil || len(crons) != 0 {
+			t.Fatalf("crons after a refused preview = %d, %v", len(crons), err)
 		}
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodPatch, "/v1/apps/preview-svc", strings.NewReader(`{"min_instances":2}`))

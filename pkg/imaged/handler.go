@@ -37,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/platformflags"
+	"github.com/onebox-faas/faas/pkg/registryproxy"
 	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -355,6 +356,10 @@ type Handler struct {
 	// place of the secretbox identities: the build seal-domain identity
 	// first, then the fleet and host identities (ADR 20261022111812).
 	registryIdentities []*age.X25519Identity
+	// registryProxy, when set, pulls private images through the control
+	// plane's secretd (ADR-20261110210000 slice 3j-2): this node never
+	// opens an app's registry password.
+	registryProxy *registryproxy.Proxy
 	// baseConvergence (ADR-567) tracks the bases this daemon staged so the
 	// convergence loop can keep each local copy byte-identical to the
 	// shared publication.
@@ -961,6 +966,13 @@ func (h *Handler) WithSecretboxIdentity(ident *age.X25519Identity) *Handler {
 // passwords. Crash captures keep the secretbox identities.
 func (h *Handler) WithRegistryIdentities(identities []*age.X25519Identity) *Handler {
 	h.registryIdentities = identities
+	return h
+}
+
+// WithRegistryProxy pulls apps' private images through secretd instead of
+// opening their registry passwords here (ADR-20261110210000 slice 3j-2).
+func (h *Handler) WithRegistryProxy(p *registryproxy.Proxy) *Handler {
+	h.registryProxy = p
 	return h
 }
 
@@ -2417,6 +2429,9 @@ func (h *Handler) handleAppTaskChanged(ctx context.Context, payload db.AppTaskCh
 // parsed ref ensures a customer can never accidentally widen the
 // credential to a different registry by manipulating a request body.
 func (h *Handler) resolveRegistryAuth(ctx context.Context, app state.App, host string) (*oci.BasicAuth, error) {
+	if h.registryProxy != nil {
+		return h.proxiedRegistryAuth(ctx, app, host)
+	}
 	identities := h.registryCredentialIdentities()
 	if len(identities) == 0 {
 		return nil, nil

@@ -32,6 +32,19 @@ func sourceLivenessOverrides(overrides *api.CreateDeploymentOverrides, probe *ap
 	return overrides
 }
 
+// sourceReadinessOverrides adds a source deploy's readiness_probe field. It is
+// not plan-gated: failing it only takes the instance out of routing.
+func sourceReadinessOverrides(overrides *api.CreateDeploymentOverrides, probe *api.DeploymentReadinessProbe) *api.CreateDeploymentOverrides {
+	if probe == nil {
+		return overrides
+	}
+	if overrides == nil {
+		overrides = &api.CreateDeploymentOverrides{}
+	}
+	overrides.ReadinessProbe = probe
+	return overrides
+}
+
 // projectReadinessOverrides are the deployment startup and liveness probes
 // a project deploy stores for its app: the HTTP or gRPC readiness check the
 // scan read from a Kubernetes manifest (ADR-20261029093621 §3), checked both

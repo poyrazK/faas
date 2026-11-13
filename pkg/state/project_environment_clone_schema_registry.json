@@ -1265,6 +1265,15 @@
     }
   },
   {
+    "table": "app_basic_auth_verifiers",
+    "columns": [
+      "created_at",
+      "sealed_sha256",
+      "verifier"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_binding_promotion_revisions",
     "columns": [
       "app_id",
@@ -1962,6 +1971,39 @@
     "clone": {
       "owner": "app"
     }
+  },
+  {
+    "table": "app_owner_authority",
+    "columns": [
+      "mode",
+      "singleton",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_owner_release_requests",
+    "columns": [
+      "app_id",
+      "from_node_id",
+      "reason",
+      "requested_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_owner_writes",
+    "columns": [
+      "app_id",
+      "authorized",
+      "from_node_id",
+      "id",
+      "login_role",
+      "mode",
+      "to_node_id",
+      "written_at"
+    ],
+    "kind": "operational"
   },
   {
     "table": "app_park_transitions",
@@ -3973,6 +4015,15 @@
     }
   },
   {
+    "table": "compute_node_db_logins",
+    "columns": [
+      "created_at",
+      "login",
+      "node_name"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "compute_node_heartbeat_hourly",
     "columns": [
       "bucket_at",
@@ -4361,7 +4412,9 @@
       "resolved_at",
       "dismissed_at",
       "dismissed_by",
-      "dismiss_reason"
+      "dismiss_reason",
+      "outcome",
+      "ticket_id"
     ],
     "kind": "operational"
   },
@@ -19352,6 +19405,30 @@
       "updated_at"
     ],
     "kind": "platform_configuration"
+  },
+  {
+    "table": "secret_grants",
+    "columns": [
+      "app_id",
+      "expires_at",
+      "granted_at",
+      "granted_by_node_id",
+      "node_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "secret_open_audit",
+    "columns": [
+      "app_id",
+      "entries",
+      "id",
+      "job_id",
+      "node_id",
+      "opened_at",
+      "via"
+    ],
+    "kind": "operational"
   },
   {
     "table": "service_caller_key_history",

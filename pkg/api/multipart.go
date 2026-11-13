@@ -98,6 +98,11 @@ func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile
 			_ = w.WriteField("liveness_probe", string(raw))
 		}
 	}
+	if a.ReadinessProbe != nil {
+		if raw, err := json.Marshal(a.ReadinessProbe); err == nil {
+			_ = w.WriteField("readiness_probe", string(raw))
+		}
+	}
 	if len(a.OverrideEnv) > 0 {
 		if raw, err := json.Marshal(a.OverrideEnv); err == nil {
 			_ = w.WriteField("override_env", string(raw))
@@ -184,6 +189,9 @@ type DeployAnnotations struct {
 	// LivenessProbe replaces the plan-default /healthz liveness probe. apid
 	// ignores it on a plan without liveness probes (Free).
 	LivenessProbe *DeploymentLivenessProbe
+	// ReadinessProbe takes a failing instance out of routing until it
+	// passes again, without restarting it (multipart field readiness_probe).
+	ReadinessProbe *DeploymentReadinessProbe
 	// OverrideFreeze is CreateDeploymentRequest.OverrideFreeze.
 	OverrideFreeze string
 	// ReleaseAt and ReleaseNotify are CreateDeploymentRequest's.

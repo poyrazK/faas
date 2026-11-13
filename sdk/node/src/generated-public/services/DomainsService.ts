@@ -14,13 +14,14 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class DomainsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List custom domain bindings.
    * @returns CustomDomainResponse Custom-domain bindings on the account.
    * @throws ApiError
    */
   public static listDomains(): CancelablePromise<Array<CustomDomainResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/domains',
       errors: {
@@ -53,7 +54,7 @@ export class DomainsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<CustomDomainResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/domains',
       headers: {
@@ -91,7 +92,7 @@ export class DomainsService {
   }: {
     requestBody: DomainManifest,
   }): CancelablePromise<DomainPlan> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/domains/plan',
       body: requestBody,
@@ -142,7 +143,7 @@ export class DomainsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<DomainApplyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/domains/apply',
       headers: {
@@ -185,7 +186,7 @@ export class DomainsService {
      */
     domain: string,
   }): CancelablePromise<CustomDomainResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/domains/{domain}',
       path: {
@@ -215,7 +216,7 @@ export class DomainsService {
      */
     domain: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/domains/{domain}',
       path: {
@@ -261,7 +262,7 @@ export class DomainsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<CustomDomainResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/domains/{domain}/verify',
       path: {
@@ -311,7 +312,7 @@ export class DomainsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<CustomDomainResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/domains/{domain}/default',
       path: {
@@ -352,7 +353,7 @@ export class DomainsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<any> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/domains/{domain}/retry',
       path: {
@@ -390,7 +391,7 @@ export class DomainsService {
      */
     domain: string,
   }): CancelablePromise<CustomDomainHostsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/domains/{domain}/hosts',
       path: {
@@ -433,7 +434,7 @@ export class DomainsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<CustomDomainHostsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/domains/{domain}/hosts',
       path: {
@@ -466,7 +467,7 @@ export class DomainsService {
      */
     domain: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/domains/{domain}/hosts',
       path: {

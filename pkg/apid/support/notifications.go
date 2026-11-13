@@ -32,6 +32,11 @@ func (x *session) notifyEvent(event, ticket, kind string, data any) error {
 	switch kind {
 	case "created":
 		audience, notice = "staff", "ticket_created"
+		if x.role != "" {
+			// Support opened the ticket (ContactCustomer): the customer
+			// hears about it like any staff reply.
+			audience, notice = "customer", "staff_reply"
+		}
 	case "reply", "reopened", "engineering_published":
 	case "handoff":
 		change, ok := data.(map[string]any)
