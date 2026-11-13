@@ -1484,6 +1484,156 @@ groups:
   # the control plane down. These alerts put the same signal in the
   # Alertmanager review queue and the fleet dashboard while it is up, and
   # notice a probe that stopped running.
+  # Independent deployment intent keeps a never-installed or vanished probe visible.
+  # Status: 0 healthy, 1 missing, 2 stale, 3 invalid evidence, 4 content off,
+  # 5 budget mismatch, 6 failing validation. No intent means no healthy verdict.
+  # Values bind to the discovered job/node/node_id/instance before aggregation;
+  # counts retain all evidence so duplicate sources cannot look healthy.
+  - name: faas_serving_probe_coverage
+    interval: 1m
+    rules:
+      - record: faas_serving_probe:inventory_valid
+        expr: |
+          (0 * min(faas_serving_probe_inventory_configured{job="node"}) + 1)
+          and on() (count(faas_serving_probe_inventory_configured{job="node"}) == 1)
+          and on() ((min(faas_serving_probe_inventory_configured{job="node"}) == 0) or (min(faas_serving_probe_inventory_configured{job="node"}) == 1))
+          and on() (min(timestamp(faas_serving_probe_inventory_configured{job="node"})) >= time() - 120)
+          and on() (max(timestamp(faas_serving_probe_inventory_configured{job="node"})) <= time() + 30)
+          and on() (count(faas_serving_probe_expected_pairs{job="node"}) == 1)
+          and on() (min(faas_serving_probe_expected_pairs{job="node"}) >= 0)
+          and on() (max(faas_serving_probe_expected_pairs{job="node"}) <= 1000)
+          and on() ((count(faas_serving_probe_expected{job="node"} == 1) or vector(0)) == scalar(faas_serving_probe_expected_pairs{job="node"}))
+      - record: faas_serving_probe:inventory_status
+        expr: |
+          min(faas_serving_probe_inventory_configured{job="node"}) and on() faas_serving_probe:inventory_valid
+      - record: faas_serving_probe:expected
+        expr: |
+          max by (probe_node, url) (faas_serving_probe_expected{job="node"} == 1) and on() (faas_serving_probe:inventory_status == 1)
+      - record: faas_serving_probe:expected_budget
+        expr: |
+          min by (probe_node) (faas_serving_probe_expected_first_byte_seconds{job="node"})
+      - record: faas_serving_probe:expected_max_age
+        expr: |
+          min by (probe_node) (faas_serving_probe_expected_max_age_seconds{job="node"})
+      - record: faas_serving_probe:result_count
+        expr: |
+          count by (probe_node, url) (label_replace(faas_serving_probe_success{job="node-compute",node!="",url!=""}, "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:result_value
+        expr: |
+          max by (probe_node, url) (label_replace((faas_serving_probe_success{job="node-compute",node!="",url!=""} and on(job, node, node_id, instance) up{job="node-compute",node!=""}), "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:result_scrape_time
+        expr: |
+          min by (probe_node, url) (label_replace((timestamp(faas_serving_probe_success{job="node-compute",node!="",url!=""}) and on(job, node, node_id, instance) up{job="node-compute",node!=""}), "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:node_scrape_count
+        expr: |
+          count by (probe_node) (label_replace(up{job="node-compute",node!=""}, "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:node_up
+        expr: |
+          min by (probe_node) (label_replace(up{job="node-compute",node!=""}, "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:node_scrape_time
+        expr: |
+          min by (probe_node) (label_replace(timestamp(up{job="node-compute",node!=""}), "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:last_run
+        expr: |
+          min by (probe_node) (label_replace((faas_serving_probe_last_run_timestamp_seconds{job="node-compute",node!=""} and on(job, node, node_id, instance) up{job="node-compute",node!=""}), "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:last_run_count
+        expr: |
+          count by (probe_node) (label_replace(faas_serving_probe_last_run_timestamp_seconds{job="node-compute",node!=""}, "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:content_enabled
+        expr: |
+          min by (probe_node) (label_replace((faas_serving_probe_content_check_enabled{job="node-compute",node!=""} and on(job, node, node_id, instance) up{job="node-compute",node!=""}), "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:content_enabled_count
+        expr: |
+          count by (probe_node) (label_replace(faas_serving_probe_content_check_enabled{job="node-compute",node!=""}, "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:budget
+        expr: |
+          min by (probe_node) (label_replace((faas_serving_probe_first_byte_budget_seconds{job="node-compute",node!=""} and on(job, node, node_id, instance) up{job="node-compute",node!=""}), "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:budget_count
+        expr: |
+          count by (probe_node) (label_replace(faas_serving_probe_first_byte_budget_seconds{job="node-compute",node!=""}, "probe_node", "$1", "node", "(.+)"))
+      - record: faas_serving_probe:node_fresh
+        expr: |
+          (faas_serving_probe:node_up == 1)
+          and on(probe_node) (faas_serving_probe:node_scrape_time >= time() - 120)
+          and on(probe_node) (faas_serving_probe:node_scrape_time <= time() + 30)
+          and on(probe_node) (faas_serving_probe:last_run >= on(probe_node) (time() - faas_serving_probe:expected_max_age))
+          and on(probe_node) (faas_serving_probe:last_run <= time() + 30)
+      - record: faas_serving_probe:fresh
+        expr: |
+          (faas_serving_probe:expected and on(probe_node, url) faas_serving_probe:result_count)
+          and on(probe_node) faas_serving_probe:node_fresh
+          and on(probe_node, url) (faas_serving_probe:result_scrape_time >= time() - 120)
+          and on(probe_node, url) (faas_serving_probe:result_scrape_time <= time() + 30)
+      - record: faas_serving_probe:valid
+        expr: |
+          faas_serving_probe:fresh
+          and on(probe_node) (faas_serving_probe:node_scrape_count == 1)
+          and on(probe_node) (faas_serving_probe:last_run_count == 1)
+          and on(probe_node) (faas_serving_probe:content_enabled_count == 1)
+          and on(probe_node) (faas_serving_probe:budget_count == 1)
+          and on(probe_node, url) (faas_serving_probe:result_count == 1)
+          and on(probe_node, url) ((faas_serving_probe:result_value == 0) or (faas_serving_probe:result_value == 1))
+          and on(probe_node) ((faas_serving_probe:content_enabled == 0) or (faas_serving_probe:content_enabled == 1))
+          and on(probe_node) (faas_serving_probe:budget > 0)
+          and on(probe_node) (faas_serving_probe:budget < Inf)
+          and on(probe_node) (faas_serving_probe:expected_budget > 0)
+          and on(probe_node) (faas_serving_probe:expected_budget < Inf)
+      - record: faas_serving_probe:missing
+        expr: |
+          faas_serving_probe:expected unless on(probe_node, url) faas_serving_probe:result_count
+      - record: faas_serving_probe:stale
+        expr: |
+          (faas_serving_probe:expected and on(probe_node, url) faas_serving_probe:result_count) unless on(probe_node, url) faas_serving_probe:fresh
+      - record: faas_serving_probe:invalid
+        expr: |
+          faas_serving_probe:fresh unless on(probe_node, url) faas_serving_probe:valid
+      - record: faas_serving_probe:content_disabled
+        expr: |
+          faas_serving_probe:valid and on(probe_node) (faas_serving_probe:content_enabled == 0)
+      - record: faas_serving_probe:budget_mismatch
+        expr: |
+          faas_serving_probe:valid unless on(probe_node) (faas_serving_probe:budget == on(probe_node) faas_serving_probe:expected_budget)
+      - record: faas_serving_probe:failing
+        expr: |
+          faas_serving_probe:valid and on(probe_node, url) (faas_serving_probe:result_value == 0)
+      - record: faas_serving_probe:coverage_state
+        expr: |
+          (faas_serving_probe:missing * 0 + 1)
+          or on(probe_node, url) (faas_serving_probe:stale * 0 + 2)
+          or on(probe_node, url) (faas_serving_probe:invalid * 0 + 3)
+          or on(probe_node, url) (faas_serving_probe:content_disabled * 0 + 4)
+          or on(probe_node, url) (faas_serving_probe:budget_mismatch * 0 + 5)
+          or on(probe_node, url) (faas_serving_probe:failing * 0 + 6)
+          or on(probe_node, url) (faas_serving_probe:expected * 0)
+      - record: faas_serving_probe:coverage_ratio
+        expr: |
+          ((count by (probe_node) (faas_serving_probe:coverage_state == 0)) or on(probe_node) (0 * count by (probe_node) (faas_serving_probe:expected)))
+          / on(probe_node) count by (probe_node) (faas_serving_probe:expected)
+      - alert: FaasServingProbeInventoryUnavailable
+        expr: absent(faas_serving_probe:inventory_valid)
+        for: 10m
+        labels:
+          severity: warn
+          component: node
+          family: serving_probe_coverage
+          public_status: internal
+        annotations:
+          summary: "Serving probe deployment inventory is unavailable"
+          description: "The independent control-plane inventory is missing, stale, ambiguous or inconsistent. Probe coverage cannot be assessed. Check node_exporter and converge the shared serving-probe fleet inventory before relying on coverage panels."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServingProbe.md"
+      - alert: FaasServingProbeCoverageDegraded
+        expr: faas_serving_probe:coverage_state > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: node
+          family: serving_probe_coverage
+          public_status: internal
+        annotations:
+          summary: "Serving probe coverage is degraded on {{ $labels.probe_node }}"
+          description: "The expected probe for {{ $labels.url }} has coverage state {{ $value }}: 1 missing result, 2 stale result, 3 invalid telemetry, 4 content validation disabled, 5 latency budget mismatch, 6 failing validation. Compare the shared fleet policy with this node's service, textfile and journal."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServingProbe.md"
+
   - name: faas_serving_probe
     interval: 1m
     rules:
@@ -1496,8 +1646,8 @@ groups:
           family: serving_probe
           public_status: internal
         annotations:
-          summary: "The serving probe on {{ $labels.instance }} cannot reach {{ $labels.url }}"
-          description: "Two attempts 30 s apart have missed a 2xx on every run for 10 minutes; faas_serving_probe_http_status shows the last status (0 means nothing answered). The node's webhook has already posted. If every compute node reports it, look at the edge or the probe app; if only one does, look at that node's network."
+          summary: "The serving probe on {{ $labels.instance }} failed validation for {{ $labels.url }}"
+          description: "Two attempts 30 s apart have failed status, configured body or first-byte checks on every run for 10 minutes. HTTP 200 can still fail validation; check the node's journal for the reason. The node posts directly to its webhook. If every compute node reports it, look at the edge or the probe app; if only one does, look at that node's network."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServingProbe.md"
 
       - alert: FaasServingProbeStale
@@ -2524,6 +2674,110 @@ groups:
           summary: "A platform daemon rejected an app_changed notification"
           description: "The {{ $labels.consumer }} consumer rejected at least one app_changed payload during the last 10m. This usually indicates a mixed or broken producer contract and can leave lifecycle or security-policy caches stale."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNotificationPayloadRejected.md"
+
+  # Completed requests per configured receiver/integration, not merely
+  # notification attempts. The collector reads loopback metrics; independent
+  # deployment intent keeps a missing transport visible. ADR-20261113090000.
+  - name: faas_notification_receivers
+    interval: 30s
+    rules:
+      - record: faas_notification_receiver:source_up
+        expr: |
+          (faas_notification_receiver_collector_up{job="node"} == 1)
+          and (timestamp(faas_notification_receiver_collector_up{job="node"}) >= time() - 120)
+          and on(job,instance) (
+            (faas_notification_receiver_collector_last_run_timestamp_seconds{job="node"} >= time() - 120)
+            and (faas_notification_receiver_collector_last_run_timestamp_seconds{job="node"} <= time() + 30)
+            and (timestamp(faas_notification_receiver_collector_last_run_timestamp_seconds{job="node"}) >= time() - 120)
+          )
+          and on(job,instance) (up{job="node"} == 1)
+          and on() (count(faas_notification_receiver_collector_up{job="node"}) == 1)
+          and on() (count(faas_notification_receiver_collector_last_run_timestamp_seconds{job="node"}) == 1)
+
+      - record: faas_notification_receiver:collector_fresh
+        expr: max(faas_notification_receiver:source_up) or vector(0)
+
+      - record: faas_notification_receiver:expected
+        expr: |
+          max by(receiver,integration) (
+            (faas_notification_receiver_expected{job="node"} == 1)
+            and (timestamp(faas_notification_receiver_expected{job="node"}) >= time() - 120)
+            and on(job,instance) (up{job="node"} == 1)
+          )
+
+      - record: faas_notification_receiver:telemetry_present
+        expr: |
+          (count by(receiver,integration) (
+            (
+              (faas_notification_receiver_requests_total{job="node"} >= 0)
+              and (timestamp(faas_notification_receiver_requests_total{job="node"}) >= time() - 120)
+              and on(job,instance,receiver,integration) (
+                (faas_notification_receiver_failures_total{job="node"} >= 0)
+                and (timestamp(faas_notification_receiver_failures_total{job="node"}) >= time() - 120)
+              )
+              and on(job,instance,receiver,integration) (
+                (faas_notification_receiver_latency_seconds_total{job="node"} >= 0)
+                and (timestamp(faas_notification_receiver_latency_seconds_total{job="node"}) >= time() - 120)
+              )
+              and on(job,instance,receiver,integration) (
+                (faas_notification_receiver_last_success_observed_timestamp_seconds{job="node"} >= 0)
+                and (faas_notification_receiver_last_success_observed_timestamp_seconds{job="node"} <= time() + 30)
+                and (timestamp(faas_notification_receiver_last_success_observed_timestamp_seconds{job="node"}) >= time() - 120)
+              )
+            )
+            and on(job,instance) faas_notification_receiver:source_up
+          ) == 1)
+          and on(receiver,integration) faas_notification_receiver:expected
+
+      - alert: FaasNotificationReceiverCollectorUnavailable
+        expr: |
+          ((faas_notification_receiver:collector_fresh == 0)
+          or absent(faas_notification_receiver:expected))
+          and on() (up{job="alertmanager"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: alertmanager
+          family: notification_receivers
+          public_status: internal
+        annotations:
+          summary: "Per-receiver notification evidence is unavailable"
+          description: "Alertmanager is reachable, but the receiver collector or independent receiver inventory is missing, stale or invalid. Check the receiver-metrics timer and the receiver-name-in-metrics feature flag. Missing evidence cannot establish successful delivery."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertmanagerDeliveryDegraded.md"
+
+      - alert: FaasNotificationReceiverTelemetryMissing
+        expr: |
+          (faas_notification_receiver:expected
+          unless on(receiver,integration) faas_notification_receiver:telemetry_present)
+          and on() (faas_notification_receiver:collector_fresh == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: alertmanager
+          family: notification_receivers
+          public_status: internal
+        annotations:
+          summary: "Configured notification receiver lacks transport evidence"
+          description: "The {{ $labels.receiver }} / {{ $labels.integration }} group is expected by deployment intent but has no complete, fresh transport evidence. Check configuration reload and collector errors; another receiver's success does not satisfy this expectation."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertmanagerDeliveryDegraded.md"
+
+      - alert: FaasNotificationReceiverRequestsFailing
+        expr: |
+          (sum by(receiver,integration) (
+            increase(faas_notification_receiver_failures_total{job="node"}[10m])
+            and on(job,instance) faas_notification_receiver:source_up
+          ) > 0)
+          and on(receiver,integration) faas_notification_receiver:telemetry_present
+        for: 2m
+        labels:
+          severity: warn
+          component: alertmanager
+          family: notification_receivers
+          public_status: internal
+        annotations:
+          summary: "Notification transport requests are failing for a receiver"
+          description: "The {{ $labels.receiver }} / {{ $labels.integration }} group recorded failed completed requests in the last ten minutes, including retry attempts. Inspect provider errors and verify firing and recovery receipts using the on-call procedure. Transport success does not prove human acknowledgement."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertmanagerDeliveryDegraded.md"
 
   # ────────────────────────────────────────────────────────────────────
   # Traffic anomaly recording rules (issue #303, ADR-039).

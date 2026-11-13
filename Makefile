@@ -533,6 +533,18 @@ environment-preflight-action-check: ## Verify the OIDC capability and promotion 
 canary-alert-test: ## Exercise the synthetic-canary Alertmanager payload against a fixture receiver
 	bash scripts/ops/canary_alert_test.sh
 
+.PHONY: canary-heartbeat-test
+canary-heartbeat-test: ## Verify scheduled-canary heartbeat eligibility, transport failures and credential redaction
+	python3 scripts/ops/canary_heartbeat_test.py
+
+.PHONY: post-deployment-monitoring-test
+post-deployment-monitoring-test: ## Verify deployment-monitoring transport, evidence retention and recovery ordering
+	python3 scripts/ci/post_deployment_monitoring_test.py
+
+.PHONY: monitoring-qualification-test
+monitoring-qualification-test: ## Verify manual notification qualification, cleanup, evidence binding and receipt semantics
+	python3 scripts/ops/monitoring_qualification_test.py
+
 # coverage-floor: assert per-package coverage ≥ floor for each ship-blocking
 # package. Floors live beside the verifier in .claude/ci/coverage_floor.py.
 # Reads every coverage/cover-shard*.out and unions repeated source blocks,
@@ -1122,6 +1134,7 @@ go-cache-retention-test: ## Test the acceptance-host Go build cache trim (disk h
 .PHONY: serving-probe-test
 serving-probe-test: ## Test the compute-node serving probe (ADR-20261023124955 §5)
 	python3 scripts/ops/faas_serving_probe_test.py
+	python3 scripts/ops/serving_probe_coverage_test.py
 
 .PHONY: cgroup-metrics-test
 cgroup-metrics-test: ## Test the per-slice cgroup metrics collector (ADR-20261023124955)
@@ -1134,6 +1147,15 @@ postgres-activity-metrics-test: ## Test the control-plane PostgreSQL activity co
 .PHONY: obs-gate-test
 obs-gate-test: ## Test the observability go/no-go check (ADR-20261023124955 §7)
 	python3 scripts/ops/obs_gate_test.py
+
+.PHONY: notification-receiver-metrics-test
+notification-receiver-metrics-test: ## Test receiver transport observations and counter-reset handling
+	python3 scripts/ops/notification_receiver_metrics_test.py
+	python3 scripts/ops/notification_drill_test.py
+
+.PHONY: notification-delivery-check
+notification-delivery-check: ## Qualify local receipt, recovery, receiver failure and watchdog loss with pinned monitoring binaries
+	bash scripts/ci/check_notification_delivery.sh $(CURDIR)
 
 .PHONY: gcp-public-beta-policy-test
 gcp-public-beta-policy-test: ## Test the read-only GCP production policy and IAM transformer

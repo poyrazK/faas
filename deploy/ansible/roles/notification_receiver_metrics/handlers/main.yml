@@ -1,0 +1,4 @@
+---
+- name: daemon-reload notification receiver metrics
+  ansible.builtin.systemd:
+    daemon_reload: true

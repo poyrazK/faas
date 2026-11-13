@@ -1,0 +1,3 @@
+---
+- name: serving_probe_inventory — validate shared fleet policy
+  ansible.builtin.include_tasks: ../../_shared/tasks/serving_probe_fleet.yml

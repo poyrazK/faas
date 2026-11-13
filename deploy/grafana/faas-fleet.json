@@ -3299,6 +3299,431 @@
       ],
       "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 3, "noValue": "no eligible events", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0.99}]}}, "overrides": []},
       "options": {"colorMode": "background", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"}
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unavailable",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Unconfigured",
+                  "color": "yellow"
+                },
+                "1": {
+                  "text": "Configured",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "id": 440,
+      "type": "stat",
+      "title": "Serving probe inventory",
+      "description": "Independent control-plane deployment intent. Unconfigured and unavailable do not establish healthy coverage. An explicitly empty inventory expects zero probes.",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 340
+      },
+      "targets": [
+        {
+          "expr": "faas_serving_probe:inventory_status and (timestamp(faas_serving_probe:inventory_status) >= time() - 120)",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unavailable"
+        },
+        "overrides": []
+      },
+      "id": 441,
+      "type": "stat",
+      "title": "Expected serving probes",
+      "description": "Expected node/URL pairs. Shows no value while inventory is unconfigured or unavailable.",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 340
+      },
+      "targets": [
+        {
+          "expr": "faas_serving_probe_expected_pairs{job=\"node\"} and on() ((faas_serving_probe:inventory_status == 1) and (timestamp(faas_serving_probe:inventory_status) >= time() - 120))",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "noValue": "Unavailable",
+          "min": 0,
+          "max": 1,
+          "displayName": "${__field.labels.probe_node}",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 442,
+      "type": "stat",
+      "title": "Serving probe coverage by node",
+      "description": "Share of expected probes with fresh, unique evidence, enabled content checks, matching latency budgets and passing results. No expectation produces no healthy verdict.",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 340
+      },
+      "targets": [
+        {
+          "expr": "faas_serving_probe:coverage_ratio and (timestamp(faas_serving_probe:coverage_ratio) >= time() - 120)",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "textMode": "auto"
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unavailable",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Healthy",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "Missing result",
+                  "color": "red"
+                },
+                "2": {
+                  "text": "Stale result",
+                  "color": "red"
+                },
+                "3": {
+                  "text": "Invalid telemetry",
+                  "color": "red"
+                },
+                "4": {
+                  "text": "Content validation disabled",
+                  "color": "red"
+                },
+                "5": {
+                  "text": "Latency budget mismatch",
+                  "color": "red"
+                },
+                "6": {
+                  "text": "Probe failing",
+                  "color": "red"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "id": 443,
+      "type": "table",
+      "title": "Serving probe status by node and URL",
+      "description": "Compares identities against deployment intent, so another node or URL cannot satisfy a missing probe. Inventory source health is shown separately above.",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 346
+      },
+      "targets": [
+        {
+          "expr": "faas_serving_probe:coverage_state and (timestamp(faas_serving_probe:coverage_state) >= time() - 120)",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true
+            },
+            "indexByName": {
+              "probe_node": 0,
+              "url": 1,
+              "Value": 2
+            },
+            "renameByName": {
+              "probe_node": "Node",
+              "url": "URL",
+              "Value": "Status"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unavailable",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Unavailable or stale",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "Fresh collector evidence",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "id": 450,
+      "type": "stat",
+      "title": "Notification receiver evidence",
+      "description": "Collector read health and freshness, independent of delivery. Missing, failed or frozen collection cannot establish receiver health.",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 356
+      },
+      "targets": [
+        {
+          "expr": "faas_notification_receiver:collector_fresh and (timestamp(faas_notification_receiver:collector_fresh) >= time() - 120)",
+          "instant": true,
+          "format": "time_series",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "Unavailable",
+          "displayName": "${__field.labels.receiver} / ${__field.labels.integration}",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-1": {
+                  "text": "Unknown: no success observed",
+                  "color": "orange"
+                },
+                "-2": {
+                  "text": "Missing transport evidence",
+                  "color": "red"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "id": 451,
+      "type": "table",
+      "title": "Last successful transport observation by receiver",
+      "description": "Age since two collector observations confirmed a new successful completed request count. Cold start is Unknown. Includes retries; groups destinations sharing receiver/integration. Does not prove provider delivery time, external watchdog receipt or human acknowledgement.",
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 6,
+        "y": 356
+      },
+      "targets": [
+        {
+          "expr": "((clamp_min(time() - (max by(receiver,integration) (faas_notification_receiver_last_success_observed_timestamp_seconds{job=\"node\"} and on(job,instance) (faas_notification_receiver:source_up and (timestamp(faas_notification_receiver:source_up) >= time() - 120))) > 0), 0)) and on(receiver,integration) (faas_notification_receiver:telemetry_present == 1 and (timestamp(faas_notification_receiver:telemetry_present) >= time() - 120))) or (((max by(receiver,integration) (faas_notification_receiver_last_success_observed_timestamp_seconds{job=\"node\"} and on(job,instance) (faas_notification_receiver:source_up and (timestamp(faas_notification_receiver:source_up) >= time() - 120))) == 0) - 1) and on(receiver,integration) (faas_notification_receiver:telemetry_present == 1 and (timestamp(faas_notification_receiver:telemetry_present) >= time() - 120))) or ((((faas_notification_receiver:expected and (timestamp(faas_notification_receiver:expected) >= time() - 120)) unless on(receiver,integration) (faas_notification_receiver:telemetry_present == 1 and (timestamp(faas_notification_receiver:telemetry_present) >= time() - 120))) * 0 - 2) and on() (faas_notification_receiver:collector_fresh == 1 and (timestamp(faas_notification_receiver:collector_fresh) >= time() - 120)))",
+          "instant": true,
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unavailable",
+          "displayName": "${__field.labels.receiver} / ${__field.labels.integration}"
+        },
+        "overrides": []
+      },
+      "id": 452,
+      "type": "table",
+      "title": "Failed transport requests by receiver (10m)",
+      "description": "Completed requests returning an error, including retries. A healthy sibling cannot hide failed attempts. Unavailable when collection is missing or stale.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 364
+      },
+      "targets": [
+        {
+          "expr": "sum by(receiver,integration) (increase(faas_notification_receiver_failures_total{job=\"node\"}[10m]) and on(job,instance) (faas_notification_receiver:source_up and (timestamp(faas_notification_receiver:source_up) >= time() - 120))) and on(receiver,integration) (faas_notification_receiver:telemetry_present == 1 and (timestamp(faas_notification_receiver:telemetry_present) >= time() - 120))",
+          "instant": true,
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "Unavailable",
+          "displayName": "${__field.labels.receiver} / ${__field.labels.integration}"
+        },
+        "overrides": []
+      },
+      "id": 453,
+      "type": "table",
+      "title": "Mean completed transport request latency (10m)",
+      "description": "Transport duration across successful and failed completed requests, including retry attempts. No value without completed requests or fresh evidence; excludes alert grouping delay and human acknowledgement.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 364
+      },
+      "targets": [
+        {
+          "expr": "(sum by(receiver,integration) (increase(faas_notification_receiver_latency_seconds_total{job=\"node\"}[10m]) and on(job,instance) (faas_notification_receiver:source_up and (timestamp(faas_notification_receiver:source_up) >= time() - 120))) / (sum by(receiver,integration) (increase(faas_notification_receiver_requests_total{job=\"node\"}[10m]) and on(job,instance) (faas_notification_receiver:source_up and (timestamp(faas_notification_receiver:source_up) >= time() - 120))) > 0)) and on(receiver,integration) (faas_notification_receiver:telemetry_present == 1 and (timestamp(faas_notification_receiver:telemetry_present) >= time() - 120))",
+          "instant": true,
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
     }
   ],
   "refresh": "30s",
@@ -3319,6 +3744,6 @@
   "timezone": "",
   "title": "faas fleet (M8 §12)",
   "uid": "faas-fleet-m8",
-  "version": 3,
+  "version": 5,
   "weekStart": ""
 }
