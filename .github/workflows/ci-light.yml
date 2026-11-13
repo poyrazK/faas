@@ -483,6 +483,9 @@ jobs:
       # hostnames and paths; handlers log the error instead.
       - name: problem detail check
         run: go run ./scripts/ci/problemdetailcheck
+      - name: daemon recovery publication policy
+        run: python3 scripts/ci/daemon_recovery_profile_test.py
+
       - name: migrations check (static)
         run: make migrations-check
       - name: select migration changes

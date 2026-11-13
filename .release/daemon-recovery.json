@@ -1,0 +1,5 @@
+{
+  "mode": "daemon-recovery",
+  "base_release": "v0.1.18-rc.341",
+  "base_sha": "5752ed6477a229963ea4139c484910fb0e2ebf17"
+}
