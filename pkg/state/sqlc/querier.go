@@ -2378,6 +2378,7 @@ type Querier interface {
 	// shared_buffers under normal load. Returns ErrNotFound when the
 	// instance row is missing.
 	GetInstanceTailCount(ctx context.Context, db DBTX, id pgtype.UUID) (int32, error)
+	GetInvocationSend(ctx context.Context, db DBTX, invocationID pgtype.UUID) (GetInvocationSendRow, error)
 	GetInvoiceSnapshot(ctx context.Context, db DBTX, id pgtype.UUID) (GetInvoiceSnapshotRow, error)
 	GetLatestDeploymentRegistryVerification(ctx context.Context, db DBTX, arg GetLatestDeploymentRegistryVerificationParams) (DeploymentRegistryVerification, error)
 	GetLatestOwnedBuildExportPublication(ctx context.Context, db DBTX, arg GetLatestOwnedBuildExportPublicationParams) (BuildExportPublication, error)
@@ -2918,6 +2919,9 @@ type Querier interface {
 	InsertFunctionMigrationDestination(ctx context.Context, db DBTX, arg InsertFunctionMigrationDestinationParams) error
 	InsertInstanceApplicationStandardBoot(ctx context.Context, db DBTX, arg InsertInstanceApplicationStandardBootParams) error
 	InsertInstanceApplicationStandardPromotion(ctx context.Context, db DBTX, arg InsertInstanceApplicationStandardPromotionParams) error
+	// ADR-20261112160000: the app that sent this invocation with send(), and the
+	// app its completion goes to, written with the invocation row.
+	InsertInvocationSend(ctx context.Context, db DBTX, arg InsertInvocationSendParams) error
 	InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg InsertInvoiceHistorySnapshotParams) (InsertInvoiceHistorySnapshotRow, error)
 	// ADR-732 live fork: pinned to the live_fork capture written in the same
 	// transaction, which is still requested. The claim waits for it.
@@ -6584,6 +6588,8 @@ type Querier interface {
 	// left out and, with an app_id, so are rules of apps outside its edge-rule
 	// scope: the owning company organization, or none for a personal app.
 	ReadPublicHostEdgeRules(ctx context.Context, db DBTX, arg ReadPublicHostEdgeRulesParams) (ReadPublicHostEdgeRulesRow, error)
+	// A branch's slot names the environment of the branch holding it
+	// (ADR-20261031193635 stable branch URLs).
 	ReadPublicHostEnvironment(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]byte, error)
 	ReadPublicHostEnvironmentPolicy(ctx context.Context, db DBTX, arg ReadPublicHostEnvironmentPolicyParams) (ReadPublicHostEnvironmentPolicyRow, error)
 	ReadPublicHostOpenAPIDoc(ctx context.Context, db DBTX, arg ReadPublicHostOpenAPIDocParams) (ReadPublicHostOpenAPIDocRow, error)

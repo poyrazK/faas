@@ -4928,6 +4928,11 @@ type Invocation struct {
 	// them as X-Faas-Edge-Jwt-*. Customer headers never fill them.
 	EdgeJWTIssuer  string `json:"-"`
 	EdgeJWTSubject string `json:"-"`
+	// SentByAppID and OnCompleteAppID record a send() (ADR-20261112160000):
+	// the calling app, and the app that receives the completion. They are
+	// written to invocation_sends with the row and not read back on it.
+	SentByAppID     string `json:"-"`
+	OnCompleteAppID string `json:"-"`
 	// WorkPolicyName and WorkKeyDigest identify an app-scoped scheduling lane.
 	// The raw application key is never persisted in this ledger.
 	WorkPolicyName     string     `json:"work_policy_name,omitempty"`

@@ -10080,7 +10080,13 @@ SELECT jsonb_build_object(
     'AccountID', account_id,
     'ProjectID', project_id,
     'Slug', slug
-)::jsonb AS data FROM project_environments WHERE id = sqlc.arg(environment_id)::uuid;
+)::jsonb AS data FROM project_environments
+-- A branch's slot names the environment of the branch holding it
+-- (ADR-20261031193635 stable branch URLs).
+WHERE id = sqlc.arg(environment_id)::uuid
+   OR id = (SELECT environment_id FROM project_environment_branches WHERE slot_id = sqlc.arg(environment_id)::uuid)
+ORDER BY (id = sqlc.arg(environment_id)::uuid) DESC
+LIMIT 1;
 
 -- name: ReadPublicHostEnvironmentPolicy :one
 WITH policy AS (SELECT jsonb_build_object(
@@ -30193,3 +30199,13 @@ WHERE b.account_id = sqlc.arg(account_id) AND b.app_id = sqlc.arg(app_id)
   AND d.previews IN ('empty', 'copy') AND d.preview_pr_number IS NULL
   AND d.state NOT IN ('deleting', 'deleted')
 ORDER BY b.environment_key;
+
+-- name: InsertInvocationSend :exec
+-- ADR-20261112160000: the app that sent this invocation with send(), and the
+-- app its completion goes to, written with the invocation row.
+INSERT INTO invocation_sends (invocation_id, sender_app_id, on_complete_app_id)
+VALUES (sqlc.arg(invocation_id)::uuid, sqlc.arg(sender_app_id)::uuid, sqlc.narg(on_complete_app_id)::uuid);
+
+-- name: GetInvocationSend :one
+SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id
+FROM invocation_sends WHERE invocation_id = sqlc.arg(invocation_id)::uuid;

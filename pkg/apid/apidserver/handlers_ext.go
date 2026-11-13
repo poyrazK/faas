@@ -3633,6 +3633,11 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 			"Invalid domain", err.Error()))
 		return
 	}
+	if s.platformOwnedDomain(domain) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid domain", domain+" belongs to Gregale; attach a domain you own"))
+		return
+	}
 	// The public CLI documents --app as an app slug. Keep accepting IDs
 	// for existing API clients, but resolve the documented slug form too.
 	app, acct, prob := s.namedAppAs(r, acct, req.AppID, true)

@@ -7525,6 +7525,13 @@ type InvocationQueueLeaseReceipt struct {
 	LeaseExpiresAt   pgtype.Timestamptz
 }
 
+type InvocationSend struct {
+	InvocationID    pgtype.UUID
+	SenderAppID     pgtype.UUID
+	OnCompleteAppID pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+}
+
 type InvocationWorkCancellation struct {
 	ID             pgtype.UUID
 	AppID          pgtype.UUID
@@ -12789,6 +12796,7 @@ type ProjectEnvironmentBranch struct {
 	DataLeaseUntil      pgtype.Timestamptz
 	CreatedAt           pgtype.Timestamptz
 	PrivateNetworks     string
+	SlotID              pgtype.UUID
 }
 
 // ADR-20261031193635 overlay buckets owned by an environment branch; purged and deleted after the branch is gone.
@@ -16298,6 +16306,12 @@ type SupportTicket struct {
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
 	ResolvedAt pgtype.Timestamptz
+}
+
+type SupportTicketSnapshot struct {
+	TicketID   pgtype.UUID
+	CapturedAt pgtype.Timestamptz
+	Snapshot   []byte
 }
 
 type SyntheticCheck struct {

@@ -12,6 +12,7 @@ package customererrors
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"regexp"
 	"sync"
@@ -300,6 +301,28 @@ func (r *Recorder) Summary(ctx context.Context, accountID string, since time.Tim
 		out.Recent = append(out.Recent, e)
 	}
 	return out, rows.Err()
+}
+
+// RequestForAccount returns the newest recorded error of accountID whose
+// request id or trace id equals id, or nil. Unlike Lookup it never returns
+// another account's row, so customer-supplied ids are safe to resolve.
+func (r *Recorder) RequestForAccount(ctx context.Context, accountID, id string) (*api.AccountHealthRequest, error) {
+	if r == nil || !uuidPattern.MatchString(accountID) || !requestIDPattern.MatchString(id) {
+		return nil, nil
+	}
+	var e api.AccountHealthRequest
+	err := r.pool.QueryRow(ctx, `SELECT occurred_at, route, code, app_slug, request_id, trace_id
+		FROM customer_api_errors WHERE account_id=$1 AND (request_id=$2 OR trace_id=$2)
+		ORDER BY occurred_at DESC, id DESC LIMIT 1`, accountID, id).
+		Scan(&e.OccurredAt, &e.Route, &e.Code, &e.AppSlug, &e.RequestID, &e.TraceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	e.OccurredAt = e.OccurredAt.UTC()
+	return &e, nil
 }
 
 // Lookup finds recorded errors whose request id or trace id equals id.

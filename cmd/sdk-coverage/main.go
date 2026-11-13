@@ -1531,6 +1531,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/account":                                         "DeleteAccount",
 	"PATCH /v1/account/plan":                                     "ChangePlan",
 	"GET /v1/account":                                            "Whoami",
+	"GET /v1/account/health":                                     "GetAccountHealth",
 	"GET /v1/capabilities":                                       "GetCapabilities",
 	"POST /v1/executions":                                        "CreateExecution",
 	"POST /v1/domains/{domain}/retry":                            "RetryDomainVerification",

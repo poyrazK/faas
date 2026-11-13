@@ -43616,6 +43616,19 @@ CREATE TABLE public.invocation_queue_lease_receipts (
 
 
 --
+-- Name: invocation_sends; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_sends (
+    invocation_id uuid NOT NULL,
+    sender_app_id uuid NOT NULL,
+    on_complete_app_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT invocation_sends_created_at_check CHECK (isfinite(created_at))
+);
+
+
+--
 -- Name: invocation_work_cancellations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -53216,6 +53229,7 @@ CREATE TABLE public.project_environment_branches (
     data_lease_until timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     private_networks text DEFAULT 'off'::text NOT NULL,
+    slot_id uuid,
     CONSTRAINT project_environment_branches_data_attempts CHECK ((data_attempts >= 0)),
     CONSTRAINT project_environment_branches_data_state CHECK ((data_state = ANY (ARRAY['pending'::text, 'ready'::text, 'failed'::text]))),
     CONSTRAINT project_environment_branches_depth CHECK (((depth >= 1) AND (depth <= 8))),
@@ -59830,6 +59844,19 @@ CREATE TABLE public.support_staff (
     CONSTRAINT support_staff_profile_check CHECK (((jsonb_typeof(profile) = 'object'::text) AND (octet_length((profile)::text) <= 16384))),
     CONSTRAINT support_staff_revision_check CHECK ((revision > 0)),
     CONSTRAINT support_staff_role_check CHECK ((role = ANY (ARRAY['agent'::text, 'manager'::text, 'revoked'::text])))
+);
+
+
+--
+-- Name: support_ticket_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.support_ticket_snapshots (
+    ticket_id uuid NOT NULL,
+    captured_at timestamp with time zone NOT NULL,
+    snapshot jsonb NOT NULL,
+    CONSTRAINT support_ticket_snapshots_captured_at_check CHECK (isfinite(captured_at)),
+    CONSTRAINT support_ticket_snapshots_snapshot_check CHECK (((jsonb_typeof(snapshot) = 'object'::text) AND (octet_length((snapshot)::text) <= 32768)))
 );
 
 
@@ -67448,6 +67475,14 @@ ALTER TABLE ONLY public.invocation_queue_lease_receipts
 
 
 --
+-- Name: invocation_sends invocation_sends_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_sends
+    ADD CONSTRAINT invocation_sends_pkey PRIMARY KEY (invocation_id);
+
+
+--
 -- Name: invocation_work_cancellations invocation_work_cancellations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -74384,6 +74419,14 @@ ALTER TABLE ONLY public.support_staff
 
 
 --
+-- Name: support_ticket_snapshots support_ticket_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_ticket_snapshots
+    ADD CONSTRAINT support_ticket_snapshots_pkey PRIMARY KEY (ticket_id);
+
+
+--
 -- Name: support_tickets support_tickets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -80119,6 +80162,13 @@ CREATE INDEX invocation_environment_queue_domain_idx ON public.invocation_enviro
 
 
 --
+-- Name: invocation_sends_sender_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocation_sends_sender_idx ON public.invocation_sends USING btree (sender_app_id, created_at);
+
+
+--
 -- Name: invocation_work_cancellations_app_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -83616,6 +83666,13 @@ CREATE INDEX project_environment_branches_parent_idx ON public.project_environme
 --
 
 CREATE INDEX project_environment_branches_project_idx ON public.project_environment_branches USING btree (account_id, project_id);
+
+
+--
+-- Name: project_environment_branches_slot_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX project_environment_branches_slot_unique ON public.project_environment_branches USING btree (slot_id) WHERE (slot_id IS NOT NULL);
 
 
 --
@@ -101248,6 +101305,30 @@ ALTER TABLE ONLY public.invocation_queue_lease_receipts
 
 
 --
+-- Name: invocation_sends invocation_sends_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_sends
+    ADD CONSTRAINT invocation_sends_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocation_sends invocation_sends_on_complete_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_sends
+    ADD CONSTRAINT invocation_sends_on_complete_app_id_fkey FOREIGN KEY (on_complete_app_id) REFERENCES public.apps(id) ON DELETE SET NULL;
+
+
+--
+-- Name: invocation_sends invocation_sends_sender_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_sends
+    ADD CONSTRAINT invocation_sends_sender_app_id_fkey FOREIGN KEY (sender_app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: invocation_work_cancellations invocation_work_cancellations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -109733,6 +109814,14 @@ ALTER TABLE ONLY public.support_satisfaction
 
 ALTER TABLE ONLY public.support_staff
     ADD CONSTRAINT support_staff_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_ticket_snapshots support_ticket_snapshots_ticket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.support_ticket_snapshots
+    ADD CONSTRAINT support_ticket_snapshots_ticket_id_fkey FOREIGN KEY (ticket_id) REFERENCES public.support_tickets(id) ON DELETE CASCADE;
 
 
 --

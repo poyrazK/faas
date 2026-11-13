@@ -5858,7 +5858,7 @@ var cliCommands = []cliCommand{
 				{Name: "behavior-output", Value: "FILE", Short: "save behavior digests after authorization checks (requires --once)"},
 				{Name: "behavior-replays", Value: "FILE", Short: "required authorization scenarios for changed behavior objects"},
 				{Name: "validators", Short: "generate runtime table and RPC argument validators alongside types"},
-				{Name: "numeric-mode", Value: "MODE", Short: "TypeScript numbers: number or lossless decimal strings", ClosedSet: []string{"number", "lossless"}},
+				{Name: "numeric-mode", Value: "MODE", Short: "TypeScript numbers: number, lossless decimal strings, or exact tagged numbers", ClosedSet: []string{"number", "lossless", "exact"}},
 				{Name: "once", Short: "verify and exit, removing disposable containers"},
 				{Name: "watch", Short: "watch migrations and refresh API/types (default true; use --watch=false to disable)"},
 				{Name: "baseline", Value: "FILE", Short: "read-only saved contract (default: last successful local contract)"},
@@ -5922,6 +5922,7 @@ var cliCommands = []cliCommand{
 					{Name: "schema", Value: "SCHEMA", Short: "the Data API's first exposed schema (default api)"},
 					{Name: "upgrade", Short: "print the upgrade for a storage_objects table without object_key"},
 					{Name: "sessions", Short: "include durable uploads, receipts and conditional replacement"},
+					{Name: "maintenance", Short: "include owner-only cleanup leases and reference guards"},
 				}, Examples: []string{"gregale data-api storage export > migrations/0005_storage.sql", "gregale data-api storage export --upgrade > migrations/0009_storage_object_keys.sql"}},
 				{Name: "enable", Short: "Bind a bucket read-write and turn storage on", Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "bucket", Value: "BUCKET", Req: true, Short: "bucket to store files in (created and bound when needed)"},
@@ -5991,7 +5992,7 @@ var cliCommands = []cliCommand{
 				{Name: "snapshot", Short: "export a JSON baseline for data-api diff"},
 				{Name: "validators", Short: "include typed runtime table and RPC argument validators"},
 				{Name: "language", Value: "LANGUAGE", Short: "client language (default typescript)", ClosedSet: []string{"typescript", "python", "go"}},
-				{Name: "numeric-mode", Value: "MODE", Short: "TypeScript JSON numbers: number or lossless decimal strings", ClosedSet: []string{"number", "lossless"}},
+				{Name: "numeric-mode", Value: "MODE", Short: "TypeScript JSON numbers: number, lossless decimal strings, or exact tagged numbers", ClosedSet: []string{"number", "lossless", "exact"}},
 				{Name: "package", Value: "NAME", Short: "Go package name (default gregaledata)"},
 				{Name: "snapshot-file", Value: "FILE", Short: "render Python or Go from a saved snapshot without contacting the API"},
 				{Name: "timeout", Value: "DURATION", Short: "task wait deadline (default 2m)"},
@@ -6041,7 +6042,7 @@ var cliCommands = []cliCommand{
 				{Name: "access-token-env", Value: "ENV", Short: "application JWT environment variable"},
 				{Name: "refresh-token-env", Value: "ENV", Short: "optional private refresh token environment variable"},
 			}, Examples: []string{"gregale --json data-api status notes-data"}},
-			{Name: "sync", Short: "Run migrations, refresh the API, export types and check the client", Positionals: []string{"<name>"}, Flags: []cliFlag{
+			{Name: "sync", Short: "Run migrations, refresh the API, export types and check the client", Notes: []string{"Run an existing workflow with gregale data-api sync --config <FILE> <name>. Use --init to generate its configuration first."}, Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "init", Short: "generate a coordinated workflow without executing it"},
 				{Name: "role", Value: "LOGIN", Short: "serving binding login for --init"},
 				{Name: "runtime-directory", Value: "DIR", Short: "owner tooling directory for --init"},

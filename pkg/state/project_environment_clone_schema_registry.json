@@ -16043,7 +16043,8 @@
       "expires_at",
       "parent_environment_id",
       "private_networks",
-      "project_id"
+      "project_id",
+      "slot_id"
     ],
     "kind": "operational"
   },
@@ -21400,6 +21401,15 @@
     "kind": "operational"
   },
   {
+    "table": "support_ticket_snapshots",
+    "columns": [
+      "ticket_id",
+      "captured_at",
+      "snapshot"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "support_tickets",
     "columns": [
       "id",
@@ -21469,6 +21479,16 @@
       "history_incomplete",
       "node_name",
       "source_kind"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "invocation_sends",
+    "columns": [
+      "invocation_id",
+      "sender_app_id",
+      "on_complete_app_id",
+      "created_at"
     ],
     "kind": "operational"
   }

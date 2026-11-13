@@ -8,36 +8,52 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// TicketOwner identifies the customer behind a ticket for the staff inbox's
-// account panel (ADR-20261112170000). AccountID is the personal owner, or
-// for an organization case the account that opened it; OrgID is set for
-// organization cases. Callers must already have authorized the staff actor
-// for this ticket (Portal does). It returns empty strings when the ticket
-// does not exist or its opener was deleted.
-func (s *Service) TicketOwner(ctx context.Context, ticketID string) (accountID, orgID string, err error) {
+// TicketCustomer identifies the customer behind a ticket and the request
+// id they attached (ADR-20261112170000, ADR-20261112210000). AccountID is
+// the personal owner, or for an organization case the account that opened
+// it; OrgID is set for organization cases.
+type TicketCustomer struct {
+	AccountID, OrgID, RequestID string
+}
+
+// TicketCustomer loads who a ticket belongs to. Callers must already have
+// authorized the reader for this ticket, or be acting on a ticket the
+// caller just created. It returns a zero value when the ticket does not
+// exist or its opener was deleted.
+func (s *Service) TicketCustomer(ctx context.Context, ticketID string) (TicketCustomer, error) {
 	if s == nil || s.Pool == nil {
-		return "", "", errors.New("support: unavailable")
+		return TicketCustomer{}, errors.New("support: unavailable")
 	}
-	var account, org, creator pgtype.UUID
-	err = s.Pool.QueryRow(ctx, `SELECT account_id, org_id, created_by FROM support_tickets WHERE id=$1`, uid(ticketID)).
-		Scan(&account, &org, &creator)
+	var (
+		account, org, creator pgtype.UUID
+		requestID             string
+	)
+	err := s.Pool.QueryRow(ctx, `SELECT account_id, org_id, created_by, coalesce(state->'context'->>'request_id','')
+		FROM support_tickets WHERE id=$1`, uid(ticketID)).Scan(&account, &org, &creator, &requestID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return TicketCustomer{}, nil
+	}
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", "", nil
-		}
-		return "", "", err
+		return TicketCustomer{}, err
 	}
-	text := func(v pgtype.UUID) string {
-		if !v.Valid {
-			return ""
-		}
-		value, _ := v.Value()
-		out, _ := value.(string)
-		return out
+	out := TicketCustomer{AccountID: uuidText(account), OrgID: uuidText(org), RequestID: requestID}
+	if out.AccountID == "" {
+		out.AccountID = uuidText(creator)
 	}
-	accountID, orgID = text(account), text(org)
-	if accountID == "" {
-		accountID = text(creator)
+	return out, nil
+}
+
+// TicketOwner is TicketCustomer without the request id.
+func (s *Service) TicketOwner(ctx context.Context, ticketID string) (accountID, orgID string, err error) {
+	customer, err := s.TicketCustomer(ctx, ticketID)
+	return customer.AccountID, customer.OrgID, err
+}
+
+func uuidText(v pgtype.UUID) string {
+	if !v.Valid {
+		return ""
 	}
-	return accountID, orgID, nil
+	value, _ := v.Value()
+	out, _ := value.(string)
+	return out
 }

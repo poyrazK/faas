@@ -28782,6 +28782,23 @@ func (q *Queries) GetInstanceTailCount(ctx context.Context, db DBTX, id pgtype.U
 	return tail_count, err
 }
 
+const getInvocationSend = `-- name: GetInvocationSend :one
+SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id
+FROM invocation_sends WHERE invocation_id = $1::uuid
+`
+
+type GetInvocationSendRow struct {
+	SenderAppID     string
+	OnCompleteAppID string
+}
+
+func (q *Queries) GetInvocationSend(ctx context.Context, db DBTX, invocationID pgtype.UUID) (GetInvocationSendRow, error) {
+	row := db.QueryRow(ctx, getInvocationSend, invocationID)
+	var i GetInvocationSendRow
+	err := row.Scan(&i.SenderAppID, &i.OnCompleteAppID)
+	return i, err
+}
+
 const getInvoiceSnapshot = `-- name: GetInvoiceSnapshot :one
 SELECT id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
        period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
@@ -35675,6 +35692,24 @@ func (q *Queries) InsertInstanceApplicationStandardPromotion(ctx context.Context
 		arg.ParentToken,
 		arg.Binding,
 	)
+	return err
+}
+
+const insertInvocationSend = `-- name: InsertInvocationSend :exec
+INSERT INTO invocation_sends (invocation_id, sender_app_id, on_complete_app_id)
+VALUES ($1::uuid, $2::uuid, $3::uuid)
+`
+
+type InsertInvocationSendParams struct {
+	InvocationID    pgtype.UUID
+	SenderAppID     pgtype.UUID
+	OnCompleteAppID pgtype.UUID
+}
+
+// ADR-20261112160000: the app that sent this invocation with send(), and the
+// app its completion goes to, written with the invocation row.
+func (q *Queries) InsertInvocationSend(ctx context.Context, db DBTX, arg InsertInvocationSendParams) error {
+	_, err := db.Exec(ctx, insertInvocationSend, arg.InvocationID, arg.SenderAppID, arg.OnCompleteAppID)
 	return err
 }
 
@@ -91711,9 +91746,15 @@ SELECT jsonb_build_object(
     'AccountID', account_id,
     'ProjectID', project_id,
     'Slug', slug
-)::jsonb AS data FROM project_environments WHERE id = $1::uuid
+)::jsonb AS data FROM project_environments
+WHERE id = $1::uuid
+   OR id = (SELECT environment_id FROM project_environment_branches WHERE slot_id = $1::uuid)
+ORDER BY (id = $1::uuid) DESC
+LIMIT 1
 `
 
+// A branch's slot names the environment of the branch holding it
+// (ADR-20261031193635 stable branch URLs).
 func (q *Queries) ReadPublicHostEnvironment(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]byte, error) {
 	row := db.QueryRow(ctx, readPublicHostEnvironment, environmentID)
 	var data []byte

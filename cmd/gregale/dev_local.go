@@ -318,6 +318,8 @@ type devLocalServer struct {
 	port       int
 	out        io.Writer
 	mu         sync.Mutex // serializes reload output and Go rebuilds
+	// invocations holds local sends for wait() and status().
+	invocations devLocalInvocations
 }
 
 func newDevLocalServer(fns []*localFunction, projectDir string) (*devLocalServer, error) {

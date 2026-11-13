@@ -8,7 +8,7 @@ export type DataResponseInfo = Readonly<{
 export type DataClientBaseOptions = {
   url: string
   fetch?: typeof globalThis.fetch
-  /** Use matching lossless generated types; all JSON numbers become decimal strings. */
+  /** Use matching generated types: lossless gives decimal strings; exact gives ExactNumber values. */
   numericMode?: import('./numeric.js').NumericMode
   /** Opt in to an exact serving-contract match before each REST/RPC operation. */
   expectedSchemaFingerprint?: string

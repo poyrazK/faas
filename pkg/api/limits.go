@@ -16423,9 +16423,18 @@ const (
 	DataAPIServerKeyPermissionsMaxEntries = 64
 	// Single-app projects upload migrations beside the runtime; structural
 	// bounds only, inside the plan's source-archive limit.
-	DataAPISingleAppMigrationsMaxFiles = 4096
-	DataAPISingleAppMigrationsMaxBytes = 16 << 20
-	DataAPIReleaseCommandMaxBytes      = 1024
+	DataAPISingleAppMigrationsMaxFiles   = 4096
+	DataAPIBackgroundJobMaxAttempts      = 8
+	DataAPIBackgroundJobRetryBaseSeconds = 2
+	DataAPIBackgroundJobRetryMaxSeconds  = 300
+	DataAPIMaintenanceGraceSeconds       = 300
+	DataAPIMaintenanceRetentionDays      = 30
+	DataAPIMaintenanceBatch              = 100
+	DataAPIMaintenanceInventory          = 10000
+	DataAPIMaintenanceResponseBytes      = 4 << 20
+	DataAPIMaintenanceRunMS              = 110000
+	DataAPISingleAppMigrationsMaxBytes   = 16 << 20
+	DataAPIReleaseCommandMaxBytes        = 1024
 	// The CLI deploys the runtime archive apid serves (ADR-20261031095954);
 	// a larger download, or one that unpacks larger, is refused.
 	DataAPIRuntimeArchiveMaxBytes = 2 << 20
