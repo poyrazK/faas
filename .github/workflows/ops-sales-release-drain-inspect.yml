@@ -36,7 +36,7 @@ jobs:
           trap 'rm -rf -- "$scratch"' EXIT
           printf '%s\n' "$COMPUTE_SSH_KEY" > "$scratch/key"
           ssh-keyscan -T 10 -t ed25519 fsn-2.gregale.dev > "$scratch/known-hosts" 2>/dev/null
-          fingerprint="$(ssh-keygen -lf "$scratch/known-hosts" -E sha256 | awk '{print $2}')"
+          fingerprint="$(ssh-keygen -lf "$scratch/known-hosts" -E sha256 | awk '{print $2}' | sort -u)"
           test "$fingerprint" = 'SHA256:0p1vgiWlG75HcPGAGJFTCTf2GudZsX2h3VJFrnrkc6k'
           ssh -i "$scratch/key" -o BatchMode=yes -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$scratch/known-hosts" \
