@@ -2501,3 +2501,6 @@ func ProjectEnvironmentPlanURLs(t *testing.T) (string, map[string]string, api.Pl
 var ProjectEnvironmentWorkloadURL = projectEnvironmentWorkloadURL
 
 var FinancialBudgetProblem = financialBudgetProblem
+
+// AppOOMRecommendation is the operational-summary OOM recommendation (2026-11-13).
+var AppOOMRecommendation = appOOMRecommendation

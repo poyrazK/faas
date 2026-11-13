@@ -1,14 +1,15 @@
-package apidserver
+package apidserver_test
 
 import (
 	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestAppOOMRecommendationNamesTheKillAndTheRAMCommand(t *testing.T) {
-	got := appOOMRecommendation("retail-orders", api.DebugStatusOOMKill{DeploymentID: "live", PeakMB: 520, PlanMB: 512}, 3, "live")
+	got := apidserver.AppOOMRecommendation("retail-orders", api.DebugStatusOOMKill{DeploymentID: "live", PeakMB: 520, PlanMB: 512}, 3, "live")
 	if got.Code != api.CodeAppRuntimeOOM || got.Severity != "error" {
 		t.Fatalf("code/severity = %s/%s", got.Code, got.Severity)
 	}
@@ -23,7 +24,7 @@ func TestAppOOMRecommendationNamesTheKillAndTheRAMCommand(t *testing.T) {
 }
 
 func TestAppOOMRecommendationOnEarlierDeploymentIsAWarning(t *testing.T) {
-	got := appOOMRecommendation("web", api.DebugStatusOOMKill{DeploymentID: "old", PlanMB: 256, DeploymentFailed: true}, 1, "live")
+	got := apidserver.AppOOMRecommendation("web", api.DebugStatusOOMKill{DeploymentID: "old", PlanMB: 256, DeploymentFailed: true}, 1, "live")
 	if got.Severity != "warning" {
 		t.Fatalf("severity = %s", got.Severity)
 	}
@@ -35,7 +36,7 @@ func TestAppOOMRecommendationOnEarlierDeploymentIsAWarning(t *testing.T) {
 }
 
 func TestAppOOMRecommendationWithoutSizesStillGivesTheCommand(t *testing.T) {
-	got := appOOMRecommendation("web", api.DebugStatusOOMKill{}, 1, "")
+	got := apidserver.AppOOMRecommendation("web", api.DebugStatusOOMKill{}, 1, "")
 	if got.Severity != "error" || !strings.Contains(got.Next, "--ram <MB>") {
 		t.Fatalf("got %+v", got)
 	}
