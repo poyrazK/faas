@@ -32,19 +32,21 @@ func (s *server) queueGroupKeyWork(acct state.Account, groupKey string, work *ap
 // ordered policy on its first use. A pre-existing policy under the reserved
 // name with other settings is refused rather than reinterpreted.
 func appWorkPolicyForEnqueue(ctx context.Context, store state.AppWorkPolicyStore, accountID, appID, name string) (state.AppWorkPolicy, *api.Problem) {
-	record, err := store.AppWorkPolicyByName(ctx, appID, name)
-	if errors.Is(err, state.ErrNotFound) && name == workpolicy.Ordered {
-		record, err = store.UpsertAppWorkPolicy(ctx, accountID, appID, workpolicy.OrderedPolicy())
+	var record state.AppWorkPolicy
+	var err error
+	if name == workpolicy.Ordered {
+		record, err = state.OrderedWorkPolicy(ctx, store, accountID, appID)
+	} else {
+		record, err = store.AppWorkPolicyByName(ctx, appID, name)
 	}
-	if errors.Is(err, state.ErrNotFound) {
-		return state.AppWorkPolicy{}, api.ErrValidation("unknown work policy")
-	}
-	if err != nil {
-		return state.AppWorkPolicy{}, api.ErrCapacity("lookup work policy")
-	}
-	if name == workpolicy.Ordered && !workpolicy.IsOrdered(record.Policy) {
+	switch {
+	case errors.Is(err, state.ErrWorkPolicyReserved):
 		return state.AppWorkPolicy{}, api.NewProblem(http.StatusConflict, "work_policy_reserved", "Reserved work policy",
 			"this app has its own policy named "+workpolicy.Ordered+"; rename it to use group_key")
+	case errors.Is(err, state.ErrNotFound):
+		return state.AppWorkPolicy{}, api.ErrValidation("unknown work policy")
+	case err != nil:
+		return state.AppWorkPolicy{}, api.ErrCapacity("lookup work policy")
 	}
 	return record, nil
 }

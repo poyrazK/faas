@@ -2,6 +2,15 @@
 -- Installed after schema.sql by the database owner (BYO) or by Gregale as the
 -- customer schema owner (managed PostgreSQL). Re-running it is safe.
 --
+-- group_key orders one row's changes (ADR-20261112193306): the relay accepts
+-- a change only after every older change with its key. Generic Commit
+-- outboxes leave it NULL.
+ALTER TABLE public.gregale_outbox ADD COLUMN IF NOT EXISTS group_key text
+    CHECK (group_key IS NULL OR pg_catalog.octet_length(group_key) BETWEEN 1 AND 128);
+CREATE INDEX IF NOT EXISTS gregale_outbox_group_pending
+    ON public.gregale_outbox(group_key, created_at, event_id)
+    WHERE accepted_at IS NULL AND group_key IS NOT NULL;
+
 -- The capture function is SECURITY DEFINER so writers of a tracked table need
 -- no grant on the outbox: a role created after installation must never have
 -- its writes refused by capture. A trigger function cannot be called directly,
@@ -20,6 +29,7 @@ DECLARE
     row_key jsonb;
     missing jsonb;
     payload jsonb;
+    change_group text;
 BEGIN
     IF TG_OP <> 'INSERT' THEN before_row := pg_catalog.to_jsonb(OLD); END IF;
     IF TG_OP <> 'DELETE' THEN after_row := pg_catalog.to_jsonb(NEW); END IF;
@@ -46,8 +56,16 @@ BEGIN
     IF missing IS NOT NULL THEN
         payload := payload || pg_catalog.jsonb_build_object('missing_columns', missing);
     END IF;
-    INSERT INTO public.gregale_outbox(event_id, event_type, payload)
-    VALUES (pg_catalog.gen_random_uuid(), 'database.' || (cfg ->> 'name') || '.' || op, payload);
+    -- <feed>:<primary key JSON>; jsonb prints keys in a fixed order. A key
+    -- that is long or not printable ASCII is hashed: capture must never
+    -- refuse the write over the key's bound.
+    change_group := (cfg ->> 'name') || ':' || row_key::text;
+    IF pg_catalog.octet_length(change_group) > 128 OR change_group !~ '^[ -~]+$' THEN
+        change_group := (cfg ->> 'name') || ':sha256:' ||
+            pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(row_key::text, 'UTF8')), 'hex');
+    END IF;
+    INSERT INTO public.gregale_outbox(event_id, event_type, payload, group_key)
+    VALUES (pg_catalog.gen_random_uuid(), 'database.' || (cfg ->> 'name') || '.' || op, payload, change_group);
     RETURN NULL;
 END;
 $$;

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // ErrCommitQueueUnavailable means a changes source's app has no enabled,
@@ -103,8 +104,9 @@ func (s *PgStore) CommitChangesSourceForApp(ctx context.Context, account, app st
 // queue and its binding.
 //
 // Lock order matches pause and the other Commit admissions: account, source,
-// then the app row the queue admission serialises on.
-func (s *PgStore) AcceptCommitChange(ctx context.Context, account, source, event, kind string, data json.RawMessage, inv Invocation) (CommitReceipt, error) {
+// then the app row the queue admission serialises on; a keyed change then
+// takes its work lane, as EnqueueKeyedInvocation does.
+func (s *PgStore) AcceptCommitChange(ctx context.Context, account, source, event, kind string, data json.RawMessage, inv Invocation, work *CommitChangeWork) (CommitReceipt, error) {
 	if _, err := uuid.Parse(event); err != nil {
 		return CommitReceipt{}, ErrInvalidArgument
 	}
@@ -171,13 +173,10 @@ func (s *PgStore) AcceptCommitChange(ctx context.Context, account, source, event
 	if err != nil {
 		return CommitReceipt{}, err
 	}
-	if err := checkInvocationAdmissionDepthDB(ctx, tx, inv); err != nil {
+	if err := enqueueCommitChange(ctx, tx, inv, work); err != nil {
 		if errors.Is(err, ErrQuotaExceeded) {
 			return CommitReceipt{}, ErrCommitQueueFull
 		}
-		return CommitReceipt{}, err
-	}
-	if _, err := enqueueInvocationRow(ctx, tx, inv); err != nil {
 		return CommitReceipt{}, err
 	}
 	receipt = CommitReceipt{ID: uuid.NewString(), SourceID: source, EventID: event, InvocationID: inv.ID, OperationURL: "/v1/operations/" + inv.ID}
@@ -188,4 +187,33 @@ func (s *PgStore) AcceptCommitChange(ctx context.Context, account, source, event
 		return CommitReceipt{}, err
 	}
 	return receipt, tx.Commit(ctx)
+}
+
+// CommitChangeWork orders a captured change under an app work policy: a
+// changes source's row key under the built-in ordered policy
+// (ADR-20261112193306).
+type CommitChangeWork struct {
+	Policy   workpolicy.Policy
+	Revision int64
+	// Key is the canonical work key (workpolicy.CanonicalScalar).
+	Key string
+}
+
+// enqueueCommitChange admits inv, under work's lane when it has one. The
+// caller holds the app's admission lock.
+func enqueueCommitChange(ctx context.Context, tx pgx.Tx, inv Invocation, work *CommitChangeWork) error {
+	if work == nil {
+		if err := checkInvocationAdmissionDepthDB(ctx, tx, inv); err != nil {
+			return err
+		}
+		_, err := enqueueInvocationRow(ctx, tx, inv)
+		return err
+	}
+	inv.WorkPolicyRevision = work.Revision
+	keyed, err := prepareKeyedInvocation(inv, work.Policy, work.Key, nil)
+	if err != nil {
+		return err
+	}
+	_, _, err = enqueueKeyedInvocationTx(ctx, tx, keyed, work.Policy)
+	return err
 }

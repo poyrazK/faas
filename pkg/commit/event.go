@@ -51,6 +51,10 @@ type Event struct {
 	Type          string             `json:"type"`
 	Data          json.RawMessage    `json:"data"`
 	Routing       *api.CommitRouting `json:"routing,omitempty"`
+	// GroupKey is a changes source's per-row ordering key
+	// (ADR-20261112193306). The relay reads it from the outbox and hands it
+	// to an in-process acceptor; it is never sent over the wire.
+	GroupKey string `json:"-"`
 }
 
 func (e Event) Validate() error {

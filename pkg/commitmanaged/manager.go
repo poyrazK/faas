@@ -26,8 +26,11 @@ type Store interface {
 	PendingCommitReplays(context.Context, string, string) ([]state.CommitReplay, error)
 	CompleteCommitReplay(context.Context, string, string, string, int64) error
 	// AcceptCommitChange enqueues a changes source's captured row change into
-	// its app's named queue (ADR-20261112140000).
-	AcceptCommitChange(context.Context, string, string, string, string, json.RawMessage, state.Invocation) (state.CommitReceipt, error)
+	// its app's named queue (ADR-20261112140000), in its row's order when
+	// work is set (ADR-20261112193306).
+	AcceptCommitChange(context.Context, string, string, string, string, json.RawMessage, state.Invocation, *state.CommitChangeWork) (state.CommitReceipt, error)
+	// Changes order each row's changes under the built-in ordered policy.
+	state.AppWorkPolicyStore
 }
 
 type Manager struct {

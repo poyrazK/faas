@@ -10,6 +10,7 @@ import (
 	commitwork "github.com/onebox-faas/faas/pkg/commit"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // acceptChange enqueues a changes source's captured row change into its
@@ -68,6 +69,36 @@ func (a *acceptor) acceptChange(ctx context.Context, e commitwork.Event) (commit
 	if err != nil {
 		return commitwork.Receipt{}, err
 	}
-	r, err := a.store.AcceptCommitChange(ctx, account.ID, a.source.ID, e.ID, e.Type, e.Data, inv)
+	work, err := a.changeWork(ctx, app, e.GroupKey)
+	if err != nil {
+		return commitwork.Receipt{}, err
+	}
+	r, err := a.store.AcceptCommitChange(ctx, account.ID, a.source.ID, e.ID, e.Type, e.Data, inv, work)
 	return convert(r, err)
+}
+
+// changeWork orders a change behind the earlier changes of its row: the
+// capture trigger's group_key under the app's built-in ordered policy
+// (ADR-20261112193306). An outbox installed before group_key leaves it empty
+// and keeps unordered delivery.
+func (a *acceptor) changeWork(ctx context.Context, app state.App, groupKey string) (*state.CommitChangeWork, error) {
+	if groupKey == "" {
+		return nil, nil
+	}
+	selector, err := api.GroupKeyWork(groupKey, nil)
+	if err != nil {
+		return nil, &commitwork.PermanentError{Code: "invalid_group_key"}
+	}
+	key, err := workpolicy.CanonicalScalar(selector.Key)
+	if err != nil {
+		return nil, &commitwork.PermanentError{Code: "invalid_group_key"}
+	}
+	record, err := state.OrderedWorkPolicy(ctx, a.store, app.AccountID, app.ID)
+	if errors.Is(err, state.ErrWorkPolicyReserved) {
+		return nil, &commitwork.PermanentError{Code: "work_policy_reserved"}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &state.CommitChangeWork{Policy: record.Policy, Revision: record.Revision, Key: key}, nil
 }

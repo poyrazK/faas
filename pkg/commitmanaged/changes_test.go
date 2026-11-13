@@ -230,11 +230,11 @@ func TestChangesSourceWaitsForQueueBindingAndRefusesGenericEvents(t *testing.T) 
 	if err := e.customer.QueryRow(ctx, `SELECT event_type, payload FROM public.gregale_outbox WHERE event_id = $1::uuid`, event).Scan(&kind, &data); err != nil {
 		t.Fatal(err)
 	}
-	again, err := e.store.AcceptCommitChange(ctx, e.account.ID, e.source.ID, event, kind, data, state.Invocation{})
+	again, err := e.store.AcceptCommitChange(ctx, e.account.ID, e.source.ID, event, kind, data, state.Invocation{}, nil)
 	if err != nil || again.ID != first.ID || again.InvocationID != first.InvocationID {
 		t.Fatalf("replay %+v, first %+v (%v)", again, first, err)
 	}
-	if _, err := e.store.AcceptCommitChange(ctx, e.account.ID, e.source.ID, event, kind, json.RawMessage(`{"changed":true}`), state.Invocation{}); err == nil {
+	if _, err := e.store.AcceptCommitChange(ctx, e.account.ID, e.source.ID, event, kind, json.RawMessage(`{"changed":true}`), state.Invocation{}, nil); err == nil {
 		t.Fatal("a changed payload replayed under the same event id")
 	}
 }
