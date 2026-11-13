@@ -194,6 +194,10 @@ func (s *server) approveEnvironmentGitRevision(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, api.ErrValidation("This source requires verified protected-branch merge approval."))
 		return
 	}
+	if problem := s.protectedEnvironmentChangeProblem(r, acct, source.ProjectID, source.EnvironmentSlug, "approve a revision into a protected project environment"); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	var request api.ApproveEnvironmentGitRevisionRequest
 	if err := decodeJSON(r, &request); err != nil {
 		api.WriteProblem(w, api.ErrValidation("Invalid revision approval."))
@@ -349,6 +353,10 @@ func (s *server) createEnvironmentGitOpsOverride(w http.ResponseWriter, r *http.
 		api.WriteProblem(w, problem)
 		return
 	}
+	if problem := s.protectedEnvironmentChangeProblem(r, acct, source.ProjectID, source.EnvironmentSlug, "override a protected project environment"); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	var request state.EnvironmentGitOpsOverrideRequest
 	if err := decodeJSON(r, &request); err != nil {
 		api.WriteProblem(w, api.ErrValidation("Invalid temporary override."))
@@ -369,6 +377,10 @@ func (s *server) createEnvironmentGitOpsOverride(w http.ResponseWriter, r *http.
 func (s *server) removeEnvironmentGitOpsOverride(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	source, problem := s.environmentGitSourceForRequest(r, acct)
 	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if problem := s.protectedEnvironmentChangeProblem(r, acct, source.ProjectID, source.EnvironmentSlug, "override a protected project environment"); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}

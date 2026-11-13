@@ -205,8 +205,23 @@ members list the company's installations at
 `GET /v1/orgs/{organization}/github/installations`. A member leaving does not
 disconnect it.
 
-Other GitHub/GitOps administration, async-route manifest bindings, resource/environment
-cloning, browser approval exchange and other unreviewed integrations remain
+Company projects also reach GitOps, environment copies, full clones and the
+browser review of a protected promotion
+([ADR-20261112230000](adr/20261112230000-company-project-gitops-clones-browser-approvals.md)).
+Every member reads GitOps status and plans. Binding, changing, rebinding or
+detaching an environment's Git source, and adopting it, need owner or admin, as
+linking the repository does; the source is the project's GitHub repository,
+and GitLab sources are refused (`gitlab_company_project_unavailable`) because a
+GitLab connection belongs to one member. Developers approve revisions and set
+GitOps overrides; in a protected environment other than production both need
+owner or admin. Developers copy an environment (`from_environment`) or start a
+full clone; copying a protected environment other than production needs owner
+or admin, as branching it does. An agent's request for a browser review of a
+protected promotion is approved by an owner or admin in the browser and
+exchanged only by the member whose credential asked for it; the approval
+records the approving member, so release approval policies judge them.
+
+Async-route manifest bindings and other unreviewed integrations remain
 outside the reviewed project surface. Shared uploads reject async-route bindings
 before resolving personal services. Managed PostgreSQL bindings use the company
 ownership rules below. Other data services and GitHub/GitOps references still
