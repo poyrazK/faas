@@ -86,7 +86,7 @@ jobs:
         run: bash scripts/test-data-api-packaging.sh --out-dir "$RUNNER_TEMP/data-api-bundle"
       - name: Verify typed data integration into an existing application
         run: node scripts/test-data-api-integration.mjs "$RUNNER_TEMP/data-api-bundle"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: gregale-data-api-${{ github.sha }}
           path: ${{ runner.temp }}/data-api-bundle/
@@ -157,7 +157,7 @@ jobs:
         run: make data-api-acceptance
       - name: Retain redacted local load and recovery evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: gregale-data-api-load-${{ github.sha }}
           path: ${{ runner.temp }}/data-api-load-report.json
