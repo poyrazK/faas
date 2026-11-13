@@ -257,11 +257,15 @@ const AIUsageCallerModeration = "moderation"
 // (ADR-1431).
 const AIUsageCallerEvaluation = "evaluation"
 
+// AIUsageCallerSemanticCache aggregates the semantic cache's embedding
+// calls (ADR 20261112194947).
+const AIUsageCallerSemanticCache = "semantic_cache"
+
 // appCaller reports whether a settled caller is an app ID, which has app
 // budgets, minute counters and alert webhooks.
 func appCaller(caller string) bool {
 	switch caller {
-	case AIUsageCallerRuns, AIUsageCallerReplay, AIUsageCallerModeration, AIUsageCallerEvaluation, aiBatchReader:
+	case AIUsageCallerRuns, AIUsageCallerReplay, AIUsageCallerModeration, AIUsageCallerEvaluation, AIUsageCallerSemanticCache, aiBatchReader:
 		return false
 	}
 	return true

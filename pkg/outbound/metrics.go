@@ -46,6 +46,7 @@ type Metrics struct {
 	aiCanaryCalls          *prometheus.CounterVec
 	aiCanaryRollbacks      *prometheus.CounterVec
 	aiModeration           *prometheus.CounterVec
+	aiSemanticCache        *prometheus.CounterVec
 	aiLogExports           *prometheus.CounterVec
 	aiQualityFlags         *prometheus.CounterVec
 	aiFeedback             *prometheus.CounterVec
@@ -214,6 +215,10 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_moderation_total",
 			Help: "AI moderation checks by integration and result (passed, flagged, blocked, or error) (ADR-1340).",
 		}, []string{"integration_id", "result"}),
+		aiSemanticCache: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_semantic_cache_total",
+			Help: "AI semantic cache lookups by integration and result (hit, miss, skipped, or error) (ADR 20261112194947).",
+		}, []string{"integration_id", "result"}),
 		aiLogExports: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_log_exports_total",
 			Help: "Settled AI calls written to the log-drain export outbox, by integration (ADR-1340).",
@@ -291,6 +296,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiCanaryCalls,
 		m.aiCanaryRollbacks,
 		m.aiModeration,
+		m.aiSemanticCache,
 		m.aiLogExports,
 		m.aiQualityFlags,
 		m.aiFeedback,
@@ -594,6 +600,14 @@ func (m *Metrics) ObserveAIModeration(integrationID, result string) {
 		return
 	}
 	m.aiModeration.WithLabelValues(integrationID, result).Inc()
+}
+
+// ObserveAISemanticCache counts one semantic cache lookup (ADR 20261112194947).
+func (m *Metrics) ObserveAISemanticCache(integrationID, result string) {
+	if m == nil || m.aiSemanticCache == nil {
+		return
+	}
+	m.aiSemanticCache.WithLabelValues(integrationID, result).Inc()
 }
 
 func (m *Metrics) ObserveAILogExport(integrationID string) {

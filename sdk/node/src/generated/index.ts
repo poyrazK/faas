@@ -1079,6 +1079,7 @@ export type { FailureRule } from './models/FailureRule.js';
 export type { FailureRules } from './models/FailureRules.js';
 export type { FeatureFlag } from './models/FeatureFlag.js';
 export type { FeatureFlagVersion } from './models/FeatureFlagVersion.js';
+export type { FeatureHint } from './models/FeatureHint.js';
 export type { FieldError } from './models/FieldError.js';
 export type { FilterCriteria } from './models/FilterCriteria.js';
 export type { FilterCriteriaClause } from './models/FilterCriteriaClause.js';
