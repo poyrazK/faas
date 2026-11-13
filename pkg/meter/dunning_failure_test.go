@@ -48,13 +48,13 @@ func TestDunningRunOnceReportsAStuckTransition(t *testing.T) {
 	d := NewDunning(DunningParams{Store: statetest.NewMem(stuckDunning{MemStore: mem, stuck: ids[0]}), Now: func() time.Time { return now }})
 	err := d.RunOnce(ctx)
 	if err == nil {
-		t.Fatal("RunOnce hid a failed suspension")
+		t.Fatal("RunOnce hid a failed move to Free")
 	}
 	moved, getErr := mem.AccountByID(ctx, ids[1])
 	if getErr != nil {
 		t.Fatal(getErr)
 	}
-	if moved.Status != state.AccountSuspended {
-		t.Fatalf("other account status = %s, want suspended: one failure must not stop the sweep (err %v)", moved.Status, err)
+	if moved.Status != state.AccountActive || moved.Plan != api.PlanFree {
+		t.Fatalf("other account = %s on %s, want active on Free: one failure must not stop the sweep (err %v)", moved.Status, moved.Plan, err)
 	}
 }

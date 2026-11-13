@@ -6382,6 +6382,11 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 		// (provider redelivery) and rows in suspended/deleted_pending
 		// (no business flipping state backwards), both of which we
 		// swallow as no-ops.
+		if acct.MovedToFreeForNonpayment() {
+			// Already moved to Free for this unpaid balance (R9-1): the
+			// old subscription's retries must not restart the ladder.
+			return nil
+		}
 		if err := s.store.MarkDunningStep(ctx, acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
 			if errors.Is(err, state.ErrNotFound) {
 				s.log.Debug("apid: payment_failed on already-advanced account",
@@ -6418,6 +6423,9 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 		// exactly once on the first delivery (EventPaymentFailed
 		// or this branch, whichever lands first). Emitting twice
 		// would double-mail customers.
+		if acct.MovedToFreeForNonpayment() {
+			return nil // already on Free for this unpaid balance (R9-1)
+		}
 		if err := s.store.MarkDunningStep(ctx, acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
 			if errors.Is(err, state.ErrNotFound) {
 				s.log.Debug("apid: subscription_past_due on already-advanced account",
@@ -6431,6 +6439,12 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 	case billing.EventPaymentSucceeded:
 		return s.handleSuccessfulPayment(ctx, ev, acct, asyncBillingMail, providerName(s.billingProvider), s.accountRestoredRequested() && !orgBillingSubject(acct))
 	case billing.EventSubscriptionUpdated:
+		if acct.MovedToFreeForNonpayment() && ev.SubscriptionID == acct.StripeSubscriptionItem {
+			// On Free for non-payment (R9-1): an update to the unpaid
+			// subscription does not re-bind its paid plan; its payment
+			// (EventPaymentSucceeded) restores the account.
+			return nil
+		}
 		if ev.SubscriptionID != "" {
 			if err := s.stampActiveBillingSubscription(ctx, acct, ev.SubscriptionID); err != nil {
 				return fmt.Errorf("store updated subscription id: %w", err)

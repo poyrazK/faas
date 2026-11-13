@@ -154,87 +154,68 @@ func TestDunning_PastDueInside7d_NoTransition(t *testing.T) {
 	}
 }
 
-func TestDunning_PastDuePast7d_AdvancesToSuspended(t *testing.T) {
+// Past the 7-day grace an account with an overdue payment moves to the Free
+// plan and stays active (Terms §3; billing review 2026-11-13 R9-1): nothing is
+// suspended or parked for non-payment, past_due_at stays as the unpaid
+// balance's marker, and the account is told once.
+func TestDunning_PastDuePast7d_MovesToFree(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d, store, parker, notif, mailer, now := dunningTestFixture(t, ctx)
-	// Past_due stamped 8 days ago — past the 7-day threshold.
 	stamp := now.AddDate(0, 0, -8)
-	acct := seedPastDue(t, ctx, store, "past7d@example.com", api.PlanHobby, stamp)
-
-	// Plant a live instance so ParkInstance has something to call.
+	acct := seedPastDue(t, ctx, store, "past7d@example.com", api.PlanPro, stamp)
 	app := newApp(t, ctx, store, acct.ID)
-	ins := makeLiveInstance(t, ctx, store, app.ID, acct.ID, 256)
+	makeLiveInstance(t, ctx, store, app.ID, acct.ID, 256)
 
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
-
-	// Status flipped to suspended.
 	got, err := store.AccountByID(ctx, acct.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != state.AccountSuspended {
-		t.Errorf("status = %s, want suspended", got.Status)
+	if got.Status != state.AccountActive || got.Plan != api.PlanFree || got.PastDueAt == nil || !got.MovedToFreeForNonpayment() {
+		t.Fatalf("after 7 days: status %s plan %s past_due_at %v; want active on Free with the balance marked", got.Status, got.Plan, got.PastDueAt)
 	}
-
-	// ParkInstance called exactly once with the right reason.
-	if len(parker.parked) != 1 {
-		t.Fatalf("parked = %d, want 1", len(parker.parked))
+	if len(parker.parked) != 0 {
+		t.Errorf("parked = %d, want 0: nothing is suspended for non-payment", len(parker.parked))
 	}
-	if parker.parked[0].InstanceID != ins.ID {
-		t.Errorf("parked id = %s, want %s", parker.parked[0].InstanceID, ins.ID)
-	}
-	if parker.parked[0].Reason != "dunning_past_due_7d" {
-		t.Errorf("parked reason = %q, want dunning_past_due_7d", parker.parked[0].Reason)
-	}
-
-	// billing_past_due notify emitted.
 	if warns := notif.byChannel(db.NotifyBillingPastDue); len(warns) != 1 {
-		t.Errorf("billing_past_due notifies = %d, want 1", len(warns))
+		t.Errorf("billing_past_due notifies = %d, want 1 (moved_to_free)", len(warns))
 	}
-
-	// Suspended mail delivered.
 	if mailer.count() != 1 {
-		t.Errorf("mails sent = %d, want 1", mailer.count())
+		t.Errorf("mails sent = %d, want the moved-to-Free mail", mailer.count())
+	}
+	// The next sweep leaves it alone.
+	if err := d.RunOnce(ctx); err != nil || mailer.count() != 1 {
+		t.Fatalf("second sweep: %v, mails %d", err, mailer.count())
 	}
 }
 
-func TestDunning_SuspendedPast21d_AdvancesToDeletedPending(t *testing.T) {
+// An account the old ladder suspended for non-payment, even past 21 days, is
+// moved to Free the same way and never scheduled for deletion.
+func TestDunning_SuspendedForNonpayment_MovesToFreeNeverDeletes(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d, store, parker, notif, mailer, now := dunningTestFixture(t, ctx)
-	// Past_due stamped 22 days ago — past the 21-day threshold from
-	// past_due (7d→suspended + 14d grace = 21d total).
-	stamp := now.AddDate(0, 0, -22)
-	acct := seedSuspended(t, ctx, store, "past21d@example.com", api.PlanHobby, stamp)
+	acct := seedSuspended(t, ctx, store, "past21d@example.com", api.PlanHobby, now.AddDate(0, 0, -22))
 
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
-
-	// Status flipped to deleted_pending.
 	got, err := store.AccountByID(ctx, acct.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != state.AccountDeletedPending {
-		t.Errorf("status = %s, want deleted_pending", got.Status)
+	if got.Status != state.AccountActive || got.Plan != api.PlanFree || got.PastDueAt == nil {
+		t.Fatalf("status %s plan %s past_due_at %v; want active on Free", got.Status, got.Plan, got.PastDueAt)
 	}
-
-	// No additional ParkInstance (instances were parked at the
-	// suspended transition; the 21-day hop just schedules the delete).
 	if len(parker.parked) != 0 {
-		t.Errorf("parked = %d, want 0 (instances were parked at suspended)", len(parker.parked))
+		t.Errorf("parked = %d, want 0", len(parker.parked))
 	}
-
-	// account_deletion_pending notify emitted.
-	if warns := notif.byChannel(db.NotifyAccountDeletionPending); len(warns) != 1 {
-		t.Errorf("account_deletion_pending notifies = %d, want 1", len(warns))
+	if warns := notif.byChannel(db.NotifyAccountDeletionPending); len(warns) != 0 {
+		t.Errorf("account_deletion_pending notifies = %d, want 0", len(warns))
 	}
-
-	// Deletion mail delivered.
 	if mailer.count() != 1 {
 		t.Errorf("mails sent = %d, want 1", mailer.count())
 	}

@@ -207,56 +207,23 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 			if now.Sub(*acct.PastDueAt) < DunningPastDueToSuspendedDuration {
 				continue // still inside the 7-day grace
 			}
-			if handled, err := d.suspendWithNotice(ctx, acct); handled {
-				if err != nil {
-					d.p.Log.Warn("meter: durable suspension unavailable", "account", acct.ID)
-					fail(acct, "suspend", err)
-				}
-				continue
+			// Billing review 2026-11-13 (R9-1, owner: "move to Free, no
+			// deletion"): past the grace the account moves to the Free plan
+			// and stays active, as the Terms say; past_due_at stays as the
+			// unpaid balance's marker until a paid order or an operator
+			// clears it. Nothing is suspended or deleted for non-payment.
+			if err := d.moveToFreeForNonpayment(ctx, acct, state.AccountPastDue, now); err != nil {
+				fail(acct, "move to free", err)
 			}
-			if err := d.p.Store.MarkDunningStep(ctx, acct.ID, state.AccountPastDue, state.AccountSuspended); err != nil {
-				if errors.Is(err, state.ErrNotFound) {
-					continue // redelivery race or status flipped under us
-				}
-				d.p.Log.Warn("meter: dunning suspend", "account", acct.ID, "err", err)
-				fail(acct, "suspend", err)
-				continue
-			}
-			d.suspensionFollowup(ctx, acct, now)
-			d.sendSuspendedMail(ctx, acct, now)
-			d.p.Log.Info("meter: dunning past_due→suspended", "account", acct.ID)
 		case state.AccountSuspended:
+			// An account the old ladder suspended for non-payment moves to
+			// Free the same way; other suspensions carry no past_due_at.
 			if acct.PastDueAt == nil {
 				continue
 			}
-			if _, err := d.suspendWithNotice(ctx, acct); err != nil {
-				d.p.Log.Warn("meter: suspension follow-up unavailable", "account", acct.ID)
-				fail(acct, "suspension follow-up", err)
+			if err := d.moveToFreeForNonpayment(ctx, acct, state.AccountSuspended, now); err != nil {
+				fail(acct, "move to free", err)
 			}
-			if now.Sub(*acct.PastDueAt) < DunningSuspendedToDeletedDuration {
-				continue // still inside the 21-day window
-			}
-			if handled, err := d.scheduleNonpaymentDeletion(ctx, acct); handled {
-				if err != nil && !d.deletionBlocked(acct, err, blocked) {
-					d.p.Log.Warn("meter: durable non-payment deletion unavailable", "account", acct.ID)
-					fail(acct, "schedule deletion", err)
-				}
-				continue
-			}
-			// ADR-20261024150500: the deletion includes the account's managed
-			// PostgreSQL databases unless the operator kill switch is off.
-			includeDatabases := state.IncludingManagedPostgres(api.NonpaymentDeletionIncludesManagedPostgres())
-			if err := d.p.Store.MarkDunningStep(ctx, acct.ID, state.AccountSuspended, state.AccountDeletedPending, includeDatabases); err != nil {
-				if errors.Is(err, state.ErrNotFound) || d.deletionBlocked(acct, err, blocked) {
-					continue
-				}
-				d.p.Log.Warn("meter: dunning delete_pending", "account", acct.ID, "err", err)
-				fail(acct, "schedule deletion", err)
-				continue
-			}
-			d.nonpaymentDeletionFollowup(ctx, acct, now)
-			d.sendDeletionMail(ctx, acct, now)
-			d.p.Log.Info("meter: dunning suspended→deleted_pending", "account", acct.ID)
 		case state.AccountDeletedPending:
 			if acct.PastDueAt != nil {
 				if _, err := d.scheduleNonpaymentDeletion(ctx, acct); err != nil {

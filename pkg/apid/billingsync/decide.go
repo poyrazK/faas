@@ -49,6 +49,10 @@ func Decide(acct state.Account, subs []billing.Subscription, planOf func(string)
 	case live.Status.InGoodStanding() && inDunning(acct):
 		ev.Type = billing.EventPaymentSucceeded
 		return ev, true
+	case !live.Status.InGoodStanding() && acct.MovedToFreeForNonpayment():
+		// On Free for non-payment (R9-1): the unpaid subscription neither
+		// restarts dunning nor re-binds its paid plan.
+		return billing.Event{}, false
 	case !live.Status.InGoodStanding() && acct.Status == state.AccountActive:
 		ev.Type = billing.EventPaymentFailed
 		return ev, true
@@ -63,6 +67,11 @@ func Decide(acct state.Account, subs []billing.Subscription, planOf func(string)
 // inDunning reports whether a payment success would restore the account: the
 // statuses restoreBillingPayment moves back to active.
 func inDunning(acct state.Account) bool {
+	if acct.MovedToFreeForNonpayment() {
+		// On Free for an unpaid balance (R9-1): a subscription back in good
+		// standing paid it.
+		return true
+	}
 	switch acct.Status {
 	case state.AccountPastDue:
 		return true

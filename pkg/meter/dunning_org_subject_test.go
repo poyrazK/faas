@@ -62,19 +62,22 @@ func TestDunningOrganizationSkipsAccountOnlyCommands(t *testing.T) {
 		return got.Status
 	}
 
+	// Billing review 2026-11-13 (R9-1): past the grace an organization moves
+	// to Free and stays active like an account, and is never scheduled for
+	// deletion.
 	*clock = time.Now().Add(api.InternalMailDunningSuspendAfter + time.Hour)
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := status(); got != state.OrgStatusSuspended {
-		t.Fatalf("organization status after the suspension window = %s, want suspended", got)
+	if got := status(); got != state.OrgStatusActive {
+		t.Fatalf("organization status after the grace = %s, want active", got)
 	}
 	*clock = time.Now().Add(api.InternalMailDunningDeleteAfter + time.Hour)
 	if err := d.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := status(); got != state.OrgStatusDeletedPending {
-		t.Fatalf("organization status after the deletion window = %s, want deleted_pending", got)
+	if got := status(); got != state.OrgStatusActive {
+		t.Fatalf("organization status after the old deletion window = %s, want active", got)
 	}
 	if commands.calls != 0 {
 		t.Fatalf("organization dunning called the account-only commands %d time(s)", commands.calls)

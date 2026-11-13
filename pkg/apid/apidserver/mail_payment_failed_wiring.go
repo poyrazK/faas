@@ -45,9 +45,13 @@ func (s *server) restoreBillingPayment(ctx context.Context, ev billing.Event, ac
 	}
 	if acct.Status != state.AccountPastDue &&
 		(acct.Status != state.AccountSuspended || acct.PastDueAt == nil) &&
-		(acct.Status != state.AccountDeletedPending || acct.PastDueAt == nil) {
+		(acct.Status != state.AccountDeletedPending || acct.PastDueAt == nil) &&
+		!acct.MovedToFreeForNonpayment() {
 		return false, nil
 	}
+	// An account moved to Free for an overdue payment (R9-1) is already
+	// active; the paid order clears its unpaid-balance marker
+	// (UpdateAccountStatus clears past_due_at outside past_due).
 	if err := s.store.UpdateAccountStatus(ctx, acct.ID, state.AccountActive); err != nil {
 		return false, err
 	}

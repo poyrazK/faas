@@ -4,7 +4,6 @@ package meter_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -85,71 +84,24 @@ func TestDunningDurableNonpaymentDeletionSelectionAndFollowup(t *testing.T) {
 				commands = nil
 			}
 			d := meter.NewDunning(meter.DunningParams{Store: store, Parker: parker, Notif: notif, Mailer: mailer, Now: func() time.Time { return *now }, Log: discardLog(), NonpaymentDeletionRequested: on.Load, NonpaymentDeletionCommands: commands})
-			// A failed deletion command fails the tick, so the dunning alert
-			// sees it (adr: 20261030120000).
-			if err, wantErr := d.RunOnce(ctx), mode != "enabled" && mode != "off"; (err != nil) != wantErr {
-				t.Fatalf("RunOnce error = %v, want an error: %v", err, wantErr)
+			// Since the billing review of 2026-11-13 (R9-1) nothing is
+			// deleted for non-payment, whatever the deletion command's
+			// state: a suspended account past 21 days moves to Free.
+			if err := d.RunOnce(ctx); err != nil {
+				t.Fatalf("RunOnce: %v", err)
 			}
 			got, err := store.AccountByID(ctx, acct.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(parker.parked) != 0 {
-				t.Fatal("deletion step unexpectedly called scheduler")
+			if got.Status != state.AccountActive || got.Plan != api.PlanFree {
+				t.Fatalf("status %s plan %s, want active on Free", got.Status, got.Plan)
 			}
-			if mode == "unconfigured" || mode == "offline" {
-				if got.Status != state.AccountSuspended || mailer.count() != 0 || len(notif.byChannel(db.NotifyAccountDeletionPending)) != 0 {
-					t.Fatal("selected failure fell back to legacy transition")
-				}
-				return
+			if fake.calls != 0 || len(notif.byChannel(db.NotifyAccountDeletionPending)) != 0 || len(parker.parked) != 0 {
+				t.Fatal("a non-payment deletion was scheduled")
 			}
-			if got.Status != state.AccountDeletedPending {
-				t.Fatal("deletion did not commit", got.Status)
-			}
-			if mode == "lost_reply" || mode == "withdrawn" {
-				if len(notif.byChannel(db.NotifyAccountDeletionPending)) != 0 || mailer.count() != 0 {
-					t.Fatal("uncertain or withdrawn response ran follow-up")
-				}
-				if mode == "withdrawn" {
-					return
-				}
-				if err := d.RunOnce(ctx); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if mode == "ack_failure" {
-				if err := d.RunOnce(ctx); err != nil {
-					t.Fatal(err)
-				}
-			}
-			want := 1
-			if mode == "ack_failure" {
-				want = 2
-			}
-			notices := notif.byChannel(db.NotifyAccountDeletionPending)
-			if len(notices) != want {
-				t.Fatal("lost deletion notification follow-up", len(notices), want)
-			}
-			if mode == "off" {
-				if fake.calls != 0 || mailer.count() != 1 {
-					t.Fatal("flag-off legacy path changed")
-				}
-				return
-			}
-			var payload struct {
-				At string `json:"at"`
-			}
-			if err := json.Unmarshal([]byte(notices[0].Payload), &payload); err != nil || payload.At != fake.at.UTC().Format(time.RFC3339Nano) {
-				t.Fatal("follow-up rewrote saved transition time", err)
-			}
-			if mailer.count() != 0 || !fake.done {
-				t.Fatal("durable path sent inline or failed to acknowledge follow-up")
-			}
-			if err := d.RunOnce(ctx); err != nil {
-				t.Fatal(err)
-			}
-			if len(notif.byChannel(db.NotifyAccountDeletionPending)) != want || mailer.count() != 0 {
-				t.Fatal("completed follow-up repeated")
+			if mailer.count() != 1 {
+				t.Fatalf("mails = %d, want the moved-to-Free mail", mailer.count())
 			}
 		})
 	}

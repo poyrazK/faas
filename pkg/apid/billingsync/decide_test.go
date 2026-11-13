@@ -69,6 +69,13 @@ func TestDecide(t *testing.T) {
 			want: billing.EventPaymentFailed, wantSub: "sub-1", wantPlan: "pro"},
 		{name: "past due in line", acct: with(func(a *state.Account) { a.Status, a.PastDueAt = state.AccountPastDue, &pastDueAt }),
 			subs: []billing.Subscription{sub("sub-1", pastDue, "pro")}},
+		// Billing review 2026-11-13 (R9-1): an account moved to Free for
+		// non-payment stays there while the old subscription is past due, and
+		// a settled subscription restores it.
+		{name: "moved to Free stays out of dunning", acct: with(func(a *state.Account) { a.Plan, a.PastDueAt = api.PlanFree, &pastDueAt }),
+			subs: []billing.Subscription{sub("sub-1", pastDue, "pro")}},
+		{name: "moved to Free restored by payment", acct: with(func(a *state.Account) { a.Plan, a.PastDueAt = api.PlanFree, &pastDueAt }),
+			subs: []billing.Subscription{sub("sub-1", active, "pro")}, want: billing.EventPaymentSucceeded, wantSub: "sub-1", wantPlan: "pro"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ev, drift := billingsync.Decide(tc.acct, tc.subs, func(id string) api.Plan { return api.Plan(id) })
