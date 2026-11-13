@@ -169,7 +169,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	ctx, cancel := reqbudget.Detached(r.Context(), uploadCommitProcessTimeout(maxBytes))
 	defer cancel()
 	r = r.WithContext(ctx)
-	stream, p := s.streamSourceTarball(r.Context(), acct, installID, req.Repo, req.Ref, maxBytes)
+	stream, p := s.streamSourceTarball(r.Context(), acct.ID, installID, req.Repo, req.Ref, maxBytes)
 	if p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -587,8 +587,10 @@ func (s *server) requireOwnedGitHubInstallation(ctx context.Context, accountID s
 // The githubd-side cap is passed through as
 // maxArchiveBytes=SourceTarballMaxMB*MiB so the wire shape
 // fails closed mid-stream rather than OOM'ing the box.
-func (s *server) streamSourceTarball(ctx context.Context, acct state.Account, installID int64, repo, ref string, maxArchiveBytes int64) (*StreamSourceRefResult, *api.Problem) {
-	res, err := s.githubd.StreamSourceRef(ctx, acct.ID, installID, repo, ref, maxArchiveBytes)
+// streamSourceTarball streams repo@ref through installID, which installOwner
+// (the namespace that owns the installation) must hold.
+func (s *server) streamSourceTarball(ctx context.Context, installOwner string, installID int64, repo, ref string, maxArchiveBytes int64) (*StreamSourceRefResult, *api.Problem) {
+	res, err := s.githubd.StreamSourceRef(ctx, installOwner, installID, repo, ref, maxArchiveBytes)
 	if err != nil {
 		if p := api.AsProblem(err); p != nil {
 			return nil, p

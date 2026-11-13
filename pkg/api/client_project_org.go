@@ -1,7 +1,6 @@
 package api
 
 import (
-	"net/http"
 	"net/url"
 	"strings"
 )
@@ -19,15 +18,9 @@ func (c *Client) WithProjectOrganization(organization string) *Client {
 // ProjectOrganization is the company WithProjectOrganization selected.
 func (c *Client) ProjectOrganization() string { return c.projectOrg }
 
-// personalOnlyProjectRoutes have no company form: the reviewed-plan and
-// safe-release entry points and the source-ref scan.
-var personalOnlyProjectRoutes = map[string]bool{
-	"/v1/projects/apply-plan":      true,
-	"/v1/projects/safe-deploy":     true,
-	"/v1/projects/scan/source-ref": true,
-}
-
-// projectRoute rewrites a /v1/projects path for the selected company.
+// projectRoute rewrites a /v1/projects path for the selected company. Every
+// project route has a company form, including the reviewed-plan, safe-release
+// and source-ref ones (ADR-20261113090000).
 func (c *Client) projectRoute(path string) (string, error) {
 	if c.projectOrg == "" {
 		return path, nil
@@ -35,12 +28,6 @@ func (c *Client) projectRoute(path string) (string, error) {
 	bare, _, _ := strings.Cut(path, "?")
 	if bare != "/v1/projects" && !strings.HasPrefix(bare, "/v1/projects/") {
 		return path, nil
-	}
-	if personalOnlyProjectRoutes[bare] {
-		p := NewProblem(http.StatusBadRequest, CodeValidation, "Not available for organization projects",
-			"this project operation has no organization form; run it without --org, or use the organization's scan and deploy").
-			WithDocs(docsBase + "/orgs")
-		return "", &APIError{Problem: *p}
 	}
 	return "/v1/orgs/" + url.PathEscape(c.projectOrg) + strings.TrimPrefix(path, "/v1"), nil
 }
