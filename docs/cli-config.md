@@ -46,6 +46,35 @@ With the opt-in, each command prints one warning on stderr. Anyone on the
 network path can read and reuse the key, so prefer TLS even on private
 networks.
 
+## HTTP request timeout
+
+Select a timeout for this invocation by placing a positive duration before
+its command:
+
+```bash
+gregale --http-timeout 90s billing usage summary
+gregale --http-timeout=2m deploy
+```
+
+Durations use Go syntax, such as `500ms`, `90s` or `2m`. Empty, zero, negative
+and invalid durations fail before contacting the API. The last prefix wins.
+There is no environment variable or saved setting; later invocations use
+their usual defaults (30 seconds for ordinary JSON calls, with existing
+operation-specific and upload budgets).
+
+An explicit value bounds each API request, including reading its response
+body and uploading source. It replaces operation-specific defaults, including
+rollback and hosting finalization budgets. Existing retries can still make
+more than one request; the flag does not set an overall retry, polling or
+command deadline. Caller context deadlines, dial and TLS limits can finish
+sooner. Private operator and external OIDC clients retain their own policies.
+
+For streaming logs, the value bounds the wait for response headers. Once
+connected, the body can remain open beyond that duration until the stream
+ends or you cancel it. Server-side app execution limits and command-local
+`--timeout` options retain their documented meaning. This flag does not add
+retries, persist configuration or change successful stdout.
+
 ## Command output and forwarded arguments
 
 `gregale deploy --help` and `gregale app --help` show common options and examples.

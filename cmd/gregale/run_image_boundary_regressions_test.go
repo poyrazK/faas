@@ -28,6 +28,9 @@ func TestRunRegressionImageCommandBoundaryAcrossPublicSpellings(t *testing.T) {
 		{"run", "--detach", "alpine"},
 		{"sandbox", "run", "--detach", "--image", "alpine"},
 		{"--non-interactive", "--json", "run", "--detach", "--image", "alpine"},
+		{"--http-timeout", "90s", "--json", "run", "--detach", "--image", "alpine"},
+		{"--http-timeout=2m", "sandbox", "run", "--detach", "alpine"},
+		{"--http-timeout=2m", "sandbox", "run", "--detach", "--image=alpine", "--"},
 		{"run", "--detach", "--image=alpine", "--"},
 	} {
 		t.Run(prefix[0]+"_"+prefix[len(prefix)-1], func(t *testing.T) {

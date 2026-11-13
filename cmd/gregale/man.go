@@ -132,6 +132,10 @@ func renderManTop(w io.Writer) {
 	})
 	manSection(w, "GLOBAL FLAGS", func(w io.Writer) {
 		_, _ = fmt.Fprintln(w, ".TP")
+		_, _ = fmt.Fprintln(w, `.BR \-\-http-timeout " DURATION"`)
+		_, _ = fmt.Fprintln(w, "API request timeout, such as 90s or 2m. Must be positive and precede the command.")
+		_, _ = fmt.Fprintln(w, "Overrides request and upload budgets; for streams, bounds the response-header wait only.")
+		_, _ = fmt.Fprintln(w, ".TP")
 		_, _ = fmt.Fprintln(w, `.BR \-\-profile " NAME"`)
 		_, _ = fmt.Fprintln(w, "Select a named connection. Place before the command;")
 		_, _ = fmt.Fprintln(w, "command-local profile flags retain their meaning.")

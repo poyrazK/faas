@@ -54,6 +54,7 @@ func topLevelUsage(showAll, showOperator bool) string {
 		b.WriteString("Run 'gregale help --all --operator' to include operator and compatibility commands.\n")
 	}
 	b.WriteString("\nGlobal flags:\n")
+	b.WriteString("  --http-timeout DURATION  API request timeout, such as 90s (before the command).\n")
 	b.WriteString("  --debug-http           Write HTTP metadata diagnostics to stderr (before the command).\n")
 	b.WriteString("  --agent-reason TEXT    With an agent key, tell the person who approves a request\n")
 	b.WriteString("                         what it is for (before the command; up to 280 characters).\n")
@@ -115,6 +116,9 @@ func init() {
 
 func run(args []string) (status int) {
 	args = protectImageRunCommandArgs(args)
+	previousHTTPTimeout := httpRequestTimeout
+	httpRequestTimeout = 0
+	defer func() { httpRequestTimeout = previousHTTPTimeout }()
 	previousDebug, previousTrace := httpDebugEnabled, activeHTTPDebug.Load()
 	httpDebugEnabled = false
 	activeHTTPDebug.Store(nil)
