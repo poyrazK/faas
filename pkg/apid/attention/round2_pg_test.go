@@ -82,11 +82,11 @@ func TestEvaluateRound2KindsAndOutcomes(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[[3]string]string{
-		{a, api.AttentionKindAppOOM, "shop"}:                       "OOM-killed 3 times; peak 601 MB of a 512 MB plan",
-		{a, api.AttentionKindBootFailing, "shop"}:                  "readiness timeout e",
-		{a, api.AttentionKindJobsFailing, "nightly"}:               "last 3 scheduled runs failed (dead_letter, failed)",
-		{a, api.AttentionKindPaymentFailing, "billing"}:            "payment failed (payment_failed) and has not recovered",
-		{a, api.AttentionKindLimitPressure, "plan_limit_apps"}:     "3 refusals on 3 days",
+		{a, api.AttentionKindAppOOM, "shop"}:                      "OOM-killed 3 times; peak 601 MB of a 512 MB plan",
+		{a, api.AttentionKindBootFailing, "shop"}:                 "readiness timeout e",
+		{a, api.AttentionKindJobsFailing, "nightly"}:              "last 3 scheduled runs failed (dead_letter, failed)",
+		{a, api.AttentionKindPaymentFailing, "billing"}:           "payment failed (payment_failed) and has not recovered",
+		{a, api.AttentionKindLimitPressure, "plan_limit_apps"}:    "3 refusals on 3 days",
 		{a, api.AttentionKindLimitPressure, "job_quota_exceeded"}: "3 refusals on 3 days",
 	}
 	for key, detail := range want {
