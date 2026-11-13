@@ -98,7 +98,11 @@ func deployIdempotencyKey(explicit string, intent deployIdempotencyIntent) (stri
 	// replay can hide a newer branch or tag head for the cache's entire TTL.
 	// Secret bundles also need a fresh identity without exposing value digests.
 	// The key remains fixed for every transport retry within this invocation.
-	if (intent.Repo != "" && !immutableDeployRef(intent.Ref)) || intent.HasSecrets {
+	// An image tag is mutable too: `app:latest` re-pushed and deployed again
+	// replayed the earlier, still-live deployment, so the new image never
+	// shipped (deploy-path review P9). Only a digest-pinned image is stable.
+	if (intent.Repo != "" && !immutableDeployRef(intent.Ref)) || intent.HasSecrets ||
+		(intent.Image != "" && !immutableImageRef(intent.Image)) {
 		var nonce [16]byte
 		if _, err := rand.Read(nonce[:]); err != nil {
 			return "", fmt.Errorf("create deploy retry identity: %w", err)
@@ -125,6 +129,17 @@ func deployOperationIdempotencyKey(base, operation string) string {
 	}
 	digest := sha256.Sum256([]byte(base + "\x00" + operation))
 	return "gregale-" + operation + "-" + hex.EncodeToString(digest[:])
+}
+
+// immutableImageRef reports whether image names its content by digest
+// (name@sha256:<64 hex>); a tag can point at a new image at any time.
+func immutableImageRef(image string) bool {
+	_, digest, ok := strings.Cut(strings.TrimSpace(image), "@sha256:")
+	if !ok || len(digest) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(digest)
+	return err == nil
 }
 
 // Only a full commit SHA is immutable; short SHAs, branches, and tags can move.

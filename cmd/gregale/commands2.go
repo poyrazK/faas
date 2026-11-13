@@ -4104,6 +4104,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err != nil {
 		return printErr("Manifest resource scope resolution failed", err)
 	}
+	if existingApp && !projectRequested && !*createOnly {
+		warnMissingRequiredSecrets(ctx, client, slug, manifestScope)
+	}
 	// The deploy session is written after the app is created or updated;
 	// prove it can be before changing anything remotely (#6625).
 	if !*createOnly {
