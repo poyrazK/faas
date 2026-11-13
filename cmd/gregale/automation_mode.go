@@ -61,6 +61,22 @@ func extractAutomationFlag(args []string) ([]string, error) {
 			projectOrganization = value
 			continue
 		}
+		if arg == "--http-retries" || strings.HasPrefix(arg, "--http-retries=") {
+			value := strings.TrimPrefix(arg, "--http-retries=")
+			if arg == "--http-retries" {
+				rest := args[i+1:]
+				if len(rest) == 0 {
+					return out, setHTTPReadRetries("")
+				}
+				value = rest[0]
+				i++
+			}
+			if err := setHTTPReadRetries(value); err != nil {
+				// Keep rejected text out of subsequent global parsers.
+				return append(out, args[i+1:]...), err
+			}
+			continue
+		}
 		handled, err := extractBoolPrefixFlag(arg, "non-interactive", &nonInteractive)
 		if !handled && err == nil {
 			handled, err = extractBoolPrefixFlag(arg, "wait-for-approval", &approvalWaitEnabled)

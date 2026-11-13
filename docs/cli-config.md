@@ -25,6 +25,39 @@ to see the effective value and its source without exposing credentials;
 `config list`, `config get` and `context` drop any `user:password@` part of a
 `FAAS_API` URL before printing it.
 
+### Read request retries
+
+```bash
+gregale --http-retries 3 billing usage summary
+gregale --http-retries=2 app list
+```
+
+Put the prefix before the command. `N` is the number of **additional** attempts
+(0–5): `3` permits at most four attempts for an eligible read. The default is zero;
+the last prefix wins. No setting or environment variable persists the choice.
+Invalid counts fail before contacting the API.
+
+The initial route set covers JSON app listing, detail, status and usage;
+app deployment listing, latest deployment and deployment summary; deployment
+detail and stages; and `billing usage summary`. Other paths, streams, uploads
+and mutations retain their existing policies. Individual commands can perform
+several requests; eligibility and the retry budget apply to each request.
+
+Eligible reads retry selected connection interruptions and per-attempt timeouts,
+generic transient 502/503/504 responses with known error codes, and recognized
+429 rate limits with `Retry-After`. Authentication, authorization, validation,
+quota, TLS verification, invalid JSON and unknown problem codes fail normally.
+Backoff uses jitter (250 ms base, 5 s cap). A valid `Retry-After` in seconds or
+HTTP-date format sets a minimum wait. If it requires more than 30 seconds, is
+malformed, or appears more than once, the original error is returned rather
+than retrying early. A 429 without `Retry-After` is also returned immediately.
+
+Cancellation stops backoff and further attempts. Each attempt uses its HTTP
+client deadline; retries do not create a separate overall command deadline.
+Successful stdout is unchanged. Add `--debug-http` to see `attempt`,
+`max_attempts` and `retry_delay_ms` on the usual metadata records; zero delays
+are omitted and arbitrary response content is never copied into diagnostics.
+
 ### Plain-HTTP API addresses
 
 Every request carries your API key, and `gregale login` receives a new one in
