@@ -89,6 +89,11 @@ custom metric history, SLOs and synthetic checks were hidden for it.
 
 ## Regression journeys
 
+`TestInvokeIdempotencyKeyLiveAPI` covers async CLI receipt replay and changed-input
+refusal against the deployed API. `TestInvokeIdempotencyKeyIsolatedAPI` checks
+human/JSON key validation before network access and explicit-key submission.
+The live check requires a plan that permits async invocation.
+
 `TestBazaarRegressions` replays the bugs that three rounds of deploying a
 multi-service project (bazaar) by hand found, one subtest per area, each
 check naming the change that fixed it (#5934, #6001, #6060): an

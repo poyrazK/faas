@@ -118,6 +118,34 @@ an `invocation_wait_timeout` Problem to stderr. Ctrl-C exits with `130`.
 Stopping the CLI wait leaves the invocation running; inspect it later with
 `gregale invocations get <id>`.
 
+## Retrying async invocation submissions
+
+Supply a stable key when a script may need to retry an uncertain submission:
+
+```sh
+gregale invoke billing --async --idempotency-key invoice-4821 --payload @invoice.json
+```
+
+`--idempotency-key` requires `--async`; the synchronous endpoint has no receipt
+cache. Surrounding whitespace is trimmed; an explicitly empty key, a key over
+255 bytes, or a key with internal spaces or ASCII controls fails before payload
+reading or network access. Without the flag, each command keeps its fresh
+SDK-generated key. The selected key is sent as request metadata, outside the
+invocation payload.
+
+After a lost response, rerun the same command with the original key and unchanged
+payload, method, path and other invocation options, using the same API, profile
+and credentials. The server's existing receipt window is **24 hours**. A completed
+receipt replays the original invocation ID; concurrent use returns `409`, and a
+request fingerprint mismatch returns `422 idempotency_key_reused`. These server
+responses are preserved. The CLI adds no submission retry loop.
+
+Use a new key for new work. Replay follows the existing server receipt policy;
+it does not extend past retention or survive every receipt-store failure.
+Some legacy receipts and requests beyond the server's 1 MiB fingerprint cap lack
+request comparison, so keep retry input unchanged even when a mismatch is not
+rejected. See ADR-20261022204036 for the full receipt policy.
+
 ## HTTP diagnostics
 
 Put `--debug-http` before the command to diagnose CLI API requests. It works
