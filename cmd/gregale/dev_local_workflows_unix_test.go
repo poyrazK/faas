@@ -88,11 +88,11 @@ export default { async fetch(request) {
     root: functions/users
     runtime: node24
 `,
-		"package.json":                                                 `{"type":"module","dependencies":{"@gregale/sdk-node":"*"}}`,
-		"functions/web/handler.js":                                     starter,
-		"functions/web/package.json":                                   `{"type":"module"}`,
-		"functions/orders/handler.js":                                  orders,
-		"functions/orders/package.json":                                `{"type":"module"}`,
+		"package.json":                  `{"type":"module","dependencies":{"@gregale/sdk-node":"*"}}`,
+		"functions/web/handler.js":      starter,
+		"functions/web/package.json":    `{"type":"module"}`,
+		"functions/orders/handler.js":   orders,
+		"functions/orders/package.json": `{"type":"module"}`,
 		"functions/orders/node_modules/@gregale/sdk-node/package.json": `{"name":"@gregale/sdk-node","type":"module","exports":{"./workflows":"./workflows.js"}}`,
 		"functions/orders/node_modules/@gregale/sdk-node/workflows.js": devLocalWorkflowSDKStub,
 		"functions/users/handler.js":                                   users,
