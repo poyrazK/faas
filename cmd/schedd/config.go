@@ -226,6 +226,16 @@ type Config struct {
 	// billed seconds once its quiet_pause_unbilled switch is on. Off by
 	// default; FAAS_QUIET_PAUSE_LEDGER overrides it.
 	QuietPauseLedger bool `toml:"quiet_pause_ledger"`
+	// IdleLadderIdleOut (ADR-20261107122928 §3) hands idle-out to vmmd's
+	// idle ladder: an instance vmmd holds quiet-paused stays resident past
+	// its idle timeout and parks IdleLadderSnapshotAfterSeconds after its
+	// last request, or sooner under RAM pressure, instead of freezing. It
+	// applies only to accounts the quiet_pause_unbilled platform flag
+	// releases, since only the pause ledger leaves those seconds unbilled,
+	// and is ignored unless quiet_pause_ledger is on. Turn it on only where
+	// meterd's quiet_pause_unbilled mode is on. Off by default;
+	// FAAS_IDLE_LADDER_IDLE_OUT overrides it.
+	IdleLadderIdleOut bool `toml:"idle_ladder_idle_out"`
 
 	// FrozenTier (ADR-1151) freezes an idle eligible function instance in
 	// place at its idle timeout instead of parking it: vmmd keeps the VM
@@ -270,6 +280,12 @@ type Config struct {
 	// (app_runtime_changed); the admission insert commits only while that
 	// generation holds. Off by default. FAAS_OWNER_CACHE overrides it.
 	OwnerCache bool `toml:"owner_cache"`
+
+	// AsyncWakeFinalize (ADR-20261105090246) answers a booted wake as soon as
+	// its RUNNING publication commits and records what the boot proved (the
+	// observed workload class and the secret delivery) afterwards. Off by
+	// default. FAAS_ASYNC_WAKE_FINALIZE overrides it.
+	AsyncWakeFinalize bool `toml:"async_wake_finalize"`
 
 	// MigratingWatchdogTickLimit (ADR-067) caps the per-tick
 	// batch of state='migrating' rows the watchdog self-heals.
@@ -624,6 +640,14 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.QuietPauseLedger = enabled
 	}
+	// ADR-20261107122928: FAAS_IDLE_LADDER_IDLE_OUT overrides idle_ladder_idle_out.
+	if v := os.Getenv("FAAS_IDLE_LADDER_IDLE_OUT"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_IDLE_LADDER_IDLE_OUT must be a boolean (got %q)", v)
+		}
+		c.IdleLadderIdleOut = enabled
+	}
 	// ADR-1151: FAAS_FROZEN_TIER overrides frozen_tier.
 	if v := os.Getenv("FAAS_FROZEN_TIER"); v != "" {
 		enabled, err := strconv.ParseBool(v)
@@ -647,6 +671,14 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("schedd: FAAS_OWNER_CACHE must be a boolean (got %q)", v)
 		}
 		c.OwnerCache = enabled
+	}
+	// ADR-20261105090246: FAAS_ASYNC_WAKE_FINALIZE overrides async_wake_finalize.
+	if v := os.Getenv("FAAS_ASYNC_WAKE_FINALIZE"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_ASYNC_WAKE_FINALIZE must be a boolean (got %q)", v)
+		}
+		c.AsyncWakeFinalize = enabled
 	}
 	if v := os.Getenv("FAAS_FROZEN_TIER_APPS"); v != "" {
 		enabled, err := strconv.ParseBool(v)

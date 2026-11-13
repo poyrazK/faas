@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	dbbounds "github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/connectionfence"
 )
@@ -81,6 +83,7 @@ func (p *Provider) withCheckpointConnectionController(ctx context.Context, defin
 		return connectionfence.Observation{}, managedpostgres.ErrUnavailable
 	}
 	poolConfig.ConnConfig, poolConfig.MaxConns, poolConfig.MinConns = config.Copy(), 1, 0
+	dbbounds.ConfigureTimeouts(poolConfig)
 	pool, err := connect(ctx, poolConfig)
 	if pool != nil {
 		defer pool.Close()

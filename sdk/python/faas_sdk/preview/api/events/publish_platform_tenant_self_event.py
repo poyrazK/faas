@@ -110,7 +110,7 @@ def sync_detailed(
     client: AuthenticatedClient,
     body: PublishEventRequest,
 ) -> Response[PlatformTenantPublishEventResponse | Problem]:
-    """Publish an event for an automation linked to this tenant.
+    """Publish an event for a stored workflow linked to this tenant.
 
      Requires platform_tenant:events:manage. The tenant identity comes from
     the bearer token, and the app must be actively linked to that tenant.
@@ -151,7 +151,7 @@ def sync(
     client: AuthenticatedClient,
     body: PublishEventRequest,
 ) -> PlatformTenantPublishEventResponse | Problem | None:
-    """Publish an event for an automation linked to this tenant.
+    """Publish an event for a stored workflow linked to this tenant.
 
      Requires platform_tenant:events:manage. The tenant identity comes from
     the bearer token, and the app must be actively linked to that tenant.
@@ -187,7 +187,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     body: PublishEventRequest,
 ) -> Response[PlatformTenantPublishEventResponse | Problem]:
-    """Publish an event for an automation linked to this tenant.
+    """Publish an event for a stored workflow linked to this tenant.
 
      Requires platform_tenant:events:manage. The tenant identity comes from
     the bearer token, and the app must be actively linked to that tenant.
@@ -226,7 +226,7 @@ async def asyncio(
     client: AuthenticatedClient,
     body: PublishEventRequest,
 ) -> PlatformTenantPublishEventResponse | Problem | None:
-    """Publish an event for an automation linked to this tenant.
+    """Publish an event for a stored workflow linked to this tenant.
 
      Requires platform_tenant:events:manage. The tenant identity comes from
     the bearer token, and the app must be actively linked to that tenant.

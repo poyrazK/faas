@@ -60,7 +60,7 @@ func genericSourceForFunctionCapacity(t *testing.T, s functionMigrationCapacityT
 	return ins, MigrationAdmissionPlan{ID: uuid.NewString(), InstanceID: ins.ID, SourceNodeID: source.ID, DestinationNodeID: dest.ID,
 		SourceWakeID: ins.WakeID, DestinationWakeID: uuid.NewString(), LeaseToken: lease.LeaseToken, MemStorageKey: "capacity/memory", VMStateStorageKey: "capacity/state",
 		RequestDigest: strings.Repeat("b", 64), DestinationGeneration: dest.LifecycleGeneration, RAMMB: 128 + api.PerVMOverheadMB,
-		CPUMillicores: api.DefaultAppCPUMillicores, VCPU: api.MustLimitsFor(api.PlanPro).VCPU, ExpiresAt: time.Now().Add(30 * time.Second).UTC().Truncate(time.Microsecond)}
+		CPUMillicores: api.DefaultAppCPUMillicores, VCPU: api.SizeVCPUs(128), ExpiresAt: time.Now().Add(30 * time.Second).UTC().Truncate(time.Microsecond)}
 }
 
 func functionMigrationSharedCapacity(t *testing.T, s functionMigrationCapacityTestStore) {

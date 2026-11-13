@@ -1511,8 +1511,6 @@ func TestClient_RejectsCookieOnlyPaths(t *testing.T) {
 		name string
 		path string
 	}{
-		{"sessions_root", "/v1/auth/sessions"},
-		{"sessions_subpath", "/v1/auth/sessions/sess_abc123"},
 		{"capabilities_root", "/v1/auth/capabilities"},
 		{"capabilities_subpath", "/v1/auth/capabilities/refresh"},
 		{"set_password_dashboard", "/dashboard/account/set-password"},

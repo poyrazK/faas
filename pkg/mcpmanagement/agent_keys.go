@@ -3,6 +3,7 @@ package mcpmanagement
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"slices"
@@ -36,6 +37,10 @@ type keyConnection struct {
 
 var errKeyConnectionCapacity = errors.New("agent key connection capacity reached")
 
+// errKeyConnectionsPerAccount refuses an account's connection past its
+// share (bug hunt H101).
+var errKeyConnectionsPerAccount = errors.New("this account's agent key connections are at their limit")
+
 // agentKeyBearer reports whether a bearer token has the shape of a Gregale API
 // key rather than one of this bridge's OAuth tokens.
 func agentKeyBearer(token string) bool {
@@ -68,7 +73,30 @@ func (r *remoteServer) serveAgentKey(w http.ResponseWriter, req *http.Request, n
 		r.challenge(w)
 		return
 	}
+	if r.opts.AgentKeyToolsetSelection {
+		values := req.Header.Values(agentKeyToolsetsHeader)
+		if len(values) > 1 || len(values) == 1 && (len(values[0]) > 256 || strings.TrimSpace(values[0]) == "") {
+			oauthError(w, http.StatusBadRequest, "invalid_request", "Provide one non-empty Gregale-MCP-Toolsets header")
+			return
+		}
+		spec := ""
+		if len(values) == 1 {
+			spec = values[0]
+		}
+		selection, err := connectionToolsets(spec, r.opts.Toolsets)
+		if err != nil {
+			oauthError(w, http.StatusBadRequest, "invalid_request", "Selected toolsets are invalid or unavailable on this server")
+			return
+		}
+		req = req.WithContext(context.WithValue(req.Context(), agentKeyToolsetsContextKey{}, selection))
+	}
 	server, release, err := r.holdKeyConnection(tokenHash(token), account.ID, account.KeyScopes, client, account.KeyApp)
+	if errors.Is(err, errKeyConnectionsPerAccount) {
+		w.Header().Set("Retry-After", "60")
+		oauthError(w, http.StatusTooManyRequests, "too_many_requests",
+			fmt.Sprintf("This account already has %d agent key connections in use; reuse a key or retry once one is idle", hostedKeyConnsPerAccount))
+		return
+	}
 	if err != nil {
 		oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "Agent connection capacity reached; retry shortly")
 		return
@@ -92,8 +120,15 @@ func (r *remoteServer) holdKeyConnection(hash, accountID string, scopes []string
 		c = nil
 	}
 	if c == nil {
+		now := time.Now()
+		if r.opts.Hosted && r.accountKeyConnectionsLocked(accountID, hash) >= hostedKeyConnsPerAccount {
+			r.dropIdleKeyConnectionsLocked(now, keyConnIdleFloor, accountID)
+			if r.accountKeyConnectionsLocked(accountID, hash) >= hostedKeyConnsPerAccount {
+				return nil, nil, errKeyConnectionsPerAccount
+			}
+		}
 		if len(r.keyConns) >= r.capacity() {
-			r.dropIdleKeyConnectionsLocked(time.Now(), 0)
+			r.dropIdleKeyConnectionsLocked(now, keyConnIdleFloor, "")
 		}
 		if len(r.keyConns) >= r.capacity() {
 			return nil, nil, errKeyConnectionCapacity
@@ -126,20 +161,45 @@ func (r *remoteServer) holdKeyConnection(hash, accountID string, scopes []string
 // for consent; journals are isolated by the account and full credential hash.
 func (r *remoteServer) keyOptions(c *keyConnection) Options {
 	var capabilities []string
+	toolsets := r.opts.Toolsets
+	if r.opts.AgentKeyToolsetSelection && toolsets == nil {
+		toolsets = []string{ToolsetAll}
+	}
 	for _, scope := range []string{api.ScopeSecretsRequest, api.ScopeStorageManage, api.ScopeManagedPostgresManage, api.ScopeEnvWrite, api.ScopeUsageRead} {
 		if slices.Contains(c.scopes, scope) {
 			capabilities = append(capabilities, scope)
 		}
 	}
-	return Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: c.accountID, grantID: c.id, Profile: "agent-key", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: c.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(c.scopes, api.ScopeDeployWrite), Toolsets: r.opts.Toolsets, Capabilities: capabilities, LocalCLI: r.grantCLI(c.client.Token()), uploads: r.uploads, agentKey: true, planStore: r.opts.StateStore, planNamespace: c.planNamespace, AllowedApps: c.allowedApps}
+	return Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: c.accountID, grantID: c.id, Profile: "agent-key", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: c.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(c.scopes, api.ScopeDeployWrite), Toolsets: toolsets, Capabilities: capabilities, LocalCLI: r.grantCLI(c.accountID, c.client.Token()), uploads: r.uploads, agentKey: true, agentKeyToolsetSelection: r.opts.AgentKeyToolsetSelection, planStore: r.opts.StateStore, planNamespace: c.planNamespace, AllowedApps: c.allowedApps}
 }
 
-// dropIdleKeyConnectionsLocked forgets key connections unused for idle with
-// nothing in flight and nothing a rebuild would lose. Caller holds r.mu.
-func (r *remoteServer) dropIdleKeyConnectionsLocked(now time.Time, idle time.Duration) {
+// dropIdleKeyConnectionsLocked forgets key connections (of accountID, or
+// all when it is empty) unused for idle with nothing in flight and nothing a
+// rebuild would lose; one holding a plan waits at least keyConnPlanIdle.
+// Caller holds r.mu.
+func (r *remoteServer) dropIdleKeyConnectionsLocked(now time.Time, idle time.Duration, accountID string) {
 	for hash, c := range r.keyConns {
-		if c.inflight == 0 && now.Sub(c.lastUsed) >= idle && c.management.idle(now) {
+		if accountID != "" && c.accountID != accountID {
+			continue
+		}
+		wait := idle
+		if c.management.holdsPlans() {
+			wait = max(idle, keyConnPlanIdle)
+		}
+		if c.inflight == 0 && now.Sub(c.lastUsed) >= wait && c.management.idle(now) {
 			delete(r.keyConns, hash)
 		}
 	}
+}
+
+// accountKeyConnectionsLocked counts accountID's key connections other than
+// the one for hash, which a request is about to replace.
+func (r *remoteServer) accountKeyConnectionsLocked(accountID, hash string) int {
+	n := 0
+	for h, c := range r.keyConns {
+		if h != hash && c.accountID == accountID {
+			n++
+		}
+	}
+	return n
 }

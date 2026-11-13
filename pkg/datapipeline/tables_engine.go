@@ -65,11 +65,15 @@ func (e *Engine) reconcileTables(ctx context.Context, p Pipeline, raw string, so
 		r.Unsupported = !table.Supported
 		actual = append(actual, r)
 	}
+	actual = recordedSourceMetadata(p, preserveMissingMetadata(actual, before))
 	for _, old := range before {
 		i := slices.IndexFunc(actual, func(r relation) bool { return r.Name == old.Name })
 		if i < 0 || !sameVerificationRelation(old, actual[i]) {
 			return &blocked{"source_schema_changed", true}
 		}
+	}
+	if err := checkRecordedSourceStorage(ctx, p, source, target, before); err != nil {
+		return err
 	}
 	plan := tablePlan(p, before, actual)
 	if p.SchemaChange.ID == plan.ID {
@@ -105,7 +109,7 @@ func (e *Engine) reconcileTables(ctx context.Context, p Pipeline, raw string, so
 		if err != nil {
 			return err
 		}
-		if err = ensureSubscription(ctx, previous, source, target, conninfo); err != nil {
+		if err = ensureSubscription(ctx, previous, source, target, conninfo, current); err != nil {
 			return err
 		}
 		ob.State, ob.Reason, ob.TablesReady = "live", "table_addition_pending", len(before)
@@ -155,7 +159,7 @@ func (e *Engine) reconcileTables(ctx context.Context, p Pipeline, raw string, so
 	if err != nil {
 		return err
 	}
-	if err = ensureSubscription(ctx, p, source, target, conninfo); err != nil {
+	if err = ensureSubscription(ctx, p, source, target, conninfo, current); err != nil {
 		return err
 	}
 	plan.State = "verifying"

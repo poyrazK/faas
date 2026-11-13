@@ -80,6 +80,29 @@ func (s *PgStore) ClaimIssueSlackDelivery(ctx context.Context) (IssueSlackClaim,
 func (s *PgStore) IssueSlackDeliveryReady(ctx context.Context, c IssueSlackClaim) (bool, error) {
 	return sqlc.New().IssueSlackReady(ctx, s.pool, sqlc.IssueSlackReadyParams{ID: issueUUID(c.ID), ClaimID: issueUUID(c.ClaimID), EntitledPlans: issueSlackEntitledPlans()})
 }
+func (s *PgStore) BeginIssueSlackAttempt(ctx context.Context, c IssueSlackClaim) error {
+	if c.Attempt < 1 || c.Attempt > api.IssueSlackMaxAttempts {
+		return ErrInvalidArgument
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// Serialize the dispatch decision with owner plan and standing changes,
+	// using the same owner-before-app lock order as ingestion.
+	if _, err = lockIssueResourcePolicy(ctx, tx, IssueCredential{AccountID: c.AccountID, AppID: c.AppID}); err != nil {
+		return err
+	}
+	n, err := sqlc.New().IssueSlackAttemptStart(ctx, tx, sqlc.IssueSlackAttemptStartParams{ID: issueUUID(c.ID), ClaimID: issueUUID(c.ClaimID), PreviousAttempt: int32(c.Attempt - 1), EntitledPlans: issueSlackEntitledPlans()})
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrIssueSlackClaimLost
+	}
+	return tx.Commit(ctx)
+}
 func (s *PgStore) FinishIssueSlackDelivery(ctx context.Context, c IssueSlackClaim, r IssueSlackResult) error {
 	if !validIssueSlackResult(r) {
 		return ErrInvalidArgument
@@ -101,6 +124,9 @@ func (s *PgStore) FinishIssueSlackDelivery(ctx context.Context, c IssueSlackClai
 		return err
 	}
 	if held.DestinationRevision != c.DestinationRevision || issueID(held.DestinationID) != c.DestinationID || issueID(held.IncidentID) != c.IncidentID || held.ChannelID != c.ChannelID {
+		return ErrIssueSlackClaimLost
+	}
+	if r.Attempted && (held.AttemptClaimID != issueUUID(c.ClaimID) || int(held.Attempt) != c.Attempt-1) {
 		return ErrIssueSlackClaimLost
 	}
 	if r.Status == "succeeded" || r.ResetThread {
@@ -127,7 +153,7 @@ func (s *PgStore) FinishIssueSlackDelivery(ctx context.Context, c IssueSlackClai
 	if next.IsZero() {
 		next = time.Now()
 	}
-	if err = q.IssueSlackFinish(ctx, tx, sqlc.IssueSlackFinishParams{ID: held.ID, Status: r.Status, LastError: r.Error, ResponseCode: int32(r.ResponseCode), NextAttemptAt: issueTime(next)}); err != nil {
+	if err = q.IssueSlackFinish(ctx, tx, sqlc.IssueSlackFinishParams{ID: held.ID, Status: r.Status, LastError: r.Error, ResponseCode: int32(r.ResponseCode), NextAttemptAt: issueTime(next), Attempted: r.Attempted}); err != nil {
 		return err
 	}
 	cooldown := time.Now().Add(api.IssueSlackSendInterval)

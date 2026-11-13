@@ -36,12 +36,33 @@ bucket. Deleted buckets retain current-month request/egress consumption.
 Customer control-plane native attempts use the same atomic request reservation
 as the gateway. This includes each multipart part-list page used by CLI resume,
 bucket configuration reads/preflight checks, tags, and version-protection
-reads/preflight checks. S3 object and part listing disable hidden SDK retries;
-a caller retry requires a new reservation. Failed native attempts remain counted; validation,
+reads/preflight checks. S3 object and part listing disable hidden SDK retries.
+GCS current-object JSON listings return exactly one native
+page per adapter call, retaining short-page continuation tokens and making no
+automatic retries or page refills. Each caller continuation or retry requires
+a new reservation. Current-object inventories follow empty native pages with
+advancing continuation tokens; existing page, cursor-cycle and key-order bounds
+still apply, and only a final page establishes completion.
+Failed native attempts remain counted; validation,
 ownership and permission denials make no reservation. Session status and other
 database-only inspection remain available at the ceiling. Inventory, accepted
 reconciliation and cleanup continue to record attempts without new-work budget
 admission, so an exhausted ceiling cannot strand accepted work.
+
+The branded S3 gateway applies this contract to native versioning, encryption,
+Object Lock, retention and legal-hold reads and mutation preflights. Every native
+attempt reserves independently, including successive checks within one request.
+Budget refusal returns `402 AccountProblem` before dispatch. A new encryption
+intent also checks admission before journaling, since it need not perform a
+native preflight; the control-plane JSON PUT applies the same check. Once
+intent is accepted, its reconciliation records attempts
+without another budget gate; clearing encryption remains cleanup even when
+ingress is disabled or the request budget is exhausted, including a repeated
+JSON DELETE that verifies an already-cleared policy.
+
+S3 tagging keeps its authorization admission and reserves the provider request
+atomically before dispatch. Concurrent tag operations cannot spend the same
+last request allowance through separate admission and record-only writes.
 
 Capacity still uses complete inventories and conservative write/multipart
 reservations. Missing, future or stale inventories fail closed, including
@@ -80,6 +101,12 @@ Supporting those paths requires separately bounded meters; sharing a provider
 interface alone does not qualify them.
 
 ## Qualification and rollout
+
+Current GCS tag PUT/DELETE reserves one native metadata read and one conditional
+metadata patch separately. Exhausting the budget after the read prevents the
+patch and creates no source-capture writer. The customer operation consumes one
+authorization allowance. Automatic SDK retries cannot spend an unreserved native
+request.
 
 Memory/PostgreSQL parity, concurrent reservations, process replacement,
 historical-bucket rejection, range/partial reads, persistence failure, disabled

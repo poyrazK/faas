@@ -71,7 +71,9 @@ func TestProbeDSNPrefersDirectEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Host != "direct.example:5432" || parsed.Query().Get("sslmode") != "require" {
+	// The platform's own connections verify Neon's certificate even when the
+	// material, like Neon's connection URI, says only sslmode=require.
+	if parsed.Host != "direct.example:5432" || parsed.Query().Get("sslmode") != "verify-full" {
 		t.Fatalf("dsn = %q", dsn)
 	}
 	if parsed.User.Username() != "gregale" {
@@ -81,7 +83,7 @@ func TestProbeDSNPrefersDirectEndpoint(t *testing.T) {
 
 func testProvider(t *testing.T, handler http.Handler) *Provider {
 	t.Helper()
-	server := httptest.NewTLSServer(handler)
+	server := httptest.NewTLSServer(recordRequests(handler))
 	t.Cleanup(server.Close)
 	baseURL, err := url.Parse(server.URL + "/api/v2")
 	if err != nil {
@@ -570,7 +572,9 @@ func TestUsageNormalizesComputeAndNetworkMeters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Usage: %v", err)
 	}
-	if len(usage.Readings) != 4 || usage.Readings[0].Quantity != 15 || usage.Readings[1].Quantity != 5*744*int64(time.Hour/time.Second) || usage.Readings[2].Quantity != 9*744*int64(time.Hour/time.Second) || usage.Readings[3].Quantity != 10 {
+	if len(usage.Readings) != 4 || usage.Readings[0].Quantity != 15 || usage.Readings[1].Quantity != 5*744*int64(time.Hour/time.Second) || usage.Readings[2].Quantity != 9*744*int64(time.Hour/time.Second) || usage.Readings[3].Quantity != 4 {
+		// Egress is public transfer only: private network transfer never
+		// leaves for the internet (ADR-20261110160000).
 		t.Fatalf("usage = %+v", usage)
 	}
 	window.From = window.From.Add(time.Minute)

@@ -93,6 +93,11 @@ func drainPlanInventoryBlocker(row sqlc.ListManagedPostgresDrainPlanInventoryRow
 	if row.Kind != "wake" {
 		return "unsupported_instance_kind"
 	}
+	if IsRefresh(row.Mode) {
+		// ADR-20261106214916: a platform snapshot refresh serves nothing
+		// and parks within seconds; the plan waits for it.
+		return "snapshot_refresh_in_progress"
+	}
 	if row.MigratedFromNodeID.Valid || row.State == "migrating" {
 		return "migration_lineage_unproven"
 	}

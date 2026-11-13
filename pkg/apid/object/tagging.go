@@ -41,16 +41,7 @@ func (s *Service) ObjectBucketTags(w http.ResponseWriter, r *http.Request, acct 
 	if !ok {
 		return
 	}
-	call := func(callCtx context.Context) (api.ObjectTaggingResult, error) {
-		return s.objectTaggingService(b, p, q.Get("key")).Do(callCtx, b, r.Method, q.Get("key"), q.Get("version_id"), tags)
-	}
-	var out api.ObjectTaggingResult
-	var err error
-	if r.Method == http.MethodGet {
-		out, err = call(r.Context())
-	} else {
-		out, err = objectstorageactivity.Execute(r.Context(), s.Host.Store(), b, call)
-	}
+	out, err := objectstorageactivity.Tag(r.Context(), s.Host.Store(), b, s.objectTaggingService(b, p, q.Get("key")), r.Method, q.Get("key"), q.Get("version_id"), tags)
 	if err != nil {
 		BucketProblem(w, err)
 		return
@@ -60,12 +51,10 @@ func (s *Service) ObjectBucketTags(w http.ResponseWriter, r *http.Request, acct 
 
 func (s *Service) objectTaggingService(b state.ObjectBucket, p objectstorage.Provider, key string) objectstorage.TaggingService {
 	refs, _ := s.Host.Store().(state.ObjectVersionReferenceStore)
-	return objectstorage.TaggingService{References: refs, Provider: p, BeforeRequest: func(ctx context.Context) error {
-		if err := s.admitObjectMultipartPartURL(ctx, b, key); err != nil {
-			return err
-		}
-		return s.CustomerObjectRequestRecorder(b)(ctx)
-	}}
+	return objectstorage.TaggingService{References: refs, Provider: p,
+		BeforeOperation: func(ctx context.Context) error { return s.admitObjectMultipartPartURL(ctx, b, key) },
+		BeforeRequest:   s.CustomerObjectRequestRecorder(b),
+	}
 }
 
 func decodeControlObjectTags(w http.ResponseWriter, r *http.Request) (map[string]string, bool) {

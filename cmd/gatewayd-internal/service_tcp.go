@@ -92,6 +92,30 @@ func newServiceTCPTargetResolver(store state.Store) gateway.ServiceTCPTargetReso
 	}
 }
 
+// newServiceTCPPinnedPortsResolver exposes only the pinned deployment's frozen
+// listener intent and serving port, even after it becomes a retained release.
+func newServiceTCPPinnedPortsResolver(store state.Store) func(context.Context, string, string) ([]int, error) {
+	return func(ctx context.Context, appID, deploymentID string) ([]int, error) {
+		app, err := store.AppByID(ctx, appID)
+		if err != nil {
+			return nil, err
+		}
+		dep, err := store.DeploymentByID(ctx, deploymentID)
+		if err != nil {
+			return nil, err
+		}
+		if app.Status == state.AppDeleted || dep.AppID != appID || dep.Status != state.DeployLive || dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
+			return nil, gateway.ErrServiceTCPTargetUnavailable
+		}
+		app, err = state.ResolveAppForDeployment(ctx, store, app, dep)
+		if err != nil {
+			return nil, err
+		}
+		dep.TrafficPercent = api.DeploymentTrafficPercentTotal
+		return serviceTCPPorts(app, []state.Deployment{dep}), nil
+	}
+}
+
 // serviceTCPPorts is what a service address exposes: every TCP listener the
 // app declares, internal ones included, plus each traffic-bearing
 // deployment's serving port. Image EXPOSE lists are not persisted beyond the
@@ -176,9 +200,10 @@ func startServiceTCPProxy(ctx context.Context, deps runDeps, addr string, servic
 	metrics := tcpmetrics.New(deps.metrics.Registry(), "gatewayd_internal_service")
 	forwarder := gateway.TCPForwarder{Nodes: deps.nodeCache.cache, Metrics: metrics}
 	proxy, err := gateway.NewServiceTCPProxy(gateway.ServiceTCPProxyConfig{
-		Services:     services,
-		ResolveChaos: newServiceTCPChaosResolver(store),
-		Resolve:      newServiceTCPTargetResolver(store),
+		Services:           services,
+		ResolveChaos:       newServiceTCPChaosResolver(store),
+		Resolve:            newServiceTCPTargetResolver(store),
+		ResolvePinnedPorts: newServiceTCPPinnedPortsResolver(store),
 		Forward: func(ctx context.Context, conn net.Conn, target gateway.Target, idle time.Duration) error {
 			session := forwarder
 			session.IdleTimeout = idle

@@ -16,6 +16,9 @@ export type UploadDeployOptions = {
   runtime?: string;
   handler?: string;
   dockerfile?: boolean;
+  /**
+   * Build directory saved for this resumable upload. Empty or omitted inherits the app's configured root; '.' selects the archive root.
+   */
   source_root?: string;
   /**
    * Named environment scope applied when the upload is committed; omitted uses default.

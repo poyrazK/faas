@@ -13,6 +13,7 @@ import (
 func TestPgStoreUDPListenerLifecycleAndRouteLookup(t *testing.T) {
 	s, ctx := pgStore(t)
 	accountID, appID, _ := seedLiveDeploy(t, s, ctx, "-udp-listener")
+	declareUDPListener(t, s, appID, "postgres", 5432)
 	created, err := s.CreateUDPListener(ctx, state.UDPListener{
 		AccountID: accountID, AppID: appID, ListenerName: "postgres",
 		GuestPort: 5432, PublicPort: 40126, Enabled: true,
@@ -53,6 +54,7 @@ func TestPgStoreUDPListenerLifecycleAndRouteLookup(t *testing.T) {
 func TestPgStoreUDPListenerOwnershipNamespaceAndDeletedApp(t *testing.T) {
 	s, ctx := pgStore(t)
 	account, app, _ := seedLiveDeploy(t, s, ctx, "-udp-ownership")
+	declareUDPListener(t, s, app, "dns", 5353)
 	other, otherApp, _ := seedLiveDeploy(t, s, ctx, "-udp-other", "udp-other")
 	base := state.UDPListener{AccountID: account, AppID: app, ListenerName: "DNS", GuestPort: 5353, PublicPort: 40127}
 	wrong := base

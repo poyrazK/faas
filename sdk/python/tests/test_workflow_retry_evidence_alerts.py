@@ -27,7 +27,7 @@ def test_retry_evidence_alert_guidance_round_trip():
         "diagnosis_reason": "terminal_outcome_not_saved",
         "repairable": True,
         "evidence_url": "/review/actions/action/evidence/parent",
-        "cli_command": "gregale automations recovery-retry-evidence --app orders --parent",
+        "cli_command": "gregale workflow stored recovery-retry-evidence --app orders --parent",
     }
     assert WorkflowRecoveryQueueBlockedWebhookPayload.from_dict(body).to_dict() == body
     receipt = {

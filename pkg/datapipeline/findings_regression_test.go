@@ -69,7 +69,7 @@ func TestPipelinePauseHealthRequiresAcknowledgement(t *testing.T) {
 		state string
 		fresh bool
 		code  string
-	}{{"live", false, "pause_unconfirmed"}, {"blocked", true, "pause_unconfirmed"}, {"paused", false, "pause_unconfirmed"}, {"paused", true, "paused"}} {
+	}{{"live", false, "pause_pending"}, {"blocked", true, "pause_failed"}, {"paused", false, "pause_pending"}, {"paused", true, "paused"}} {
 		p := api.DataPipeline{DesiredState: "paused", State: tc.state, ObservationFresh: tc.fresh}
 		if h := pipelineHealth(p, time.Now()); h.Code != tc.code {
 			t.Fatalf("%+v -> %+v", tc, h)
@@ -260,7 +260,12 @@ func TestVerificationUsesSourcePrimaryKeyOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if slices.Equal(after, hydrated) || physicalVerificationID("same-intent", after) == physicalVerificationID("same-intent", hydrated) {
+	if !slices.Equal(after, hydrated) {
+		t.Fatal("planner metadata changed raw physical storage identity")
+	}
+	staleProof := verificationQueryStorage(after, "", []relation{r})
+	hydratedProof := verificationQueryStorage(hydrated, "", updated)
+	if slices.Equal(staleProof, hydratedProof) || physicalVerificationID("same-intent", staleProof) == physicalVerificationID("same-intent", hydratedProof) {
 		t.Fatal("changed query order could reuse a proof created during DDL")
 	}
 }

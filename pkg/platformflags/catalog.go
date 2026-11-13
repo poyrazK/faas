@@ -256,7 +256,7 @@ var catalog = []Spec{
 	{
 		Key:         GuestTracing,
 		Label:       "Guest request tracing",
-		Description: "Release in-guest request tracing to accounts: apps may turn tracing on. vmmd's trace receiver still needs FAAS_GUEST_TRACING_ENABLED on the node; the flag only releases the setting.",
+		Description: "Release in-guest request tracing to accounts: apps may turn tracing on. vmmd's trace receiver is on by default on every node with a state store (FAAS_GUEST_TRACING_ENABLED=0 turns it off on a node).",
 		ADR:         "ADR-958",
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan},
@@ -364,6 +364,7 @@ var catalog = []Spec{
 	},
 	{
 		Key:         StrictBudgets,
+		Capability:  "strict-budgets",
 		Label:       "Strict budgets",
 		Description: "Release strict (suspend_workloads) compute and egress budgets to accounts. Off by default until native acceptance passes. Strict budgets that are already enabled keep enforcing and stay editable while it is off; only creating or enabling one is refused.",
 		ADR:         "ADR-1750",
@@ -378,7 +379,7 @@ var catalog = []Spec{
 			"It takes effect only where meterd's quiet_pause_unbilled mode is on; meterd counts every other account's paused seconds as in shadow mode and bills them in full. " +
 			"Off by default: release it to internal accounts first, then to every account after the financial-model sign-off.",
 		ADR:        "ADR-20261023171905",
-		Consumers:  []string{"meterd"},
+		Consumers:  []string{"meterd", "schedd"},
 		Attributes: []Attribute{AttributePlan, AttributeOrg},
 		RetireBy:   "2027-06-30",
 	},

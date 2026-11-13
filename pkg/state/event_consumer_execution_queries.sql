@@ -144,15 +144,16 @@ WITH pending AS (
  AND r.account_id=i.account_id AND r.app_id=i.app_id)))
  ORDER BY c.reconciliation_requested_at,c.subscription_id
  FOR UPDATE OF c SKIP LOCKED LIMIT sqlc.arg(batch_limit)::integer
-), ready AS (
- SELECT c.subscription_id FROM event_execution_coverage c JOIN pending p USING(subscription_id)
- WHERE NOT EXISTS(SELECT 1 FROM invocations i WHERE i.account_id=c.account_id AND i.app_id=c.app_id
- AND ((i.replay_root_invocation_id IS NULL)<>(i.replay_root_created_at IS NULL) OR NOT EXISTS(SELECT 1 FROM event_execution_roots r
- WHERE r.root_invocation_id=coalesce(i.replay_root_invocation_id,i.id) AND r.root_created_at=coalesce(i.replay_root_created_at,i.created_at)
- AND r.account_id=i.account_id AND r.app_id=i.app_id)))
 )
+-- pending already proved each locked row has no unattributed execution, and
+-- every part of one statement reads the same snapshot, so a second check
+-- could only agree. It used to be a separate CTE, which the planner ran as an
+-- anti-join of every coverage row against all invocations before joining it
+-- to pending: about 0.5 s per call on production with nothing pending
+-- (2026-11-10). Updating from pending reads invocations only for rows it
+-- locked.
 UPDATE event_execution_coverage c SET ledger_started_at=greatest(clock_timestamp(),c.ledger_started_at,c.reconciliation_requested_at,c.ledger_lost_through_at+interval '1 microsecond'),ledger_baseline_known=true
-FROM ready WHERE c.subscription_id=ready.subscription_id;
+FROM pending p WHERE c.subscription_id=p.subscription_id;
 
 -- name: EventExecutionLineageRepairReceipts :many
 -- Admission roots include settled receipts and materialized backfill recipients.

@@ -19,7 +19,7 @@ func (m *MemStore) requestServiceAlertRollbackLocked(ctx context.Context, r api.
 	if !found || previous.id != r.PredecessorDeploymentID {
 		return r, ErrAlertRollbackChanged
 	}
-	r, target, err = queueAlertServiceRollback(r, target)
+	r, target, err = queueAlertServiceRollback(ctx, r, target)
 	if err != nil {
 		return r, err
 	}

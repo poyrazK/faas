@@ -59,7 +59,10 @@ export async function publishPackages(packages, {
     });
     if (result.error || result.status !== 0) throw new Error(`npm ${args[0]} failed: ${result.error?.message ?? result.status}`);
   },
-  timeoutMs = 600_000, pollMs = 10_000, now = Date.now,
+  // npm can take well over ten minutes to make an accepted version public
+  // (rc.318 and rc.321: a platform package stayed pending past 600 s, so the
+  // launcher was never published). Each wait gets 20 minutes.
+  timeoutMs = 1_200_000, pollMs = 10_000, now = Date.now,
   sleep = ms => new Promise(done => setTimeout(done, ms)), log = console.log,
 } = {}) {
   const version = packages[4].manifest.version;
@@ -113,7 +116,8 @@ export async function publishPackages(packages, {
       log(`Waiting for public npm packages: ${pending.join("; ")}`);
       if (now() >= deadline) {
         throw new Error(`npm publication remains incomplete after ${timeoutMs / 1000}s. ` +
-          "Check npm's package/owner dashboard for processing or staging; do not blindly republish accepted versions. " + pending.join("; "));
+          "Check npm's package/owner dashboard for processing or staging; do not blindly republish accepted versions. " +
+          "Re-running this job is safe: it never re-uploads an accepted version and publishes the launcher once every platform is public. " + pending.join("; "));
       }
       await sleep(Math.min(pollMs, deadline - now()));
     }

@@ -1,7 +1,12 @@
 [Service]
 # Private control-plane gRPC listener used by compute-only imaged nodes to
 # verify that a GitHub source branch still points at the staged commit.
-Environment=FAAS_GITHUBD_LISTEN_ADDR={{ faas_githubd_listen_addr }}
+{# ADR-20261110120000: a wildcard listener binds the address compute nodes'
+   /etc/hosts maps githubd.faas to, when this host has it; otherwise every
+   address, as before. Keep in step with control_plane_service's copy. #}
+{% set faas_bind_candidate = faas_private_dns_address | default(faas_private_address | default(((ansible_facts | default({})).default_ipv4 | default({})).address | default(''), true), true) %}
+{% set faas_private_bind = faas_bind_candidate if (faas_bind_candidate and faas_bind_candidate in ((ansible_facts | default({})).all_ipv4_addresses | default([]))) else '0.0.0.0' %}
+Environment=FAAS_GITHUBD_LISTEN_ADDR={{ faas_githubd_listen_addr | replace('tcp://0.0.0.0:', 'tcp://' ~ faas_private_bind ~ ':') }}
 Environment=FAAS_GITHUBD_TLS_CERT_PATH=/etc/faas/tls/githubd/server.crt
 Environment=FAAS_GITHUBD_TLS_KEY_PATH=/etc/faas/tls/githubd/server.key
 Environment=FAAS_GITHUBD_TLS_CA_PATH=/etc/faas/tls/ca/ca.crt

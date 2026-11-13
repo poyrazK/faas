@@ -2,6 +2,7 @@ package managedrealtime
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -33,6 +34,47 @@ type endpointRegistrations struct {
 	present   map[string]map[string]struct{}
 	presentAt map[string]time.Time
 	sent      map[string]map[string]sentRegistration
+	// previews is each node's last reported realtime previews; a nil list
+	// is a node that predates the report.
+	previews   map[string][]string
+	previewsAt map[string]time.Time
+}
+
+// nodePreviewLister is a node operator that also reports which realtime
+// previews the node serves (realtime.NodePreviewsHeader).
+type nodePreviewLister interface {
+	EndpointsWithPreviews(context.Context) ([]string, []string, error)
+}
+
+func (r *endpointRegistrations) recordPreviews(nodeID string, previews []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.previews == nil {
+		r.previews, r.previewsAt = map[string][]string{}, map[string]time.Time{}
+	}
+	r.previews[nodeID], r.previewsAt[nodeID] = previews, time.Now()
+}
+
+// NodesServePreview reports whether the realtime fleet serves a preview
+// (realtime.NodePreview*): false once any node that answered the inventory
+// in the last endpointInventoryFresh lists its previews without it. A node
+// that predates the report, or has not answered lately, does not count, so
+// a fleet of older nodes keeps the decision to apid's flags as before
+// (ADR 20261021080640, amendment of 2026-11-09).
+func (o *leasedRealtimeOwner) NodesServePreview(name string) bool {
+	r := &o.endpointSync
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	for node, previews := range r.previews {
+		if previews == nil || now.Sub(r.previewsAt[node]) >= endpointInventoryFresh {
+			continue
+		}
+		if !slices.Contains(previews, name) {
+			return false
+		}
+	}
+	return true
 }
 
 // activeNodes lists active nodes, reusing a list read in the last few

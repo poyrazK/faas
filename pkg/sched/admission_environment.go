@@ -98,6 +98,14 @@ func (e *Engine) seedLedgerDeploymentPolicy(ctx context.Context, app state.App, 
 	if err != nil {
 		return policy, err
 	}
+	if deployment.AppID != app.ID {
+		return policy, state.ErrConflict
+	}
+	// Environment deletion tombstones its deployments. Their resident VMs
+	// still consume capacity, but have no runtime owner to resolve or adopt.
+	if deployment.DeletedAt != nil {
+		return policy, nil
+	}
 	policy.app, err = state.ResolveAppForDeployment(ctx, e.store, app, deployment)
 	if err != nil {
 		return policy, err

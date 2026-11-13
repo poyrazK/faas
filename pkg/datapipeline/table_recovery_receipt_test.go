@@ -43,6 +43,17 @@ func TestTableRecoveryReceiptCannotReplaceActiveOrNewerApproval(t *testing.T) {
 	if err = beginTableRecovery(ctx, p, target, always); err != nil {
 		t.Fatal(err)
 	}
+	// A receipt created before copy-retry mode acquires the default without
+	// changing its original approval identity or committed retirement stage.
+	if _, err = target.Exec(ctx, `ALTER TABLE gregale_pipeline.table_recoveries DROP COLUMN copy_retry`); err != nil {
+		t.Fatal(err)
+	}
+	if err = ensureTableRecoveryReceipt(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	if stage, err := loadTableRecovery(ctx, p, target); err != nil || stage != "retiring" {
+		t.Fatal("legacy approval did not survive receipt expansion", stage, err)
+	}
 	next := p
 	next.SchemaApproval = strings.Repeat("b", 64)
 	nextPlan := *p.SchemaChange

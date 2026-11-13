@@ -317,7 +317,9 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 // flag" (Hunt 12 H12-27).
 func globalFlagPlacementHint(diagnostic, path string) string {
 	for _, global := range []struct{ name, example string }{
+		{"debug-http", "--debug-http"},
 		{"non-interactive", "--non-interactive"},
+		{"wait-for-approval", "--wait-for-approval"},
 		{"profile", "--profile NAME"},
 	} {
 		if diagnostic == "unknown flag --"+global.name || strings.HasPrefix(diagnostic, "unknown flag --"+global.name+"=") {

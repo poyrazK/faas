@@ -1,12 +1,15 @@
-package db
+package db_test
 
 import (
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/e2etest"
 )
 
 // TestArch_ApidWarmsPoolBeforeBgBefore is the grep gate that
@@ -23,26 +26,31 @@ import (
 // If any of (1)-(3) regress, this test fails with a message that
 // names the file + line number of the violation. ADR-094 references
 // this gate as the architectural pin.
+// adr: 094 — pool warm-up precedes background work and listener binding.
 func TestArch_ApidWarmsPoolBeforeBgBefore(t *testing.T) {
-	const apidMainPath = "pkg/apid/apidserver/main.go"
-	// Walk via parser.ParseFile (path is relative to the repo root
-	// where `go test ./...` is run).
+	dir, err := e2etest.CallerDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	apidMainPath := filepath.Join(dir, "..", "apid", "apidserver", "main.go")
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, apidMainPath, nil, parser.ParseComments)
 	if err != nil {
-		t.Skipf("cannot parse %s (likely ran from non-repo root): %v", apidMainPath, err)
+		t.Fatalf("cannot parse warm-up architecture source %s: %v", apidMainPath, err)
 	}
 
 	// Locate the *FuncDecl for run or runWithDeps.
-	var runFunc *ast.FuncDecl
+	var runFunc, runWithDeps *ast.FuncDecl
 	for _, decl := range f.Decls {
 		fd, ok := decl.(*ast.FuncDecl)
 		if !ok {
 			continue
 		}
-		if fd.Name.Name == "run" || fd.Name.Name == "runWithDeps" {
+		switch fd.Name.Name {
+		case "run":
 			runFunc = fd
-			break
+		case "runWithDeps":
+			runWithDeps = fd
 		}
 	}
 	if runFunc == nil || runFunc.Body == nil {
@@ -56,39 +64,59 @@ func TestArch_ApidWarmsPoolBeforeBgBefore(t *testing.T) {
 	//   - `deps.listen(...)` calls,
 	//   - `return` statements inside the function.
 	type marker struct {
-		line int
-		text string
+		line  int
+		order int
+		text  string
 	}
 	var (
 		opens, warms, bgBefores, listens []marker
 		returns                          []marker
 	)
-	ast.Inspect(runFunc.Body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
+	// Follow the production delegation to runWithDeps at its call site.
+	// Compare execution order rather than declaration line numbers: changing
+	// the order of function declarations must not change the architecture gate.
+	order := 0
+	var walk func(ast.Node)
+	walk = func(root ast.Node) {
+		ast.Inspect(root, func(n ast.Node) bool {
+			if _, literal := n.(*ast.FuncLit); literal {
+				return false // Defining a background callback does not run it.
+			}
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if name, ok := call.Fun.(*ast.Ident); ok && name.Name == "runWithDeps" {
+				if runWithDeps == nil || runWithDeps.Body == nil {
+					t.Fatal("production run delegates to missing runWithDeps")
+				}
+				walk(runWithDeps.Body)
+				return false
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			pkg, ok := sel.X.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			line := fset.Position(call.Pos()).Line
+			order++
+			switch {
+			case pkg.Name == "db" && (sel.Sel.Name == "Open" || sel.Sel.Name == "OpenWithAppName"):
+				opens = append(opens, marker{line, order, "db.Open"})
+			case pkg.Name == "db" && sel.Sel.Name == "WarmUp":
+				warms = append(warms, marker{line, order, "db.WarmUp"})
+			case pkg.Name == "deps" && sel.Sel.Name == "bgBefore":
+				bgBefores = append(bgBefores, marker{line, order, "deps.bgBefore"})
+			case pkg.Name == "deps" && sel.Sel.Name == "listen":
+				listens = append(listens, marker{line, order, "deps.listen"})
+			}
 			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		pkg, ok := sel.X.(*ast.Ident)
-		if !ok {
-			return true
-		}
-		line := fset.Position(call.Pos()).Line
-		switch {
-		case pkg.Name == "db" && sel.Sel.Name == "Open":
-			opens = append(opens, marker{line, "db.Open"})
-		case pkg.Name == "db" && sel.Sel.Name == "WarmUp":
-			warms = append(warms, marker{line, "db.WarmUp"})
-		case pkg.Name == "deps" && sel.Sel.Name == "bgBefore":
-			bgBefores = append(bgBefores, marker{line, "deps.bgBefore"})
-		case pkg.Name == "deps" && sel.Sel.Name == "listen":
-			listens = append(listens, marker{line, "deps.listen"})
-		}
-		return true
-	})
+		})
+	}
+	walk(runFunc.Body)
 
 	// Also collect every `return` statement (including `return nil`,
 	// `return err`, etc.) by walking the function body.
@@ -97,7 +125,7 @@ func TestArch_ApidWarmsPoolBeforeBgBefore(t *testing.T) {
 		if !ok {
 			return true
 		}
-		returns = append(returns, marker{fset.Position(ret.Pos()).Line, "return"})
+		returns = append(returns, marker{line: fset.Position(ret.Pos()).Line, text: "return"})
 		return true
 	})
 
@@ -125,7 +153,7 @@ func TestArch_ApidWarmsPoolBeforeBgBefore(t *testing.T) {
 	// In run() the order is db.Open -> db.WarmUp -> bgBefore -> listen.
 	for _, w := range warms {
 		for _, b := range bgBefores {
-			if w.line >= b.line {
+			if w.order >= b.order {
 				t.Errorf("%s:%d: db.WarmUp (%d) must come BEFORE deps.bgBefore (%d) per ADR-094",
 					apidMainPath, w.line, w.line, b.line)
 			}
@@ -161,7 +189,7 @@ func TestArch_ApidWarmsPoolBeforeBgBefore(t *testing.T) {
 	// itself trigger a pool.Acquire on the API path).
 	for _, w := range warms {
 		for _, l := range listens {
-			if w.line >= l.line {
+			if w.order >= l.order {
 				t.Errorf("%s:%d: db.WarmUp (%d) must come BEFORE deps.listen (%d) — otherwise the listener can accept requests before the pool is verified warm",
 					apidMainPath, w.line, w.line, l.line)
 			}

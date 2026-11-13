@@ -21,6 +21,7 @@ var (
 	ErrUnavailable   = errors.New("data pipelines are unavailable")
 	ErrQuota         = errors.New("data pipeline limit reached")
 	ErrCheckRequired = errors.New("a fresh passing connection check is required for every selected table")
+	ErrCheckBusy     = errors.New("another connection check or setup is in progress; retry after it completes")
 	identifier       = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 )
 

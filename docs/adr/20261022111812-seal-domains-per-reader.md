@@ -950,6 +950,73 @@ of runtime values on compute nodes.
   control) and gatewayd-internal (edge) still load it, so node join keeps
   staging it until those domains contract.
 
+## Implemented: the compute contract steps (edge, delivery, control)
+
+The last readers of the fleet key on compute nodes get their contract step:
+gatewayd-internal (`edge`) and schedd (`control` and `delivery`). With these,
+the build and runtime steps above and storage for s3-gatewayd, no compute
+unit needs `fleet.age`; node join still stages it until a later change stops
+that.
+
+- **Checks.** `seal-domain migrate --check` now covers `edge`, `delivery` and
+  `control`. Edge counts a log destination an application standard manages
+  as skipped while only a legacy identity opens it: it is an immutable
+  version, so only a new version of the standard's destination replaces it.
+- **Trigger configs move for good.** apid sealed trigger config credentials
+  to the fleet key too even in domain mode, waiting for every schedd to open
+  them with the delivery identity. They now follow the delivery write mode
+  like the other delivery values, and the delivery re-seal and check walk
+  them as a fourth kind (`trigger_config`): each credential leaf is opened
+  and sealed to the domain alone, a credential stored in plaintext is
+  sealed, and the write is a compare-and-swap on the stored jsonb.
+- **A 30- drop-in, not a reset in the reader drop-in.** The optional
+  credentials role loads credentials into gatewayd-internal (the log archive
+  key) and schedd (`host.age.previous`) from 40- drop-ins, which a reset in
+  the 60- reader drop-in would drop. The contract drop-in therefore sorts
+  first: `30-faas-seal-domain-edge-contract.conf` drops the base unit's
+  fleet and host identities and unsets `FAAS_HOST_KEY_PATH`;
+  `30-faas-seal-domain-schedd-contract.conf` drops schedd's fleet identity
+  and loads `host.age` (per host, it opens no fleet-sealed value) and the
+  signing public key again.
+- **schedd contracts both domains together.** One set of credentials serves
+  both, so `faas_seal_domain_control_contracted` and
+  `faas_seal_domain_delivery_contracted` are set together or not at all.
+  `control.yml` runs before `delivery.yml`, so it checks both domains before
+  it writes the contract drop-in; `delivery.yml` proves the running schedd
+  holds both domain identities and no fleet identity.
+- As for the other domains, a contract switch changes nothing until it is
+  set, and the role refuses it while a check finds a value only a legacy
+  identity opens.
+
+## Implemented: retiring the fleet key on compute nodes
+
+With every compute reader contracted, `faas_compute_fleet_key_retired`
+takes the fleet identity off compute nodes.
+
+- **Guarded.** Node join and `compute_only_service` refuse the switch unless
+  runtime, build, edge, control and delivery are contracted, and storage too
+  when s3-gatewayd runs on compute nodes. Each contract step already proved
+  its domain holds no value only a legacy identity opens.
+- **Removed, not only unstaged.** Node join stops staging `fleet.age` and
+  deletes it and `fleet.age.previous`; a compute converge without node join
+  deletes any copy left behind. `fleet.age.pub` stays: it is public.
+- **The join gate keeps its proof.** `gregalectl fleet-seal verify
+  --fleet-retired` (`fleetseal.Verify` with no fleet identity) opens the
+  cluster signing key with the control identity alone and round-trips an
+  internal-service token. It skips the customer probe, which only the fleet
+  identity opens; the seal_domains role's per-domain probes cover the
+  readers. It still writes `faas_fleet_seal_domain_ready` and
+  `faas_fleet_cluster_signing_key_info`, so `FaasFleetSealDomainUnverified`
+  and `FaasFleetSigningKIDDiverged` keep working.
+- **The pre-stage unit follows.** The join's base pre-stage one-shot stops
+  loading the fleet identity; it opens no sealed value.
+- **Not yet:** CD still writes `fleet.age` into the compute join artifacts
+  on the runner (node join no longer copies it), and the control plane keeps
+  the fleet identity until `account` and the other control-plane readers
+  contract.
+
+Runbook: [Seal domains rollout](../runbooks/seal-domains-rollout.md), step 11f.
+
 ## CD and node join stage the domain keys
 
 Each domain's key pair is a pair of GitHub environment secrets:

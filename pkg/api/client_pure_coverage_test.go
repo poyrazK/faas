@@ -73,6 +73,22 @@ func TestClient_UploadHTTP_ReturnsDeployWhenSet(t *testing.T) {
 	}
 }
 
+// The upload client waits for response headers as long as its deploy
+// timeout: it kept the 30s JSON wait, so a cold `gregale dev` first sync the
+// server took longer to accept failed with "timeout awaiting response
+// headers" (prod, 2026-11-11).
+func TestClient_UploadTransportWaitsForHeadersUpToDeployTimeout(t *testing.T) {
+	c := NewClientWithDeployTimeout("https://api.example.com", "tok", 5*time.Minute)
+	wrapped, ok := c.deployHTTP.Transport.(agentReasonTransport)
+	if !ok {
+		t.Fatalf("upload transport = %T, want agentReasonTransport", c.deployHTTP.Transport)
+	}
+	transport, ok := wrapped.next.(*http.Transport)
+	if !ok || transport.ResponseHeaderTimeout != 5*time.Minute {
+		t.Fatalf("upload ResponseHeaderTimeout = %v, want 5m", transport.ResponseHeaderTimeout)
+	}
+}
+
 // --- SetCompletionCache / CompletionCache --------------------------
 
 func TestClient_SetCompletionCache_ReturnsReceiver(t *testing.T) {
@@ -97,7 +113,7 @@ func TestClient_SetCompletionCache_ReturnsReceiver(t *testing.T) {
 
 func TestClient_Do_CookieOnlyPathReturns403(t *testing.T) {
 	c := NewClient("https://api.example.com", "tok")
-	err := c.do(context.Background(), "GET", "/v1/auth/sessions", nil, nil)
+	err := c.do(context.Background(), "GET", "/v1/auth/capabilities", nil, nil)
 	if err == nil {
 		t.Fatal("cookie-only path: err = nil, want 403")
 	}
@@ -129,11 +145,11 @@ func TestClient_Do_CookieOnlyPathSubpathAlsoRejected(t *testing.T) {
 	}
 }
 
-func TestClient_Do_CookieOnlyPathBareSessionsRejected(t *testing.T) {
-	// /v1/auth/sessions with NO trailing subpath must also match
+func TestClient_Do_CookieOnlyPathBareCapabilitiesRejected(t *testing.T) {
+	// /v1/auth/capabilities with NO trailing subpath must also match
 	// (the regex's optional subpath group captures both).
 	c := NewClient("https://api.example.com", "tok")
-	err := c.do(context.Background(), "GET", "/v1/auth/sessions", nil, nil)
+	err := c.do(context.Background(), "GET", "/v1/auth/capabilities", nil, nil)
 	var p *Problem
 	if !errors.As(err, &p) {
 		t.Fatalf("not a *Problem: %T %v", err, err)

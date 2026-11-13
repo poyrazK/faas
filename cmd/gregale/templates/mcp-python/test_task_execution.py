@@ -72,6 +72,8 @@ class TaskExecutionPostgresTests(unittest.TestCase):
         runtime.owner_keys = [{"owner_hash_key": _derive_key(OWNER_KEY, "gregale-mcp-task-owner:v1"),
                                "payload_key": payload_key}]
         runtime.payload_keys, runtime._main_payload_keys = {"initial": payload_key}, {}
+        runtime._rewrap_lock = threading.Lock()
+        runtime._rewrap_after = runtime._rewrap_through = None
         runtime.active_owner_key_id, runtime.payload_encryption_version = "initial", 1
         runtime._aesgcm, runtime.ttl_ms, runtime.poll_interval_ms = AESGCM, 3600000, 2000
         runtime.max_outstanding, runtime.max_per_owner = 1000, 100
@@ -88,6 +90,32 @@ class TaskExecutionPostgresTests(unittest.TestCase):
                 VALUES(%s,%s,%s,'build_report','2',%s,'queued',clock_timestamp()+interval '1 hour')""",
                 (self.runtime.namespace, task_id, owner, encrypted))
         return task_id
+
+    def test_cancelled_expired_lease_is_settled_before_recovery(self):
+        class Authenticator:
+            def can_access_tool(self, name, scopes):
+                return True
+
+        for budget in (1, 3):
+            with self.subTest(budget=budget):
+                self.runtime.execution = TaskExecutionPolicy({"max_attempts": budget})
+                task_id = self.insert_task(self.runtime._owner_hashes(None)[0])
+                original = self.runtime._claim()
+                self.runtime.cancel(task_id, None, Authenticator(), [])
+                self.assertIsNone(self.runtime._claim())
+                with self.runtime.pool.connection() as connection:
+                    live = connection.execute("SELECT status,lease_token::text FROM gregale_mcp_tasks WHERE task_id=%s", (task_id,)).fetchone()
+                    self.assertEqual((live["status"], live["lease_token"]), ("running", original["lease_token"]))
+                    connection.execute("UPDATE gregale_mcp_tasks SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE task_id=%s", (task_id,))
+                next_id = self.insert_task(b"another-owner")
+                replacement = self.runtime._claim()
+                self.assertEqual(replacement["task_id"], next_id)
+                with self.runtime.pool.connection() as connection:
+                    row = connection.execute("""SELECT status,attempt_count,
+                        lease_token IS NULL AND lease_expires_at IS NULL AND NOT resume_pending AND next_attempt_at IS NULL AS cleared
+                        FROM gregale_mcp_tasks WHERE task_id=%s""", (task_id,)).fetchone()
+                    self.assertEqual((row["status"], row["attempt_count"], row["cleared"]), ("cancelled", 1, True))
+                self.runtime._finish(replacement, "completed", {"content": []})
 
     def test_aliases_share_capacity_before_and_after_authentication(self):
         self.runtime.execution = TaskExecutionPolicy({"max_running": 3, "max_running_per_owner": 1})

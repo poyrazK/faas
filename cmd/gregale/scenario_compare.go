@@ -214,36 +214,25 @@ func cmdTestCompare(args []string) int {
 		}
 		comparison.Gate = &gate
 	}
-	if *htmlPath != "" {
-		if err := writeTestComparisonHTML(*htmlPath, comparison); err != nil {
-			return printErr("Could not save HTML comparison", err)
-		}
-	}
-	if *markdownPath != "" {
-		if err := writeTestComparisonMarkdown(*markdownPath, comparison); err != nil {
-			return printErr("Could not save Markdown comparison", err)
-		}
-	}
-	if summaryPath != "" {
-		if err := appendTestComparisonGitHubSummary(summaryPath, comparison); err != nil {
-			return printErr("Could not update GitHub Actions summary", err)
-		}
-	}
+	outputErr := writeTestComparisonReports(comparison, *htmlPath, *markdownPath, summaryPath)
 	if jsonOutput {
 		if err := writeJSON(comparison); err != nil {
-			return printErr("Could not print report comparison", err)
+			outputErr = errors.Join(outputErr, fmt.Errorf("JSON stdout: %w", err))
 		}
 	} else {
 		printTestReportComparison(osStdout, comparison)
-		if *htmlPath != "" {
+		if *htmlPath != "" && outputErr == nil {
 			_, _ = fmt.Fprintf(osStdout, "HTML report: %s\n", *htmlPath)
 		}
-		if *markdownPath != "" {
+		if *markdownPath != "" && outputErr == nil {
 			_, _ = fmt.Fprintf(osStdout, "Markdown summary: %s\n", *markdownPath)
 		}
-		if summaryPath != "" {
+		if summaryPath != "" && outputErr == nil {
 			_, _ = fmt.Fprintln(osStdout, "GitHub Actions job summary updated")
 		}
+	}
+	if outputErr != nil {
+		return printErr("Could not save comparison reports", &exitErr{msg: outputErr.Error(), code: 1})
 	}
 	if comparison.Gate != nil && comparison.Gate.Status != "passed" {
 		return 1
@@ -261,6 +250,25 @@ func cmdTestCompare(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+func writeTestComparisonReports(comparison testReportComparison, htmlPath, markdownPath, summaryPath string) error {
+	var outputErrors []error
+	for _, output := range []struct {
+		name, path string
+		write      func(string, testReportComparison) error
+	}{
+		{"HTML report", htmlPath, writeTestComparisonHTML},
+		{"Markdown report", markdownPath, writeTestComparisonMarkdown},
+		{"GitHub Actions summary", summaryPath, appendTestComparisonGitHubSummary},
+	} {
+		if output.path != "" {
+			if err := output.write(output.path, comparison); err != nil {
+				outputErrors = append(outputErrors, fmt.Errorf("%s: %w", output.name, err))
+			}
+		}
+	}
+	return errors.Join(outputErrors...)
 }
 
 func compareTestReports(beforeName, afterName string, before, after []testRunReceipt) (testReportComparison, error) {

@@ -16,6 +16,7 @@ type storedPlan struct {
 	ConfigReceipt      *api.EnvBatchResponse `json:",omitempty"`
 	Provision          *nativeProvision      `json:",omitempty"`
 	OperationRequest   json.RawMessage       `json:",omitempty"`
+	ConfigReceiptProof string                `json:",omitempty"`
 	LocalReceipt       json.RawMessage       `json:",omitempty"`
 	RegressionResult   *api.DebugRegressionReview
 	BudgetResult       *api.EnvironmentRouteBudgets
@@ -81,7 +82,7 @@ func (m *management) restorePlans() error {
 			if p.Budgets == nil || routemonitor.ValidateEnvironmentBudgets(p.Budgets.Proposed) != nil || validateBudgetResponse(p.Budgets.Before, p.AppID, p.Scope, p.ProjectID, p.EnvironmentID) != nil || p.Budgets.Proposed.AppID != p.AppID || p.Budgets.Proposed.ProjectID != p.ProjectID || p.Budgets.Proposed.EnvironmentID != p.EnvironmentID || *p.Budgets.Proposed.ExpectedRevision != p.Budgets.Before.Revision || *p.Budgets.Proposed.ExpectedAppRevision != p.Budgets.Before.AppRevision {
 				return errors.New("stored route budget plan binding mismatch")
 			}
-			if record.BudgetResult != nil && validateBudgetResponse(*record.BudgetResult, p.AppID, p.Scope, p.ProjectID, p.EnvironmentID) != nil {
+			if record.BudgetResult != nil && (!record.Attempted || validateBudgetReceipt(&p, *record.BudgetResult) != nil) {
 				return errors.New("stored route budget receipt binding mismatch")
 			}
 		}
@@ -113,7 +114,18 @@ func (m *management) restorePlans() error {
 			if !operationKinds[p.Operation.Kind] || p.Action != "operation_"+p.Operation.Kind || !json.Valid(record.OperationRequest) {
 				return errors.New("stored operation binding mismatch")
 			}
+			if p.Operation.CronHistorySafe && p.Operation.Kind != "cron_update" && p.Operation.Kind != "cron_delete" {
+				return errors.New("stored cron history binding mismatch")
+			}
 			p.Operation.Request = record.OperationRequest
+			if p.Operation.EnvIdentityPinned || p.Operation.RollbackGuarded {
+				if (p.Operation.Kind != "env" || !p.Operation.EnvIdentityPinned) && (p.Operation.Kind != "config_rollback_guarded" || !p.Operation.RollbackGuarded) || !api.ValidEnvBatchReceiptProof(record.ConfigReceiptProof) {
+					return errors.New("stored configuration receipt proof mismatch")
+				}
+				p.Operation.EnvReceiptProof = record.ConfigReceiptProof
+			} else if record.ConfigReceiptProof != "" {
+				return errors.New("unexpected stored configuration receipt proof")
+			}
 		}
 		if len(record.LocalReceipt) > 0 {
 			p.localReceipt = record.LocalReceipt
@@ -130,8 +142,15 @@ func (m *management) restorePlans() error {
 // Called with the management lock held. Persist the attempt BEFORE the customer
 // API write, so a process death after commit retries the original key and body.
 func (m *management) persistPlans() error {
+	if err := m.syncActionHistory(time.Now().UTC()); err != nil {
+		return err
+	}
 	if m.opts.planStore == nil {
 		return nil
+	}
+	environments, err := m.storedEnvironmentPlans()
+	if err != nil {
+		return err
 	}
 	records := make(map[string]storedPlan, len(m.plans))
 	for id, p := range m.plans {
@@ -155,6 +174,9 @@ func (m *management) persistPlans() error {
 		if p.Operation != nil {
 			r := records[id]
 			r.OperationRequest = p.Operation.Request
+			if p.Operation.EnvIdentityPinned || p.Operation.RollbackGuarded {
+				r.ConfigReceiptProof = p.Operation.EnvReceiptProof
+			}
 			records[id] = r
 		}
 		if p.Provision != nil && p.Provision.Native != nil {
@@ -163,7 +185,49 @@ func (m *management) persistPlans() error {
 			records[id] = r
 		}
 	}
-	return m.opts.planStore.update("plans/"+m.opts.planNamespace, records)
+	legacy, workloads, budgets, scaling, configs, configRollbacks, crons := make(map[string]actionRecord), make(map[string]actionRecord), make(map[string]actionRecord), make(map[string]actionRecord), make(map[string]actionRecord), make(map[string]actionRecord), make(map[string]actionRecord)
+	for id, entry := range m.actions {
+		if workloadHistoryAction(entry.Action) {
+			workloads[id] = entry
+		} else if entry.Action == "route_budgets" {
+			budgets[id] = entry
+		} else if entry.Action == "operation_scale" {
+			scaling[id] = entry
+		} else if entry.Action == "operation_env" {
+			configs[id] = entry
+		} else if entry.Action == "operation_config_rollback_guarded" {
+			configRollbacks[id] = entry
+		} else if cronHistoryAction(entry.Action) {
+			crons[id] = entry
+		} else {
+			legacy[id] = entry
+		}
+	}
+	defaults, named := m.serviceAbortOutcomeSnapshots()
+	return m.opts.planStore.updateMany(map[string]any{
+		environmentPromotionOutcomeNamespace + m.opts.planNamespace: environmentRollbackSnapshot{Version: 1, Items: m.environmentPromotionOutcomes},
+		environmentRollbackOutcomeNamespace + m.opts.planNamespace:  environmentRollbackSnapshot{Version: 1, Items: m.environmentRollbackOutcomes},
+		namedServiceAbortOutcomeNamespace + m.opts.planNamespace:    named,
+		serviceAbortOutcomeNamespace + m.opts.planNamespace:         defaults,
+		serviceRollbackOutcomeNamespace + m.opts.planNamespace:      rollbackOutcomeSnapshot{Version: 1, Items: m.serviceRollbackOutcomes},
+		rollbackOutcomeNamespace + m.opts.planNamespace:             rollbackOutcomeSnapshot{Version: 1, Items: m.rollbackOutcomes},
+		promotionOutcomeNamespace + m.opts.planNamespace:            promotionOutcomeSnapshot{Version: 1, Items: m.promotionOutcomes},
+		deploymentOutcomeNamespace + m.opts.planNamespace:           deploymentOutcomeSnapshot{Version: 1, Items: m.deploymentOutcomes},
+		budgetOutcomeNamespace + m.opts.planNamespace:               budgetOutcomeSnapshot{Version: 1, Items: m.budgetOutcomes},
+		"environment-plans/" + m.opts.planNamespace:                 environments,
+		environmentActionsNamespace + m.opts.planNamespace:          environmentActionSnapshot{Version: 1, Items: m.environmentActions},
+		"plans/" + m.opts.planNamespace:                             records,
+		"actions/" + m.opts.planNamespace:                           actionHistorySnapshot{Version: 1, Items: legacy},
+		workloadActionsNamespace + m.opts.planNamespace:             actionHistorySnapshot{Version: 1, Items: workloads},
+		budgetActionsNamespace + m.opts.planNamespace:               actionHistorySnapshot{Version: 1, Items: budgets},
+		scalingOutcomeNamespace + m.opts.planNamespace:              scalingOutcomeSnapshot{Version: 1, Items: m.scalingOutcomes},
+		configOutcomeNamespace + m.opts.planNamespace:               configOutcomeSnapshot{Version: 1, Items: m.configOutcomes},
+		configRollbackOutcomeNamespace + m.opts.planNamespace:       configRollbackSnapshot{Version: 1, Items: m.configRollbacks},
+		scalingActionsNamespace + m.opts.planNamespace:              actionHistorySnapshot{Version: 1, Items: scaling},
+		configActionsNamespace + m.opts.planNamespace:               actionHistorySnapshot{Version: 1, Items: configs},
+		configRollbackActionsNamespace + m.opts.planNamespace:       actionHistorySnapshot{Version: 1, Items: configRollbacks},
+		cronActionsNamespace + m.opts.planNamespace:                 actionHistorySnapshot{Version: 1, Items: crons},
+	})
 }
 
 func temporaryPlan(p *releasePlan) bool {

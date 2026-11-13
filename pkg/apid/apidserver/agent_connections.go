@@ -17,6 +17,14 @@ import (
 // agentConnectionDeps wires the connected-agents handlers
 // (ADR-20261030133644) to apid's key revocation and audit.
 func (s *server) agentConnectionDeps() agentconnections.Deps {
+	d := s.agentConnectionBaseDeps()
+	if s.agentUndo != nil {
+		d.Undo = s.agentUndo
+	}
+	return d
+}
+
+func (s *server) agentConnectionBaseDeps() agentconnections.Deps {
 	return agentconnections.Deps{
 		Store:    s.store,
 		Log:      s.log,
@@ -28,6 +36,7 @@ func (s *server) agentConnectionDeps() agentconnections.Deps {
 		Audit: func(ctx context.Context, kind, accountID string, data map[string]any) {
 			s.audit.Emit(ctx, kind, &accountID, data)
 		},
+		ReviewURL: s.agentApprovalReviewURL,
 	}
 }
 
@@ -39,7 +48,7 @@ func (s *server) orgAgentDeps() agentconnections.OrgDeps {
 		AuthzAudit: s.authzAuditForCurrentRequest,
 		RevokeOrg:  s.revokeOrgAgentKey,
 		RecordPolicy: func(r *http.Request, acct state.Account, policy state.OrgAgentPolicy, revoked int) {
-			data := map[string]any{"agents_allowed": policy.AgentsAllowed, "allowed_scopes": policy.AllowedScopes, "revoked": revoked}
+			data := map[string]any{"agents_allowed": policy.AgentsAllowed, "allowed_scopes": policy.AllowedScopes, "approval_categories": policy.ApprovalCategories, "revoked": revoked}
 			s.audit.Emit(r.Context(), "org.agent_policy.updated", &acct.ID, data)
 			id, _ := uuid.Parse(policy.OrgID)
 			actorType, actorLabel, actorAccountID := activityActor(r, acct)

@@ -41,6 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wakeownershipwire"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // RoutedVMM is the multi-node vmmd surface schedd's engine consumes.
@@ -258,8 +259,11 @@ type VMMRouter struct {
 	mu               sync.Mutex
 	cache            map[string]VMM    // nodeID -> dialed client (targetURL stored separately for the dial path)
 	targets          map[string]string // nodeID -> target_url (filled at construction; lookup before dial)
-	dial             DialFunc
-	tls              *tls.Config
+	// names maps nodeID -> compute_nodes.name, the CN each dial requires of
+	// the vmmd leaf it reaches (ADR-20261108124106).
+	names map[string]string
+	dial  DialFunc
+	tls   *tls.Config
 	// outboundRelay is the schedd-local path to outboundd. It is attached to
 	// every per-node execution stream and never travels to vmmd or the guest.
 	outboundRelay     ExecutionOutboundRelay
@@ -283,11 +287,13 @@ func NewVMMRouter(activeNodes []ComputeNodeInfo, dial DialFunc, tlsCfg *tls.Conf
 	r := &VMMRouter{
 		cache:   map[string]VMM{},
 		targets: map[string]string{},
+		names:   map[string]string{},
 		dial:    dial,
 		tls:     tlsCfg,
 	}
 	for _, n := range activeNodes {
 		r.targets[n.ID] = n.TargetURL
+		r.names[n.ID] = n.Name
 	}
 	return r
 }
@@ -376,7 +382,10 @@ func (r *VMMRouter) WithCloneMigrationResumeRecorder(record func(context.Context
 // pgx, etc., via the Store interface). cmd/schedd projects the
 // ActiveComputeNodes slice into this shape; tests pass literals.
 type ComputeNodeInfo struct {
-	ID        string
+	ID string
+	// Name is compute_nodes.name: a TLS dial to this node accepts only a
+	// vmmd leaf whose CN is Name (ADR-20261108124106).
+	Name      string
 	TargetURL string
 }
 
@@ -448,7 +457,18 @@ func maxPlanRAMMB() int {
 
 func (r *VMMRouter) Refresh(nodeID, targetURL string) {
 	r.mu.Lock()
+	name := r.names[nodeID]
+	r.mu.Unlock()
+	r.RefreshNode(nodeID, targetURL, name)
+}
+
+// RefreshNode is Refresh that also records the node's compute_nodes.name,
+// which every later dial to nodeID requires of the vmmd leaf
+// (ADR-20261108124106).
+func (r *VMMRouter) RefreshNode(nodeID, targetURL, name string) {
+	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.names[nodeID] = name
 	if cli, ok := r.cache[nodeID]; ok && cli != nil {
 		delete(r.cache, nodeID)
 		// Evict now, close LATER. Closing a grpc.ClientConn cancels
@@ -504,7 +524,10 @@ func (r *VMMRouter) resolveFor(ctx context.Context, nodeID string) (VMM, error) 
 	}
 	r.mu.Unlock()
 
+	r.mu.Lock()
 	target, ok := r.targets[nodeID]
+	name := r.names[nodeID]
+	r.mu.Unlock()
 	// An empty target_url is the same as "row gone" for the
 	// resolveFor path: resolveFor's contract is to dial vmmd
 	// against a real URL. A blank URL would silently re-dial
@@ -520,7 +543,9 @@ func (r *VMMRouter) resolveFor(ctx context.Context, nodeID string) (VMM, error) 
 	if r.dial == nil {
 		return nil, errors.New("vmm router: nil dial closure (constructor not called)")
 	}
-	cli, err := r.dial(ctx, target, r.tls)
+	// The dial accepts only the leaf of the node it means to reach; the
+	// target_url alone is a row compute nodes can write (ADR-20261108124106).
+	cli, err := r.dial(ctx, target, wire.ExpectPeerCN(r.tls, name))
 	if err != nil {
 		return nil, routerDialError{fmt.Errorf("vmm router: dial %s: %w", target, err)}
 	}

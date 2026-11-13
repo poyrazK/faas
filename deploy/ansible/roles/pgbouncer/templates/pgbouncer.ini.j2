@@ -36,7 +36,7 @@ auth_query = SELECT usename, passwd FROM pg_shadow WHERE usename = $1
 # no database password of its own.
 auth_user = {{ faas_pgbouncer_db_role }}
 
-# Prepared statements: pkg/db switches the pooled path to QueryExecModeExec
+# Prepared statements: pkg/db switches the pooled path to QueryExecModeCacheDescribe
 # when FAAS_DATABASE_URL_DIRECT is set, so no named statements cross a pooled
 # transaction. This stays 0 deliberately — relying on pgbouncer to track them
 # would make correctness depend on the pooler's version, and the client-side

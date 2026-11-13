@@ -15,6 +15,7 @@ import type { RotateAlertRuleSecretResponse } from '../models/RotateAlertRuleSec
 import type { TestAlertPresetResponse } from '../models/TestAlertPresetResponse.js';
 import type { TestNotificationChannelResponse } from '../models/TestNotificationChannelResponse.js';
 import type { UpdateAlertRuleRequest } from '../models/UpdateAlertRuleRequest.js';
+import type { UpdateNotificationChannelRequest } from '../models/UpdateNotificationChannelRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -81,6 +82,38 @@ export class AlertRulesService {
       errors: {
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Rename a notification channel or replace its destination
+   * Renames the channel or replaces its Slack webhook URL or PagerDuty routing key in place, so a leaked destination is rotated without unbinding the channel from its rules. The kind never changes; an email channel can only be renamed. A PagerDuty region changes only together with a new routing key. A new destination clears the channel's last error.
+   * @returns NotificationChannelResponse The updated channel.
+   * @throws ApiError
+   */
+  public static updateNotificationChannel({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Notification channel identifier returned when the channel was created.
+     */
+    id: string,
+    requestBody: UpdateNotificationChannelRequest,
+  }): CancelablePromise<NotificationChannelResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/notification-channels/{id}',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }

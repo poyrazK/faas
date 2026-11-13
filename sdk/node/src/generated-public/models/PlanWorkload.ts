@@ -21,6 +21,10 @@ export type PlanWorkload = {
    */
   public_url?: string;
   /**
+   * Public URL auth the app will have after apply (bearer, basic, ...), from the existing app or the plan default for a new app. Omitted when the URL accepts anonymous requests.
+   */
+  public_auth_mode?: string;
+  /**
    * Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original identity. Present for migration scans, existing allocations, and new workloads whose name cannot be a slug, which get the project-prefixed name.
    */
   app_slug?: string;

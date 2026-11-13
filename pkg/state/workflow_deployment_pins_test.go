@@ -143,12 +143,12 @@ func TestWorkflowDeploymentPinEventsAndWebhooksBeforeAdmission(t *testing.T) {
 			t.Fatalf("event run=%+v err=%v", run, err)
 		}
 
-		webhookApp, endpoint, _ := seedWebhookAutomation(t, store)
+		webhookApp, endpoint, _ := seedWebhookWorkflow(t, store)
 		webhookDep, err := store.LiveDeploymentForScope(ctx, webhookApp.ID, "default")
 		if err != nil {
 			t.Fatal(err)
 		}
-		receipt, handled, err := store.(WebhookAutomationStore).AcceptWebhookAutomation(ctx, endpoint, webhookTestBody("evt_pinned"), true)
+		receipt, handled, err := store.(WebhookWorkflowStore).AcceptWebhookWorkflow(ctx, endpoint, webhookTestBody("evt_pinned"), true)
 		if err != nil || !handled {
 			t.Fatalf("receipt=%+v handled=%v err=%v", receipt, handled, err)
 		}

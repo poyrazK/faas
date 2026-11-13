@@ -3,6 +3,7 @@ package datapipeline
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"filippo.io/age"
@@ -44,5 +45,19 @@ func TestWorkerKeysRequireMatchingRecipientAndKeepRotationOverlap(t *testing.T) 
 	c.Enabled = false
 	if _, err = c.LoadIdentities(); err == nil {
 		t.Fatal("disabled worker started")
+	}
+}
+
+func TestPilotAccountMatchesEquivalentUUID(t *testing.T) {
+	id := uuid.NewString()
+	cfg := Config{Enabled: true, Accounts: []string{strings.ToUpper(id)}, Hosts: []string{"db.example"}, CIDRs: []string{"203.0.113.4/32"}, IdentityPath: "/unused/identity", RecipientPath: "/unused/recipient"}
+	if _, err := cfg.Policy(); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Allowed(id) || !cfg.Allowed(strings.ToUpper(id)) {
+		t.Fatal("equivalent account UUID was denied")
+	}
+	if cfg.Allowed("invalid") || cfg.Allowed(uuid.NewString()) {
+		t.Fatal("unlisted account was admitted")
 	}
 }

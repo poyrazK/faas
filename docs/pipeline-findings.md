@@ -110,7 +110,7 @@ and freshly acknowledged pause. Only claim paused after a current-revision nativ
 acknowledgement. Verify stale observations and destination failures, while keeping
 retention warnings visible for a confirmed paused slot.
 
-**Implementation (2026-11-13).** Health reports `pause_unconfirmed` until the current revision has a fresh paused acknowledgement. Confirmed pause retains WAL warnings. Covered by `TestPipelinePauseHealthRequiresAcknowledgement`.
+**Implementation (2026-11-13).** Health reports `pause_pending` or `pause_failed` until the current revision has a fresh paused acknowledgement. Confirmed pause retains WAL warnings. Covered by `TestPipelinePauseHealthRequiresAcknowledgement`.
 
 ## PIPE-003 — Paused slots can lose monitoring without an alert
 

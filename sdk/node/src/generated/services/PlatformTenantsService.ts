@@ -1453,7 +1453,7 @@ export class PlatformTenantsService {
      */
     since?: string,
     /**
-     * Exclusive UTC end of the usage window, snapped to midnight.
+     * Exclusive UTC end of the usage window, snapped to midnight. Defaults to the next UTC midnight, so today is included.
      */
     until?: string,
   }): CancelablePromise<PlatformTenantUsageResponse> {
@@ -2668,7 +2668,7 @@ export class PlatformTenantsService {
      */
     since?: string,
     /**
-     * Exclusive UTC-day boundary; buckets before this instant are included.
+     * Exclusive UTC-day boundary; buckets before this instant are included. Defaults to the next UTC midnight, so today is included.
      */
     until?: string,
   }): CancelablePromise<PlatformTenantUsageResponse> {

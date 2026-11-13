@@ -57,6 +57,57 @@
     group: root
     mode: "0755"
 
+# The contract step (ADR 20261022111812, step 4). schedd reads the control
+# and delivery domains with one set of credentials, and this file writes the
+# drop-in that drops the fleet identity, before delivery.yml runs. So every
+# precondition of both domains is checked here, before anything changes:
+# both contracted or neither, and neither check finds a value the fleet or
+# host identity still opens.
+- name: seal_domains — require schedd's two domains to contract together
+  ansible.builtin.assert:
+    that:
+      - (faas_seal_domain_control_contracted | bool) == (faas_seal_domain_delivery_contracted | bool)
+      - not (faas_seal_domain_control_contracted | bool) or faas_seal_domain_delivery_writes == 'domain'
+      - not (faas_seal_domain_control_contracted | bool) or faas_seal_domain_delivery_identity_src | length > 0
+    fail_msg: >-
+      schedd contracts the control and delivery domains together: set
+      faas_seal_domain_control_contracted and
+      faas_seal_domain_delivery_contracted both or neither, with
+      faas_seal_domain_delivery_writes domain and the delivery identity staged.
+
+- name: seal_domains — check schedd's values open with the domains alone before it drops the fleet identity
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/gregalectl
+      - seal-domain
+      - migrate
+      - --domain
+      - "{{ item }}"
+      - --check
+      - --db-env
+      - "{{ faas_seal_domain_db_env }}"
+      - --json
+  loop: [control, delivery]
+  changed_when: false
+  when: faas_seal_domain_control_contracted | bool
+
+- name: seal_domains — drop schedd's fleet identity once control and delivery contract
+  ansible.builtin.template:
+    src: 30-faas-seal-domain-schedd-contract.conf.j2
+    dest: /etc/systemd/system/faas-schedd.service.d/30-faas-seal-domain-schedd-contract.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-schedd for seal domains
+  when: faas_seal_domain_control_contracted | bool
+
+- name: seal_domains — keep schedd's base credentials while its domains are not contracted
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-schedd.service.d/30-faas-seal-domain-schedd-contract.conf
+    state: absent
+  notify: restart faas-schedd for seal domains
+  when: not (faas_seal_domain_control_contracted | bool)
+
 - name: seal_domains — give schedd the control domain identity
   ansible.builtin.template:
     src: 60-faas-seal-domain-control-reader.conf.j2

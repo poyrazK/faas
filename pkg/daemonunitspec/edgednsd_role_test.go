@@ -48,6 +48,7 @@ print(Environment(trim_blocks=True).from_string(pathlib.Path(sys.argv[1]).read_t
 		}
 		values["faas_edgednsd_names"] = []string{"zone-1:*.gregale.dev", "zone-1:pilot.gregale.dev"}
 		values["faas_edgednsd_node_addresses"] = []string{"fsn-2.faas=203.0.113.2"}
+		values["faas_edgednsd_node_private_addresses"] = []string{"fsn-2.faas=10.10.0.2"}
 		values["faas_edgednsd_dry_run"] = tc.dryRun
 		encoded, err := json.Marshal(values)
 		if err != nil {
@@ -102,6 +103,7 @@ print(Environment(trim_blocks=True).from_string(pathlib.Path(sys.argv[1]).read_t
 		}
 		values["faas_edgednsd_names"] = []string{"zone-1:*.gregale.dev:dns-only"}
 		values["faas_edgednsd_node_addresses"] = []string{"fsn-2.faas=203.0.113.2"}
+		values["faas_edgednsd_node_private_addresses"] = []string{"fsn-2.faas=10.10.0.2"}
 		values["faas_edgednsd_certificate_names"] = names
 		values["faas_edgednsd_certificate_zone_id"] = "zone-1"
 		encoded, err := json.Marshal(values)
@@ -163,6 +165,7 @@ print(Environment(trim_blocks=True).from_string(pathlib.Path(sys.argv[1]).read_t
 		}
 		values["faas_edgednsd_names"] = []string{"zone-1:*.gregale.dev:dns-only"}
 		values["faas_edgednsd_node_addresses"] = []string{"fsn-2.faas=203.0.113.2"}
+		values["faas_edgednsd_node_private_addresses"] = []string{"fsn-2.faas=10.10.0.2"}
 		for k, v := range overrides {
 			values[k] = v
 		}

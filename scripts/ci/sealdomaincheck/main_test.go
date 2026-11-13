@@ -53,6 +53,16 @@ func TestOwnIdentity(t *testing.T) {
 	if d := sealDomainReaderTemplate("deploy/ansible/roles/seal_domains/templates/60-faas-seal-domain-outbound-writer.conf.j2"); d != "" {
 		t.Errorf("a writer template counted as a reader: %q", d)
 	}
+	for rel, want := range map[string]string{
+		"deploy/ansible/roles/seal_domains/templates/30-faas-seal-domain-schedd-contract.conf.j2": "faas-schedd",
+		"deploy/ansible/roles/seal_domains/templates/30-faas-seal-domain-edge-contract.conf.j2":   "",
+		"deploy/ansible/roles/seal_domains/templates/60-faas-seal-domain-outbound-reader.conf.j2": "",
+		"deploy/ansible/roles/other/templates/30-faas-seal-domain-schedd-contract.conf.j2":        "",
+	} {
+		if got := sealDomainContractTemplate(rel); got != want {
+			t.Errorf("sealDomainContractTemplate(%s) = %q, want %q", rel, got, want)
+		}
+	}
 }
 
 func TestCountLoaderCalls(t *testing.T) {

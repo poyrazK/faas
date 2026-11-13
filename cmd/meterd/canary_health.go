@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -18,6 +19,11 @@ import (
 )
 
 const canaryHealthTelemetryRowLimit = 10000
+
+// errCanaryTelemetryIncomplete holds a canary whose window a gateway may have
+// lost request telemetry from: neither promotion nor a breaker abort can be
+// judged on partial counts.
+var errCanaryTelemetryIncomplete = errors.New("canary health: request telemetry may be incomplete for this window")
 
 type canaryLatencyWeight struct {
 	latency int32
@@ -86,6 +92,18 @@ func (a *canaryStoreAdapter) CircuitBreakerObservation(ctx context.Context, row 
 	out.Candidate, err = a.deploymentHealthWindow(ctx, appID, candidateID, since, now)
 	if err != nil {
 		return canary.CircuitBreakerObservation{}, fmt.Errorf("canary health: read candidate telemetry: %w", err)
+	}
+	if reader, ok := a.store.(state.RequestTelemetryLossReader); ok {
+		// Rows a gateway dropped would compare partial counts; the canary
+		// holds until coverage returns (ADR-625 amendment 2026-11-10).
+		from, until := since.UTC().Truncate(time.Minute), canary.ClosedTelemetryUntil(now, now)
+		lost, lossErr := reader.RequestTelemetryLostBetween(ctx, from, until)
+		if lossErr != nil {
+			return canary.CircuitBreakerObservation{}, fmt.Errorf("canary health: read telemetry coverage: %w", lossErr)
+		}
+		if lost {
+			return canary.CircuitBreakerObservation{}, errCanaryTelemetryIncomplete
+		}
 	}
 	if err := a.addProbeEvidence(ctx, row, since, now, &out); err != nil {
 		return canary.CircuitBreakerObservation{}, fmt.Errorf("canary health: read synthetic probe totals: %w", err)
@@ -235,6 +253,9 @@ func (a *canaryStoreAdapter) deploymentHealthWindow(ctx context.Context, appID, 
 	// samples (candidate=0 stable=0)". Align to the bucket, as the CPU window
 	// in the same summary query already does for usage_minutes.
 	since = since.UTC().Truncate(time.Minute)
+	// Only closed minutes: an open minute holds the candidate's 5xx rows but
+	// not its folded 2xx yet (ADR-625 amendment 2026-11-10).
+	now = canary.ClosedTelemetryUntil(now, now)
 	if reader, ok := a.store.(canaryHealthTelemetrySummaryReader); ok {
 		requests, serverErrors, p95, coldBootRequests, coldBootP95, cpuUsec, cpuRequests, err := reader.RequestTelemetryCircuitBreakerSummary(ctx, uuid.UUID(appID.Bytes).String(), uuid.UUID(deploymentID.Bytes).String(), since, now)
 		if err != nil {

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from ..models.debug_rollout_explanation import DebugRolloutExplanation
     from ..models.debug_status_deployment import DebugStatusDeployment
     from ..models.debug_status_health import DebugStatusHealth
+    from ..models.debug_status_memory import DebugStatusMemory
     from ..models.debug_status_oom_kill import DebugStatusOOMKill
     from ..models.debug_telemetry_request_item import DebugTelemetryRequestItem
 
@@ -48,6 +49,9 @@ class DebugStatusResponse:
     oom_kills_total: int | Unset = UNSET
     oom_fix: str | Unset = UNSET
     """The remedy for the newest out-of-memory kill, one suggestion per line."""
+    memory_pressure: DebugStatusMemory | Unset = UNSET
+    """Present when the app's guests ran short of memory in the last day: the low point and the RAM that would have
+    kept 30% of the guest's memory free. Shown where Gregale has released memory warnings to the account."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -99,6 +103,10 @@ class DebugStatusResponse:
 
         oom_fix = self.oom_fix
 
+        memory_pressure: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.memory_pressure, Unset):
+            memory_pressure = self.memory_pressure.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -125,6 +133,8 @@ class DebugStatusResponse:
             field_dict["oom_kills_total"] = oom_kills_total
         if oom_fix is not UNSET:
             field_dict["oom_fix"] = oom_fix
+        if memory_pressure is not UNSET:
+            field_dict["memory_pressure"] = memory_pressure
 
         return field_dict
 
@@ -134,6 +144,7 @@ class DebugStatusResponse:
         from ..models.debug_rollout_explanation import DebugRolloutExplanation
         from ..models.debug_status_deployment import DebugStatusDeployment
         from ..models.debug_status_health import DebugStatusHealth
+        from ..models.debug_status_memory import DebugStatusMemory
         from ..models.debug_status_oom_kill import DebugStatusOOMKill
         from ..models.debug_telemetry_request_item import DebugTelemetryRequestItem
 
@@ -197,6 +208,13 @@ class DebugStatusResponse:
 
         oom_fix = d.pop("oom_fix", UNSET)
 
+        _memory_pressure = d.pop("memory_pressure", UNSET)
+        memory_pressure: DebugStatusMemory | Unset
+        if isinstance(_memory_pressure, Unset):
+            memory_pressure = UNSET
+        else:
+            memory_pressure = DebugStatusMemory.from_dict(_memory_pressure)
+
         debug_status_response = cls(
             verdict=verdict,
             headline=headline,
@@ -214,6 +232,7 @@ class DebugStatusResponse:
             oom_kills=oom_kills,
             oom_kills_total=oom_kills_total,
             oom_fix=oom_fix,
+            memory_pressure=memory_pressure,
         )
 
         debug_status_response.additional_properties = d

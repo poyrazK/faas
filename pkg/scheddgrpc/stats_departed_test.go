@@ -65,6 +65,10 @@ func TestListInstanceStats_ServesDepartedNetworkCounters(t *testing.T) {
 	if gone == nil || gone.GetNetTxBytes() != 5000 || gone.GetTxValid() != 0 || gone.GetNetRxBytes() != 40 || gone.GetRxValid() != 0 {
 		t.Fatalf("departed row = %v, want final counters 5000/40, valid", gone)
 	}
+	// ADR-20261104090000: the departed row says so, the live row does not.
+	if !gone.GetDeparted() || byID["vm-live"].GetDeparted() {
+		t.Fatalf("departed flags: gone=%v live=%v, want true/false", gone.GetDeparted(), byID["vm-live"].GetDeparted())
+	}
 	if gone.GetCpuValid() != uint32(instancestats.Unknown) || gone.GetDiskUsedBytes() != nil {
 		t.Fatalf("departed row serves CPU/disk: cpu_valid=%d disk=%v", gone.GetCpuValid(), gone.GetDiskUsedBytes())
 	}

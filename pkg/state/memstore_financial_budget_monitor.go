@@ -31,14 +31,17 @@ func (m *MemStore) RecordFinancialBudgetEvaluation(_ context.Context, account, i
 		return ErrConflict
 	}
 	old := m.financialBudgetEvaluations[id]
-	if old.revision == revision && (old.value.EvaluatedAt.After(e.EvaluatedAt) || old.value.PeriodStart.Equal(e.PeriodStart) && old.value.EvidenceThroughID > e.EvidenceThroughID && e.KnownMillicents != nil) {
+	historical := !e.EvaluatedAt.Before(e.PeriodEnd)
+	if !historical && old.revision == revision && (old.value.EvaluatedAt.After(e.EvaluatedAt) || old.value.PeriodStart.Equal(e.PeriodStart) && old.value.EvidenceThroughID > e.EvidenceThroughID && e.KnownMillicents != nil) {
 		return ErrConflict
 	}
 	if m.financialBudgetEvaluations == nil {
 		m.financialBudgetEvaluations = map[string]financialBudgetMemoryEvaluation{}
 		m.financialBudgetAlerts = map[string]FinancialBudgetAlertDelivery{}
 	}
-	m.financialBudgetEvaluations[id] = financialBudgetMemoryEvaluation{revision, cloneFinancialBudgetEvaluation(e)}
+	if !historical {
+		m.financialBudgetEvaluations[id] = financialBudgetMemoryEvaluation{revision, cloneFinancialBudgetEvaluation(e)}
+	}
 	m.recordFinancialBudgetStopLocked(p, e)
 	for _, alert := range financialBudgetAlerts(p, e) {
 		if _, exists := m.financialBudgetAlerts[alert.ID]; !exists {

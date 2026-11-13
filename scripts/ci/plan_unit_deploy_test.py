@@ -2,6 +2,7 @@
 """Unit tests for plan_unit_deploy.py (per-unit deploy planning)."""
 import copy
 import importlib.util
+import json
 import pathlib
 import sys
 import unittest
@@ -54,6 +55,13 @@ def cp_plan(rel, host, **kw):
 
 
 class ControlPlaneLaneTest(unittest.TestCase):
+    def test_real_apid_release_verifies_optional_pipeline_workers(self):
+        table = json.loads(pathlib.Path(__file__).with_name("release_units.json").read_text())
+        only, verify, _ = pud.activation({"units": {"apid": table["binaries"]["apid"]}}, ["apid"], CP)
+        self.assertEqual(only, ["apid"])
+        self.assertIn("?apid-data-pipeline-worker", verify)
+        self.assertIn("?apid-data-pipeline-alert-worker", verify)
+
     def test_first_unit_release_over_a_full_release(self):
         got = cp_plan(release(), full_host())
         self.assertEqual(got["action"], "deploy")

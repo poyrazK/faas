@@ -308,7 +308,11 @@ func (c *matchCompiler) leaf(e EdgeRuleMatchExpr, at string) (matchNode, error) 
 		if len(values) != 1 || len(values[0]) > EdgeRuleMatchMaxRegexBytes {
 			return matchNode{}, fmt.Errorf("%s: regex takes one pattern of at most %d bytes", at, EdgeRuleMatchMaxRegexBytes)
 		}
-		re, err := regexp.Compile(values[0])
+		pattern := values[0]
+		if n.foldCase {
+			pattern = "(?i:" + pattern + ")"
+		}
+		re, err := regexp.Compile(pattern)
 		if err != nil {
 			return matchNode{}, fmt.Errorf("%s: invalid regex: %w", at, err)
 		}
@@ -459,6 +463,38 @@ func (p *EdgeRuleMatchProgram) Matches(in EdgeRuleMatchInput) bool {
 		return false
 	}
 	return p.root.eval(in)
+}
+
+// MatchesProtective evaluates the condition of a rule that denies or
+// constrains requests (EdgeRuleKindUsesProtectivePathMatch). It holds when
+// the condition holds for any path form the rule's match_path matches under
+// (ProtectiveEdgeRulePaths), and, for HEAD, also when it holds for GET:
+// frameworks route /public/../admin, //admin and /ADMIN as /admin and answer
+// HEAD with the GET handler, so a condition that read only the raw path and
+// method let those requests past the gate (ADR-20261107190000).
+// Every extra form only adds protection.
+func (p *EdgeRuleMatchProgram) MatchesProtective(in EdgeRuleMatchInput) bool {
+	if p == nil {
+		return true
+	}
+	methods := []string{in.Method}
+	if strings.EqualFold(in.Method, http.MethodHead) {
+		methods = append(methods, http.MethodGet)
+	}
+	paths := []string{in.Path}
+	if in.Path != "" {
+		paths = ProtectiveEdgeRulePaths(in.Path)
+	}
+	for _, method := range methods {
+		for _, form := range paths {
+			variant := in
+			variant.Method, variant.Path = method, form
+			if p.Matches(variant) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (n *matchNode) eval(in EdgeRuleMatchInput) bool {

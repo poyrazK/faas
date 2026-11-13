@@ -16,6 +16,7 @@ type bucketObjectLockClient interface {
 }
 
 func cmdBucketObjectLock(args []string) int {
+	args = bucketStatusAlias(args)
 	if len(args) < 3 || !api.ValidAppSlug(args[1]) {
 		return bucketObjectLockUsage()
 	}

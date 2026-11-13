@@ -77,7 +77,7 @@ def sync_detailed(
     """Read an app's change timeline.
 
      Internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
-    otherwise 503 `change_timeline_unavailable`. Requires apps:read or
+    otherwise 403 `change_timeline_unavailable`. Requires apps:read or
     admin; no MFA required.
 
     Merges deployment audit, edge-rule changes, the latest runtime-config
@@ -125,7 +125,7 @@ def sync(
     """Read an app's change timeline.
 
      Internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
-    otherwise 503 `change_timeline_unavailable`. Requires apps:read or
+    otherwise 403 `change_timeline_unavailable`. Requires apps:read or
     admin; no MFA required.
 
     Merges deployment audit, edge-rule changes, the latest runtime-config
@@ -168,7 +168,7 @@ async def asyncio_detailed(
     """Read an app's change timeline.
 
      Internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
-    otherwise 503 `change_timeline_unavailable`. Requires apps:read or
+    otherwise 403 `change_timeline_unavailable`. Requires apps:read or
     admin; no MFA required.
 
     Merges deployment audit, edge-rule changes, the latest runtime-config
@@ -214,7 +214,7 @@ async def asyncio(
     """Read an app's change timeline.
 
      Internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
-    otherwise 503 `change_timeline_unavailable`. Requires apps:read or
+    otherwise 403 `change_timeline_unavailable`. Requires apps:read or
     admin; no MFA required.
 
     Merges deployment audit, edge-rule changes, the latest runtime-config

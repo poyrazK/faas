@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -34,9 +35,17 @@ type verificationDigest struct {
 func verificationQuery(r relation, lower, upper []string) (string, []any) {
 	keys := primaryColumns(r)
 	args := []any{}
-	values, order, textKeys := []string{}, []string{}, []string{}
+	values, sizes, order, textKeys := []string{}, []string{}, []string{}, []string{}
 	for _, c := range r.Columns {
-		values = append(values, "v."+ident(c.Name)+"::text")
+		name := "v." + ident(c.Name)
+		values = append(values, name+"::text")
+		size := "pg_catalog.octet_length(" + name + "::text)::bigint"
+		if c.Type == "bytea" {
+			// verificationSetting pins hex output. Read the raw length without
+			// allocating its potentially unrepresentable hexadecimal expansion.
+			size = "pg_catalog.octet_length(" + name + ")::bigint*2+2"
+		}
+		sizes = append(sizes, "coalesce("+size+",0)")
 	}
 	for _, c := range keys {
 		order = append(order, collated("v."+ident(c.Name), c))
@@ -64,7 +73,7 @@ func verificationQuery(r relation, lower, upper []string) (string, []any) {
 	args = append(args, api.DataPipelineVerificationChunkRows+1)
 	rowLimit := "$" + strconv.Itoa(len(args))
 	args = append(args, api.DataPipelineVerificationBytesMax+1)
-	byteLimit := "$" + strconv.Itoa(len(args))
+	byteLimit := "$" + strconv.Itoa(len(args)) + "::integer"
 	args = append(args, api.DataPipelineVerificationChunkBytes)
 	chunkLimit := "$" + strconv.Itoa(len(args))
 	args = append(args, api.DataPipelineVerificationKeyBytesMax+1)
@@ -79,7 +88,12 @@ func verificationQuery(r relation, lower, upper []string) (string, []any) {
 	// and bytes are both referenced by the recursive step.
 	keyData := "substring(pg_catalog.convert_to(pg_catalog.array_to_json(ARRAY[" + strings.Join(textKeys, ",") + "]::text[])::text,'UTF8') FROM 1 FOR " + keyLimit + ")"
 	lookup := func(tid string) string {
-		return "SELECT " + data + " AS data," + keyData + " AS keys FROM " + tableIdent(r.Name) + " v WHERE v.ctid=" + tid + " OFFSET 0"
+		// Text lengths are a lower bound on the encoded array. Below that
+		// bound, JSON escaping can expand it at most sixfold, within JSONB's
+		// representation limit. A NULL sentinel stops the recursive batch.
+		return "SELECT CASE WHEN size.too_large THEN NULL::bytea ELSE " + data + " END AS data," +
+			"CASE WHEN size.too_large THEN NULL::bytea ELSE " + keyData + " END AS keys FROM " + tableIdent(r.Name) +
+			" v CROSS JOIN LATERAL (SELECT (" + strings.Join(sizes, "+") + ")>=" + byteLimit + " AS too_large OFFSET 0) size WHERE v.ctid=" + tid + " OFFSET 0"
 	}
 	// A bounded tid[] gives each recursive step constant-time access to its
 	// next tuple, rather than repeatedly scanning a materialized key relation.
@@ -97,13 +111,43 @@ func scanVerificationRange(ctx context.Context, tx pgx.Tx, r relation, lower, up
 	return scanVerificationRows(ctx, tx, r, lower, upper, split, false)
 }
 func scanVerificationRows(ctx context.Context, tx pgx.Tx, r relation, lower, upper []string, split, capture bool) (verificationDigest, error) {
+	read, err := tx.Begin(ctx)
+	if err != nil {
+		return verificationDigest{}, err
+	}
+	defer func() { _ = read.Rollback(ctx) }()
+	result, err := readVerificationRows(ctx, read, r, lower, upper, split, capture)
+	if err != nil {
+		// Builtin output functions can themselves exceed PostgreSQL's format
+		// limits (for example compact JSONB numbers with huge text output).
+		// Restore the parent transaction before persisting an inconclusive run.
+		if rollbackErr := read.Rollback(ctx); rollbackErr != nil {
+			return verificationDigest{}, err
+		}
+		var pg *pgconn.PgError
+		if errors.As(err, &pg) && pg.Code == "54000" {
+			return verificationDigest{Limited: true, LimitReason: "verification_row_limit"}, nil
+		}
+		return result, err
+	}
+	if err = read.Commit(ctx); err != nil {
+		return verificationDigest{}, err
+	}
+	return result, nil
+}
+
+func readVerificationRows(ctx context.Context, tx pgx.Tx, r relation, lower, upper []string, split, capture bool) (result verificationDigest, err error) {
 	query, args := verificationQuery(r, lower, upper)
 	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {
 		return verificationDigest{}, err
 	}
-	defer rows.Close()
-	result := verificationDigest{}
+	defer func() {
+		rows.Close()
+		if err == nil {
+			err = rows.Err()
+		}
+	}()
 	sum := sha256.New()
 	keys := primaryColumns(r)
 	for rows.Next() {
@@ -113,7 +157,7 @@ func scanVerificationRows(ctx context.Context, tx pgx.Tx, r relation, lower, upp
 		if err = rows.Scan(dest...); err != nil {
 			return result, err
 		}
-		if len(data) > api.DataPipelineVerificationBytesMax {
+		if data == nil || len(data) > api.DataPipelineVerificationBytesMax {
 			result.Limited = true
 			result.LimitReason = "verification_row_limit"
 			return result, nil
@@ -272,7 +316,7 @@ func compareVerificationRange(ctx context.Context, p Pipeline, source *pgxpool.P
 	if !sameVerificationRelation(actual, r) {
 		return false, ErrConflict
 	}
-	storage, err := verificationSourceStorage(ctx, sourceTx, []relation{r})
+	_, storage, err := verificationStorage(ctx, p, sourceTx, target, []relation{r})
 	if err != nil {
 		return false, err
 	}
@@ -403,6 +447,7 @@ func compareLockedVerificationRange(ctx context.Context, p Pipeline, sourceTx, t
 	return true, nil
 }
 func sameVerificationRelation(a, b relation) bool {
+	a = preserveMissingMetadata([]relation{a}, []relation{b})[0]
 	encoded, _ := json.Marshal(a)
 	expected, _ := json.Marshal(b)
 	return string(encoded) == string(expected)

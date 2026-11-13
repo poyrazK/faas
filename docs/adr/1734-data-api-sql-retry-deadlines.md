@@ -108,3 +108,15 @@ one idle session snapshot cannot establish completion between attempts. Existing
 real deadlock and legacy coordinated-refresh tests remain regression coverage.
 Composed-hook checks verify barrier wait consumes the budget and pause/resume
 continues to work. SDK checks preserve uncertain-outcome guidance without replay.
+
+## Amendment 1 (2026-11-07): room for an ahead gateway clock
+
+The engine refuses a deadline more than one query budget (`queryMs`) ahead of
+the database's clock, with no slack. The gateway's own deadline is its clock
+plus `queryMs`, so a VM clock even a few milliseconds ahead of the database's
+failed requests with `500 data_api_sql_deadline_invalid`. Storage calls and
+the change relay failed first, because they create their tokens just before
+SQL runs. The gateway now sends the deadline `DataAPISQLDeadlineClockSkew`
+(2 s) early. A VM clock up to 2 s ahead still passes, and SQL stops shortly
+before the HTTP deadline, which leaves time to answer. The installed SQL
+bodies are unchanged, so existing installations need no migration.

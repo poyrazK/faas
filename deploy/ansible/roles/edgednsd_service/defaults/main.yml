@@ -18,6 +18,10 @@ faas_edgednsd_env_src: ""
 faas_edgednsd_names: []
 # "<registry node name>=<public address>" per compute node.
 faas_edgednsd_node_addresses: []
+# Each compute node's private address, "<node>=<host>", where edgednsd probes
+# its edge's /readyz (ADR-20261107180000: not the registry's target_url,
+# which every compute node can write).
+faas_edgednsd_node_private_addresses: []
 # edgednsd logs and counts the changes it would make until this is false.
 faas_edgednsd_dry_run: true
 faas_edgednsd_metrics_listen: "127.0.0.1:9113"

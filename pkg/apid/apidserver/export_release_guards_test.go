@@ -72,6 +72,13 @@ func (s *server) ReleaseSetMembersGuardProblemForTest(ctx context.Context, envir
 	return s.releaseSetMembersGuardProblem(ctx, environment, false, members)
 }
 
+// ReleaseApprovalCanaryProblemForTest runs the deploy-time approval and
+// release-gate check on req after the default release policy
+// (ADR-20261020085706 amendments 1 and 14).
+func (s *server) ReleaseApprovalCanaryProblemForTest(ctx context.Context, app state.App, req *api.CreateDeploymentRequest) *api.Problem {
+	return s.releaseApprovalCanaryProblem(ctx, app, req)
+}
+
 // RenderReleaseSafetyForTest renders the release safety dashboard page for
 // acct's app slug.
 func (s *server) RenderReleaseSafetyForTest(acct state.Account, slug string) *httptest.ResponseRecorder {

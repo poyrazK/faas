@@ -48,7 +48,9 @@ func (b *environmentGitOpsBackend) gitOpsReleaseHold(ctx context.Context, lease 
 		}
 		active, err := freeze.ActiveFor(ctx, b.server.store, app, scope, now)
 		if err != nil {
-			b.server.log.Warn("deploy freeze: could not read freezes; activating", "app", app.ID, "err", err)
+			// ADR-20261019071733 amendment 13: an unreadable freeze holds
+			// activation; the lease retries.
+			return "", fmt.Errorf("read deploy freezes of %s: %w", app.Slug, err)
 		} else if len(active) > 0 {
 			return "deploy freeze on " + app.Slug, nil
 		}

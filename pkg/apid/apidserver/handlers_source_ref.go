@@ -39,9 +39,9 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
-	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -59,6 +59,8 @@ import (
 //   - streamSourceTarball     — gRPC streaming + cap-bound + spool
 //   - auditSourceRefDeploy    — emits deploy.source_ref {…} + log
 //   - isValidRef              — ref-shape guard before the gRPC fetch
+//
+//nolint:contextcheck // From the GitHub fetch on, r carries a context detached from the deploy-submission budget under the upload commit's size-scaled bound (deploy review 2026-11-10, E1); idempotentDeploy replays the outcome.
 func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok, limits := s.loadAppAndPreflight(w, r, acct)
 	if !ok {
@@ -113,30 +115,12 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(req.Healthcheck)
-	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
+	_, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
 	if healthProblem != nil {
 		api.WriteProblem(w, healthProblem)
 		return
 	}
 	if p := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); p != nil {
-		api.WriteProblem(w, p)
-		return
-	}
-	sched, p := s.releaseFreezeOrSchedule(r, acct, app, rolloutReq)
-	if p != nil {
-		api.WriteProblem(w, p)
-		return
-	}
-	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
-	if ap := s.releaseApprovalCanaryProblem(r.Context(), app, rolloutReq); ap != nil {
-		api.WriteProblem(w, ap)
-		return
-	}
-	if p := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); p != nil {
-		api.WriteProblem(w, p)
-		return
-	}
-	if p := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
@@ -153,13 +137,11 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, api.ErrValidation("native_rollout must match the reviewed workload mode"))
 		return
 	}
-	sched.park(rolloutReq)
-	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
-	if rolloutProblem != nil {
-		api.WriteProblem(w, rolloutProblem)
+
+	if problem := s.previewDeployProblem(r.Context(), acct, app); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
-
 	installID, p := s.resolveInstallToken(r.Context(), acct, app, req.Repo)
 	if p != nil {
 		api.WriteProblem(w, p)
@@ -176,6 +158,17 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	}
 
 	maxBytes := int64(limits.SourceTarballMaxMB) * 1024 * 1024
+	// From here the deploy downloads, scans, hashes and publishes the whole
+	// repository archive before it records the deployment. Under the flat
+	// deploy-submission budget (RequestBudgetMax, 30 s) a large repository
+	// failed on the deadline the way uploads did before H10-26, so it gets
+	// the upload commit's size-scaled bound, sized by the plan's source cap
+	// because the archive's size is unknown until it arrives. idempotentDeploy
+	// replays the outcome to a client that stopped waiting (deploy review
+	// 2026-11-10, E1).
+	ctx, cancel := reqbudget.Detached(r.Context(), uploadCommitProcessTimeout(maxBytes))
+	defer cancel()
+	r = r.WithContext(ctx)
 	stream, p := s.streamSourceTarball(r.Context(), acct, installID, req.Repo, req.Ref, maxBytes)
 	if p != nil {
 		api.WriteProblem(w, p)
@@ -277,7 +270,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, buildProblem)
 		return
 	}
-	releaseCommand, releaseProblem := reviewedSourceReleaseCommand(spoolPath, app, manifest, req.ExpectedSource != nil)
+	releaseCommand, releaseProblem := reviewedSourceReleaseCommand(spoolPath, app, manifest, req.ExpectedSource != nil, s.releasePhaseOff)
 	if releaseProblem != nil {
 		api.WriteProblem(w, releaseProblem)
 		return
@@ -294,18 +287,12 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	}
 	if manifest != nil {
 		workflowDefs = manifest.Workflows
-		overrides, applied, workloadProblem := s.applyManifestWorkloads(rolloutReq, manifest, acct, limits)
-		if workloadProblem != nil {
-			api.WriteProblem(w, workloadProblem)
-			return
-		}
-		if applied {
-			rollout, rolloutProblem = buildDeploymentForInsert(app, rolloutReq, overrides, limits, acct.Plan)
-			if rolloutProblem != nil {
-				api.WriteProblem(w, rolloutProblem)
-				return
-			}
-		}
+	}
+	rolloutReq.Workflows = workflowDefs
+	rollout, sched, rolloutProblem := s.prepareSourceDeploymentRollout(r, acct, app, manifest, rolloutReq)
+	if rolloutProblem != nil {
+		api.WriteProblem(w, rolloutProblem)
+		return
 	}
 	if !s.admitCanaryDeployment(w, r, rollout) {
 		return
@@ -391,26 +378,27 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		// Issue #977 / ADR-116: annotation surface forwarded onto
 		// the deployment row from the request's annotationForm.
 		// nil/zero values are dropped by EnqueueParams handling.
-		Reason:                 ann.Reason,
-		Tag:                    ann.Tag,
-		DeployedBy:             ann.DeployedBy,
-		PRNumber:               ann.PRNumber,
-		TrafficPercent:         rollout.TrafficPercent,
-		TrafficPercentExplicit: rollout.TrafficPercentExplicit,
-		RollbackOn5xx:          rollout.RollbackOn5xx,
-		DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
-		CanaryPreset:           rollout.CanaryPreset,
-		CanaryStep:             rollout.CanaryStep,
-		CanaryTotalSteps:       rollout.CanaryTotalSteps,
-		CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
-		CanaryStages:           rollout.CanaryStages,
-		ReleaseCommand:         releaseCommand.command,
-		ReleaseCommandShell:    releaseCommand.shell,
-		Workflows:              marshalWorkflowDefinitions(workflowDefs),
-		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
-		OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
-		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
-		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && req.TrafficPercent == nil && req.Canary == nil,
+		Reason:                   ann.Reason,
+		Tag:                      ann.Tag,
+		DeployedBy:               ann.DeployedBy,
+		PRNumber:                 ann.PRNumber,
+		TrafficPercent:           rollout.TrafficPercent,
+		TrafficPercentExplicit:   rollout.TrafficPercentExplicit,
+		RollbackOn5xx:            rollout.RollbackOn5xx,
+		DisableStartupCPUBoost:   rollout.DisableStartupCPUBoost,
+		MCPTaskMigrationOverride: rollout.MCPTaskMigrationOverride,
+		CanaryPreset:             rollout.CanaryPreset,
+		CanaryStep:               rollout.CanaryStep,
+		CanaryTotalSteps:         rollout.CanaryTotalSteps,
+		CanaryStepStartedAt:      rollout.CanaryStepStartedAt,
+		CanaryStages:             rollout.CanaryStages,
+		ReleaseCommand:           releaseCommand.command,
+		ReleaseCommandShell:      releaseCommand.shell,
+		Workflows:                append(json.RawMessage(nil), rollout.Workflows...),
+		Sidecars:                 append(json.RawMessage(nil), rollout.Sidecars...),
+		OverrideHealthcheck:      append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
+		OverrideMainDependsOn:    append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
+		ServiceRollout:           state.IsServiceRollout(rollout),
 	})
 	if err != nil {
 		// A queued source build may have committed even when its reply was

@@ -40,6 +40,8 @@ func (s *server) runScheduledReleaseWorker(ctx context.Context) {
 }
 
 func (s *server) startDueScheduledReleases(ctx context.Context, now time.Time) {
+	s.scheduledReleaseMu.Lock()
+	defer s.scheduledReleaseMu.Unlock()
 	store, ok := s.scheduledReleases()
 	if !ok {
 		return
@@ -50,7 +52,7 @@ func (s *server) startDueScheduledReleases(ctx context.Context, now time.Time) {
 		s.releaseMetrics.Pass(releasemetrics.WorkerScheduledReleases, now)
 		return
 	}
-	due, err := store.DueScheduledReleases(ctx, now, api.ScheduledReleaseBatch)
+	due, err := store.DueScheduledReleasesPage(ctx, now, api.ScheduledReleaseBatch, s.scheduledReleaseCursor)
 	if err != nil {
 		if ctx.Err() == nil {
 			s.log.Warn("scheduled releases: list due", "err", err)
@@ -63,10 +65,16 @@ func (s *server) startDueScheduledReleases(ctx context.Context, now time.Time) {
 		if ctx.Err() != nil {
 			return
 		}
+		// Advance past attempted rows, including waits and read errors. A
+		// cancelled sweep leaves unattempted rows for the next tick.
+		s.scheduledReleaseCursor = state.ReleaseScanCursor{At: sr.ReleaseAt, ID: sr.ID}
 		if err := s.runScheduledRelease(ctx, store, sr, now); err != nil {
 			s.log.Warn("scheduled releases: start", "schedule", sr.ID, "deployment", sr.DeploymentID, "err", err)
 			s.releaseMetrics.Error(releasemetrics.WorkerScheduledReleases)
 		}
+	}
+	if len(due) < api.ScheduledReleaseBatch {
+		s.scheduledReleaseCursor = state.ReleaseScanCursor{}
 	}
 }
 
@@ -92,6 +100,14 @@ func (s *server) runScheduledRelease(ctx context.Context, store state.ScheduledR
 		return err
 	}
 	decision := schedule.Decide(sr, d, siblings, now)
+	if decision.Action == schedule.ActionWait || decision.State == state.ScheduledReleaseExpired {
+		// A release waiting for approval before its release command is not
+		// a build that did not finish (ADR-20261020085706 amendment 14).
+		// imaged closes it if the schedule ends first.
+		if wait, err := approval.LoadReleaseCommandWait(ctx, s.store, app, d, now); err == nil && wait.Pending() {
+			decision = schedule.WaitOrExpire(sr, now, "it was still waiting for approval before its release command")
+		}
+	}
 	var overridden []string
 	if decision.Action == schedule.ActionStart {
 		decision, overridden = s.scheduleStartChecks(ctx, sr, app, d, siblings, now)
@@ -137,6 +153,12 @@ func (s *server) scheduleStartChecks(ctx context.Context, sr state.ScheduledRele
 	}
 	if blocking := schedule.UnoverriddenFreezes(active, sr.OverrideFreezeIDs); len(blocking) > 0 {
 		return schedule.Blocked(api.CodeReleaseFrozen, freeze.Summary(app.Slug, blocking)), nil
+	}
+	if decision, ok := schedule.SchedulerStanding(ctx, s.store, sr, app, active, now); !ok {
+		if decision.Action == schedule.ActionEnd {
+			s.log.Warn("scheduled releases: scheduler may no longer release it", "schedule", sr.ID, "scheduled_by", sr.ScheduledBy)
+		}
+		return decision, nil
 	}
 	ladder, p := s.scheduleLadder(sr, siblings)
 	if p != nil {

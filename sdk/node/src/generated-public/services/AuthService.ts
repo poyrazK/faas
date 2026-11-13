@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { AuthCapabilities } from '../models/AuthCapabilities.js';
 import type { CSRFTokenResponse } from '../models/CSRFTokenResponse.js';
+import type { EmailVerificationResendResponse } from '../models/EmailVerificationResendResponse.js';
 import type { MagicLinkSignupRequest } from '../models/MagicLinkSignupRequest.js';
 import type { OAuthTokenExchangeResponse } from '../models/OAuthTokenExchangeResponse.js';
 import type { OIDCExchangeRequest } from '../models/OIDCExchangeRequest.js';
@@ -195,6 +196,37 @@ export class AuthService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: invalid_credentials — wrong email or password. Drafted for the dashboard auth surface.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Preserve an explicitly entered referral code for OAuth signup.
+   * Rate limited pre-signup request. An empty code clears the pending selection; no customer identity is returned. The host-only selection expires in 15 minutes.
+   * @returns any Selection accepted; it grants no account access.
+   * @throws ApiError
+   */
+  public static selectReferralCode({
+    requestBody,
+  }: {
+    requestBody: {
+      referral_code: string;
+    },
+  }): CancelablePromise<{
+    accepted: boolean;
+  }> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/referrals/selection',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -830,28 +862,48 @@ export class AuthService {
     });
   }
   /**
+   * Send a new email verification link.
+   * Mails a new 24-hour verification link when the account's address is
+   * unverified, at most once a minute and five times an hour. Returns
+   * `already_verified` when there is nothing to send. Available after the
+   * 30-day verification period ends, when other routes answer
+   * `email_verification_required`.
+   *
+   * @returns EmailVerificationResendResponse The address is already verified.
+   * @throws ApiError
+   */
+  public static resendEmailVerification(): CancelablePromise<EmailVerificationResendResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/auth/verify-email/resend',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * Revoke every session except the calling one.
-   * Revokes all `sessions` rows for the calling account
-   * whose `id` is NOT the calling cookie's `sid`. The
-   * caller's session stays active. Returns the count of
-   * rows revoked so the dashboard can render "Signed out
-   * N other devices".
+   * From a browser session: revokes every other browser session of the
+   * calling account and keeps the caller's. CSRF: action
+   * `sessions_revoke_all`.
    *
-   * CSRF: action `sessions_revoke_all`.
+   * With an API key: revokes every browser session. API keys keep
+   * working, and no CSRF token is needed.
    *
-   * Emits `auth.sessions.revoke_all` with
-   * `{revoked_count, retained_sid}`.
+   * Returns the count of sessions revoked.
    *
    * @returns SessionsRevokeAllResponse Bulk revocation succeeded.
    * @throws ApiError
    */
   public static postAccountSessionsRevokeAll({
-    requestBody,
     faasSid,
+    requestBody,
   }: {
-    requestBody: {
-      csrf_token: string;
-    },
     /**
      * Dashboard session cookie. Sealed; opaque to the client
      * (`HttpOnly; Secure; SameSite=Lax`). 7-day fixed lifetime.
@@ -861,6 +913,9 @@ export class AuthService {
      *
      */
     faasSid?: string,
+    requestBody?: {
+      csrf_token: string;
+    },
   }): CancelablePromise<SessionsRevokeAllResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -1012,6 +1067,122 @@ export class AuthService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Prepare an anonymous website sales inquiry
+   * Requires the default-off sales intake flag. This opaque one-hour form token must be at least two seconds old when submitted. The challenge and submission share a separate ten-requests-per-minute IP budget.
+   * @returns any Form check prepared
+   * @throws ApiError
+   */
+  public static salesInquiryChallenge(): CancelablePromise<{
+    challenge: string;
+    ready_after_ms: number;
+    expires_in_seconds: number;
+  }> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/sales/inquiries/challenge',
+      errors: {
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Submit a contact or demo request from the website
+   * Enabled only by FAAS_SALES_INTAKE_ENABLED and FAAS_SALES_ENABLED.
+   * Browser writes must come from a trusted control-plane origin. A token
+   * is consumed atomically with intake; retrying that token is idempotent
+   * until expiry, including when a changed body is presented. Active emails
+   * are deduplicated without overwriting staff data or ownership. Unknown,
+   * paused, customer or unavailable salesperson codes enter manager review;
+   * the response never reveals code validity or ownership. These messages
+   * are unverified and grant no referral attribution, rewards or account access.
+   *
+   * @returns any Inquiry accepted without disclosing routing details
+   * @throws ApiError
+   */
+  public static submitSalesInquiry({
+    requestBody,
+  }: {
+    requestBody: {
+      name: string;
+      email: string;
+      company?: string;
+      intent: 'contact' | 'demo';
+      /**
+       * UTF-8 byte limit; other text limits are also measured in bytes.
+       */
+      message: string;
+      salesperson_code?: string;
+      challenge: string;
+      /**
+       * Leave blank.
+       */
+      website?: string;
+    },
+  }): CancelablePromise<{
+    accepted: boolean;
+  }> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/sales/inquiries',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid form input or sales_challenge_invalid; refresh the form check before resubmitting an expired challenge.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Check whether the signed-in account can add a salesperson code
+   * Requires a verified browser session and the sales feature flag. API keys
+   * are rejected. Eligibility is a display hint; the plan mutation checks it
+   * again atomically with referral selection before starting payment.
+   *
+   * @returns any Current first-purchase referral eligibility
+   * @throws ApiError
+   */
+  public static checkoutReferralStatus(): CancelablePromise<{
+    eligible: boolean;
+    reason?: 'already_attributed' | 'not_first_purchase' | 'unavailable';
+    /**
+     * The already saved referral code; no referrer contact details are returned.
+     */
+    code?: string;
+  }> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/referrals/checkout',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });

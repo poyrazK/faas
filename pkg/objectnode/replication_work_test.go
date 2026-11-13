@@ -89,6 +89,16 @@ func TestReplicaEntryBudgetSurvivesBoundedSteps(t *testing.T) {
 	if err != nil || first.CaughtUp || first.EntriesApplied != api.ObjectNodeReplicationBatch {
 		t.Fatal(first, err)
 	}
+	// The budget carries over: a reset would refill the whole burst. At the
+	// minimum rate of one entry a second a loaded runner can legitimately
+	// earn a token between steps, so spend that time-based refill before the
+	// bounded step below checks it waits (nightly 11-07).
+	entries := follower.store.replicaWork.entries
+	if tokens := entries.Tokens(); tokens >= float64(api.ObjectNodeReplicationBatch)/2 {
+		t.Fatalf("entry tokens reset between bounded steps: %.1f available", tokens)
+	} else if tokens >= 1 {
+		entries.AllowN(time.Now(), int(tokens))
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	defer cancel()
 	second, err := follower.CatchUp(ctx, localReplicationSource{primary}, options)

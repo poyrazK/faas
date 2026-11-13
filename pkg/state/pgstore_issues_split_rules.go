@@ -31,9 +31,15 @@ func (s *PgStore) CreateIssueSplitRule(ctx context.Context, app, id, actor strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	if _, err = q.IssueLockApp(ctx, tx, issueUUID(app)); err != nil {
+	owner, err := q.IssuePolicyApp(ctx, tx, issueUUID(app))
+	if err != nil {
 		return api.IssueSplitRule{}, mapErr(err)
 	}
+	current, err := lockIssueResourcePolicy(ctx, tx, IssueCredential{AccountID: issueID(owner.AccountID), AppID: app})
+	if err != nil {
+		return api.IssueSplitRule{}, err
+	}
+	limits.IssuesPerApp = min(limits.IssuesPerApp, current.IssuesPerApp)
 	source, err := q.IssueGet(ctx, tx, sqlc.IssueGetParams{AppID: issueUUID(app), ID: issueUUID(id)})
 	if err != nil {
 		return api.IssueSplitRule{}, mapErr(err)

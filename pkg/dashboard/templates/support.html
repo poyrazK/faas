@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; --muted: #596579; --line: #8694a940; --panel: #8b9db40c; --accent: #2457c5; }
+    @media (prefers-color-scheme: dark) { :root { --muted: #b0bbcc; --accent: #9fbdff; } }
+    * { box-sizing: border-box; } body { font: 16px/1.55 system-ui, sans-serif; max-width: 1200px; margin: auto; padding: 0 1.25rem; }
+    header { padding: 1rem 0; border-bottom: 1px solid var(--line); } nav, .filters, .actions { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
+    a { color: var(--accent); } main { padding: 1.5rem 0 3rem; } h1 { margin: .3rem 0 1rem; } h2 { font-size: 1.2rem; } h3 { font-size: 1rem; }
+    .muted, .scope { color: var(--muted); } .scope { margin: 0; font-size: .9rem; } .badge { display: inline-block; padding: .15rem .65rem; border: 1px solid var(--line); border-radius: 2rem; font-size: .85rem; }
+    .panel, article { border: 1px solid var(--line); border-radius: .65rem; padding: 1.1rem; background: var(--panel); margin-bottom: 1rem; }
+    .notice { padding: 1rem; border: 1px solid #4c8e69; border-radius: .5rem; margin: 1rem 0; } .error { border-color: #ba573a; }
+    .columns { display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); gap: 1.5rem; } .scroll { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; } th, td { text-align: left; vertical-align: top; padding: .75rem .5rem; border-bottom: 1px solid var(--line); } th { font-size: .85rem; color: var(--muted); }
+    td small { display: block; } label { display: grid; gap: .3rem; margin: .7rem 0; } input, select, textarea, button { font: inherit; padding: .5rem .65rem; border: 1px solid #8694a980; border-radius: .35rem; }
+    input, select, textarea { max-width: 100%; background: transparent; color: inherit; } textarea { width: 100%; min-height: 9rem; resize: vertical; } button { cursor: pointer; } button:focus-visible, a:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+    .filters { align-items: end; } .filters label { margin: 0; } .message { white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 0; } .internal { border-left: 4px solid #af7c28; }
+    .meta { font-size: .85rem; color: var(--muted); } .ticket-subject, code, dd { overflow-wrap: anywhere; } dl { margin: 0; } dt { color: var(--muted); margin-top: .8rem; font-size: .85rem; } dd { margin: .1rem 0; }
+    details { margin: 1rem 0; } summary { cursor: pointer; } .new-ticket { max-width: 750px; margin-top: 2rem; }
+    @media (max-width: 760px) { .columns { grid-template-columns: 1fr; } .filters { align-items: stretch; } .filters label { width: 100%; } body { padding: 0 1rem; } }
+  </style>
+</head>
+<body>
+<header><nav aria-label="Main"><strong>Gregale</strong><a href="/dashboard/">Overview</a><a href="/dashboard/account">Account</a>{{with .Data}}<a href="{{.Base}}">{{if .StaffMode}}Staff inbox{{else}}Support{{end}}</a>{{end}}</nav></header>
+<main>
+{{template "email-verification-banner" .}}
+{{with .Data}}{{$d := .}}
+<p class="scope">{{.Scope}}</p>
+<p class="meta"><strong data-support-total>{{.Notifications.UnreadCount}}</strong> unread updates</p>
+{{if .Error}}<div class="notice error" role="alert"><strong>Could not submit.</strong> {{.Error}} Your form and request key have been kept. {{if .StepUp}}<a href="{{.StepUpURL}}" target="_blank" rel="noopener">Verify your identity</a>, then retry this form.{{else}}<a href="{{.URL}}">Reload the latest version</a> if the ticket changed; copy any draft first.{{end}}</div>{{end}}
+{{if and .Error (.Form.Get "body")}}<details class="panel"><summary>Your submitted message</summary><p class="message">{{.Form.Get "body"}}</p><p class="meta">Request key: <code>{{.Form.Get "idempotency_key"}}</code>{{with .Form.Get "expected_revision"}} · Revision: {{.}}{{end}}</p></details>{{end}}
+{{if .Updated}}<p class="notice" role="status">Your update has been saved.</p>{{end}}
+{{if .Ticket}}
+  <p><a href="{{.Base}}">← {{if .StaffMode}}Back to inbox{{else}}All conversations{{end}}</a></p>
+  <h1 class="ticket-subject">{{.Ticket.Subject}}</h1>
+  <p class="meta"><span data-support-ticket-unread>{{.Ticket.UnreadCount}}</span> unread updates in this conversation</p>
+  {{if and .ReadThrough (eq .Messages.NextCursor 0)}}<form method="post" action="{{.URL}}" data-support-read>{{template "support-form-fields" (.Fields "read")}}<input type="hidden" name="through_sequence" value="{{.ReadThrough}}"><button type="submit">Mark conversation read</button></form><p class="meta" role="status" data-support-read-status></p>{{end}}
+  <p><span class="badge">{{.Ticket.Status}}</span> <span class="badge">{{.Ticket.Category}}</span> <span class="meta">Opened {{.Date .Ticket.CreatedAt}}</span></p>
+  <div class="columns"><section aria-labelledby="conversation">
+    <h2 id="conversation">Conversation</h2>
+    {{if .Filters.Get "after"}}<p><a href="{{.URL}}#conversation">Back to first messages</a></p>{{end}}
+    {{range .Messages.Items}}
+      <article{{if eq .Author "note"}} class="internal"{{end}}>
+        <div class="meta"><strong>{{if eq .Author "note"}}Internal note · staff only{{else if eq .Author "staff"}}Gregale support{{else}}Customer{{end}}</strong> · <time datetime="{{.CreatedAt.Format "2006-01-02T15:04:05Z07:00"}}">{{$d.Date .CreatedAt}}</time></div>
+        {{if .Redacted}}<p class="muted">Message removed following a privacy review.</p>{{else}}<p class="message">{{.Body}}</p>{{end}}
+      </article>
+    {{else}}<p class="muted">No messages on this page.</p>{{end}}
+    {{if .NextMessages}}<p><a href="{{.NextMessages}}">More messages →</a></p>{{end}}
+    {{if and (ne .Ticket.Status "resolved") (or (not .StaffMode) .CanManage)}}
+      <section class="panel"><h2>Reply{{if .StaffMode}} to customer{{end}}</h2>
+      <form method="post" action="{{.URL}}">{{template "support-form-fields" (.Fields "reply")}}
+        <label>Message <textarea name="body" required maxlength="{{.BodyMax}}">{{.Value "reply" "body" ""}}</textarea></label>
+        <p class="meta">{{if .StaffMode}}This reply will be visible to the customer.{{else}}Include what happened and what you expected. Keep passwords and credentials out of your message.{{end}}</p>
+        <button type="submit">Send reply</button>
+      </form></section>
+      {{if .StaffMode}}<details class="panel" {{if eq .Failed "note"}}open{{end}}><summary>Add an internal note</summary>
+        <p class="meta">Visible to support staff only.</p><form method="post" action="{{.URL}}">{{template "support-form-fields" (.Fields "note")}}
+        <label>Internal note <textarea name="body" required maxlength="{{.BodyMax}}">{{.Value "note" "body" ""}}</textarea></label><button type="submit">Save internal note</button></form>
+      </details>{{end}}
+    {{end}}
+    {{if and (eq .Ticket.Status "resolved") (or (and .StaffMode .CanManage) (and (not .StaffMode) .Ticket.CanReopen))}}
+      <section class="panel"><h2>Still need help?</h2>{{with .Ticket.ReopenUntil}}<p class="meta">Customer reopening available until {{$d.Date .}}.</p>{{end}}
+      <form method="post" action="{{.URL}}">{{template "support-form-fields" (.Fields "reopen")}}
+        <label>What is still unresolved? <textarea name="body" required maxlength="{{.BodyMax}}">{{.Value "reopen" "body" ""}}</textarea></label><button type="submit">Reopen conversation</button>
+      </form></section>
+    {{else if and (not .StaffMode) (eq .Ticket.Status "resolved")}}<p class="muted">This conversation is resolved. <a href="{{.Base}}#new-ticket">Start a new conversation</a> if you need further help.</p>{{end}}
+    {{with .Satisfaction}}
+      {{if .Eligible}}<section class="panel"><h2>How was your support experience?</h2><form method="post" action="{{$d.URL}}">{{template "support-form-fields" ($d.Fields "satisfaction")}}
+        <input type="hidden" name="episode_id" value="{{$d.Value "satisfaction" "episode_id" .EpisodeID}}">
+        <label>Rating <select aria-label="Rating" name="rating" required><option value="">Choose a rating</option><option value="1" {{if eq ($d.Value "satisfaction" "rating" "") "1"}}selected{{end}}>1 — Very dissatisfied</option><option value="2" {{if eq ($d.Value "satisfaction" "rating" "") "2"}}selected{{end}}>2 — Dissatisfied</option><option value="3" {{if eq ($d.Value "satisfaction" "rating" "") "3"}}selected{{end}}>3 — Neutral</option><option value="4" {{if eq ($d.Value "satisfaction" "rating" "") "4"}}selected{{end}}>4 — Satisfied</option><option value="5" {{if eq ($d.Value "satisfaction" "rating" "") "5"}}selected{{end}}>5 — Very satisfied</option></select></label><button type="submit">Send rating</button>
+      </form></section>{{else if .Rating}}<p class="muted">Thank you. Your rating for this resolution: {{.Rating}} / 5.</p>{{end}}
+    {{end}}
+  </section><aside aria-label="Ticket details">
+    <section class="panel"><h2>Details</h2><dl><dt>Ticket</dt><dd><code>{{.Ticket.ID}}</code></dd><dt>Last updated</dt><dd>{{.Date .Ticket.UpdatedAt}}</dd>
+    {{with .Ticket.Context.AppID}}<dt>App</dt><dd><code>{{.}}</code></dd>{{end}}{{with .Ticket.Context.DeploymentID}}<dt>Deployment</dt><dd><code>{{.}}</code></dd>{{end}}{{with .Ticket.Context.RequestID}}<dt>Request</dt><dd><code>{{.}}</code></dd>{{end}}
+    {{with .StaffTicket}}<dt>Priority</dt><dd>{{.Priority}}</dd><dt>Team</dt><dd>{{$d.TeamName .TeamID}}</dd><dt>Assigned to</dt><dd>{{$d.StaffName .AssigneeID}}</dd><dt>Response target</dt><dd>{{$d.ResponseTarget .Episode}}</dd><dt>Resolution target</dt><dd>{{$d.ResolutionTarget .Episode}}</dd>{{end}}</dl></section>
+    {{if .StaffMode}}{{template "support-customer" .}}{{end}}
+    {{if and (ne .Ticket.Status "resolved") (or (not .StaffMode) .CanManage)}}<section class="panel"><h2>Conversation status</h2><div class="actions">
+      <form method="post" action="{{.URL}}">{{template "support-form-fields" (.Fields "close")}}<button type="submit">Mark resolved</button></form>
+      {{if .StaffMode}}{{if .StaffTicket.Episode.WaitSince}}<form method="post" action="{{.URL}}">{{template "support-form-fields" (.Fields "resume")}}<button type="submit">Resume support clock</button></form>{{else}}<form method="post" action="{{.URL}}">{{template "support-form-fields" (.Fields "pause")}}<button type="submit">Wait for customer</button></form>{{end}}{{end}}
+    </div></section>{{end}}
+    {{if .StaffMode}}{{template "support-assignment" .}}{{end}}
+  </aside></div>
+{{else}}
+  <h1>{{if .StaffMode}}Support inbox{{else}}Customer support{{end}}</h1>
+  <section class="panel" aria-labelledby="support-updates"><h2 id="support-updates">Updates</h2><p><a href="{{.Base}}?notifications_unread=true">Unread updates</a> · <a href="{{.Base}}">All updates</a></p>
+  <ul>{{range .Notifications.Items}}<li><a href="{{$d.Base}}/{{.TicketID}}">{{$d.NotificationLabel .Kind}} · ticket {{.TicketID}}</a> <span class="meta">{{$d.Date .CreatedAt}}</span> {{if not .ReadAt}}<span class="badge">Unread</span>{{end}}</li>{{else}}<li class="muted">No updates to show.</li>{{end}}</ul>{{if .NextNotifications}}<p><a href="{{.NextNotifications}}">Earlier updates →</a></p>{{end}}</section>
+  <p class="muted">{{if .StaffMode}}Follow customer conversations, check saved service targets, and manage ownership.{{else}}Ask the Gregale team for help and keep track of your conversations.{{end}}</p>
+  {{if not .StaffMode}}<p><a href="#new-ticket">Start a conversation ↓</a></p>{{end}}
+  <form class="filters" method="get" action="{{.Base}}">
+    <label>Search <input type="search" name="search" value="{{.Filters.Get "search"}}" maxlength="{{.SubjectMax}}" placeholder="Subject or message"></label>
+    <label>Status <select aria-label="Status" name="status"><option value="">All statuses</option><option value="open" {{if eq (.Filters.Get "status") "open"}}selected{{end}}>Open</option><option value="pending" {{if eq (.Filters.Get "status") "pending"}}selected{{end}}>Waiting for customer</option><option value="resolved" {{if eq (.Filters.Get "status") "resolved"}}selected{{end}}>Resolved</option></select></label>
+    {{if .StaffMode}}<label>Team <select aria-label="Team" name="team_id"><option value="">All teams</option>{{range .Teams}}<option value="{{.ID}}" {{if eq ($d.Filters.Get "team_id") .ID}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+    <label>Assigned to <select aria-label="Assigned to" name="assignee_id"><option value="">Anyone</option>{{range .Staff}}{{if ne .Role "revoked"}}<option value="{{.AccountID}}" {{if eq ($d.Filters.Get "assignee_id") .AccountID}}selected{{end}}>{{$d.StaffName .AccountID}}</option>{{end}}{{end}}</select></label>{{end}}
+    <button type="submit">Filter</button><a href="{{.Base}}">Reset</a>
+  </form>
+  <div class="scroll"><table><caption class="meta">{{if .StaffMode}}Customer support queue{{else}}Your conversations in this scope{{end}}</caption><thead><tr><th scope="col">Conversation</th><th scope="col">Status</th>{{if .StaffMode}}<th scope="col">Ownership</th><th scope="col">Response target</th><th scope="col">Resolution target</th>{{else}}<th scope="col">Updated</th>{{end}}</tr></thead><tbody>
+  {{if .StaffMode}}{{range .Inbox.Items}}<tr><td><a class="ticket-subject" href="{{$d.Base}}/{{.Ticket.ID}}">{{.Ticket.Subject}}</a>{{if .Ticket.UnreadCount}} <span class="badge">{{.Ticket.UnreadCount}} unread</span>{{end}}<small class="muted">{{.Ticket.Category}} · {{.Priority}}</small></td><td>{{.Ticket.Status}}</td><td>{{$d.TeamName .TeamID}}<small>{{$d.StaffName .AssigneeID}}</small></td><td>{{$d.ResponseTarget .Episode}}</td><td>{{$d.ResolutionTarget .Episode}}</td></tr>{{else}}<tr><td colspan="5">No conversations match these filters.</td></tr>{{end}}
+  {{else}}{{range .Tickets.Items}}<tr><td><a class="ticket-subject" href="{{$d.Base}}/{{.ID}}">{{.Subject}}</a>{{if .UnreadCount}} <span class="badge">{{.UnreadCount}} unread</span>{{end}}<small class="muted">{{.Category}}</small></td><td>{{.Status}}</td><td>{{$d.Date .UpdatedAt}}</td></tr>{{else}}<tr><td colspan="3">No conversations match these filters. Start a conversation below if you need help.</td></tr>{{end}}{{end}}
+  </tbody></table></div>
+  {{if .Next}}<p><a href="{{.Next}}">Next page →</a></p>{{end}}
+  {{if not .StaffMode}}{{template "support-create" .}}{{end}}
+{{end}}
+{{end}}
+</main>
+<script nonce="{{.Nonce}}">
+(() => {
+  const form = document.querySelector('[data-support-read]');
+  if (!form) return;
+  const status = document.querySelector('[data-support-read-status]');
+  const button = form.querySelector('button');
+  async function markRead() {
+    if (button.disabled) return;
+    button.disabled = true;
+    try {
+      const response = await fetch(form.getAttribute('action'), {method: 'POST', credentials: 'same-origin', headers: {'Accept': 'application/json'}, body: new URLSearchParams(new FormData(form))});
+      if (!response.ok) throw new Error('read failed');
+      const result = await response.json();
+      document.querySelectorAll('[data-support-total]').forEach(el => el.textContent = String(result.unread_total));
+      document.querySelectorAll('[data-support-ticket-unread]').forEach(el => el.textContent = String(result.unread_count));
+      form.hidden = true;
+      status.textContent = result.unread_count ? 'New updates arrived. Refresh the conversation to read them.' : 'Conversation marked read.';
+    } catch (_) {
+      status.textContent = 'Could not mark this conversation read. Try again.';
+      button.disabled = false;
+    }
+  }
+  form.addEventListener('submit', event => {event.preventDefault(); markRead();});
+  markRead();
+})();
+</script>
+</body></html>
+
+{{define "support-form-fields"}}
+<input type="hidden" name="csrf_token" value="{{.CSRF}}"><input type="hidden" name="idempotency_key" value="{{.Key}}"><input type="hidden" name="action" value="{{.Action}}">{{if .Revision}}<input type="hidden" name="expected_revision" value="{{.Revision}}">{{end}}
+{{end}}
+
+{{define "support-create"}}
+<section class="panel new-ticket" id="new-ticket"><h2>Start a conversation</h2>
+<form method="post" action="{{.Base}}">{{template "support-form-fields" (.Fields "create")}}
+  <label>Subject <input name="subject" required maxlength="{{.SubjectMax}}" value="{{.Value "create" "subject" ""}}"></label>
+  <div class="filters"><label>Category <select aria-label="Category" name="category"><option value="deployment" {{if eq (.Value "create" "category" "deployment") "deployment"}}selected{{end}}>Deployment</option><option value="billing" {{if eq (.Value "create" "category" "deployment") "billing"}}selected{{end}}>Billing</option><option value="account" {{if eq (.Value "create" "category" "deployment") "account"}}selected{{end}}>Account</option><option value="incident" {{if eq (.Value "create" "category" "deployment") "incident"}}selected{{end}}>Incident</option><option value="other" {{if eq (.Value "create" "category" "deployment") "other"}}selected{{end}}>Other</option></select></label>
+  <label>Priority <select aria-label="Priority" name="priority"><option value="low" {{if eq (.Value "create" "priority" "normal") "low"}}selected{{end}}>Low</option><option value="normal" {{if eq (.Value "create" "priority" "normal") "normal"}}selected{{end}}>Normal</option><option value="high" {{if eq (.Value "create" "priority" "normal") "high"}}selected{{end}}>High</option><option value="urgent" {{if eq (.Value "create" "priority" "normal") "urgent"}}selected{{end}}>Urgent</option></select></label></div>
+  <label>How can we help? <textarea name="body" required maxlength="{{.BodyMax}}">{{.Value "create" "body" ""}}</textarea></label>
+  <p class="meta">Describe what happened and what you expected. Keep passwords, API keys, and other credentials out of your message.</p>
+  <details {{if or (eq .Failed "create") (.Filters.Get "app_id") (.Filters.Get "request_id")}}open{{end}}><summary>Optional troubleshooting context</summary><p class="meta">Identifiers only. Logs and credentials are never collected automatically. Gregale also saves a summary of your account's health with the conversation.</p>
+    <label>App ID <input name="app_id" value="{{.Value "create" "app_id" (.Filters.Get "app_id")}}"></label><label>Deployment ID <input name="deployment_id" value="{{.Value "create" "deployment_id" (.Filters.Get "deployment_id")}}"></label><label>Request ID <input name="request_id" value="{{.Value "create" "request_id" (.Filters.Get "request_id")}}"></label>
+  </details><button type="submit">Send to Gregale support</button>
+</form></section>
+{{end}}
+
+{{define "support-assignment"}}{{$d := .}}
+{{if .CanClaim}}<section class="panel"><h2>Take ownership</h2><form method="post" action="{{.URL}}">{{template "support-form-fields" (.Fields "claim")}}
+<input type="hidden" name="priority" value="{{.Value "claim" "priority" .StaffTicket.Priority}}"><input type="hidden" name="team_id" value="{{.Value "claim" "team_id" .StaffTicket.TeamID}}"><input type="hidden" name="required_skills" value="{{.Value "claim" "required_skills" .Skills}}"><input type="hidden" name="reason" value="Claimed from support inbox"><button type="submit">Assign to me</button></form></section>{{end}}
+{{if .CanManage}}<details class="panel" {{if eq .Failed "triage"}}open{{end}}><summary>Assignment and priority</summary><form method="post" action="{{.URL}}">{{template "support-form-fields" (.Fields "triage")}}
+<label>Priority <select aria-label="Priority" name="priority">{{range $p := .Priorities}}<option value="{{$p}}" {{if eq ($d.Value "triage" "priority" $d.StaffTicket.Priority) $p}}selected{{end}}>{{$p}}</option>{{end}}</select></label>
+<label>Team <select aria-label="Team" name="team_id"><option value="">No team</option>{{range .Teams}}{{if or .Enabled (eq .ID $d.StaffTicket.TeamID)}}<option value="{{.ID}}" {{if eq ($d.Value "triage" "team_id" $d.StaffTicket.TeamID) .ID}}selected{{end}}>{{.Name}}{{if not .Enabled}} (disabled){{end}}</option>{{end}}{{end}}</select></label>
+<label>Assigned to <select aria-label="Assigned to" name="assignee_id"><option value="">Unassigned</option>{{range .Staff}}{{if or (ne .Role "revoked") (eq .AccountID $d.StaffTicket.AssigneeID)}}<option value="{{.AccountID}}" {{if eq ($d.Value "triage" "assignee_id" $d.StaffTicket.AssigneeID) .AccountID}}selected{{end}}>{{$d.StaffName .AccountID}}{{if eq .Role "revoked"}} (revoked){{end}}</option>{{end}}{{end}}</select></label>
+<label>Required skills <input name="required_skills" value="{{.Value "triage" "required_skills" .Skills}}" aria-describedby="skills-hint"></label><p class="meta" id="skills-hint">Separate skill names with spaces.</p>
+<label>Reason for change <input name="reason" required maxlength="{{.ReasonMax}}" value="{{.Value "triage" "reason" ""}}"></label><button type="submit">Save assignment</button></form></details>{{end}}
+{{end}}
+
+{{define "support-customer"}}{{$d := .}}{{with .Customer}}
+<section class="panel" aria-label="Customer account"><h2>Customer account</h2>
+{{if .Unavailable}}<p class="muted">Account context could not be loaded. The conversation is unaffected.</p>{{else}}
+<dl><dt>Account</dt><dd><code>{{.AccountID}}</code></dd>{{with .OrgSlug}}<dt>Organization</dt><dd>{{.}}</dd>{{end}}<dt>Plan</dt><dd>{{.Plan}}</dd><dt>Status</dt><dd>{{.Status}}</dd><dt>Apps</dt><dd>{{.Apps}}</dd></dl>
+{{with .Snapshot}}<details open><summary><strong>At ticket creation</strong> <small class="muted">{{$d.Date .CapturedAt}}</small></summary>
+<p>Plan {{.Plan}}, status {{.Status}}.</p>
+{{with .RequestID}}<p>Attached request <code>{{.}}</code>:</p>{{end}}{{with .Request}}<p><code>{{.Route}}</code> refused with <code>{{.Code}}</code>{{with .AppSlug}} for <code>{{.}}</code>{{end}} <small class="muted">{{$d.Date .OccurredAt}}</small></p>{{else}}{{if .RequestID}}<p class="muted">No refused request with this id was recorded for the account in the last 14 days.</p>{{end}}{{end}}
+{{with .Health}}<p>{{range .Restrictions}}<strong>{{.Kind}}</strong> · {{else}}No restrictions · {{end}}{{len .FailedDeployments}} failed deployments · {{len .DomainIssues}} domain problems · {{.RefusedRequests.Total}} refused requests in 24 h</p>
+{{range .FailedDeployments}}<p>{{with .AppSlug}}<code>{{.}}</code> {{end}}{{with .ErrorCode}}<code>{{.}}</code> {{end}}{{.Error}}</p>{{end}}{{end}}
+</details>{{end}}
+{{with .Lifted}}<p class="meta">Lifted since the ticket was opened: {{range $i, $k := .}}{{if $i}}, {{end}}<strong>{{$k}}</strong>{{end}}</p>{{end}}
+{{with .Added}}<p class="meta">New since the ticket was opened: {{range $i, $k := .}}{{if $i}}, {{end}}<strong>{{$k}}</strong>{{end}}</p>{{end}}
+{{if .Snapshot}}<h3>Now</h3>{{end}}
+{{with .Diagnosis}}
+<h3>Restrictions</h3>{{range .Restrictions}}<p><strong>{{.Kind}}</strong>{{with .Reason}}: {{.}}{{end}}{{with .Since}} <small class="muted">since {{$d.Date .}}</small>{{end}}</p>{{else}}<p class="muted">None.</p>{{end}}
+<h3>Failed deployments, last 7 days</h3>{{range .FailedDeployments}}<p>{{with .AppSlug}}<code>{{.}}</code> {{end}}{{with .ErrorCode}}<code>{{.}}</code> {{end}}{{.Error}} <small class="muted">{{$d.Date .CreatedAt}}</small></p>{{else}}<p class="muted">None.</p>{{end}}
+<h3>Custom domains</h3>{{range .DomainIssues}}<p><code>{{.Domain}}</code>: {{.Problem}}{{with .CertLastError}} ({{.}}){{end}}</p>{{else}}<p class="muted">No problems ({{.HealthyDomains}} healthy).</p>{{end}}
+<h3>Refused API requests, last 24 hours</h3>{{if .CustomerErrors.Total}}<p>{{.CustomerErrors.Total}} refused.</p><ul>{{range .CustomerErrors.ByCode}}<li><code>{{.Code}}</code> × {{.Count}}, last {{$d.Date .LastAt}}</li>{{end}}</ul>{{else}}<p class="muted">None recorded.</p>{{end}}
+{{with .EnabledFlags}}<h3>Previews</h3><p>{{range $i, $flag := .}}{{if $i}}, {{end}}<code>{{$flag}}</code>{{end}}</p>{{end}}
+{{with .Unavailable}}<p class="muted">Not loaded: {{range $i, $section := .}}{{if $i}}, {{end}}{{$section}}{{end}}</p>{{end}}
+{{end}}
+<p class="meta">Full view: <code>gregalectl accounts 360 --account-id {{.AccountID}}</code></p>
+{{end}}</section>
+{{end}}{{end}}

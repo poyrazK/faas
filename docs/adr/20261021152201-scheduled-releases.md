@@ -82,3 +82,41 @@ Schedule outcomes use the release notification outbox of ADR-20261020085706 (`re
 - A parked release that is never started is replaced by the next release, like any 0% deployment.
 - Times are absolute. The CLI turns local times and offsets such as `+2h` into RFC 3339 before sending. Daylight-saving shifts between scheduling and the start do not move a release.
 - Recurring releases, scheduled project promotions and scheduled config changes are out of scope.
+
+## Amendment (2026-11-05): waiting releases do not monopolize the due scan
+
+The worker retains a process-local `(release_at, id)` cursor between bounded
+20-row sweeps. It advances past waiting or failed-to-read candidates and wraps
+after a short or empty page, so earlier releases are revisited when ready.
+Timestamp/ID pagination continues correctly after a processed schedule leaves
+the due set. Each apid worker serializes its own sweep; a restart starts a new
+pass. The transactional start guards, freezes, approvals, per-tick budget and
+one-hour start grace are unchanged.
+
+## Amendment (2026-11-10): a schedule starts only while its scheduler may release
+
+Deploy review E3: the worker started a due schedule without asking whether
+whoever scheduled it could still deploy. `scheduled_by` was only a label, so a
+member removed from the company, a revoked or expired key, or a suspended
+account still shipped at `release_at`, with the freeze override they had once
+been allowed to make. Owner decision: block at start, no eager cancellation.
+
+- A schedule records `scheduled_by_account_id` and, for an API key,
+  `scheduled_by_key_id` (migration `20261112115023417`, no foreign keys so a
+  deleted account or key reads as gone).
+- Before a start, after the freeze check, `schedule.SchedulerStanding`
+  requires: the account exists and is not suspended or pending deletion; the
+  key, if any, exists, is not revoked and has not expired; the account may
+  still deploy the app (`appaccess.Standing`, `org.deploy_app`); and for each
+  company freeze the schedule overrides, the account may still lift it (the
+  window's creator, or `org.manage_app_security`).
+- A refusal ends the schedule as `blocked` with `scheduler_lost_access`, so
+  its channels hear of it; the release stays parked and anyone who may deploy
+  can schedule or release it again. A read failure waits, then expires, as the
+  other start checks do.
+- Schedules recorded before this change carry no identities and start without
+  the check.
+
+Validation: `TestSchedulerStanding`,
+`TestScheduledReleaseIsBlockedWhenItsSchedulerLosesAccess`, the scheduled
+release conformance case.

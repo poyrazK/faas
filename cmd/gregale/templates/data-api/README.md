@@ -216,6 +216,10 @@ evidence, refresh state and current admission counts. Failed SQL checks leave
 database connectivity unknown; they can also reflect a saturated pool. A known
 refresh pause remains separate from an unavailable reader. Probes have a bounded
 two-second observation deadline and share in-flight work without adding SQL pools.
+A ready answer is reused for up to five seconds; an unready one never is, and an
+engine restart, schema reload, snapshot or restore forgets it. The platform's
+liveness probe uses `/livez`, so a busy pool or a database blip never restarts a
+healthy runtime.
 
 `/healthz` also includes a `pool` observation with `checked_at`. A bounded private
 engine metrics read reports capacity, existing idle (`available`) connections,
@@ -318,3 +322,14 @@ The CLI accepts this trusted owner command through `data-api rotation preflight
 NAME --binding UUID --owner-check FILE`; `rotation status` uses public binding
 metadata alone. Neither command starts rotation or approves drift. Passing checks
 remain advisory; provider preparation still validates the full candidate witness.
+
+Authorization metadata qualifies a bounded safety lease. A failed reread does
+not renew it; requests wait for a successful check after expiry or restore,
+and return 503 while safety cannot be established. Authorization is checked
+again after readiness. Health invalidation cancels old probes and excludes old
+refresh/pool completions.
+
+Opt-in exact numeric clients and owner-only storage/job maintenance are
+specified in [workflows](../../../../docs/data-api/workflows.md). Install the
+maintenance SQL separately from serving permissions; its worker defaults to
+dry-run and uses the migration/owner binding only in a trusted environment.

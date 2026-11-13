@@ -76,6 +76,66 @@ func TestEvaluator_SlowAccountDoesNotDelayOthers(t *testing.T) {
 	}
 }
 
+// urlGatedDispatcher holds deliveries to slowURL until release is closed.
+type urlGatedDispatcher struct {
+	recordingDispatcher
+	slowURL string
+	release chan struct{}
+}
+
+func (g *urlGatedDispatcher) Dispatch(ctx context.Context, t webhookout.Target, evt webhookout.Event) webhookout.Result {
+	if t.URL == g.slowURL {
+		select {
+		case <-g.release:
+		case <-ctx.Done():
+		}
+	}
+	return g.recordingDispatcher.Dispatch(ctx, t, evt)
+}
+
+// adr: 20261110090000 — on production (2026-11-09) a rule whose receiver
+// returned 500 held the same account's next rule for its whole 30-second
+// webhook budget. Deliveries now leave the evaluation path: the other rule is
+// delivered while the first receiver still hangs, and the tick's counters
+// include both once they are recorded.
+func TestEvaluator_HungWebhookDoesNotDelaySameAccountRules(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	slow, ident, _ := seedRule(t, store, state.AlertMetricErrorRate, state.AlertGt, 5)
+	fast := slow
+	fast.ID, fast.Name, fast.WebhookURL = "", slow.Name+"-fast", "https://fast.example.com/hook"
+	if _, err := store.CreateAlertRule(ctx, fast); err != nil {
+		t.Fatal(err)
+	}
+	dispatch := &urlGatedDispatcher{recordingDispatcher: recordingDispatcher{result: webhookout.Result{StatusCode: 200, Attempts: 1}},
+		slowURL: slow.WebhookURL, release: make(chan struct{})}
+	ev := evaluatorFor(store, dispatch, 0, ident)
+
+	done := make(chan alerts.Stats, 1)
+	go func() {
+		stats, _ := ev.RunOnce(ctx)
+		done <- stats
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for dispatch.callCount() == 0 {
+		if time.Now().After(deadline) {
+			close(dispatch.release)
+			t.Fatal("the account's other rule was not delivered while one receiver hung")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	select {
+	case stats := <-done:
+		close(dispatch.release)
+		t.Fatalf("tick ended (%+v) before the hung delivery was recorded", stats)
+	default:
+	}
+	close(dispatch.release)
+	if stats := <-done; stats.Fired != 2 || stats.Delivered != 2 {
+		t.Fatalf("stats = %+v, want both rules fired and delivered", stats)
+	}
+}
+
 func TestEvaluator_AccountTickBudgetDefersAndResumes(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()

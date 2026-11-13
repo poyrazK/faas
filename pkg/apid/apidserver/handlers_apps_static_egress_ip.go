@@ -99,6 +99,14 @@ func (s *server) setAppStaticEgressIP(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.ErrPlanStaticEgressIPNotAllowed(acct.Plan))
 		return
 	}
+	// An IP without set=true is ambiguous. CLIs through rc.339 sent exactly
+	// that for `static-egress-ip set <ip>`, and the handler cleared the pin
+	// while answering 200 (Hunt 34 H34-44). Clearing is set=false with no IP,
+	// or DELETE.
+	if !req.Set && strings.TrimSpace(req.IP) != "" {
+		api.WriteProblem(w, api.ErrAppStaticEgressIPInvalid(req.IP, `send "set": true to pin an IP; clear with DELETE`))
+		return
+	}
 	var (
 		newIP     *netip.Addr
 		willClear = !req.Set

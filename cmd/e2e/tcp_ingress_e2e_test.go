@@ -51,6 +51,7 @@ func TestTCPIngressE2E(t *testing.T) {
 		Slug:      "tcp-ingress-" + uuid.NewString(),
 		Status:    state.AppActive,
 		RAMMB:     256,
+		Manifest:  state.AppManifest{Ports: []api.WorkloadPort{{Name: "echo", Port: 5432, Protocol: api.WorkloadPortTCP}}},
 	})
 	if err != nil {
 		t.Fatalf("create app: %v", err)
@@ -188,6 +189,7 @@ func TestTCPIngressSessionGuardsE2E(t *testing.T) {
 		Slug:      "tcp-guards-" + uuid.NewString(),
 		Status:    state.AppActive,
 		RAMMB:     256,
+		Manifest:  state.AppManifest{Ports: []api.WorkloadPort{{Name: "echo", Port: 5432, Protocol: api.WorkloadPortTCP}}},
 	})
 	if err != nil {
 		t.Fatalf("create app: %v", err)

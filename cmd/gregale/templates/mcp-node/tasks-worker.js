@@ -1,13 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { startMcpTaskRuntime } from './task-runtime.js';
+import { startMcpTaskWorkerReceipts } from './task-worker-receipts.js';
 
 const config = JSON.parse(readFileSync(new URL('./gregale-mcp.json', import.meta.url)));
 const taskServices = await startMcpTaskRuntime(config, { role: 'worker' });
-console.log(JSON.stringify({ event: 'mcp_task_worker_started', workerID: taskServices.taskRuntime.workerID, workerID: taskServices.taskRuntime.workerID, claimFence: true }));
+const stopReceipts = startMcpTaskWorkerReceipts({ workerID: taskServices.taskRuntime.workerID, shutdownTimeoutMs: taskServices.shutdownTimeoutMs });
 
 let shutdownPromise;
 async function shutdown(signal) {
   if (shutdownPromise) return shutdownPromise;
+  stopReceipts();
   console.log(JSON.stringify({ event: 'mcp_task_worker_stopping', signal }));
   shutdownPromise = taskServices.close().catch(() => {
     process.exitCode = 1;

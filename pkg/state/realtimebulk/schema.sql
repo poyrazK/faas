@@ -119,3 +119,4 @@ CREATE TABLE realtime_usage_hours (
 -- Fair-use connection projection (ADR-1323); runtime migration 20261014194829908.
 CREATE TABLE realtime_node_connection_syncs (node_name text PRIMARY KEY, synced_at timestamptz NOT NULL);
 CREATE TABLE realtime_node_connections (node_name text NOT NULL, account_id uuid NOT NULL, connections integer NOT NULL, PRIMARY KEY (node_name, account_id));
+CREATE TABLE realtime_node_endpoint_connections (node_name text NOT NULL, endpoint_id uuid NOT NULL, connections integer NOT NULL, PRIMARY KEY (node_name, endpoint_id));

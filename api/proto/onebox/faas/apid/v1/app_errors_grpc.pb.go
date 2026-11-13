@@ -37,6 +37,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	AppErrors_IncrementAppError_FullMethodName = "/onebox.faas.apid.v1.AppErrors/IncrementAppError"
+	AppErrors_RecordHTTPIssue_FullMethodName   = "/onebox.faas.apid.v1.AppErrors/RecordHTTPIssue"
 )
 
 // AppErrorsClient is the client API for AppErrors service.
@@ -61,6 +62,10 @@ type AppErrorsClient interface {
 	// transient DB failure on one record returns ResourceExhausted
 	// for that single response — the stream continues.
 	IncrementAppError(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[IncrementAppErrorRequest, IncrementAppErrorResponse], error)
+	// RecordHTTPIssue retries only the idempotent Issues occurrence. It never
+	// increments the legacy app-error counter, whose outcome can be ambiguous
+	// after a broken stream. Older apid versions return Unimplemented.
+	RecordHTTPIssue(ctx context.Context, in *IncrementAppErrorRequest, opts ...grpc.CallOption) (*IncrementAppErrorResponse, error)
 }
 
 type appErrorsClient struct {
@@ -84,6 +89,16 @@ func (c *appErrorsClient) IncrementAppError(ctx context.Context, opts ...grpc.Ca
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AppErrors_IncrementAppErrorClient = grpc.BidiStreamingClient[IncrementAppErrorRequest, IncrementAppErrorResponse]
 
+func (c *appErrorsClient) RecordHTTPIssue(ctx context.Context, in *IncrementAppErrorRequest, opts ...grpc.CallOption) (*IncrementAppErrorResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(IncrementAppErrorResponse)
+	err := c.cc.Invoke(ctx, AppErrors_RecordHTTPIssue_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AppErrorsServer is the server API for AppErrors service.
 // All implementations must embed UnimplementedAppErrorsServer
 // for forward compatibility.
@@ -106,6 +121,10 @@ type AppErrorsServer interface {
 	// transient DB failure on one record returns ResourceExhausted
 	// for that single response — the stream continues.
 	IncrementAppError(grpc.BidiStreamingServer[IncrementAppErrorRequest, IncrementAppErrorResponse]) error
+	// RecordHTTPIssue retries only the idempotent Issues occurrence. It never
+	// increments the legacy app-error counter, whose outcome can be ambiguous
+	// after a broken stream. Older apid versions return Unimplemented.
+	RecordHTTPIssue(context.Context, *IncrementAppErrorRequest) (*IncrementAppErrorResponse, error)
 	mustEmbedUnimplementedAppErrorsServer()
 }
 
@@ -118,6 +137,9 @@ type UnimplementedAppErrorsServer struct{}
 
 func (UnimplementedAppErrorsServer) IncrementAppError(grpc.BidiStreamingServer[IncrementAppErrorRequest, IncrementAppErrorResponse]) error {
 	return status.Error(codes.Unimplemented, "method IncrementAppError not implemented")
+}
+func (UnimplementedAppErrorsServer) RecordHTTPIssue(context.Context, *IncrementAppErrorRequest) (*IncrementAppErrorResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RecordHTTPIssue not implemented")
 }
 func (UnimplementedAppErrorsServer) mustEmbedUnimplementedAppErrorsServer() {}
 func (UnimplementedAppErrorsServer) testEmbeddedByValue()                   {}
@@ -147,13 +169,36 @@ func _AppErrors_IncrementAppError_Handler(srv interface{}, stream grpc.ServerStr
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AppErrors_IncrementAppErrorServer = grpc.BidiStreamingServer[IncrementAppErrorRequest, IncrementAppErrorResponse]
 
+func _AppErrors_RecordHTTPIssue_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IncrementAppErrorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AppErrorsServer).RecordHTTPIssue(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AppErrors_RecordHTTPIssue_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AppErrorsServer).RecordHTTPIssue(ctx, req.(*IncrementAppErrorRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AppErrors_ServiceDesc is the grpc.ServiceDesc for AppErrors service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var AppErrors_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "onebox.faas.apid.v1.AppErrors",
 	HandlerType: (*AppErrorsServer)(nil),
-	Methods:     []grpc.MethodDesc{},
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "RecordHTTPIssue",
+			Handler:    _AppErrors_RecordHTTPIssue_Handler,
+		},
+	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "IncrementAppError",

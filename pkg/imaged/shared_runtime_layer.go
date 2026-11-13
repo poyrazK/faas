@@ -80,6 +80,8 @@ type sharedRuntimeLayers struct {
 	// Reason names why the layer keeps everything above the base; empty
 	// when it holds only /app.
 	Reason string
+	// baseDiffIDs are the runner base's layers the artifact was split at.
+	baseDiffIDs []string
 }
 
 // sharedRuntimeAppLayers splits a build artifact at its runner base and
@@ -121,7 +123,7 @@ func (h *Handler) sharedRuntimeAppLayers(ctx context.Context, runtime, archivePa
 			manifest.Env["PATH"] = sharedruntime.PythonRunnerPath
 			manifest.Env["VIRTUAL_ENV"] = "/app/.venv"
 		}
-		return sharedRuntimeLayers{layers: filtered, cleanup: cleanup}, nil
+		return sharedRuntimeLayers{layers: filtered, cleanup: cleanup, baseDiffIDs: baseDiffIDs}, nil
 	}
 	if filterErr == nil {
 		cleanup()
@@ -136,7 +138,7 @@ func (h *Handler) sharedRuntimeAppLayers(ctx context.Context, runtime, archivePa
 		allCleanup()
 		return sharedRuntimeLayers{}, fmt.Errorf("runtime base layer boundary %d is outside artifact layer count %d", start, len(all))
 	}
-	return sharedRuntimeLayers{layers: layersAsReaders(all[start:]), cleanup: allCleanup, Reason: reason}, nil
+	return sharedRuntimeLayers{layers: layersAsReaders(all[start:]), cleanup: allCleanup, Reason: reason, baseDiffIDs: baseDiffIDs}, nil
 }
 
 // sharedRuntimeStart resolves the app's start command for the runner base,

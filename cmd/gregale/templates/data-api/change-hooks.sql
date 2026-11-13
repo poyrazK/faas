@@ -4,7 +4,7 @@
 -- {{schema}}.gregale_change_events inside the writing transaction. The Data
 -- API publishes them as Gregale events, in order, and deletes them.
 
-CREATE TABLE {{schema}}.gregale_change_events (
+CREATE TABLE IF NOT EXISTS {{schema}}.gregale_change_events (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   event_key uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
   relation_schema text NOT NULL,
@@ -25,22 +25,135 @@ CREATE TABLE {{schema}}.gregale_change_events (
   failure_code text CHECK (octet_length(failure_code) <= 64)
 );
 ALTER TABLE {{schema}}.gregale_change_events ENABLE ROW LEVEL SECURITY;
+-- Waiting changes in order: the relay's claim and capture's backlog bound.
+CREATE INDEX IF NOT EXISTS gregale_change_events_pending ON {{schema}}.gregale_change_events (id) WHERE failed_at IS NULL;
 
 -- Only the Data API's relay reads and settles events: it adds the
 -- gateway-owned gregale_access = 'hooks' claim, which the gateway never gives
 -- a client request. Hooked writes insert as the owner, which RLS skips.
+DROP POLICY IF EXISTS gregale_change_relay ON {{schema}}.gregale_change_events;
 CREATE POLICY gregale_change_relay ON {{schema}}.gregale_change_events
   USING (coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'gregale_access', '') = 'hooks')
   WITH CHECK (coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'gregale_access', '') = 'hooks');
 
-CREATE SCHEMA gregale_hooks;
+CREATE SCHEMA IF NOT EXISTS gregale_hooks;
 REVOKE ALL ON SCHEMA gregale_hooks FROM PUBLIC;
+
+-- gregale:upgrade-begin. `gregale data-api hooks export --upgrade` replays
+-- everything from here to gregale:upgrade-end on an existing installation, so
+-- each statement here can run again.
+
+ALTER TABLE {{schema}}.gregale_change_events ADD COLUMN IF NOT EXISTS schema_version text
+  CHECK (schema_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$');
+
+-- The schema owner selects the version for future changes. Capture freezes it
+-- on each outbox row, so changing the setting cannot reinterpret a retry.
+-- enable hooks a table with a primary key, or changes its options.
+CREATE OR REPLACE FUNCTION gregale_hooks.enable(relation regclass, payload text DEFAULT 'row', exclude text[] DEFAULT '{}')
+RETURNS void LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  target record;
+  key_columns text[];
+  unknown text;
+BEGIN
+  IF payload IS NULL OR payload NOT IN ('row', 'keys') THEN
+    RAISE EXCEPTION 'payload must be row or keys' USING ERRCODE = '22023';
+  END IF;
+  exclude := coalesce(exclude, '{}');
+  SELECT n.nspname AS schema, c.relname AS name, c.relkind AS kind INTO target
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.oid = relation;
+  IF target.kind NOT IN ('r', 'p') THEN
+    RAISE EXCEPTION '% is not a table', relation USING ERRCODE = '42809';
+  END IF;
+  IF relation = '{{schema}}.gregale_change_events'::regclass THEN
+    RAISE EXCEPTION 'the change event table cannot be hooked' USING ERRCODE = '22023';
+  END IF;
+  SELECT array_agg(a.attname::text ORDER BY k.ordinality) INTO key_columns
+    FROM pg_index i CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality)
+    JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.attnum
+    WHERE i.indrelid = relation AND i.indisprimary AND k.ordinality<=i.indnkeyatts;
+  IF key_columns IS NULL THEN
+    RAISE EXCEPTION '% needs a primary key to be hooked', relation USING ERRCODE = '55000';
+  END IF;
+  IF key_columns && exclude THEN
+    RAISE EXCEPTION 'primary key columns cannot be excluded' USING ERRCODE = '22023';
+  END IF;
+  SELECT e INTO unknown FROM unnest(exclude) e
+    WHERE NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = relation AND attname = e AND attnum > 0 AND NOT attisdropped) LIMIT 1;
+  IF unknown IS NOT NULL THEN
+    RAISE EXCEPTION 'column % of % does not exist', unknown, relation USING ERRCODE = '42703';
+  END IF;
+  EXECUTE format('DROP TRIGGER IF EXISTS gregale_change_hook ON %s', relation);
+  EXECUTE format('CREATE TRIGGER gregale_change_hook AFTER INSERT OR UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE FUNCTION gregale_hooks.capture(%L, %L, %L, %L, %L)',
+    relation, key_columns::text, payload, exclude::text, target.schema, target.name);
+END
+$$;
+REVOKE ALL ON FUNCTION gregale_hooks.enable(regclass, text, text[]) FROM PUBLIC;
+
+-- disable stops recording a table's changes; recorded events still publish.
+CREATE OR REPLACE FUNCTION gregale_hooks.disable(relation regclass) RETURNS void
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  EXECUTE format('DROP TRIGGER IF EXISTS gregale_change_hook ON %s', relation);
+END
+$$;
+REVOKE ALL ON FUNCTION gregale_hooks.disable(regclass) FROM PUBLIC;
+
+CREATE TABLE IF NOT EXISTS gregale_hooks.schema_versions (
+  relation regclass PRIMARY KEY,
+  schema_version text NOT NULL CHECK (schema_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
+);
+REVOKE ALL ON gregale_hooks.schema_versions FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION gregale_hooks.set_schema_version(target regclass, version text)
+RETURNS void LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF version IS NOT NULL AND version !~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' THEN
+    RAISE EXCEPTION 'invalid event schema version' USING ERRCODE = '22023';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=target AND tgname='gregale_change_hook') THEN
+    RAISE EXCEPTION 'table has no change hook' USING ERRCODE = '22023';
+  END IF;
+  IF version IS NULL THEN
+    DELETE FROM gregale_hooks.schema_versions WHERE relation=target;
+  ELSE
+    INSERT INTO gregale_hooks.schema_versions(relation,schema_version) VALUES(target,version)
+    ON CONFLICT(relation) DO UPDATE SET schema_version=excluded.schema_version;
+  END IF;
+END
+$$;
+REVOKE ALL ON FUNCTION gregale_hooks.set_schema_version(regclass, text) FROM PUBLIC;
+
+
+-- gregale_change_drops notes when capture last left a change out at the
+-- backlog bound (ADR-20261022121642 amendment 3); the relay reports it, so
+-- owners see that changes went unrecorded. Like the event table, only the
+-- relay's claim reads it; capture writes it as the owner, which RLS skips.
+CREATE TABLE IF NOT EXISTS {{schema}}.gregale_change_drops (
+  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+  last_dropped_at timestamptz
+);
+ALTER TABLE {{schema}}.gregale_change_drops ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS gregale_change_relay ON {{schema}}.gregale_change_drops;
+CREATE POLICY gregale_change_relay ON {{schema}}.gregale_change_drops FOR SELECT
+  USING (coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'gregale_access', '') = 'hooks');
+INSERT INTO {{schema}}.gregale_change_drops (singleton) VALUES (true) ON CONFLICT DO NOTHING;
 
 -- capture records one change. Its arguments are the key columns, the payload
 -- ('row' or 'keys'), excluded columns and the hooked relation's name. Rows
 -- larger than 64 KiB together are left out and the event marked truncated;
 -- consumers read the row by its key.
-CREATE FUNCTION gregale_hooks.capture() RETURNS trigger
+--
+-- gregale:backlog-bound (amendment 2). While {{backlog_max}} changes wait to
+-- publish, because the platform does not take them (a stage, an installation
+-- without workload identity) or publishing keeps failing, new changes are not
+-- recorded: the table cannot grow until it fills the database. The bound
+-- counts identifiers from the oldest waiting change, so it errs early.
+--
+-- gregale:drop-tracking (amendment 3). A change left out is noted in
+-- {{schema}}.gregale_change_drops, at most once a second and never waiting for another
+-- writer's note.
+CREATE OR REPLACE FUNCTION gregale_hooks.capture() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   key_columns text[] := TG_ARGV[0]::text[];
@@ -51,9 +164,31 @@ DECLARE
   changed text[];
   row_key jsonb;
   truncated boolean := false;
+  newest bigint;
+  oldest bigint;
+  root_relation oid;
+  current_keys text[];
 BEGIN
   IF current_setting('gregale_hooks.skip', true) = 'on' THEN
     RETURN NULL;
+  END IF;
+  -- Follow cloned partition triggers to the configured parent. Names in older
+  -- trigger arguments are a contract: DDL must never turn a key into JSON null
+  -- or redirect events to a different table that reuses the previous name.
+  WITH RECURSIVE parents AS (
+    SELECT oid,tgrelid,tgparentid,0 AS depth FROM pg_trigger WHERE tgrelid=TG_RELID AND tgname=TG_NAME
+    UNION ALL
+    SELECT t.oid,t.tgrelid,t.tgparentid,p.depth+1 FROM pg_trigger t JOIN parents p ON t.oid=p.tgparentid
+  ) SELECT tgrelid INTO root_relation FROM parents ORDER BY depth DESC LIMIT 1;
+  SELECT array_agg(a.attname::text ORDER BY k.ordinality) INTO current_keys
+    FROM pg_index i CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality)
+    JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.attnum
+    WHERE i.indrelid=root_relation AND i.indisprimary AND k.ordinality<=i.indnkeyatts;
+  IF root_relation IS DISTINCT FROM to_regclass(format('%I.%I',TG_ARGV[3],TG_ARGV[4]))::oid
+    OR current_keys IS DISTINCT FROM key_columns
+    OR EXISTS(SELECT 1 FROM unnest(excluded) e WHERE NOT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=root_relation AND attname=e AND attnum>0 AND NOT attisdropped)) THEN
+    RAISE EXCEPTION 'change hook metadata changed; enable the hook again after DDL'
+      USING ERRCODE='55000', HINT='Run gregale_hooks.enable with the current relation, payload and excluded columns.';
   END IF;
   IF TG_OP <> 'INSERT' THEN
     old_row := to_jsonb(OLD) - excluded;
@@ -78,73 +213,45 @@ BEGIN
     new_row := NULL;
     truncated := true;
   END IF;
-  INSERT INTO {{schema}}.gregale_change_events (relation_schema, relation_name, op, row_key, old_row, new_row, changed, truncated)
-  VALUES (TG_ARGV[3], TG_ARGV[4], lower(TG_OP), row_key, old_row, new_row, changed, truncated);
+  -- gregale:backlog-bound
+  newest := pg_sequence_last_value(pg_get_serial_sequence('{{schema}}.gregale_change_events', 'id')::regclass);
+  SELECT id INTO oldest FROM {{schema}}.gregale_change_events WHERE failed_at IS NULL ORDER BY id LIMIT 1;
+  IF newest - oldest + 1 >= {{backlog_max}} THEN
+    -- gregale:drop-tracking
+    PERFORM 1 FROM {{schema}}.gregale_change_drops
+      WHERE singleton AND (last_dropped_at IS NULL OR last_dropped_at < clock_timestamp() - interval '1 second')
+      FOR UPDATE SKIP LOCKED;
+    IF FOUND THEN
+      UPDATE {{schema}}.gregale_change_drops SET last_dropped_at = clock_timestamp() WHERE singleton;
+    END IF;
+    RETURN NULL;
+  END IF;
+  -- Partition trigger arguments identify the configured parent source.
+  INSERT INTO {{schema}}.gregale_change_events (relation_schema, relation_name, op, row_key, old_row, new_row, changed, truncated, schema_version)
+  VALUES (TG_ARGV[3], TG_ARGV[4], lower(TG_OP), row_key, old_row, new_row, changed, truncated,
+    (SELECT schema_version FROM gregale_hooks.schema_versions
+      WHERE relation=root_relation::regclass));
   RETURN NULL;
 END
 $$;
 REVOKE ALL ON FUNCTION gregale_hooks.capture() FROM PUBLIC;
 
--- enable hooks a table with a primary key, or changes its options.
-CREATE FUNCTION gregale_hooks.enable(relation regclass, payload text DEFAULT 'row', exclude text[] DEFAULT '{}')
-RETURNS void LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
-DECLARE
-  target record;
-  key_columns text[];
-  unknown text;
-BEGIN
-  IF payload IS NULL OR payload NOT IN ('row', 'keys') THEN
-    RAISE EXCEPTION 'payload must be row or keys' USING ERRCODE = '22023';
-  END IF;
-  exclude := coalesce(exclude, '{}');
-  SELECT n.nspname AS schema, c.relname AS name, c.relkind AS kind INTO target
-    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.oid = relation;
-  IF target.kind NOT IN ('r', 'p') THEN
-    RAISE EXCEPTION '% is not a table', relation USING ERRCODE = '42809';
-  END IF;
-  IF relation = '{{schema}}.gregale_change_events'::regclass THEN
-    RAISE EXCEPTION 'the change event table cannot be hooked' USING ERRCODE = '22023';
-  END IF;
-  SELECT array_agg(a.attname::text ORDER BY array_position(i.indkey::int2[], a.attnum)) INTO key_columns
-    FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey::int2[])
-    WHERE i.indrelid = relation AND i.indisprimary;
-  IF key_columns IS NULL THEN
-    RAISE EXCEPTION '% needs a primary key to be hooked', relation USING ERRCODE = '55000';
-  END IF;
-  IF key_columns && exclude THEN
-    RAISE EXCEPTION 'primary key columns cannot be excluded' USING ERRCODE = '22023';
-  END IF;
-  SELECT e INTO unknown FROM unnest(exclude) e
-    WHERE NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = relation AND attname = e AND attnum > 0 AND NOT attisdropped) LIMIT 1;
-  IF unknown IS NOT NULL THEN
-    RAISE EXCEPTION 'column % of % does not exist', unknown, relation USING ERRCODE = '42703';
-  END IF;
-  EXECUTE format('DROP TRIGGER IF EXISTS gregale_change_hook ON %s', relation);
-  EXECUTE format('CREATE TRIGGER gregale_change_hook AFTER INSERT OR UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE FUNCTION gregale_hooks.capture(%L, %L, %L, %L, %L)',
-    relation, key_columns::text, payload, exclude::text, target.schema, target.name);
-END
-$$;
-REVOKE ALL ON FUNCTION gregale_hooks.enable(regclass, text, text[]) FROM PUBLIC;
-
--- disable stops recording a table's changes; recorded events still publish.
-CREATE FUNCTION gregale_hooks.disable(relation regclass) RETURNS void
-LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
-BEGIN
-  EXECUTE format('DROP TRIGGER IF EXISTS gregale_change_hook ON %s', relation);
-END
-$$;
-REVOKE ALL ON FUNCTION gregale_hooks.disable(regclass) FROM PUBLIC;
-
--- retry_failed queues events the platform rejected again. They publish after
--- newer events of the same rows.
-CREATE FUNCTION gregale_hooks.retry_failed() RETURNS bigint
+-- retry_failed queues events the platform rejected again, under new
+-- identifiers in their old order: they publish after newer events of the same
+-- rows (each keeps its event id, time and transaction; data.sequence is new), and
+-- the backlog bound, which counts identifiers from the oldest waiting event,
+-- does not count every change recorded since they failed.
+CREATE OR REPLACE FUNCTION gregale_hooks.retry_failed() RETURNS bigint
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   n bigint;
 BEGIN
-  UPDATE {{schema}}.gregale_change_events SET failed_at = NULL, failure_code = NULL, attempts = 0,
-    available_at = '-infinity', claimed_by = NULL, claimed_until = NULL
-  WHERE failed_at IS NOT NULL;
+  WITH moved AS (
+    DELETE FROM {{schema}}.gregale_change_events WHERE failed_at IS NOT NULL
+    RETURNING id, event_key, relation_schema, relation_name, op, row_key, old_row, new_row, changed, truncated, txid, captured_at, schema_version
+  )
+  INSERT INTO {{schema}}.gregale_change_events (event_key, relation_schema, relation_name, op, row_key, old_row, new_row, changed, truncated, txid, captured_at, schema_version)
+  SELECT event_key, relation_schema, relation_name, op, row_key, old_row, new_row, changed, truncated, txid, captured_at, schema_version FROM moved ORDER BY id;
   GET DIAGNOSTICS n = ROW_COUNT;
   RETURN n;
 END
@@ -152,7 +259,7 @@ $$;
 REVOKE ALL ON FUNCTION gregale_hooks.retry_failed() FROM PUBLIC;
 
 -- discard_failed deletes events the platform rejected.
-CREATE FUNCTION gregale_hooks.discard_failed() RETURNS bigint
+CREATE OR REPLACE FUNCTION gregale_hooks.discard_failed() RETURNS bigint
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   n bigint;
@@ -164,10 +271,28 @@ END
 $$;
 REVOKE ALL ON FUNCTION gregale_hooks.discard_failed() FROM PUBLIC;
 
+-- discard_waiting deletes every change still waiting to publish, such as a
+-- backlog at the bound that will never publish, and clears the drop note.
+-- Recording resumes with the next change.
+CREATE OR REPLACE FUNCTION gregale_hooks.discard_waiting() RETURNS bigint
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  n bigint;
+BEGIN
+  DELETE FROM {{schema}}.gregale_change_events WHERE failed_at IS NULL;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  UPDATE {{schema}}.gregale_change_drops SET last_dropped_at = NULL WHERE singleton;
+  RETURN n;
+END
+$$;
+REVOKE ALL ON FUNCTION gregale_hooks.discard_waiting() FROM PUBLIC;
+
+-- gregale:upgrade-end
+
 -- The relay's claim and settlement run as the Data API login and RLS decides
 -- what they touch. They carry no @gregale:rpc marker, so the gateway never
 -- routes them, and they refuse callers without the relay's claim.
-CREATE FUNCTION {{schema}}.gregale_change_claim(relay text, max_events integer, lease_ms integer)
+CREATE OR REPLACE FUNCTION {{schema}}.gregale_change_claim(relay text, max_events integer, lease_ms integer)
 RETURNS SETOF {{schema}}.gregale_change_events
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
@@ -209,7 +334,7 @@ GRANT EXECUTE ON FUNCTION {{schema}}.gregale_change_claim(text, integer, integer
 
 -- settle deletes published events, marks rejected ones failed and returns the
 -- rest of the relay's claim, to wait retry_after_ms when it is positive.
-CREATE FUNCTION {{schema}}.gregale_change_settle(relay text, published bigint[], failed jsonb, retry_after_ms integer)
+CREATE OR REPLACE FUNCTION {{schema}}.gregale_change_settle(relay text, published bigint[], failed jsonb, retry_after_ms integer)
 RETURNS void LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
   IF coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'gregale_access', '') <> 'hooks' THEN

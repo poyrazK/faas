@@ -163,7 +163,7 @@ func TestGitHubInstallStatusIncludesProjectDeployBranches(t *testing.T) {
 	}
 }
 
-func TestGitHubAutomationSurfaceRejectsSessionCookie(t *testing.T) {
+func TestGitHubStoredWorkflowSurfaceRejectsSessionCookie(t *testing.T) {
 	gh := &githubConnectionFake{}
 	h, _, _, _, cookie := newGitHubConnectionTestServer(t, gh, []Repo{{FullName: "acme/api"}})
 	req := githubStatusRequest(http.MethodGet, "/v1/apps/myapp/github", cookie, "")

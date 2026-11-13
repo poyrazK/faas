@@ -92,11 +92,14 @@ Forwarded-address headers cannot authorize either.
 
 Before awaiting work, the adapter closes database readiness, cancels captured
 requests and invalidates the captured pool. It rereads the latest atomic snapshot
-even at the same revision, validates a fresh connection/schema, and drains old
-resources within a maximum 1.5-second application budget. Concurrent restore
-calls coalesce. Success reopens readiness; failure leaves it closed so Gregale
-can reject restoration and cold-boot the deployment. A later successful hook can
-recover. An empty notes table is valid; a missing schema is not.
+even at the same revision, builds a fresh lazy pool, and drains old resources
+within a maximum 1.5-second application budget. It runs no SQL: the first query
+connects and reports `database_unavailable` if the database is unreachable, so
+a scale-to-zero database never holds the wake (ADR-20261109180000). Concurrent
+restore calls coalesce. Success reopens admission; a failed snapshot reload or
+drain leaves it closed so Gregale can reject restoration and cold-boot the
+deployment. A later successful hook can recover. `/healthz` still checks the
+schema: an empty notes table is valid; a missing schema is not.
 
 The deadline includes reloads queued behind SIGHUP and ACK transport. A cancelled
 or timed-out attempt cannot later publish its candidate or initiate an applied

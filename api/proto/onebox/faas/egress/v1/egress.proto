@@ -78,7 +78,14 @@ service EgressTxService {
 // current request shape mirrors Vmmd.LogsRequest (intentionally
 // empty, room to grow without a wire version bump) so the
 // surface can stay stable across the next ADR-046 slice.
-message StreamBytesRequest {}
+message StreamBytesRequest {
+  // edge_frames asks for frames that carry app_id: bytes the gateway served
+  // for an app without an instance, such as response-cache hits and log drain
+  // deliveries (ADR-20261104132753). A client that leaves it false receives
+  // only instance frames; the gateway keeps edge frames for a client that
+  // asks, so an older meterd never sees a frame it cannot persist.
+  bool edge_frames = 1;
+}
 
 // BytesFrame is one (instance, minute, bytes) row. instance_id
 // is the compute_node-relative instances.id UUID
@@ -96,6 +103,9 @@ message BytesFrame {
   uint64 requests = 4;
   uint64 cold_boots = 5;
   string event_id = 6;
+  // app_id is set on an edge frame (ADR-20261104132753). instance_id then
+  // holds the app's edge usage ID, not an instances row.
+  string app_id = 7;
 }
 
 message AckBytesRequest { repeated string event_ids = 1; }

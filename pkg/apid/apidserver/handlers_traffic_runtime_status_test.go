@@ -130,3 +130,32 @@ func TestGetRuntimePolicyStatusTrafficObservationsRespectAppOwnership(t *testing
 		t.Fatalf("failed observation read = %d %s", w.Code, w.Body.String())
 	}
 }
+
+// adr: 20261108110000 — amendment 2026-11-09: the traffic status shows
+// whether gateways open sealed edge-rule header values, the fleet gate for
+// sealing them.
+func TestTrafficRuntimeStatusReportsEdgeHeaderSecrets(t *testing.T) {
+	now := time.Now().UTC()
+	ready := func(node string, opens bool) state.ServingGatewayTrafficRuntime {
+		return state.ServingGatewayTrafficRuntime{NodeName: node, Generation: 1, ReportedAt: now, DatabaseNow: now,
+			GatewayTrafficFeatures: state.GatewayTrafficFeatures{EdgeHeaderSecrets: opens}}
+	}
+	missing := ready("c", true)
+	missing.Generation = 0
+	for _, tc := range []struct {
+		name        string
+		rows        []state.ServingGatewayTrafficRuntime
+		state, mode string
+	}{
+		{"every gateway", []state.ServingGatewayTrafficRuntime{ready("a", true), ready("b", true)}, "observed", "enabled"},
+		{"an older gateway", []state.ServingGatewayTrafficRuntime{ready("a", true), ready("b", false)}, "mixed", "mixed"},
+		{"a missing report", []state.ServingGatewayTrafficRuntime{ready("a", true), missing}, "unverified", "unwired"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := apidserver.SummarizeTrafficRuntime(tc.rows).EdgeHeaderSecrets
+			if got == nil || got.State != tc.state || got.Mode != tc.mode {
+				t.Fatalf("edge_header_secrets = %+v, want %s/%s", got, tc.state, tc.mode)
+			}
+		})
+	}
+}

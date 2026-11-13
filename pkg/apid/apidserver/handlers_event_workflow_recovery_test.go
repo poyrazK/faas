@@ -20,7 +20,7 @@ func TestWorkflowRecoveryJobHTTP(t *testing.T) {
 		t.Fatalf("ordinary=%d %s", ordinary.Code, ordinary.Body.String())
 	}
 	req := api.EventRecoveryRequest{RequestID: uuid.NewString(), WorkflowRouting: &api.EventWorkflowRecoveryPlan{Name: "paid", PublishedVersion: 1, Source: "billing"}}
-	for i := 0; i < api.AutomationRecoveryBatchMaxRuns; i++ {
+	for i := 0; i < api.StoredWorkflowRecoveryBatchMaxRuns; i++ {
 		req.WorkflowRouting.Events = append(req.WorkflowRouting.Events, api.EventWorkflowRecoveryTarget{EventID: fmt.Sprintf("%02d%s", i, strings.Repeat("e", 230)), SubscriptionID: strings.Repeat("s", 240)})
 	}
 	data, _ := json.Marshal(req)

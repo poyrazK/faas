@@ -77,11 +77,11 @@ func waitConnectionCheck(ctx context.Context, client connectionCheckClient, chec
 		case <-ctx.Done():
 			return check, ctx.Err()
 		case <-ticker.C:
-			var err error
-			check, err = client.GetDataConnectionCheck(ctx, check.ConnectionID)
+			current, err := client.GetDataConnectionCheck(ctx, check.ConnectionID)
 			if err != nil {
 				return check, err
 			}
+			check = current
 		}
 	}
 }

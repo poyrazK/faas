@@ -27,7 +27,7 @@ func requestKind(r *http.Request, capture api.ProfileCapture) string {
 // mergeKind merges one kind of a ready capture across its processes.
 // Parsing happens here, outside vmmd and schedd, with the same bounds as
 // continuous profile queries.
-func mergeKind(ctx context.Context, app state.App, store state.ProfileCaptureStore, capture api.ProfileCapture, kind string) (*profile.Profile, *api.Problem) {
+func (s *Service) mergeKind(ctx context.Context, app state.App, store state.ProfileCaptureStore, capture api.ProfileCapture, kind string) (*profile.Profile, *api.Problem) {
 	if !slices.Contains(capture.Kinds, kind) {
 		return nil, api.ErrValidation("kind must be one of the capture's kinds")
 	}
@@ -38,7 +38,10 @@ func mergeKind(ctx context.Context, app state.App, store state.ProfileCaptureSto
 	if err != nil {
 		return nil, api.ErrCapacity("profile capture data is unavailable")
 	}
-	merged, _, err := profiling.MergeCapture(KindProfiles(blobs, kind), kind)
+	merged, busy, err := s.MergeBlobs(blobs, kind)
+	if busy {
+		return nil, errMergeBusy
+	}
 	if err != nil {
 		return nil, api.ErrCapacity("profile capture could not be merged")
 	}
@@ -47,7 +50,7 @@ func mergeKind(ctx context.Context, app state.App, store state.ProfileCaptureSto
 
 // KindView is one kind of a ready capture as a source-linked view.
 func (s *Service) KindView(ctx context.Context, acct state.Account, app state.App, store state.ProfileCaptureStore, capture api.ProfileCapture, kind string) (api.ProfileCaptureView, *api.Problem) {
-	merged, problem := mergeKind(ctx, app, store, capture, kind)
+	merged, problem := s.mergeKind(ctx, app, store, capture, kind)
 	if problem != nil {
 		return api.ProfileCaptureView{}, problem
 	}
@@ -116,7 +119,7 @@ func (s *Service) Download(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	kind := requestKind(r, capture)
-	merged, problem := mergeKind(r.Context(), app, store, capture, kind)
+	merged, problem := s.mergeKind(r.Context(), app, store, capture, kind)
 	if problem != nil {
 		api.WriteProblemForRequest(w, r, problem)
 		return

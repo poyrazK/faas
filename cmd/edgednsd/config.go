@@ -18,8 +18,12 @@ import (
 const defaultEdgeControlPort = "9109"
 
 type config struct {
-	names       []edgedns.Name
-	public      map[string]netip.Addr
+	names  []edgedns.Name
+	public map[string]netip.Addr
+	// private is each node's address on the private network, where its
+	// edge answers /readyz; from the manifest, never the registry
+	// (ADR-20261107180000).
+	private     map[string]string
 	tokenFile   string
 	dryRun      bool
 	interval    time.Duration
@@ -60,6 +64,11 @@ func (c watchConfig) enabled() bool { return c.domain != "" }
 //     (ADR-20261103163954 §1);
 //   - FAAS_EDGEDNS_NODE_ADDRESSES: each compute node's public address,
 //     "<node name>=<address>,...";
+//   - FAAS_EDGEDNS_NODE_PRIVATE_ADDRESSES: each compute node's private
+//     address or host name, "<node name>=<host>,...", where its edge's
+//     /readyz is probed. Every compute node can write the registry, so its
+//     target_url does not choose what the control plane probes
+//     (ADR-20261107180000); a node without an entry stays unready;
 //   - FAAS_EDGEDNS_CF_TOKEN_FILE: the Zone > DNS: Edit token;
 //   - FAAS_EDGEDNS_DRY_RUN: anything but "0" only logs the changes;
 //   - FAAS_EDGEDNS_INTERVAL, FAAS_EDGEDNS_EDGE_CONTROL_PORT and
@@ -71,6 +80,7 @@ func (c watchConfig) enabled() bool { return c.domain != "" }
 func configFromEnv(getenv func(string) string) (config, error) {
 	c := config{
 		public:      map[string]netip.Addr{},
+		private:     map[string]string{},
 		tokenFile:   strings.TrimSpace(getenv("FAAS_EDGEDNS_CF_TOKEN_FILE")),
 		dryRun:      strings.TrimSpace(getenv("FAAS_EDGEDNS_DRY_RUN")) != "0",
 		interval:    2 * time.Second,
@@ -102,6 +112,17 @@ func configFromEnv(getenv func(string) string) (config, error) {
 	}
 	if len(c.public) == 0 {
 		return config{}, errors.New("edgednsd: FAAS_EDGEDNS_NODE_ADDRESSES gives no node an address")
+	}
+	for _, entry := range splitList(getenv("FAAS_EDGEDNS_NODE_PRIVATE_ADDRESSES")) {
+		node, host, ok := strings.Cut(entry, "=")
+		host = strings.TrimSpace(host)
+		if !ok || node == "" || !validProbeHost(host) {
+			return config{}, fmt.Errorf("edgednsd: FAAS_EDGEDNS_NODE_PRIVATE_ADDRESSES entry %q is not <node>=<address or host name>", entry)
+		}
+		c.private[node] = host
+	}
+	if len(c.private) == 0 {
+		return config{}, errors.New("edgednsd: FAAS_EDGEDNS_NODE_PRIVATE_ADDRESSES gives no node a private address to probe")
 	}
 	if c.tokenFile == "" {
 		return config{}, errors.New("edgednsd: FAAS_EDGEDNS_CF_TOKEN_FILE is unset")
@@ -235,6 +256,28 @@ func parseName(entry string) (edgedns.Name, error) {
 		return edgedns.Name{}, fmt.Errorf("edgednsd: FAAS_EDGEDNS_NAMES entry %q: mode %q is not proxied or dns-only", entry, mode)
 	}
 	return name, nil
+}
+
+// validProbeHost reports whether host is an IP address or a DNS host name,
+// with no port, path or user info.
+func validProbeHost(host string) bool {
+	if _, err := netip.ParseAddr(host); err == nil {
+		return true
+	}
+	if host == "" || len(host) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func splitList(raw string) []string {

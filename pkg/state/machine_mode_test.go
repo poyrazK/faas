@@ -1,10 +1,9 @@
 // machine_mode_test.go — pins the M-2 mode helpers in pkg/state/machine.go
 // (issue #1186 / ADR-137 §Decision 1 + ADR-138 §Decision 4).
 //
-// These are the single source of truth for the meter-skip and
-// RAM-admission predicates. The values are referenced by
-// pkg/meter/sampler.go (commit 9 wires the inline mirror check to
-// IsMeteredSkippableMode) and pkg/sched/admission.go (commit 6).
+// These are the single source of truth for the RAM-admission
+// predicate referenced by pkg/sched/admission.go (commit 6). Every
+// mode bills at the meter (ADR-20261104145353).
 
 package state_test
 
@@ -13,23 +12,23 @@ import (
 	"testing"
 )
 
-// TestIsMeteredSkippableMode pins the meter-skip predicate.
-// Pre-M-2: only mode='mirror' is skipped (ADR-125). Post-M-2
-// (commit 4 + commit 9): the helper is the single source of truth;
-// the new modes (worker / service / job) are NOT skipped because
-// they bill at the standard mb_seconds rate (spec §4.7 unchanged).
+// TestIsMeteredSkippableMode pins the meter-skip predicate: only a
+// platform snapshot refresh is skipped (ADR-20261106214916). Mirror VMs
+// bill (ADR-20261104145353), and so do worker / service / job (spec §4.7).
 func TestIsMeteredSkippableMode(t *testing.T) {
 	tests := []struct {
 		mode string
 		want bool
 	}{
 		{"normal", false},
-		{"mirror", true},
+		{"mirror", false}, // ADR-20261104145353: mirrors bill
 		{"worker", false},
 		{"service", false},
 		{"job", false},
-		{"", false},      // empty defaults to non-skip
-		{"bogus", false}, // unknown mode is not skipped (fail-open at the meter layer; CHECK is the load-bearing defence)
+		{"fork", false},   // ADR-732: a fork bills like a live instance
+		{"refresh", true}, // ADR-20261106214916: the release caused it
+		{"", false},       // empty defaults to non-skip
+		{"bogus", false},  // unknown mode is not skipped (fail-open at the meter layer; CHECK is the load-bearing defence)
 	}
 	for _, tt := range tests {
 		t.Run(tt.mode, func(t *testing.T) {
@@ -92,5 +91,22 @@ func TestInstanceModeConstants(t *testing.T) {
 		if got[k] != v {
 			t.Errorf("InstanceMode %q: string value %q, want %q", k, got[k], v)
 		}
+	}
+}
+
+// TestNeverServes pins which modes every target loader, wake reuse and
+// replica count skips: a fork (ADR-732) and a platform snapshot refresh
+// (ADR-20261106214916).
+func TestNeverServes(t *testing.T) {
+	for mode, want := range map[string]bool{
+		"normal": false, "mirror": false, "worker": false, "service": false, "job": false, "": false,
+		"fork": true, "refresh": true,
+	} {
+		if got := state.NeverServes(mode); got != want {
+			t.Errorf("NeverServes(%q) = %v, want %v", mode, got, want)
+		}
+	}
+	if !state.IsRefresh(string(state.InstanceModeRefresh)) || state.IsRefresh(string(state.InstanceModeFork)) {
+		t.Error("IsRefresh must match exactly the refresh mode")
 	}
 }

@@ -11,7 +11,42 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"golang.org/x/time/rate"
+
+	"github.com/onebox-faas/faas/pkg/knownhosts"
 )
+
+// After a restart the gateway has seen no host route, so a flood of random
+// names that spent the new-host budget used to shed every real app's first
+// lookup too. A preloaded app host skips the spent budget; random names are
+// still shed.
+func TestPreloadedHostsSkipASpentNewHostBudget(t *testing.T) {
+	const real = "pulse.gregale.dev"
+	clock := &testClock{now: time.Unix(1_800_000_000, 0)}
+	router := newCountingHostRouter(map[string]App{
+		real: {ID: "app-1", AccountID: "acct-1", Slug: "pulse"},
+	})
+	b := NewPGBackend(router, nil, nil)
+	b.misses = newTestRouteMissGuard(3, clock)
+	known := knownhosts.New("gregale.dev")
+	known.Replace([]string{"pulse"}, nil)
+	b.PreloadKnownHosts(known)
+	ctx := context.Background()
+	shed := 0
+	for i := range 20 {
+		if _, _, err := b.LookupHostPolicy(ctx, fmt.Sprintf("r%d.gregale.dev", i)); errors.Is(err, errRouteLookupShed) {
+			shed++
+		}
+	}
+	if shed != 17 {
+		t.Fatalf("%d of 20 random names were shed, want 17 (budget 3)", shed)
+	}
+	if app, ok, err := b.LookupHostPolicy(ctx, real); !ok || err != nil || app.ID != "app-1" {
+		t.Fatalf("preloaded app host after the flood: app=%+v ok=%v err=%v", app, ok, err)
+	}
+	if _, _, err := b.LookupHostPolicy(ctx, "r99.gregale.dev"); !errors.Is(err, errRouteLookupShed) {
+		t.Fatalf("random name after the preload: err=%v, want shed", err)
+	}
+}
 
 // countingHostRouter routes the hosts in apps and counts every read. A host
 // in dynamic is resolved on every request, like a stage URL. gate, when set,

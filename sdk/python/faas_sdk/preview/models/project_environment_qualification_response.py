@@ -44,9 +44,9 @@ class ProjectEnvironmentQualificationResponse:
     """SHA-256 of canonical non-secret environment configuration; empty only for a legacy receipt that cannot
     qualify for promotion."""
     secret_revision_hashes: ProjectEnvironmentQualificationResponseSecretRevisionHashes
-    """Opaque per-workload fingerprints of secret keys, version metadata, and managed credential generations; no
-    secret values or value hashes are included. Empty only for a legacy receipt that cannot qualify for promotion.
-   """
+    """Opaque per-workload secret fingerprints and, for tracked shared-secret sets, the reserved project:secrets
+    identity. No secret values or value hashes are included. Empty only for a legacy receipt that cannot qualify for
+    promotion."""
     status: ProjectEnvironmentQualificationResponseStatus
     checks: list[ProjectEnvironmentQualificationCheck]
     created_at: datetime.datetime

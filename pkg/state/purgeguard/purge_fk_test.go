@@ -337,4 +337,12 @@ var accountPurgeExemptions = []exemption{
 	// managed_postgres_fence: the managed PostgreSQL service owns them.
 	{"managed_postgres_checkpoint_maintenance", "managed_postgres_databases", "purge refuses: managed_postgres_fence"},
 	{"managed_postgres_cutover_source_fences", "managed_postgres_databases", "purge refuses: managed_postgres_fence"},
+	// Append-only accounting evidence: its trigger refuses a delete while the
+	// account row exists, so the purge cannot remove it first. The key is
+	// deferred, and the rows cascade from the account's resource namespace
+	// after the account row is gone, before commit
+	// (pkg/managedpostgres TestUsageImportEvidenceAllowsFinalAccountErasure,
+	// TestAccountingReconciliationAuditReplayAndAccountErasure).
+	{"managed_postgres_usage_imports", "managed_postgres_databases", "deferred; cascades after the account row"},
+	{"managed_postgres_accounting_reconciliations", "managed_postgres_databases", "deferred; cascades after the account row"},
 }

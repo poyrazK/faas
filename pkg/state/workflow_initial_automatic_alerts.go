@@ -69,7 +69,7 @@ func initialRecoveryBlockTransition(r *api.WorkflowInitialRecoveryReview, reason
 		count := int64(d.ResumeCount)
 		payload.EvidenceKind, payload.RunID, payload.ResumeCount, payload.Repairable, payload.DiagnosisReason = "initial", d.RunID, &count, &d.Repairable, d.Reason
 		payload.EvidenceURL = base + "/initial-recovery-reviews/" + r.ID + "/evidence"
-		payload.CLICommand = fmt.Sprintf("gregale automations failure-recovery-evidence --app %s --review %s", r.App, r.ID)
+		payload.CLICommand = fmt.Sprintf("gregale workflow stored failure-recovery-evidence --app %s --review %s", r.App, r.ID)
 		if state == "blocked" && (reason == "evidence_unknown" || reason == "terminal_outcome_not_saved") {
 			payload.OperatorAction = "Inspect the exact initial recovery generation using the diagnosis link or CLI command; missing or conflicting proof cannot be forced."
 			if d.Repairable {

@@ -14,6 +14,12 @@ import (
 
 // DeploymentDependencyPin is captured by admission. It never follows a later
 // deployment, an environment fallback, or a changed Compose declaration.
+// Admission pins the dependency's newest release that is serving or still
+// on its way, never a failed, superseded or cancelled one: a rollback reuses
+// the older release's row, so the newest by revision after a rollback, or
+// after a failed deploy, is a release that will never serve again, and pinning
+// it failed every later deploy of the services waiting for it
+// (ADR-20261105104500).
 type DeploymentDependencyPin struct {
 	Service      string `json:"service"`
 	AppID        string `json:"app_id"`
@@ -149,7 +155,7 @@ func (m *MemStore) captureDeploymentDependenciesLocked(app App, candidate Deploy
 		var latest Deployment
 		for _, other := range m.deployments {
 			if other.AppID == target.ID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(candidate.Scope) &&
-				!other.EnvironmentWorkloadHeld() && other.Revision > latest.Revision {
+				!other.EnvironmentWorkloadHeld() && !other.Status.IsTerminal() && other.Revision > latest.Revision {
 				latest = other
 			}
 		}

@@ -26,7 +26,10 @@ func cpuAdmissionRequest(instance string) sched.Request {
 	}
 }
 
-func TestAdmit_CPUMillicoreBudgetEnforcedAndReleased(t *testing.T) {
+// The physical CPU budget is counted, never refused (ADR-20261109172421):
+// past it an admission still runs, and a release brings the node back
+// within it.
+func TestAdmit_CPUMillicoreBudgetCountedAndReleased(t *testing.T) {
 	t.Parallel()
 	ledger := sched.NewNodeLedger()
 	for i := 0; i < 4; i++ {
@@ -37,16 +40,15 @@ func TestAdmit_CPUMillicoreBudgetEnforcedAndReleased(t *testing.T) {
 	if got := ledger.UsedCPUMillicoresForNode("node-a"); got != 4000 {
 		t.Fatalf("reserved CPU = %d, want 4000", got)
 	}
-	if err := ledger.Admit(cpuAdmissionRequest("over")); err == nil {
-		t.Fatal("fifth 1000m instance on a 4000m node must be rejected")
-	}
-	if got := ledger.UsedCPUMillicoresForNode("node-a"); got != 4000 {
-		t.Fatalf("failed admit changed reserved CPU to %d, want 4000", got)
+	admitPastCPUBudget(t, ledger, cpuAdmissionRequest("over"), "fifth 1000m instance on a 4000m node")
+	if got := ledger.UsedCPUMillicoresForNode("node-a"); got != 5000 {
+		t.Fatalf("reserved CPU = %d, want 5000", got)
 	}
 
 	ledger.Release("fit-0")
-	if err := ledger.Admit(cpuAdmissionRequest("replacement")); err != nil {
-		t.Fatalf("replacement after release: %v", err)
+	ledger.Release("over")
+	if err := ledger.XCPUOverBudget(cpuAdmissionRequest("replacement")); err != nil {
+		t.Fatalf("replacement after release is past the budget: %v", err)
 	}
 }
 
@@ -63,14 +65,13 @@ func TestAdmit_CPUOvercommitRecoveryAccountsExistingWithoutAllowingGrowth(t *tes
 	if got := ledger.UsedCPUMillicoresForNode("node-a"); got != 5000 {
 		t.Fatalf("recovered reserved CPU = %d, want 5000", got)
 	}
-	if err := ledger.Admit(cpuAdmissionRequest("new-while-over")); err == nil {
-		t.Fatal("normal admission must remain blocked while recovered node is over budget")
-	}
+	admitPastCPUBudget(t, ledger, cpuAdmissionRequest("new-while-over"), "new admission while the recovered node is over budget")
 
 	ledger.Release("existing-0")
 	ledger.Release("existing-1")
-	if err := ledger.Admit(cpuAdmissionRequest("new-after-drain")); err != nil {
-		t.Fatalf("admission after node drains below budget: %v", err)
+	ledger.Release("new-while-over")
+	if err := ledger.XCPUOverBudget(cpuAdmissionRequest("new-after-drain")); err != nil {
+		t.Fatalf("admission after the node drains below budget is past it: %v", err)
 	}
 }
 
@@ -123,21 +124,18 @@ func TestAdmit_StartupCPUBoostCountsAgainstPhysicalBudget(t *testing.T) {
 	req.CPUStartupBoostMillicores = 1000
 	req.CPUBudgetMillicores = 750
 	req.CPUStartupBoostUntil = time.Now().Add(time.Second)
-	if err := ledger.Admit(req); err == nil {
-		t.Fatal("temporary startup quota must be included in physical CPU admission")
-	}
-	if got := ledger.UsedCPUMillicoresForNode("node-a"); got != 0 {
-		t.Fatalf("failed boosted admit reserved %d millicores, want 0", got)
+	admitPastCPUBudget(t, ledger, req, "temporary startup quota counts against the physical CPU budget")
+	if got := ledger.UsedCPUMillicoresForNode("node-a"); got != 1000 {
+		t.Fatalf("boosted admit reserved %d millicores, want the 1000 peak", got)
 	}
 }
 
+// The startup boost is one core on every plan, or the configured ceiling
+// when it is higher (ADR-20261109172421).
 func TestStartupCPUBoostQuotaMatchesVMMDProfile(t *testing.T) {
-	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
-		if got := sched.StartupCPUBoostQuota(plan, 250); got != api.DefaultAppCPUMillicores {
-			t.Errorf("startupCPUBoostQuota(%s, 250) = %d, want %d", plan, got, api.DefaultAppCPUMillicores)
-		}
-		if got := sched.StartupCPUBoostQuota(plan, 1000); got != 1000 {
-			t.Errorf("startupCPUBoostQuota(%s, 1000) = %d, want configured quota 1000", plan, got)
+	for configured, want := range map[int]int{250: api.DefaultAppCPUMillicores, 1000: 1000, 2000: 2000} {
+		if got := sched.StartupCPUBoostQuota(configured); got != want {
+			t.Errorf("startupCPUBoostQuota(%d) = %d, want %d", configured, got, want)
 		}
 	}
 }

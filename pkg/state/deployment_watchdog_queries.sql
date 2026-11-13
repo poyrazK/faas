@@ -24,6 +24,13 @@ WITH candidate AS (
         AND NOT (d.stage_state ? 'build_dependency_gate')
         AND NOT (d.stage_state ? 'hosting_verification')
         AND NOT EXISTS (SELECT 1 FROM deployment_mcp_task_holds h WHERE h.deployment_id = d.id)
+        -- ADR-20261020085706 amendments 12-13: a release that may be waiting
+        -- for approval before its release command is in flight by design;
+        -- imaged closes it at the policy's timeout. Left out here, it cannot
+        -- fill the batch and hide stuck deployments behind it.
+        AND NOT (d.status = 'snapshotting' AND cardinality(d.release_command) > 0
+            AND EXISTS (SELECT 1 FROM app_release_approval_policies p WHERE p.app_id = d.app_id)
+            AND NOT EXISTS (SELECT 1 FROM app_tasks t WHERE t.deployment_id = d.id AND t.kind = 'release'))
         AND (sqlc.arg(only_id)::text = '' OR d.id::text = sqlc.arg(only_id)::text)
 ), judged AS (
     SELECT c.id, c.app_id, c.status,

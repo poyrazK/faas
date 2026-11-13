@@ -77,6 +77,35 @@ func QualificationAPIEnvSHA256(entries []APIEnvEntry) (string, error) {
 	return qualificationAPIEnvSHA256(env)
 }
 
+// qualificationRestoreAPIEnv is the API env a restored qualification guest
+// actually holds: the restore request's reviewed env under the instance
+// identity of the capture it was restored from. A snapshot restore cannot
+// change a running process's environment, and the platform identity is the
+// only per-instance entry of a qualification spec (ADR 20261023093000).
+func qualificationRestoreAPIEnv(entries []APIEnvEntry, captureInstanceID string) ([]APIEnvEntry, error) {
+	if parsed, err := uuid.Parse(captureInstanceID); err != nil || parsed == uuid.Nil || parsed.String() != captureInstanceID {
+		return nil, state.ErrInvalidArgument
+	}
+	restored := append([]APIEnvEntry(nil), entries...)
+	for i := range restored {
+		if restored[i].Key == api.PlatformInstanceIDEnv {
+			restored[i].Value = captureInstanceID
+		}
+	}
+	return restored, nil
+}
+
+// QualificationRestoreAPIEnvSHA256 is the configuration digest a restored
+// qualification guest acknowledges: the restore request's env with the
+// capture's platform instance identity.
+func QualificationRestoreAPIEnvSHA256(entries []APIEnvEntry, captureInstanceID string) (string, error) {
+	restored, err := qualificationRestoreAPIEnv(entries, captureInstanceID)
+	if err != nil {
+		return "", err
+	}
+	return QualificationAPIEnvSHA256(restored)
+}
+
 func qualificationSecretKeysMAC(key []byte, keys []string) (string, error) {
 	if len(key) != sha256.Size {
 		return "", state.ErrInvalidArgument
@@ -116,66 +145,28 @@ func qualificationSidecarConfigMAC(key []byte, apiEnv, sidecarEnv map[string]str
 	return hex.EncodeToString(mac.Sum(nil)), nil
 }
 
+// qualificationRestoreReceiptControl is the one-time receipt control for a
+// native qualification restore. The restored layer must stay byte-identical
+// to its capture, so the control rides the peer-checked resume hook instead of
+// the per-wake env file (ADR 20261023093000).
+type qualificationRestoreReceiptControl struct {
+	token  string
+	macKey string // hex; never logged
+}
+
+func (c qualificationRestoreReceiptControl) valid() bool {
+	parsed, err := uuid.Parse(c.token)
+	key, keyErr := hex.DecodeString(c.macKey)
+	defer clear(key)
+	return err == nil && parsed != uuid.Nil && keyErr == nil && len(key) == sha256.Size
+}
+
 func (m *Manager) prepareQualificationConfigReceipt(req WakeRequest) (WakeRequest, *qualificationConfigReceiptWaiter, error) {
-	digest, err := QualificationAPIEnvSHA256(req.APIEnvEntries)
+	token, secretKeysKey, waiter, err := m.registerQualificationWakeConfigReceipt(req)
 	if err != nil {
 		return WakeRequest{}, nil, err
-	}
-	env := make(map[string]string, len(req.APIEnvEntries))
-	for _, entry := range req.APIEnvEntries {
-		env[entry.Key] = entry.Value
-	}
-	token := uuid.NewString()
-	secretKeysKey := make([]byte, sha256.Size)
-	if _, err := rand.Read(secretKeysKey); err != nil {
-		return WakeRequest{}, nil, fmt.Errorf("generate qualification receipt key: %w", err)
 	}
 	defer clear(secretKeysKey)
-	secretKeys := make([]string, 0, len(req.SealedEnvEntries))
-	seen := make(map[string]struct{}, len(req.SealedEnvEntries))
-	for _, entry := range req.SealedEnvEntries {
-		if api.ValidateEnvKey(entry.Key) != nil || strings.HasPrefix(entry.Key, qualificationConfigReceiptKeyPrefix) {
-			return WakeRequest{}, nil, state.ErrInvalidArgument
-		}
-		if _, exists := seen[entry.Key]; exists {
-			return WakeRequest{}, nil, state.ErrInvalidArgument
-		}
-		seen[entry.Key] = struct{}{}
-		secretKeys = append(secretKeys, entry.Key)
-	}
-	secretKeysMAC, err := qualificationSecretKeysMAC(secretKeysKey, secretKeys)
-	if err != nil {
-		return WakeRequest{}, nil, err
-	}
-	expected := map[string]qualificationConfigReceiptExpectation{
-		WorkloadNameMain: {apiEnvSHA256: digest, secretsRead: len(req.SealedEnvEntries) > 0, secretKeysMAC: secretKeysMAC},
-	}
-	for _, sidecar := range req.Sidecars {
-		if !validQualificationWorkloadName(sidecar.Name) || sidecar.Name == WorkloadNameMain {
-			return WakeRequest{}, nil, state.ErrInvalidArgument
-		}
-		if len(sidecar.SealedEnv)+len(sidecar.SealedSecrets) > 0 && len(sidecar.preparedEnvJSON) == 0 {
-			return WakeRequest{}, nil, fmt.Errorf("sidecar %q configuration is not prepared: %w", sidecar.Name, state.ErrInvalidArgument)
-		}
-		if _, exists := expected[sidecar.Name]; exists {
-			return WakeRequest{}, nil, state.ErrInvalidArgument
-		}
-		sidecarEnv := map[string]string{}
-		if len(sidecar.preparedEnvJSON) > 0 {
-			if err := json.Unmarshal(sidecar.preparedEnvJSON, &sidecarEnv); err != nil || sidecarEnv == nil {
-				return WakeRequest{}, nil, fmt.Errorf("sidecar %q configuration is not prepared: %w", sidecar.Name, errors.Join(err, state.ErrInvalidArgument))
-			}
-		}
-		configMAC, err := qualificationSidecarConfigMAC(secretKeysKey, env, sidecarEnv)
-		if err != nil {
-			return WakeRequest{}, nil, err
-		}
-		expected[sidecar.Name] = qualificationConfigReceiptExpectation{configMAC: configMAC}
-	}
-	waiter, err := m.registerQualificationConfigReceipt(req.Instance, token, expected)
-	if err != nil {
-		return WakeRequest{}, nil, err
-	}
 	// The one-time random control key shares the existing per-wake env file so
 	// its presence proves guest-init parsed the staged projection. Guest init
 	// removes it before constructing the customer process environment. The
@@ -187,6 +178,101 @@ func (m *Manager) prepareQualificationConfigReceipt(req WakeRequest) (WakeReques
 		Key: qualificationConfigReceiptMACKey, Value: hex.EncodeToString(secretKeysKey),
 	})
 	return req, waiter, nil
+}
+
+// prepareQualificationRestoreConfigReceipt registers a fresh receipt for a
+// restored main workload without staging any file. The captured guest reports
+// the configuration it loaded at boot; the host expects this request's frozen
+// projection under the capture's instance identity, so a capture made from
+// different inputs cannot satisfy it.
+func (m *Manager) prepareQualificationRestoreConfigReceipt(req WakeRequest, captureInstanceID string) (WakeRequest, *qualificationConfigReceiptWaiter, error) {
+	if len(req.Sidecars) != 0 {
+		return WakeRequest{}, nil, state.ErrInvalidArgument
+	}
+	expected := req
+	var err error
+	if expected.APIEnvEntries, err = qualificationRestoreAPIEnv(req.APIEnvEntries, captureInstanceID); err != nil {
+		return WakeRequest{}, nil, err
+	}
+	token, secretKeysKey, waiter, err := m.registerQualificationWakeConfigReceipt(expected)
+	if err != nil {
+		return WakeRequest{}, nil, err
+	}
+	defer clear(secretKeysKey)
+	req.qualificationRestoreReceipt = qualificationRestoreReceiptControl{token: token, macKey: hex.EncodeToString(secretKeysKey)}
+	req.qualificationRestoreReceiptWaiter = waiter
+	return req, waiter, nil
+}
+
+// registerQualificationWakeConfigReceipt returns the token and the raw MAC key;
+// the caller clears the key once it has encoded it for the guest.
+func (m *Manager) registerQualificationWakeConfigReceipt(req WakeRequest) (string, []byte, *qualificationConfigReceiptWaiter, error) {
+	digest, err := QualificationAPIEnvSHA256(req.APIEnvEntries)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	env := make(map[string]string, len(req.APIEnvEntries))
+	for _, entry := range req.APIEnvEntries {
+		env[entry.Key] = entry.Value
+	}
+	token := uuid.NewString()
+	secretKeysKey := make([]byte, sha256.Size)
+	if _, err := rand.Read(secretKeysKey); err != nil {
+		return "", nil, nil, fmt.Errorf("generate qualification receipt key: %w", err)
+	}
+	registered := false
+	defer func() {
+		if !registered {
+			clear(secretKeysKey)
+		}
+	}()
+	secretKeys := make([]string, 0, len(req.SealedEnvEntries))
+	seen := make(map[string]struct{}, len(req.SealedEnvEntries))
+	for _, entry := range req.SealedEnvEntries {
+		if api.ValidateEnvKey(entry.Key) != nil || strings.HasPrefix(entry.Key, qualificationConfigReceiptKeyPrefix) {
+			return "", nil, nil, state.ErrInvalidArgument
+		}
+		if _, exists := seen[entry.Key]; exists {
+			return "", nil, nil, state.ErrInvalidArgument
+		}
+		seen[entry.Key] = struct{}{}
+		secretKeys = append(secretKeys, entry.Key)
+	}
+	secretKeysMAC, err := qualificationSecretKeysMAC(secretKeysKey, secretKeys)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	expected := map[string]qualificationConfigReceiptExpectation{
+		WorkloadNameMain: {apiEnvSHA256: digest, secretsRead: len(req.SealedEnvEntries) > 0, secretKeysMAC: secretKeysMAC},
+	}
+	for _, sidecar := range req.Sidecars {
+		if !validQualificationWorkloadName(sidecar.Name) || sidecar.Name == WorkloadNameMain {
+			return "", nil, nil, state.ErrInvalidArgument
+		}
+		if len(sidecar.SealedEnv)+len(sidecar.SealedSecrets) > 0 && len(sidecar.preparedEnvJSON) == 0 {
+			return "", nil, nil, fmt.Errorf("sidecar %q configuration is not prepared: %w", sidecar.Name, state.ErrInvalidArgument)
+		}
+		if _, exists := expected[sidecar.Name]; exists {
+			return "", nil, nil, state.ErrInvalidArgument
+		}
+		sidecarEnv := map[string]string{}
+		if len(sidecar.preparedEnvJSON) > 0 {
+			if err := json.Unmarshal(sidecar.preparedEnvJSON, &sidecarEnv); err != nil || sidecarEnv == nil {
+				return "", nil, nil, fmt.Errorf("sidecar %q configuration is not prepared: %w", sidecar.Name, errors.Join(err, state.ErrInvalidArgument))
+			}
+		}
+		configMAC, err := qualificationSidecarConfigMAC(secretKeysKey, env, sidecarEnv)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		expected[sidecar.Name] = qualificationConfigReceiptExpectation{configMAC: configMAC}
+	}
+	waiter, err := m.registerQualificationConfigReceipt(req.Instance, token, expected)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	registered = true
+	return token, secretKeysKey, waiter, nil
 }
 
 // prepareQualificationJobConfigReceipt stages an attempt-bound receipt control
@@ -319,6 +405,15 @@ func (m *Manager) MarkEnvironmentQualificationConfigApplied(instance string, rec
 }
 
 func (m *Manager) waitForQualificationConfigReceipt(ctx context.Context, instance string, waiter *qualificationConfigReceiptWaiter) error {
+	return waiter.wait(ctx, instance)
+}
+
+// wait is usable without the Manager: a native qualification restore must
+// consume its receipt before its private guest channels close.
+func (waiter *qualificationConfigReceiptWaiter) wait(ctx context.Context, instance string) error {
+	if waiter == nil {
+		return fmt.Errorf("qualification guest configuration receipt was not registered for %s: %w", instance, state.ErrConflict)
+	}
 	ctx, cancel := context.WithTimeout(ctx, qualificationConfigReceiptWait)
 	defer cancel()
 	select {

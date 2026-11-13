@@ -37,6 +37,9 @@ const (
 
 // realtimeJourney is the state TestRealtime's steps share.
 type realtimeJourney struct {
+	// owner is TestRealtime's own t. Sockets outlive the step that opens
+	// them, so their cleanup belongs to it, not to the step's subtest.
+	owner         *testing.T
 	tg            *target
 	key           string // API key for the calls the CLI has no command for
 	slug, base    string
@@ -66,7 +69,7 @@ type realtimeJourney struct {
 func TestRealtime(t *testing.T) {
 	tg := needs(t, tierFull, true)
 	t.Parallel()
-	j := &realtimeJourney{tg: tg, slug: tg.app(t, "realtime")}
+	j := &realtimeJourney{owner: t, tg: tg, slug: tg.app(t, "realtime")}
 	j.key = tg.scopedKey(t, "realtime")
 	t.Cleanup(func() { j.cleanup(t) })
 	s := newStory(t)
@@ -456,7 +459,9 @@ func (j *realtimeJourney) dialToken(t *testing.T, protocol, token string) *realt
 	})
 	client := &realtimeClient{conn: conn, wake: make(chan struct{}, 1)}
 	go client.read()
-	t.Cleanup(func() { _ = conn.Close() })
+	// The step's t ends as soon as the step does; closing the socket then
+	// dropped v1 before connection_listed could see it.
+	j.owner.Cleanup(func() { _ = conn.Close() })
 	return client
 }
 

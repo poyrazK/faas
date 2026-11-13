@@ -117,3 +117,11 @@ func TestUnconfiguredPipelineRoutesFailClosed(t *testing.T) {
 		t.Fatalf("closed route returned %d", response.Code)
 	}
 }
+
+func TestCheckBusyReturnsActionableConflict(t *testing.T) {
+	response := httptest.NewRecorder()
+	WriteProblem(response, datapipeline.ErrCheckBusy)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "data_connection_check_busy") {
+		t.Fatalf("busy check did not return an actionable conflict: %d %s", response.Code, response.Body.String())
+	}
+}

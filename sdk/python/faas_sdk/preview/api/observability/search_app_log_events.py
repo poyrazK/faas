@@ -125,7 +125,7 @@ def sync_detailed(
     """Search an app's log events.
 
      Internal preview, enabled by
-    `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 503 `log_search_unavailable`.
+    `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 403 `log_search_unavailable`.
     Requires apps:read or admin.
 
     Returns one newest-first page of the app's log ledger. Filters
@@ -206,7 +206,7 @@ def sync(
     """Search an app's log events.
 
      Internal preview, enabled by
-    `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 503 `log_search_unavailable`.
+    `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 403 `log_search_unavailable`.
     Requires apps:read or admin.
 
     Returns one newest-first page of the app's log ledger. Filters
@@ -282,7 +282,7 @@ async def asyncio_detailed(
     """Search an app's log events.
 
      Internal preview, enabled by
-    `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 503 `log_search_unavailable`.
+    `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 403 `log_search_unavailable`.
     Requires apps:read or admin.
 
     Returns one newest-first page of the app's log ledger. Filters
@@ -361,7 +361,7 @@ async def asyncio(
     """Search an app's log events.
 
      Internal preview, enabled by
-    `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 503 `log_search_unavailable`.
+    `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 403 `log_search_unavailable`.
     Requires apps:read or admin.
 
     Returns one newest-first page of the app's log ledger. Filters

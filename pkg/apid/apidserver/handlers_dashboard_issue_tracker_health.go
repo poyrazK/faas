@@ -58,7 +58,7 @@ func (s *server) renderDashboardTrackerHealth(w http.ResponseWriter, r *http.Req
 	// #nosec G124 -- configured production domains use Secure; empty domain supports local HTTP development.
 	http.SetCookie(w, &http.Cookie{Name: dashboardIssueCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
 	view := dashboard.NewIssueTrackerSyncHealthView(app.Slug, r.PathValue("issue_id"), row.Policy.LinkID, row.Baseline.Provider, token, row.Policy, health)
-	view.CanManage = app.AccountID == acct.ID
+	view.CanManage = s.dashboardCanManageTrackerNotifications(r, acct, app)
 	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), dashboard.Page{Title: "Tracker sync health", Body: "issue_tracker_sync_health", Account: dashboardAccountView(acct, 0), Data: view}); err != nil {
 		renderProblem(w, s.log, err)
 	}

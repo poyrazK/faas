@@ -66,7 +66,7 @@ func (s *server) getDomainStatus(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, conditions.Domain(domainResponse(d), time.Now()))
+	writeJSON(w, http.StatusOK, conditions.Domain(s.domainResponseWithDefault(r.Context(), d), time.Now()))
 }
 
 // getCronStatus is GET /v1/crons/{id}/status: the cron's conditions from its

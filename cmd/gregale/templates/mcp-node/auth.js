@@ -1,5 +1,50 @@
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { createLocalJWKSet, createRemoteJWKSet, customFetch, jwtVerify } from 'jose';
 import { createPromptPolicy, createResourcePolicy, createToolPolicy, validateScopes } from './tool-policy.js';
+
+const MAX_JWKS_BYTES = 1 << 20;
+
+async function readJWKSet(response) {
+  if (!response.body) throw new Error('Empty JWKS response');
+  const reader = response.body.getReader();
+  const chunks = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_JWKS_BYTES) throw new Error('JWKS response is too large');
+      chunks.push(value);
+    }
+  } catch (error) {
+    void reader.cancel().catch(() => {});
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+  return JSON.parse(Buffer.concat(chunks, size).toString('utf8'));
+}
+
+function createJWKResolver(url) {
+  let retryAt = 0;
+  return createRemoteJWKSet(new URL(url), {
+    timeoutDuration: 5000,
+    [customFetch]: async (...args) => {
+      if (performance.now() < retryAt) throw new Error('JWKS refresh is cooling down');
+      try {
+        const response = await fetch(...args);
+        if (response.status !== 200) throw new Error('JWKS refresh failed');
+        const jwks = await readJWKSet(response);
+        createLocalJWKSet(jwks); // Validate the payload before considering the fetch successful.
+        return new Response(JSON.stringify(jwks), { status: 200 });
+      } catch (error) {
+        // jose coalesces concurrent fetches; failed fetches also need a cooldown.
+        retryAt = performance.now() + 30_000;
+        throw error;
+      }
+    },
+  });
+}
 
 // Only call this with authInfo created by the verified bearer-token middleware.
 // It intentionally omits the token and all raw JWT claims from handler-facing identity.
@@ -69,7 +114,7 @@ export function createAuth(config, keyResolver) {
   validateScopes(auth.scopes);
   if (!auth.scopes.length) throw new Error('Set nonempty OAuth scopes');
   const metadataURL = new URL(`/.well-known/oauth-protected-resource${config.endpoint}`, auth.resource).href;
-  const resolver = keyResolver ?? createRemoteJWKSet(new URL(auth.jwks_url), { timeoutDuration: 5000 });
+  const resolver = keyResolver ?? createJWKResolver(auth.jwks_url);
   function reject(res, status, error, scopes = auth.scopes) {
     const challenge = `Bearer resource_metadata="${metadataURL}", scope="${scopes.join(' ')}"${error ? `, error="${error}"` : ''}`;
     res.setHeader('WWW-Authenticate', challenge);

@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.custom_metric_response_kind import CustomMetricResponseKind, check_custom_metric_response_kind
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.custom_metric_series_value import CustomMetricSeriesValue
+
 
 T = TypeVar("T", bound="CustomMetricResponse")
 
@@ -31,6 +35,9 @@ class CustomMetricResponse:
     side so the API and the scheduler cannot disagree about which rows count."""
     kind: CustomMetricResponseKind | Unset = UNSET
     """gauge for pushed values (a scaling signal); counter for OTLP cumulative sums, which never drive scaling."""
+    series: list[CustomMetricSeriesValue] | Unset = UNSET
+    """A labelled metric's series. value is then their aggregate: the sum for counters, the maximum of fresh series
+    for gauges. Absent for an unlabelled metric."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,6 +53,13 @@ class CustomMetricResponse:
         if not isinstance(self.kind, Unset):
             kind = self.kind
 
+        series: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.series, Unset):
+            series = []
+            for series_item_data in self.series:
+                series_item = series_item_data.to_dict()
+                series.append(series_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -58,11 +72,15 @@ class CustomMetricResponse:
         )
         if kind is not UNSET:
             field_dict["kind"] = kind
+        if series is not UNSET:
+            field_dict["series"] = series
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.custom_metric_series_value import CustomMetricSeriesValue
+
         d = dict(src_dict)
         name = d.pop("name")
 
@@ -79,12 +97,22 @@ class CustomMetricResponse:
         else:
             kind = check_custom_metric_response_kind(_kind)
 
+        _series = d.pop("series", UNSET)
+        series: list[CustomMetricSeriesValue] | Unset = UNSET
+        if _series is not UNSET:
+            series = []
+            for series_item_data in _series:
+                series_item = CustomMetricSeriesValue.from_dict(series_item_data)
+
+                series.append(series_item)
+
         custom_metric_response = cls(
             name=name,
             value=value,
             observed_at=observed_at,
             stale=stale,
             kind=kind,
+            series=series,
         )
 
         custom_metric_response.additional_properties = d

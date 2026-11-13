@@ -1,0 +1,14 @@
+[
+  {
+    "log": "python_round3_repros.log",
+    "exit_code": 1
+  },
+  {
+    "log": "node_round3_repros.log",
+    "exit_code": 1
+  },
+  {
+    "log": "go_starter_round3_repros.log",
+    "exit_code": 1
+  }
+]

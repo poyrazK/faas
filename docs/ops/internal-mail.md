@@ -3134,6 +3134,13 @@ failed save is retried on the next sweep. An organization subject has no account
 row and gets no email yet. Maild re-checks the account at submission and
 cancels the email if the account is no longer active or is being deleted.
 
+The same gate sends the egress hold email
+([ADR-20261110160000](../adr/20261110160000-managed-postgres-egress-shares-plan-allowance.md)):
+threshold `egress_held`, recorded the first time an enforced sweep holds a
+subject because its apps and databases sent the shared egress allowance, and
+mailed on its own once per month, never as one of the compute thresholds above.
+Apply `20261111160000418_managed_postgres_cap_events_egress_held.sql` first.
+
 ## Managed PostgreSQL restore slot notices
 
 `FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_RESTORE_SLOT_OUTBOX_ENABLED=0`

@@ -109,16 +109,10 @@ func TestPg_CoveragePasswordOAuthIdempotency(t *testing.T) {
 	if err := s.UpsertOAuthLink(ctx, account.ID, "google", "subj", account.Email, true); err != nil {
 		t.Fatal(err)
 	}
-	// MemStore detects cross-account OAuth takeover on UpsertOAuthLink;
-	// PgStore silently drops the conflicting write (the WHERE clause on
-	// the ON CONFLICT branch filters out non-matching account_id, so
-	// the affected-row count is 0 and no error surfaces). Both are
-	// safe — the existing row keeps its original binding. Document the
-	// divergence here; anti-takeover enforcement lives in the OAuth
-	// callback's pre-flight OAuthLinkByProviderSubject lookup, not the
-	// upsert.
-	if err := s.UpsertOAuthLink(ctx, uuid.NewString(), "google", "subj", "other@example.com", true); err != nil {
-		t.Fatalf("oauth takeover on PgStore = %v (want nil — PgStore silently keeps the original binding)", err)
+	// Both stores refuse a cross-account OAuth takeover with ErrConflict and
+	// keep the original binding (#6705).
+	if err := s.UpsertOAuthLink(ctx, uuid.NewString(), "google", "subj", "other@example.com", true); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("oauth takeover on PgStore = %v, want ErrConflict", err)
 	}
 }
 

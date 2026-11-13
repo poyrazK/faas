@@ -84,7 +84,7 @@ func TestSlackClientThreadsSafeMessagesAndClassifiesFailures(t *testing.T) {
 			})})
 			start := time.Now()
 			result := client.Send(t.Context(), state.IssueSlackClaim{ID: "delivery-id", NotificationID: "notice", ChannelID: "C0123456789", AppSlug: "app", IncidentID: "incident", Kind: "reminder", Reason: "<@everyone>", Attempt: 1, ThreadTS: tc.thread}, "xoxb-fake-token", "https://gregale.example")
-			if result.Status != tc.status || result.Error != tc.reason || result.ResetThread != tc.reset || calls != 1 {
+			if result.Status != tc.status || result.Error != tc.reason || result.ResetThread != tc.reset || !result.Attempted || calls != 1 {
 				t.Fatal(result, calls)
 			}
 			if tc.after == "120" && result.RetryAt.Before(start.Add(119*time.Second)) {
@@ -124,12 +124,29 @@ func TestSlackRetryBudgetTokenAndOriginValidation(t *testing.T) {
 		calls++
 		return nil, errors.New("secret must not be persisted")
 	})})
-	if r := client.Send(t.Context(), c, "bad-token", "https://gregale.example"); r.Error != "token_unavailable" || calls != 0 {
+	if r := client.Send(t.Context(), c, "bad-token", "https://gregale.example"); r.Error != "token_unavailable" || r.Attempted || calls != 0 {
 		t.Fatal(r, calls)
 	}
 	c.Attempt = 1
-	if r := client.Send(t.Context(), c, "xoxb-fake-token", "https://gregale.example"); r.Error != "transport_error" || r.Status != "failed" {
+	if r := client.Send(t.Context(), c, "xoxb-fake-token", "https://gregale.example"); r.Error != "transport_error" || r.Status != "failed" || !r.Attempted {
 		t.Fatal(r)
+	}
+}
+
+type selectiveReadyStore struct{ *fakeStore }
+
+func (s *selectiveReadyStore) IssueSlackDeliveryReady(_ context.Context, c state.IssueSlackClaim) (bool, error) {
+	if c.ID == "blocked" {
+		return false, errors.New("preflight failed")
+	}
+	return false, nil
+}
+
+func TestSlackBatchContinuesAfterOnePreflightFailure(t *testing.T) {
+	s := &selectiveReadyStore{&fakeStore{claims: []state.IssueSlackClaim{{ID: "blocked", Status: "in_flight"}, {ID: "healthy", Status: "in_flight"}}}}
+	w := Worker{Store: s, OpenToken: func([]byte) (string, error) { return "xoxb-fake-token", nil }}
+	if err := w.Batch(t.Context()); err == nil || s.calls != 3 || len(s.claims) != 0 || s.result.Status != "canceled" {
+		t.Fatalf("err=%v calls=%d remaining=%d result=%+v", err, s.calls, len(s.claims), s.result)
 	}
 }
 
@@ -138,6 +155,9 @@ type fakeStore struct {
 	claims    []state.IssueSlackClaim
 	calls     int
 	ready     bool
+	readyErr  error
+	begins    int
+	beginErr  error
 	result    state.IssueSlackResult
 	finishErr error
 }
@@ -152,7 +172,11 @@ func (s *fakeStore) ClaimIssueSlackDelivery(context.Context) (state.IssueSlackCl
 	return c, true, nil
 }
 func (s *fakeStore) IssueSlackDeliveryReady(context.Context, state.IssueSlackClaim) (bool, error) {
-	return s.ready, nil
+	return s.ready, s.readyErr
+}
+func (s *fakeStore) BeginIssueSlackAttempt(context.Context, state.IssueSlackClaim) error {
+	s.begins++
+	return s.beginErr
 }
 func (s *fakeStore) FinishIssueSlackDelivery(_ context.Context, _ state.IssueSlackClaim, r state.IssueSlackResult) error {
 	s.result = r
@@ -181,5 +205,19 @@ func TestSlackWorkerBoundsCancellationAndEligibility(t *testing.T) {
 	w = Worker{Store: s, OpenToken: func([]byte) (string, error) { return "", errors.New("secret decryption failure") }}
 	if ok, err := w.Step(t.Context()); err != nil || !ok || s.result.Error != "token_unavailable" {
 		t.Fatal(ok, err, s.result)
+	}
+	if s.result.Status != "failed" || !s.result.RetryAt.After(time.Now()) || s.begins != 0 {
+		t.Fatalf("key failure must remain retryable without spending an attempt: %+v", s.result)
+	}
+	want := errors.New("database unavailable")
+	s = &fakeStore{claims: []state.IssueSlackClaim{{Status: "in_flight"}}, readyErr: want}
+	w = Worker{Store: s, OpenToken: func([]byte) (string, error) { return "xoxb-fake-token", nil }}
+	if ok, err := w.Step(t.Context()); !ok || !errors.Is(err, want) || s.result.Status != "failed" || s.begins != 0 {
+		t.Fatalf("readiness failure did not release the claim for retry: ok=%v err=%v result=%+v", ok, err, s.result)
+	}
+	s = &fakeStore{claims: []state.IssueSlackClaim{{Status: "in_flight"}}, ready: true, beginErr: state.ErrIssuePolicyChanged}
+	w = Worker{Store: s, OpenToken: func([]byte) (string, error) { return "xoxb-fake-token", nil }}
+	if ok, err := w.Step(t.Context()); !ok || err != nil || s.result.Status != "canceled" || s.result.Attempted {
+		t.Fatalf("revoked policy dispatched: ok=%v err=%v result=%+v", ok, err, s.result)
 	}
 }

@@ -37,6 +37,10 @@ const (
 	Delivery Domain = "delivery"
 	Control  Domain = "control"
 	Account  Domain = "account"
+	// Neon holds the per-project Neon API keys (ADR-20261112160000 §3).
+	// neond seals and opens them on the control plane; apid, which asks
+	// neond to call Neon, never holds the identity.
+	Neon Domain = "neon"
 
 	// Dedicated identities that predate the registry (ADR-1737, ADR
 	// 20261016151947, ADR-1591). They are listed so every sealed column has
@@ -140,13 +144,15 @@ var registry = []Spec{
 		cols("github_installations", "sealed_install_token"),
 		cols("github_webhook_secrets", "secret_sealed"),
 	)},
-	// gatewayd-internal on compute opens basic-auth credentials and log
-	// drain headers. gatewayd-public's DNS-provider token is not stored in
-	// these columns, so it is not a reader.
+	// gatewayd-internal on compute opens basic-auth credentials, log drain
+	// headers and sealed edge-rule request header values
+	// (ADR-20261108110000). gatewayd-public's DNS-provider token is not
+	// stored in these columns, so it is not a reader.
 	{Domain: Edge, Readers: []string{"gatewayd-internal"}, Roles: computeOnly, Wired: true, Columns: join(
 		cols("apps", "public_auth_basic"),
 		cols("app_log_drains", "auth_header_sealed"),
 		cols("application_standard_log_destinations", "auth_header_sealed"),
+		cols("edge_rule_header_secrets", "ciphertext"),
 	)},
 	// The apps domains' certificate key (ADR-20261103163954 §3). edgednsd
 	// seals it to this domain alone, never the fleet identity: the table is
@@ -160,6 +166,12 @@ var registry = []Spec{
 		cols("notification_channels", "target_sealed"),
 		cols("mcp_readiness_pagerduty_policies", "integration_key_sealed"),
 		cols("mcp_readiness_fallback_policies", "integration_key_sealed", "webhook_secret_sealed"),
+	)},
+	// Per-project Neon API keys (ADR-20261112160000 §3). neond seals each
+	// key to this domain alone and is its only reader: the table is new, so
+	// there is no fleet copy.
+	{Domain: Neon, Readers: []string{"neond"}, Roles: cpOnly, Wired: true, Columns: join(
+		cols("neon_project_keys", "sealed_key"),
 	)},
 	{Domain: Storage, Readers: []string{"s3-gatewayd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("object_storage_s3_credentials", "secret_sealed"),

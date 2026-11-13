@@ -110,7 +110,8 @@ function readHeaders(): Record<string, string> {
 }
 
 /** Retry policy. `maxAttempts` is the TOTAL number of attempts
- *  (initial + retries); `maxAttempts:1` disables retry. */
+ *  (initial + retries), capped at nine; `maxAttempts:1` disables retry.
+ *  A nonpositive backoff uses 100ms; exponential growth stops at 8s. */
 export interface RetryPolicy {
   maxAttempts: number;
   backoffMs: number;
@@ -128,8 +129,8 @@ export interface FaaSClientOptions {
    *  which is a no-op identity (matches Go SDK's `WithRetry` default
    *  of `max<=0` short-circuiting to the inner Transport). */
   retry?: RetryPolicy;
-  /** Optional request timeout in milliseconds. Passed straight
-   *  through to the wrapped fetch via `AbortSignal.timeout`. */
+  /** Request timeout in milliseconds, including retries. Defaults to 30s
+   *  for ordinary requests; SSE uses its caller's signal. Zero disables it. */
   timeoutMs?: number;
   /** Optional override for the underlying fetch. Used by tests to
    *  inject a stub. Production callers leave this unset. */
@@ -236,8 +237,9 @@ export class FaaSClient {
         headers.set('Idempotency-Key', defaultKey ?? mintIdempotencyKey());
       }
       reqInit.headers = headers;
-      if (timeoutMs && timeoutMs > 0) {
-        const timeout = AbortSignal.timeout(timeoutMs);
+      const budgetMs = timeoutMs ?? (headers.get('Accept')?.includes('text/event-stream') ? 0 : 30_000);
+      if (budgetMs > 0) {
+        const timeout = AbortSignal.timeout(budgetMs);
         reqInit.signal = reqInit.signal ? AbortSignal.any([reqInit.signal, timeout]) : timeout;
       }
       return rfc7807Layer(input, reqInit);
@@ -331,7 +333,7 @@ export class FaaSClient {
       // Fetch consumes Request and ReadableStream bodies. Do not replay a
       // one-shot upload; generated JSON/FormData bodies are reusable.
       const body = init?.body ?? (input instanceof Request ? input.body : undefined);
-      const attempts = body instanceof ReadableStream ? 1 : Math.max(1, retry.maxAttempts);
+      const attempts = body instanceof ReadableStream ? 1 : Math.min(9, Math.max(1, retry.maxAttempts));
       for (let attempt = 0; attempt < attempts; attempt++) {
         signal?.throwIfAborted();
         // Transport errors propagate unchanged; only HTTP 429/5xx and a
@@ -339,7 +341,8 @@ export class FaaSClient {
         const response = await loggerLayer(input, init);
         const retryable = response.status >= 500 || response.status === 429 || await policyCheckTimedOut(response);
         if (!retryable || attempt + 1 === attempts) return response;
-        const delay = Math.max(retry.backoffMs * 2 ** attempt, retryAfterMs(response.headers.get('Retry-After')));
+        const base = retry.backoffMs > 0 ? retry.backoffMs : 100;
+        const delay = Math.max(Math.min(8_000, base * 2 ** attempt), retryAfterMs(response.headers.get('Retry-After')));
         // Release intermediate bodies only. The final body must remain intact
         // for typed errors and the generated client's normal response parser.
         await response.body?.cancel().catch(() => undefined);

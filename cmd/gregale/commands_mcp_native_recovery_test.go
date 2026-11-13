@@ -93,7 +93,7 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 				case "/v1/apps/web/deployments":
 					json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{{ID: current, AppID: "web-id", Status: main.StatusLive, TrafficPercent: 100}}})
 				case "/v1/apps/web":
-					json.NewEncoder(w).Encode(api.AppResponse{ID: "web-id", Slug: "web", URL: endpoint.URL, StreamingEnabled: true, PublicAuth: api.PublicAuthStatus{Mode: api.AppPublicAuthModeOpen}})
+					json.NewEncoder(w).Encode(api.AppResponse{ID: "web-id", Slug: "web", URL: endpoint.URL, StreamingEnabled: true, PublicAuth: api.PublicAuthStatus{Mode: api.AppPublicAuthModeOpen}, Manifest: api.AppManifest{Env: map[string]string{"MCP_TASKS_ROLE": "web", "MCP_TASK_NAMESPACE": mcpNativeTestNamespace}}})
 				case "/v1/apps/web/instances":
 					json.NewEncoder(w).Encode([]api.InstanceResponse{{ID: "stable-instance", DeploymentID: "stable", State: "running"}})
 				case "/v1/apps/web/deployments/stable/instances/stable-instance/mcp-probe":
@@ -117,7 +117,7 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 				case "/v1/apps/previous/instances":
 					json.NewEncoder(w).Encode([]api.InstanceResponse{{ID: "old-instance", DeploymentID: "old", State: "running"}})
 				case "/v1/apps/previous/logs":
-					fmt.Fprint(w, "event: log\ndata: {\"instance\":\"old-instance\",\"line\":\"{\\\"event\\\":\\\"mcp_task_worker_started\\\",\\\"workerID\\\":\\\"12345678-1234-1234-1234-123456789abc\\\"}\"}\n\n")
+					fmt.Fprint(w, "event: log\ndata: {\"instance\":\"old-instance\",\"line\":\"{\\\"event\\\":\\\"mcp_task_worker_started\\\",\\\"shutdownTimeoutMs\\\":10000,\\\"claimFence\\\":true,\\\"workerID\\\":\\\"12345678-1234-1234-1234-123456789abc\\\"}\"}\n\n")
 				case "/v1/apps/candidate-worker":
 					json.NewEncoder(w).Encode(api.AppResponse{ID: "candidate-worker-id", WorkloadClass: "worker", Manifest: api.AppManifest{StopGracePeriod: 45 * time.Second}})
 				case "/v1/apps/candidate-worker/deployments/latest":
@@ -133,7 +133,7 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 					}
 					json.NewEncoder(w).Encode(instances)
 				case "/v1/apps/candidate-worker/logs":
-					fmt.Fprint(w, "event: log\ndata: {\"instance\":\"candidate-instance\",\"line\":\"{\\\"event\\\":\\\"mcp_task_worker_started\\\",\\\"claimFence\\\":true,\\\"workerID\\\":\\\"12345678-1234-1234-1234-123456789abc\\\"}\"}\n\n")
+					fmt.Fprint(w, "event: log\ndata: {\"instance\":\"candidate-instance\",\"line\":\"{\\\"event\\\":\\\"mcp_task_worker_started\\\",\\\"shutdownTimeoutMs\\\":10000,\\\"claimFence\\\":true,\\\"workerID\\\":\\\"12345678-1234-1234-1234-123456789abc\\\"}\"}\n\n")
 				case "/v1/apps/candidate-worker/park/conditional":
 					var body map[string]string
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["expected_deployment_id"] != "worker-candidate" {

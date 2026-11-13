@@ -195,3 +195,28 @@ until the hold lifted. Status now reports `budget_held`, and a manual run is
 refused with `402 financial_budget_held`. A manual run of a disabled cron is
 refused with `409` instead of failing in the scheduler a moment later. The
 scheduler's PostgreSQL cron listing drops disabled crons, as MemStore did.
+
+## Amendment 2026-11-05 (2): stopped crons' queued runs, removing long-lived crons
+
+The drain dropped a queued cron run only when its cron was gone. A disabled
+or suspended cron's runs still reached the app: those the spend cap or a
+budget hold deferred (delivered when the hold lifted, after the customer had
+switched the cron off), retries under failure rules or after a platform
+refusal, and manual runs still queued. A run kept the path it was queued
+with, so a path fixed after a 404 kept being called at the old one. The drain
+now cancels a cron run whose cron is disabled or suspended and delivers the
+others to the cron's current path. This reverses the earlier documented "disabling
+does not cancel a queued run": disable is the customer's way to stop a cron.
+
+A deploy's `gregale.yaml`, its activation and a project apply removed crons
+with one `DELETE` inside their transaction. For a long-lived cron the
+foreign key's `SET NULL` detached every run inline, the failure `DeleteCron`
+avoids by detaching in committed batches (hunt #9, H9-165): the statement held
+the account's cron quota lock until it timed out, and the activation worker
+failed every pass. A removal now checks how many runs its crons hold. Past
+1,000 it rolls back, detaches the settled runs in committed batches and tries
+again (three attempts). Inside the transaction it cancels the crons' runs that
+have not started, so an aborted removal never loses one. An aborted removal can
+leave a surviving cron's settled runs out of its history. Schedule occurrences
+still cascade inline; a schedule-policy cron's 90 days of them is a known
+residual.

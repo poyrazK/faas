@@ -44,7 +44,7 @@ func TestNativeSingleTableLiveRepairCompletes(t *testing.T) {
 	})
 }
 
-func TestNativeReaderChangesAndPausePreserveManualVerification(t *testing.T) {
+func TestNativeReaderChangesAndPauseRetainManualIntent(t *testing.T) {
 	f := newNativeRecoveryFixture(t, `CREATE TABLE public.orders(id int PRIMARY KEY,value text);INSERT INTO public.orders SELECT i,'original' FROM generate_series(1,50000)i`)
 	ctx := t.Context()
 	f.control(t, "verify")
@@ -85,6 +85,10 @@ func TestNativeReaderChangesAndPausePreserveManualVerification(t *testing.T) {
 		t.Fatal("reader change was not acknowledged")
 	}
 	rows := f.pipeline.VerificationProgress.Rows
+	before, err := loadSourceSlot(ctx, f.pipeline, f.target)
+	if err != nil || before == nil {
+		t.Fatal("stream witness unavailable before pause", before, err)
+	}
 	f.control(t, "pause")
 	f.tick(t)
 	unchanged()
@@ -93,6 +97,19 @@ func TestNativeReaderChangesAndPausePreserveManualVerification(t *testing.T) {
 	}
 	f.control(t, "resume")
 	awaitNativeWorkflow(t, f, func(p Pipeline) bool { return p.VerificationProgress.Rows > rows })
+	resumed := f.pipeline.VerificationProgress
+	if resumed.IntentID != first.IntentID || resumed.ManualAttempt != first.ManualAttempt {
+		t.Fatal("resume lost the original manual verification intent", first, *resumed)
+	}
+	if resumed.ID != first.ID {
+		// Unobserved progress from a new sender must invalidate physical ranges,
+		// while retaining the manual request and its cancellation identity.
+		after, err := loadSourceSlot(ctx, f.pipeline, f.target)
+		if err != nil || after == nil || after.Epoch == "" || after.Epoch == before.Epoch {
+			t.Fatal("manual proof restarted without a changed stream epoch", after, err)
+		}
+		first = *resumed
+	}
 	unchanged()
 	for until, rows := time.Now().Add(time.Minute), int64(0); ; {
 		f.tick(t)

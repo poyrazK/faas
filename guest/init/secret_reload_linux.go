@@ -29,6 +29,9 @@ type runtimeSecretsState struct {
 	// files rewrites the workload's /run/secrets files with each published
 	// generation; nil when it declares none. Set before the reloader starts.
 	files *secretFileWriter
+	// redactor masks every value this state has held in the main
+	// workload's output; created on first use by logRedactor.
+	redactor *secretRedactor
 }
 
 // Projection identity is resolved once against the workload's image, before
@@ -106,7 +109,24 @@ func (s *runtimeSecretsState) publishForOwner(path, revisionPath string, uid, di
 	}
 	s.secrets = cloneRuntimeSecrets(secrets)
 	s.revision = revision
+	if s.redactor != nil {
+		s.redactor.update(secrets)
+	}
 	return nil
+}
+
+// logRedactor returns the redactor shared by the main workload's restarts.
+// A nil state (no runtime reload) gets a fresh one.
+func (s *runtimeSecretsState) logRedactor() *secretRedactor {
+	if s == nil {
+		return newSecretRedactor(nil)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.redactor == nil {
+		s.redactor = newSecretRedactor(s.secrets)
+	}
+	return s.redactor
 }
 
 func cloneRuntimeSecrets(secrets map[string]string) map[string]string {

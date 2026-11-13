@@ -288,10 +288,10 @@ func cmdStatus(args []string) int {
 // flow as `gregale secrets set`; `--restart` opts into an immediate
 // park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
-	if len(args) == 0 || args[0] == "clone-status" && !fullEnvironmentCloneCLI() {
+	if len(args) == 0 || (args[0] == "clone-status" || args[0] == "resume-automation") && !fullEnvironmentCloneCLI() {
 		usage := "usage: gregale env <create|pull|push|diff|history|rollback>"
 		if fullEnvironmentCloneCLI() {
-			usage = "usage: gregale env <create|clone-status|pull|push|diff|history|rollback>"
+			usage = "usage: gregale env <create|clone-status|resume-automation|pull|push|diff|history|rollback>"
 		}
 		PrintUsage(os.Stderr, usage, "env")
 		return 1
@@ -305,6 +305,8 @@ func cmdEnv(args []string) int {
 		return envCreate(args[1:])
 	case "clone-status":
 		return envCloneStatus(args[1:])
+	case "resume-automation":
+		return envResumeAutomation(args[1:])
 	case "pull":
 		return envPull(args[1:])
 	case "push":
@@ -324,91 +326,6 @@ func cmdEnv(args []string) int {
 	return unknownSubcommandChoices(os.Stderr, "env", parent, args[0])
 }
 
-func envPull(args []string) int {
-	fs := newFlagSet("env pull", flag.ContinueOnError)
-	app := fs.String("app", "", "app slug")
-	scope := fs.String("scope", "", "env scope (defaults to linked project environment)")
-	out := fs.String("o", ".env", "output file (default .env)")
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if rejectUnexpectedFlagArgs(fs) {
-		return 1
-	}
-	resolvedApp, resolveErr := resolveAppFlagOrContext(*app)
-	if resolveErr == nil {
-		*app = resolvedApp
-	} else if !errors.Is(resolveErr, errProjectContextNotFound) {
-		return printErr("Could not read local project context", resolveErr)
-	}
-	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale env pull --app <slug> [--env <name>] [-o .env] (or run `gregale link <project-slug>`)", "env")
-		return 1
-	}
-	resolvedScope, scopeErr := resolveEnvironmentFlagOrContext(*scope)
-	if scopeErr != nil {
-		return printErr("Could not read local project context", scopeErr)
-	}
-	*scope = resolvedScope
-	client, err := authedClient()
-	if err != nil {
-		return printErr("Not logged in", err)
-	}
-	resp, err := client.ListSecretsWithScope(context.Background(), *app, *scope)
-	if err != nil {
-		return printErr("List failed", err)
-	}
-	existing, readErr := os.ReadFile(*out)
-	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
-		return printErr("Could not read existing .env", readErr)
-	}
-	present := envAssignmentKeys(existing)
-	var b strings.Builder
-	if len(existing) > 0 {
-		b.Write(existing)
-		if existing[len(existing)-1] != '\n' {
-			b.WriteByte('\n')
-		}
-	}
-	added := 0
-	for _, s := range resp.Secrets {
-		if _, ok := present[s.Key]; ok {
-			continue
-		}
-		// KEY-only template: the G2 boundary (§11) means the server
-		// never returns plaintext, so we intentionally write an empty
-		// value. The customer fills values by hand before `env push`.
-		fmt.Fprintf(&b, "%s=\n", s.Key)
-		added++
-	}
-	if err := os.WriteFile(*out, []byte(b.String()), 0o600); err != nil {
-		return printErr("Could not write .env", err)
-	}
-	if jsonOutput {
-		return jsonOut(writeJSON(struct {
-			AppSlug       string `json:"app_slug"`
-			Scope         string `json:"scope"`
-			OutputPath    string `json:"output_path"`
-			RemoteKeys    int    `json:"remote_key_count"`
-			AddedKeys     int    `json:"added_key_count"`
-			PreservedKeys int    `json:"preserved_key_count"`
-			KeyOnly       bool   `json:"key_only"`
-		}{*app, scopeOrDefault(*scope), *out, len(resp.Secrets), added, len(present), true}))
-	}
-	if len(resp.Secrets) == 0 && len(existing) == 0 {
-		PrintOK(osStdout, "Wrote empty %s (%s has no secrets)", *out, *app)
-		return 0
-	}
-	if len(existing) == 0 {
-		PrintOK(osStdout, "Wrote %d key(s) to %s (values intentionally blank — fill by hand)",
-			len(resp.Secrets), *out)
-	} else {
-		PrintOK(osStdout, "Added %d missing key(s) to %s; existing values and local keys were preserved",
-			added, *out)
-	}
-	return 0
-}
-
 func envAssignmentKeys(data []byte) map[string]struct{} {
 	keys := make(map[string]struct{})
 	for _, raw := range strings.Split(string(data), "\n") {
@@ -416,8 +333,11 @@ func envAssignmentKeys(data []byte) map[string]struct{} {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if pair, err := parseSecretsPair(line); err == nil {
-			keys[pair.Key] = struct{}{}
+		if pair, err := parseSecretsPair(stripDotenvExport(line)); err == nil {
+			key := strings.TrimSpace(pair.Key)
+			if api.ValidateSecretKey(key) == nil {
+				keys[key] = struct{}{}
+			}
 		}
 	}
 	return keys
@@ -533,7 +453,7 @@ func envPush(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			p, err := parseSecretsPair(line)
+			p, err := parseSecretsPair(stripDotenvExport(line))
 			if err != nil {
 				return printErr("Bad stdin line", fmt.Errorf("line %d: %w", lineNo, err))
 			}
@@ -559,7 +479,7 @@ func envPush(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			p, err := parseSecretsPair(line)
+			p, err := parseSecretsPair(stripDotenvExport(line))
 			if err != nil {
 				return printErr("Bad .env line", fmt.Errorf("line %d: %w", lineNo, err))
 			}
@@ -572,6 +492,13 @@ func envPush(args []string) int {
 	if len(pairs) == 0 {
 		PrintFail(os.Stderr, "no KEY=VALUE pairs in input")
 		return 1
+	}
+	// Every key is checked before the first write: a bad key on line 3
+	// stopped the push after lines 1 and 2 were saved (Hunt 32 H32-68).
+	for i, p := range pairs {
+		if problem := api.ValidateSecretKey(p.k); problem != nil {
+			return printErr("Invalid secret key", fmt.Errorf("pair %d (%s): %s; nothing was written", i+1, p.k, problem.Detail))
+		}
 	}
 	if *dryRun {
 		previewPairs := make([]secretsPair, len(pairs))
@@ -835,7 +762,7 @@ func cmdAppScale(slug string, args []string) int {
 	environment := fs.String("environment", "", "edit this project environment's workload settings")
 	workloadRevision := int64(-1)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
-	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
+	cpuMillicores := fs.Int("cpu-millicores", 0, "cap CPU at 250 or 500 millicores; 1000 leaves it uncapped")
 	profile := new(string)
 	resourceSizeFlag(fs, profile, "update named resource size: micro|small|medium|large|xlarge")
 	conc := fs.Int("max-concurrency", 0, "update the maximum instances (replicas) the app scales to")
@@ -1186,15 +1113,18 @@ func cmdAppDispatch(args []string) int {
 		return code
 	}
 	if len(args) >= 2 {
+		commandArgs := args[2:]
 		switch args[1] {
 		case subHealth:
-			return cmdAppHealth(slug, args[2:])
+			return cmdAppHealth(slug, commandArgs)
 		case subChanges:
-			return cmdAppChanges(slug, args[2:])
+			return cmdAppChanges(slug, commandArgs)
 		case subScale:
-			return cmdAppScale(slug, args[2:])
+			return cmdAppScale(slug, commandArgs)
+		case "scaling":
+			return cmdAppScaling(slug, commandArgs)
 		case "costs":
-			return cmdAppCosts(slug, args[2:])
+			return cmdAppCosts(slug, commandArgs)
 		case subRename:
 			if len(args) != 3 {
 				PrintUsage(os.Stderr, "usage: gregale app <slug> rename <new-slug>", "apps")
@@ -1202,33 +1132,33 @@ func cmdAppDispatch(args []string) int {
 			}
 			return cmdAppRename(slug, args[2])
 		case subRestart:
-			return cmdAppRestart(slug, args[2:])
+			return cmdAppRestart(slug, commandArgs)
 		case subExec:
-			return cmdAppExec(slug, args[2:])
+			return cmdAppExec(slug, commandArgs)
 		case "cp":
-			return cmdAppCopy(slug, args[2:])
+			return cmdAppCopy(slug, commandArgs)
 		case "port-forward":
-			return cmdAppPortForward(slug, args[2:])
+			return cmdAppPortForward(slug, commandArgs)
 		case subSecurity:
-			return cmdAppSecurity(slug, args[2:])
+			return cmdAppSecurity(slug, commandArgs)
 		case subEgressAllowlist:
-			return cmdAppEgressAllowlist(slug, args[2:])
+			return cmdAppEgressAllowlist(slug, commandArgs)
 		case subEgressPorts:
-			return cmdAppEgressPorts(slug, args[2:])
+			return cmdAppEgressPorts(slug, commandArgs)
 		case subNetwork:
-			return cmdAppNetwork(slug, args[2:])
+			return cmdAppNetwork(slug, commandArgs)
 		case "traffic-status":
-			return cmdAppTrafficStatus(slug, args[2:])
+			return cmdAppTrafficStatus(slug, commandArgs)
 		case subRoutes:
-			return cmdAppsRoutes(slug, args[2:])
+			return cmdAppsRoutes(slug, commandArgs)
 		case subTCPListeners:
-			return cmdAppsTCP(slug, args[2:])
+			return cmdAppsTCP(slug, commandArgs)
 		case subUDPListeners:
-			return cmdAppsUDP(slug, args[2:])
+			return cmdAppsUDP(slug, commandArgs)
 		case subStreamingCap:
-			return cmdAppsStreamingCap(slug, args[2:])
+			return cmdAppsStreamingCap(slug, commandArgs)
 		case subStaticEgressIP:
-			return cmdAppStaticEgressIP(slug, args[2:])
+			return cmdAppStaticEgressIP(slug, commandArgs)
 		}
 	}
 	// Backwards-compat: legacy flag-form dispatch is the existing cmdApp.
@@ -1295,6 +1225,13 @@ func cmdPlan(args []string) int {
 			PrintWarn(osStderr, "Keep the subscription first: gregale billing plan %s", acct.Plan)
 		}
 		return printErr("Plan change failed", err)
+	}
+	if jsonOutput {
+		// The account as apid returned it: plan, plus plan_change_status,
+		// requested_plan and effective_at when the change is scheduled or
+		// a scheduled change was undone. Scripts branch on these instead
+		// of the human lines below.
+		return jsonOut(writeJSON(updated))
 	}
 	if updated.PlanChangeStatus == "scheduled_change_undone" {
 		PrintOK(osStdout, "Kept the %s subscription: its scheduled cancellation or plan change was undone", updated.Plan)
@@ -1624,6 +1561,11 @@ func queueWorkFromFlags(policy, key, fairnessKey string) (*api.InvokeWork, error
 // the SDK-side timeout; a 204 No Content (empty queue) returns
 // `empty`. Mirrors the existing cmdQueueTail long-poll framing —
 // same signal.NotifyContext wiring.
+// queueReceiveEmpty explains an empty receive: it returns processed
+// messages' results, and pending messages are delivered to the app, so a
+// queue with depth > 0 can still receive nothing (Hunt 32 H32-44).
+const queueReceiveEmpty = "(empty: no message finished processing in the wait window; pending messages are delivered to the app, not to receive)"
+
 func cmdQueueReceive(args []string) int {
 	fs := newFlagSet("queue receive", flag.ContinueOnError)
 	appFlag := fs.String("app", "", appSlugFlagUsage)
@@ -1659,7 +1601,7 @@ func cmdQueueReceive(args []string) int {
 			if jsonOutput {
 				return jsonOut(writeJSON(api.QueueReceiveResponse{}))
 			}
-			_, _ = fmt.Fprintln(osStdout, "(empty)")
+			_, _ = fmt.Fprintln(osStdout, queueReceiveEmpty)
 			return 0
 		}
 		return printErr("Queue receive failed", err)
@@ -1672,7 +1614,7 @@ func cmdQueueReceive(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(resp))
 		}
-		_, _ = fmt.Fprintln(osStdout, "(empty)")
+		_, _ = fmt.Fprintln(osStdout, queueReceiveEmpty)
 		return 0
 	}
 	if jsonOutput {
@@ -2389,4 +2331,13 @@ func openCustomerDirectoryForSync(path string) (*os.File, error) {
 		return nil, fmt.Errorf("recovery directory changed during open: %q", path)
 	}
 	return directory, nil
+}
+
+// stripDotenvExport drops a dotenv `export ` prefix, so a file a shell can
+// source (`export KEY="value"`) pushes like `KEY="value"` (Hunt 32 H32-68).
+func stripDotenvExport(line string) string {
+	if rest, ok := strings.CutPrefix(line, "export "); ok {
+		return strings.TrimLeft(rest, " \t")
+	}
+	return line
 }

@@ -191,3 +191,26 @@ Validation: `TestHostPolicyLookupRetriesAFailedAttempt`,
 `TestHostPolicyLookupGivesUpAtTheColdBound`,
 `TestHostPolicyLookupDoesNotRetryAnUnknownHost`,
 `TestConnectionWarmupsRunOnMigratedSchema`.
+
+## Amendment 3 (2026-11-04): the cached host path refuses a failed read too
+
+Amendment 2's retry and refusal assumed the host read returns its error. That
+holds when `FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY` is on. With it off, the
+default, the host policy lookup reads through the route cache
+(`PGBackend.Lookup`). There a failed read with no last-known-good route
+(ADR-190) was reported as an unknown host. It was not retried, and the request
+was answered 404 `No such app`. On the native acceptance node (n2, 2026-11-04)
+a GitOps app's first requests met an organization read past the 250 ms bound
+and got that 404.
+
+The cached path now returns the read's error to the host policy lookup when no
+last-known-good route answers it, and it does the same when the production
+deployment weights cannot be read. The lookup retries it within the cold bound
+and then refuses with 503 `traffic_policy_unavailable`, as on the
+authoritative path. A store answer of "no such host" is still a 404 and is
+still never retried. A last-known-good route is still served. Callers without
+an error path (`Lookup`) still treat a failed read as a miss.
+
+Validation: `TestCachedHostPolicyRetriesAFailedRouteRead`,
+`TestCachedHostPolicyRefusesAnUnreadableHost`,
+`TestCachedHostPolicyKeepsUnknownAndLastKnownGoodHosts`.

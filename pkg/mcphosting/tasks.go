@@ -25,6 +25,7 @@ const (
 	taskStreamReconnectBase = 250 * time.Millisecond
 	taskStreamReconnectMax  = 5 * time.Second
 	maxTaskStreamReconnects = 3
+	taskReconcileInterval   = 30 * time.Second
 )
 
 var (
@@ -40,7 +41,11 @@ type CallOptions struct {
 	Responder   InputResponder
 	EnableTasks bool
 	WaitForTask bool
-	OnTask      func(Task)
+	// CancelOnTimeout requests cooperative cancellation when the wait ends
+	// because its context expires or is cancelled. It is opt-in so a resumed
+	// wait can stop observing without stopping durable work.
+	CancelOnTimeout bool
+	OnTask          func(Task)
 }
 
 // Task is the Tasks extension's durable view of a tool call. Result and Error
@@ -68,6 +73,26 @@ type TaskInputRequest struct {
 		Message         string         `json:"message"`
 		RequestedSchema map[string]any `json:"requestedSchema"`
 	} `json:"params"`
+}
+
+func (request *TaskInputRequest) UnmarshalJSON(data []byte) error {
+	type plain TaskInputRequest
+	var decoded plain
+	decoded.Params.Mode = "form"
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields struct {
+		Params map[string]json.RawMessage `json:"params"`
+	}
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if mode, present := fields.Params["mode"]; present && bytes.Equal(bytes.TrimSpace(mode), []byte("null")) {
+		return errors.New("MCP elicitation mode must be a string")
+	}
+	*request = TaskInputRequest(decoded)
+	return nil
 }
 
 // GetTask reads one task. Streamable HTTP requests carry taskId in Mcp-Name
@@ -100,14 +125,14 @@ func (c *Client) WaitTask(ctx context.Context, taskID string, options CallOption
 		return Task{}, fmt.Errorf("MCP Tasks requires protocol %s", ProtocolVersion)
 	}
 	if err := c.requireTasksCapability(ctx); err != nil {
-		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+		if options.CancelOnTimeout && (ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded)) {
 			c.bestEffortCancelTask(ctx, taskID)
 		}
 		return Task{}, err
 	}
 	task, _, err := c.GetTask(ctx, taskID)
 	if err != nil {
-		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+		if options.CancelOnTimeout && (ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded)) {
 			c.bestEffortCancelTask(ctx, taskID)
 		}
 		return Task{}, err
@@ -528,6 +553,10 @@ func validateTaskID(taskID string) error {
 }
 
 func (c *Client) waitForTask(ctx context.Context, tool string, task Task, options CallOptions) (result Task, waitErr error) {
+	return c.waitForTaskWithReconcileInterval(ctx, tool, task, options, taskReconcileInterval)
+}
+
+func (c *Client) waitForTaskWithReconcileInterval(ctx context.Context, tool string, task Task, options CallOptions, reconcileInterval time.Duration) (result Task, waitErr error) {
 	if options.OnTask != nil {
 		options.OnTask(task)
 	}
@@ -538,7 +567,7 @@ func (c *Client) waitForTask(ctx context.Context, tool string, task Task, option
 	reconnectDelay := taskStreamReconnectBase
 	streamFailures := 0
 	defer func() {
-		if (ctx.Err() != nil || errors.Is(waitErr, context.DeadlineExceeded)) && task.Status != "completed" && task.Status != "failed" && task.Status != "cancelled" {
+		if options.CancelOnTimeout && (ctx.Err() != nil || errors.Is(waitErr, context.DeadlineExceeded)) && task.Status != "completed" && task.Status != "failed" && task.Status != "cancelled" {
 			c.bestEffortCancelTask(ctx, task.TaskID)
 		}
 	}()
@@ -601,7 +630,19 @@ func (c *Client) waitForTask(ctx context.Context, tool string, task Task, option
 			}
 		}
 		if subscriptionsSupported {
-			updated, err := c.listenTaskUpdate(ctx, task)
+			interval := reconcileInterval
+			if task.PollInterval != nil && time.Duration(*task.PollInterval)*time.Millisecond > interval {
+				interval = time.Duration(*task.PollInterval) * time.Millisecond
+			}
+			streamCtx, cancel := context.WithTimeout(ctx, interval)
+			updated, err := c.listenTaskUpdate(streamCtx, task)
+			expired := errors.Is(streamCtx.Err(), context.DeadlineExceeded)
+			cancel()
+			// A healthy but silent stream may miss a notification. Reconcile
+			// against durable state without treating this timeout as task cancellation.
+			if err != nil && expired && ctx.Err() == nil {
+				updated, _, err = c.GetTask(ctx, task.TaskID)
+			}
 			switch {
 			case err == nil:
 				reconnectDelay = taskStreamReconnectBase
@@ -691,7 +732,7 @@ func parseTaskInputRequests(tool string, inputRequests map[string]TaskInputReque
 			return nil, errors.New("MCP task contains an unsupported input request")
 		}
 		properties, ok := form.Params.RequestedSchema["properties"].(map[string]any)
-		if !ok || len(properties) == 0 || len(properties) > 100 {
+		if !ok || len(properties) > 100 {
 			return nil, errors.New("MCP task contains an invalid input form schema")
 		}
 		schemaBytes, err := json.Marshal(form.Params.RequestedSchema)

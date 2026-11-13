@@ -107,7 +107,21 @@ func (s *server) readDebugRunning(ctx context.Context, app state.App, windowStar
 	if eventCap > 400 {
 		eventCap = 400
 	}
-	events, err := s.store.ListEvents(ctx, app.ID, eventCap+1)
+	// Read only the scheduler's observations in the window, so the app's
+	// other events cannot push them out of the bounded read (ADR-127
+	// amendment 2026-11-05). A store without the kind filter reads every
+	// kind; when that read fills up, the history says it may be incomplete.
+	var (
+		events    []state.Event
+		err       error
+		capFilled bool
+	)
+	if lister, ok := s.store.(state.EventKindLister); ok {
+		events, err = lister.ListEventsBySubjectKind(ctx, app.ID, debugRunningEventKind, windowStart, limit+1)
+	} else {
+		events, err = s.store.ListEvents(ctx, app.ID, eventCap+1)
+		capFilled = len(events) > eventCap
+	}
 	if err != nil {
 		return api.DebugRunningResponse{}, err
 	}
@@ -176,7 +190,7 @@ func (s *server) readDebugRunning(ctx context.Context, app state.App, windowStar
 		CurrentObservedAt: currentObservedAt,
 		Config:            config,
 		History:           history,
-		HistoryTruncated:  len(history) == limit,
+		HistoryTruncated:  len(history) == limit || capFilled,
 	}, nil
 }
 

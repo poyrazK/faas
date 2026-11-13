@@ -100,6 +100,9 @@ func cmdTestMinimize(args []string) int {
 	if err != nil {
 		return printErr("Invalid minimization configuration", err)
 	}
+	if err := validateTestReportInputs(testScenarioInputPaths(prepared.Scenario, dir), *report, *junit, *html); err != nil {
+		return printErr("Invalid minimization paths", err)
+	}
 	options := testFaultMinimizationOptions{DurationResolution: *durationResolution, Mode: *mode, StabilityResolution: *stabilityResolution, MaxRecoveryWithin: *maxRecovery, RecoveryResolution: *recoveryResolution, PercentResolution: *percentResolution, MaxRateKiBPerSecond: *maxRate, RateResolutionKiBPerSecond: *rateResolution, RuleIndex: *ruleIndex, Resolution: *resolution, Target: target, MaxRuns: *maxRuns, MaxWorkloadMinutes: *maxMinutes}
 	if _, err := validateTestMinimization(prepared, original, options); err != nil {
 		return printErr("Invalid minimization", err)

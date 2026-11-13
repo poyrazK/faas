@@ -45,12 +45,23 @@ type Timings struct {
 	ReseedClients        int    `json:"reseed_clients"`
 	ReseedSlowestUs      int64  `json:"reseed_slowest_us"`
 	ReseedSlowestRuntime string `json:"reseed_slowest_runtime,omitempty"`
+	// ReseedUnregistered counts running Node, Python, Bun and Deno processes
+	// the barrier did not reach (ADR-20261109140000); they may replay the
+	// snapshot's random values. ReseedUnregisteredRuntimes is their sorted,
+	// comma-separated runtime labels, "-sidecar" marking a sidecar's.
+	ReseedUnregistered         int    `json:"reseed_unregistered,omitempty"`
+	ReseedUnregisteredRuntimes string `json:"reseed_unregistered_runtimes,omitempty"`
 	// ProfilesUs resumes guest profilers; AfterRestoreUs is the application's
 	// after_restore callback.
 	ProfilesUs     int64 `json:"profiles_us"`
 	AfterRestoreUs int64 `json:"after_restore_us"`
 	// TotalUs is from the request header arriving to the ack being written.
 	TotalUs int64 `json:"total_us"`
+	// IdentityDigest (ADR-20261031193635) is the restore identity the
+	// after_restore hook acknowledged, set only when vmmd asked for an
+	// identity reload. vmmd requires it to match the digest it served; a
+	// guest that predates the field omits it, so the restore fails closed.
+	IdentityDigest string `json:"identity_digest,omitempty"`
 }
 
 // AppendFrame appends the frame for t: a 4-byte big-endian length and the

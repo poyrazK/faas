@@ -1,3 +1,4 @@
+// adr: 20261104144000 — retain shared SDK acceptance with canonical trimpath builds.
 package bindingrun
 
 import (
@@ -10,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/poyrazK/faas/sdk/go/internal/api"
+	"github.com/gregale-dev/gregale-go/internal/api"
 )
 
 type contractCase struct {
@@ -272,6 +273,7 @@ func runFake(ctx context.Context, f *fakeClient, o Options) (string, error) {
 }
 
 func TestRunnerSharedRecoveryContracts(t *testing.T) {
+	// Go tests run in the package directory; source paths are trimmed in builds.
 	data, err := os.ReadFile("../../../binding-runner-tests/contracts.json")
 	if err != nil {
 		t.Fatal(err)

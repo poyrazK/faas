@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/netip"
 	"os"
 	"sync"
 	"time"
@@ -75,19 +76,48 @@ func (b *rateBody) Read(p []byte) (int, error) {
 
 // InFlight answers 503 once max requests are already being served through
 // next, so the requests a node forwards on stay bounded however many
-// clients send them.
-func InFlight(next http.Handler, max int, refused func(reason string)) http.Handler {
+// clients send them. With perAddr above zero, one client address (an IPv4
+// address or an IPv6 /64, named by clientAddr) may have at most perAddr of
+// them, so one slow client cannot hold every slot (ADR-20261107180000); a
+// request clientAddr cannot name counts against the shared bound only.
+func InFlight(next http.Handler, max, perAddr int, clientAddr func(*http.Request) (netip.Addr, bool), refused func(reason string)) http.Handler {
 	slots := make(chan struct{}, max)
+	var mu sync.Mutex
+	held := map[netip.Prefix]int{}
+	busy := func(w http.ResponseWriter, reason, detail string, limit int) {
+		refused(reason)
+		w.Header().Set("Retry-After", "1")
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "control_plane_busy",
+			"Control plane busy", detail).
+			WithLimit(int64(limit), int64(limit)).
+			WithDocs(wire.DocsBaseURL+"/errors"))
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var key netip.Prefix
+		if perAddr > 0 && clientAddr != nil {
+			if addr, ok := clientAddr(r); ok {
+				key = Key(addr)
+				mu.Lock()
+				if held[key] >= perAddr {
+					mu.Unlock()
+					busy(w, ReasonForwardInFlightPerAddress, "this address has as many requests forwarded to the control plane as one address may", perAddr)
+					return
+				}
+				held[key]++
+				mu.Unlock()
+				defer func() {
+					mu.Lock()
+					if held[key]--; held[key] <= 0 {
+						delete(held, key)
+					}
+					mu.Unlock()
+				}()
+			}
+		}
 		select {
 		case slots <- struct{}{}:
 		default:
-			refused(ReasonForwardInFlight)
-			w.Header().Set("Retry-After", "1")
-			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "control_plane_busy",
-				"Control plane busy", "this node is forwarding as many requests to the control plane as it allows").
-				WithLimit(int64(max), int64(max)).
-				WithDocs(wire.DocsBaseURL+"/errors"))
+			busy(w, ReasonForwardInFlight, "this node is forwarding as many requests to the control plane as it allows", max)
 			return
 		}
 		defer func() { <-slots }()

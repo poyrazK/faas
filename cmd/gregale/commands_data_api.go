@@ -121,7 +121,7 @@ func cmdDataAPIRefresh(args []string) int {
 			return printErr("Could not check Data API readiness", err)
 		}
 	}
-	result, err := client.RestartAppFresh(ctx, fs.Arg(0))
+	result, err := refreshDataAPIFresh(ctx, client, fs.Arg(0))
 	if err != nil {
 		return printErr("Could not refresh Data API schema", err)
 	}
@@ -143,6 +143,10 @@ func cmdDataAPIRefresh(args []string) int {
 }
 
 func cmdDataAPICreate(args []string) int {
+	return cmdDataAPICreateContext(context.Background(), args)
+}
+
+func cmdDataAPICreateContext(ctx context.Context, args []string) int {
 	fs := newFlagSet("data-api create", flag.ContinueOnError)
 	database := fs.String("database", "", "managed PostgreSQL name or ID")
 	schema := fs.String("schema", "api", "exposed schema (api, or public with --read-only)")
@@ -199,7 +203,6 @@ func cmdDataAPICreate(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	ctx := context.Background()
 	if *authApp != "" {
 		resolved, err := resolveAuthIssuer(ctx, client, *authApp)
 		if err != nil {
@@ -294,7 +297,11 @@ func configureDataAPI(ctx context.Context, client *api.Client, app api.AppRespon
 			return err
 		}
 	}
-	for _, key := range []string{"DATA_API_SCHEMAS", "DATA_API_ISSUER", "DATA_API_JWKS_URL", "DATA_API_AUDIENCE", "DATA_API_ALLOWED_ORIGINS", "DATA_API_READ_ONLY"} {
+	// --origins is optional: the runtime reads a missing
+	// DATA_API_ALLOWED_ORIGINS as "no browser origins". Writing it empty
+	// failed with "secret value must not be empty" after the app and its
+	// database binding already existed (ChronoLake finding 21).
+	for _, key := range []string{"DATA_API_SCHEMAS", "DATA_API_ISSUER", "DATA_API_JWKS_URL", "DATA_API_AUDIENCE", "DATA_API_READ_ONLY"} {
 		if err = client.SetSecretWithScope(ctx, app.Slug, key, func() string {
 			if key == "DATA_API_READ_ONLY" && settings[key] == "" {
 				return "false"
@@ -305,7 +312,7 @@ func configureDataAPI(ctx context.Context, client *api.Client, app api.AppRespon
 		}
 	}
 	// Optional owner opt-ins are stored only when requested; absence keeps them off.
-	for _, key := range []string{"DATA_API_PUBLIC_READ", "DATA_API_PUBLIC_RPC", "DATA_API_SQL_DEADLINE", "DATA_API_AGGREGATES", dataAPIUsageURLKey} {
+	for _, key := range []string{"DATA_API_ALLOWED_ORIGINS", "DATA_API_PUBLIC_READ", "DATA_API_PUBLIC_RPC", "DATA_API_SQL_DEADLINE", "DATA_API_AGGREGATES", dataAPIUsageURLKey} {
 		if settings[key] == "" {
 			continue
 		}
@@ -338,6 +345,7 @@ func cmdDataAPITypes(args []string) int {
 	check := fs.Bool("check", false, "fail if --output differs from the database contract")
 	snapshot := fs.Bool("snapshot", false, "export a JSON contract baseline for data-api diff")
 	validators := fs.Bool("validators", false, "include typed runtime table and RPC argument validators")
+	numericMode := fs.String("numeric-mode", "number", "TypeScript JSON numbers: number, lossless (decimal strings), or exact (ExactNumber)")
 	language := fs.String("language", "typescript", "client language: typescript, python or go")
 	pkg := fs.String("package", "gregaledata", "Go package name for --language go")
 	snapshotFile := fs.String("snapshot-file", "", "render Python or Go from a saved snapshot without contacting the API")
@@ -351,13 +359,13 @@ func cmdDataAPITypes(args []string) int {
 	if *language != "typescript" {
 		// Python and Go render from the contract snapshot, locally or via the app task.
 		named := fs.NArg() == 1 && api.ValidAppSlug(fs.Arg(0))
-		if !dataAPIDiagnosticAllowed(*language, "python", "go") || named == (*snapshotFile != "") || fs.NArg() > 1 || *snapshot || *validators || (*check && *output == "") || (*language == "python" && *pkg != "gregaledata") || !clientgen.GoPackageValid(*pkg) || *timeout <= 0 || *timeout > time.Hour {
+		if *numericMode != "number" || !dataAPIDiagnosticAllowed(*language, "python", "go") || named == (*snapshotFile != "") || fs.NArg() > 1 || *snapshot || *validators || (*check && *output == "") || (*language == "python" && *pkg != "gregaledata") || !clientgen.GoPackageValid(*pkg) || *timeout <= 0 || *timeout > time.Hour {
 			PrintUsage(os.Stderr, usage, "data-api")
 			return 1
 		}
 		return dataAPIClientTypes(fs.Arg(0), *language, *pkg, *snapshotFile, *output, *check, *timeout)
 	}
-	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || (*check && *output == "") || (*snapshot && *validators) || *snapshotFile != "" || *pkg != "gregaledata" || *timeout <= 0 || *timeout > time.Hour {
+	if !dataAPIDiagnosticAllowed(*numericMode, "number", "lossless", "exact") || (*numericMode != "number" && (*snapshot || *validators)) || fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || (*check && *output == "") || (*snapshot && *validators) || *snapshotFile != "" || *pkg != "gregaledata" || *timeout <= 0 || *timeout > time.Hour {
 		PrintUsage(os.Stderr, usage, "data-api")
 		return 1
 	}
@@ -377,6 +385,12 @@ func cmdDataAPITypes(args []string) int {
 	}
 	if err != nil {
 		return printErr("Schema generation failed", err)
+	}
+	switch *numericMode {
+	case "lossless":
+		task.StdoutTail = dataAPILosslessTypes(task.StdoutTail)
+	case "exact":
+		task.StdoutTail = dataAPIExactTypes(task.StdoutTail)
 	}
 	if err = writeDataAPITypes(*output, *check, task.StdoutTail); err != nil {
 		return printErr("Could not export schema types", err)
@@ -406,6 +420,29 @@ func cmdDataAPITypes(args []string) int {
 		PrintOK(osStdout, "Database types %s: %s", map[bool]string{true: "match", false: "written"}[*check], *output)
 	}
 	return 0
+}
+
+var dataAPITypeTokens = regexp.MustCompile(`"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|//[^\n]*|\bnumber\b`)
+
+func dataAPIExactTypes(source string) string {
+	result := dataAPITypeTokens.ReplaceAllStringFunc(source, func(token string) string {
+		if token == "number" {
+			return "ExactNumber"
+		}
+		return token
+	})
+	return "import type { ExactNumber } from '@gregale/data'\n" + strings.Replace(result, "// Generated by gregale data-api types. Do not edit.\n", "// Generated by gregale data-api types. Do not edit.\n// numericMode: exact (tagged JSON numbers).\n", 1)
+}
+
+func dataAPILosslessTypes(source string) string {
+	result := dataAPITypeTokens.ReplaceAllStringFunc(source, func(token string) string {
+		if token == "number" {
+			return "string"
+		}
+		return token
+	})
+	result = strings.Replace(result, "export type Json = string | string |", "export type Json = string |", 1)
+	return strings.Replace(result, "// Generated by gregale data-api types. Do not edit.\n", "// Generated by gregale data-api types. Do not edit.\n// numericMode: lossless (all JSON numbers are decimal strings).\n", 1)
 }
 
 func generateDataAPIInputValidators(ctx context.Context, client *api.Client, slug string) (api.AppTaskResponse, error) {

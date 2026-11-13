@@ -43,17 +43,8 @@ func (g *gatewaydEdgeRules) PinHostPolicy(ctx context.Context, host string) (con
 		}
 		// ADR-1191: once the request's app is known the host's set includes that
 		// app's app-wide rules, so the pin is per (host, app) like the cache.
-		cached, err := g.loadHost(ctx, host)
+		entry, err := g.pinnableHost(ctx, host, key)
 		if err != nil {
-			return nil, err
-		}
-		// The cached entry is shared with concurrent requests and must not be
-		// mutated. Production loadHostUncached seals before publication, so this
-		// copy shares that immutable seal; an unsealed fixture entry is sealed
-		// privately here.
-		entry := new(gateway.HostEntry)
-		*entry = *cached
-		if err := entry.SealPolicy(); err != nil {
 			return nil, err
 		}
 		if current, unchanged := g.cache.UnchangedSince(ctx, generation, key, entry); unchanged {
@@ -66,6 +57,28 @@ func (g *gatewaydEdgeRules) PinHostPolicy(ctx context.Context, host string) (con
 			return nil, errors.New("traffic policy changed during snapshot resolution")
 		}
 	}
+}
+
+// pinnableHost returns the sealed entry to pin for (host, app) key: the cached
+// entry itself on a hit, otherwise the coalesced load's.
+func (g *gatewaydEdgeRules) pinnableHost(ctx context.Context, host, key string) (*gateway.HostEntry, error) {
+	if entry, ok, err := g.cache.PinnableHost(key); ok || err != nil {
+		return entry, err
+	}
+	cached, err := g.loadHost(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	// The loaded entry may be shared with concurrent requests and must not be
+	// mutated. Production loadHostUncached seals before publication, so this
+	// copy shares that immutable seal; an unsealed fixture entry is sealed
+	// privately here.
+	entry := new(gateway.HostEntry)
+	*entry = *cached
+	if err := entry.SealPolicy(); err != nil {
+		return nil, err
+	}
+	return entry, nil
 }
 
 // hostPolicyPinAttempts bounds how often a first host pin re-reads after a

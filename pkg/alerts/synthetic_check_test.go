@@ -95,6 +95,38 @@ func TestEvaluator_SyntheticConsecutiveFailures(t *testing.T) {
 	}
 }
 
+// adr: 20261031144636 — a paused check, or one whose newest run is older
+// than SyntheticCheckStaleIntervals intervals, has no current value: its
+// alert goes unknown instead of re-paging on old failures.
+func TestEvaluator_SyntheticFailuresOfAPausedOrStaleCheckAreUnknown(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, tt := range []struct {
+		name   string
+		pause  bool
+		newest time.Time
+	}{
+		{"paused", true, now},
+		{"stale", false, now.Add(-11 * time.Minute)}, // interval 300 s: two intervals have passed
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := state.NewMemStore()
+			rule, check, ident := seedSyntheticRule(t, store, state.AlertMetricSyntheticConsecutiveFailures, state.AlertGte, 2)
+			recordRuns(t, store, check.ID, tt.newest, false, false, false)
+			if tt.pause {
+				if _, err := store.SetSyntheticCheckEnabled(context.Background(), check.AppID, check.ID, false); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if stats := evaluateSynthetic(t, store, ident, now); stats.Fired != 0 {
+				t.Fatalf("stats = %+v; want no fire", stats)
+			}
+			if got, _ := store.AlertRuleByID(context.Background(), rule.ID); got.State != state.AlertStateUnknown {
+				t.Fatalf("state = %q; want unknown", got.State)
+			}
+		})
+	}
+}
+
 func TestEvaluator_SyntheticLatencyP95(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	store := state.NewMemStore()

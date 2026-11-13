@@ -47,6 +47,8 @@ var hopByHopHeaders = map[string]struct{}{
 // Handler is an explicit request-aware outbound gateway. A request to
 // /i/{integrationID}/path is sent only to that integration's configured origin.
 type Handler struct {
+	// aiAccountRates bounds each account's AI calls per second.
+	aiAccountRates aiAccountRates
 	// Log, when set, records failures the caller only sees as a generic 503.
 	Log                       *slog.Logger
 	SimulationHandler         http.Handler
@@ -361,6 +363,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusForbidden, "outbound_route_not_allowed", "Outbound method or path is not allowed", "")
 		return
 	}
+	// ADR 20261027132936 amendment 2: one account's AI calls per second
+	// across all its integrations, counted only once the caller is
+	// authorized so nobody else can spend an account's allowance. The
+	// gateway's own checks and probes are not the account's traffic.
+	if integration.AIProvider != "" && integration.OwnerKind == IntegrationOwnerCustomer && !isInternal && !isQualification &&
+		!h.aiAccountRates.allow(integration.AccountID, integration.AccountPlan, time.Now()) {
+		h.Metrics.ObserveRejection(metricIntegrationID, "outbound_ai_account_rate_limited")
+		writeProblem(w, http.StatusTooManyRequests, "outbound_ai_account_rate_limited",
+			"The account's AI calls per second are at the plan limit", "1")
+		return
+	}
 	aiEndUser, aiAffinity, ok := aiCallerKeys(r, integration)
 	if !ok {
 		h.Metrics.ObserveRejection(metricIntegrationID, "outbound_ai_user_invalid")
@@ -539,6 +552,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if requestTimeout <= 0 {
 		requestTimeout = integration.RequestTimeout
 	}
+	if _, public := accessTokenFromContext(r.Context()); public {
+		requestTimeout = publicHeaderTimeout(requestTimeout)
+	}
 	// ADR 20261027132936: a billable AI call's request timeout bounds the
 	// wait for its response headers; its answer may take longer.
 	var aiCall *aiCallContext
@@ -667,7 +683,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if realtime != realtimeNone {
 		// The upgrade itself was admitted like a call, with no reservation;
-		// each response is admitted with its own (ADR 20261019072722).
+		// each response is admitted with its own (ADR 20261019072722). The
+		// session holds its in-flight slot until it ends, so its lease is
+		// renewed (ADR 20261027132936 amendment 1).
+		defer h.renewAILease(integration.ID, decision.LeaseID, requestTimeout)()
 		h.serveRealtime(w, r, &realtimeSession{h: h, integration: integration, appID: appID, instanceID: callerInstance, metricID: metricIntegrationID,
 			metered: realtime == realtimeMetered, spec: spec, endUser: aiEndUser, tags: aiTags, traceID: aiTrace,
 			model: realtimeURLModel(r.URL.Query()), live: livePath(integration.AIProvider, path)}, upstreamReq)
@@ -780,7 +799,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		resp, attempts, err = h.doWithRetries(dependencyCtx, client, upstreamReq, integration.ID, metricIntegrationID,
-			integration.PolicyRevision, maxRetries, decision.RetryBudgetPerMinute, keys)
+			integration.PolicyRevision, maxRetries, decision.RetryBudgetPerMinute, keys, aiCall != nil)
 		if breaker != nil {
 			outcome := outboundCircuitOutcome(resp, err)
 			if outcome != CircuitOutcomeNeutral {
@@ -914,6 +933,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		dependencySpan.SetStatus(codes.Error, "incomplete provider response")
 		panic(http.ErrAbortHandler)
 	}
+}
+
+// publicHeaderTimeout caps the header wait of a call through the public
+// host, whose proxy stops waiting for an origin's response at 100 seconds
+// (ADR 20261027132936 amendment 1).
+func publicHeaderTimeout(requestTimeout time.Duration) time.Duration {
+	publicCap := api.OutboundAIPublicHeaderTimeoutSeconds * time.Second
+	if requestTimeout <= 0 || requestTimeout > publicCap {
+		return publicCap
+	}
+	return requestTimeout
 }
 
 // callerAppID returns the calling app and, when a verified workload

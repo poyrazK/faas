@@ -140,6 +140,22 @@ func (q *Queries) LockQueueCanaryApp(ctx context.Context, db DBTX, arg LockQueue
 	return id, err
 }
 
+const lockQueueClaimApp = `-- name: LockQueueClaimApp :one
+SELECT id FROM apps WHERE id=$1::uuid FOR SHARE
+`
+
+// A queue claim takes its app's share lock before the binding lock (Hunt 33
+// H33-27). Capped enqueues lock the app FOR UPDATE and then the binding FOR
+// SHARE (invocation insert trigger); a claim that locked the binding first
+// and reached the app through the invocation update triggers deadlocked
+// against them.
+func (q *Queries) LockQueueClaimApp(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockQueueClaimApp, appID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const queueCanaryManagedAuthority = `-- name: QueueCanaryManagedAuthority :one
 SELECT release.id::text AS release_id, source.generation
 FROM deployments d JOIN apps a ON a.id=d.app_id
@@ -274,7 +290,8 @@ func (q *Queries) QueueCanarySnapshotView(ctx context.Context, db DBTX, arg Queu
 const readInvocationDispatchAuthority = `-- name: ReadInvocationDispatchAuthority :one
 SELECT coalesce(i.environment_id::text,'')::text AS environment_id, i.app_id, i.account_id,
  coalesce(i.queue_binding_id::text,'')::text AS queue_binding_id,i.queue_name,i.deployment_scope,
- EXISTS(SELECT 1 FROM queue_binding_canaries c WHERE c.id=i.id)::boolean AS queue_canary
+ EXISTS(SELECT 1 FROM queue_binding_canaries c WHERE c.id=i.id)::boolean AS queue_canary,
+ coalesce(i.edge_jwt_issuer,'')::text AS edge_jwt_issuer, coalesce(i.edge_jwt_subject,'')::text AS edge_jwt_subject
 FROM invocations i WHERE i.id=$1::uuid
 `
 
@@ -286,6 +303,8 @@ type ReadInvocationDispatchAuthorityRow struct {
 	QueueName       string
 	DeploymentScope string
 	QueueCanary     bool
+	EdgeJwtIssuer   string
+	EdgeJwtSubject  string
 }
 
 func (q *Queries) ReadInvocationDispatchAuthority(ctx context.Context, db DBTX, invocationID pgtype.UUID) (ReadInvocationDispatchAuthorityRow, error) {
@@ -299,6 +318,8 @@ func (q *Queries) ReadInvocationDispatchAuthority(ctx context.Context, db DBTX, 
 		&i.QueueName,
 		&i.DeploymentScope,
 		&i.QueueCanary,
+		&i.EdgeJwtIssuer,
+		&i.EdgeJwtSubject,
 	)
 	return i, err
 }

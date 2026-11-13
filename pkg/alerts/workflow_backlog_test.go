@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/webhookout"
 )
 
-func TestEvaluatorAutomationBacklogThresholdCooldownAndRecovery(t *testing.T) {
+func TestEvaluatorStoredWorkflowBacklogThresholdCooldownAndRecovery(t *testing.T) {
 	store := state.NewMemStore()
 	rule, ident, _ := seedRule(t, store, state.AlertMetricWorkflowDueAge, state.AlertGte, api.WorkflowBacklogAlertThresholdSeconds)
 	run := &state.WorkflowRun{AppID: rule.AppID, WorkflowName: "nightly", Input: json.RawMessage(`{"private":"backlog-input-secret"}`), DefinitionSnapshot: json.RawMessage(`{"name":"nightly","steps":[{"name":"pause","wait_for_duration":"1h"}]}`)}

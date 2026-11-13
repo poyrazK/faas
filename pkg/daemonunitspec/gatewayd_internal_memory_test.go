@@ -9,7 +9,7 @@ func TestGatewaydInternalGoRuntimeTuning(t *testing.T) {
 	if u.MemoryMax != "512M" {
 		t.Fatalf("internal gateway cgroup cap = %s; re-derive GOMEMLIMIT before changing it", u.MemoryMax)
 	}
-	want := map[string]string{"GOGC": "200", "GOMEMLIMIT": "384MiB"}
+	want := map[string]string{"GOGC": "200", "GOMEMLIMIT": "384MiB", "OTEL_TRACES_SAMPLER_ARG": "0.1"}
 	for _, kv := range u.Environment {
 		if v, ok := want[kv.Key]; ok {
 			if kv.Value != v {

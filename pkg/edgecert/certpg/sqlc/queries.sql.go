@@ -92,11 +92,17 @@ func (q *Queries) InsertEdgeTLSCertificate(ctx context.Context, db DBTX, arg Ins
 }
 
 const liveEdgeTLSCertificates = `-- name: LiveEdgeTLSCertificates :many
-SELECT DISTINCT ON (names) id, names, chain_pem, key_sealed, not_before, not_after
+SELECT id, names, chain_pem, key_sealed, not_before, not_after
 FROM edge_tls_certificates
 WHERE ca = $1 AND not_before <= now() AND not_after > now()
-ORDER BY names, not_after DESC, id DESC
+ORDER BY not_before DESC, id DESC
+LIMIT $2::int
 `
+
+type LiveEdgeTLSCertificatesParams struct {
+	Ca  string
+	Max int32
+}
 
 type LiveEdgeTLSCertificatesRow struct {
 	ID        int64
@@ -107,10 +113,12 @@ type LiveEdgeTLSCertificatesRow struct {
 	NotAfter  pgtype.Timestamptz
 }
 
-// What a compute edge serves: for each set of names, the newest certificate
-// from ca that is valid now, with its chain and sealed key.
-func (q *Queries) LiveEdgeTLSCertificates(ctx context.Context, db DBTX, ca string) ([]LiveEdgeTLSCertificatesRow, error) {
-	rows, err := db.Query(ctx, liveEdgeTLSCertificates, ca)
+// What a compute edge may serve: the certificates from ca that are valid
+// now, newest first, with their chains and sealed keys. Every one is
+// returned, not only the newest per set of names, so a row the edge cannot
+// open never hides one it can (ADR-20261107180000).
+func (q *Queries) LiveEdgeTLSCertificates(ctx context.Context, db DBTX, arg LiveEdgeTLSCertificatesParams) ([]LiveEdgeTLSCertificatesRow, error) {
+	rows, err := db.Query(ctx, liveEdgeTLSCertificates, arg.Ca, arg.Max)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +148,7 @@ const newestEdgeTLSCertificateTerms = `-- name: NewestEdgeTLSCertificateTerms :o
 SELECT id, account_uri, key_kid, sha256, not_after
 FROM edge_tls_certificates
 WHERE names = $1::text[] AND ca = $2
-ORDER BY not_after DESC, id DESC
+ORDER BY not_before DESC, id DESC
 LIMIT 1
 `
 

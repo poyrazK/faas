@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppPostgresBindingList } from '../models/AppPostgresBindingList.js';
 import type { ChangeManagedPostgresComputePolicyRequest } from '../models/ChangeManagedPostgresComputePolicyRequest.js';
 import type { CreateManagedPostgresBindingRequest } from '../models/CreateManagedPostgresBindingRequest.js';
 import type { CreateManagedPostgresDatabaseRequest } from '../models/CreateManagedPostgresDatabaseRequest.js';
@@ -365,6 +366,34 @@ export class ManagedPostgresService {
       url: '/v1/postgres/databases/{id}/connection-budget',
       path: {
         'id': id,
+      },
+    });
+  }
+  /**
+   * List an app's managed PostgreSQL bindings
+   * Lists the app's live managed PostgreSQL bindings on every database it
+   * is bound to, including organization databases and project environment
+   * copies. Deleting the app is refused while a binding listed here is not
+   * being deleted. Bindings on an environment copy are removed by tearing
+   * down that environment.
+   *
+   * @returns AppPostgresBindingList The app's bindings on every database, without credential material
+   * @returns Problem App lookup, permission or binding listing error
+   * @throws ApiError
+   */
+  public static listAppPostgresBindings({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AppPostgresBindingList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/postgres-bindings',
+      path: {
+        'slug': slug,
       },
     });
   }

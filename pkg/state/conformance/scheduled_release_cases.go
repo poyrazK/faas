@@ -40,13 +40,14 @@ func testScheduledReleases(t *testing.T, fx *Fixture) {
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	first, second := parkedDeployment(t, fx), parkedDeployment(t, fx)
-	notify := uuid.NewString()
+	notify, schedulerKey := uuid.NewString(), uuid.NewString()
 	schedule := func(d state.Deployment, at time.Time) (state.ScheduledRelease, []state.ScheduledRelease) {
 		t.Helper()
 		created, replaced, err := store.ScheduleRelease(fx.Ctx, state.ScheduledRelease{
 			AccountID: fx.Account.ID, AppID: fx.App.ID, DeploymentID: d.ID, ReleaseAt: at,
 			Canary: json.RawMessage(`{"preset":"balanced"}`), NotifyChannelIDs: []string{notify},
 			OverrideFreeze: "launch night", OverrideFreezeIDs: []string{uuid.NewString()}, ScheduledBy: "user:conformance",
+			ScheduledByAccountID: fx.Account.ID, ScheduledByKeyID: schedulerKey,
 		}, "replaced", "a newer schedule replaced it", now)
 		if err != nil {
 			t.Fatalf("ScheduleRelease: %v", err)
@@ -56,7 +57,8 @@ func testScheduledReleases(t *testing.T, fx *Fixture) {
 	early, replaced := schedule(first, now.Add(time.Hour))
 	if len(replaced) != 0 || early.State != state.ScheduledReleasePending || early.Revision != first.Revision ||
 		!early.ReleaseAt.Equal(now.Add(time.Hour)) || string(early.Canary) == "" || len(early.NotifyChannelIDs) != 1 ||
-		early.NotifyChannelIDs[0] != notify || early.OverrideFreeze != "launch night" || len(early.OverrideFreezeIDs) != 1 || early.StartedAt != nil {
+		early.NotifyChannelIDs[0] != notify || early.OverrideFreeze != "launch night" || len(early.OverrideFreezeIDs) != 1 || early.StartedAt != nil ||
+		early.ScheduledByAccountID != fx.Account.ID || early.ScheduledByKeyID != schedulerKey {
 		t.Fatalf("scheduled = %+v, replaced = %+v", early, replaced)
 	}
 	late, replaced := schedule(second, now.Add(2*time.Hour))
@@ -80,7 +82,7 @@ func testScheduledReleases(t *testing.T, fx *Fixture) {
 		t.Fatalf("due before release_at = %+v, %v", due, err)
 	}
 	due, err := store.DueScheduledReleases(fx.Ctx, now.Add(2*time.Hour), 10)
-	if err != nil || len(due) != 1 || due[0].ID != late.ID {
+	if err != nil || len(due) != 1 || due[0].ID != late.ID || due[0].ScheduledByAccountID != fx.Account.ID || due[0].ScheduledByKeyID != schedulerKey {
 		t.Fatalf("due at release_at = %+v, %v", due, err)
 	}
 	if _, err := store.FinishScheduledRelease(fx.Ctx, early.ID, state.ScheduledReleaseBlocked, "release_frozen", "", now); !errors.Is(err, state.ErrNotFound) {

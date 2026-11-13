@@ -51,7 +51,7 @@ func verifyResumable(ctx context.Context, p Pipeline, source *pgxpool.Pool, targ
 		}
 		return false, nil
 	}
-	storage, err := verificationSourceStorage(ctx, source, relations)
+	_, storage, err := verificationStorage(ctx, p, source, target, relations)
 	if err != nil {
 		return false, err
 	}
@@ -143,6 +143,12 @@ func verifyResumable(ctx context.Context, p Pipeline, source *pgxpool.Pool, targ
 // Range tracking covers every write since each comparison. A clean journal at
 // this boundary proves all ranges simultaneously; independent scans never do.
 func sealVerification(ctx context.Context, p Pipeline, source *pgxpool.Pool, target *pgx.Conn, relations []relation, ob *Observation, current func(context.Context) error, complete func(pgx.Tx) error) (bool, error) {
+	if err := ensureSourceStorageReceipt(ctx, target); err != nil {
+		return false, err
+	}
+	if err := checkProofContinuity(ctx, p, source, target); err != nil {
+		return false, err
+	}
 	relations, err := orderedVerificationRelations(ctx, source, relations)
 	if err != nil {
 		return false, err
@@ -174,17 +180,21 @@ func sealVerification(ctx context.Context, p Pipeline, source *pgxpool.Pool, tar
 	if err != nil || !caught {
 		return false, err
 	}
-	storage, err := verificationSourceStorage(ctx, sourceTx, relations)
+	actualStorage, storage, err := verificationStorage(ctx, p, sourceTx, target, relations)
 	if err != nil {
 		return false, err
 	}
 	if !reflect.DeepEqual(storage, c.Storage) {
 		return false, errVerificationSourceRewritten
 	}
+	if err = checkProofContinuity(ctx, p, sourceTx, target); err != nil {
+		return false, err
+	}
 	actual, _, err := inspectSource(ctx, p, source)
 	if err != nil {
 		return false, err
 	}
+	actual = preserveMissingMetadata(actual, relations)
 	_, actualSpec := verificationID(p, actual)
 	if actualSpec != spec {
 		return false, ErrConflict
@@ -264,11 +274,17 @@ func sealVerification(ctx context.Context, p Pipeline, source *pgxpool.Pool, tar
 	c.Progress.State, c.Progress.Phase, c.Progress.Table, c.Progress.Reason = "passed", "complete", "", ""
 	c.Progress.CompletedAt = time.Now().UTC()
 	if complete != nil {
+		if err = finishSourceSlotQualification(ctx, p, tx, relations); err != nil {
+			return false, err
+		}
 		if err = complete(tx); err != nil {
 			return false, err
 		}
 	}
 	if err = saveVerification(ctx, tx, p, c); err != nil {
+		return false, err
+	}
+	if err = saveSourceStorage(ctx, p, tx, relations, actualStorage); err != nil {
 		return false, err
 	}
 	if err = current(ctx); err != nil {

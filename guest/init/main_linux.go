@@ -68,6 +68,7 @@ const (
 	modeAppTask
 	modeDataRepair
 	modeAgent
+	modeSandbox
 )
 
 // main is guest PID 1. Any fatal error here panics the VM (panic=1 in boot args
@@ -179,6 +180,12 @@ func boot() error {
 	if mode == modeAgent {
 		guestStage("before-agent-run")
 		return runAgentGuest(slog.Default())
+	}
+	// Sandbox sessions (ADR-20261027090013 §4) serve many operations until
+	// vmmd stops the VM.
+	if mode == modeSandbox {
+		guestStage("before-sandbox")
+		return runSandboxGuest(slog.Default())
 	}
 	var extensionHooks *extensionLifecycle
 	var afterRestore atomic.Pointer[afterRestoreRuntime]
@@ -319,15 +326,6 @@ func boot() error {
 		slog.Default().Warn("vsock liveness listener unavailable", "err", err)
 	}
 
-	// Wave 0 PR-C / ADR-047: stateless-runtime advisory. FAN_CLASS_NOTIF
-	// on a closed set of state-shaped paths; debounced batches shipped
-	// over AF_VSOCK DGRAM (port=1025, msg_type=2) to the host. Returns
-	// are tolerated — a guest without CONFIG_FANOTIFY=y still boots,
-	// the contract is "no signal" not "won't boot".
-	if err := runStatelessAdvisory(slog.Default()); err != nil {
-		slog.Default().Warn("stateless advisory unavailable", "err", err)
-	}
-
 	// Issue #667 / ADR-078 (consolidated follow-up PR): the
 	// tail-events unix-socket proxy. The proxy at
 	// /run/guest-init/tail-events.sock is the runner-facing entry
@@ -372,6 +370,13 @@ func boot() error {
 	if err != nil {
 		return err
 	}
+	// ADR-047 (amended 2026-11-12): watch state-shaped directories,
+	// including data/ and db/ under the app's working directory, and ship
+	// each written path once over vsock port 1025. Tolerated — the
+	// contract is "no signal", not "won't boot".
+	if err := runStatelessAdvisory(slog.Default(), manifest.EffectiveWorkingDir()); err != nil {
+		slog.Default().Warn("stateless advisory unavailable", "err", err)
+	}
 	if manifest.EffectivePort() == api.ProfileBridgePort() {
 		// The bridge would take the app's own port; an older imaged may
 		// still have stamped collectors for it (ADR-1155).
@@ -384,6 +389,10 @@ func boot() error {
 	}
 	if manifest.AfterRestore != nil {
 		afterRestore.Store(&afterRestoreRuntime{hook: *manifest.AfterRestore, port: manifest.EffectivePort()})
+		if manifest.AfterRestore.ReloadsIdentity() {
+			reload := newRestoreIdentityReload(*manifest.AfterRestore, manifest.EffectivePort(), lookupUID(manifest.EffectiveUser())).run
+			restoreIdentityReloader.Store(&reload)
+		}
 	}
 	if manifest.BeforeCheckpoint != nil {
 		beforeCheckpoint.Store(&beforeCheckpointRuntime{hook: *manifest.BeforeCheckpoint, port: manifest.EffectivePort()})
@@ -439,6 +448,11 @@ func boot() error {
 	if apiErr != nil {
 		slog.Default().Warn("env.json could not be loaded; proceeding without api env", "err_kind", errorKind(apiErr))
 	}
+	// ADR-20261107160000: the identity file outlives the environment's
+	// FAAS_INSTANCE_ID, which a snapshot restore cannot change.
+	if err := publishBootInstanceIdentity(apiEnv, time.Now()); err != nil {
+		slog.Default().Warn("instance identity file unavailable", "err", err)
+	}
 	qualificationReceiptToken, qualificationReceiptMACKey, qualificationReceiptErr := takeQualificationConfigReceiptControl(apiEnv)
 	if qualificationReceiptErr != nil {
 		slog.Default().Warn("qualification configuration receipt control is invalid")
@@ -480,6 +494,11 @@ func boot() error {
 	if qualificationReceiptToken != "" {
 		emitQualificationConfigReceipt(slog.Default(), "main", qualificationReceiptToken, qualificationReceiptMACKey, apiEnv, secrets, nil)
 		clear(qualificationReceiptMACKey)
+		// A native qualification restore of this guest re-attests the same
+		// configuration under a fresh token (ADR 20261023093000).
+		if err := rememberQualificationRestoreBasis(apiEnv, secrets); err != nil {
+			slog.Default().Warn("qualification restore receipt basis unavailable", "err", err)
+		}
 	}
 
 	// ADR-051 Phase 4: Supervisor holds atomic.Pointer (Run is a
@@ -630,6 +649,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	env = stampTracingEnv(env, m.Tracing)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
 	env = StampRestoreReseedEnv(env)
+	env = StampInstanceIdentityEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	serviceProxyTrust, trustErr := prepareServiceProxyTrust("/", "/")
 	if trustErr != nil {
@@ -644,16 +664,23 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// boundary. Empty = no OTel configured, the env is unchanged.
 	env = StampTraceparentEnv(env, GetResumeTraceparent())
 	// ADR-741: `gregale dev --debug` starts the Node inspector for the main
-	// workload only.
+	// workload only, and only in a developer environment: schedd owns the
+	// marker, so the switch set on any other app is ignored.
+	developer := apiEnv[api.PlatformDeveloperEnvironmentEnv] == "1"
 	preload := ""
 	if devDebugEnvValue(env, api.DevDebugEnv) == api.DevDebugRuntimeNode {
-		if err := writeDevDebugPreload(devDebugPreloadPath); err != nil {
-			slog.Warn("dev debug preload unavailable; inspecting the first node process", "err", err)
-		} else {
-			preload = devDebugPreloadPath
+		switch {
+		case !developer:
+			slog.Warn("dev debug ignored: not a developer environment", "key", api.DevDebugEnv)
+		default:
+			if err := writeDevDebugPreload(devDebugPreloadPath); err != nil {
+				slog.Warn("dev debug preload unavailable; inspecting the first node process", "err", err)
+			} else {
+				preload = devDebugPreloadPath
+			}
 		}
 	}
-	env = StampDevDebugEnv(env, preload)
+	env = StampDevDebugEnv(env, preload, developer)
 	// ADR-1170: a watch-mode developer image runs a development server that
 	// reloads patched files itself.
 	devWatchActive.Store(devDebugEnvValue(env, api.DevWatchEnv) == "1")
@@ -682,7 +709,12 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	if sup != nil {
 		output = io.MultiWriter(os.Stdout, sup.LogBuffer())
 	}
-	outputPipe, err := newWorkloadOutputPipe(output, int(credential.Uid), int(credential.Gid))
+	// Spec §17 G2: sealed values never reach the logs in cleartext. A
+	// reloadable app shares one redactor across restarts so reloaded values
+	// are masked too (ADR-20261110090000).
+	redactor := processSecrets.logRedactor()
+	redactor.update(secrets)
+	outputPipe, err := newWorkloadOutputPipe(redactor.writer(output), int(credential.Uid), int(credential.Gid))
 	if err != nil {
 		return fmt.Errorf("run app: workload output pipe: %w", err)
 	}
@@ -840,6 +872,7 @@ func errorKind(err error) string {
 //
 // Mode priority (ADR-171):
 //  0. agent.json with kind=="agent"            → modeAgent (ADR-20261027090010), alone
+//     sandbox.json with kind=="sandbox"        → modeSandbox (ADR-20261027090013), alone
 //  1. app-task.json with kind=="app_task"     → modeAppTask
 //  2. execution.json with kind=="execution"   → modeExecution
 //  3. job.json with kind=="job"               → modeJob
@@ -874,7 +907,7 @@ func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
 		if markerErr := validateAgentManifest(data); markerErr != nil {
 			return modeAgent, api.BuildManifest{}, fmt.Errorf("invalid agent manifest: %w", markerErr)
 		}
-		for _, other := range []string{appTaskManifestRelativePath, executionManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
+		for _, other := range []string{sandboxManifestRelativePath, appTaskManifestRelativePath, executionManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
 			if _, err = fs.Stat(fsys, other); !errors.Is(err, fs.ErrNotExist) {
 				return modeAgent, api.BuildManifest{}, errors.New("conflicting agent guest mode")
 			}
@@ -882,6 +915,19 @@ func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
 		return modeAgent, api.BuildManifest{}, nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return modeAgent, api.BuildManifest{}, fmt.Errorf("read agent manifest: %w", err)
+	}
+	if data, err := fs.ReadFile(fsys, sandboxManifestRelativePath); err == nil {
+		if markerErr := validateSandboxManifest(data); markerErr != nil {
+			return modeSandbox, api.BuildManifest{}, fmt.Errorf("invalid sandbox manifest: %w", markerErr)
+		}
+		for _, other := range []string{appTaskManifestRelativePath, executionManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
+			if _, err = fs.Stat(fsys, other); !errors.Is(err, fs.ErrNotExist) {
+				return modeSandbox, api.BuildManifest{}, errors.New("conflicting sandbox guest mode")
+			}
+		}
+		return modeSandbox, api.BuildManifest{}, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return modeSandbox, api.BuildManifest{}, fmt.Errorf("read sandbox manifest: %w", err)
 	}
 	if data, err := fs.ReadFile(fsys, appTaskManifestRelativePath); err == nil {
 		if markerErr := validateAppTaskManifest(data); markerErr != nil {
@@ -1186,6 +1232,21 @@ func runBuildOnce(m api.BuildManifest) error {
 	// mount policy. The VM plus this outer namespace remain the isolation
 	// boundary.
 	buildkitRoot := builderDriveMount + "/upper/build/.buildkit"
+	// ADR-20261030122204: a seeded build keeps BuildKit's root on drive2,
+	// which already holds the platform images. A build falls back to drive1
+	// when drive2 is unusable; the seed run cannot.
+	seedMounted := false
+	if wantBuildKitSeed(m) {
+		root, seedErr := mountBuildKitSeed()
+		switch {
+		case seedErr == nil:
+			buildkitRoot, seedMounted = root, true
+		case m.BuildKitSeedOnly:
+			return writeAndPoweroff(m, fmt.Errorf("mount buildkit seed drive: %w", seedErr), "")
+		default:
+			fmt.Fprintf(os.Stderr, "guest-init: buildkit seed drive unusable, keeping BuildKit on the builder drive: %v\n", seedErr)
+		}
+	}
 	if err := os.MkdirAll(buildkitRoot, 0o777); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("mkdir buildkit root: %w", err), "")
 	}
@@ -1457,6 +1518,14 @@ func runBuildOnce(m api.BuildManifest) error {
 	// successful halt. Quiesce the daemon before reading its log and syncing
 	// the writable drive so export cannot observe partially written metadata.
 	stopBuildkit()
+	if seedMounted {
+		if seedErr := unmountBuildKitSeed(); seedErr != nil {
+			if m.BuildKitSeedOnly && err == nil {
+				err = fmt.Errorf("unmount buildkit seed drive: %w", seedErr)
+			}
+			fmt.Fprintf(os.Stderr, "guest-init: unmount buildkit seed drive: %v\n", seedErr)
+		}
+	}
 	if m.DependencyCache && !deferCacheExport(m) {
 		cachePath := filepath.Join(m.OutDir, "cache")
 		removed, cacheErr := removeOversizedDependencyCache(cachePath, api.MaxExportedLayerBytes)
@@ -2406,6 +2475,7 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string, timings *
 		BuildkitVersion: buildkitVersion,
 		RailpackVersion: railpackVersion,
 		Timings:         timings,
+		BuildKitSeeded:  buildKitSeedUsed(),
 	}
 	if runErr == nil && !m.CacheExportOnly {
 		done.PublicBuildURLsSHA256 = api.PublicBuildURLsSHA256(m.PublicBuildURLs)

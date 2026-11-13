@@ -9,6 +9,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -22,6 +23,9 @@ func (s *server) checkedRollbackCheck(ctx context.Context, operation api.Rollbac
 	}
 	if target.AppID != operation.AppID {
 		return "failed", "rollback_deployment_changed", nil, nil
+	}
+	if state.CheckedRollbackCompleted(operation, target) {
+		return "complete", "", nil, nil
 	}
 	if target.Status == state.DeployFailed || target.Status == state.DeployCancelled || target.Status == state.DeploySuperseded {
 		return "failed", "rollback_readiness_failed", nil, nil
@@ -56,6 +60,9 @@ func (s *server) checkedRollbackCheck(ctx context.Context, operation api.Rollbac
 	if err != nil {
 		return "", "", nil, err
 	}
+	if operation.Service != (app.Manifest.ExecutionMode == api.ExecutionModeService) {
+		return "failed", "rollback_execution_mode_changed", nil, nil
+	}
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
 		if problem.Status >= 500 {
 			return rollbackProblemStatus(problem)
@@ -85,6 +92,15 @@ func (s *server) checkedRollbackCheck(ctx context.Context, operation api.Rollbac
 	if problem := s.supersededRollbackTargetProblem(ctx, app, target); problem != nil {
 		return rollbackProblemStatus(problem)
 	}
+	if api.ApiContractDiffEnabled() && openapidiff.IsProductionScope(target.Scope) {
+		check, err := openapidiff.CheckDeploymentRollback(ctx, s.store, app.ID, target.ID, operation.CurrentDeploymentID, target.Scope)
+		if err != nil && !errors.Is(err, openapidiff.ErrSnapshotBaselineMissing) {
+			return "", "", nil, err
+		}
+		if check.Diff.Blocking() {
+			return "failed", contractGateProblem(check.Diff).Code, nil, nil
+		}
+	}
 	var updated api.RollbackOperation
 	problem, err = s.withBindingReleaseObservations(r, acct, app, observations, func(writeCtx context.Context) error {
 		var writeErr error
@@ -94,11 +110,23 @@ func (s *server) checkedRollbackCheck(ctx context.Context, operation api.Rollbac
 	if problem != nil {
 		return rollbackProblemStatus(problem)
 	}
+	if errors.Is(err, state.ErrRollbackCrossesRelease) {
+		return "failed", api.CodeRollbackCrossesRelease, nil, nil
+	}
+	if errors.Is(err, state.ErrProjectReleaseRollbackRequired) {
+		return "failed", api.CodeProjectReleaseRollbackRequired, nil, nil
+	}
+	if errors.Is(err, state.ErrRollbackTargetDatabaseRestored) {
+		return "failed", api.CodeRollbackTargetDatabaseRestored, nil, nil
+	}
 	if errors.Is(err, state.ErrCheckedRollbackChanged) {
 		return "failed", "rollback_deployment_changed", nil, nil
 	}
 	if errors.Is(err, state.ErrServiceRolloutNotReady) {
 		return "blocked", "service_rollout_not_ready", []api.BindingCheckFinding{{Code: "service_rollout_not_ready", DeploymentID: target.ID, Message: "The rollback target needs ready service capacity before traffic can move."}}, nil
+	}
+	if errors.Is(err, state.ErrWorkerRollbackNotReady) {
+		return "blocked", "worker_rollback_not_ready", []api.BindingCheckFinding{{Code: "worker_rollback_not_ready", DeploymentID: target.ID, Message: "The rollback target needs a running worker with the current configuration before it can become active."}}, nil
 	}
 	if state.IsMCPReadinessRequired(err) {
 		return "blocked", api.CodeMCPReadinessRequired, []api.BindingCheckFinding{{Code: api.CodeMCPReadinessRequired, DeploymentID: target.ID, Message: "Refresh platform MCP readiness or create an audited emergency override before moving traffic."}}, nil

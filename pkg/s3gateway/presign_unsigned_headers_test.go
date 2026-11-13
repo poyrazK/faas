@@ -96,16 +96,16 @@ func TestUploadWriteProtectionNeedsBucketSettingsKey(t *testing.T) {
 	}
 }
 
-func TestUnsignedPresignHeader(t *testing.T) {
+func TestUnsignedAmzHeader(t *testing.T) {
 	header := http.Header{}
 	header.Set("Content-Type", "text/plain")
 	header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
 	header.Set("X-Amz-Meta-Signed", "yes")
-	if got := unsignedPresignHeader(header, map[string]bool{"host": true, "x-amz-meta-signed": true}); got != "" {
+	if got := unsignedAmzHeader(header, map[string]bool{"host": true, "x-amz-meta-signed": true}); got != "" {
 		t.Fatalf("signed and exempt headers reported %q", got)
 	}
 	header.Set("X-Amz-Object-Lock-Mode", "COMPLIANCE")
-	if got := unsignedPresignHeader(header, map[string]bool{"host": true, "x-amz-meta-signed": true}); got != "x-amz-object-lock-mode" {
+	if got := unsignedAmzHeader(header, map[string]bool{"host": true, "x-amz-meta-signed": true}); got != "x-amz-object-lock-mode" {
 		t.Fatalf("unsigned header = %q, want x-amz-object-lock-mode", got)
 	}
 }

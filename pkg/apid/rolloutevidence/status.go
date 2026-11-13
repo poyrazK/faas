@@ -1,8 +1,10 @@
 package rolloutevidence
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -18,8 +20,11 @@ import (
 const (
 	failingErrorPct    = 5
 	failingMinRequests = 20
-	// failureScan bounds the newest rows read to find recent failures.
-	failureScan = 200
+	// failureScan bounds the newest rows read, per serving deployment, to
+	// find recent failures. A busy app's newest 200 rows across every
+	// deployment were often all successes (or the rolled-back candidate's),
+	// so a degraded verdict came back with no failing request to show.
+	failureScan = 1000
 )
 
 // Status summarizes the app over [now-since, now]: serving deployments,
@@ -40,18 +45,24 @@ func (r Reader) Status(ctx context.Context, app state.App, since, retention time
 		return out, fmt.Errorf("rolloutevidence: live deployments: %w", err)
 	}
 	sort.SliceStable(live, func(i, j int) bool { return live[i].TrafficPercent > live[j].TrafficPercent })
+	var latency []sqlc.RequestTelemetryLatencyWeightsByRouteRow
+	var serving []string
 	for _, dep := range live {
 		// A rolled-back candidate stays live at 0% traffic. Its failures
 		// belong to Rollout, not to the health of what serves now.
 		if dep.RolloutState == api.DebugRolloutAborted {
 			continue
 		}
+		serving = append(serving, dep.ID)
 		out.Deployments = append(out.Deployments, api.DebugStatusDeployment{
 			ID: dep.ID, TrafficPercent: dep.TrafficPercent, RolloutState: dep.RolloutState,
 			CommitSHA: dep.CommitSHA, CreatedAt: dep.CreatedAt.UTC().Format(time.RFC3339),
 		})
+		// The regression view: the platform's own refusals and requests
+		// pinned to a deployment are not the serving release's errors.
 		errs, err := r.Store.RequestTelemetryErrorsByRoute(ctx, sqlc.RequestTelemetryErrorsByRouteParams{
 			AppID: pgUUID(app.ID), DeploymentID: pgUUID(dep.ID), ReceivedAt: pgTime(start), ReceivedAt_2: pgTime(now),
+			Column5: true,
 		})
 		if err != nil {
 			return out, fmt.Errorf("rolloutevidence: deployment errors: %w", err)
@@ -60,14 +71,17 @@ func (r Reader) Status(ctx context.Context, app state.App, since, retention time
 			out.Health.Requests += row.Requests
 			out.Health.ServerErrors += row.ErrorRequests
 		}
+		weights, err := r.Store.RequestTelemetryLatencyWeightsByRoute(ctx, sqlc.RequestTelemetryLatencyWeightsByRouteParams{
+			AppID: pgUUID(app.ID), DeploymentID: pgUUID(dep.ID), ReceivedAt: pgTime(start), ReceivedAt_2: pgTime(now),
+		})
+		if err != nil {
+			return out, fmt.Errorf("rolloutevidence: deployment latency: %w", err)
+		}
+		latency = append(latency, weights...)
 	}
-	summary, err := r.Store.RequestTelemetryAnalyticsSummary(ctx, sqlc.RequestTelemetryAnalyticsSummaryParams{
-		AppID: pgUUID(app.ID), AccountID: pgUUID(app.AccountID), ReceivedAt: pgTime(start), ReceivedAt_2: pgTime(now),
-	})
-	if err != nil {
-		return out, fmt.Errorf("rolloutevidence: request summary: %w", err)
-	}
-	out.Health.P95MS = int(summary.P95Ms)
+	// The p95 is the warm p95 of what serves now: the app-wide analytics
+	// summary mixed in cold boots and a rolled-back candidate's requests.
+	out.Health.P95MS = weightedP95(latency)
 
 	rollout, err := r.Explain(ctx, app, "", retention)
 	if err != nil {
@@ -86,7 +100,7 @@ func (r Reader) Status(ctx context.Context, app state.App, since, retention time
 		out.Regressions = items[:min(len(items), api.DebugStatusMaxRegression)]
 	}
 	if out.Health.ServerErrors > 0 {
-		if out.RecentFailures, err = r.recentFailures(ctx, app.ID, start, now); err != nil {
+		if out.RecentFailures, err = r.recentFailures(ctx, app.ID, serving, start, now); err != nil {
 			return out, err
 		}
 	}
@@ -132,20 +146,54 @@ func rolloutInWindow(rollout api.DebugRolloutExplanation, start time.Time) bool 
 	return false
 }
 
-func (r Reader) recentFailures(ctx context.Context, appID string, start, end time.Time) ([]api.DebugTelemetryRequestItem, error) {
-	rows, err := r.Store.ListRequestTelemetryByApp(ctx, sqlc.ListRequestTelemetryByAppParams{
-		AppID: pgUUID(appID), ReceivedAt: pgTime(start), ReceivedAt_2: pgTime(end), ColdBootFilter: -1, Limit: failureScan,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("rolloutevidence: recent failures: %w", err)
-	}
-	out := []api.DebugTelemetryRequestItem{}
-	for _, row := range rows {
-		if row.Status >= 500 && len(out) < api.DebugStatusMaxFailures {
-			out = append(out, r.item(row))
+// recentFailures returns the newest server errors of the serving
+// deployments, newest first.
+func (r Reader) recentFailures(ctx context.Context, appID string, serving []string, start, end time.Time) ([]api.DebugTelemetryRequestItem, error) {
+	var failed []sqlc.ListRequestTelemetryByAppRow
+	for _, deploymentID := range serving {
+		rows, err := r.Store.ListRequestTelemetryByApp(ctx, sqlc.ListRequestTelemetryByAppParams{
+			AppID: pgUUID(appID), ReceivedAt: pgTime(start), ReceivedAt_2: pgTime(end), DeploymentID: deploymentID,
+			ColdBootFilter: -1, Limit: failureScan,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("rolloutevidence: recent failures: %w", err)
+		}
+		for _, row := range rows {
+			if row.Status >= 500 {
+				failed = append(failed, row)
+			}
 		}
 	}
+	sort.SliceStable(failed, func(i, j int) bool { return failed[i].ReceivedAt.Time.After(failed[j].ReceivedAt.Time) })
+	out := []api.DebugTelemetryRequestItem{}
+	for _, row := range failed[:min(len(failed), api.DebugStatusMaxFailures)] {
+		out = append(out, r.item(row))
+	}
 	return out, nil
+}
+
+// weightedP95 is the 95th percentile latency of weighted latency buckets.
+func weightedP95(rows []sqlc.RequestTelemetryLatencyWeightsByRouteRow) int {
+	var total int64
+	for _, row := range rows {
+		total += row.Requests
+	}
+	if total == 0 {
+		return 0
+	}
+	sorted := slices.Clone(rows)
+	slices.SortFunc(sorted, func(a, b sqlc.RequestTelemetryLatencyWeightsByRouteRow) int {
+		return cmp.Compare(a.LatencyMs, b.LatencyMs)
+	})
+	rank := (total*95 + 99) / 100 // nearest rank
+	var seen int64
+	for _, row := range sorted {
+		seen += row.Requests
+		if seen >= rank {
+			return int(row.LatencyMs)
+		}
+	}
+	return int(sorted[len(sorted)-1].LatencyMs)
 }
 
 // verdict picks the worst condition, in order: failing, rolled back,

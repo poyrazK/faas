@@ -103,6 +103,10 @@ type gatewaydEdgeRules struct {
 	// capabilityAllowed drops the rules of an off capability per request
 	// (ADR-20261023115741); nil keeps every rule.
 	capabilityAllowed func(capability, accountID string) bool
+	// headerSecretOpener opens sealed request header values
+	// (ADR-20261108110000); nil leaves rules using them unapplied.
+	headerSecretOpener edgeRuleHeaderSecretOpener
+	headerSecrets      edgeRuleHeaderSecrets
 }
 
 // edgeRuleFenceKey scopes a fence to the account whose mutation raised it;
@@ -477,6 +481,10 @@ func (g *gatewaydEdgeRules) compileHostRules(ctx context.Context, host string, s
 		return nil, err
 	}
 	storeRules, err := g.resolveEdgeRuleLists(ctx, storeRules)
+	if err != nil {
+		return nil, err
+	}
+	storeRules, err = g.resolveEdgeRuleHeaderSecrets(ctx, storeRules)
 	if err != nil {
 		return nil, err
 	}
@@ -2550,6 +2558,7 @@ func (g *gatewaydEdgeRules) compileValidateRules(storeRules []state.EdgeRule) ([
 			Methods:             buildMethodsMap(r.MatchMethods),
 			MatchHeaders:        buildMatchHeadersMap(r.MatchHeaders),
 			SchemaDigest:        digest,
+			Schema:              append([]byte(nil), schemaBytes...),
 			ContentTypes:        contentTypes,
 			ApplyWhileStreaming: action.ApplyWhileStreaming,
 			RejectUnknownFields: action.RejectOnUnknown,
@@ -2589,7 +2598,7 @@ func (g *gatewaydEdgeRules) compileValidateParameters(p *api.EdgeRuleValidatePar
 		if err != nil {
 			return nil, err
 		}
-		*loc.into = gateway.EdgeRuleParamSchemaResolved{Set: true, Digest: digest, Kinds: kinds}
+		*loc.into = gateway.EdgeRuleParamSchemaResolved{Set: true, Digest: digest, Schema: append([]byte(nil), loc.raw...), Kinds: kinds}
 	}
 	return out, nil
 }

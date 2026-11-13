@@ -95,6 +95,7 @@ const (
 	releaseGatesFile                 = "release_gates.go"        // ADR-20261019071734 release gates
 	releaseApprovalsFile             = "release_approvals.go"    // ADR-20261020085706 release approvals
 	releaseDiffFile                  = "release_diff.go"         // ADR-20261021101117 release diff
+	releaseOutcomeFile               = "release_outcome.go"      // ADR-1448 amendment 1 release outcome checks
 	releaseTimelineFile              = "release_timeline.go"     // ADR-20261022120744 release page timeline
 	scheduledReleasesFile            = "scheduled_releases.go"   // ADR-20261021152201 scheduled releases
 	databaseSwitchFile               = "database_switch.go"      // ADR-20261023181931 rollbacks that restore the database
@@ -122,6 +123,30 @@ var previewFields = map[string]map[string]bool{
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	"GET /v1/referrals/checkout":                              true, // private browser checkout hint; mounted in sales.go
+	"GET /v1/sales/templates":                                 true, // private sales message tools; session authentication
+	"POST /v1/sales/templates":                                true,
+	"GET /v1/sales/templates/{template}":                      true,
+	"PUT /v1/sales/templates/{template}":                      true,
+	"GET /v1/sales/leads/{lead}/templates/{template}/preview": true,
+
+	"GET /v1/sales/qualification":              true, // private qualification and closing analysis
+	"GET /v1/sales/leads/{lead}/qualification": true,
+	"PUT /v1/sales/leads/{lead}/qualification": true,
+
+	"GET /v1/sales/alerts":                   true, // private sales attention and history
+	"GET /v1/sales/leads/{lead}/activities":  true,
+	"POST /v1/sales/leads/{lead}/activities": true,
+
+	"GET /v1/sales/inquiries/challenge":            true, // website intake; x-internal contract
+	"POST /v1/sales/inquiries":                     true,
+	"GET /v1/sales/inquiries":                      true, // private sales inbox
+	"PUT /v1/sales/inquiries/{inquiry}/assignment": true,
+	"PUT /v1/sales/inquiries/{inquiry}/close":      true,
+
+	// ADR-20261112134100: private staff inbox metadata; public customer counterparts remain documented.
+	"GET /v1/admin/support/notifications":                                         true,
+	"POST /v1/admin/support/tickets/{ticket}/read":                                true,
 	"DELETE /v1/apps/{slug}/operation-approval-forms/{id}":                        true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
 	"DELETE /v1/apps/{slug}/operation-concurrency/{id}":                           true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
 	"GET /v1/apps/{slug}/operation-approval-forms":                                true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
@@ -215,6 +240,9 @@ var routeExclude = map[string]bool{
 	// Mirror across this list AND cmd/sdk-coverage/main.go::routeExclude.
 	"POST /v1/postgres/databases/{id}/upgrade":              true,
 	"GET /v1/postgres/databases/{id}/upgrades/{upgrade_id}": true,
+	// ADR-20261102123523 PR preview databases: behind the preview-databases
+	// capability until launch. Mirror in cmd/sdk-coverage/main.go::routeExclude.
+	"PUT /v1/postgres/databases/{id}/previews": true,
 
 	"POST /integrations/slack/actions":                     true, // ADR-1497 signed managed Slack actions.
 	"POST /integrations/slack/events":                      true, // ADR-1497 signed Slack uninstall/revocation callbacks.
@@ -422,6 +450,22 @@ var routeExclude = map[string]bool{
 	"GET /v1/agent-tools/.well-known/rap-toolset":     true,
 	"POST /v1/agent-tools/invoke":                     true,
 	"POST /v1/agent-tools/close_thread":               true,
+	"POST /v1/sandboxes":                              true,
+	"GET /v1/sandboxes":                               true,
+	"GET /v1/sandboxes/{id}":                          true,
+	"PATCH /v1/sandboxes/{id}":                        true,
+	"DELETE /v1/sandboxes/{id}":                       true,
+	"GET /v1/sandbox-snapshots":                       true,
+	"GET /v1/sandbox-snapshots/{id}":                  true,
+	"DELETE /v1/sandbox-snapshots/{id}":               true,
+	"GET /v1/sandbox-templates":                       true,
+	"GET /v1/sandbox-templates/{name}":                true,
+	"PUT /v1/sandbox-templates/{name}":                true,
+	"DELETE /v1/sandbox-templates/{name}":             true,
+	"POST /v1/sandboxes/{id}/ports":                   true,
+	"GET /v1/sandboxes/{id}/ports":                    true,
+	"GET /v1/sandboxes/{id}/ports/{port}":             true,
+	"DELETE /v1/sandboxes/{id}/ports/{port}":          true,
 	"GET /v1/agents":                                  true,
 	"GET /v1/agents/{agent}":                          true,
 	"DELETE /v1/agents/{agent}":                       true,
@@ -450,6 +494,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/capacity":                true, // operator-only capacity projection
 	"GET /v1/admin/obs/tenants":                 true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/360":        true, // operator-only tenant 360 projection
+	"GET /v1/admin/obs/lookup":                  true, // operator-only identifier lookup (ADR-20261112170000)
 	"GET /v1/admin/obs/tenants/{id}":            true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/activity":   true, // operator-only tenant activity drill-down
 	"GET /v1/admin/obs/apps/{id}":               true, // operator-only app workload drill-down
@@ -505,7 +550,10 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/ops/accounts/{id}/suspend":                      true, // operator-only tenant lifecycle control
 	"POST /v1/admin/ops/accounts/{id}/restore":                      true, // operator-only tenant lifecycle control
 	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":              true, // operator-only tenant security control
+	"POST /v1/admin/ops/accounts/{id}/reset-mfa":                    true, // operator-only account recovery (ADR-20261108160000)
+	"POST /v1/admin/ops/accounts/{id}/revert-email":                 true, // operator-only account recovery (ADR-20261110100000)
 	"POST /v1/admin/ops/accounts/{id}/object-storage-ceiling":       true, // operator-only support grant (ADR-20261101214152)
+	"POST /v1/admin/ops/accounts/{id}/complimentary":                true, // operator-only complimentary plan (ADR-20261111140000)
 	"POST /v1/admin/ops/nodes/{name}/drain":                         true, // operator-only node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/force-drain":                   true, // operator-only destructive node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/activate":                      true, // operator-only node lifecycle control
@@ -551,6 +599,17 @@ var routeExclude = map[string]bool{
 	"GET /dashboard":                                                true, // HTML dashboard
 	"GET /dashboard/":                                               true, // HTML dashboard
 	"POST /dashboard/account/delete":                                true, // HTML form
+	"POST /dashboard/account/display-name":                          true, // HTML form (ADR-20261107103000)
+	"POST /dashboard/account/email":                                 true, // HTML form (ADR-20261107103000)
+	"POST /dashboard/account/providers/{provider}/unlink":           true, // HTML form (ADR-20261107103000)
+	"POST /dashboard/account/providers/{provider}/link":             true, // HTML form starting an OAuth link (ADR-20261108150000)
+	"POST /dashboard/account/trusted-browsers/{id}/forget":          true, // HTML form forgetting a remembered browser (ADR-20261108150000)
+	"POST /dashboard/account/trusted-browsers/forget-all":           true, // HTML form forgetting every remembered browser (ADR-20261108150000)
+	"POST /dashboard/account/sessions/{id}/revoke":                  true, // HTML form (ADR-20261107103000)
+	"POST /dashboard/account/verify-email/resend":                   true, // HTML form (ADR-20261107103000)
+	"GET /auth/email-change":                                        true, // email-change confirm page (browser-only)
+	"POST /auth/email-change":                                       true, // email-change confirm submit (browser-only)
+	"POST /login/magic-link":                                        true, // /login magic-link form (browser-only)
 	"POST /dashboard/account/keys/{id}/delete":                      true, // HTML form (issue #248)
 	"POST /dashboard/account/plan":                                  true, // HTML form (issue #248)
 	"POST /dashboard/account/restore":                               true, // HTML form
@@ -558,6 +617,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/mfa":                                           true, // HTML form, TOTP challenge
 	"GET /dashboard/account/export":                                 true, // session-auth twin of /v1/account/export
 	"GET /dashboard/account/mfa":                                    true, // ADR-20261103202000: browser-only session form over the documented /v1/account/mfa actions
+	"GET /dashboard/invitations/{token}":                            true, // ADR-20261106210000: browser-only review page over the documented invitation peek/accept APIs
 	"GET /dashboard/account/dpa":                                    true, // session-auth twin of DPA
 	"POST /dashboard/raise-overage-cap":                             true, // HTML form (issue #561)
 	"POST /dashboard/upgrade":                                       true, // HTML form (hosted-checkout hand-off)
@@ -604,8 +664,8 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/incidents/{id}/notes":                          true, // ADR-20261022193512 CSRF form over POST /v1/incidents/{id}/notes
 	"GET /dashboard/releases/{id}":                                  true, // ADR-20261022120744 HTML page over GET /v1/deployments/{id}/timeline
 	"GET /dashboard/apps/{slug}/custom-metrics":                     true, // ADR-745 HTML view of custom metric history
-	"GET /dashboard/apps/{slug}/automations":                        true, // ADR-1285 HTML authoring console
-	"POST /dashboard/apps/{slug}/automations/{action}":              true, // ADR-1285 app-bound CSRF forms
+	"GET /dashboard/apps/{slug}/workflows/stored":                   true, // ADR-1285 HTML authoring console
+	"POST /dashboard/apps/{slug}/workflows/stored/{action}":         true, // ADR-1285 app-bound CSRF forms
 	// Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert" form
 	// (session-cookie dashboard twin of the JSON route). Mirror the
 	// cmd/sdk-coverage/main.go::routeExclude entry for the same
@@ -673,9 +733,12 @@ var routeExclude = map[string]bool{
 	"PUT /v1/apps/{slug}/operation-concurrency":    true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
 
 	// ADR-1293: session-bound HTML progress and CSRF result-check fragments.
-	"GET /dashboard/apps/{slug}/automations/live-verifications/{run_id}":     true, // ADR-1293 session-authenticated HTML progress fragment
-	"POST /dashboard/apps/{slug}/automations/live-verifications/{run_id}":    true, // ADR-1293 CSRF-protected assertion check fragment
-	"POST /dashboard/apps/{slug}/automations/live-suites/{suite_id}/advance": true, // ADR-1297: session-only HTML continuation with CSRF.
+	"GET /dashboard/apps/{slug}/workflows/stored/live-verifications/{run_id}":     true, // ADR-1293 session-authenticated HTML progress fragment
+	"POST /dashboard/apps/{slug}/workflows/stored/live-verifications/{run_id}":    true, // ADR-1293 CSRF-protected assertion check fragment
+	"POST /dashboard/apps/{slug}/workflows/stored/live-suites/{suite_id}/advance": true, // ADR-1297: session-only HTML continuation with CSRF.
+
+	// ADR-20261110200000: CSRF-protected HTML form on the organization page.
+	"POST /dashboard/orgs/{slug}/github/{installationID}/disconnect": true,
 }
 
 func init() {
@@ -790,6 +853,8 @@ var dtoExclude = map[string]bool{
 	"StatusPage":                        true, // GET /status/slo.json (public status)
 	"SessionsRevokeRequest":             true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
 	"ManagedPostgresPlanLimits":         true, // internal plan policy, not a wire DTO
+	"ManagedPostgresPreviewOwner":       true, // ADR-20261102123523 preview-databases capability; documented at launch
+	"SetManagedPostgresPreviewsRequest": true, // ADR-20261102123523 preview-databases capability; documented at launch
 	"RealtimeLimits":                    true, // internal plan policy, not a wire DTO
 	"ExecutionSnapshotShape":            true, // internal snapshot compatibility key, not a wire DTO
 	"ResolvedExecutionRequest":          true, // sealed scheduler intent, not a public DTO
@@ -837,7 +902,7 @@ var dtoExclude = map[string]bool{
 	// ADR-1193: the operation input delivered to the app, not an apid request or response.
 	"OperationWebhookInput":                  true,
 	"OperationWebhookEvent":                  true,
-	"AutomationHealthOptions":                true, // client-only query parameters for the documented automation health response
+	"StoredWorkflowHealthOptions":            true, // client-only query parameters for the documented automation health response
 	"WorkflowRunListOptions":                 true, // client-only history query parameters for the documented run list response
 	"ListWorkflowScheduleOccurrencesOptions": true, // client-only history query parameters; the occurrence response DTOs are in the public spec
 	"InboundWebhookEndpointRow":              true,
@@ -942,6 +1007,7 @@ var dtoExclude = map[string]bool{
 	// every other Obs* DTO stays admin-only and is excluded here.
 	"ObsAccountMutationResponse":      true,
 	"ObsObjectStorageCeilingResponse": true, // operator-only support grant view (ADR-20261101214152)
+	"ObsComplimentaryResponse":        true, // operator-only complimentary plan view (ADR-20261111140000)
 	"ObsAppDetail":                    true,
 	"ObsAppDetailResponse":            true,
 	"ObsAppHealth":                    true,
@@ -1023,9 +1089,13 @@ var codeExclude = map[string]bool{
 // to a standalone Go struct: aliases, inline anonymous structs, or pure-
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
+	// Browser management envelopes are anonymous structs in
+	// handlers_github_accounts.go and middleware's named-CSRF decoder.
+	"GitHubAccountConnections":      true,
+	"GitHubConnectionManageRequest": true,
 	// Baseline policy uses the strictly parsed version-2 CoveragePolicy in
-	// pkg/automationgate; the API carries canonical policy JSON in its DTOs.
-	"AutomationLiveBaselinePolicy":          true,
+	// pkg/storedworkflowgate; the API carries canonical policy JSON in its DTOs.
+	"StoredWorkflowLiveBaselinePolicy":      true,
 	"ApplicationStandardSettings":           true, // appstandards field map checked by TestApplicationStandardSpecContracts.
 	"ApplicationStandardAdoption":           true, // appstandards wire types checked by TestApplicationStandardSpecContracts.
 	"ApplicationStandardSource":             true,
@@ -1127,6 +1197,7 @@ var schemaSpecOnly = map[string]bool{
 	// pkg/apihostingreceipt structs, not pkg/api DTOs.
 	// TestSpecComplianceDeploymentStageState checks their fields and enums.
 	"DeploymentStageState":          true,
+	"DeploymentRetryIntent":         true,
 	"DeploymentStageHistoryEntry":   true,
 	"DeploymentDependencyGate":      true,
 	"DeploymentDependencyPin":       true,
@@ -1390,6 +1461,8 @@ func testRoutesParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg/apid/apidserver", "org_object_routes.go"),
 		filepath.Join(root, "pkg/apid/apidserver", "org_queue_routes.go"),
 		filepath.Join(root, "pkg/apid/apidserver", "handlers_issues.go"),
+		filepath.Join(root, "pkg/apid/apidserver", "customer_support.go"),
+		filepath.Join(root, "pkg/apid/apidserver", "support_notifications.go"),
 		filepath.Join(root, "cmd/gatewayd-internal", "run.go"),
 	}
 	var codeRoutes []string
@@ -1584,10 +1657,12 @@ var previewFieldExclude = map[string]map[string]bool{
 	// ADR-20261031100025: labels on apps, databases, crons and jobs, behind the
 	// resource-labels capability; the PATCH .../labels routes document them
 	// until beta.
-	"AppResponse":             {"labels": true},
-	"CronResponse":            {"labels": true},
-	"JobResponse":             {"labels": true},
-	"ManagedPostgresDatabase": {"labels": true},
+	"AppResponse":  {"labels": true},
+	"CronResponse": {"labels": true},
+	"JobResponse":  {"labels": true},
+	// ADR-20261102123523: PR preview databases, behind the preview-databases
+	// capability until launch.
+	"ManagedPostgresDatabase": {"labels": true, "previews": true, "preview": true},
 }
 
 func testSchemasParity(t *testing.T, root string, spec *specDoc) {
@@ -1601,6 +1676,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "data_api_access.go"),              // ADR-20261016151947 access settings for live reads without a token.
 		filepath.Join(root, "pkg", "api", "data_api_contract_tasks.go"),      // ADR-20261027123814 Data API contract tasks.
 		filepath.Join(root, "pkg", "api", "data_api_runtime.go"),             // ADR-20261031095954 runtime served by apid.
+		filepath.Join(root, "pkg", "api", "data_api_status.go"),              // ADR-20261022121642 amd 1: Data API status and change hook reports.
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
 		filepath.Join(root, "pkg", "api", "compose_process.go"),   // ADR-1337 Compose process overrides for prebuilt images.
 		filepath.Join(root, "pkg", "api", "compose_resources.go"), // ADR-20261023120000 Compose deploy resources and replicas.
@@ -1616,6 +1692,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "environment_gitops_notifications.go"),
 		filepath.Join(root, "pkg", "api", "environment_definition.go"),
 		filepath.Join(root, "pkg", "api", dtoFile),
+		filepath.Join(root, "pkg", "api", "support.go"),
 		filepath.Join(root, "pkg", "api", "deleted_apps.go"),
 		filepath.Join(root, "pkg", "api", "deployment_response_check.go"),
 		filepath.Join(root, "pkg", "api", devBucketsFile),
@@ -1730,6 +1807,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "project_promotion_migration_recovery.go"),
 		filepath.Join(root, "pkg", "api", "project_promotion_secrets.go"),
 		filepath.Join(root, "pkg", "api", "deployment_readiness.go"),
+		filepath.Join(root, "pkg", "api", "domain_readiness.go"),
+		filepath.Join(root, "pkg", "api", "domain_plan.go"),
 		filepath.Join(root, "pkg", "api", "object_encryption_capabilities.go"),
 		filepath.Join(root, "pkg", "api", "object_encryption.go"),
 		filepath.Join(root, "pkg", "api", "object_lock.go"),
@@ -1753,20 +1832,20 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "workflow_code.go"), // ADR-20261021204307 code-first workflow spec
 		filepath.Join(root, "pkg", "api", "workflow_schedules.go"),
 		filepath.Join(root, "pkg", "api", "workflow_queued_cancel.go"),
-		filepath.Join(root, "pkg", "api", "automations.go"),
-		filepath.Join(root, "pkg", "api", "automation_simulation.go"),
-		filepath.Join(root, "pkg", "api", "automation_check_evidence.go"),
-		filepath.Join(root, "pkg", "api", "automation_publish_checks.go"),
-		filepath.Join(root, "pkg", "api", "automation_tests.go"),
-		filepath.Join(root, "pkg", "api", "automation_live.go"),
-		filepath.Join(root, "pkg", "api", "automation_live_baselines.go"),
-		filepath.Join(root, "pkg", "api", "automation_live_baseline_listing.go"),
-		filepath.Join(root, "pkg", "api", "automation_live_baseline_retirement.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflows.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_simulation.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_check_evidence.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_publish_checks.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_tests.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_live.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_live_baselines.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_live_baseline_listing.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_live_baseline_retirement.go"),
 
-		filepath.Join(root, "pkg", "api", "automation_live_suites.go"),
-		filepath.Join(root, "pkg", "api", "automation_live_suite_execution.go"),
-		filepath.Join(root, "pkg", "api", "automation_live_suite_comparison.go"),
-		filepath.Join(root, "pkg", "api", "automation_failure_policy.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_live_suites.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_live_suite_execution.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_live_suite_comparison.go"),
+		filepath.Join(root, "pkg", "api", "stored_workflow_failure_policy.go"),
 		filepath.Join(root, "pkg", "api", "workflow_outbound.go"),
 		filepath.Join(root, "pkg", "api", "workflow_guard.go"),
 		filepath.Join(root, "pkg", "api", "workflow_join.go"),
@@ -1812,12 +1891,18 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "source_review.go"),
 		filepath.Join(root, "pkg", "api", "scoped_telemetry.go"),
 		filepath.Join(root, "pkg", "api", "environment_route_budgets.go"),
+		filepath.Join(root, "pkg", "api", "deployment_promotion_receipts.go"),
+		filepath.Join(root, "pkg", "api", "environment_promotion_receipts.go"), // ADR-20261105153007
+		filepath.Join(root, "pkg", "api", "environment_rollback_receipts.go"),  // ADR-20261105102920
+		filepath.Join(root, "pkg", "api", "service_abort_attempts.go"),         // ADR-20261104144000
+		filepath.Join(root, "pkg", "api", "environment_route_budget_receipts.go"),
 		filepath.Join(root, "pkg", "api", mfaFile),
 		filepath.Join(root, "pkg", "api", sessionsFile),
 		filepath.Join(root, "pkg", "api", errorsFile),
 		filepath.Join(root, "pkg", "api", wakeTLFile),
 		filepath.Join(root, "pkg", "api", sidecarTimelineFile),
 		filepath.Join(root, "pkg", "api", orgsFile),
+		filepath.Join(root, "pkg", "api", "account_profile.go"), // ADR-20261107103000 account flow DTOs
 		filepath.Join(root, "pkg", "api", orgBillingFile),
 		filepath.Join(root, "pkg", "api", "org_queues.go"),
 		filepath.Join(root, "pkg", "api", scanFile),
@@ -1866,6 +1951,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", uploadSessionFile),
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
 		filepath.Join(root, "pkg", "api", envBatchFile),
+		filepath.Join(root, "pkg", "api", "app_scaling.go"), // ADR-20261104104521
 		filepath.Join(root, "pkg", "api", agentInspectionFile),
 		filepath.Join(root, "pkg", "api", "app_resource_inventory.go"),
 		filepath.Join(root, "pkg", "api", "data_pipelines.go"),
@@ -1884,7 +1970,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", appTasksFile),
 		filepath.Join(root, "pkg", "api", imageRunsFile),
 		filepath.Join(root, "pkg", "api", projectsFile),
-		filepath.Join(root, "pkg", "api", "project_environment_clones.go"), // ADR-590
+		filepath.Join(root, "pkg", "api", "project_environment_clones.go"),   // ADR-590
+		filepath.Join(root, "pkg", "api", "project_environment_branches.go"), // ADR-20261031193635
 		filepath.Join(root, "pkg", "api", "project_environment_queues.go"),
 		filepath.Join(root, "pkg", "api", "project_environment_secrets.go"), // ADR-1139
 		filepath.Join(root, "pkg", "api", "project_release_bindings.go"),
@@ -1934,6 +2021,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", releaseGatesFile),
 		filepath.Join(root, "pkg", "api", releaseApprovalsFile),
 		filepath.Join(root, "pkg", "api", releaseDiffFile),
+		filepath.Join(root, "pkg", "api", releaseOutcomeFile),
 		filepath.Join(root, "pkg", "api", releaseTimelineFile),
 		filepath.Join(root, "pkg", "api", scheduledReleasesFile),
 		filepath.Join(root, "pkg", "api", databaseSwitchFile),
@@ -2026,6 +2114,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "route_insights.go"),
 		filepath.Join(root, "pkg", "api", "debug_rollout.go"),     // ADR-1447 amendment: rollout explanation + debug status
 		filepath.Join(root, "pkg", "api", "agent_connections.go"), // ADR-20261030133644: connected agents
+		filepath.Join(root, "pkg", "api", "agent_approvals.go"),   // ADR-20261104140058: approvals for risky agent actions
+		filepath.Join(root, "pkg", "api", "agent_activity.go"),    // ADR-20261107220000: agent activity log
+		filepath.Join(root, "pkg", "api", "agent_budget.go"),      // ADR-20261111114059: agent budgets
+		filepath.Join(root, "pkg", "api", "agent_undo.go"),        // ADR-20261112080601: agent undo
+		filepath.Join(root, "pkg", "api", "account_health.go"),    // ADR-20261112210000: customer account health
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {
@@ -2104,6 +2197,19 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	for name, schema := range map[string]string{"Table": "ScenarioPostgresTable", "Spec": "ScenarioPostgresSpec", "CreateRequest": "CreateScenarioPostgresRequest", "SealRequest": "SealScenarioPostgresRequest", "Receipt": "ScenarioPostgresReceipt", "Snapshot": "ScenarioPostgresSnapshot", "Delta": "ScenarioPostgresDelta", "Evidence": "ScenarioPostgresEvidence"} {
 		dtos[schema] = postgresDTOs[name]
 	}
+
+	// Browser connection DTOs live in their domain and state packages, rather
+	// than pkg/api. Check those actual JSON fields under the OpenAPI names.
+	connectionDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "apid", "githubconnect", "accounts.go")})
+	if err != nil {
+		t.Fatalf("scan GitHub connection DTOs: %v", err)
+	}
+	verificationDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "state", "github_account_connections.go")})
+	if err != nil {
+		t.Fatalf("scan GitHub verification DTOs: %v", err)
+	}
+	dtos["GitHubAccountConnection"] = connectionDTOs["Connection"]
+	dtos["GitHubConnectionVerification"] = verificationDTOs["GitHubConnectionVerification"]
 
 	// Git approval evidence is shared with githubd and the state transaction
 	// without importing pkg/api there. Check its actual JSON fields under the

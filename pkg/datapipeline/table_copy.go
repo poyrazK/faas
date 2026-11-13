@@ -80,7 +80,7 @@ func nativeCopyRelations(ctx context.Context, p Pipeline, target *pgx.Conn) ([]n
 
 // Initial selection uses the same durable high-water marks as later additions,
 // without creating a schema approval or changing the customer's selected tables.
-func observeInitialCopy(ctx context.Context, p Pipeline, target *pgx.Conn, ob *Observation, current func(context.Context) error) error {
+func observeInitialCopyProgress(ctx context.Context, p Pipeline, target *pgx.Conn, ob *Observation, current func(context.Context) error) error {
 	if err := ensureTableReceipt(ctx, target); err != nil {
 		return err
 	}
@@ -189,6 +189,9 @@ func observeTableCopies(ctx context.Context, p Pipeline, target *pgx.Conn, curre
 	for _, name := range CopiedTables(p.SchemaChange) {
 		next := TableCopyProgress{Table: name, Phase: "waiting"}
 		if stage == "copying" || stage == "refreshing" {
+			next.Phase = "missing"
+		}
+		if r := p.SchemaChange.Recovery; r != nil && r.Table == name && r.Stage == "copying" {
 			next.Phase = "missing"
 		}
 		if r := p.SchemaChange.Recovery; r != nil && r.Table == name && r.State == "approved" && slices.Contains([]string{"retiring", "detached", "cleared", "published"}, r.Stage) {

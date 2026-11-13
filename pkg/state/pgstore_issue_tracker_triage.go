@@ -112,12 +112,9 @@ func (s *PgStore) UpdateIssueTrackerTriage(ctx context.Context, app, owner, acto
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	locked, err := q.IssueLockApp(ctx, tx, issueUUID(app))
+	manager, err := lockIssueResponseActor(ctx, tx, app, owner, actor)
 	if err != nil {
-		return mapErr(err)
-	}
-	if issueID(locked.AccountID) != owner {
-		return ErrNotFound
+		return err
 	}
 	scope, err := trackerTriageScope(ctx, q, tx, app, owner, actor, notice)
 	if err != nil {
@@ -133,7 +130,7 @@ func (s *PgStore) UpdateIssueTrackerTriage(ctx context.Context, app, owner, acto
 	if req.Action == "snooze" && (!req.SnoozedUntil.After(scope.CheckedAt.Time) || req.SnoozedUntil.After(scope.CheckedAt.Time.Add(api.IssueTrackerSyncSnoozeMax))) {
 		return ErrInvalidArgument
 	}
-	changed, err := applyTrackerTriageUpdate(&out, actor, owner, req)
+	changed, err := applyTrackerTriageUpdate(&out, actor, manager && scope.CanManage, req)
 	if err != nil {
 		return err
 	}
@@ -147,7 +144,7 @@ func (s *PgStore) UpdateIssueTrackerTriage(ctx context.Context, app, owner, acto
 	return tx.Commit(ctx)
 }
 
-func applyTrackerTriageAction(out *IssueTrackerTriage, actor, owner, action string) (bool, error) {
+func applyTrackerTriageAction(out *IssueTrackerTriage, actor string, manager bool, action string) (bool, error) {
 	switch action {
 	case "acknowledge":
 		if out.AcknowledgedBy != "" {
@@ -166,7 +163,7 @@ func applyTrackerTriageAction(out *IssueTrackerTriage, actor, owner, action stri
 		if out.ClaimedBy == "" {
 			return false, nil
 		}
-		if out.ClaimedBy != actor && actor != owner {
+		if out.ClaimedBy != actor && !manager {
 			return false, trackerTriageConflict()
 		}
 		out.ClaimedBy = ""
@@ -184,7 +181,7 @@ func saveTrackerTriage(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, scope sq
 	return q.IssueTrackerTriageActivityPrune(ctx, tx, sqlc.IssueTrackerTriageActivityPruneParams{IncidentID: scope.IncidentID, RetainedCount: api.IssueTrackerSyncTriageHistoryMax})
 }
 
-func applyTrackerTriageUpdate(out *IssueTrackerTriage, actor, owner string, req IssueTrackerTriageAction) (bool, error) {
+func applyTrackerTriageUpdate(out *IssueTrackerTriage, actor string, manager bool, req IssueTrackerTriageAction) (bool, error) {
 	switch req.Action {
 	case "snooze":
 		if out.SnoozedUntil != nil && out.SnoozedUntil.Equal(*req.SnoozedUntil) && out.SnoozedBy == actor && out.SnoozeReason == req.Reason {
@@ -201,7 +198,7 @@ func applyTrackerTriageUpdate(out *IssueTrackerTriage, actor, owner string, req 
 		out.SnoozeReason = ""
 		return true, nil
 	default:
-		return applyTrackerTriageAction(out, actor, owner, req.Action)
+		return applyTrackerTriageAction(out, actor, manager, req.Action)
 	}
 }
 func trackerSnoozeTime(v pgtype.Timestamptz) *time.Time {

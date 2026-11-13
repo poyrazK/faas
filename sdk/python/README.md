@@ -1,5 +1,20 @@
-# faas_sdk
-A client library for accessing one-box FaaS REST API
+# Gregale Python SDK
+
+The Python client and runtime helpers for [Gregale](https://gregale.dev):
+the Gregale API, workflows, realtime, operations and feature flags. The
+distribution is `gregale-sdk`; import it as `faas_sdk`.
+
+## Install
+
+`gregale-sdk` is not on PyPI yet. Install a pinned commit of this repository:
+
+```sh
+pip install 'gregale-sdk @ git+https://github.com/gregale-dev/gregale-python@<commit>'
+```
+
+Do not run `pip install faas_sdk` or `pip install faas-sdk`: that PyPI name
+belongs to an unrelated company's package. See
+[Install the SDKs](../../docs/sdks.md#python) for extras.
 
 ## Default and preview packages
 
@@ -377,6 +392,16 @@ the private carrier removed. A synchronous handler can use
 `GregaleReleaseTransport`. Calls without context propagation are unlinked to
 the parent deadline. Complete-path acceptance remains pending; see
 [the deadline contract](../../docs/ops/traffic-total-deadline.md).
+
+The middleware and `with_gregale_request_context` also capture
+`X-Faas-Deadline-Ms`, the time Gregale gives the request to run, and the
+transports send the time still left on each managed call, so the service proxy
+ends a downstream call when the caller's request runs out
+(ADR-20261102082606). It only shortens: a smaller value you set on the call is
+kept, and a request with no time left sends `1`, which the proxy refuses
+without waking the target. `gregale_request_time_remaining_ms()` returns the
+time left inside the handler. The proxy honours the header once the platform
+enables service-call deadlines.
 
 ## Advanced customizations
 

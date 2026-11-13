@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/eventcontract"
 )
 
 var (
@@ -46,12 +47,21 @@ func notificationTarget(r api.ObjectNotificationRule, b ObjectBucket) (api.Objec
 	return t, nil
 }
 
+// objectNotificationProducer is the producer a bucket's events carry: its
+// app, whose company bounds where they may go (ADR-20261025211616).
+func objectNotificationProducer(b ObjectBucket) string {
+	if b.AppID == "" {
+		return ""
+	}
+	return eventcontract.AppProducer(b.AppID)
+}
+
 func notificationEntitled(plan api.Plan, kind string) bool {
 	l, ok := api.LimitsFor(plan)
 	return ok && (kind == "queue" && l.MaxQueueDepth > 0 || kind == "function" && l.AsyncInvokeAllowed)
 }
 
-func notificationRecipients(b ObjectBucket, p api.ObjectBucketNotifications, typ string, d api.ObjectStorageEvent, queue func(api.ObjectNotificationTarget) (string, []byte, error)) ([]PublishedEventRecipient, error) {
+func notificationRecipients(b ObjectBucket, p api.ObjectBucketNotifications, typ string, d api.ObjectStorageEvent, queue func(api.ObjectNotificationTarget) (QueueBinding, error)) ([]PublishedEventRecipient, error) {
 	out := []PublishedEventRecipient{}
 	for _, r := range p.Rules {
 		if !api.MatchObjectNotification(r, typ, d) {
@@ -63,15 +73,23 @@ func notificationRecipients(b ObjectBucket, p api.ObjectBucketNotifications, typ
 		}
 		s := ObjectNotificationSnapshot{Rule: r, BucketName: b.Name, BucketRegion: b.Region}
 		if t.Kind == "queue" {
-			s.QueueBindingID, s.RetryPolicy, err = queue(t)
+			var binding QueueBinding
+			binding, err = queue(t)
 			if err != nil && !errors.Is(err, ErrNotFound) {
 				return nil, err
 			}
+			s.QueueBindingID, s.RetryPolicy = binding.ID, bytes.Clone(binding.RetryPolicyJSON)
 		}
 		identity, _ := json.Marshal([]string{b.ID, strconv.FormatInt(p.Revision, 10), r.ID})
 		out = append(out, PublishedEventRecipient{ID: uuid.NewSHA1(uuid.NameSpaceURL, identity).String(), AccountID: b.AccountID, AppID: t.AppID, Source: api.ObjectEventSource, Type: typ, Filter: json.RawMessage("{}"), WorkSnapshotCaptured: true, ObjectNotification: &s})
 	}
 	return out, nil
+}
+
+// The captured binding identity, including its immutable environment, owns
+// delivery. A rename or another environment's same-name queue cannot redirect it.
+func notificationCapturedQueue(b QueueBinding, t api.ObjectNotificationTarget) bool {
+	return b.ID != "" && notificationSameIdentity(b.AccountID, t.AccountID) && notificationSameIdentity(b.AppID, t.AppID) && b.Enabled && b.RetiredAt == nil
 }
 
 func validateNotificationInvocation(in Invocation, s ObjectNotificationSnapshot) (api.ObjectNotificationTarget, error) {

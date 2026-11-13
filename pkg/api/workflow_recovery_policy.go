@@ -169,7 +169,7 @@ func (r SetWorkflowRecoveryPolicyRequest) Validate() error {
 	}
 	seen := map[string]bool{}
 	for _, name := range p.WorkflowNames {
-		if strings.TrimSpace(name) != name || name == "" || len(name) > AutomationNameMaxBytes || strings.ContainsAny(name, "/\\\x00") || seen[name] {
+		if strings.TrimSpace(name) != name || name == "" || len(name) > StoredWorkflowNameMaxBytes || strings.ContainsAny(name, "/\\\x00") || seen[name] {
 			return fmt.Errorf("invalid or duplicate workflow filter")
 		}
 		seen[name] = true

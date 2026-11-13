@@ -48,6 +48,9 @@ func (h *Handler) applyEdgeRuleChallenge(w http.ResponseWriter, r *http.Request,
 	if m == nil || deploymentSmoke || !h.edgeFeatureReleased(platformflags.EdgeChallenge, app) {
 		return false
 	}
+	if h.applySourceAttackMode(w, r, m) {
+		return true
+	}
 	rules := matchEdgeGates(r, func(ctx context.Context, path string) *EdgeRuleChallengeResolved {
 		return m.MatchChallenge(ctx, hostname(r.Host), path, r.Method)
 	})
@@ -57,6 +60,41 @@ func (h *Handler) applyEdgeRuleChallenge(w http.ResponseWriter, r *http.Request,
 	}
 	for _, rule := range rules {
 		if h.applyEdgeRuleChallengeRule(w, r, app, rule) {
+			return true
+		}
+	}
+	return false
+}
+
+type edgeRouteSourceKey struct{}
+
+// withEdgeRouteSource records the app whose host a kind=route rule served
+// another app on.
+func withEdgeRouteSource(ctx context.Context, source App) context.Context {
+	return context.WithValue(ctx, edgeRouteSourceKey{}, source)
+}
+
+// applySourceAttackMode enforces the attack mode of the app a routed request
+// was addressed to (ADR-091 amendment 2026-11-04, round 12). A routed
+// request runs as its target app, so the source app's "@app" rules do not
+// apply to it; attack mode is one of them, and switching it on left every
+// path its hosts route elsewhere open. Only the attack-mode rule follows the
+// request: the source app's other rules stay its own.
+func (h *Handler) applySourceAttackMode(w http.ResponseWriter, r *http.Request, m ChallengeEdgeRuleMatcher) bool {
+	source, ok := r.Context().Value(edgeRouteSourceKey{}).(App)
+	if !ok || source.ID == "" || !h.edgeFeatureReleased(platformflags.EdgeChallenge, source) {
+		return false
+	}
+	ctx := WithEdgeRuleScope(r.Context(), source)
+	rules := matchEdgeGates(r, func(_ context.Context, path string) *EdgeRuleChallengeResolved {
+		rule := m.MatchChallenge(ctx, hostname(r.Host), path, r.Method)
+		if rule == nil || !rule.AttackMode {
+			return nil
+		}
+		return rule
+	})
+	for _, rule := range rules {
+		if h.applyEdgeRuleChallengeRule(w, r, source, rule) {
 			return true
 		}
 	}

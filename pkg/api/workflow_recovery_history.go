@@ -26,7 +26,7 @@ func (o WorkflowRecoveryHistoryOptions) Validate() error {
 	if o.Limit < 0 || o.Limit > EventRecoveryHistoryPageMax || o.PolicyVersion < 0 || len(o.After) > WorkflowRecoveryHistoryCursorMaxBytes {
 		return fmt.Errorf("invalid history pagination or policy version")
 	}
-	if o.Workflow != "" && (strings.TrimSpace(o.Workflow) != o.Workflow || len(o.Workflow) > AutomationNameMaxBytes || strings.ContainsAny(o.Workflow, "/\\\x00")) {
+	if o.Workflow != "" && (strings.TrimSpace(o.Workflow) != o.Workflow || len(o.Workflow) > StoredWorkflowNameMaxBytes || strings.ContainsAny(o.Workflow, "/\\\x00")) {
 		return fmt.Errorf("invalid history workflow")
 	}
 	if o.RunID != "" {
@@ -34,7 +34,7 @@ func (o WorkflowRecoveryHistoryOptions) Validate() error {
 			return fmt.Errorf("invalid history run id: %w", err)
 		}
 	}
-	if !o.CreatedAfter.IsZero() && !o.CreatedBefore.IsZero() && (o.CreatedAfter.After(o.CreatedBefore) || o.CreatedBefore.Sub(o.CreatedAfter) > WorkflowAutomationHealthMaxRange) {
+	if !o.CreatedAfter.IsZero() && !o.CreatedBefore.IsZero() && (o.CreatedAfter.After(o.CreatedBefore) || o.CreatedBefore.Sub(o.CreatedAfter) > StoredWorkflowHealthMaxRange) {
 		return fmt.Errorf("history time window must be ordered and at most 30 days")
 	}
 	return nil

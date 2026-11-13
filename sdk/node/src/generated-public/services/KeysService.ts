@@ -2,9 +2,19 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AgentActivityResponse } from '../models/AgentActivityResponse.js';
+import type { AgentApprovalChannelsRequest } from '../models/AgentApprovalChannelsRequest.js';
+import type { AgentApprovalChannelsResponse } from '../models/AgentApprovalChannelsResponse.js';
+import type { AgentApprovalResponse } from '../models/AgentApprovalResponse.js';
+import type { AgentApprovalsResponse } from '../models/AgentApprovalsResponse.js';
+import type { AgentBudgetRequest } from '../models/AgentBudgetRequest.js';
+import type { AgentBudgetResponse } from '../models/AgentBudgetResponse.js';
 import type { AgentClientRequest } from '../models/AgentClientRequest.js';
 import type { AgentConnectionsResponse } from '../models/AgentConnectionsResponse.js';
 import type { AgentConnectionsRevokeAllResponse } from '../models/AgentConnectionsRevokeAllResponse.js';
+import type { AgentUndoPlan } from '../models/AgentUndoPlan.js';
+import type { AgentUndoRequest } from '../models/AgentUndoRequest.js';
+import type { AgentUndoResult } from '../models/AgentUndoResult.js';
 import type { APIKeyResponse } from '../models/APIKeyResponse.js';
 import type { CreateKeyRequest } from '../models/CreateKeyRequest.js';
 import type { CreateOrgAPIKeyRequest } from '../models/CreateOrgAPIKeyRequest.js';
@@ -124,6 +134,120 @@ export class KeysService {
     });
   }
   /**
+   * List agent approval requests.
+   * With an agent connection's key: that agent's requests that needed a
+   * person's approval, newest first. With any other credential: the
+   * pending requests the caller may decide, those of agents they
+   * connected and of agents acting in organizations they own or
+   * administer. A person decides only on the review page.
+   *
+   * @returns AgentApprovalsResponse The approval requests.
+   * @throws ApiError
+   */
+  public static listAgentApprovals(): CancelablePromise<AgentApprovalsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/agent-approvals',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Show where the account's agents' approval requests also go.
+   * The notification channels that get a message for each new approval
+   * request of the account's agents, besides the email to the person
+   * who connected the agent.
+   *
+   * @returns AgentApprovalChannelsResponse The account's approval channels.
+   * @throws ApiError
+   */
+  public static getAgentApprovalChannels(): CancelablePromise<AgentApprovalChannelsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/agent-approvals/channels',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Choose where the account's agents' approval requests also go.
+   * Replaces the notification channels that get the account's agents'
+   * approval requests. Name your own channels; an empty list leaves
+   * email only. Needs an admin credential, so an agent cannot change
+   * where its own requests go.
+   *
+   * @returns AgentApprovalChannelsResponse The channels now bound.
+   * @throws ApiError
+   */
+  public static setAgentApprovalChannels({
+    requestBody,
+  }: {
+    requestBody: AgentApprovalChannelsRequest,
+  }): CancelablePromise<AgentApprovalChannelsResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/agent-approvals/channels',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Get an agent approval request.
+   * An agent reads its own request to learn whether a person approved
+   * it; a person reads one they may decide. Any other request answers
+   * 404.
+   *
+   * @returns AgentApprovalResponse The approval request.
+   * @throws ApiError
+   */
+  public static getAgentApproval({
+    id,
+  }: {
+    /**
+     * The approval request's id.
+     */
+    id: string,
+  }): CancelablePromise<AgentApprovalResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/agent-approvals/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * Revoke every agent connected to the account.
    * Revokes the API key of every connected agent; each must sign in
    * again. Needs an admin credential. Audits `key.revoked` with reason
@@ -195,6 +319,354 @@ export class KeysService {
       errors: {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the calling agent's own activity.
+   * The write requests (POST, PUT, PATCH, DELETE) the calling agent key
+   * made in the last 7 days, newest first. Only an agent key can call it;
+   * a person reads an agent's log by its connection id.
+   *
+   * @returns AgentActivityResponse One page of the calling agent's write requests, newest first.
+   * @throws ApiError
+   */
+  public static agentConnectionSelfActivity({
+    before,
+    limit,
+  }: {
+    /**
+     * The `next_before` value of an earlier activity page; omit it for the newest rows.
+     */
+    before?: string,
+    /**
+     * Activity rows per page, 1 to 200. Default 50.
+     */
+    limit?: number,
+  }): CancelablePromise<AgentActivityResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/agent-connections/self/activity',
+      query: {
+        'before': before,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the calling agent's own budget.
+   * The monthly budget for always-on capacity that applies to the
+   * calling agent key and what it committed this month. Only an agent key
+   * can call it.
+   *
+   * @returns AgentBudgetResponse The calling agent's budget and spend.
+   * @throws ApiError
+   */
+  public static agentConnectionSelfBudget(): CancelablePromise<AgentBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/agent-connections/self/budget',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a connected agent's budget.
+   * The monthly budget for always-on capacity (warm instances, schedule
+   * floors, prewarms) that applies to one of the account's agents, where
+   * it comes from, and what the agent committed this month. Past the
+   * budget, each change needs a person's approval. An agent key may read
+   * only its own.
+   *
+   * @returns AgentBudgetResponse The agent's budget and spend.
+   * @throws ApiError
+   */
+  public static agentConnectionBudget({
+    id,
+  }: {
+    /**
+     * API key id of the connected agent whose budget to read or set.
+     */
+    id: string,
+  }): CancelablePromise<AgentBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/agent-connections/{id}/budget',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Set a connected agent's budget.
+   * Sets the agent's monthly budget, makes it unlimited (an organization's
+   * ceiling still applies) or returns it to the plan's default: half the
+   * plan's default spend cap. Needs an admin credential; an agent cannot
+   * change its own budget.
+   *
+   * @returns AgentBudgetResponse The agent's budget after the change.
+   * @throws ApiError
+   */
+  public static setAgentConnectionBudget({
+    id,
+    requestBody,
+  }: {
+    /**
+     * API key id of the connected agent whose budget to read or set.
+     */
+    id: string,
+    requestBody: AgentBudgetRequest,
+  }): CancelablePromise<AgentBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/agent-connections/{id}/budget',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Plan undoing the calling agent's own changes.
+   * An agent key plans an undo of its own changes, like a person's plan.
+   * Applying it needs a person's approval.
+   *
+   * @returns AgentUndoPlan The undo plan.
+   * @throws ApiError
+   */
+  public static planSelfAgentUndo({
+    requestBody,
+  }: {
+    requestBody: AgentUndoRequest,
+  }): CancelablePromise<AgentUndoPlan> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/agent-connections/self/undo/plan',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Undo the calling agent's own changes, once a person approves.
+   * An agent key applies a reviewed undo of its own changes. It always
+   * waits for a person's approval: the first call answers 428
+   * approval_required with the request to wait on (category undo, bound
+   * to this body and so to the plan digest); after the approval, the same
+   * call applies it once.
+   *
+   * @returns AgentUndoResult What the undo did to each change.
+   * @throws ApiError
+   */
+  public static applySelfAgentUndo({
+    requestBody,
+  }: {
+    requestBody: AgentUndoRequest,
+  }): CancelablePromise<AgentUndoResult> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/agent-connections/self/undo',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Plan undoing a connected agent's changes.
+   * Lists the agent's changes the request selects, newest first (by
+   * default those of the last 24 hours; changes are kept 7 days), with
+   * what undoing each will do: undo it, leave it because it cannot be
+   * undone or because someone changed it again since, or nothing because
+   * it was already undone. Apply the plan with its plan_digest. An agent
+   * key cannot plan or apply an undo.
+   *
+   * @returns AgentUndoPlan The undo plan for the connected agent.
+   * @throws ApiError
+   */
+  public static planAgentUndo({
+    id,
+    requestBody,
+  }: {
+    /**
+     * API key id of the connected agent whose changes to undo.
+     */
+    id: string,
+    requestBody: AgentUndoRequest,
+  }): CancelablePromise<AgentUndoPlan> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/agent-connections/{id}/undo/plan',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Undo a connected agent's changes.
+   * Applies a reviewed plan: the same request with the plan's
+   * plan_digest. Changes are undone newest first through the same API
+   * the agent used, as the caller; a change that cannot be undone leaves
+   * the older changes of its resource as they are. 409 when the changes
+   * or their state differ from the plan. Needs an admin credential.
+   *
+   * @returns AgentUndoResult What the undo did to each of the connected agent's changes.
+   * @throws ApiError
+   */
+  public static applyAgentUndo({
+    id,
+    requestBody,
+  }: {
+    /**
+     * API key id of the connected agent whose changes are undone.
+     */
+    id: string,
+    requestBody: AgentUndoRequest,
+  }): CancelablePromise<AgentUndoResult> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/agent-connections/{id}/undo',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a connected agent's activity.
+   * The write requests one of the account's agents made in the last 7
+   * days, newest first: when, method, path, response status and the
+   * approval request it went through on. Reads and requests the approval
+   * gate answered are not listed. An agent key may read only its own.
+   *
+   * @returns AgentActivityResponse One page of the connected agent's write requests, newest first.
+   * @throws ApiError
+   */
+  public static agentConnectionActivity({
+    id,
+    before,
+    limit,
+  }: {
+    /**
+     * API key id of the connected agent whose activity to read.
+     */
+    id: string,
+    /**
+     * The `next_before` value of an earlier activity page; omit it for the newest rows.
+     */
+    before?: string,
+    /**
+     * Activity rows per page, 1 to 200. Default 50.
+     */
+    limit?: number,
+  }): CancelablePromise<AgentActivityResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/agent-connections/{id}/activity',
+      path: {
+        'id': id,
+      },
+      query: {
+        'before': before,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -350,6 +822,155 @@ export class KeysService {
       errors: {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Plan undoing the changes of an agent acting in an organization.
+   * The organization's variant of planning an undo, for its owners and
+   * admins.
+   *
+   * @returns AgentUndoPlan The undo plan for the organization agent.
+   * @throws ApiError
+   */
+  public static planOrgAgentUndo({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * API key id of the organization agent whose changes to undo.
+     */
+    id: string,
+    requestBody: AgentUndoRequest,
+  }): CancelablePromise<AgentUndoPlan> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/agent-connections/{id}/undo/plan',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Undo the changes of an agent acting in an organization.
+   * The organization's variant of applying a reviewed undo plan, for its
+   * owners and admins.
+   *
+   * @returns AgentUndoResult What the undo did to each of the organization agent's changes.
+   * @throws ApiError
+   */
+  public static applyOrgAgentUndo({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * API key id of the organization agent whose changes are undone.
+     */
+    id: string,
+    requestBody: AgentUndoRequest,
+  }): CancelablePromise<AgentUndoResult> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/agent-connections/{id}/undo',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the activity of an agent acting in an organization.
+   * The write requests an agent acting in the organization made in the
+   * last 7 days, newest first. Owners and admins only; an id that is not
+   * one of the organization's agents is 404.
+   *
+   * @returns AgentActivityResponse One page of the organization agent's write requests, newest first.
+   * @throws ApiError
+   */
+  public static orgAgentConnectionActivity({
+    slug,
+    id,
+    before,
+    limit,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * API key id of the organization agent whose activity to read.
+     */
+    id: string,
+    /**
+     * The `next_before` value of an earlier activity page; omit it for the newest rows.
+     */
+    before?: string,
+    /**
+     * Activity rows per page, 1 to 200. Default 50.
+     */
+    limit?: number,
+  }): CancelablePromise<AgentActivityResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/agent-connections/{id}/activity',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'before': before,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -631,6 +1252,8 @@ export class KeysService {
    * the next rotation observes the new value. `days=0` is atomic
    * rotation (no grace); `days=null` (or omission) clears the
    * override and falls back to the plan default.
+   * A failed save returns retryable 503 without invalidating the cache
+   * or emitting a successful change audit event.
    *
    * @returns GraceWindowResponse Override applied.
    * @throws ApiError
@@ -646,12 +1269,16 @@ export class KeysService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid body (e.g. negative days).`,
+        400: `Invalid body (negative days, or more than 30).`,
         401: `code: unauthorized`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });

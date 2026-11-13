@@ -164,6 +164,9 @@ type createdProjectResponse struct {
 
 func (p *Provider) Capabilities() managedpostgres.Capabilities {
 	access := []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration}
+	if p.sessionEnabled {
+		access = append(access, managedpostgres.CredentialSession)
+	}
 	if p.dataAPIEnabled {
 		access = append(access, managedpostgres.CredentialDataAPI)
 	}
@@ -171,7 +174,10 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 		access = append(access, managedpostgres.CredentialAuth)
 	}
 	return managedpostgres.Capabilities{
-		PostgresMajors:               []int{14, 15, 16, 17, 18},
+		// PostgreSQL 14 reached upstream end of life in November 2026 and is
+		// not offered at all (owner, 2026-11-12); Neon has no in-place major
+		// upgrade.
+		PostgresMajors:               []int{15, 16, 17, 18},
 		ServiceClasses:               []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction},
 		Availability:                 []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
 		CredentialAccess:             access,
@@ -189,9 +195,6 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 			managedpostgres.MeterHistoryByteSeconds,
 			managedpostgres.MeterEgressBytes,
 		},
-		// PostgreSQL 14 reaches upstream end of life in November 2026, and
-		// Neon has no in-place major upgrade.
-		RetiringMajors: []int{14},
 	}
 }
 
@@ -438,10 +441,19 @@ func probeDSN(material managedpostgres.CredentialMaterial) (string, error) {
 		Host:   net.JoinHostPort(selected.Host, fmt.Sprintf("%d", selected.Port)),
 		Path:   "/" + material.Database,
 	}
-	query := url.Values{"sslmode": {material.TLSMode}}
+	// Every connection built here is the platform's own (owner role SQL,
+	// probes, qualification), across the public internet to Neon. Neon's
+	// connection URI says sslmode=require, which encrypts but checks no
+	// certificate, so pin verify-full as the maintenance, copy and pipeline
+	// connections do; Neon endpoints carry publicly trusted certificates.
+	query := url.Values{"sslmode": {platformTLSMode}}
 	u.RawQuery = query.Encode()
 	return u.String(), nil
 }
+
+// platformTLSMode is the sslmode of every connection Gregale itself opens to
+// a Neon endpoint.
+const platformTLSMode = "verify-full"
 
 func probeQuery(ctx context.Context, dsn string) error {
 	conn, err := pgx.Connect(ctx, dsn)

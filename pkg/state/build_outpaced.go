@@ -93,7 +93,7 @@ func (m *MemStore) SupersedeOutpacedBuild(_ context.Context, claim Build) (bool,
 	}
 	newer := false
 	for _, other := range m.deployments {
-		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Revision > d.Revision {
+		if outpaces(other, d) {
 			newer = true
 			break
 		}
@@ -137,7 +137,7 @@ func supersedeOutpacedDeploymentTx(ctx context.Context, tx pgx.Tx, id string) er
 func (m *MemStore) supersedeOutpacedDeploymentLocked(d Deployment) Deployment {
 	newer := Deployment{}
 	for _, other := range m.deployments {
-		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Revision > d.Revision && other.Revision > newer.Revision {
+		if outpaces(other, d) && other.Revision > newer.Revision {
 			newer = other
 		}
 	}

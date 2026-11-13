@@ -312,7 +312,7 @@
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/customer-operations">View customer operations →</a></p>
       {{if .Data.ProductControlURL}}<p><a href="{{.Data.ProductControlURL}}">Manage Product Control →</a></p>{{end}}
       {{if $.On "issues"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/errors">View grouped errors →</a></p>{{end}}
-      {{if $.On "debug"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/debug">Open production debugger →</a></p>{{end}}
+      {{if $.On "production-debugger"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/debug">Open production debugger →</a></p>{{end}}
       {{if $.On "profile-captures"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/profiles/captures">Capture a profile from a running instance →</a></p>{{end}}
       {{if $.On "progressive-rollouts"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/release-safety">Review release safety →</a></p>{{end}}
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/domains">Manage custom domains →</a></p>
@@ -592,7 +592,7 @@
       {{end}}
 
       <h2>Workflows</h2>
-      {{if $.On "automations"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/automations">Build and manage automations →</a></p>{{end}}
+      {{if $.On "stored workflows"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/workflows/stored">Build and manage stored workflows →</a></p>{{end}}
       {{if .Data.Workflows}}
         <p class="muted">Recent durable workflow runs. Inputs and outputs stay in the workflow API; this view is for run state and step diagnostics.</p>
         {{range .Data.Workflows}}
@@ -792,6 +792,7 @@
             · {{if eq .Data.RequestAnalytics.GroupBy "consumer_id"}}<strong>consumer</strong>{{else}}<a href="?analytics_by=consumer_id">consumer</a>{{end}}
           </p>
           {{if .Data.RequestAnalytics.WindowClamped}}<p class="muted">The requested window was reduced to your plan's telemetry retention.</p>{{end}}
+          {{if .Data.RequestAnalytics.Omitted}}<p class="muted" role="status">Some details are unavailable: {{range $i, $item := .Data.RequestAnalytics.Omitted}}{{if $i}}, {{end}}{{$item}}{{end}}.</p>{{end}}
           {{if .Data.RequestAnalytics.TelemetryGaps}}<p class="muted" role="status">Some requests in this window may be missing from these totals ({{range $i, $gap := .Data.RequestAnalytics.TelemetryGaps}}{{if $i}}, {{end}}<code>{{$gap}}</code>{{end}}).</p>{{end}}
           <p class="muted">Cold-request p95 includes both wake and handler time. Wake boot p95 is schedd boot-start to instance-running time. Guest runtime percentiles are platform-runner wall time, not CPU time, and are unavailable for arbitrary HTTP containers.</p>
           <p class="muted">Dependency timings use retained, classified span samples. Exclusive p95 estimates time outside nested child spans; it is not a full request-call count or additive latency total.</p>

@@ -39,9 +39,21 @@ func (s *PgStore) tryAcquireTrafficPolicySessionLocks(ctx context.Context, locks
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("state: acquire traffic policy connection: %w", err)
 	}
+	release, busy, err := tryLockTrafficPolicySession(ctx, conn, locks)
+	if err != nil || busy {
+		return nil, nil, busy, err
+	}
+	return conn, release, false, nil
+}
+
+// tryLockTrafficPolicySession takes locks on a connection the caller already
+// holds. It takes the connection over: busy returns it to the pool, an error
+// closes it, and success hands back the release that unlocks and returns it.
+func tryLockTrafficPolicySession(ctx context.Context, conn *pgxpool.Conn, locks []trafficSessionLock) (func(context.Context), bool, error) {
 	locked := make([]trafficSessionLock, 0, len(locks))
 	for _, lock := range locks {
 		var acquired bool
+		var err error
 		if lock.Shared {
 			acquired, err = sqlc.New().TryLockTrafficPolicySessionShared(ctx, conn, lock.Key)
 		} else {
@@ -51,15 +63,15 @@ func (s *PgStore) tryAcquireTrafficPolicySessionLocks(ctx context.Context, locks
 			// A canceled query may have granted the session lock. Close the
 			// session even if the client never received the successful reply.
 			closeTrafficPolicySession(ctx, conn)
-			return nil, nil, false, fmt.Errorf("state: acquire traffic policy session lock: %w", err)
+			return nil, false, fmt.Errorf("state: acquire traffic policy session lock: %w", err)
 		}
 		if !acquired {
 			releaseTrafficPolicySession(conn, locked)(ctx)
-			return nil, nil, true, nil
+			return nil, true, nil
 		}
 		locked = append(locked, lock)
 	}
-	return conn, releaseTrafficPolicySession(conn, locked), false, nil
+	return releaseTrafficPolicySession(conn, locked), false, nil
 }
 
 func closeTrafficPolicySession(ctx context.Context, conn *pgxpool.Conn) {

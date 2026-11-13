@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/bindings"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -27,7 +28,7 @@ func (s *server) publishProjectReleaseSet(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrValidation("release set requires 1-100 workloads and ttl_seconds within the revision pin window"))
 		return
 	}
-	apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+	apps, err := bindings.ProjectReleaseApps(r.Context(), s.store, acct.ID, project.ID, environment)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not load project workloads"))
 		return

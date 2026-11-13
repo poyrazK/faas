@@ -603,7 +603,7 @@ test('CLI one-shot replay executes ordered Alice/Bob scenarios and reports failu
     catch (error) { return error }
   }
   const success = await run()
-  assert.equal(success.code, undefined, success.stderr)
+  assert.equal(success.code, undefined, success.stderr + '\n' + success.stdout)
   const events = success.stdout.trim().split('\n').map(line => JSON.parse(line))
   assert.deepEqual(events.filter(event => event.event === 'replay_result').map(event => event.name), requests.map(request => request.name))
   assert.deepEqual(events.find(event => event.event === 'replay_summary'), { event: 'replay_summary', total: 7, passed: 7, failed: 0 })

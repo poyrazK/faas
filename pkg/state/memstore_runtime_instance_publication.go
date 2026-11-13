@@ -27,6 +27,9 @@ func (m *MemStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeIns
 			return Instance{}, err
 		}
 	}
+	if err := m.checkSnapshotPrimeAttemptLocked(ctx, p.AppID, p.Fence.DeploymentID); err != nil {
+		return Instance{}, err
+	}
 	instance, err := m.checkOwnedRuntimePublicationLocked(p)
 	if err != nil {
 		return Instance{}, err
@@ -138,6 +141,7 @@ func (m *MemStore) checkOwnedRuntimePublicationLocked(p RuntimeInstancePublicati
 type runtimeInstanceConfigProof struct {
 	WakeID, NodeID string
 	Fence          RuntimeAppConfigFence
+	PrimeHandoff   []byte
 }
 
 func (m *MemStore) InstanceRuntimeConfigFence(_ context.Context, accountID, appID, instanceID string) (RuntimeAppConfigFence, error) {

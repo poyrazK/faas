@@ -1,0 +1,14 @@
+# Managed by the signd_service role (ADR-20261109170000). The fleet signing
+# key and signd's TLS key are credentials: systemd reads the root-only files
+# and hands them to faas-signd alone, so no other daemon user can read them.
+[Service]
+LoadCredential=sign_key:/etc/faas/secrets/sign.key
+LoadCredential=tls_key:/etc/faas/tls/signd/server.key
+Environment=FAAS_SIGN_KEY=%d/sign_key
+Environment=FAAS_SIGND_LISTEN={{ faas_signd_listen }}
+Environment=FAAS_SIGND_TLS_CERT_PATH=/etc/faas/tls/signd/server.crt
+Environment=FAAS_SIGND_TLS_KEY_PATH=%d/tls_key
+Environment=FAAS_SIGND_TLS_CA_PATH=/etc/faas/tls/ca/ca.crt
+Environment=FAAS_SIGND_ROLE={{ faas_box_role | default('single-box') }}
+# signd logs in only as faas_signd (pg_ident: faas-signd -> faas_signd).
+Environment=FAAS_DB_ROLE=faas_signd

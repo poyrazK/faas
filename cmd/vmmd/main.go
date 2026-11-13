@@ -38,6 +38,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
@@ -105,6 +106,10 @@ func configuredRuntimeBaseGenerations(envLookup func(string) string) (map[string
 type signalAdapter struct {
 	*fcvm.Manager
 }
+
+// vmmd checks snapshot keys against the instance's deployment through this
+// lookup; a wrapper that hid it would turn the check off (bug hunt H95).
+var _ vmmdgrpc.InstanceDeploymentLookup = signalAdapter{}
 
 func (a signalAdapter) SignalAndKill(ctx context.Context, instance string, signal int32, graceSeconds int32) (bool, int32, error) {
 	return a.Manager.SignalAndKill(ctx, instance, syscall.Signal(signal), time.Duration(graceSeconds)*time.Second)
@@ -413,7 +418,13 @@ func defaultDeps() runDeps {
 		scheddTarget:        envOr("FAAS_VMMD_SCHEDD_TARGET", "unix:///run/faas/schedd.sock"),
 		capacityInterval:    durationPtr(CapacityInterval),
 		prepareJailHelper: func(jailer *fcvm.JailerVMM) error {
-			return jailer.PrepareJailHelper()
+			if err := jailer.PrepareJailHelper(); err != nil {
+				return err
+			}
+			// Best effort: a launch stages on demand and falls back to the
+			// installed jailer and firecracker (ADR-20261105100000).
+			jailer.PrepareResidentBinaries()
+			return nil
 		},
 		// residentFn left nil; runWithDeps fills it with
 		// leakcheck.ResidentBytes once the resolver runs.
@@ -965,6 +976,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-907: Firecracker before 1.14 rejects the balloon field, so an
 	// older or undetected binary boots without it.
 	freePageReporting := !cfg.DisableFreePageReporting && fcvm.FreePageReportingSupported(fcVersion)
+	// ADR-20261109120000: advance a restored guest's monotonic clock by the
+	// parked time. Firecracker 1.16+ only, and only where KVM records the
+	// realtime clock flag in captures (a tsc host clocksource).
+	restoreClockRealtime := !cfg.DisableRestoreClockRealtime && fcvm.ClockRealtimeSupported(fcVersion) && fcvm.HostClocksourceTSC()
 	// ADR-908: pmem needs Firecracker 1.16+, and native recovery stages
 	// images through its own journal, which has no pmem slot yet.
 	pmemBaseDir := ""
@@ -986,6 +1001,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRestoreConcurrency(cfg.RestoreConcurrency).
 		WithRestorePrefetch(!cfg.DisableRestorePrefetch).
 		WithFreePageReporting(freePageReporting).
+		WithRestoreClockRealtime(restoreClockRealtime).
 		WithCPUTemplate(cfg.CPUTemplate).
 		WithPmemBase(pmemBaseDir).
 		WithRestoreReseedThread(cfg.RestoreReseedThread).
@@ -1007,7 +1023,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			ops.IncLogDropped("slow_subscriber")
 		})
 	log.Info("vmmd: snapshot restore concurrency configured", "limit", cfg.RestoreConcurrency,
-		"working_set_prefetch", !cfg.DisableRestorePrefetch, "free_page_reporting", freePageReporting, "pmem_base_dir", pmemBaseDir,
+		"working_set_prefetch", !cfg.DisableRestorePrefetch, "free_page_reporting", freePageReporting, "restore_clock_realtime", restoreClockRealtime, "pmem_base_dir", pmemBaseDir,
 		"cpu_template", cfg.CPUTemplate)
 	if deps.prepareJailHelper != nil {
 		if err := deps.prepareJailHelper(jailer); err != nil {
@@ -1052,6 +1068,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.NativeRuntimeCapture {
 		jailer.WithNativeRuntimeCapture()
 	}
+	if cfg.NativeQualificationCapture {
+		// ADR 20261023093000: LoadConfig already required native recovery
+		// and both private roots.
+		jailer.WithEnvironmentQualificationCapture()
+	}
 	// Adoption ADR §2: only guests whose console is a file survive a vmmd
 	// restart in an adoptable state (V-A3). Records imply file consoles.
 	if cfg.AdoptionRecord && !cfg.NativeProcessRecovery {
@@ -1081,6 +1102,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	mgr.WithFlatTenantCgroups(cfg.FlatTenantCgroups)
 	mgr.WithPrivateNetworkMembers(privateNetworkMemberSource(store, identityNodeID), privateNetworkMemberRelease(store, identityNodeID))
 	mgr.WithPrivateNetworkTransportIdentitySource(func(ctx context.Context, account, network, region string) (uint32, error) {
 		source, ok := store.(state.PrivateNetworkTransportStore)
@@ -1105,6 +1127,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	mgr.WithEgressCircuitBreaker(egressCircuitEnabled)
+	// ADR-20261109130000: reset an app guest's TCP connections before
+	// destroying it, so its databases free the sessions at once.
+	mgr.WithReleaseConnectionsOnDestroy(!cfg.DisableReleaseConnectionsOnDestroy)
 	if egressCircuitEnabled {
 		if store == nil {
 			return fmt.Errorf("vmmd: FAAS_EGRESS_CIRCUIT_BREAKER requires a compute-node database configuration for durable policy")
@@ -1142,6 +1167,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			mgr.WithRehearsalNetworkPolicies(policies)
 		}
+		// Contained environment branches (ADR-20261031193635): every app
+		// wake reads its deployment's branch egress, so a contained branch
+		// never boots with live egress on this node.
+		branches, ok := store.(state.EnvironmentBranchEgressStore)
+		if !ok {
+			return errors.New("vmmd: environment branch egress storage is unavailable")
+		}
+		mgr.WithEnvironmentBranchEgress(branches)
 		// Revoke unconditionally: identities left by an earlier enabled
 		// incarnation must not survive a restart with containment disabled.
 		if fencer, ok := store.(interface {
@@ -1363,6 +1396,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// cpustats.NewWithDefaults() and skip the sample loop
 	// entirely via runCPUSampleInterval=0.
 	cpuCache := cpustats.NewWithDefaults()
+	// Netstats cache: per-instance byte-counter over root-side
+	// vethHost rx/tx_bytes, fed by runNetworkEgressPoll below and
+	// consumed by vmmdgrpc.Server.Stats as the net_tx_bytes wire field
+	// (ADR-046 step 7) and by the idle ladder's activity guard
+	// (ADR-20261107122928). nil-safe so tests can pass nil to
+	// vmmdgrpc.NewWithCPUAndNet and skip the sample loop entirely.
+	netCache := netstats.NewWithDefaults()
 	// ADR-20261027090012: pause an eligible agent run VM while it waits on
 	// the model. It shares ADR-1151's pause pass below.
 	if cfg.AgentWaitPause {
@@ -1395,6 +1435,37 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.QuietPause || cfg.QuietPauseObserve || cfg.AgentWaitPause {
 		go mgr.RunQuietPause(ctx)
 	}
+	// ADR-20261107122928 idle ladder. Observe measures the level each
+	// request-serving instance's idle time reaches and pauses nothing; on
+	// also quiet-pauses at the ladder's 1 s and reports instances quiet for
+	// 10 s at L2, whose memory measured admission charges with the frozen
+	// floor. LoadConfig
+	// refuses on without quiet pause.
+	if cfg.IdleLadder != idleLadderOff {
+		on := cfg.IdleLadder == idleLadderOn
+		mgr.WithIdleLadder(fcvm.IdleLadderConfig{
+			Activity: activityTracker,
+			Metrics:  fcvm.NewIdleLadderMetrics(ops.Registry()),
+			On:       on,
+			Apps:     cfg.IdleLadderApps,
+			// The activity guard (ADR §6) watches apps quiet pause does not
+			// pause: their VM CPU and veth bytes.
+			CPU: agentWaitCPU{cache: cpuCache},
+			Net: idleLadderNet{cache: netCache},
+			// L3/L4: compress quiet-paused VMs' cold pages (LoadConfig
+			// refuses it without on).
+			Compress:        cfg.IdleLadderCompress,
+			CompressMetrics: fcvm.NewIdleCompressMetrics(ops.Registry()),
+		})
+		go mgr.RunIdleLadderObserve(ctx)
+		go mgr.RunIdleLadderCompress(ctx)
+		if on {
+			log.Info("idle ladder on (ADR-20261107122928): quiet pause at 1 s, L2 reported at 10 s quiet",
+				"guarded_app_pause", cfg.IdleLadderApps, "cold_compression", cfg.IdleLadderCompress)
+		} else {
+			log.Info("idle ladder observe mode enabled (ADR-20261107122928): measuring ladder levels, pausing nothing")
+		}
+	}
 	// ADR-1151 frozen tier: nothing is frozen until schedd calls
 	// FreezeInstance. The activity tracker lets a freeze refuse an instance
 	// that is serving a request.
@@ -1426,8 +1497,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	log.Info("vmmd: runtime bases routed to their generation keys", "bases", routedBases)
 	mgr.WithBaseGenerations(baseGenerations)
 	// ADR-510: identify the kernel and cached bases in the background so the
-	// first restore after this start does not hash a base in its wake path.
-	go mgr.PrimeBackingDigests(ctx)
+	// first restore after this start does not hash a base in its wake path,
+	// and keep following them: a release pre-stage replaces bases while this
+	// process still serves wakes (amendment 2).
+	go mgr.RunBackingDigestPrimer(ctx, fcvm.BackingDigestPrimeInterval)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// (pkg/events.Platform) on the VMM. vmmd is the canonical emit
 	// site for wake.readiness_200 (the first 2xx probe) and a
@@ -1565,7 +1638,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	// Wave 0 PR-C / ADR-047: vmmd becomes a gRPC client for the
 	// first time. The AdvisoryClient dials /run/faas/apid.sock to
-	// forward guest-init fanotify batches. Empty FAAS_APID_ADVISORY_SOCK
+	// forward guest-init stateless advisory batches. Empty FAAS_APID_ADVISORY_SOCK
 	// disables (matches apid's explicit-empty pattern); nil client
 	// short-circuits Manager.ForwardStatelessAdvisory to a no-op.
 	//
@@ -1574,9 +1647,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Forward outcome. The accessor is nil-receiver safe, so a
 	// nil ops is also a clean no-op (kept for symmetry / unit
 	// tests that don't wire metrics).
+	//
+	// ADR-047 amendment 2026-11-12: a database-backed vmmd writes the audit
+	// row through its own store instead. apid runs on the control plane, so
+	// a compute node has no apid.sock and the gRPC hop never delivered.
 	advisoryTarget := envOr("FAAS_APID_ADVISORY_SOCK", "unix:///run/faas/apid.sock")
 	var advisoryCli *vmmdgrpc.AdvisoryClient
-	if advisoryTarget != "" {
+	switch {
+	case store != nil:
+		advisoryAuditor := &statelessAdvisoryAuditor{audit: audit.New(store, log, ops, "vmmd"), apps: store}
+		if pool != nil {
+			advisoryAuditor.notify = func(ctx context.Context, payload string) error {
+				return db.Notify(ctx, pool, db.NotifyStatelessAdvisory, payload)
+			}
+		}
+		mgr.SetAdvisoryClient(advisoryAuditor)
+		log.Info("vmmd: stateless advisory writes audit rows through the store")
+	case advisoryTarget != "":
 		advisoryCli = vmmdgrpc.NewAdvisoryClient(advisoryTarget, log, ops)
 		mgr.SetAdvisoryClient(advisoryCli)
 		log.Info("vmmd: stateless advisory client wired", "target", advisoryTarget)
@@ -1619,11 +1706,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if recv != nil {
 		if readinessStore, ok := store.(state.EnvironmentQualificationFrameworkReadyReceiptStore); ok {
-			recv.WithQualificationFrameworkReadyRecorder(func(recordCtx context.Context, frame state.EnvironmentQualificationExecution,
+			record := func(recordCtx context.Context, frame state.EnvironmentQualificationExecution,
 				runtimeName string, warmupMS int64) error {
 				_, err := readinessStore.RecordEnvironmentQualificationFrameworkReadyReceipt(recordCtx, frame, runtimeName, warmupMS)
 				return err
-			})
+			}
+			recv.WithQualificationFrameworkReadyRecorder(record)
+			// A native qualification restore reads the restored runner's
+			// stored framework-ready state itself (ADR 20261023093000).
+			mgr.WithQualificationFrameworkReadyRecorder(record)
 		}
 		// Workstream B: the guest metadata event proxy sends only the
 		// caller-authored JSON over the instance-bound vsock stream. Resolve
@@ -1798,6 +1889,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		defer crashRecv.Close()
 	}
+	// ADR-047 (amended 2026-11-12): guest-init ships stateless advisory
+	// batches over a guest-initiated stream; the listener names the app.
+	if err := StartStatelessAdvisoryReceiver(log, mgr, jailer); err != nil {
+		log.Warn("vmmd: stateless advisory receiver unavailable", "err", err, "goos", runtime.GOOS)
+	}
 	log.Info("vmmd ready", "fc_version", fcVersion, "max_slots", fcvm.MaxSlots,
 		"uid_lo", fcvm.JailUIDBase, "uid_hi", fcvm.JailUIDMax,
 		"host_key_path", keyPath, "recipient_path", pubPath,
@@ -1940,13 +2036,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Finding 5).
 	// cpuCache (created before quiet pause below) feeds
 	// vmmdgrpc.Server.Stats.
-	// Netstats cache: per-instance byte-counter over root-side
-	// vethHost.rx_bytes, fed by runNetworkEgressPoll below and
-	// consumed by vmmdgrpc.Server.Stats as the net_tx_bytes
-	// wire field. ADR-046 (step 7). nil-safe so tests can pass
-	// nil to vmmdgrpc.NewWithCPUAndNet and skip the sample
-	// loop entirely.
-	netCache := netstats.NewWithDefaults()
+	// netCache (created with cpuCache above) feeds
+	// vmmdgrpc.Server.Stats as the net_tx_bytes wire field.
 	gsrv := grpc.NewServer(append(append(
 		wire.ServerCredsOrEmpty(serverTLS),
 		wire.TraceServerOptions()...),
@@ -1968,7 +2059,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithBridgeStreamHeadroom(cfg.BridgeStreamHeadroom).
 		WithStreamBridgeGoRuntime(cfg.StreamBridgeGOMAXPROCS, cfg.StreamBridgeGOGC).
 		// ADR-20261027090010 §1: agent runs stay off unless this node opts in.
-		WithAgentRuns(strings.TrimSpace(os.Getenv("FAAS_VMMD_AGENT_RUNS")) == "1")
+		WithAgentRuns(strings.TrimSpace(os.Getenv("FAAS_VMMD_AGENT_RUNS")) == "1").
+		// ADR-20261027090013 step 7: sandbox workspaces persist to, and
+		// sessions start from, this node's artifact store.
+		WithSandboxWorkspaces(storageBackend)
 	// ADR-20261022184531: Ping tells schedd whether this vmmd can adopt each
 	// configured base generation, so a node that cannot is marked degraded.
 	impl.WithBaseGenerationReadiness(vmmdgrpc.NewCachedBaseGenerationReadiness(

@@ -114,6 +114,15 @@ func (s *Service) StartSetup(ctx context.Context, account string, r SetupRequest
 	if !errors.Is(err, ErrNotFound) {
 		return Setup{}, err
 	}
+	if r.DatabaseID != "" {
+		state, err := s.MirrorState(ctx, account, r.DatabaseID)
+		if err != nil {
+			return Setup{}, err
+		}
+		if state == "deleting" || state == "deleted" {
+			return Setup{}, ErrConflict
+		}
+	}
 	check, err := s.Store.Check(ctx, account, r.SourceConnectionID)
 	if err != nil {
 		return Setup{}, ErrCheckRequired
@@ -156,7 +165,7 @@ func MirrorName(name string) string {
 	generated := name + "-mirror"
 	// Pipeline slugs may start with a digit; managed database names may not.
 	if len(name) > 0 && name[0] >= '0' && name[0] <= '9' {
-		generated = "p-" + generated
+		generated = "p-" + generated + "-db"
 	}
 	return generated
 }
@@ -311,6 +320,9 @@ func (s *Service) setupCheck(ctx context.Context, job Setup, database string) (b
 		return true, nil
 	}
 	_, err = s.Store.RequestCheck(ctx, job.AccountID, connection.ID, connection.Revision, database, api.RequestDataConnectionCheck{Tables: job.Request.Tables})
+	if errors.Is(err, ErrCheckBusy) {
+		return false, nil
+	}
 	return false, err
 }
 

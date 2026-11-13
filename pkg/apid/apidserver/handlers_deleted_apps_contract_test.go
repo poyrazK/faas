@@ -98,22 +98,33 @@ func TestRestoreDeletedAppRejectsReplacementSlugBeforeMutation(t *testing.T) {
 	}
 }
 
+// activeSlugCollisionStore reports an active app on the retained app's slug.
+// Both stores keep a deleted app's slug until purge (#6484), so the collision
+// is injected the way a racing writer would present it.
+type activeSlugCollisionStore struct {
+	MemStore *state.MemStore
+	active   state.App
+}
+
+func (s activeSlugCollisionStore) AppBySlug(_ context.Context, slug string) (state.App, error) {
+	if slug == s.active.Slug {
+		return s.active, nil
+	}
+	return state.App{}, state.ErrNotFound
+}
+
 func TestRestoreDeletedAppRejectsAnActiveSlugCollision(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	id := apidserver.MustSeedApp(t, e, "reused-slug")
 	_, _ = (*e.Store()).ScheduleAppDeletion(context.Background(), id, time.Now().Add(time.Hour))
-	replacement, err := (*e.Store()).CreateApp(context.Background(), state.App{AccountID: e.Acct().ID, Slug: "reused-slug", Status: state.AppActive})
-	if err != nil {
-		t.Fatal(err)
-	}
+	active := state.App{ID: "00000000-0000-4000-8000-0000000000aa", AccountID: e.Acct().ID, Slug: "reused-slug", Status: state.AppActive}
+	*(*e.S()).Store() = statetest.NewMem(activeSlugCollisionStore{MemStore: (*e.Store()), active: active})
 	r := e.Do(t, http.MethodPost, "/v1/deleted-apps/"+id+"/restore", nil, nil)
 	if r.Code != 409 {
 		t.Fatalf("slug collision = %d: %s", r.Code, r.Body)
 	}
-	old, _ := (*e.Store()).AppByID(context.Background(), id)
-	current, _ := (*e.Store()).AppByID(context.Background(), replacement.ID)
-	if old.Status != state.AppDeleted || current.Status != state.AppActive {
-		t.Fatalf("changed collision records: old=%s, replacement=%s", old.Status, current.Status)
+	if old, _ := (*e.Store()).AppByID(context.Background(), id); old.Status != state.AppDeleted {
+		t.Fatalf("restored over an active slug: old=%s", old.Status)
 	}
 }
 

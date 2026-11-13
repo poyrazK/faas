@@ -20,14 +20,14 @@ func TestWorkflowOutboundPublicationAndAttemptFencing(t *testing.T) {
 		if _, err := bindingStore.CreateOutboundIntegration(ctx, offer); err != nil {
 			t.Fatal(err)
 		}
-		spec := api.WorkflowSpec{Name: "crm", Steps: []api.WorkflowStepSpec{{Name: "send", Outbound: &api.WorkflowOutboundSpec{IntegrationID: offer.ID, Method: "POST", Path: "/v1/contacts/{{input.contact_id}}", Query: map[string]string{"source": "automation"}, IdempotencySupported: true}, Retry: &api.WorkflowRetrySpec{MaxAttempts: 3}}}}
+		spec := api.WorkflowSpec{Name: "crm", Steps: []api.WorkflowStepSpec{{Name: "send", Outbound: &api.WorkflowOutboundSpec{IntegrationID: offer.ID, Method: "POST", Path: "/v1/contacts/{{input.contact_id}}", Query: map[string]string{"source": "stored_workflow"}, IdempotencySupported: true}, Retry: &api.WorkflowRetrySpec{MaxAttempts: 3}}}}
 		definition, _ := json.Marshal(spec)
-		author := store.(state.AutomationStore)
-		draft, err := author.MutateAutomation(ctx, app.ID, spec.Name, state.AutomationMutation{Action: "save", Draft: definition})
+		author := store.(state.StoredWorkflowStore)
+		draft, err := author.MutateStoredWorkflow(ctx, app.ID, spec.Name, state.StoredWorkflowMutation{Action: "save", Draft: definition})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := author.MutateAutomation(ctx, app.ID, spec.Name, state.AutomationMutation{Action: "publish", ExpectedVersion: draft.Version}); !errors.Is(err, state.ErrAutomationInvalid) {
+		if _, err := author.MutateStoredWorkflow(ctx, app.ID, spec.Name, state.StoredWorkflowMutation{Action: "publish", ExpectedVersion: draft.Version}); !errors.Is(err, state.ErrStoredWorkflowInvalid) {
 			t.Fatalf("published unbound integration: %v", err)
 		}
 		if err := bindingStore.SetOutboundCredential(ctx, app.AccountID, offer.ID, []byte("sealed-placeholder")); err != nil {
@@ -36,13 +36,13 @@ func TestWorkflowOutboundPublicationAndAttemptFencing(t *testing.T) {
 		if _, err := bindingStore.BindOutboundIntegration(ctx, app.AccountID, app.ID, offer.ID); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := author.MutateAutomation(ctx, app.ID, spec.Name, state.AutomationMutation{Action: "publish", ExpectedVersion: draft.Version}); err != nil {
+		if _, err := author.MutateStoredWorkflow(ctx, app.ID, spec.Name, state.StoredWorkflowMutation{Action: "publish", ExpectedVersion: draft.Version}); err != nil {
 			t.Fatal(err)
 		}
 		if err := bindingStore.UpdateOutboundBindingPolicy(ctx, app.AccountID, app.ID, offer.ID, []string{"POST"}, []string{"/v1/other"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.(state.WorkflowOutboundStore).ValidateWorkflowOutboundBindings(ctx, app.ID, spec); !errors.Is(err, state.ErrAutomationInvalid) {
+		if err := store.(state.WorkflowOutboundStore).ValidateWorkflowOutboundBindings(ctx, app.ID, spec); !errors.Is(err, state.ErrStoredWorkflowInvalid) {
 			t.Fatalf("ignored narrowed route: %v", err)
 		}
 		if err := bindingStore.UpdateOutboundBindingPolicy(ctx, app.AccountID, app.ID, offer.ID, []string{"POST"}, []string{"/v1/x"}); err != nil {
@@ -53,7 +53,7 @@ func TestWorkflowOutboundPublicationAndAttemptFencing(t *testing.T) {
 		unprovenOutbound := *spec.Steps[0].Outbound
 		unprovenOutbound.Path = "/v1/{{input.contact_id}}/history"
 		unproven.Steps[0].Outbound = &unprovenOutbound
-		if err := store.(state.WorkflowOutboundStore).ValidateWorkflowOutboundBindings(ctx, app.ID, unproven); !errors.Is(err, state.ErrAutomationInvalid) {
+		if err := store.(state.WorkflowOutboundStore).ValidateWorkflowOutboundBindings(ctx, app.ID, unproven); !errors.Is(err, state.ErrStoredWorkflowInvalid) {
 			t.Fatalf("placeholder sample incorrectly satisfied a narrower route prefix: %v", err)
 		}
 		if err := bindingStore.UpdateOutboundBindingPolicy(ctx, app.AccountID, app.ID, offer.ID, []string{"POST"}, []string{"/v1/contacts"}); err != nil {

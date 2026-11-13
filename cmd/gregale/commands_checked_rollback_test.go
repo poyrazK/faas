@@ -133,3 +133,41 @@ func TestCmdCheckedRollbackInvalidFlagsMakeNoWrites(t *testing.T) {
 		}
 	}
 }
+
+// ChronoLake finding 23: a target still live at zero traffic is recorded
+// ready at once; the CLI must accept that receipt instead of exiting 1 for a
+// rollback the server already committed.
+func TestCmdCheckedRollbackAcceptsReadyReceipt(t *testing.T) {
+	for _, status := range []string{"ready", "routing"} {
+		t.Run(status, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			t.Setenv("FAAS_TOKEN", "test")
+			pin := rollbackCLIPin()
+			pin.Status = status
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/demo":
+					_ = json.NewEncoder(w).Encode(api.AppResponse{ID: pin.AppID, Slug: "demo"})
+				case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/demo/rollback":
+					w.WriteHeader(202)
+					_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: pin.TargetDeploymentID, AppID: pin.AppID, Status: "live", Scope: "default", RollbackOperation: &pin})
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					http.Error(w, "unexpected", 500)
+				}
+			}))
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			code := main.CmdRollback([]string{"demo", "--to", pin.TargetDeploymentID, "--expected-current", pin.CurrentDeploymentID, "--no-wait"})
+			want := 0
+			if status == "routing" {
+				want = 1 // a fresh receipt is never already routing
+			}
+			if code != want {
+				t.Fatalf("status %s: exit=%d, want %d", status, code, want)
+			}
+		})
+	}
+}

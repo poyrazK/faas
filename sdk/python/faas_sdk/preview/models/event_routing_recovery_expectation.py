@@ -12,7 +12,7 @@ T = TypeVar("T", bound="EventRoutingRecoveryExpectation")
 
 @_attrs_define
 class EventRoutingRecoveryExpectation:
-    """Reviewed acceptance-time automation routing state. All comparisons occur in the replay transaction; mismatches
+    """Reviewed acceptance-time stored workflow routing state. All comparisons occur in the replay transaction; mismatches
     return 409 event_recovery_changed without queuing a replay. Generation must be supplied for recipient routing and
     omitted for legacy routing. Does not bypass admission rules.
 

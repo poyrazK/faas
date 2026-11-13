@@ -125,7 +125,7 @@ func runDataPipelineWorker(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return errors.New("data pipelines: private identity unavailable")
 	}
-	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "faas-apid-pipeline-worker")
+	pool, err := db.OpenWithAppName(db.WithBootWait(ctx), cfg.DBURL, "faas-apid-pipeline-worker")
 	if err != nil {
 		return errors.New("data pipelines: catalog unavailable")
 	}

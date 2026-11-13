@@ -61,13 +61,20 @@ SELECT DISTINCT b.app_id::text AS app_id FROM managed_postgres_bindings b
  WHERE b.database_id=sqlc.arg(database_id)::text::uuid AND b.state IN ('ready','retiring')
  ORDER BY 1;
 
--- name: UpsertLiveLogin :exec
-INSERT INTO managed_postgres_live_logins (database_id,account_id,sealed_login,recipient,provider_identity_id,slot,awake,sealed_login_sig)
- VALUES (sqlc.arg(database_id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(sealed_login)::bytea,sqlc.arg(recipient)::text,
- sqlc.arg(provider_identity_id)::text,sqlc.arg(slot)::text,sqlc.arg(awake)::text,sqlc.narg(sealed_login_sig)::bytea)
+-- name: UpsertLiveLogin :execrows
+INSERT INTO managed_postgres_live_logins (database_id,account_id,sealed_login,recipient,provider_identity_id,slot,awake,sealed_login_sig,data_resource_id,authorized_identity_id)
+ SELECT d.id,d.account_id,sqlc.arg(sealed_login)::bytea,sqlc.arg(recipient)::text,
+ sqlc.arg(provider_identity_id)::text,sqlc.arg(slot)::text,sqlc.arg(awake)::text,sqlc.narg(sealed_login_sig)::bytea,
+ nullif(sqlc.arg(data_resource_id)::text,''),
+ CASE WHEN sqlc.arg(data_resource_id)::text<>'' THEN sqlc.arg(provider_identity_id)::text ELSE NULL END
+ FROM managed_postgres_databases d
+ WHERE d.id=sqlc.arg(database_id)::text::uuid AND d.account_id=sqlc.arg(account_id)::text::uuid
+ AND d.deleted_at IS NULL AND d.state NOT IN ('deleting','deleted')
+ AND coalesce(d.data_resource_id,'')=sqlc.arg(data_resource_id)::text
  ON CONFLICT (database_id) DO UPDATE SET sealed_login=EXCLUDED.sealed_login, recipient=EXCLUDED.recipient,
  provider_identity_id=EXCLUDED.provider_identity_id, slot=EXCLUDED.slot, awake=EXCLUDED.awake,
- sealed_login_sig=EXCLUDED.sealed_login_sig, created_at=now();
+ sealed_login_sig=EXCLUDED.sealed_login_sig, data_resource_id=EXCLUDED.data_resource_id,
+ authorized_identity_id=EXCLUDED.authorized_identity_id, created_at=now();
 
 -- name: LiveLoginOf :many
 SELECT provider_identity_id,slot FROM managed_postgres_live_logins
@@ -130,11 +137,33 @@ DELETE FROM managed_postgres_live_logins
    AND recipient=sqlc.arg(recipient)::text;
 
 -- name: LiveDatabasesWithoutLogin :many
--- Databases with an active live key and no login, the ones apid issues a
--- login for: a login the re-seal dropped, or one never stored.
-SELECT DISTINCT k.database_id::text AS database_id,k.account_id::text AS account_id
+-- Missing logins and legacy root logins whose dataset authorization must be
+-- upgraded once. Old writers remain compatible and cannot bless a changed
+-- provider identity with authorization captured for another login.
+-- The partial unique index permits exactly one active key per database.
+SELECT k.database_id::text AS database_id,k.account_id::text AS account_id
  FROM managed_postgres_live_keys k
  JOIN managed_postgres_databases d ON d.id=k.database_id
+ LEFT JOIN managed_postgres_live_logins l ON l.database_id=d.id
+ LEFT JOIN managed_postgres_live_login_attempts a ON a.database_id=d.id
  WHERE k.retires_at IS NULL AND d.deleted_at IS NULL AND d.state NOT IN ('deleting','deleted')
-   AND NOT EXISTS (SELECT 1 FROM managed_postgres_live_logins l WHERE l.database_id=k.database_id)
- ORDER BY 1 LIMIT sqlc.arg(page_size)::int;
+ AND (l.database_id IS NULL OR (d.data_resource_id IS NOT NULL AND d.data_resource_id IS DISTINCT FROM d.provider_resource_id
+   AND (l.data_resource_id IS DISTINCT FROM d.data_resource_id OR l.authorized_identity_id IS DISTINCT FROM l.provider_identity_id)))
+ ORDER BY a.attempted_at NULLS FIRST,k.database_id::text LIMIT sqlc.arg(page_size)::int;
+
+-- name: RecordLiveLoginAttempt :execrows
+-- Commit before provider I/O, outside the login publication transaction: a
+-- failed issue must still move behind databases not yet attempted.
+INSERT INTO managed_postgres_live_login_attempts(database_id,attempted_at)
+ SELECT d.id,clock_timestamp() FROM managed_postgres_databases d
+ WHERE d.id=sqlc.arg(database_id)::text::uuid AND d.account_id=sqlc.arg(account_id)::text::uuid
+ AND d.deleted_at IS NULL AND d.state NOT IN ('deleting','deleted')
+ AND EXISTS(SELECT 1 FROM managed_postgres_live_keys k WHERE k.database_id=d.id AND k.retires_at IS NULL)
+ ON CONFLICT(database_id) DO UPDATE SET attempted_at=EXCLUDED.attempted_at;
+
+-- name: LiveLoginNeedsDatasetRepair :one
+SELECT EXISTS(SELECT 1 FROM managed_postgres_live_logins l JOIN managed_postgres_databases d ON d.id=l.database_id
+ WHERE d.id=sqlc.arg(database_id)::text::uuid AND d.account_id=sqlc.arg(account_id)::text::uuid
+ AND d.deleted_at IS NULL AND d.state NOT IN ('deleting','deleted')
+ AND d.data_resource_id IS NOT NULL AND d.data_resource_id IS DISTINCT FROM d.provider_resource_id
+ AND (l.data_resource_id IS DISTINCT FROM d.data_resource_id OR l.authorized_identity_id IS DISTINCT FROM l.provider_identity_id))::boolean;

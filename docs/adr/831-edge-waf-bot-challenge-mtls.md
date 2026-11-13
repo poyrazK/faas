@@ -1394,3 +1394,23 @@ traffic can take from the node. Like a body past its inspection limit,
 header content past the bound is not inspected; the docs say so.
 
 Tests: `TestBoundHeaders`.
+
+## Amendment 20 (2026-11-07): headers past the bound are a detection
+
+Amendment 19 bounded what a check scores (4 KiB per header value, 16 KiB of
+headers in all, in name order) and let the rest pass unscored. A client
+could pad its headers (four early-sorting 4 KiB headers, or 4 KiB of filler
+before a payload in one value) and hide an attack in Cookie, User-Agent or
+any later header from a `block` rule. A `warn` or `block` rule now counts a
+request whose headers exceed either bound
+(`api.EdgeWAFHeadersExceedInspection`) as a detection with category
+`uninspected-headers`, without running the check: `block` answers 403, `warn`
+adds `X-WAF-Warning`. Like a cookie-only detection it never boxes the client.
+A Cookie header is measured and scored one cookie per value
+(`api.EdgeWAFInspectHeaders`): browsers join every cookie into one header,
+often past 4 KiB, while capping each cookie at 4 KiB.
+`observe` is unchanged. Apps that legitimately receive larger headers keep
+those paths in `observe`; the bound itself, and so the cost of a check, is
+unchanged. Node.js already refuses more than 16 KiB of headers by default.
+
+Tests: `TestWAFHeadersPastTheInspectionBoundAreADetection`.

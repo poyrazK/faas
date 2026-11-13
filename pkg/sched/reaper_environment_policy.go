@@ -128,7 +128,7 @@ func (l *Loop) enrichReaperEnvironmentPolicies(ctx context.Context, apps []state
 		row.LastScaleInAt, row.LastScaleOutAt = app.LastScaleInAt, app.LastScaleOutAt
 		row.ScaleInCooldownS = state.ScalingPolicyOrDefault(app.ScalingPolicy).ScaleInCooldownS
 		row.ConfiguredMinInstances = app.EffectiveMinInstances()
-		row.MinInstances = max(row.MinInstances, row.ConfiguredMinInstances)
+		row.MinInstances = planCappedFloor(row.Plan, max(row.MinInstances, row.ConfiguredMinInstances))
 		row.PrewarmMinInstances = 0
 		if reaperProductionScope(row.Scope) {
 			row.PrewarmMinInstances = prewarmFloors[row.AppID]
@@ -176,4 +176,19 @@ func (l *Loop) reaperDeployments(ctx context.Context, snapshot []InstanceInfo) m
 		return nil
 	}
 	return deployments
+}
+
+// planCappedFloor caps a configured min-instances floor at what plan allows
+// (ADR-20261105120000). A floor saved under a larger plan otherwise kept that
+// many instances from idling out after a downgrade. An unresolved plan ("")
+// leaves the floor as configured, as a failed plan read does elsewhere in the
+// reaper. Prewarm floors are not configured floors and are not capped here.
+func planCappedFloor(plan api.Plan, floor int) int {
+	if plan == "" {
+		return floor
+	}
+	if !plan.MinInstancesAllowed() {
+		return 0
+	}
+	return min(floor, plan.MaxMinInstances())
 }

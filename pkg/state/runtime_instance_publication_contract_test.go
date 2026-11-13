@@ -152,6 +152,9 @@ func testRuntimeInstancePublicationLifetime(t *testing.T, store runtimeAppEnvTes
 	node := runtimeSecretNodeForTest(t, store)
 	original := seedRuntimeInstancePublication(t, store, f, f.deployments["stage"], node)
 	production := seedRuntimeInstancePublication(t, store, f, f.deployments["production"], node)
+	if err := store.UpdateDeploymentStatus(ctx, f.deployments["stage"].ID, state.DeployCancelled, "stopped before environment deletion"); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.DeleteProjectEnvironment(ctx, f.account.ID, f.project.ID, "stage"); err != nil {
 		t.Fatal(err)
 	}

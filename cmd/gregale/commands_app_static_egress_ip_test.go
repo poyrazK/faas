@@ -70,6 +70,10 @@ func TestTierD_StaticEgressIP_SetHappyPath(t *testing.T) {
 	if got["ip"] != "203.0.113.42" {
 		t.Errorf("body.ip = %v, want 203.0.113.42", got["ip"])
 	}
+	// Without set=true apid treats the PUT as a clear (Hunt 34 H34-44).
+	if got["set"] != true {
+		t.Errorf("body.set = %v, want true", got["set"])
+	}
 }
 
 // TestTierD_StaticEgressIP_SetMissingIPExitsOne — the leaf

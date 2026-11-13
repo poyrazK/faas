@@ -1,74 +1,102 @@
 package reposcan
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"sort"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/onebox-faas/faas/pkg/projectconfig"
 )
 
-// ProjectConfigPath is the repository's project declaration for what Compose
-// declares about its own services (ADR-20261025093331).
-const ProjectConfigPath = ".gregale/project.yaml"
+// ProjectConfigPath is the deprecated standalone project declaration for what
+// Compose declares about its own services (ADR-20261025093331). The root
+// gregale.yaml's `project:` block replaces it (ADR-20261107180000).
+const ProjectConfigPath = projectconfig.LegacyPath
 
-type projectConfig struct {
-	ServicePolicy string                          `yaml:"service_policy"`
-	Services      map[string]projectServiceConfig `yaml:"services"`
-}
+// projectConfigMigrationHint tells a repository with the legacy file how to
+// move to the one source.
+const projectConfigMigrationHint = "run `gregale project import` to move it into the root gregale.yaml `project:` block"
 
-type projectServiceConfig struct {
-	ServicePolicy string   `yaml:"service_policy"`
-	Visibility    string   `yaml:"visibility"`
-	DependsOn     []string `yaml:"depends_on"`
-}
-
-// applyProjectConfig overlays .gregale/project.yaml on the scanned
-// workloads. Compose declarations stay the more specific source: a declared
-// x-gregale-service-policy wins and depends_on lists are merged. A missing
-// file changes nothing; an invalid one fails the scan.
-func applyProjectConfig(fsys fs.FS, workloads []Workload) error {
+// loadProjectConfig returns the repository's project settings and where they
+// came from. The root gregale.yaml `project:` block is the source; the legacy
+// .gregale/project.yaml is still read, with a deprecation warning. Declaring
+// both is refused: two files that can disagree is what the one-model rule
+// removes.
+func loadProjectConfig(fsys fs.FS) (cfg projectconfig.Config, source string, warnings []string, err error) {
+	manifestCfg, manifestSource, err := manifestProjectConfig(fsys)
+	if err != nil {
+		return projectconfig.Config{}, "", nil, err
+	}
 	body, err := readValidFile(fsys, ProjectConfigPath)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return manifestCfg, manifestSource, nil, nil
 	}
 	if err != nil {
-		return fmt.Errorf("reposcan: read %s: %w", ProjectConfigPath, err)
+		return projectconfig.Config{}, "", nil, fmt.Errorf("reposcan: read %s: %w", ProjectConfigPath, err)
 	}
-	var cfg projectConfig
-	decoder := yaml.NewDecoder(bytes.NewReader(body))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("reposcan: parse %s: %w", ProjectConfigPath, err)
+	if manifestSource != "" {
+		return projectconfig.Config{}, "", nil, fmt.Errorf("reposcan: project settings are declared in both %s and %s; keep one (%s)", manifestSource, ProjectConfigPath, projectConfigMigrationHint)
+	}
+	legacy, err := projectconfig.Parse(body)
+	if err != nil {
+		return projectconfig.Config{}, "", nil, fmt.Errorf("reposcan: parse %s: %w", ProjectConfigPath, err)
+	}
+	return legacy, ProjectConfigPath, []string{fmt.Sprintf("%s is deprecated; %s", ProjectConfigPath, projectConfigMigrationHint)}, nil
+}
+
+// manifestProjectConfig reads the root manifest's project block. source is
+// empty when no root manifest declares one.
+func manifestProjectConfig(fsys fs.FS) (projectconfig.Config, string, error) {
+	for _, name := range projectconfig.ManifestNames {
+		body, err := readValidFile(fsys, name)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return projectconfig.Config{}, "", fmt.Errorf("reposcan: read %s: %w", name, err)
+		}
+		cfg, found, err := projectconfig.FromManifest(body)
+		if err != nil {
+			return projectconfig.Config{}, "", fmt.Errorf("reposcan: parse %s: %w", name, err)
+		}
+		// A block that only names the CLI target (name, app) carries no
+		// service settings and does not conflict with the legacy file.
+		if !found || !cfg.HasServiceSettings() {
+			return projectconfig.Config{}, "", nil
+		}
+		return cfg, name + " `project:`", nil
+	}
+	return projectconfig.Config{}, "", nil
+}
+
+// applyProjectConfig overlays the project settings on the scanned workloads.
+// Compose declarations stay the more specific source: a declared
+// x-gregale-service-policy wins and depends_on lists are merged. No settings
+// change nothing; invalid ones fail the scan. It returns any deprecation
+// warning.
+func applyProjectConfig(fsys fs.FS, workloads []Workload) ([]string, error) {
+	cfg, source, warnings, err := loadProjectConfig(fsys)
+	if err != nil || source == "" {
+		return nil, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("reposcan: %s: %w", source, err)
 	}
 	projectPolicy, err := projectConfigPolicy(cfg.ServicePolicy)
 	if err != nil {
-		return fmt.Errorf("reposcan: %s: %w", ProjectConfigPath, err)
+		return nil, fmt.Errorf("reposcan: %s: %w", source, err)
 	}
 	byName := make(map[string]int, len(workloads))
 	for i, w := range workloads {
 		byName[strings.ToLower(w.Name)] = i
 	}
-	services := make(map[int]projectServiceConfig, len(cfg.Services))
+	services := make(map[int]projectconfig.Service, len(cfg.Services))
 	for name, service := range cfg.Services {
 		i, ok := byName[strings.ToLower(strings.TrimSpace(name))]
 		if !ok {
-			return fmt.Errorf("reposcan: %s: service %q is not in the project; the scan found %s", ProjectConfigPath, name, workloadNames(workloads))
-		}
-		if _, err := projectConfigPolicy(service.ServicePolicy); err != nil {
-			return fmt.Errorf("reposcan: %s: service %q: %w", ProjectConfigPath, name, err)
-		}
-		if service.Visibility != "" && service.Visibility != "public" && service.Visibility != "internal" {
-			return fmt.Errorf("reposcan: %s: service %q visibility must be public or internal, got %q", ProjectConfigPath, name, service.Visibility)
-		}
-		for _, dependency := range service.DependsOn {
-			if strings.TrimSpace(dependency) == "" {
-				return fmt.Errorf("reposcan: %s: service %q has an empty depends_on entry", ProjectConfigPath, name)
-			}
+			return nil, fmt.Errorf("reposcan: %s: service %q is not in the project; the scan found %s", source, name, workloadNames(workloads))
 		}
 		services[i] = service
 	}
@@ -90,7 +118,7 @@ func applyProjectConfig(fsys fs.FS, workloads []Workload) error {
 		}
 		w.DependsOn = mergeDependsOn(w.DependsOn, service.DependsOn)
 	}
-	return nil
+	return warnings, nil
 }
 
 func projectConfigPolicy(value string) (ServiceBindingPolicy, error) {

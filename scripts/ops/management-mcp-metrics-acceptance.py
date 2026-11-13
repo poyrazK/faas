@@ -10,19 +10,32 @@ import selectors
 import subprocess
 import tempfile
 import threading
+import time
 import urllib.request
 from http.server import ThreadingHTTPServer
 
 
-def read_line(stream):
+def read_line(stream, timeout=10):
+    # TextIOWrapper.readline can prefetch a second startup notice even though
+    # select no longer sees bytes on the pipe. Read exactly one raw line so
+    # the next notice remains visible, and bound incomplete lines too.
+    value = bytearray()
+    deadline = time.monotonic() + timeout
     with selectors.DefaultSelector() as selector:
         selector.register(stream, selectors.EVENT_READ)
-        if not selector.select(10):
-            raise RuntimeError("CLI output timed out")
-    value = stream.readline()
-    if not value:
-        raise RuntimeError("CLI ended early")
-    return value
+        while not value.endswith(b"\n"):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(remaining):
+                raise RuntimeError("CLI output timed out")
+            chunk = os.read(stream.fileno(), 1)
+            if not chunk:
+                if not value:
+                    raise RuntimeError("CLI ended early")
+                break
+            value.extend(chunk)
+    raw = bytes(value)
+    encoding = getattr(stream, "encoding", None)
+    return raw.decode(encoding, stream.errors) if encoding else raw
 
 
 def check_stdio(binary, fixture, backend, root):

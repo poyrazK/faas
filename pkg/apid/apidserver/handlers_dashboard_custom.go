@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/onebox-faas/faas/pkg/apid/dashboards"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -44,6 +45,8 @@ func (s *server) renderCustomDashboard(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, state.ErrNotFound):
 			http.NotFound(w, r)
 			return
+		case errors.Is(err, dashboards.ErrDataBusy):
+			data.Error = "Other views of your dashboards are still loading; refresh in a few seconds."
 		case err != nil:
 			s.log.WarnContext(r.Context(), "dashboard: read custom dashboard", "err", err)
 			data.Error = "This dashboard could not be loaded; try again shortly."

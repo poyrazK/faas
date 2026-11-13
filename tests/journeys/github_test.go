@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/githubscope"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"net/http"
 	"os"
 	"os/exec"
@@ -13,6 +15,141 @@ import (
 	"testing"
 	"time"
 )
+
+// Both fixture accounts must first authorize the same GitHub App installation
+// through Connect GitHub. Tokens authenticate the test, never substitute for
+// the browser authorization. This journey owns the fixture repo while running.
+func TestGitHubDeploysSharedInstallation(t *testing.T) {
+	first := needs(t, tierFull, true)
+	secondToken := os.Getenv("GREGALE_E2E_GITHUB_SECOND_TOKEN")
+	repo := os.Getenv("GREGALE_E2E_GITHUB_REPO")
+	if secondToken == "" || repo == "" {
+		t.Skip("requires a GitHub fixture repo and GREGALE_E2E_GITHUB_SECOND_TOKEN for a separately connected account")
+	}
+	if _, err := exec.LookPath("gh"); err != nil {
+		t.Skip("the gh CLI is not installed")
+	}
+	second := &target{api: first.api, appsDomain: first.appsDomain, token: secondToken, cli: first.cli,
+		runID: first.runID + "s", tier: first.tier, home: t.TempDir(), deploySlots: make(chan struct{}, 1)}
+	ids := make([]string, 0, 2)
+	for _, account := range []*target{first, second} {
+		who := object(t, account.ok(t, time.Minute, "whoami").stdout)
+		ids = append(ids, str(who, "id"))
+	}
+
+	if ids[0] == "" || ids[0] == ids[1] {
+		t.Fatal("shared GitHub acceptance requires two different Gregale accounts")
+	}
+	slugA, baseA := first.deployProbe(t, "github-shared-a")
+	slugB, baseB := second.deployProbe(t, "github-shared-b")
+	first.ok(t, 2*time.Minute, "github", "link", slugA, "--repo", repo, "--branch", "main")
+	second.ok(t, 2*time.Minute, "github", "link", slugB, "--repo", repo, "--branch", "main")
+	version := "gh-a"
+	if strings.TrimSpace(ghFileContent(t, repo, "main", "version.txt")) == version {
+		version = "gh-b"
+	}
+	commit := ghPutFile(t, repo, "main", "version.txt", version+"\n", "shared GitHub journey "+first.runID)
+	expectVersion(t, baseA, version, 15*time.Minute)
+	expectVersion(t, baseB, version, 15*time.Minute)
+	for _, fixture := range []struct {
+		account *target
+		slug    string
+	}{{first, slugA}, {second, slugB}} {
+		result := fixture.account.run(t, time.Minute, "github", "status", fixture.slug)
+		if result.exit != 0 || !strings.Contains(string(result.stdout), repo) {
+			t.Fatalf("connection changed after shared push: %s", result.problem())
+		}
+	}
+	eventually(t, "independent account checks on the same commit", 5*time.Minute, 15*time.Second, func() (bool, string) {
+		runs := gh(t, "api", "repos/"+repo+"/commits/"+commit+"/check-runs", "--jq", `[.check_runs[] | .name] | join(";")`)
+		for _, id := range ids {
+			if !strings.Contains(runs, githubscope.Tag(githubscope.WithAccount(context.Background(), id))) {
+				return false, runs
+			}
+		}
+		return true, runs
+	})
+	branch := "e2ej-shared-" + first.runID
+	gh(t, "api", "repos/"+repo+"/git/refs", "-f", "ref=refs/heads/"+branch, "-f", "sha="+commit)
+	t.Cleanup(func() { ghQuiet("api", "-X", "DELETE", "repos/"+repo+"/git/refs/heads/"+branch) })
+	ghPutFile(t, repo, branch, "version.txt", "pr-preview\n", "shared account preview "+first.runID)
+	prURL := strings.TrimSpace(gh(t, "pr", "create", "--repo", repo, "--head", branch, "--base", "main", "--title", "shared account preview "+first.runID, "--body", "Gregale shared-account acceptance journey."))
+	number, err := strconv.Atoi(prURL[strings.LastIndex(prURL, "/")+1:])
+	if err != nil {
+		t.Fatal("invalid fixture PR URL")
+	}
+	t.Cleanup(func() { ghQuiet("pr", "close", strconv.Itoa(number), "--repo", repo) })
+	for _, fixture := range []struct {
+		account *target
+		slug    string
+	}{{first, slugA}, {second, slugB}} {
+		preview := fmt.Sprintf("pr-%d-%s", number, fixture.slug)
+		t.Cleanup(func() { fixture.account.run(t, 2*time.Minute, "preview", "delete", preview) })
+		eventually(t, "automatic shared preview "+fixture.slug, 5*time.Minute, 15*time.Second, func() (bool, string) {
+			result := fixture.account.run(t, time.Minute, "preview", "list", "--app", fixture.slug)
+			return result.exit == 0 && strings.Contains(string(result.stdout), preview), result.problem()
+		})
+		fixture.account.ok(t, 25*time.Minute, "preview", "wait", preview, "--timeout", "20m")
+		expectVersion(t, fixture.account.appURL(preview), "pr-preview", 5*time.Minute)
+	}
+	// Account-wide disconnect is browser-only. Supply a disposable fixture
+	// session explicitly; never substitute an API key or disconnect a live user.
+	sessionCookie := os.Getenv("GREGALE_E2E_GITHUB_FIRST_SESSION")
+	if sessionCookie == "" {
+		t.Log("account-wide browser disconnect requires GREGALE_E2E_GITHUB_FIRST_SESSION; API acceptance covers it locally")
+		return
+	}
+	status := fetch(http.MethodGet, first.api+"/v1/install/connections", map[string]string{"Cookie": sessioncookie.Name + "=" + sessionCookie})
+	var connections struct {
+		CSRFToken   string `json:"csrf_token"`
+		Connections []struct {
+			ID int64 `json:"installation_id"`
+		} `json:"connections"`
+	}
+	if status.status != 200 || json.Unmarshal(status.body, &connections) != nil || len(connections.Connections) != 1 {
+		t.Fatal("fixture browser session must own exactly one disposable installation")
+	}
+	csrfCookie := ""
+	for _, cookie := range (&http.Response{Header: status.header}).Cookies() {
+		if cookie.Name == "faas_csrf_github_account" {
+			csrfCookie = cookie.Value
+		}
+	}
+	payload, err := json.Marshal(map[string]string{"csrf_token": connections.CSRFToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/v1/install/connections/%d", first.api, connections.Connections[0].ID), strings.NewReader(string(payload)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", first.api)
+	req.AddCookie(&http.Cookie{Name: sessioncookie.Name, Value: sessionCookie})
+	req.AddCookie(&http.Cookie{Name: "faas_csrf_github_account", Value: csrfCookie})
+	response, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != 204 {
+		t.Fatalf("disconnect fixture status %d", response.StatusCode)
+	}
+	next := "gh-b"
+	if version == next {
+		next = "gh-a"
+	}
+	ghPutFile(t, repo, "main", "version.txt", next+"\n", "verify remaining Gregale connection "+first.runID)
+	expectVersion(t, baseB, next, 15*time.Minute)
+	expectVersion(t, baseA, version, time.Minute)
+	for index, account := range []*target{first, second} {
+		who := object(t, account.ok(t, time.Minute, "whoami").stdout)
+		if str(who, "id") != ids[index] {
+			t.Fatal("disconnect changed account identity")
+		}
+	}
+
+}
 
 // TestGitHubDeploys binds an app to the fixture repository (set
 // GREGALE_E2E_GITHUB_REPO, e.g. poyrazK/gregale-e2e-fixture, which the

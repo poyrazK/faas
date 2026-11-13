@@ -134,6 +134,15 @@ func cmdWorkers(args []string) int {
 	}
 }
 
+// brokerTriggerKind reports a trigger that polls an external broker.
+func brokerTriggerKind(kind api.TriggerKind) bool {
+	switch kind {
+	case api.TriggerKindKafka, api.TriggerKindNATS, api.TriggerKindRedisStreams, api.TriggerKindSQSCompat, api.TriggerKindRealtime:
+		return true
+	}
+	return false
+}
+
 func extractTriggerSource(t api.Trigger) (kind string, source string) {
 	kind = string(t.Kind)
 	if len(t.Config) == 0 {
@@ -376,19 +385,36 @@ func cmdWorkersStatus(args []string) int {
 		}
 	}
 
-	// Fetch triggers
-	triggers, err := client.GetTriggers(ctx, app.ID, "")
-	if err == nil && len(triggers) > 0 {
-		t := triggers[0]
-		bKind, bSrc := extractTriggerSource(t)
-		status.BrokerKind = bKind
-		status.BrokerSource = bSrc
-
-		metrics, mErr := client.GetTriggersIdMetrics(ctx, t.ID)
-		if mErr == nil {
-			status.QueueLag = int64(metrics.PendingCount)
-			status.DLQCount = int64(metrics.DeadLetterCount)
-			status.RetryCount = int64(metrics.RetryCount)
+	// Backlog and dead letters come from the app's production queue
+	// bindings: a pull binding, the documented default, has no trigger
+	// (ADR-20261018101500 amendment 2026-10-31).
+	queueBound := false
+	if bindings, bErr := client.ListQueueBindings(ctx, slug); bErr == nil {
+		for _, binding := range bindings {
+			if !binding.Enabled || binding.Environment != "" {
+				continue
+			}
+			if st, sErr := client.GetQueueBindingStatus(ctx, slug, binding.ID); sErr == nil {
+				queueBound = true
+				status.QueueLag += int64(st.Depth)
+				status.DLQCount += int64(st.DeadLetter)
+			}
+		}
+	}
+	// Only an external broker trigger names a source; a cron or a push
+	// binding's consumer trigger is not the worker's broker.
+	if triggers, tErr := client.GetTriggers(ctx, app.ID, ""); tErr == nil {
+		for _, t := range triggers {
+			if !brokerTriggerKind(t.Kind) {
+				continue
+			}
+			status.BrokerKind, status.BrokerSource = extractTriggerSource(t)
+			if metrics, mErr := client.GetTriggersIdMetrics(ctx, t.ID); mErr == nil {
+				status.QueueLag += int64(metrics.PendingCount)
+				status.DLQCount += int64(metrics.DeadLetterCount)
+				status.RetryCount = int64(metrics.RetryCount)
+			}
+			break
 		}
 	}
 
@@ -408,8 +434,11 @@ func cmdWorkersStatus(args []string) int {
 	if status.Target > 0 {
 		_, _ = fmt.Fprintf(osStdout, "  Target:     %.0f messages/worker\n", status.Target)
 	}
-	if status.QueueLag > 0 || status.BrokerKind != "" {
+	if status.QueueLag > 0 || status.BrokerKind != "" || queueBound {
 		_, _ = fmt.Fprintf(osStdout, "  Backlog:    %d messages pending\n", status.QueueLag)
+	}
+	if queueBound && status.BrokerKind == "" {
+		_, _ = fmt.Fprintf(osStdout, "  DLQ:        %d dead-letter messages\n", status.DLQCount)
 	}
 	_, _ = fmt.Fprintln(osStdout)
 
@@ -428,7 +457,7 @@ func cmdWorkersStatus(args []string) int {
 	}
 
 	if len(status.Instances) == 0 {
-		_, _ = fmt.Fprintln(osStdout, "Active Instances: 0 (worker pool is scaled to zero / parked)")
+		_, _ = fmt.Fprintln(osStdout, workerNoInstancesLine(status.Slug, status.Status, status.QueueLag))
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "Active Instances (%d):\n", len(status.Instances))
 		_, _ = fmt.Fprintf(osStdout, "  %-36s %-12s %-8s %-20s %s\n", "INSTANCE ID", "STATE", "RAM_MB", "STARTED", "UPTIME")
@@ -717,4 +746,18 @@ func workerMetricLabel(metrics string) string {
 		return "none (holds the minimum replicas)"
 	}
 	return metrics
+}
+
+// workerNoInstancesLine explains an empty worker pool. A parked pool stays
+// parked whatever its backlog until `gregale app wake` (H8-23); the status
+// said "scaled to zero / parked" either way, so a parked pool with queued
+// messages read like an autoscaler that had stopped (Hunt 32 H32-32).
+func workerNoInstancesLine(slug, appStatus string, backlog int64) string {
+	if appStatus == "evicted_cold" {
+		if backlog > 0 {
+			return fmt.Sprintf("Active Instances: 0 (parked; %d queued messages wait until `gregale app wake %s`)", backlog, slug)
+		}
+		return fmt.Sprintf("Active Instances: 0 (parked; autoscaling resumes after `gregale app wake %s`)", slug)
+	}
+	return "Active Instances: 0 (scaled to zero; it starts replicas when the backlog reaches its target)"
 }

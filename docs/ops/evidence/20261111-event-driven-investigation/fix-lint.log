@@ -1,0 +1,44 @@
+Initial affected-package scan (two selector findings subsequently fixed):
+lint-changed: 76 changed files against 46aad2a12
+  lint (14): . ./cmd/gregale ./cmd/gregale/templates ./migrations ./pkg/api ./pkg/apid ./pkg/apid/apidserver ./pkg/apid/appevents ./pkg/apid/dataapievents ./pkg/eventcontract ./pkg/sched ./pkg/state ./pkg/state/sqlc ./tests/journeys
+Checking .
+0 issues.
+Checking ./cmd/gregale
+0 issues.
+Checking ./cmd/gregale/templates
+0 issues.
+Checking ./migrations
+0 issues.
+Checking ./pkg/api
+0 issues.
+Checking ./pkg/apid
+0 issues.
+Checking ./pkg/apid/apidserver
+0 issues.
+Checking ./pkg/apid/appevents
+0 issues.
+Checking ./pkg/apid/dataapievents
+0 issues.
+Checking ./pkg/eventcontract
+0 issues.
+Checking ./pkg/sched
+pkg/sched/nats_broker_pool.go:180:11: QF1008: could remove embedded field "triggerSource" from selector (staticcheck)
+	return p.triggerSource.Nack(ctx, t, ids, triggerReasonBrokerError)
+	         ^
+pkg/sched/nats_broker_pool.go:187:11: QF1008: could remove embedded field "triggerSource" from selector (staticcheck)
+	return p.triggerSource.Nack(ctx, t, ids, triggerReasonBrokerError)
+	         ^
+2 issues:
+* staticcheck: 2
+Checking ./pkg/state
+0 issues.
+Checking ./pkg/state/sqlc
+0 issues.
+Checking ./tests/journeys
+0 issues.
+lint-changed: failed: ./pkg/sched
+make: *** [Makefile:1006: lint-changed] Error 1
+
+Final recheck of the changed appevents and sched packages:
+GOFLAGS='-trimpath -gcflags=all=-dwarf=false "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-c=1 -dwarf=false" "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver_test=-c=1 -dwarf=false" "-gcflags=github.com/onebox-faas/faas/pkg/state=-c=1 -dwarf=false" "-gcflags=github.com/onebox-faas/faas/pkg/state_test=-c=1 -dwarf=false" "-gcflags=github.com/onebox-faas/faas/pkg/sched=-c=1 -dwarf=false" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-c=1 -dwarf=false"' GOMEMLIMIT=6GiB GOLANGCI_LINT_CACHE=/workspace/faas-env/cache/golangci-lint go tool golangci-lint run --allow-serial-runners --timeout=20m ./pkg/apid/appevents ./pkg/sched > /tmp/gregale-event-audit/lint-recheck.log 2>&1
+0 issues.

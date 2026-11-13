@@ -57,13 +57,12 @@ npm install @gregale/sdk-node
 ```
 
 **Today it is not published yet**, so install from a locally built tarball.
-npm cannot install a package from a subdirectory of a git repo, so
-`npm install github:poyrazK/faas#<tag>` does *not* work — the repo root has
-no `package.json`, and `dist/` is a build artifact that is not committed.
+npm cannot install a package from a subdirectory of a git repo, and `dist/`
+is a build artifact that is not committed.
 
 ```sh
-git clone https://github.com/poyrazK/faas.git
-cd faas/sdk/node
+git clone https://github.com/gregale-dev/gregale-js.git
+cd gregale-js/packages/sdk-node
 npm ci && npm run build
 npm pack --pack-destination /tmp     # -> /tmp/gregale-sdk-node-0.1.0.tgz
 
@@ -830,6 +829,15 @@ they never automatically forward the carrier to a redirect destination.
 Omitting the helper or carrier makes a call unlinked to the parent deadline.
 The platform's complete-path acceptance is still pending; see
 [the deadline contract](../../docs/ops/traffic-total-deadline.md).
+
+The helper also captures `X-Faas-Deadline-Ms`, the time Gregale gives the
+request to run, and `serviceFetch` sends the time still left on each managed
+call, so the service proxy ends a downstream call when the caller's request
+runs out (ADR-20261102082606). It only shortens: a smaller value you set on the
+call is kept, and a request with no time left sends `1`, which the proxy
+refuses without waking the target. `gregaleRequestTimeRemainingMs()` returns
+the time left inside the handler. The proxy honours the header once the
+platform enables service-call deadlines.
 
 ### Browser SPA release pinning
 

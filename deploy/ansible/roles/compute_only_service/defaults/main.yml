@@ -1,0 +1,8 @@
+---
+# ADR-20261109170000: signd's tcp://<control plane private address>:<port>
+# (signd_service's faas_signd_listen). Empty keeps imaged signing app layers
+# with this node's own sign.key.
+faas_imaged_signd_target: ""
+# The control-plane host that holds the fleet CA and issues imaged's signd
+# client leaf.
+faas_imaged_signd_tls_issuer_host: "{{ groups['control_plane'] | default([]) | first | default('') }}"

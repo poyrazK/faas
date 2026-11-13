@@ -71,13 +71,11 @@ func (s *PgStore) CreateIssueToken(ctx context.Context, account, app string, in 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	owner, err := q.IssueLockApp(ctx, tx, issueUUID(app))
+	current, err := lockIssueResourcePolicy(ctx, tx, IssueCredential{AccountID: account, AppID: app})
 	if err != nil {
-		return api.IssueIngestToken{}, mapErr(err)
+		return api.IssueIngestToken{}, err
 	}
-	if issueID(owner.AccountID) != account {
-		return api.IssueIngestToken{}, ErrNotFound
-	}
+	lim.TokensPerApp = min(lim.TokensPerApp, current.TokensPerApp)
 	if _, err = q.IssueDeploymentScope(ctx, tx, sqlc.IssueDeploymentScopeParams{DeploymentID: issueUUID(in.DeploymentID), AppID: issueUUID(app), AccountID: issueUUID(account), Environment: in.Environment}); err != nil {
 		return api.IssueIngestToken{}, mapErr(err)
 	}
@@ -153,7 +151,7 @@ func (s *PgStore) RecordIssueBatch(ctx context.Context, inputs []RecordIssuePara
 		return nil, ErrInvalidArgument
 	}
 	for _, in := range inputs {
-		if in.Credential != inputs[0].Credential || in.Limits != inputs[0].Limits {
+		if in.Credential != inputs[0].Credential || in.Limits != inputs[0].Limits || in.EnforceResourcePolicy != inputs[0].EnforceResourcePolicy {
 			return nil, ErrInvalidArgument
 		}
 	}
@@ -162,6 +160,20 @@ func (s *PgStore) RecordIssueBatch(ctx context.Context, inputs []RecordIssuePara
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if len(inputs) > 0 && inputs[0].EnforceResourcePolicy {
+		limits, err := lockIssueResourcePolicy(ctx, tx, inputs[0].Credential)
+		if err != nil {
+			return nil, err
+		}
+		inputs = append([]RecordIssueParams(nil), inputs...)
+		retentionFloor := time.Now().UTC().AddDate(0, 0, -limits.RetentionDays)
+		for i := range inputs {
+			inputs[i].Limits = limits
+			if inputs[i].Event.OccurredAt.Before(retentionFloor) {
+				return nil, ErrInvalidArgument
+			}
+		}
+	}
 	results := make([]api.IssueEventResponse, 0, len(inputs))
 	batchMaps := make(map[string]*issues.SourceMapSet)
 	for _, in := range inputs {
@@ -193,6 +205,58 @@ func (s *PgStore) RecordIssueBatch(ctx context.Context, inputs []RecordIssuePara
 		return nil, err
 	}
 	return results, nil
+}
+
+// Lock the financial owner before the app, matching plan-update lock order.
+// This prevents an in-flight capture from committing after a suspension or
+// downgrade using an earlier policy snapshot.
+func lockIssueResourcePolicy(ctx context.Context, tx pgx.Tx, credential IssueCredential) (api.IssueLimits, error) {
+	q := sqlc.New()
+	app, err := q.IssuePolicyApp(ctx, tx, issueUUID(credential.AppID))
+	if err != nil {
+		return api.IssueLimits{}, mapErr(err)
+	}
+	if issueID(app.AccountID) != credential.AccountID {
+		return api.IssueLimits{}, ErrNotFound
+	}
+	account, err := q.IssuePolicyLockAccount(ctx, tx, app.AccountID)
+	if err != nil {
+		return api.IssueLimits{}, mapErr(err)
+	}
+	policy := Account{Plan: api.Plan(account.Plan), Status: AccountStatus(account.Status), AbuseHoldAt: issueTimePtr(account.AbuseHoldAt)}
+	if app.OrgID.Valid {
+		org, orgErr := q.IssuePolicyLockOrg(ctx, tx, app.OrgID)
+		if orgErr != nil {
+			return api.IssueLimits{}, mapErr(orgErr)
+		}
+		if org.PersonalOrg {
+			if org.PersonalOwnerAccountID != app.AccountID {
+				return api.IssueLimits{}, ErrConflict
+			}
+		} else if org.ResourceOwnershipEnabled {
+			policy = Account{Plan: api.Plan(org.Plan), Status: AccountStatus(org.Status), AbuseHoldAt: issueTimePtr(org.AbuseHoldAt)}
+			if org.DeletedPending {
+				policy.Status = AccountDeletedPending
+			}
+		} else {
+			policy.Status = orgLegacyOwnerStatus(Org{Status: OrgStatus(org.Status), DeletedPending: org.DeletedPending}, policy.Status)
+			if org.AbuseHoldAt.Valid {
+				policy.AbuseHoldAt = issueTimePtr(org.AbuseHoldAt)
+			}
+		}
+	}
+	locked, err := q.IssueLockApp(ctx, tx, issueUUID(credential.AppID))
+	if err != nil {
+		return api.IssueLimits{}, mapErr(err)
+	}
+	if locked.AccountID != app.AccountID || locked.OrgID != app.OrgID {
+		return api.IssueLimits{}, ErrConflict
+	}
+	limits := policy.Plan.IssueLimits()
+	if !policy.Active() || !limits.Enabled {
+		return api.IssueLimits{}, ErrIssuePolicyChanged
+	}
+	return limits, nil
 }
 
 func validateIssueTimeBuckets(in RecordIssueParams, count int64) error {
@@ -1056,15 +1120,16 @@ func actOnIssueTxDetails(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, app, i
 // MaintainIssues is a bounded sweep, independent of whether an app receives
 // new events. Issue metadata and release totals outlive occurrence retention.
 func (s *PgStore) MaintainIssues(ctx context.Context, now time.Time) error {
-	q := sqlc.New()
-	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
-		if _, err := q.IssuePurgePlanEvents(ctx, s.pool, sqlc.IssuePurgePlanEventsParams{Plan: string(plan), Before: issueTime(now.AddDate(0, 0, -plan.IssueLimits().RetentionDays)), BatchLimit: api.IssueMaintenanceBatch}); err != nil {
-			return err
-		}
-	}
-	if _, err := q.IssuePurgeExpiredTokens(ctx, s.pool, issueTime(now)); err != nil {
+	if _, err := s.MaintainIssueRetention(ctx, now); err != nil {
 		return err
 	}
+	return s.MaintainIssueHousekeeping(ctx, now)
+}
+
+// MaintainIssueHousekeeping advances attribution and expired ignores without
+// coupling them to a potentially large retention backlog.
+func (s *PgStore) MaintainIssueHousekeeping(ctx context.Context, now time.Time) error {
+	q := sqlc.New()
 	if err := s.enrichIssueAttribution(ctx, now); err != nil {
 		return err
 	}
@@ -1081,6 +1146,25 @@ func (s *PgStore) MaintainIssues(ctx context.Context, now time.Time) error {
 		}
 	}
 	return nil
+}
+
+// MaintainIssueRetention deletes one bounded batch per plan and one token
+// batch. A full batch signals the worker to keep draining after a short pause.
+func (s *PgStore) MaintainIssueRetention(ctx context.Context, now time.Time) (bool, error) {
+	q := sqlc.New()
+	more := false
+	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
+		n, err := q.IssuePurgePlanEvents(ctx, s.pool, sqlc.IssuePurgePlanEventsParams{Plan: string(plan), Before: issueTime(now.AddDate(0, 0, -plan.IssueLimits().RetentionDays)), BatchLimit: api.IssueMaintenanceBatch})
+		if err != nil {
+			return false, err
+		}
+		more = more || n >= api.IssueMaintenanceBatch
+	}
+	n, err := q.IssuePurgeExpiredTokens(ctx, s.pool, sqlc.IssuePurgeExpiredTokensParams{Now: issueTime(now), BatchLimit: api.IssueMaintenanceBatch})
+	if err != nil {
+		return false, err
+	}
+	return more || n >= api.IssueMaintenanceBatch, nil
 }
 
 func issueDebugRequest(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, account, app, dep string, e api.IssueEvent) string {

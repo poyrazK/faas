@@ -166,6 +166,8 @@ type gregaleignorePattern struct {
 	dirOnly      bool     // trailing '/'
 	negate       bool     // leading '!'
 	globSegments []string // per-segment glob, split on '/'
+	source       string
+	line         int
 }
 
 // loadGregaleignore reads .gregaleignore from srcDir (the packed root)
@@ -186,9 +188,11 @@ func loadGregaleignore(srcDir string) []gregaleignorePattern {
 func parseGregaleignore(data []byte) []gregaleignorePattern {
 	var out []gregaleignorePattern
 	sc := bufio.NewScanner(bytes.NewReader(data))
+	lineNumber := 0
 	// Allow long lines; the .gregaleignore spec has no line-length cap
 	// (gitignore uses the same ScanLines default and never complains).
 	for sc.Scan() {
+		lineNumber++
 		// Trim trailing CR (for CRLF inputs) AND surrounding
 		// whitespace so blank / whitespace-only lines and
 		// trailing-whitespace comments are ignored the same way
@@ -197,7 +201,7 @@ func parseGregaleignore(data []byte) []gregaleignorePattern {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		p := gregaleignorePattern{}
+		p := gregaleignorePattern{source: gregaleignoreFile, line: lineNumber}
 		if strings.HasPrefix(line, "!") {
 			p.negate = true
 			line = line[1:]
@@ -321,6 +325,7 @@ type packRules struct {
 	// goVendor reports whether a vendor/ directory at rel holds Go module
 	// vendoring (vendor/modules.txt), which is source, not an install.
 	goVendor func(rel string) bool
+	report   *deploySourceFilesReport
 }
 
 // exclude applies, in order: .git (always excluded, cannot be re-included);
@@ -328,30 +333,7 @@ type packRules struct {
 // negated line such as `!dist/` re-includes a default-excluded directory.
 // Before ADR-20261026152731 the defaults could not be overridden at all.
 func (r packRules) exclude(rel string, isDir bool) bool {
-	base := rel
-	if i := strings.LastIndex(rel, "/"); i >= 0 {
-		base = rel[i+1:]
-	}
-	if base == ".git" {
-		return true
-	}
-	excluded := false
-	if isDir {
-		keptBuildOutput := r.dockerfile && buildOutputDirs[base]
-		keptGoVendor := base == "vendor" && r.goVendor != nil && r.goVendor(rel)
-		excluded = defaultExcludeDirs[base] && !keptBuildOutput && !keptGoVendor
-	} else {
-		excluded = defaultExcludeFiles[base] || strings.HasSuffix(base, ".pyc")
-	}
-	for _, p := range r.patterns {
-		if p.dirOnly && !isDir {
-			continue
-		}
-		if matchGregaleignoreOne(rel, p) {
-			excluded = !p.negate
-		}
-	}
-	return excluded
+	return r.selection(rel, isDir).excluded
 }
 
 // dockerignoreFile is read for Dockerfile builds so the uploaded context
@@ -364,6 +346,7 @@ const dockerignoreFile = ".dockerignore"
 func parseDockerignore(data []byte) []gregaleignorePattern {
 	patterns := parseGregaleignore(data)
 	for i := range patterns {
+		patterns[i].source = dockerignoreFile
 		patterns[i].anchor = true
 		for len(patterns[i].globSegments) > 1 && patterns[i].globSegments[0] == "." {
 			patterns[i].globSegments = patterns[i].globSegments[1:]
@@ -790,39 +773,7 @@ func detectShape(srcDir string) shape {
 // same wire shape they would have got via
 // `gregale --template function-node --tarball ...`.
 func inferFunctionRuntime(srcDir string) (runtime, handler string, ok bool) {
-	if manifest, found, err := gregalemanifest.Load(srcDir); err == nil && found && manifest.Function != nil {
-		if err := manifest.Validate(); err == nil {
-			return strings.TrimSpace(manifest.Function.Runtime), strings.TrimSpace(manifest.Function.Handler), true
-		}
-	}
-	entries, err := os.ReadDir(srcDir)
-	if err != nil {
-		return "", "", false
-	}
-	var picked string
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		if functionHandlerFiles[strings.ToLower(e.Name())] {
-			if picked != "" {
-				return "", "", false // ambiguous — multiple handlers
-			}
-			picked = strings.ToLower(e.Name())
-		}
-	}
-	if picked == "" {
-		return "", "", false
-	}
-	switch strings.ToLower(picked) {
-	case "handler.js", "handler.ts":
-		return runtimeNode22, defaultTemplateHandler, true
-	case "handler.py":
-		return runtimePython312, defaultTemplateHandler, true
-	case "handler.go":
-		return runtimeGo124, defaultTemplateHandler, true
-	}
-	return "", "", false
+	return gregalemanifest.InferFunctionRuntime(srcDir)
 }
 
 // defaultZeroConfigSourceCapMB is the conservative per-plan floor used when
@@ -902,6 +853,10 @@ func packDirToTarGzFlat(srcDir, destPath string, capMB int, envOverride map[stri
 // the plan limit was applied to the uncompressed bytes, refusing sources the
 // server accepts.
 func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[string][]byte, archiveRoot string, buildOnlyFiles map[string][]byte, dockerfile bool, extraExcludes ...string) (regularFileCount int, err error) {
+	return packDirToTarGzReported(srcDir, destPath, capMB, envOverride, archiveRoot, buildOnlyFiles, dockerfile, nil, extraExcludes...)
+}
+
+func packDirToTarGzReported(srcDir, destPath string, capMB int, envOverride map[string][]byte, archiveRoot string, buildOnlyFiles map[string][]byte, dockerfile bool, report *deploySourceFilesReport, extraExcludes ...string) (regularFileCount int, err error) {
 	// os.Getwd returns the shell's $PWD spelling, and WalkDir never descends
 	// into a symlinked root, so a project reached through a symlink packed
 	// as an empty archive. Callers already chose archiveRoot.
@@ -912,6 +867,14 @@ func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[
 	// Load the file-selection rules once (before the walk) so every entry
 	// sees the same policy.
 	rules := loadPackRules(srcDir, dockerfile)
+	rules.report = report
+	if report != nil {
+		report.archiveRoot = archiveRoot
+		report.generated = buildOnlyFiles
+		for name := range envOverride {
+			report.redacted[name] = true
+		}
+	}
 	extraExcludeSet := packExtraExcludeSet(srcDir, extraExcludes)
 
 	f, err := os.Create(destPath)
@@ -1100,8 +1063,16 @@ func packWriteError(capMB int, name string, err error) error {
 	return fmt.Errorf("write %s: %w", name, err)
 }
 
+// sourceUploadLimitErr is a packed source over the upload cap the CLI packed
+// against. resolveSourceUploadCap explains a cap it could not verify.
+type sourceUploadLimitErr struct{ capMB int }
+
+func (e *sourceUploadLimitErr) Error() string {
+	return fmt.Sprintf("packed source is over your plan's %d MB upload limit; exclude large files in .gregaleignore (https://gregale.dev/docs/deploy-from-source#what-gets-uploaded)", e.capMB)
+}
+
 func sourceUploadLimitError(capMB int) error {
-	return fmt.Errorf("packed source is over your plan's %d MB upload limit; exclude large files in .gregaleignore (https://gregale.dev/docs/deploy-from-source#what-gets-uploaded)", capMB)
+	return &sourceUploadLimitErr{capMB: capMB}
 }
 
 func sourceExpandedLimitError() error {
@@ -1144,7 +1115,14 @@ func collectPackEntries(root, dir, rel string, rules packRules, extra map[string
 			}
 		}
 		isDir := info.IsDir()
-		if extra[relSlash] || rules.exclude(relSlash, isDir) {
+		decision := rules.selection(relSlash, isDir)
+		if extra[relSlash] {
+			decision = packSelection{excluded: true, reason: "command-scoped exclusion"}
+		}
+		if err := rules.report.observe(relSlash, isDir, info.Size(), decision, abs != p); err != nil {
+			return err
+		}
+		if decision.excluded {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}

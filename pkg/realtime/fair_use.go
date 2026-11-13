@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -23,6 +24,13 @@ type ConnectionSyncer interface {
 	SyncRealtimeConnections(context.Context, []state.RealtimeAccountConnections) ([]state.RealtimeAccountConnections, error)
 }
 
+// EndpointConnectionSyncer is a ConnectionSyncer that also carries the
+// counts of endpoints with a customer-set max_connections, so that cap holds
+// across nodes. Without it, or until a sync answers, the cap is per node.
+type EndpointConnectionSyncer interface {
+	SyncRealtimeConnectionsWithEndpoints(context.Context, []state.RealtimeAccountConnections, []state.RealtimeEndpointConnections) ([]state.RealtimeAccountConnections, []state.RealtimeEndpointConnections, error)
+}
+
 // accountConnections is one account's connections on this node and, from the
 // last sync, on the other nodes.
 type accountConnections struct {
@@ -37,8 +45,7 @@ type accountConnections struct {
 }
 
 // connectionRefusal explains a refused reservation. A zero value means the
-// node or endpoint limit applied, which predates fair use and keeps its plain
-// response.
+// endpoint was revoked while the connection was being admitted.
 type connectionRefusal struct {
 	scope           string
 	limit, observed int64
@@ -55,6 +62,20 @@ func (m *Manager) accountFor(id string) *accountConnections {
 
 // remoteConnections is the other nodes' count for the account, or zero when
 // the last sync is too old to trust.
+// remoteEndpointConnections is the other nodes' count for an endpoint whose
+// customer set max_connections, or zero when the sync is stale or the cap is
+// the node default.
+func (m *Manager) remoteEndpointConnections(state *endpointState, config *Endpoint) int64 {
+	if !config.maxConnectionsSet {
+		return 0
+	}
+	synced := m.connectionSyncedAt.Load()
+	if synced == 0 || time.Since(time.Unix(0, synced)) > api.RealtimeConnectionSyncStaleAfter {
+		return 0
+	}
+	return state.remote.Load()
+}
+
 func (m *Manager) remoteConnections(account *accountConnections) int64 {
 	synced := m.connectionSyncedAt.Load()
 	if synced == 0 || time.Since(time.Unix(0, synced)) > api.RealtimeConnectionSyncStaleAfter {
@@ -122,7 +143,15 @@ func (m *Manager) syncConnections(ctx context.Context) {
 		return true
 	})
 	syncCtx, cancel := context.WithTimeout(ctx, m.cfg.ConnectionSyncInterval)
-	remote, err := m.cfg.ConnectionSync.SyncRealtimeConnections(syncCtx, counts)
+	var remote []state.RealtimeAccountConnections
+	var remoteEndpoints []state.RealtimeEndpointConnections
+	var err error
+	endpointSyncer, syncsEndpoints := m.cfg.ConnectionSync.(EndpointConnectionSyncer)
+	if syncsEndpoints {
+		remote, remoteEndpoints, err = endpointSyncer.SyncRealtimeConnectionsWithEndpoints(syncCtx, counts, m.cappedEndpointConnections())
+	} else {
+		remote, err = m.cfg.ConnectionSync.SyncRealtimeConnections(syncCtx, counts)
+	}
 	cancel()
 	if err != nil {
 		m.connectionSyncFailures.Add(1)
@@ -140,6 +169,45 @@ func (m *Manager) syncConnections(ctx context.Context) {
 		value.(*accountConnections).remote.Store(others[key.(string)])
 		return true
 	})
+	if syncsEndpoints {
+		m.storeRemoteEndpointConnections(remoteEndpoints)
+	}
 	m.connectionSyncedAt.Store(time.Now().UnixNano())
 	m.connectionSyncs.Add(1)
+}
+
+// cappedEndpointConnections lists this node's count for every endpoint with a
+// customer-set max_connections, zero included, so the node learns the other
+// nodes' counts before its own first connection. Endpoint IDs that are not
+// UUIDs (tests, local tools) are left out; apid stores only UUIDs.
+func (m *Manager) cappedEndpointConnections() []state.RealtimeEndpointConnections {
+	counts := []state.RealtimeEndpointConnections{}
+	m.endpoints.Range(func(key, value any) bool {
+		node := value.(*endpointState)
+		if node.revoked.Load() || !node.config.Load().maxConnectionsSet {
+			return true
+		}
+		if _, err := uuid.Parse(key.(string)); err != nil {
+			return true
+		}
+		if len(counts) >= api.RealtimeConnectionSyncMaxEndpoints {
+			return false
+		}
+		counts = append(counts, state.RealtimeEndpointConnections{EndpointID: key.(string), Connections: node.reserved.Load()})
+		return true
+	})
+	return counts
+}
+
+// storeRemoteEndpointConnections records the other nodes' counts; an
+// endpoint the answer leaves out has none elsewhere.
+func (m *Manager) storeRemoteEndpointConnections(remote []state.RealtimeEndpointConnections) {
+	others := make(map[string]int64, len(remote))
+	for _, r := range remote {
+		others[r.EndpointID] = r.Connections
+	}
+	m.endpoints.Range(func(key, value any) bool {
+		value.(*endpointState).remote.Store(others[key.(string)])
+		return true
+	})
 }

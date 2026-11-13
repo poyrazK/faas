@@ -138,6 +138,7 @@ func TestPgObjectUploadMutationBindingGuardsAndRollback(t *testing.T) {
 	if _, err = tx.Exec(ctx, putIntentParts[0]); err != nil {
 		t.Fatal(err)
 	}
+	reapplyObjectAccountNoKeyLocks(t, ctx, tx, "guard_bound_upload_mutation")
 	if err := tx.QueryRow(ctx, shape).Scan(&after); err != nil || before != after {
 		t.Fatal("binding migration round trip changed guard", err)
 	}

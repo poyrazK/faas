@@ -44,6 +44,7 @@ type dataAPIStorageReceipt struct {
 	Buckets        []dataAPIStorageBucket `json:"buckets"`
 	Changed        []string               `json:"changed"`
 	Restarted      bool                   `json:"restarted,omitempty"`
+	Parked         bool                   `json:"parked,omitempty"`
 }
 
 // dataAPIStorageBucket is one bucket bound to the Data API app. Name is the
@@ -94,6 +95,8 @@ func cmdDataAPIStorageSQL(args []string) int {
 	fs := newFlagSet("data-api storage sql", flag.ContinueOnError)
 	schema := fs.String("schema", "api", "the Data API's first exposed schema")
 	upgrade := fs.Bool("upgrade", false, "print the upgrade for a storage_objects table without object_key")
+	sessions := fs.Bool("sessions", false, "include durable resumable upload sessions and conditional replacement")
+	maintenance := fs.Bool("maintenance", false, "include owner-only storage cleanup leases and reference guards")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 0 {
 		PrintUsage(os.Stderr, "usage: gregale data-api storage export [--schema api] [--upgrade]", "data-api")
 		return 1
@@ -101,6 +104,20 @@ func cmdDataAPIStorageSQL(args []string) int {
 	sql, err := dataAPIStorageSQL(*schema, *upgrade)
 	if err != nil {
 		return printErr("Invalid schema", err)
+	}
+	if *sessions {
+		content, readErr := templates.FS.ReadFile("data-api/storage-sessions.sql")
+		if readErr != nil {
+			return printErr("Could not read upload session SQL", readErr)
+		}
+		sql += "\n" + strings.ReplaceAll(string(content), "{{schema}}", *schema)
+	}
+	if *maintenance {
+		content, readErr := templates.FS.ReadFile("data-api/storage-cleanup.sql")
+		if readErr != nil {
+			return printErr("Could not read storage maintenance SQL", readErr)
+		}
+		sql += "\n" + strings.ReplaceAll(string(content), "{{schema}}", *schema)
 	}
 	_, _ = fmt.Fprint(osStdout, sql)
 	return 0
@@ -159,17 +176,20 @@ func cmdDataAPIStorageEnable(args []string) int {
 	}
 	receipt.Buckets = []dataAPIStorageBucket{bound}
 	if !*noRestart {
-		if _, err := client.RestartAppFresh(ctx, app); err != nil {
+		_, parked, err := restartDataAPISettings(ctx, client, app)
+		if err != nil {
 			return printErr("Settings stored; fresh restart failed", err)
 		}
-		receipt.Restarted = true
+		receipt.Restarted, receipt.Parked = !parked, parked
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(receipt))
 	}
 	PrintOK(osStdout, "File storage on for %s: bucket %s is %q in storage routes", app, bound.Bucket, bound.Name)
 	_, _ = fmt.Fprintf(osStdout, "Add the storage_objects table and your policies with a migration (gregale data-api storage export). Until it exists, storage answers 503 storage_unavailable and the rest of the API keeps serving.\n")
-	if !receipt.Restarted {
+	if receipt.Parked {
+		_, _ = fmt.Fprintln(osStdout, dataAPIParkedSettingsNote)
+	} else if !receipt.Restarted {
 		_, _ = fmt.Fprintf(osStdout, "Run gregale data-api refresh %s to apply the settings.\n", app)
 	}
 	return 0
@@ -290,14 +310,18 @@ func cmdDataAPIStorageDisable(args []string) int {
 	}
 	receipt := dataAPIStorageReceipt{App: app, Scope: *scope, Buckets: []dataAPIStorageBucket{}, Changed: []string{"storage"}}
 	if !*noRestart {
-		if _, err := client.RestartAppFresh(ctx, app); err != nil {
+		_, parked, err := restartDataAPISettings(ctx, client, app)
+		if err != nil {
 			return printErr("Settings stored; fresh restart failed", err)
 		}
-		receipt.Restarted = true
+		receipt.Restarted, receipt.Parked = !parked, parked
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(receipt))
 	}
 	PrintOK(osStdout, "File storage off for %s; buckets stay bound and keep their files", app)
+	if receipt.Parked {
+		_, _ = fmt.Fprintln(osStdout, dataAPIParkedSettingsNote)
+	}
 	return 0
 }

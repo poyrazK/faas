@@ -247,6 +247,28 @@ func (f *fakeScheduler) DeleteDatabase(_ context.Context, in *scheddpb.DatabaseR
 	return &scheddpb.DeleteDatabaseResponse{}, nil
 }
 
+func (f *fakeScheduler) HoldDatabase(_ context.Context, in *scheddpb.HoldDatabaseRequest, _ ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rt, ok := f.vms[in.GetDatabaseId()]
+	if !ok {
+		return nil, status.Error(codes.NotFound, "dbsched: database not found")
+	}
+	rt.Held = in.GetHeld()
+	return rt, nil
+}
+
+func (f *fakeScheduler) SetDatabaseComputeQuota(_ context.Context, in *scheddpb.SetDatabaseComputeQuotaRequest, _ ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rt, ok := f.vms[in.GetDatabaseId()]
+	if !ok {
+		return nil, status.Error(codes.NotFound, "dbsched: database not found")
+	}
+	rt.ComputeQuotaUnitSeconds = in.GetQuotaUnitSeconds()
+	return rt, nil
+}
+
 func (f *fakeScheduler) SetDatabaseAlwaysOn(_ context.Context, in *scheddpb.SetDatabaseAlwaysOnRequest, _ ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -394,7 +416,7 @@ func TestParseConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.HostSuffix != "db.gregale.test" || cfg.Port != 5432 || cfg.TLSMode != "verify-full" || cfg.Database != "gregale" ||
-		!slices.Equal(cfg.Majors, []int{14, 15, 16, 17, 18}) || cfg.MaxStorageBytes != 100<<30 {
+		!slices.Equal(cfg.Majors, []int{15, 16, 17, 18}) || cfg.MaxStorageBytes != 100<<30 {
 		t.Fatalf("defaults = %+v", cfg)
 	}
 	cfg, err = ParseConfig(base(settingPort, "6432", settingTLSMode, "require", settingDatabase, "app_db", settingMajors, "16, 17", settingMaxStorage, "2147483648"))
@@ -662,6 +684,7 @@ func TestIssueCredentialsPublishesOnlyAVerifier(t *testing.T) {
 		want := []managedpostgres.Endpoint{
 			{Role: managedpostgres.EndpointDirect, Host: testDatabaseID + ".db.gregale.test", Port: 5432},
 			{Role: managedpostgres.EndpointPooled, Host: testDatabaseID + "-pooler.db.gregale.test", Port: 5432},
+			{Role: managedpostgres.EndpointReadOnly, Host: testDatabaseID + "-ro-pooler.db.gregale.test", Port: 5432},
 		}
 		if !reflect.DeepEqual(material.Endpoints, want) {
 			t.Fatalf("%s: endpoints = %+v", access, material.Endpoints)
@@ -1025,7 +1048,7 @@ func TestUpdateUpgradesTheMajor(t *testing.T) {
 	sched.upgradeHeld = true
 	ctx := context.Background()
 	spec := devSpec()
-	spec.PostgresMajor = 14
+	spec.PostgresMajor = 15
 	if _, err := p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: testDatabaseID, Spec: spec}); err != nil {
 		t.Fatal(err)
 	}

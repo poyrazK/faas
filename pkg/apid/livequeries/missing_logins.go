@@ -12,6 +12,7 @@ import (
 // one.
 type MissingLogins interface {
 	DatabasesWithoutLogin(ctx context.Context, limit int) ([]livekeys.LoginRef, error)
+	RecordLoginAttempt(ctx context.Context, accountID, databaseID string) (bool, error)
 	IssueMissingLogin(ctx context.Context, accountID, databaseID string, issue func(context.Context) (*livekeys.Login, error)) (bool, error)
 }
 
@@ -24,8 +25,9 @@ const missingLoginsPage = 20
 const MissingLoginsInterval = 5 * time.Minute
 
 // IssueMissingLogins issues a login, sealed bound to its database, to each
-// database that has an active live key and no login, and returns how many it
-// issued. The operator re-seal drops every legacy login instead of binding
+// database that has an active live key and no login or needs its legacy
+// root login replaced with a dataset-scoped one. It returns how many it issued.
+// The operator re-seal drops every legacy login instead of binding
 // it (ADR-20261016151947, at-rest binding, amended 2026-10-28): a legacy
 // blob names no database, so binding it would trust whatever row it sits on.
 // A login apid issues comes from the provider for the database itself. A
@@ -41,6 +43,16 @@ func (s *Service) IssueMissingLogins(ctx context.Context, store MissingLogins) (
 	}
 	issued := 0
 	for _, ref := range refs {
+		if err := ctx.Err(); err != nil {
+			return issued, err
+		}
+		attempted, err := store.RecordLoginAttempt(ctx, ref.AccountID, ref.DatabaseID)
+		if err != nil {
+			return issued, err
+		}
+		if !attempted {
+			continue
+		}
 		db, err := s.Databases.Get(ctx, ref.AccountID, ref.DatabaseID)
 		if err == nil {
 			var stored bool

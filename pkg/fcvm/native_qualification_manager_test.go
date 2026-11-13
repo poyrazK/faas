@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/frameworkready"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -351,7 +352,7 @@ func TestNativeQualificationManagerRestoresPrivatelyAndRetiresFromRestoreJournal
 		}
 	}
 	restoreVMM := m.vmm.(*recoveryVMMFixture)
-	restoreVMM.restoreQualification = func(_ context.Context, got state.EnvironmentQualificationExecution, lease Lease, req WakeRequest, candidates [2]string, fcVersion, _ string) error {
+	restoreVMM.restoreQualification = func(ctx context.Context, got state.EnvironmentQualificationExecution, lease Lease, req WakeRequest, candidates [2]string, fcVersion string) error {
 		if got != target || lease.Instance != target.InstanceID || req.Instance != target.InstanceID ||
 			candidates != [2]string{kernelPath, basePath} || fcVersion != "1.7.0" {
 			return errors.New("fixture: restore did not receive the pinned private execution")
@@ -365,10 +366,21 @@ func TestNativeQualificationManagerRestoresPrivatelyAndRetiresFromRestoreJournal
 		expected := waiter.expected[WorkloadNameMain]
 		token := waiter.token
 		m.mu.Unlock()
-		return m.MarkEnvironmentQualificationConfigApplied(target.InstanceID, EnvironmentQualificationConfigReceipt{
+		// The captured layer is verified byte-for-byte, so restore stages no
+		// file and the fresh control travels only with the resume hook.
+		if req.qualificationRestoreReceipt.token != token || !req.qualificationRestoreReceipt.valid() || req.qualificationRestoreReceiptWaiter != waiter ||
+			len(req.preparedAPIEnvJSON) != 0 || len(req.preparedSecretsEnvJSON) != 0 || len(req.APIEnvEntries) != len(sourceReq.APIEnvEntries) {
+			return errors.New("fixture: restore staged files or lost its fresh receipt control")
+		}
+		if err := m.MarkEnvironmentQualificationConfigApplied(target.InstanceID, EnvironmentQualificationConfigReceipt{
 			Token: token, Workload: WorkloadNameMain, APIEnvSHA256: expected.apiEnvSHA256,
 			SecretsFileRead: expected.secretsRead, SecretKeysMAC: expected.secretKeysMAC, ConfigMAC: expected.configMAC,
-		})
+		}); err != nil {
+			return err
+		}
+		// The real restorer consumes the receipt before its channels close;
+		// the manager no longer waits after the restorer returns.
+		return req.qualificationRestoreReceiptWaiter.wait(ctx, target.InstanceID)
 	}
 	req := sourceReq
 	req.Instance, req.BaseKey = target.InstanceID, basePath
@@ -396,6 +408,91 @@ func TestNativeQualificationManagerRestoresPrivatelyAndRetiresFromRestoreJournal
 	}
 	if m.LiveCount() != 0 || len(m.cidToID) != 0 || m.qualificationInstances[target.InstanceID] != nil {
 		t.Fatal("private restore retirement leaked its lifecycle identity")
+	}
+}
+
+// The restored-graph smoke forwards through NetnsFor. A restored target is
+// reachable from its private registry; a held qualification Job and any other
+// private member are not, and the serving index is unchanged.
+func TestNetnsForReachesRestoredQualificationTargetsOnly(t *testing.T) {
+	m := NewManager(&fakeRunner{}, nil, Paths{}, "test", nil, nil)
+	m.live["serving"] = &Instance{Lease: Lease{Instance: "serving", Netns: "fc-serving"}}
+	restoredTarget := &netns.PublicForwardTarget{Veth: "vh-restored", IfIndex: 7}
+	m.qualificationInstances["restored"] = &Instance{Lease: Lease{Instance: "restored", Netns: "fc-restored"}, Method: WakeRestore, QualificationOnly: true,
+		publicForwardTarget: restoredTarget, Plan: api.PlanHobby}
+	m.qualificationInstances["job"] = &Instance{Lease: Lease{Instance: "job", Netns: "fc-job"}, Method: WakeRestore, QualificationOnly: true, IsJob: true}
+	m.qualificationInstances["cold"] = &Instance{Lease: Lease{Instance: "cold", Netns: "fc-cold"}, Method: WakeColdBoot, QualificationOnly: true}
+	for instance, want := range map[string]string{"serving": "fc-serving", "restored": "fc-restored", "job": "", "cold": "", "absent": ""} {
+		got, ok := m.NetnsFor(instance)
+		if got != want || ok != (want != "") {
+			t.Fatalf("NetnsFor(%s) = %q, %v; want %q", instance, got, ok, want)
+		}
+	}
+	// The native forward also needs the captured public target.
+	if got, err := m.PublicForwardTarget("restored"); err != nil || got == nil || *got != *restoredTarget || got == restoredTarget {
+		t.Fatalf("PublicForwardTarget(restored) = %+v, %v; want a copy of %+v", got, err, restoredTarget)
+	}
+	for _, instance := range []string{"job", "cold", "absent"} {
+		if _, err := m.PublicForwardTarget(instance); err == nil {
+			t.Fatalf("PublicForwardTarget(%s) reached a private member", instance)
+		}
+	}
+	// HTTP forward admission (ADR-570) admits the restored target too.
+	_, release, err := m.AcquireHTTPForward(t.Context(), "restored")
+	if err != nil {
+		t.Fatalf("AcquireHTTPForward(restored) = %v", err)
+	}
+	release()
+	for _, instance := range []string{"job", "cold", "absent"} {
+		if _, _, err := m.AcquireHTTPForward(t.Context(), instance); !errors.Is(err, ErrHTTPForwardNotLive) {
+			t.Fatalf("AcquireHTTPForward(%s) admitted a private member: %v", instance, err)
+		}
+	}
+	if m.live["restored"] != nil {
+		t.Fatal("a restored qualification target entered the serving index")
+	}
+}
+
+// A restored runner reports the framework-ready state it kept since capture;
+// a runtime-less app owes no receipt, and a missing sink fails closed.
+func TestRestoredQualificationFrameworkReadyIsReadFromTheGuest(t *testing.T) {
+	m := NewManager(&fakeRunner{}, nil, Paths{}, "test", nil, nil)
+	frame := state.EnvironmentQualificationExecution{InstanceID: uuid.NewString()}
+	reads := 0
+	m.WithFrameworkReadyReader(func(_ context.Context, instance string) (frameworkready.Status, error) {
+		reads++
+		if instance != frame.InstanceID {
+			return frameworkready.Status{}, errors.New("read another instance")
+		}
+		return frameworkready.Status{Ready: reads > 1, WarmupMs: 42}, nil
+	})
+	if err := m.recordRestoredQualificationFrameworkReady(t.Context(), frame, "node22"); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("restore without a framework-ready sink = %v", err)
+	}
+	if err := m.recordRestoredQualificationFrameworkReady(t.Context(), frame, ""); err != nil || reads != 0 {
+		t.Fatalf("runtime-less restore read framework-ready: %v, reads=%d", err, reads)
+	}
+	type record struct {
+		frame   state.EnvironmentQualificationExecution
+		runtime string
+		warmup  int64
+	}
+	var got []record
+	m.WithQualificationFrameworkReadyRecorder(func(_ context.Context, frame state.EnvironmentQualificationExecution, runtime string, warmup int64) error {
+		got = append(got, record{frame, runtime, warmup})
+		return nil
+	})
+	if err := m.recordRestoredQualificationFrameworkReady(t.Context(), frame, "node22"); err != nil {
+		t.Fatal(err)
+	}
+	if reads != 2 || len(got) != 1 || got[0] != (record{frame, "node22", 42}) {
+		t.Fatalf("framework-ready receipt = %+v after %d reads", got, reads)
+	}
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	reads = -100 // never ready before the deadline
+	if err := m.recordRestoredQualificationFrameworkReady(canceled, frame, "node22"); err == nil || len(got) != 1 {
+		t.Fatalf("a runner that never reported ready was recorded: %v", err)
 	}
 }
 

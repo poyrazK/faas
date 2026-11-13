@@ -103,7 +103,7 @@ func (s *server) newCapturedCloneObjectCredential(ctx context.Context, op state.
 	}
 	credential := state.ObjectS3Credential{ID: uuid.NewString(), AccountID: op.AccountID, BucketID: bucket.ID, AccessKeyID: accessKey,
 		SecretSealed: sealed, KID: kid, Label: source.Label, Permission: source.Permission, Status: state.ObjectS3CredentialStatusActive,
-		ManagedAppID: source.ManagedAppID, ManagedPrefix: source.ManagedPrefix}
+		ManagedAppID: source.ManagedAppID, ManagedPrefix: source.ManagedPrefix, KeyPrefix: source.KeyPrefix}
 	request.Target = state.ObjectS3ComputeBindingCreateRequest{Credential: credential, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket}
 	if source.ManagedAppID == "" {
 		return request, nil

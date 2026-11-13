@@ -68,6 +68,14 @@ func abortedCanaryCandidate(d Deployment) bool {
 	return d.CanaryTotalSteps > 0 && d.RolloutState == "aborted" && d.RolloutCompletedAt == nil
 }
 
+// implicitRollbackExcluded reports a deployment a plain rollback never returns
+// to: a canary aborted before it completed (H5-62), or a release an automatic
+// guard already reverted (ADR-625 amendment 2026-11-10). Returning to the
+// reverted release re-served the failure with its guard spent.
+func implicitRollbackExcluded(d Deployment) bool {
+	return abortedCanaryCandidate(d) || d.LastAutoRollbackReason != ""
+}
+
 // AbortedCanaryCandidate exports abortedCanaryCandidate for schedd, which
 // retires such a candidate's instances instead of letting them hold a
 // serving slot until the idle timeout.

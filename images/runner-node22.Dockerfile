@@ -2,7 +2,7 @@
 # §4.9). The base is content-addressed and staged once as drive0; app images
 # still contribute only their dependency/code delta as drive1.
 # Content-addressed, staged to /srv/fc/base/runner-node22.ext4.
-FROM mirror.gcr.io/library/node:22-alpine@sha256:025b8e975a61d94e33abeafaad1255ef44e4898cf1a1b6446860009c72e6d284
+FROM mirror.gcr.io/library/node:22-alpine@sha256:12f54cafa58d0e96554ae05871e29663ff7241836377dc9a7916449b8adb062c
 # Issue #197 B3.6: mutable tag pinned via images/Dockerfile.lock.
 # `make images-lock-update` is the only way to bump the digest.
 # This runtime is intentionally self-contained rather than composed over the
@@ -19,8 +19,13 @@ RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt ch
     cd /opt/gregale/profiling && NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt npm ci --omit=dev && \
     cd /opt/gregale/tracing && NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt npm ci --omit=dev --ignore-scripts && apk del .profiling-build && \
     rm -rf /root/.npm
+# zlib floor: CVE-2026-4738 (CRITICAL, fixed in Alpine zlib 1.4-r0). The
+# Grype DB of 2026-11-07 flagged the published image's zlib 1.3.2-r1, and the
+# base scan gate then refused every cold boot on the rc.327 node22 base
+# (scan_critical). `apk upgrade` alone keeps whatever the layer cache holds;
+# the explicit floor fails the build instead of shipping the vulnerable one.
 RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt apk upgrade --no-cache && \
-    apk add --no-cache bash && \
+    apk add --no-cache bash 'zlib>=1.4-r0' && \
     rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack && \
     rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack && \
     if id app >/dev/null 2>&1; then :; \

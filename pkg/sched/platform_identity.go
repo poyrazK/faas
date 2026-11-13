@@ -35,6 +35,14 @@ func appendPlatformIdentity(env []fcvm.APIEnvEntry, app state.App, dep state.Dep
 		createdAt = dep.CreatedAt.UTC().Format(time.RFC3339Nano)
 	}
 	add(api.PlatformDeploymentCreatedEnv, createdAt)
+	// Always emitted, empty outside `gregale dev`, so a customer value for the
+	// reserved key can never mark a production app as a developer
+	// environment (it would let FAAS_DEV_DEBUG start an inspector there).
+	developer := ""
+	if state.IsDeveloperApp(app) {
+		developer = "1"
+	}
+	add(api.PlatformDeveloperEnvironmentEnv, developer)
 	return entries
 }
 

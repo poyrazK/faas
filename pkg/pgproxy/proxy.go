@@ -24,10 +24,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgproto3"
 
 	"github.com/onebox-faas/faas/pkg/dbcreds"
+	"github.com/onebox-faas/faas/pkg/dbrefusal"
 	"github.com/onebox-faas/faas/pkg/pgscram"
 )
 
@@ -51,10 +51,23 @@ type Credentials interface {
 	Forget(databaseID, role string)
 }
 
+// Backend is where a woken database runs: its node's vmmd target and the
+// node's id. The dial accepts only that node's vmmd leaf, because the
+// target alone is a row the node registry lets nodes write
+// (ADR-20261108124106).
+type Backend struct {
+	Target string
+	Node   string
+	// ReplicaTarget and ReplicaNode are where the database's read sessions
+	// go while its standby serves them (replica.go); empty otherwise.
+	ReplicaTarget string
+	ReplicaNode   string
+}
+
 // Waker wakes a database through schedd and records activity on it.
 type Waker interface {
-	// Wake returns the vmmd target of the node running the database.
-	Wake(ctx context.Context, databaseID string) (string, error)
+	// Wake returns the node running the database.
+	Wake(ctx context.Context, databaseID string) (Backend, error)
 	// Touch records activity and the bytes sent to the database's clients
 	// since the last touch (the egress meter). The bytes are reported at
 	// most once: a failed touch drops them.
@@ -63,7 +76,7 @@ type Waker interface {
 
 // SessionDialer opens a byte stream to a database VM's data port.
 type SessionDialer interface {
-	Dial(ctx context.Context, target, databaseID string) (io.ReadWriteCloser, error)
+	Dial(ctx context.Context, backend Backend, databaseID string) (io.ReadWriteCloser, error)
 }
 
 // Config tunes the proxy.
@@ -82,6 +95,9 @@ type Config struct {
 	HandshakeTimeout time.Duration
 	WakeTimeout      time.Duration
 	TouchInterval    time.Duration
+	// ReplicaLoginTimeout bounds a read session's attempt on the replica
+	// before it goes to the primary (default 3 s; replica.go).
+	ReplicaLoginTimeout time.Duration
 	// MaxConnections caps open client connections; MaxHandshakes caps
 	// those not yet authenticated, and MaxHandshakesPerSource those from
 	// one address. Unauthenticated clients cost a TLS handshake and a
@@ -132,6 +148,8 @@ type Proxy struct {
 	handshakes  int
 
 	pools *poolSet
+	// statementSequence gives every fresh Parse its own backend name.
+	statementSequence atomic.Uint64
 
 	cancelMu sync.Mutex
 	cancels  map[cancelKey]canceler
@@ -155,6 +173,9 @@ func New(cfg Config, creds Credentials, waker Waker, dialer SessionDialer, log *
 	}
 	if cfg.WakeTimeout <= 0 {
 		cfg.WakeTimeout = time.Minute
+	}
+	if cfg.ReplicaLoginTimeout <= 0 {
+		cfg.ReplicaLoginTimeout = 3 * time.Second
 	}
 	if cfg.MaxConnections <= 0 {
 		cfg.MaxConnections = 10000
@@ -221,6 +242,19 @@ type fatal struct {
 }
 
 func (f *fatal) Error() string { return f.code + ": " + f.msg }
+
+// wakeRefused is what the client is told when schedd refuses to wake its
+// database (ADR-1027 amendment 2026-11-10), or nil for any other failure.
+// Neither is worth retrying soon.
+func wakeRefused(err error) *fatal {
+	switch dbrefusal.Reason(err) {
+	case dbrefusal.Held:
+		return &fatal{"08004", "the database is suspended; its status in Gregale says why"}
+	case dbrefusal.ComputeQuota:
+		return &fatal{"53400", "the database's account reached its compute limit for this month"}
+	}
+	return nil
+}
 
 func (p *Proxy) handle(ctx context.Context, raw net.Conn) {
 	defer func() { _ = raw.Close() }()
@@ -370,6 +404,10 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 		return none, err
 	}
 	_ = conn.SetDeadline(time.Now().Add(p.cfg.HandshakeTimeout))
+	ctx, cancelSetup := context.WithTimeout(ctx, p.cfg.HandshakeTimeout)
+	defer cancelSetup()
+	finishClientSetup := interruptSetup(ctx, conn)
+	defer func() { _ = finishClientSetup() }()
 	if c, ok := msg.(*pgproto3.CancelRequest); ok {
 		p.handleCancel(ctx, c.ProcessID, c.SecretKey, false)
 		return none, errCancelServed
@@ -379,10 +417,11 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 		return none, &fatal{"08P01", "expected a startup message"}
 	}
 	user := startup.Parameters["user"]
-	databaseID, pooled, err := p.route(conn.ConnectionState().ServerName, startup.Parameters["options"])
+	ep, err := p.route(conn.ConnectionState().ServerName, startup.Parameters["options"])
 	if err != nil {
 		return none, &fatal{"08004", err.Error()}
 	}
+	databaseID, pooled := ep.databaseID, ep.pooled
 	none.databaseID = databaseID
 	var poolParams map[string]string
 	if pooled {
@@ -402,7 +441,7 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 		return none, &fatal{"28P01", fmt.Sprintf("password authentication failed for user %q", user)}
 	}
 	if pooled {
-		pl, err := p.joinPool(ctx, poolKey{databaseID: databaseID, role: user, dbname: poolParams["database"], verifier: verifierKey(verifier)},
+		pl, err := p.joinPool(ctx, poolKey{databaseID: databaseID, role: user, dbname: poolParams["database"], verifier: verifierKey(verifier), readOnly: ep.readOnly},
 			clientKey, verifier.ServerKey, poolParams)
 		if err != nil {
 			return none, err
@@ -417,23 +456,26 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 			pl.leave()
 			return none, err
 		}
+		if err := finishClientSetup(); err != nil {
+			release()
+			pl.leave()
+			return none, err
+		}
 		return established{pool: pl, canceler: c, databaseID: databaseID, release: release}, nil
 	}
 	wakeCtx, cancel := context.WithTimeout(ctx, p.cfg.WakeTimeout)
 	defer cancel()
 	wakeStarted := time.Now()
-	target, err := p.waker.Wake(wakeCtx, databaseID)
+	woken, err := p.waker.Wake(wakeCtx, databaseID)
 	p.cfg.Metrics.woke(time.Since(wakeStarted))
 	if err != nil {
+		if f := wakeRefused(err); f != nil {
+			return none, f
+		}
 		return none, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
 	}
-	session, err := p.dialer.Dial(wakeCtx, target, databaseID)
+	login, err := p.loginEndpoint(wakeCtx, woken, ep.readOnly, databaseID, forwardParams(startup.Parameters), clientKey, verifier.ServerKey)
 	if err != nil {
-		return none, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
-	}
-	backend := pgproto3.NewFrontend(session, session)
-	if err := loginBackend(backend, forwardParams(startup.Parameters), clientKey, verifier.ServerKey); err != nil {
-		_ = session.Close()
 		var f *fatal
 		if errors.As(err, &f) {
 			if f.code == "28P01" {
@@ -443,22 +485,29 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 		}
 		return none, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
 	}
+	defer func() { _ = login.finish() }()
 	client.Send(&pgproto3.AuthenticationSASLFinal{Data: serverFinal})
 	client.Send(&pgproto3.AuthenticationOk{})
 	release := func() {}
 	// The client gets its own key in place of the backend's; a cancel with
-	// it reaches this backend through the node's vmmd.
+	// it reaches this backend (the primary, or the replica that took the
+	// session) through its node's vmmd.
 	swapKey := func(k *pgproto3.BackendKeyData) *pgproto3.BackendKeyData {
-		key, drop := p.register(directCanceler{p: p, key: backendKey{target: target, databaseID: databaseID, pid: k.ProcessID, secret: append([]byte(nil), k.SecretKey...)}})
+		key, drop := p.register(directCanceler{p: p, key: backendKey{target: login.backend, databaseID: databaseID, pid: k.ProcessID, secret: append([]byte(nil), k.SecretKey...)}})
 		release = drop
 		return key
 	}
-	if err := relayUntilReady(backend, client, swapKey); err != nil {
+	if err := relayUntilReady(login.fe, client, swapKey); err != nil {
 		release()
-		_ = session.Close()
+		_ = login.rw.Close()
 		return none, err
 	}
-	return established{session: session, databaseID: databaseID, release: release}, nil
+	if err := errors.Join(login.finish(), finishClientSetup()); err != nil {
+		release()
+		_ = login.rw.Close()
+		return none, err
+	}
+	return established{session: login.rw, databaseID: databaseID, release: release}, nil
 }
 
 // joinPool counts the client into its role's pool. A new pool logs a first
@@ -488,31 +537,24 @@ func (p *Proxy) joinPool(ctx context.Context, key poolKey, clientKey, serverKey 
 	return pl, nil
 }
 
-// route finds the database id in the SNI name, or in an "endpoint=<id>"
-// startup option for clients that send no SNI. An id ending in -pooler
-// names the database's pooled endpoint.
-func (p *Proxy) route(sni, options string) (string, bool, error) {
-	parse := func(label string) (string, bool, bool) {
-		label = strings.ToLower(label)
-		id, pooled := strings.CutSuffix(label, pooledSuffix)
-		if _, err := uuid.Parse(id); err != nil || len(id) != 36 {
-			return "", false, false
-		}
-		return id, pooled, true
-	}
+// route finds the endpoint in the SNI name, or in an "endpoint=<label>"
+// startup option for clients that send no SNI. A label ending in -pooler
+// names the database's pooled endpoint, and -ro (before any -pooler) its
+// read-only one (replica.go).
+func (p *Proxy) route(sni, options string) (endpoint, error) {
 	if label, ok := strings.CutSuffix(strings.ToLower(sni), "."+p.cfg.HostSuffix); ok {
-		if id, pooled, ok := parse(label); ok {
-			return id, pooled, nil
+		if ep, ok := parseEndpoint(label); ok {
+			return ep, nil
 		}
 	}
 	for _, field := range strings.Fields(options) {
 		if label, ok := strings.CutPrefix(field, "endpoint="); ok {
-			if id, pooled, ok := parse(label); ok {
-				return id, pooled, nil
+			if ep, ok := parseEndpoint(label); ok {
+				return ep, nil
 			}
 		}
 	}
-	return "", false, fmt.Errorf("unknown database endpoint: connect to <database-id>.%s with TLS", p.cfg.HostSuffix)
+	return endpoint{}, fmt.Errorf("unknown database endpoint: connect to <database-id>.%s with TLS", p.cfg.HostSuffix)
 }
 
 // verifier returns the role's verifier, or a decoy that no password

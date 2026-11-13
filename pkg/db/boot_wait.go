@@ -13,7 +13,8 @@ package db
 // while still activating: it reports STATUS and extends its start timeout
 // with EXTEND_TIMEOUT_USEC each attempt. FaasStuckActivating pages if the
 // wait lasts five minutes. Outside a Type=notify unit (CLIs, tests, local
-// runs) NOTIFY_SOCKET is unset and Open keeps failing fast.
+// runs) NOTIFY_SOCKET is unset and Open keeps failing fast unless the caller
+// explicitly opts in with WithBootWait.
 
 import (
 	"context"
@@ -52,6 +53,15 @@ func (r *BootWaitRecord) Waited() bool { return r != nil && r.waited.Load() }
 
 type bootWaitRecordKey struct{}
 
+type bootWaitEnabledKey struct{}
+
+// WithBootWait opts a caller into waiting for a retryable startup outage even
+// when it runs without systemd's notify protocol. FAAS_DB_BOOT_WAIT=0 still
+// forces fail-fast. Use only for long-lived workers, never request handlers.
+func WithBootWait(ctx context.Context) context.Context {
+	return context.WithValue(ctx, bootWaitEnabledKey{}, true)
+}
+
 // WithBootWaitRecord returns a context under which Open records into r
 // whether it had to wait for the database.
 func WithBootWaitRecord(ctx context.Context, r *BootWaitRecord) context.Context {
@@ -73,9 +83,10 @@ type bootWaiter struct {
 	log        *slog.Logger
 }
 
-func defaultBootWaiter() bootWaiter {
+func defaultBootWaiter(ctx context.Context) bootWaiter {
+	optedIn, _ := ctx.Value(bootWaitEnabledKey{}).(bool)
 	return bootWaiter{
-		enabled:    os.Getenv("NOTIFY_SOCKET") != "" && os.Getenv(BootWaitEnv) != "0",
+		enabled:    (os.Getenv("NOTIFY_SOCKET") != "" || optedIn) && os.Getenv(BootWaitEnv) != "0",
 		notify:     daemonunit.Notify,
 		minBackoff: bootWaitMinBackoff,
 		maxBackoff: bootWaitMaxBackoff,

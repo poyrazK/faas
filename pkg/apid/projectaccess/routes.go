@@ -9,8 +9,10 @@ import (
 // Routes are individually reviewed. Unlisted GitOps, data-service, full clone
 // and browser-approval operations remain outside shared project administration.
 var routeActions = map[string]authz.OrgAction{
-	"GET /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings": authz.OrgActionReadQueues,
-	"PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings": authz.OrgActionConfigureQueues,
+	"GET /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback-attempts/{attempt_id}": authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/promotion-attempts/{attempt_id}":                       authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings":                   authz.OrgActionReadQueues,
+	"PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings":                   authz.OrgActionConfigureQueues,
 	"GET /v1/projects":                                                               authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}":                                                        authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments":                                           authz.OrgActionReadProject,
@@ -64,6 +66,7 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect":                             authz.OrgActionReadProject,
 	"PUT /v1/projects/{slug}/environments/{environment}/flags":                                            authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/flags/rollback":                                  authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/automation/resume":                               authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote":                     authz.OrgActionDeployProject,
 	"GET /v1/projects/{slug}/environments/{environment}/release-sets/staging/{stage}":                     authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs":                   authz.OrgActionReadProject,
@@ -86,7 +89,21 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/projects/{slug}/deployment-readiness":                                                       authz.OrgActionReadProject,
 	"DELETE /v1/projects/{slug}":                            authz.OrgActionDeleteProject,
 	"DELETE /v1/projects/{slug}/environments/{environment}": authz.OrgActionDeleteProject,
+	// Environment branches (ADR-20261031193635, company projects reviewed
+	// 2026-11-12). Creating one configures the project; branching a
+	// protected environment also needs the approve action (BranchParent).
+	// A branch is deleted with the configure action (environmentDeleteAction).
+	"GET /v1/projects/{slug}/environments/{environment}/branches":  authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/branches": authz.OrgActionConfigureProject,
+	// The branch's own view and lifecycle (reviewed 2026-11-12): extending
+	// and resetting configure the project; a reset of a protected parent's
+	// branch also needs the approve action (BranchParent).
+	"GET /v1/projects/{slug}/environments/{environment}/branch":         authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/branch/extend": authz.OrgActionConfigureProject,
+	"POST /v1/projects/{slug}/environments/{environment}/branch/reset":  authz.OrgActionConfigureProject,
 }
+
+const environmentDeletePattern = "DELETE /v1/projects/{slug}/environments/{environment}"
 
 // preCreationRoutes may name a personal project that its first deploy will
 // create. They create nothing and are reviewed like collection requests.

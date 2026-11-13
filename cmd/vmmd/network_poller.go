@@ -290,3 +290,14 @@ func evictStaleCacheEntries(cache *netstats.Cache, live map[string]string) {
 		cache.Forget(stale)
 	}
 }
+
+// idleLadderNet reads an instance's cumulative veth bytes from the netstats
+// cache for the idle ladder's activity guard (ADR-20261107122928): egress is
+// vethHost rx (guest to the world), ingress vethHost tx. A reading the cache
+// marks invalid is no reading: the guard then waits.
+type idleLadderNet struct{ cache *netstats.Cache }
+
+func (n idleLadderNet) NetBytes(instance string) (egress, ingress uint64, ok bool) {
+	r, ok := n.cache.Lookup(instance)
+	return r.CumulativeBytes, r.IngressCumulativeBytes, ok && r.Valid
+}

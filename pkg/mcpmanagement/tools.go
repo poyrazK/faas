@@ -68,9 +68,13 @@ func (m *management) connection(ctx context.Context, _ noArgs) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	toolsets := m.opts.Toolsets
+	if selected, ok := ctx.Value(agentKeyToolsetsContextKey{}).([]string); m.opts.agentKeyToolsetSelection && ok {
+		toolsets = selected
+	}
 	return map[string]any{
 		"profile": m.opts.Profile, "api_base": m.opts.APIBase, "read_only": !m.opts.AllowWrites,
-		"toolsets":                m.opts.Toolsets,
+		"toolsets":                toolsets,
 		"connection_capabilities": m.opts.Capabilities,
 		"account":                 map[string]string{"id": account.ID, "plan": account.Plan, "status": account.Status},
 		"capabilities":            capabilities,

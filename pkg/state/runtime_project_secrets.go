@@ -59,11 +59,9 @@ func decodeInheritedProjectSecrets(snapshot RuntimeAppValuesSnapshot, projectID 
 	return inheritedProjectSecrets(snapshot, rows), nil
 }
 
-// WithProjectSecretRevision adds the environment's shared secrets to a
-// qualification's secret revision hashes under api.ProjectSecretsRevisionKey,
-// so a promotion refuses once one changed after qualification. An environment
-// without project secrets adds nothing, which keeps qualifications recorded
-// before ADR-1139 comparable.
+// WithProjectSecretRevision computes the legacy per-key revision representation.
+// Qualification and promotion use ProjectSharedSecretRevision instead, whose
+// persistent generation also distinguishes deletion and recreation.
 func WithProjectSecretRevision(hashes map[string]string, secrets []ProjectEnvironmentSecret) (map[string]string, error) {
 	if len(secrets) == 0 {
 		return hashes, nil

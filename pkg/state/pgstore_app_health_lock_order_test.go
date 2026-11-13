@@ -133,3 +133,54 @@ func waitForLockWaiter(t *testing.T, pool *pgxpool.Pool, finished <-chan error) 
 	}
 	t.Fatal("the collector never waited on the account lock held by apply")
 }
+
+// A claim that finds the previous lease expired upserts the app's collection
+// row, which the previous holder may still have locked in FinishAppHealth. That
+// finish then inserts history, whose app_id foreign key takes a key-share lock
+// on the app row. The claim used to hold the app row FOR UPDATE, so the two
+// deadlocked (prod 2026-11-09, ~1/h: ClaimAppHealth vs InsertAppHealthHistory).
+func TestClaimAppHealthLetsAFinishingHolderReachItsApp(t *testing.T) {
+	pool, s := openHealthLockOrderStore(t)
+	_, app := healthNotificationFixture(t, s)
+	now := time.Now().UTC().Truncate(time.Second)
+	if _, err := s.ClaimAppHealth(t.Context(), uuid.NewString(), now); err != nil {
+		t.Fatal(err)
+	}
+
+	finish, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = finish.Rollback(context.Background()) })
+	if _, err := finish.Exec(t.Context(), `set local lock_timeout = '3s'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := finish.Exec(t.Context(), `select 1 from app_health_collection_state where app_id = $1 for update`, app.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	claimed := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_, err := s.ClaimAppHealth(ctx, uuid.NewString(), now.Add(2*time.Hour))
+		claimed <- err
+	}()
+	waitForLockWaiter(t, pool, claimed)
+
+	// The history insert's foreign-key check on the app row.
+	if _, err := finish.Exec(t.Context(), `select 1 from apps where id = $1 for key share`, app.ID); err != nil {
+		t.Fatalf("finishing holder could not reach its app while a new claim waited: %v", err)
+	}
+	if err := finish.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-claimed:
+		if err != nil {
+			t.Fatalf("claim after the finish committed: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("claim did not complete after the finish committed")
+	}
+}

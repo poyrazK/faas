@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/overlay"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // DialFunc opens a gRPC connection to a database node's vmmd.
@@ -28,7 +30,21 @@ type GRPCVMM struct {
 	tls   *tls.Config
 	dial  DialFunc
 	mu    sync.Mutex
-	conns map[string]*grpc.ClientConn
+	conns map[connKey]*grpc.ClientConn
+}
+
+// connKey keys a connection by node and target: a connection authenticated
+// as one node never serves another that shares its target_url.
+type connKey struct{ node, target string }
+
+// NodeCN is the CN a database node's vmmd leaf carries: <id>.faas
+// (`gregalectl pki issue-bundle --box-role database --cn <id>`).
+func NodeCN(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" || strings.HasSuffix(id, ".faas") {
+		return id
+	}
+	return id + ".faas"
 }
 
 // NewGRPCVMM dials vmmd through the overlay like schedd's app VM router.
@@ -41,7 +57,7 @@ func NewGRPCVMM(tlsCfg *tls.Config) *GRPCVMM {
 
 // NewGRPCVMMWithDial is NewGRPCVMM with an injected dialer.
 func NewGRPCVMMWithDial(tlsCfg *tls.Config, dial DialFunc) *GRPCVMM {
-	return &GRPCVMM{tls: tlsCfg, dial: dial, conns: map[string]*grpc.ClientConn{}}
+	return &GRPCVMM{tls: tlsCfg, dial: dial, conns: map[connKey]*grpc.ClientConn{}}
 }
 
 var _ VMM = (*GRPCVMM)(nil)
@@ -49,13 +65,16 @@ var _ VMM = (*GRPCVMM)(nil)
 func (g *GRPCVMM) client(ctx context.Context, node Node) (vmmdpb.VmmdClient, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	conn, ok := g.conns[node.TargetURL]
+	key := connKey{node: node.ID, target: node.TargetURL}
+	conn, ok := g.conns[key]
 	if !ok {
 		var err error
-		if conn, err = g.dial(ctx, node.TargetURL, g.tls); err != nil {
+		// Only this node's vmmd leaf answers for it: the stored target_url
+		// alone does not prove which node is listening (ADR-20261108124106).
+		if conn, err = g.dial(ctx, node.TargetURL, wire.ExpectPeerCN(g.tls, NodeCN(node.ID))); err != nil {
 			return nil, err
 		}
-		g.conns[node.TargetURL] = conn
+		g.conns[key] = conn
 	}
 	return vmmdpb.NewVmmdClient(conn), nil
 }
@@ -64,9 +83,9 @@ func (g *GRPCVMM) client(ctx context.Context, node Node) (vmmdpb.VmmdClient, err
 func (g *GRPCVMM) Close() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	for target, conn := range g.conns {
+	for key, conn := range g.conns {
 		_ = conn.Close()
-		delete(g.conns, target)
+		delete(g.conns, key)
 	}
 	return nil
 }

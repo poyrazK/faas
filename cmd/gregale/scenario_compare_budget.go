@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -45,6 +46,7 @@ type testComparisonBudget struct {
 	LoadP99IncreasePercent      *float64
 	LoadErrorRateIncreasePoints *float64
 	LoadMinSamples              int
+	LoadMinSamplesExplicit      bool
 	Repeat                      *testComparisonRepeatBudget
 }
 
@@ -171,6 +173,7 @@ func validateTestComparisonBudget(spec testComparisonBudgetSpec) (testComparison
 	}
 	if spec.Load.MinSamples != nil {
 		budget.LoadMinSamples = *spec.Load.MinSamples
+		budget.LoadMinSamplesExplicit = true
 	}
 	return budget, nil
 }
@@ -245,7 +248,7 @@ func evaluateTestComparisonBudget(comparison testReportComparison, before, after
 }
 
 func (budget testComparisonBudget) hasLoadBudgets() bool {
-	return budget.LoadP95IncreasePercent != nil || budget.LoadP99IncreasePercent != nil || budget.LoadErrorRateIncreasePoints != nil
+	return budget.LoadMinSamplesExplicit || budget.LoadP95IncreasePercent != nil || budget.LoadP99IncreasePercent != nil || budget.LoadErrorRateIncreasePoints != nil
 }
 
 func testNonpassingRunReason(receipt testRunReceipt) string {
@@ -290,7 +293,7 @@ func compareTestGateErrorRate(run, metric string, before, after, maxIncreasePoin
 	}
 	beforePercent, afterPercent := before*100, after*100
 	limit := math.Min(100, beforePercent+maxIncreasePoints)
-	passed := afterPercent <= limit
+	passed := testRateAtMost(after, math.Min(1, before+maxIncreasePoints/100))
 	status := "passed"
 	if !passed {
 		status = "failed"
@@ -321,6 +324,14 @@ func addTestHTTPBudgetChecks(gate *testComparisonGate, run string, before, after
 			gate.addInconclusive(run, "http."+name+".duration_ms", "HTTP step method or path changed")
 			continue
 		}
+		if !validTestHTTPPathTemplateDigest(old.PathTemplateSHA256) || !validTestHTTPPathTemplateDigest(current.PathTemplateSHA256) {
+			gate.addInconclusive(run, "http."+name+".duration_ms", "HTTP path template identity is missing or invalid; record new reports")
+			continue
+		}
+		if old.PathTemplateSHA256 != current.PathTemplateSHA256 {
+			gate.addInconclusive(run, "http."+name+".duration_ms", "HTTP path or query template changed")
+			continue
+		}
 		check := compareTestGateMetric(run, "http."+name+".duration_ms", "ms", float64(old.DurationMS), float64(current.DurationMS), maxIncreasePercent)
 		gate.add(check)
 	}
@@ -329,6 +340,14 @@ func addTestHTTPBudgetChecks(gate *testComparisonGate, run string, before, after
 			gate.addInconclusive(run, "http."+name+".duration_ms", "HTTP step is new and has no earlier duration")
 		}
 	}
+}
+
+func validTestHTTPPathTemplateDigest(value string) bool {
+	if len(value) != 64 || strings.ToLower(value) != value {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func indexTestHTTPRequestEvidence(steps []testHTTPRequestEvidence) (map[string]testHTTPRequestEvidence, error) {
@@ -358,12 +377,12 @@ func addTestLoadBudgetChecks(gate *testComparisonGate, run string, before, after
 		gate.addInconclusive(run, "load.workload", "workload identity changed; load metrics are not comparable")
 		return
 	}
-	if err := testBenchmarkMetricsValid(before.testLoadMetrics); err != nil {
-		gate.addInconclusive(run, "load.metrics", "earlier load metrics are invalid: "+err.Error())
+	if err := validateTestBenchmarkEvidence(before); err != nil {
+		gate.addInconclusive(run, "load.metrics", "earlier load evidence is invalid: "+err.Error())
 		return
 	}
-	if err := testBenchmarkMetricsValid(after.testLoadMetrics); err != nil {
-		gate.addInconclusive(run, "load.metrics", "later load metrics are invalid: "+err.Error())
+	if err := validateTestBenchmarkEvidence(after); err != nil {
+		gate.addInconclusive(run, "load.metrics", "later load evidence is invalid: "+err.Error())
 		return
 	}
 	if before.Latency.Samples < budget.LoadMinSamples || after.Latency.Samples < budget.LoadMinSamples {
@@ -379,9 +398,7 @@ func addTestLoadBudgetChecks(gate *testComparisonGate, run string, before, after
 	if budget.LoadErrorRateIncreasePoints != nil {
 		gate.add(compareTestGateErrorRate(run, "load.error_rate", before.ErrorRate, after.ErrorRate, *budget.LoadErrorRateIncreasePoints))
 	}
-	if budget.LoadP95IncreasePercent != nil || budget.LoadP99IncreasePercent != nil || budget.LoadErrorRateIncreasePoints != nil {
-		addTestLoadStepBudgetChecks(gate, run, before.Steps, after.Steps, budget)
-	}
+	addTestLoadStepBudgetChecks(gate, run, before.Steps, after.Steps, budget)
 }
 
 func addTestLoadStepBudgetChecks(gate *testComparisonGate, run string, before, after []testLoadStepEvidence, budget testComparisonBudget) {

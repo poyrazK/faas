@@ -879,7 +879,14 @@ func TestPGAppErrorsReceiverStoresRepeatOccurrenceWithoutHeaders(t *testing.T) {
 	if requests != 3 || withoutHeaders != 2 {
 		t.Fatalf("app_error_requests rows = %d (%d without headers), want 3 (2)", requests, withoutHeaders)
 	}
-	list := issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues", nil, nil), 200)
+	// Issue grouping runs on the receiver's bounded background queue (#6600).
+	var list api.ListIssuesResponse
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		list = issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues", nil, nil), 200)
+		if len(list.Items) == 1 && list.Items[0].EventCount == 3 || time.Now().After(deadline) {
+			break
+		}
+	}
 	if len(list.Items) != 1 || list.Items[0].EventCount != 3 {
 		t.Fatalf("issues = %+v, want one issue with 3 events", list.Items)
 	}

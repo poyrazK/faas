@@ -127,7 +127,7 @@ func cmdPipelineCreate(args []string) int {
 	fs := newFlagSet("pipeline create", flag.ContinueOnError)
 	connection := fs.String("connection", "", "source connection ID")
 	sourceFile := fs.String("url-file", "", "register a source from a private URL file instead of --connection")
-	database := fs.String("database", "", "existing empty managed database; otherwise create NAME-mirror")
+	database := fs.String("database", "", "existing empty managed database; otherwise create a mirror named from NAME")
 	region := fs.String("region", "", "placement for an automatically created mirror")
 	tables := fs.String("tables", "", "comma-separated public table names")
 	subjects := fs.String("read-subjects", "", "comma-separated application JWT subjects allowed to read the mirror")
@@ -152,9 +152,7 @@ func cmdPipelineCreate(args []string) int {
 	if err := datapipeline.ValidateCreate(validation); err != nil {
 		return printErr("Invalid pipeline", err)
 	}
-	if *connection != "" {
-		*connection, _ = canonicalPipelineID(*connection)
-	}
+	*connection, *database = pipelineID(*connection), pipelineID(*database)
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -200,6 +198,13 @@ func cmdPipelineCreate(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
+	recovered, found, err := recoverPipelineCreate(ctx, client, api.CreateDataPipelineRequest{Name: fs.Arg(0), SourceConnectionID: *connection, Tables: strings.Split(*tables, ","), ReadSubjects: strings.Split(*subjects, ",")}, *database, *region)
+	if err != nil {
+		return printErr("Could not recover existing pipeline", err)
+	}
+	if found {
+		return finishPipelineCreate(ctx, client, recovered, *wait, *apiName, *authApp)
+	}
 	if err = checkConnectionForCreate(ctx, client, *connection, "", strings.Split(*tables, ",")); err != nil {
 		return printErr("Source compatibility check failed before mirror provisioning", err)
 	}
@@ -207,9 +212,6 @@ func cmdPipelineCreate(args []string) int {
 	if *database != "" {
 		db, err = resolveManagedPostgresDatabase(ctx, client, *database)
 	} else {
-		if len(fs.Arg(0)) > 55 {
-			return printErr("Name too long", errors.New("use a name of at most 55 characters or supply --database"))
-		}
 		if *region == "" {
 			caps, capErr := client.GetManagedPostgresCapabilities(ctx, "")
 			if capErr != nil {
@@ -235,18 +237,23 @@ func cmdPipelineCreate(args []string) int {
 	if err != nil {
 		return printErr("Mirror is retained; retry with --database "+db.ID, err)
 	}
-	if *wait || *apiName != "" {
+	return finishPipelineCreate(ctx, client, p, *wait, *apiName, *authApp)
+}
+
+func finishPipelineCreate(ctx context.Context, client *api.Client, p api.DataPipeline, wait bool, apiName, authApp string) int {
+	if wait || apiName != "" {
+		var err error
 		p, err = waitDataPipeline(ctx, client, p, "live", time.Second)
 		if err != nil {
 			_ = writeJSON(p)
 			return printErr("Pipeline is retained for recovery", err)
 		}
 	}
-	if err = writeJSON(p); err != nil {
+	if err := writeJSON(p); err != nil {
 		return jsonOut(err)
 	}
-	if *apiName != "" {
-		return cmdDataAPICreate([]string{*apiName, "--database", db.ID, "--read-only", "--schema", "public", "--auth", *authApp})
+	if apiName != "" {
+		return cmdDataAPICreateContext(ctx, []string{apiName, "--database", p.DatabaseID, "--read-only", "--schema", "public", "--auth", authApp})
 	}
 	return 0
 }
@@ -333,18 +340,23 @@ func waitDataPipeline(ctx context.Context, client pipelineReader, p api.DataPipe
 		if expected == "verified" && p.ObservationFresh && p.Verification == "inconclusive" {
 			return p, errors.New("verification was inconclusive; inspect saved progress in Data connections, then retry or use explicit recovery")
 		}
-		if p.ObservationFresh && (p.State == "resync_required" || (p.State == "blocked" && p.Reason != "database_unavailable")) && expected != "deleted" && expected != "paused" {
+		if expected == "verified" && p.ObservationFresh && p.DesiredState == "paused" && p.State == "paused" && p.Verification == "pending" {
+			return p, errors.New("verification is paused; resume the pipeline to continue")
+		}
+		qualificationRunning := (p.Reason == "source_storage_verification" || p.Reason == "replication_continuity_verification") && p.Verification == "pending"
+		progressing := p.Reason == "database_unavailable" || p.Reason == "schema_api_refresh_pending" || qualificationRunning
+		if p.ObservationFresh && (p.State == "resync_required" || (p.State == "blocked" && !progressing)) && expected != "deleted" && expected != "paused" {
 			return p, fmt.Errorf("pipeline %s: %s", p.State, p.Reason)
 		}
 		select {
 		case <-ctx.Done():
 			return p, ctx.Err()
 		case <-ticker.C:
-			var err error
-			p, err = client.GetDataPipeline(ctx, p.ID)
+			current, err := client.GetDataPipeline(ctx, p.ID)
 			if err != nil {
 				return p, err
 			}
+			p = current
 		}
 	}
 }
