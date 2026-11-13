@@ -27702,7 +27702,8 @@ func mapErr(err error) error {
 		case "environment_recovery_budget":
 			observed, _ := strconv.ParseInt(admission.Detail, 10, 64)
 			return &EnvironmentRecoveryQuotaError{Observed: observed}
-		case "environment_recovery_retained":
+		case "environment_recovery_retained",
+			"event_subscription_environment_membership", "event_subscription_scope_identity":
 			return ErrConflict
 		case "environment_recovery_artifact_unavailable":
 			return ErrLayerArtifactRetired

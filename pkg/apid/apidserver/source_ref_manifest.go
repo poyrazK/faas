@@ -679,6 +679,11 @@ func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Acc
 	// A deploy installs into its own environment (ADR-20261104120000): a
 	// stage's subscriptions receive the stage's events, never production's.
 	scope := state.NormalizeCronDeploymentScope(deploymentScope)
+	if app.ProjectID == "" {
+		// A project-less app's legacy deployment scopes are not
+		// environments; its subscriptions stay app-wide, as before.
+		scope = ""
+	}
 	scoped, ok := s.store.(state.EventSubscriptionScopeStore)
 	if !ok && scope != "" {
 		return api.ErrCapacity("environment event subscriptions are unavailable")
@@ -737,6 +742,10 @@ func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Acc
 				row, inserted, err = eventStore.UpsertEventSubscription(ctx, acct.ID, app.ID, subscription.Source, subscription.Type, subscription.Filter)
 			} else {
 				row, inserted, err = scoped.UpsertEventSubscriptionInScope(ctx, acct.ID, app.ID, scope, subscription.Source, subscription.Type, subscription.Filter)
+				if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrInvalidArgument) {
+					return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest",
+						"environment "+scope+" does not exist in the app's project")
+				}
 			}
 			if err != nil {
 				return sourceRefEventSubscriptionProblem(err)
