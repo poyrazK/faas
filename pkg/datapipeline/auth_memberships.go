@@ -57,7 +57,7 @@ func (w *Worker) syncAuthMemberships(ctx context.Context, p *Pipeline) error {
 	} // The last proof expires even if the worker is offline.
 	snapshot, err := w.AuthMemberships(ctx, *p)
 	if err != nil {
-		return nil
+		return nil //nolint:nilerr // The previous proof expires; ordinary replication may continue.
 	}
 	members := snapshot.Members
 	if !validMemberships(members) || !validAuthIssuer(snapshot.Issuer) {

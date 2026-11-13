@@ -20,6 +20,12 @@ live provider account, production deployment or feature gate was changed.
   654 seconds; every listed package passed.
 - Final catalog and HTTP suites passed after the additional control-query fence,
   including the real PostgreSQL interleaving regression for PIPE-018.
+- The complete Go API suite passed with `-race`. Its unchanged completion-cache
+  test initially failed with the sandbox's non-writable default config directory;
+  the full suite passed with an isolated writable `XDG_CONFIG_HOME`, without
+  changing API or cache behavior.
+- Clone-registry tests passed against both `schema.sql` and the actually migrated
+  application catalog, including fail-closed reservation coverage.
 - Schema regeneration and SQLC generation completed; migration expand/contract
   safety passed against the updated parent commit `658d74bd6`.
 - OpenAPI lint and AST schema/route parity passed. Existing non-fatal OpenAPI

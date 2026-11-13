@@ -42,7 +42,7 @@ func (e *Engine) refreshRelationships(ctx context.Context, p Pipeline, target *p
 	_, ready, err := refresh(ctx, p, SchemaChange{ID: version, Retry: attempt})
 	if err != nil {
 		ob.State, ob.Reason = "blocked", "relationship_api_refresh_failed"
-		return false, nil
+		return false, nil //nolint:nilerr // Failure is recorded in the blocked observation and requires explicit retry.
 	}
 	if !ready {
 		ob.State, ob.Reason = "blocked", "relationship_api_refresh_pending"

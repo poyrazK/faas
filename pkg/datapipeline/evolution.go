@@ -51,7 +51,9 @@ func evolutionPlan(p Pipeline, r api.DataPipelineEvolutionRequest) (*api.DataPip
 	if !CanEvolve(p) {
 		return nil, ErrConflict
 	}
-	if p.State != "live" && !((p.Reason == "auth_membership_unconfirmed" && r.Kind == "auth_organizations") || (p.Reason == "relationship_contract_unavailable" && r.Kind == "relationships")) {
+	repairAuth := p.Reason == "auth_membership_unconfirmed" && r.Kind == "auth_organizations"
+	repairRelationship := p.Reason == "relationship_contract_unavailable" && r.Kind == "relationships"
+	if p.State != "live" && !repairAuth && !repairRelationship {
 		return nil, ErrConflict
 	}
 	after := normalizeServing(p.Serving)
