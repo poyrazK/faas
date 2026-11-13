@@ -90,6 +90,18 @@ the personal installation or administers the organization.
 Adding a permission makes GitHub ask every installation's owner to approve it;
 until they do, those installations keep the old permission set.
 
+Discovery may see another person's personal installation. If the user owns
+none of the returned personal installations, the connection continues with
+installing the App rather than repeatedly rejecting the unrelated owners.
+An explicit installation selection still requires its owner. Settings also
+offers a state-protected **Install on GitHub** recovery action.
+
+For a refusal, `journalctl -u faas-githubd` records `githubd audit` with event
+`auth.install.connect_refused`: `account_id` identifies the Gregale account;
+`payload.installation_id`, `github_owner`, `owner_type` and `reason` identify
+the rejected candidate. The apid refusal records the stable reason alone.
+Never add OAuth codes, state or tokens to these diagnostics.
+
 Without Deployments access, GitHub answers 403 to every deployment write.
 githubd skips the GitHub deployment and still writes the Check Run and the PR
 comment, so the only loss is the PR's environment link. Each skip counts as

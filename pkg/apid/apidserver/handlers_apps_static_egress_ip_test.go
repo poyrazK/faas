@@ -422,3 +422,41 @@ func TestStaticEgressIP_AppUpdateSanity(t *testing.T) {
 		t.Errorf("ip = %v, want %s", resp.IP, ip)
 	}
 }
+
+// TestStaticEgressIP_PutIPWithoutSetIsRefused pins Hunt 34 H34-44: CLIs
+// through rc.339 sent {"ip": "<ip>"} for `static-egress-ip set <ip>`. The
+// handler read the missing set as a clear, removed an existing pin and
+// answered 200. An IP without set=true is now a 400 and the pin stays.
+func TestStaticEgressIP_PutIPWithoutSetIsRefused(t *testing.T) {
+	withStaticEgressIPEnabled(t)
+	e := apidserver.Setup(t, api.PlanScale)
+	apidserver.MustSeedApp(t, e, "ambiguous-app")
+	mustSeedProvisionedStaticEgressIPs(t, e, "203.0.113.42")
+
+	rec := e.Do(t, "PUT", "/v1/apps/ambiguous-app/static-egress-ip",
+		staticEgressIPReq("203.0.113.42", true), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("seed PUT status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec = e.Do(t, "PUT", "/v1/apps/ambiguous-app/static-egress-ip",
+		staticEgressIPReq("203.0.113.42", false), nil)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "app_static_egress_ip_invalid") {
+		t.Fatalf("PUT ip without set: status = %d, want 400 app_static_egress_ip_invalid; body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec = e.Do(t, "GET", "/v1/apps/ambiguous-app/static-egress-ip", nil, nil)
+	var resp api.AppStaticEgressIPResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.IP == nil || resp.IP.String() != "203.0.113.42" {
+		t.Fatalf("pin after refused PUT = %v, want 203.0.113.42 kept", resp.IP)
+	}
+
+	// set=false with no IP is still the documented clear.
+	rec = e.Do(t, "PUT", "/v1/apps/ambiguous-app/static-egress-ip", staticEgressIPReq("", false), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT clear status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+}

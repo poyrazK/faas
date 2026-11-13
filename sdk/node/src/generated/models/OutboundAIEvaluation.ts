@@ -33,5 +33,9 @@ export type OutboundAIEvaluation = {
   started_at: string | null;
   finished_at: string | null;
   items?: Array<OutboundAIEvaluationItem>;
+  /**
+   * The items' output texts were left out; reading them needs admin or secrets:read.
+   */
+  content_withheld?: boolean;
 };
 

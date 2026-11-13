@@ -1,6 +1,7 @@
+import { ExactNumber } from './exact-numeric.js'
 import type { PostgrestFilterBuilder } from '@supabase/postgrest-js'
 
-type Scalar = string | number | boolean | null
+type Scalar = string | number | boolean | null | ExactNumber
 export type CursorOrder = Readonly<{ column: string; ascending?: boolean; nullsFirst?: boolean; unique?: boolean }>
 type Row<Query> = Query extends PostgrestFilterBuilder<infer _C, infer _S, infer R, infer _D, infer _N, infer _F, infer _M, infer _T> ? R : never
 export type ReadQuery<Query> = Query extends PostgrestFilterBuilder<infer _C, infer _S, infer _R, infer D, infer _N, infer _F, infer M, infer _T>
@@ -24,6 +25,7 @@ function checkOrder(order: readonly CursorOrder[]) {
   }
 }
 function literal(value: Scalar): string {
+  if (value instanceof ExactNumber) return value.source
   if (typeof value === 'string') {
     if (/[\u0000-\u001f\u007f]/.test(value)) throw new Error('Cursor strings cannot contain control characters')
     return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`

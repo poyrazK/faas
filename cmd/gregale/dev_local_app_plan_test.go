@@ -1,11 +1,50 @@
 package main_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	main "github.com/onebox-faas/faas/cmd/gregale"
 )
+
+func TestDevLocalAppFrameworkReload(t *testing.T) {
+	for _, tc := range []struct {
+		name, pkg, override, want string
+		hmr                       bool
+	}{
+		{name: "next", pkg: `{"dependencies":{"next":"16"}}`, want: "next dev --hostname 127.0.0.1 --port $PORT", hmr: true},
+		{name: "vite script", pkg: `{"scripts":{"dev":"vite"},"devDependencies":{"vite":"6"}}`, want: "npm run dev -- --host 127.0.0.1 --port $PORT --strictPort", hmr: true},
+		{name: "react router", pkg: `{"devDependencies":{"@react-router/dev":"7"}}`, want: "react-router dev --host 127.0.0.1 --port $PORT", hmr: true},
+		{name: "opaque script", pkg: `{"scripts":{"dev":"node server.js"},"devDependencies":{"vite":"6"}}`, want: "npm run dev"},
+		{name: "explicit command", pkg: `{"dependencies":{"next":"16"}}`, override: "next dev", want: "next dev"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeDevLocalProject(t, map[string]string{"package.json": tc.pkg})
+			command, _, _, err := main.PlanDevLocalWorkloadForTest(dir, tc.override)
+			if err != nil || command != tc.want {
+				t.Fatalf("command = %q, %v; want %q", command, err, tc.want)
+			}
+			if got, err := main.DevLocalAppFrameworkReloadForTest(dir, tc.override); err != nil || got != tc.hmr {
+				t.Fatalf("framework reload = %v, %v; want %v", got, err, tc.hmr)
+			}
+		})
+	}
+	for _, manager := range []string{"npm", "pnpm", "yarn", "bun"} {
+		t.Run(manager+" flags", func(t *testing.T) {
+			dir := writeDevLocalProject(t, map[string]string{"package.json": fmt.Sprintf(`{"packageManager":%q,"scripts":{"dev":"vite dev"},"devDependencies":{"vite":"6"}}`, manager+"@1.0")})
+			command, _, _, err := main.PlanDevLocalWorkloadForTest(dir, "")
+			separator := ""
+			if manager == "npm" {
+				separator = " --"
+			}
+			want := manager + " run dev" + separator + " --host 127.0.0.1 --port $PORT --strictPort"
+			if err != nil || command != want {
+				t.Fatalf("command = %q, %v; want %q", command, err, want)
+			}
+		})
+	}
+}
 
 func TestDevLocalAppDetection(t *testing.T) {
 	for _, tc := range []struct {

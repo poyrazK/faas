@@ -204,6 +204,14 @@ func (d functionSetDeploy) run(ctx context.Context, client functionSetClient) in
 	}
 	_, _ = fmt.Fprintf(d.out, "Deploying %d functions from %s\n", len(planned), displayPath(d.cwd, d.projectDir))
 	d.printConfigFromCode()
+	if !d.planOnly {
+		// Before any build: a Python function imports its gregale_functions.py.
+		if resolved, err := d.manifest.PlanFunctions(d.projectDir, d.projectSlug); err == nil {
+			if err := refreshFunctionTypes(d.projectDir, resolved, d.projectSlug, d.out); err != nil {
+				_, _ = fmt.Fprintf(d.out, "warning: generated function types were not refreshed: %v\n", err)
+			}
+		}
+	}
 	done := make([]string, 0, len(planned))
 	for i, fn := range planned {
 		_, _ = fmt.Fprintf(d.out, "\n[%d/%d] %s → %s (%s, %s)\n", i+1, len(planned), fn.spec.Name, fn.slug, fn.runtime, fn.root)

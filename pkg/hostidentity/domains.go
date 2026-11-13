@@ -129,7 +129,7 @@ func (d Domains) IsPlatformHost(host string) bool {
 	if d.Platform == "" {
 		return true
 	}
-	return host == d.Platform || host == "api."+d.Platform || host == "operations."+d.Platform
+	return host == d.Platform || host == "api."+d.Platform || host == "operations."+d.Platform || host == "sales."+d.Platform
 }
 
 // IsAppHost reports whether host is one label under an apps domain and not

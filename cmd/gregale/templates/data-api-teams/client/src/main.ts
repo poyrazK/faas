@@ -1,3 +1,4 @@
+import {backgroundDataJobs,snapshotCsv} from './data-jobs.js'
 import {sharedOrderViews,createSharedViewForm} from './shared-views.js'
 import type {SharedView} from './shared-views.js'
 import {orderOperations,createOrderViewForm,createBulkFulfilmentForm,parseCriteria} from './order-operations.js'
@@ -35,10 +36,12 @@ let testForm: ReturnType<typeof createWebhookTestForm> | null = null, subscripti
 let viewForm: ReturnType<typeof createOrderViewForm> | null = null, bulkForm: ReturnType<typeof createBulkFulfilmentForm> | null = null, editingView: View | null = null, viewsNext: string | null = null, bulkHistoryNext: string | null = null, bulkReviewed: Preview[] | null = null
 let sharedForm: ReturnType<typeof createSharedViewForm> | null = null, selectedShared: SharedView | null = null, sharedNext: string | null = null, sharedHistoryNext: string | null = null
 const bulkSelected = new Map<string,Order>()
+let pendingDataJob: {id:string;kind:'import'|'export';source?:string} | null = null
 let next: OrderCursor | null = null, actionToken = '', busy = false
 const canWrite = () => membership?.role === 'owner' || membership?.role === 'admin'
 function controls() {
-  const pending = Boolean(form?.pending || memberForm?.pending || inviteForm?.pending || importForm?.pending || workflowForm?.pending || replayForm?.pending || controlForm?.pending || subscriptionForm?.pending || subscriptionReplay?.pending || testForm?.pending || viewForm?.pending || bulkForm?.pending || sharedForm?.pending)
+  const pending = Boolean(pendingDataJob || form?.pending || memberForm?.pending || inviteForm?.pending || importForm?.pending || workflowForm?.pending || replayForm?.pending || controlForm?.pending || subscriptionForm?.pending || subscriptionReplay?.pending || testForm?.pending || viewForm?.pending || bulkForm?.pending || sharedForm?.pending)
+  for (const element of document.querySelectorAll<HTMLButtonElement>('[data-data-job]')) element.disabled = busy || pending
   button('shared-views-load').disabled = busy || pending || !client
   button('shared-views-next').disabled = busy || pending || !client || !sharedNext
   for (const name of ['shared-view-save','shared-view-new']) button(name).disabled = busy || pending || !canWrite()
@@ -62,6 +65,9 @@ function controls() {
   for (const element of document.querySelectorAll<HTMLButtonElement>('[data-saved-view]')) element.disabled = busy || pending || !client
   for (const element of document.querySelectorAll<HTMLInputElement>('[data-bulk-order]')) element.disabled = busy || pending || !canWrite() || element.dataset.status !== 'submitted'
   for (const name of ['import-start','import-advance','imports-load']) button(name).disabled = busy || pending || !canWrite()
+  for (const name of ['job-import','job-export','jobs-load']) button(name).disabled = busy || pending || !canWrite()
+  button('job-import').disabled ||= !importForm?.job || importForm.job.processed === importForm.job.total
+  button('job-resolve').disabled = busy || !pendingDataJob
   button('import-start').disabled ||= !importPreview || !!importPreview.errors.length || !input('import-confirm').checked || !!importForm?.job && importForm.job.processed < importForm.job.total
   button('import-advance').disabled ||= !importForm?.job || importForm.job.processed === importForm.job.total
   button('import-resolve').disabled = busy || !importForm?.pending
@@ -173,7 +179,7 @@ button('connect').onclick = () => void action(async () => {
   const candidate = teamsClient({ url: input('url').value, accessToken: () => actionToken, onResponse(info) { text('diagnostics', `HTTP ${info.status}${info.requestId ? ` · Request ${info.requestId}` : ''}`) } }, input('tenant').value)
   const member = await candidate.membership()
   if (!member) { text('message', 'Your session has no membership in this team.'); return }
-  client = candidate; membership = member; form = createOrderForm(client); administration = teamAdministration(client); memberForm = createMembershipForm(client); importForm = createImportForm(client); workflowForm = createWorkflowForm(client); replayForm = createReplayForm(client); controlForm = createDeliveryControlForm(client); subscriptionForm = createSubscriptionForm(client); testForm = createWebhookTestForm(client); viewForm = createOrderViewForm(client); bulkForm = createBulkFulfilmentForm(client); sharedForm = createSharedViewForm(client); edit(null)
+  client = candidate; membership = member; restoreDataJob(); form = createOrderForm(client); administration = teamAdministration(client); memberForm = createMembershipForm(client); importForm = createImportForm(client); workflowForm = createWorkflowForm(client); replayForm = createReplayForm(client); controlForm = createDeliveryControlForm(client); subscriptionForm = createSubscriptionForm(client); testForm = createWebhookTestForm(client); viewForm = createOrderViewForm(client); bulkForm = createBulkFulfilmentForm(client); sharedForm = createSharedViewForm(client); edit(null)
   showMembership(member)
   await load()
 })
@@ -309,6 +315,7 @@ if (location.hash) {
   catch { text('invite-message', 'This invitation link is invalid.') }
 }
 function clearImports() {
+  pendingDataJob = null; document.getElementById('data-jobs')!.replaceChildren(); text('jobs-message','')
   importPreview = null; importsNext = null; input('import-confirm').checked = false
   document.getElementById('imports')!.replaceChildren(); document.getElementById('import-preview-rows')!.replaceChildren(); document.getElementById('import-errors')!.replaceChildren()
   text('import-preview-message', 'Review the CSV for this team before importing.'); text('import-message', '')
@@ -371,6 +378,52 @@ button('orders-export').onclick = () => void action(async () => {
   const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'team-orders.csv'; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
   text('message', 'Filtered CSV exported. Spreadsheet formula prefixes were escaped.')
 })
+
+async function queueDataJob(kind?: 'import' | 'export') {
+  if (!pendingDataJob) {
+    if (!kind || kind === 'import' && !importForm?.job) return
+    pendingDataJob = {id:crypto.randomUUID(),kind,...(kind === 'import' ? {source:importForm!.job!.import_id} : {})}
+  }
+  try {
+    const operation = pendingDataJob
+    localStorage.setItem(dataJobKey(),JSON.stringify(operation))
+    const job = await backgroundDataJobs(client!).queue(operation.kind,operation.id,operation.source)
+    localStorage.removeItem(dataJobKey())
+    pendingDataJob = null
+    text('jobs-message',`Job ${job.id}: ${job.state}. You may close this page and refresh progress later.`)
+    await loadDataJobs()
+  } catch { text('jobs-message','The enqueue response is uncertain. Resolve the pending job before changing user or team.') }
+}
+function dataJobKey() { return 'gregale:data-job:' + JSON.stringify([input('url').value.trim(),client!.tenant,membership!.subject]) }
+function restoreDataJob() {
+  try {
+    const value = JSON.parse(localStorage.getItem(dataJobKey()) ?? 'null')
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+    if (value && uuid.test(value.id) && ['import','export'].includes(value.kind) && (value.kind === 'export' || uuid.test(value.source))) { pendingDataJob = value; text('jobs-message','Resolve the saved pending enqueue before changing user or team.') }
+  } catch { /* A private browser store may be unavailable. */ }
+}
+async function loadDataJobs() {
+  try {
+    const jobs = await backgroundDataJobs(client!).list(), tbody = document.getElementById('data-jobs')!; tbody.replaceChildren()
+    for (const job of jobs) {
+      const tr = document.createElement('tr')
+      for (const value of [job.kind,job.actor,job.state==='blocked'?'Needs review':job.state==='queued'&&job.attempts>0?`Retry scheduled: ${new Date(job.next_attempt_at).toLocaleString()}`:job.state,`${job.processed}/${job.total}`]) { const td = document.createElement('td'); td.textContent = String(value); tr.append(td) }
+      const actions = document.createElement('td')
+      if (['queued','running','blocked'].includes(job.state)) { const cancel = document.createElement('button'); cancel.dataset.dataJob = job.id; cancel.textContent = 'Cancel remaining work'; cancel.disabled = busy || !!pendingDataJob; cancel.onclick = () => void action(async () => { await backgroundDataJobs(client!).cancel(job.id); await loadDataJobs() }); actions.append(cancel) }
+      if (job.state === 'blocked') { const resume=document.createElement('button');resume.dataset.dataJob=job.id;resume.textContent='Resume from saved progress';resume.disabled=busy||!!pendingDataJob;resume.onclick=()=>void action(async()=>{await backgroundDataJobs(client!).resume(job.id);await loadDataJobs()});actions.append(resume) }
+      if (job.state === 'completed' && job.kind === 'export' || ['failed','blocked'].includes(job.state)) { const download = document.createElement('button'); download.dataset.dataJob = job.id; download.textContent = ['failed','blocked'].includes(job.state) ? 'Download error report' : 'Download snapshot CSV'; download.disabled = busy || !!pendingDataJob; download.onclick = () => void action(async () => {
+        const saved = await backgroundDataJobs(client!).get(job.id), csv = saved.state === 'completed' && saved.kind === 'export'
+        const contents = csv ? snapshotCsv(saved) : JSON.stringify(saved.failure,null,2)
+        const url = URL.createObjectURL(new Blob([contents],{type:csv?'text/csv;charset=utf-8':'application/json'})), link = document.createElement('a'); link.href = url; link.download = `team-orders-${saved.id}.${csv?'csv':'errors.json'}`; link.click(); setTimeout(() => URL.revokeObjectURL(url),1000)
+      }); actions.append(download) }
+      tr.append(actions); tbody.append(tr)
+    }
+  } catch { text('jobs-message','Could not load background jobs. Check current team access.') }
+}
+button('job-import').onclick = () => void action(() => queueDataJob('import'))
+button('job-export').onclick = () => void action(() => queueDataJob('export'))
+button('job-resolve').onclick = () => void action(() => queueDataJob())
+button('jobs-load').onclick = () => void action(() => loadDataJobs())
 
 function clearOrderHistory() { historyOrder = null; historyNext = null; document.getElementById('order-history')!.replaceChildren(); text('history-order','Choose History beside an order.'); text('workflow-message','') }
 async function loadOrderHistory(id: string, after = 1) {

@@ -25,6 +25,40 @@ type Handler struct {
 	// Submit must preserve the API's session, origin and staff step-up gates.
 	Submit func(http.ResponseWriter, *http.Request, string, bool)
 	Render func(http.ResponseWriter, *http.Request, Data)
+	// Customer, when set, loads the account panel shown beside a staff
+	// ticket (ADR-20261112170000). It runs only after Portal authorized the
+	// staff actor for that ticket.
+	Customer func(*http.Request, *support.StaffTicket) *CustomerContext
+}
+
+// CustomerContext is the staff ticket's account panel: who the customer is
+// and why their account may not be working. It carries no email.
+type CustomerContext struct {
+	AccountID, OrgSlug, Plan, Status string
+	Apps                             int
+	Diagnosis                        api.ObsTenantDiagnosis
+	// Unavailable means the panel could not be loaded; the ticket page
+	// still renders.
+	Unavailable bool
+	// Snapshot is the account health captured when the ticket was opened
+	// (ADR-20261112210000); nil when none was saved. Lifted and Added name
+	// the restriction kinds that have gone away or appeared since.
+	Snapshot      *TicketSnapshot
+	Lifted, Added []string
+}
+
+// TicketSnapshot is what apid stores in support_ticket_snapshots: the
+// customer's own account-health view at ticket creation plus the refused
+// request matching the request id they attached, if any.
+type TicketSnapshot struct {
+	CapturedAt time.Time                 `json:"captured_at"`
+	Plan       string                    `json:"plan"`
+	Status     string                    `json:"status"`
+	Health     api.AccountHealth         `json:"health"`
+	Request    *api.AccountHealthRequest `json:"request,omitempty"`
+	// RequestID is the id the customer attached; set even when no
+	// recorded error matched it.
+	RequestID string `json:"request_id,omitempty"`
 }
 
 type Data struct {
@@ -32,8 +66,10 @@ type Data struct {
 	StaffMode                             bool
 	ActorID, Base, Scope, CSRF, Error     string
 	Failed, StepUpURL, Next, NextMessages string
+	NextNotifications                     string
 	Filters                               url.Values
 	Form                                  url.Values
+	Customer                              *CustomerContext
 	Keys                                  map[string]string
 	Updated, StepUp                       bool
 	SubjectMax, BodyMax, ReasonMax        int
@@ -54,6 +90,9 @@ func (h Handler) Serve(w http.ResponseWriter, r *http.Request, actor support.Act
 		return
 	}
 	d := newData(r, actor.ID, staff, view)
+	if staff && view.StaffTicket != nil && h.Customer != nil {
+		d.Customer = h.Customer(r, view.StaffTicket)
+	}
 	status := http.StatusOK
 	if r.Method == http.MethodPost {
 		var done bool
@@ -86,7 +125,7 @@ func newData(r *http.Request, actor string, staff bool, view support.PortalView)
 	d := Data{PortalView: view, StaffMode: staff, ActorID: actor, Base: base, Scope: scope, Filters: r.URL.Query(),
 		Updated: r.URL.Query().Get("updated") == "1", Keys: map[string]string{}, SubjectMax: api.SupportSubjectMaxBytes,
 		BodyMax: api.SupportBodyMaxBytes, ReasonMax: api.SupportReasonMaxBytes}
-	for _, action := range []string{"create", "reply", "note", "close", "reopen", "pause", "resume", "triage", "claim", "satisfaction"} {
+	for _, action := range []string{"create", "reply", "note", "close", "reopen", "pause", "resume", "triage", "claim", "satisfaction", "read"} {
 		d.Keys[action] = uuid.NewString()
 	}
 	cursor := view.Tickets.NextCursor
@@ -100,6 +139,11 @@ func newData(r *http.Request, actor string, staff bool, view support.PortalView)
 	}
 	if view.Ticket != nil && view.Messages.NextCursor != 0 {
 		d.NextMessages = base + "/" + view.Ticket.ID + "?after=" + strconv.FormatInt(view.Messages.NextCursor, 10) + "#conversation"
+	}
+	if view.Notifications.NextCursor != 0 {
+		query := r.URL.Query()
+		query.Set("notifications_before", strconv.FormatInt(view.Notifications.NextCursor, 10))
+		d.NextNotifications = base + "?" + query.Encode()
 	}
 	// Verify in a separate tab, returning outside the portal so its CSRF cookie
 	// is not rotated underneath the draft in the original tab.
@@ -129,6 +173,12 @@ func (h Handler) submit(w http.ResponseWriter, r *http.Request, d *Data) (int, b
 	forward.Header.Set("Idempotency-Key", d.Keys[action])
 	response := &capture{header: http.Header{}, status: http.StatusOK}
 	h.Submit(response, forward, endpoint, d.StaffMode)
+	if action == "read" && r.Header.Get("Accept") == "application/json" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(response.status)
+		_, _ = w.Write(response.body.Bytes())
+		return response.status, true
+	}
 	if response.status >= 400 {
 		var problem api.Problem
 		_ = json.Unmarshal(response.body.Bytes(), &problem)
@@ -176,6 +226,13 @@ func formPayload(form url.Values, d *Data) (string, any, error) {
 	}
 	if d.Ticket == nil {
 		return bad()
+	}
+	if action == "read" {
+		through, err := strconv.ParseInt(form.Get("through_sequence"), 10, 64)
+		if err != nil || through < 1 {
+			return bad()
+		}
+		return "read", api.SupportReadRequest{ThroughSequence: through}, nil
 	}
 	if action == "satisfaction" && !d.StaffMode {
 		rating, err := strconv.ParseInt(form.Get("rating"), 10, 32)
@@ -258,7 +315,20 @@ func (d Data) Skills() string {
 	}
 	return strings.Join(d.StaffTicket.RequiredSkills, " ")
 }
-func (d Data) Priorities() []string    { return []string{"low", "normal", "high", "urgent"} }
+func (d Data) Priorities() []string { return []string{"low", "normal", "high", "urgent"} }
+func (d Data) NotificationLabel(kind string) string {
+	switch kind {
+	case "staff_reply":
+		return "Gregale replied"
+	case "customer_reply":
+		return "Customer replied"
+	case "assigned":
+		return "Assigned to you"
+	case "ticket_created":
+		return "New conversation"
+	}
+	return "Conversation updated"
+}
 func (d Data) Date(t time.Time) string { return t.UTC().Format("02 Jan 2006, 15:04 UTC") }
 
 type FormFields struct {

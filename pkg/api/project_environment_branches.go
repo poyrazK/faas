@@ -22,6 +22,30 @@ func (c *Client) SeedDevSessionFromEnvironmentBranch(ctx context.Context, projec
 	return out, c.do(ctx, http.MethodPost, "/v1/dev/sessions/"+url.PathEscape(project)+"/seed", req, &out)
 }
 
+// GetProjectEnvironmentBranch reports one branch: its settings, data, copies
+// and workloads.
+func (c *Client) GetProjectEnvironmentBranch(ctx context.Context, projectSlug, branchSlug string) (ProjectEnvironmentResponse, error) {
+	var out ProjectEnvironmentResponse
+	return out, c.do(ctx, http.MethodGet, projectEnvironmentBranchPath(projectSlug, branchSlug), nil, &out)
+}
+
+// ExtendProjectEnvironmentBranch moves a branch's expiry to now plus req.TTL.
+func (c *Client) ExtendProjectEnvironmentBranch(ctx context.Context, projectSlug, branchSlug string, req ExtendProjectEnvironmentBranchRequest) (ProjectEnvironmentResponse, error) {
+	var out ProjectEnvironmentResponse
+	return out, c.do(ctx, http.MethodPost, projectEnvironmentBranchPath(projectSlug, branchSlug)+"/extend", req, &out)
+}
+
+// ResetProjectEnvironmentBranch makes the branch again from its parent, with
+// its settings. Its workloads get new URLs.
+func (c *Client) ResetProjectEnvironmentBranch(ctx context.Context, projectSlug, branchSlug string) (ProjectEnvironmentResponse, error) {
+	var out ProjectEnvironmentResponse
+	return out, c.do(ctx, http.MethodPost, projectEnvironmentBranchPath(projectSlug, branchSlug)+"/reset", struct{}{}, &out)
+}
+
+func projectEnvironmentBranchPath(projectSlug, branchSlug string) string {
+	return "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(branchSlug) + "/branch"
+}
+
 // ListProjectEnvironmentBranches lists the direct branches of environmentSlug.
 func (c *Client) ListProjectEnvironmentBranches(ctx context.Context, projectSlug, environmentSlug string) (ProjectEnvironmentBranchListResponse, error) {
 	var out ProjectEnvironmentBranchListResponse
@@ -86,6 +110,13 @@ const (
 	// CodeEnvironmentBranchHasBranches: delete the branches of an
 	// environment before the environment itself.
 	CodeEnvironmentBranchHasBranches = "environment_has_branches"
+	// CodeEnvironmentBranchLifetime: an extend would keep the branch past
+	// its longest lifetime (EnvironmentBranchMaxTTL after its creation, or
+	// EnvironmentBranchWithDatabasesMaxLifetime with database copies).
+	CodeEnvironmentBranchLifetime = "environment_branch_lifetime_exceeded"
+	// CodeEnvironmentBranchDataPending: the branch's data is still being
+	// copied; its expiry moves once the copies exist.
+	CodeEnvironmentBranchDataPending = "environment_branch_data_pending"
 )
 
 // CreateProjectEnvironmentBranchRequest is POST
@@ -138,6 +169,26 @@ type ProjectEnvironmentBranchResponse struct {
 	Data      string                             `json:"data"`
 	DataError string                             `json:"data_error,omitempty"`
 	Workloads []ProjectEnvironmentBranchWorkload `json:"workloads,omitempty"`
+	// CreatedAt and Databases are reported by the branch's own view (GET
+	// .../environments/{branch}/branch).
+	CreatedAt string                             `json:"created_at,omitempty"`
+	Databases []ProjectEnvironmentBranchDatabase `json:"databases,omitempty"`
+}
+
+// ProjectEnvironmentBranchDatabase is one managed PostgreSQL copy a branch
+// owns. CopyDatabaseID is empty until the copy is made.
+type ProjectEnvironmentBranchDatabase struct {
+	SourceDatabaseID string `json:"source_database_id"`
+	Name             string `json:"name"`
+	CopyDatabaseID   string `json:"copy_database_id,omitempty"`
+}
+
+// ExtendProjectEnvironmentBranchRequest is POST
+// /v1/projects/{slug}/environments/{environment}/branch/extend.
+type ExtendProjectEnvironmentBranchRequest struct {
+	// TTL is the time from now the branch lives, such as "48h". Empty
+	// takes the default.
+	TTL string `json:"ttl,omitempty"`
 }
 
 // ProjectEnvironmentBranchWorkload is one workload a branch published from
@@ -148,8 +199,11 @@ type ProjectEnvironmentBranchWorkload struct {
 	SourceDeployment string `json:"source_deployment_id"`
 	Status           string `json:"status"`
 	// URL is the workload's address in the branch; its first request
-	// starts it.
+	// starts it. It is the branch's stable URL, which a reset keeps.
 	URL string `json:"url,omitempty"`
+	// EnvironmentURL is the address of this incarnation of the branch: a
+	// reset gives it a new one. Empty when it is the same as URL.
+	EnvironmentURL string `json:"environment_url,omitempty"`
 }
 
 // ProjectEnvironmentBranchListResponse lists a project's branches.

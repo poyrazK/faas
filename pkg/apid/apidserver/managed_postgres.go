@@ -670,6 +670,7 @@ func (s *server) managedPostgresResize(serve func(managedpg.Resizes, http.Respon
 		rs := managedpg.Resizes{Storage: s.storageResizes, Problem: managedPostgresProblem, NotConfigured: managedPostgresNotConfiguredProblem, Audit: s.audit}
 		if s.managedPostgres != nil {
 			rs.Service = s.managedPostgres
+			rs.Charge = s.chargePostgresResize
 		}
 		serve(rs, w, r, acct)
 	}

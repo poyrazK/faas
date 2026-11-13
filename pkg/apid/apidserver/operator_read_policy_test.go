@@ -144,6 +144,8 @@ func sessionOnlyOperatorReads(tenantID string) []string {
 		"/v1/admin/obs/tenants/" + tenantID,
 		"/v1/admin/obs/tenants/" + tenantID + "/360",
 		"/v1/admin/obs/tenants/" + tenantID + "/activity",
+		"/v1/admin/obs/lookup?q=" + tenantID,
+		"/v1/admin/obs/attention",
 		"/v1/admin/obs/apps/" + id,
 		"/v1/admin/obs/nodes/node-1/detail",
 		"/v1/admin/obs/nodes/events",
@@ -204,6 +206,12 @@ var bearerReadableOperatorReads = []string{
 // the FAAS_OPERATOR_BEARER_READS grace.
 var strictOperatorSessionReads = map[string]bool{"GET /v1/admin/status/incidents": true}
 
+// supportStaffReads are support-inbox reads gated by the support roster
+// (ADR-20261111130000), not the operator allowlist: they need a session
+// principal and the staff-mode support handler, which checks MFA and the
+// roster on every request.
+var supportStaffReads = map[string]bool{"GET /v1/admin/support/notifications": true}
+
 // Every provider read picks a policy at the route table, so a new GET
 // /v1/admin route cannot fall back to the admin scope alone, which every
 // customer's own key and dashboard session hold.
@@ -233,6 +241,10 @@ func TestEveryAdminReadUsesAnOperatorReadPolicy(t *testing.T) {
 					if !strings.Contains(call, gate) {
 						t.Errorf("%s:%d: %s lacks %s", file, line, pattern, gate)
 					}
+				}
+			case supportStaffReads[pattern]:
+				if !strings.Contains(call, "s.requireSessionPrincipal(") || !strings.Contains(call, ", true)") {
+					t.Errorf("%s:%d: %s must require a session principal and the staff support handler", file, line, pattern)
 				}
 			case strings.Contains(call, "s.requireOperatorSessionRead(") || strings.Contains(call, "s.requireOperatorRead("):
 			default:

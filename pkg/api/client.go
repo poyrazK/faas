@@ -681,6 +681,14 @@ func (c *Client) Whoami(ctx context.Context) (AccountResponse, error) {
 	return out, c.do(ctx, "GET", "/v1/account", nil, &out)
 }
 
+// GetAccountHealth returns what may stop the authenticated account from
+// working: restrictions, failed deployments, custom-domain problems and
+// refused API requests (ADR-20261112210000).
+func (c *Client) GetAccountHealth(ctx context.Context) (AccountHealth, error) {
+	var out AccountHealth
+	return out, c.do(ctx, "GET", "/v1/account/health", nil, &out)
+}
+
 // PatchAccountBilling updates the authenticated account's legal billing
 // identity. Omitted fields are preserved; an explicitly empty string clears
 // that field. The response is the refreshed account profile.
@@ -4949,6 +4957,14 @@ func (c *Client) ListAuditLogAllPage(ctx context.Context, before, accountID, sin
 func (c *Client) MintCliAuthCode(ctx context.Context) (CliAuthCodeResponse, error) {
 	var out CliAuthCodeResponse
 	return out, c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Device: true}, &out)
+}
+
+// MintCliAuthLoopbackCode mints a one-click login code whose approval is
+// sent to 127.0.0.1:port (ADR-20261111170000). The response's Loopback is
+// false when the server kept the typed-code flow.
+func (c *Client) MintCliAuthLoopbackCode(ctx context.Context, port int) (CliAuthCodeResponse, error) {
+	var out CliAuthCodeResponse
+	return out, c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Device: true, LoopbackPort: port}, &out)
 }
 
 // ExchangeCliAuthLogin polls for a minted code's approval: with its device

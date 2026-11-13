@@ -154,6 +154,9 @@ type MemStore struct {
 	privateNetworkTransportIDs  map[string]privateNetworkTransportIdentity
 	privateNetworkServiceOwners map[string]privateNetworkServiceOwner
 	trafficAppsSuffix           string
+	// abuseStrikes is each resource owner's abuse recycle times inside the
+	// escalation window (RecordAccountAbuseStrike, ADR-20261113133500).
+	abuseStrikes map[string][]time.Time
 	// planChangedAt is when each account's or org's plan last changed
 	// (PlanChangedAt, ADR-20261103121407).
 	planChangedAt map[string]time.Time
@@ -829,6 +832,7 @@ type MemStore struct {
 	// query is a single goroutine today.
 	appWebhooks                 map[string]AppWebhook
 	appWebhookDeliveries        map[string]AppWebhookDelivery
+	invocationSends             map[string]InvocationSend
 	appWebhookDeliverySources   map[string]string
 	entityOutboxAcceptances     map[string]string
 	appWebhookDeliveryAttempts  map[string][]AppWebhookDeliveryAttempt
@@ -1443,6 +1447,8 @@ type MemStore struct {
 	// ADR-20261111114059: agent keys' budgets and monthly spend.
 	agentKeyBudgets  map[string]AgentKeyBudget
 	agentBudgetSpend map[agentBudgetSpendKey]int64
+	// agentUndoRecords: ADR-20261112080601.
+	agentUndoRecords []AgentUndoRecord
 	orgsBySlug       map[string]string // lower(slug) -> id
 	memberships      map[orgAccountKey]OrgMembership
 	invitations      map[string]OrgInvitation // hex(hash) -> OrgInvitation
@@ -2193,6 +2199,9 @@ func (m *MemStore) CreateAccount(_ context.Context, email string, plan api.Plan)
 // callers so the partial-unique invariant the SQL partial index
 // enforces is preserved in MemStore.
 func (m *MemStore) CreateAccountWithPersonalOrg(ctx context.Context, params CreateAccountWithPersonalOrgParams) (CreateAccountWithPersonalOrgResult, error) {
+	if params.Referral != nil {
+		return CreateAccountWithPersonalOrgResult{}, errors.New("referrals require PostgreSQL")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -4282,6 +4291,16 @@ func (m *MemStore) ProjectEnvironmentByID(_ context.Context, id string) (Project
 		// MemStore's newID uses 32 hex characters; platform host decoding
 		// returns the canonical, hyphenated form of the same UUID bytes.
 		environment, ok = m.projectEnvironments[strings.ReplaceAll(id, "-", "")]
+	}
+	if !ok {
+		// A branch's slot names the environment of the branch holding it.
+		slot := canonicalUUID(id)
+		for _, branch := range m.projectEnvironmentBranches {
+			if branch.SlotID != "" && branch.SlotID == slot {
+				environment, ok = m.projectEnvironments[branch.EnvironmentID]
+				break
+			}
+		}
 	}
 	if !ok {
 		return ProjectEnvironment{}, ErrNotFound
@@ -14190,6 +14209,11 @@ func anchorCronSchedule(before, after Cron, now time.Time) Cron {
 		(after.Enabled && !before.Enabled) || (after.SuspendedReason == "" && before.SuspendedReason != "") {
 		after.ScheduleAnchorAt = now.UTC()
 	}
+	// Mirrors clear_cron_clone_pause: an explicit enable or disable is the
+	// customer's decision about a cron a clone paused.
+	if after.Enabled != before.Enabled {
+		after.ClonePaused = false
+	}
 	return after
 }
 
@@ -15298,7 +15322,12 @@ func (m *MemStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoc
 	if err := m.checkInvocationAdmissionLocked(inv, nil); err != nil {
 		return Invocation{}, err
 	}
-	return m.enqueueInvocationLocked(inv)
+	out, err := m.enqueueInvocationLocked(inv)
+	if err == nil {
+		inv.ID = out.ID
+		m.recordInvocationSendLocked(inv)
+	}
+	return out, err
 }
 
 func (m *MemStore) enqueueInvocationLocked(inv Invocation) (Invocation, error) {
@@ -15763,6 +15792,9 @@ func (m *MemStore) decrementAccountAsyncInflightLocked(accountID string) {
 // Caller holds m.mu so the callback row and terminal invocation become
 // visible together to MemStore readers.
 func (m *MemStore) enqueueInvocationDestinationLocked(inv Invocation) error {
+	if err := m.enqueueInvocationCompletionLocked(inv); err != nil {
+		return err
+	}
 	delivery, ok, err := invocationDestinationDelivery(inv)
 	if err != nil || !ok {
 		return err
@@ -22712,6 +22744,18 @@ func (m *MemStore) PeekCliAuthCode(_ context.Context, tokenHash []byte) (api.Cli
 // would short-circuit the CAS that the CLI's exchange relies on to
 // mint exactly one API key per code (review finding F4).
 func (m *MemStore) ClaimCliAuthCode(_ context.Context, tokenHash []byte, accountID string) error {
+	return m.claimCliAuthCode(tokenHash, accountID, nil)
+}
+
+// ClaimCliAuthCodeForDevice implements CliAuthDeviceCodeStore.
+func (m *MemStore) ClaimCliAuthCodeForDevice(_ context.Context, tokenHash []byte, accountID string, deviceHash []byte) error {
+	if len(deviceHash) == 0 {
+		return errors.New("claim cli auth code: empty device hash")
+	}
+	return m.claimCliAuthCode(tokenHash, accountID, storedCredential(credTagCLIDeviceCode, deviceHash))
+}
+
+func (m *MemStore) claimCliAuthCode(tokenHash []byte, accountID string, storedDevice []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key, _ := rawCredentialKey(m.cliAuthCodes, credTagCLIAuthCode, tokenHash)
@@ -22731,6 +22775,9 @@ func (m *MemStore) ClaimCliAuthCode(_ context.Context, tokenHash []byte, account
 		return ErrConflict
 	}
 	row.AccountID = accountID
+	if storedDevice != nil {
+		row.DeviceHash = append([]byte(nil), storedDevice...)
+	}
 	m.cliAuthCodes[key] = row
 	return nil
 }

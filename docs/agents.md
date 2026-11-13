@@ -214,7 +214,9 @@ and, for a new request, its review link. It never includes the request body.
 
 An agent can raise what you pay every month without any traffic: by keeping
 instances warm (`min_instances`, a scaling policy's floor or schedule
-windows), raising the RAM of warm instances, or prewarming. Each agent has a
+windows, a deployment's own `min_instances`), running services and workers
+(their replicas run whatever the traffic), raising the RAM of warm instances,
+or prewarming. Each agent has a
 monthly budget for this always-on capacity. A change is priced by how much it
 adds, at the overage rate ($0.05 per GB-hour, RAM plus 8 MB per instance,
 730 hours a month), before it is made. Traffic-driven usage is not counted;
@@ -236,18 +238,40 @@ gregale mcp connection budget <id> --unlimited
 gregale mcp connection budget <id> --default
 ```
 
-An agent reads its own with `gregale mcp connection budget --self`, so it can
-plan within it. An organization can cap every agent acting in it; the lower
+An agent reads its own with `gregale mcp connection budget --self` (MCP:
+`gregale_agent_budget`), so it can plan within it. Before making a change it
+can ask what the change would cost: `gregale_plan_scale` and
+`gregale app <slug> scale --plan` show the added cost, the budget left and
+whether a person would be asked first. Sending a request with the header
+`Gregale-Agent-Preview: budget` does the same for any client; Gregale prices
+it as the real request and changes nothing. Previews work on app settings
+(`PATCH /v1/apps/{slug}`), scaling and prewarm; other routes refuse the
+header. An organization can cap every agent acting in it; the lower
 of the agent's budget and the ceiling applies:
 
 ```sh
 gregale org agent policy set --org acme --agents allow --max-budget 100
 ```
 
-In this release the budget covers `PATCH /v1/apps/{slug}`,
-`POST /v1/apps/{slug}/scaling` and `POST /v1/apps/{slug}/prewarm`. Replica
-minimums in deployment manifests and project environment settings are
-priced in a later release.
+In this release the budget covers creating an app (`POST /v1/apps`: a
+service or worker is priced for the replicas it starts with),
+`PATCH /v1/apps/{slug}` (including the `execution_mode`, `service_replicas`
+and `worker_replicas` that `gregale deploy` applies from `gregale.yaml`),
+`POST /v1/apps/{slug}/scaling`, `POST /v1/apps/{slug}/prewarm` and
+`PATCH /v1/deployments/{id}`.
+
+Creating an environment from another (`gregale env create --from`, a full
+clone, or an environment branch) is priced at the warm instances it copies:
+each workload's floor in the source environment. A branch keeps no
+`min_instances` floor, but its services and workers still run their
+replicas.
+
+Managed Postgres is priced only when a database never scales to zero: its
+service class's smallest compute (0.25 compute units for development and
+burstable, 1 for production) running all month at the Postgres overage
+rate. That covers creating such a database, turning scale-to-zero off,
+resizing it to a larger class, and restoring a copy of it. A database that
+scales to zero adds nothing; its compute, storage and egress follow use.
 
 ## See what an agent changed
 
@@ -269,6 +293,61 @@ organization can read the activity of every agent acting in it. An agent reads
 its own with `gregale mcp connection activity --self`, for example to check
 what it already did before repeating work. Pages hold 50 rows; pass the
 printed `--cursor` value for older ones.
+
+## Undo what an agent changed
+
+`gregale mcp connection undo` reverses an agent's changes. It first prints
+them, newest first, with what undoing each will do, and undoes them once you
+confirm:
+
+```sh
+gregale mcp connection undo <id>                  # the last 24 hours
+gregale mcp connection undo <id> --since 2h
+gregale mcp connection undo <id> --entry <activity-id> --entry <activity-id>
+gregale mcp connection undo <id> --plan           # only show what it would do
+gregale mcp connection undo <id> --org acme       # an agent acting in an organization
+```
+
+Undo restores:
+
+- app settings the agent changed, such as `min_instances`, `ram_mb`,
+  `idle_timeout_s`, egress and CORS settings,
+- scaling changes,
+- env vars of the app and of its project's named environments,
+- deploys and rollbacks: a deployment the agent started is cancelled while
+  it builds, and once it serves the app is rolled back to the deployment
+  that served before it,
+- promotes and traffic changes: the app's live deployments get back the
+  exact traffic split they had before,
+- things the agent created (apps, buckets, crons, domains, Postgres
+  databases) are deleted: an app is parked and can be restored for 7 days, a
+  bucket that holds objects is left, and a database can be undeleted for 7
+  days,
+- things the agent deleted come back: an app or Postgres database within its
+  7-day restore window, a cron or custom domain created again as it was (the
+  domain verifies again),
+
+and cancels prewarms the agent asked for. Undo runs through the same API as
+any other change, with your access, so it is validated and applied the same
+way.
+
+Some changes cannot be undone, and the plan says so and why: a secret the
+agent set or removed (Gregale keeps no copy of a replaced secret, so set it
+again), a few settings that cannot be set back to empty, an app's first
+deploy (there is nothing to return to), and kinds of change Gregale cannot
+undo yet, such as an individual canary step or a deleted bucket. A canary in progress, or an agent's rollback still starting, is left
+until it settles; undo again then. If someone changed a resource again after the agent did, undo leaves
+it, and the agent's older changes to it, as they are; pass `--force` to undo
+them anyway. Each change is undone once, and changes are kept 7 days.
+
+You can undo the agents you connected; owners and admins can undo every agent
+acting in their organization. Undoing needs an admin credential.
+
+An agent can ask to undo its own changes, never another key's, through the
+MCP tools `gregale_plan_undo` and `gregale_apply_undo` (or
+`POST /v1/agent-connections/self/undo`). Applying always waits for your
+approval, whatever approval categories the agent chose; the approval covers
+exactly the plan the agent showed you.
 
 ## Run the CLI non-interactively
 
@@ -350,7 +429,7 @@ so list only the toolsets it needs:
 
 | Toolset | Tools |
 |---|---|
-| `core` (default) | Apps, deployments, logs, metrics, health and error groups; deploy a directory, set variables, promote and roll back, then verify readiness. About a quarter of the full catalog. |
+| `core` (default) | Apps, deployments, logs, metrics, health and error groups; deploy a directory, set variables, promote and roll back, then verify readiness; wait for approvals, list and undo the agent's own changes. About a third of the full catalog. |
 | `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets |
 | `diagnose` | Request, performance, wake, trace and regression diagnostics |
 | `provision` | Custom domains, buckets, managed PostgreSQL and crons |

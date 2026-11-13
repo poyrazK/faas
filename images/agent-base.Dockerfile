@@ -19,7 +19,7 @@
 #
 # Node 22 on Alpine (musl), the same digest as runner-node22: every harness
 # ships a musl build, and the memory experiment measured this base.
-FROM mirror.gcr.io/library/node:22-alpine@sha256:025b8e975a61d94e33abeafaad1255ef44e4898cf1a1b6446860009c72e6d284
+FROM mirror.gcr.io/library/node:22-alpine@sha256:12f54cafa58d0e96554ae05871e29663ff7241836377dc9a7916449b8adb062c
 # Issue #197 B3.6: mutable tag pinned via images/Dockerfile.lock.
 
 COPY --chmod=0644 images/agent-base/package.json images/agent-base/package-lock.json /opt/gregale/agents/
@@ -32,9 +32,11 @@ COPY --chmod=0755 images/agent-base/finish-install.sh /tmp/finish-install.sh
 # npm stays, unlike in the runner bases: agents install and test projects.
 # Both install scripts that run here (opencode-ai, claude-code) only link
 # their locked platform binary into place; finish-install.sh checks that.
+# zlib floor: CVE-2026-4738 (CRITICAL, fixed in Alpine zlib 1.4-r0; issue
+# #6727), the same floor runner-node22.Dockerfile sets on this base.
 RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt \
     apk upgrade --no-cache && \
-    apk add --no-cache bash git python3 ripgrep libstdc++ libgcc && \
+    apk add --no-cache bash git python3 ripgrep libstdc++ libgcc 'zlib>=1.4-r0' && \
     chmod 0755 /opt/gregale /opt/gregale/agents /usr/share/faas && \
     cd /opt/gregale/agents && \
     NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt npm ci --omit=dev --no-audit --no-fund && \

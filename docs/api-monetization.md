@@ -24,8 +24,11 @@ gregale consumers key-create my-api CONSUMER_ID --name production --scopes read,
 
 The key secret is shown once. Your customer sends it as
 `Authorization: Bearer ck_...`. Scopes limit methods: `read` allows `GET`,
-while `write` and `admin` allow every method. To require a key on every
-request, run `gregale app my-api --consumer-auth-mode required`.
+`HEAD` and `OPTIONS`, while `write` and `admin` allow every method. To require
+a key on every request, run `gregale app my-api --consumer-auth-mode required`.
+Browser CORS preflights carry no credentials, so required mode lets a preflight
+(`OPTIONS` with `Origin` and `Access-Control-Request-Method`) through to your
+CORS rule or app; the request that follows still needs a key.
 Gregale reserves only `Bearer ck_...`: in the default optional mode, any
 other `Authorization` value (`Basic ...`, `Token ...`, or a Bearer token
 without the `ck_` prefix) reaches your app unchanged. Required mode rejects

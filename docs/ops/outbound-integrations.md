@@ -159,7 +159,11 @@ without an `outboundd` restart. Requests already admitted retain their original
 deadline, and reducing `max_in_flight` does not terminate calls already running.
 The credential remains unavailable until uploaded and the gateway fails closed
 if it is missing or revoked. A maximum of 25 enabled customer integrations is
-allowed per account.
+allowed per account. AI calls of one account across all its customer
+integrations are also limited per `outboundd` process to
+`OutboundAIAccountRatePerSecondMax` (Free 20, Hobby 40, Pro 200, Scale 1000
+per second, burst twice that); excess calls get `429
+outbound_ai_account_rate_limited` (ADR 20261027132936 amendment 2).
 
 The account plan bounds each integration's request policy:
 
@@ -284,9 +288,12 @@ path and query. It returns `429 application/problem+json` with `Retry-After`
 when the rate or concurrency budget is exhausted; inspect
 `X-Gregale-Outbound-Rejection` for `rate_limit` versus `concurrency_limit`.
 By default, Gregale makes one upstream attempt. A configured `max_retries`
-(0–2) enables retries only for bodyless `GET` and `HEAD` requests, and only
-for network timeouts/resets or provider `408`, `425`, `429`, `502`, `503`, and
-`504` responses. Other methods and requests with bodies are never retried.
+(0–2) enables retries for bodyless `GET` and `HEAD` requests, on network
+timeouts/resets or provider `408`, `425`, `429`, `502`, `503`, and `504`
+responses. A buffered AI `POST` (ADR-990) is also retried, but only when the
+provider cannot have run it: a request that failed before it was sent, or a
+`425`, `429`, `502` or `503` answer (ADR 20261027132936 amendment 1). Other
+methods and requests with bodies are never retried.
 Exponential backoff starts at 100 ms. Automatic retries honor a valid provider
 `Retry-After` only when it fits within the one-second retry window; longer
 delays are never shortened into an early retry, and the current provider
@@ -393,6 +400,22 @@ status codes.
 >
 > The rollout steps, alerts and rollback are in the
 > [AI gateway runbook](../runbooks/FaasAIGateway.md).
+>
+> **Before turning the flag on (ADR 20261027132936 amendment 1).** Deployed
+> apps reach the gateway only through the [app relay](#app-relay), so turning
+> on the flag alone serves no app.
+>
+> 1. Install the workload-identity key on the control plane.
+> 2. Set `faas_outboundd_relay_listen` for the control plane.
+> 3. Set `faas_vmmd_outbound_relay_target` and
+>    `faas_vmmd_outbound_relay_tls_managed` for compute nodes, then converge.
+> 4. Check that `outbound_ai_app_relay_ready` is 1 on every `outboundd`.
+>
+> `FaasAIGatewayEnabledWithoutAppRelay` warns while the flag is on and the
+> relay is off. The public host for access tokens
+> (`faas_ai_gateway_public_enabled`) is optional; calls through it wait at
+> most `OutboundAIPublicHeaderTimeoutSeconds` (90 s) for headers, under
+> Cloudflare's 100-second limit.
 
 An integration in front of an LLM provider can declare `ai_provider`. Use
 `openai` for OpenAI and any provider that speaks its wire format, or
@@ -621,6 +644,16 @@ call:
   model's `cached_requests` and adds the cost the provider call would have had,
   priced from the cached response, to `cache_saved_millicents`.
   `outbound_ai_response_cache_saved_millicents_total` counts it.
+- **Semantic cache** (ADR 20261112194947, Pro and Scale): an AI policy's
+  `semantic_cache` answers a cache miss from an entry whose last user turn
+  embeds within the threshold of the call's and whose rest of the call
+  matches exactly. The embedding runs in process through the named OpenAI or
+  Gemini integration under the caller `semantic_cache` (1 s, fail-open).
+  Each outboundd process indexes at most 2,000 entries per integration, 256
+  integrations and 64 MiB. `outbound_ai_semantic_cache_total{result}`
+  counts `hit`, `miss`, `skipped` (not a candidate) and `error` (the
+  embedding failed). outboundd ignores the settings when the plan no longer
+  includes them or the response cache is off.
 - **Prompt-cache savings:** every call also adds
   `prompt_cache_saved_millicents`: its cost with cached reads and cache
   writes priced as plain input, minus its cost. It is negative when cache
@@ -1508,7 +1541,9 @@ replays or the gateway's own checks.
   outbound_ai_response_flagged` after moderation. A flag sends
   `X-Gregale-AI-Response-Moderation: flagged=<categories>`.
 - A failed moderation check under `--moderation-on-error block` answers `503
-  outbound_ai_moderation_unavailable`. A response the gateway cannot read or
+  outbound_ai_moderation_unavailable`. Without `--moderation-on-error`, a
+  `block` check blocks on failure and a `flag` check allows (ADR 20261027132936
+  amendment 2). A response the gateway cannot read or
   that is over 4 MiB answers `502 outbound_ai_response_unchecked`.
 - Gemini's `streamGenerateContent` without `alt=sse` is a JSON array, so it
   is checked whole and arrives at the end.

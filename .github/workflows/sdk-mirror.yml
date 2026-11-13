@@ -4,8 +4,10 @@ name: sdk-mirror
 # gregale-dev org (docs/adr/20261112110000-sdk-public-repositories.md). This
 # repository stays the source of truth; scripts/sdk_mirror.py builds each
 # public tree from sdk/mirror.json. Pull requests build and check the trees;
-# a merge to main (or a dispatch) also pushes them, one deploy key per
-# repository. A repository whose key secret is missing is built and skipped.
+# a merge to main (or a dispatch) also pushes them with a short-lived token
+# from the gregale-dev "SDK mirror" GitHub App, scoped to that one
+# repository's contents. Until the SDK_MIRROR_APP_CLIENT_ID variable is set,
+# the trees are built and the push is skipped.
 
 on:
   pull_request:
@@ -50,11 +52,8 @@ jobs:
       matrix:
         include:
           - repo: gregale-go
-            secret: SDK_MIRROR_DEPLOY_KEY_GO
           - repo: gregale-js
-            secret: SDK_MIRROR_DEPLOY_KEY_JS
           - repo: gregale-python
-            secret: SDK_MIRROR_DEPLOY_KEY_PYTHON
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -93,23 +92,30 @@ jobs:
         working-directory: ${{ runner.temp }}/tree
         run: python -m pip wheel --quiet --no-deps --wheel-dir "$RUNNER_TEMP/wheel" .
 
+      - name: Skip the push (no GitHub App configured)
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.SDK_MIRROR_APP_CLIENT_ID == ''
+        run: echo "::notice::SDK_MIRROR_APP_CLIENT_ID is not set; skipping the push to gregale-dev/${{ matrix.repo }}"
+      - name: Mint a token for gregale-dev/${{ matrix.repo }}
+        id: app-token
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.SDK_MIRROR_APP_CLIENT_ID != ''
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.SDK_MIRROR_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SDK_MIRROR_APP_PRIVATE_KEY }}
+          owner: gregale-dev
+          repositories: ${{ matrix.repo }}
+          permission-contents: write
       - name: Push to gregale-dev/${{ matrix.repo }}
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: steps.app-token.outcome == 'success'
         env:
-          DEPLOY_KEY: ${{ secrets[matrix.secret] }}
+          TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ matrix.repo }}
-          SECRET_NAME: ${{ matrix.secret }}
         run: |
-          if [ -z "$DEPLOY_KEY" ]; then
-            echo "::notice::$SECRET_NAME is not set; skipping the push to gregale-dev/$REPO"
-            exit 0
-          fi
-          key="$RUNNER_TEMP/deploy_key"
-          install -m 600 /dev/null "$key"
-          printf '%s\n' "$DEPLOY_KEY" > "$key"
-          # GitHub's published SSH host key (docs: "GitHub's SSH key fingerprints").
-          known_hosts="$RUNNER_TEMP/known_hosts"
-          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$known_hosts"
-          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known_hosts"
-          python3 scripts/sdk_mirror.py push --repo "$REPO" --remote "git@github.com:gregale-dev/$REPO.git"
-          rm -f "$key"
+          # The token goes in an HTTP header from the environment, never in a
+          # remote URL or argument that git or the script could print.
+          basic=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          echo "::add-mask::$basic"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic"
+          python3 scripts/sdk_mirror.py push --repo "$REPO" --remote "https://github.com/gregale-dev/$REPO.git"

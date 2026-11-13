@@ -38,6 +38,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
@@ -1637,7 +1638,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	// Wave 0 PR-C / ADR-047: vmmd becomes a gRPC client for the
 	// first time. The AdvisoryClient dials /run/faas/apid.sock to
-	// forward guest-init fanotify batches. Empty FAAS_APID_ADVISORY_SOCK
+	// forward guest-init stateless advisory batches. Empty FAAS_APID_ADVISORY_SOCK
 	// disables (matches apid's explicit-empty pattern); nil client
 	// short-circuits Manager.ForwardStatelessAdvisory to a no-op.
 	//
@@ -1646,9 +1647,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Forward outcome. The accessor is nil-receiver safe, so a
 	// nil ops is also a clean no-op (kept for symmetry / unit
 	// tests that don't wire metrics).
+	//
+	// ADR-047 amendment 2026-11-12: a database-backed vmmd writes the audit
+	// row through its own store instead. apid runs on the control plane, so
+	// a compute node has no apid.sock and the gRPC hop never delivered.
 	advisoryTarget := envOr("FAAS_APID_ADVISORY_SOCK", "unix:///run/faas/apid.sock")
 	var advisoryCli *vmmdgrpc.AdvisoryClient
-	if advisoryTarget != "" {
+	switch {
+	case store != nil:
+		advisoryAuditor := &statelessAdvisoryAuditor{audit: audit.New(store, log, ops, "vmmd"), apps: store}
+		if pool != nil {
+			advisoryAuditor.notify = func(ctx context.Context, payload string) error {
+				return db.Notify(ctx, pool, db.NotifyStatelessAdvisory, payload)
+			}
+		}
+		mgr.SetAdvisoryClient(advisoryAuditor)
+		log.Info("vmmd: stateless advisory writes audit rows through the store")
+	case advisoryTarget != "":
 		advisoryCli = vmmdgrpc.NewAdvisoryClient(advisoryTarget, log, ops)
 		mgr.SetAdvisoryClient(advisoryCli)
 		log.Info("vmmd: stateless advisory client wired", "target", advisoryTarget)
@@ -1873,6 +1888,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("vmmd: crash capture receiver unavailable", "err", crashRecvErr, "goos", runtime.GOOS)
 	} else {
 		defer crashRecv.Close()
+	}
+	// ADR-047 (amended 2026-11-12): guest-init ships stateless advisory
+	// batches over a guest-initiated stream; the listener names the app.
+	if err := StartStatelessAdvisoryReceiver(log, mgr, jailer); err != nil {
+		log.Warn("vmmd: stateless advisory receiver unavailable", "err", err, "goos", runtime.GOOS)
 	}
 	log.Info("vmmd ready", "fc_version", fcVersion, "max_slots", fcvm.MaxSlots,
 		"uid_lo", fcvm.JailUIDBase, "uid_hi", fcvm.JailUIDMax,

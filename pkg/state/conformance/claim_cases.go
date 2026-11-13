@@ -476,6 +476,41 @@ func testCliAuthCodeClaimBindsOneAccount(t *testing.T, fx *Fixture) {
 	}
 }
 
+// testCliAuthLoopbackClaimRebindsDevice pins ClaimCliAuthCodeForDevice: a
+// one-click approval (ADR-20261111170000) leaves the code exchangeable only
+// with the new device code, never the one its minting terminal holds.
+func testCliAuthLoopbackClaimRebindsDevice(t *testing.T, fx *Fixture) {
+	devices, ok := fx.Store.(state.CliAuthDeviceCodeStore)
+	if !ok {
+		t.Skip("store has no device codes")
+	}
+	tokenHash := api.HashToken([]byte("loopback-" + uuid.NewString()))
+	minted := api.HashToken([]byte("minted-" + uuid.NewString()))
+	fresh := api.HashToken([]byte("fresh-" + uuid.NewString()))
+	if err := devices.IssueCliAuthDeviceCode(fx.Ctx, tokenHash, minted, time.Now().UTC().Add(10*time.Minute)); err != nil {
+		t.Fatalf("IssueCliAuthDeviceCode: %v", err)
+	}
+	if status, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, minted); err != nil || status != api.CliAuthStatusPending {
+		t.Fatalf("before approval: %q, %v; want pending", status, err)
+	}
+	if err := devices.ClaimCliAuthCodeForDevice(fx.Ctx, tokenHash, fx.Account.ID, fresh); err != nil {
+		t.Fatalf("ClaimCliAuthCodeForDevice: %v", err)
+	}
+	if err := devices.ClaimCliAuthCodeForDevice(fx.Ctx, tokenHash, fx.Account.ID, minted); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("second claim: %v, want ErrConflict (and the device code kept)", err)
+	}
+	if _, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, minted); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("exchange with the minting device code: %v, want ErrNotFound", err)
+	}
+	status, accountID, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, fresh)
+	if err != nil || status != api.CliAuthStatusConsumed || accountID != fx.Account.ID {
+		t.Fatalf("exchange with the new device code: %q/%q, %v; want consumed/%s", status, accountID, err, fx.Account.ID)
+	}
+	if _, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, fresh); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("second exchange: %v, want ErrNotFound", err)
+	}
+}
+
 // testDueWebhookDeliveryClaimRespectsScheduleAndLimit pins
 // ClaimDueAppWebhookDeliveries: the batch must honour both the due time and
 // the caller's limit, and must not hand the same delivery to two dispatchers.

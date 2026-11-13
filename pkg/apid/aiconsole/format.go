@@ -171,6 +171,8 @@ func callerName(caller string, apps map[string]string) string {
 		return "Moderation checks"
 	case "evaluation":
 		return "Evaluations"
+	case "semantic_cache":
+		return "Semantic cache embeddings"
 	}
 	return caller
 }

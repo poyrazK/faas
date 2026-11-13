@@ -11,7 +11,8 @@
     "migrate": "node migrations/migrate.mjs",
     "release": "node migrations/release.mjs",
     "rpc:permissions": "node migrations/rpc-permissions.mjs",
-    "outbox:once": "node workers/order-webhooks.mjs"
+    "outbox:once": "node workers/order-webhooks.mjs",
+    "data-jobs:once": "node workers/data-jobs.mjs"
   },
   "dependencies": {
     "pg": "8.23.1"

@@ -267,17 +267,17 @@ type Paths struct {
 	Kernel string // /srv/fc/base/vmlinux-6.1.x
 }
 
-// AdvisoryEvent is one fanotify event the guest-init
-// stateless_advisory_linux.go observed and shipped over vsock DGRAM.
+// AdvisoryEvent is one write guest-init's stateless advisory observed and
+// shipped over a guest-initiated vsock stream (DecodeStatelessAdvisoryFrame).
 // Wire-shaped at guest/init/stateless_advisory_linux.go::advisoryEvent
 // and forwarded to apid via pkg/vmmdgrpc/advisory_client.go. ADR-047
 // records the chain end-to-end; spec §17 G13 names the closed path
 // set this event belongs to.
 type AdvisoryEvent struct {
-	Path   string   // path observed (resolved from fanotify fd)
-	Masks  []string // canonical verbs: "create" | "modify" | "move" | "access" | "delete" | "other"
-	PID    int      // host-side process id at event time (best effort)
-	TsUnix int64    // ms since unix epoch
+	Path   string   // path written
+	Masks  []string // canonical verbs: "create" | "modify" | "move" | "other"
+	PID    int      // writer pid; 0 since the guest watches with inotify (ADR-047 amendment 2026-11-12)
+	TsUnix int64    // ms since unix epoch (guest clock)
 }
 
 // AdvisoryForwarder is the seam the Manager uses to ship a guest-init
@@ -645,8 +645,14 @@ type Instance struct {
 	// WakeRequest. It remains empty for either gRPC readiness or legacy
 	// TCP readiness. Stamped on Instance for readers that resolve it
 	// without a second request lookup (PR-C mirror).
-	HealthcheckPath          string
-	HealthcheckGRPC          bool
+	HealthcheckPath string
+	HealthcheckGRPC bool
+	// HealthcheckGRPCService is the health.v1 service gRPC readiness checked;
+	// plan-default liveness checks the same service.
+	HealthcheckGRPCService string
+	// RoutedPortRawTCP is WakeRequest.RoutedPortRawTCP: a raw TCP server
+	// gets no plan-default HTTP liveness probe.
+	RoutedPortRawTCP         bool
 	ImageHealthcheckRequired bool
 	// StartupDeadlineS is the per-app readiness budget from the lifecycle
 	// contract. 0 preserves the vmmd default for legacy callers.
@@ -2337,12 +2343,13 @@ type LivenessProbeConfig struct {
 	ConsecutiveFailures      int
 	CooldownSeconds          int
 	IdleResetOnDestroy       bool
-	// NotFoundIsAlive accepts a 404 from the plan-default probe path. It is
-	// set for an instance whose readiness contract is its TCP listener (a
-	// direct OCI image with no health path) and no liveness override: such
-	// an image never promised /healthz, and a 404 proves it serves HTTP, as
-	// deploy verification already accepts (H10-23).
-	NotFoundIsAlive bool
+	// UnpromisedPath marks an HTTP probe of the plan-default path on an app
+	// whose startup contract never proved that path: its readiness was a
+	// declared path such as /actuator/health, or its TCP listener (a direct
+	// OCI image with no health path, H10-23). Any answer below 500 (404,
+	// 401, 400, ...) then proves the server is alive; a timeout, a refused
+	// connection or a 5xx still fails (ADR-079 amendment 1).
+	UnpromisedPath bool
 }
 
 // LivenessRegistry owns the per-instance liveness-probe poll
@@ -2563,11 +2570,64 @@ func instanceHasNoHTTPContract(inst *Instance) bool {
 	return false
 }
 
+// livenessReadiness is the startup probe an instance passed: an HTTP path,
+// gRPC health, or (neither) its TCP listener, which rawTCP marks as a
+// declared raw TCP listener rather than an HTTP image.
+type livenessReadiness struct {
+	path        string
+	grpc        bool
+	grpcService string
+	rawTCP      bool
+	plan        api.Plan
+}
+
+// planDefaultLivenessAction picks what the plan-default liveness probe checks
+// when the deployment declares no liveness path or gRPC action (ADR-079
+// amendment 1). Liveness asks whether the server still answers, never whether
+// its dependencies are healthy, so a database outage cannot restart or park
+// an app:
+//   - gRPC readiness: the same health.v1 Check readiness proved. A gRPC
+//     server cannot answer an HTTP/1.1 GET, so the HTTP default killed every
+//     gRPC app ~10 s after boot (pulsewatch-grpc, liveness_conn_err). gRPC
+//     liveness is a Pro/Scale capability (api.Plan.GRPCLivenessAllowed), so
+//     on other plans the app gets no default probe; process exit still
+//     reports through ProcessExited, as for a worker.
+//   - TCP readiness on a declared raw TCP listener (a database, a game
+//     server): no default probe. Such a server answers an HTTP GET in its
+//     own protocol, or waits silently for a frame, so HTTP cannot judge it;
+//     process exit still reports through ProcessExited.
+//   - HTTP readiness on the plan-default path: strict, startup proved it.
+//   - any other readiness (a declared path such as /actuator/health, or the
+//     TCP listener of an HTTP image): the plan-default path is one the app
+//     never promised. Spring answered /healthz with 404 and every retail-*
+//     app was destroyed ~10 s after each boot, so every request paid a 12 s
+//     cold boot.
+func planDefaultLivenessAction(cfg LivenessProbeConfig, readiness livenessReadiness) LivenessProbeConfig {
+	if cfg.GRPC {
+		return cfg
+	}
+	if readiness.rawTCP && readiness.path == "" && !readiness.grpc {
+		cfg.PeriodSeconds = 0
+		return cfg
+	}
+	if readiness.grpc {
+		if !readiness.plan.GRPCLivenessAllowed() {
+			cfg.PeriodSeconds = 0
+			return cfg
+		}
+		cfg.Path, cfg.GRPC, cfg.GRPCService = "", true, readiness.grpcService
+		return cfg
+	}
+	cfg.UnpromisedPath = readiness.path != cfg.Path
+	return cfg
+}
+
 func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot int, override json.RawMessage) {
 	if m.livenessRegistry == nil {
 		return
 	}
 	cfg := m.livenessDefaultCfg
+	overrideAction := false
 	// Per-deployment override (api.DeploymentLivenessProbe) merges
 	// over the plan defaults. Same fail-soft shape as
 	// healthcheckPathFromDep (engine.go:3360): a malformed override
@@ -2585,10 +2645,12 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 				cfg.Path = ""
 				cfg.GRPC = true
 				cfg.GRPCService = ov.GRPC.Service
+				overrideAction = true
 			} else if ov.Path != "" {
 				cfg.Path = ov.Path
 				cfg.GRPC = false
 				cfg.GRPCService = ""
+				overrideAction = true
 			}
 			if ov.IntervalS > 0 {
 				cfg.PeriodSeconds = ov.IntervalS
@@ -2616,19 +2678,17 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 		}
 	}
 	noHTTPContract := false
-	tcpReadiness := false
+	var readiness *livenessReadiness
 	m.mu.Lock()
 	if inst := m.live[instance]; inst != nil {
 		cfg.ImageHealthcheckRequired = inst.ImageHealthcheckRequired
 		noHTTPContract = instanceHasNoHTTPContract(inst)
-		tcpReadiness = inst.HealthcheckPath == ""
+		readiness = &livenessReadiness{path: inst.HealthcheckPath, grpc: inst.HealthcheckGRPC, grpcService: inst.HealthcheckGRPCService,
+			rawTCP: inst.RoutedPortRawTCP, plan: inst.Plan}
 	}
 	m.mu.Unlock()
-	// On prod the default /healthz probe got 404 from nginx-unprivileged,
-	// parked its stable release as liveness_exhausted mid-canary and served
-	// 503s; a hang still fails the probe by timeout or refused connection.
-	if tcpReadiness && len(override) == 0 && !cfg.GRPC {
-		cfg.NotFoundIsAlive = true
+	if !overrideAction && readiness != nil {
+		cfg = planDefaultLivenessAction(cfg, *readiness)
 	}
 	// A declared image command is its liveness contract. Do not invent the
 	// plan-default /healthz endpoint for that image; explicit HTTP/gRPC
@@ -2649,7 +2709,8 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 	m.log.Debug("liveness: starting probe loop",
 		"instance", instance, "slot", slot,
 		"period_s", cfg.PeriodSeconds,
-		"consecutive", cfg.ConsecutiveFailures)
+		"consecutive", cfg.ConsecutiveFailures,
+		"path", cfg.Path, "grpc", cfg.GRPC, "unpromised_path", cfg.UnpromisedPath)
 	// The actual goroutine spawn + vsock dial logic lives in
 	// cmd/vmmd/liveness_recv.go (cmd-level binding). We hand the
 	// cmd helper a closure that knows how to launch the loop and
@@ -3328,8 +3389,8 @@ func (m *Manager) InstanceSidecarOwner(instance, sidecar string) (deploymentID, 
 }
 
 // ForwardStatelessAdvisory is the public Manager seam that turns
-// one guest-init fanotify batch into one apid audit row. The vsock
-// DGRAM receiver in cmd/vmmd calls this with the parsed batch.
+// one guest-init advisory batch into one apid audit row. vmmd's port-1025
+// stream receiver (cmd/vmmd) calls this with the decoded batch.
 //
 // ADR-035 best-effort: returns nil on a nil client (default-local)
 // and on a forward failure — the advisory is observation, not
@@ -3933,6 +3994,10 @@ type WakeRequest struct {
 	// them into the builder's secrets.env as a Docker config. Ignored for
 	// every VM that is not a builder.
 	BuildRegistryCredentials []BuildRegistryCredential
+	// BuildKitSeedDrive is a builder VM's writable drive2: builderd's copy of
+	// the node's BuildKit seed, beside drive1 (ADR-20261030122204). Empty for
+	// a two-drive builder and for every VM that is not a builder.
+	BuildKitSeedDrive string
 	// Port (issue #460 / ADR-053, PR-C) is the per-deployment runtime
 	// port the customer's app binds inside the guest. 0 = legacy 8080
 	// (netns.AppPort default). The host's published and readiness port
@@ -3953,6 +4018,10 @@ type WakeRequest struct {
 	HealthcheckGRPCService string
 	// ImageHealthcheckRequired requires a fresh guest command check before readiness (ADR-683).
 	ImageHealthcheckRequired bool
+	// RoutedPortRawTCP marks TCP readiness on a port the app declares as a
+	// public raw TCP listener (ADR-20261027090000). It gets no plan-default
+	// HTTP liveness probe (ADR-079 amendment 1).
+	RoutedPortRawTCP bool
 	// StartupDeadlineS is the per-app readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int
@@ -5574,6 +5643,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		PrivateNetworkExcluded: req.privateNetworkExcluded,
 		WakeID:                 wakeID, NodeID: fields.NodeID,
 		Plan: req.Plan, RequestConcurrency: req.RequestConcurrency, Port: req.Port, HealthcheckPath: req.HealthcheckPath, HealthcheckGRPC: req.HealthcheckGRPC,
+		HealthcheckGRPCService:   req.HealthcheckGRPCService,
+		RoutedPortRawTCP:         req.RoutedPortRawTCP,
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:           append(json.RawMessage(nil), req.ReadinessProbe...),
@@ -5689,7 +5760,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		needsPolicyApply := lease.CPUMillicores != policy.cpuMillicores || hasWorkloadName(inst.WorkloadNames, WorkloadNameMain)
 		if hasPolicy && !req.ExecutionOnly && needsPolicyApply {
 			if err := m.applyAppCPULimit(ctx, inst, policy.cpuMillicores); err != nil {
-				return nil, fmt.Errorf("wake %s: apply current app CPU policy: %w", req.Instance, err)
+				return nil, m.wakeStepError(lease, "apply current app CPU policy", err)
 			}
 			lease.CPUMillicores = policy.cpuMillicores
 			inst.Lease.CPUMillicores = policy.cpuMillicores
@@ -5714,7 +5785,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			delete(m.waking, req.Instance)
 			m.dropFunctionStartingLocked(req.Instance, inst.Lease.processGeneration)
 			m.mu.Unlock()
-			err = fmt.Errorf("wake %s: firecracker exited before lifecycle registration (exit code %d)", req.Instance, exitCode)
+			err = m.guestExitError(lease, exitCode, fmt.Errorf("wake %s: firecracker exited before lifecycle registration (exit code %d)", req.Instance, exitCode))
 			return nil, err
 		}
 		delete(m.waking, req.Instance)
@@ -7439,6 +7510,63 @@ func (m *Manager) applyAppCPULimit(ctx context.Context, inst *Instance, cpuMilli
 		return fmt.Errorf("VMM does not support live guest workload CPU policy")
 	}
 	return guestUpdater.UpdateAppWorkloadCPULimit(ctx, inst.Lease, cpuMillicores)
+}
+
+// wakeStepExitGrace bounds how long a failed post-boot wake step waits for
+// the process watcher to report a Firecracker exit. A VM that died fails the
+// step's vsock dial before the watcher has reaped it.
+var (
+	wakeStepExitGrace = time.Second
+	wakeStepExitPoll  = 20 * time.Millisecond
+)
+
+// wakeStepError reports a failed post-boot wake step. When Firecracker has
+// exited, the exit is the cause and the step's error (typically a refused
+// vsock dial) only a symptom, so the exit leads the message (Hunt 34 H34-35:
+// a guest that stopped during boot read as an app CPU policy fault).
+func (m *Manager) wakeStepError(lease Lease, step string, err error) error {
+	instance := lease.Instance
+	deadline := time.Now().Add(wakeStepExitGrace)
+	for {
+		m.mu.Lock()
+		exitCode, exited := m.pendingProcessExits[instance]
+		m.mu.Unlock()
+		if exited {
+			return m.guestExitError(lease, exitCode, fmt.Errorf("wake %s: firecracker exited during boot (exit code %d); %s then failed: %w", instance, exitCode, step, err))
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("wake %s: %s: %w", instance, step, err)
+		}
+		time.Sleep(wakeStepExitPoll)
+	}
+}
+
+// guestStopExplainer names why a guest stopped during its wake from what its
+// workloads printed (JailerVMM.ExplainGuestStop).
+type guestStopExplainer interface {
+	ExplainGuestStop(Lease) error
+}
+
+// guestExitError reports a Firecracker exit found after the guest passed
+// readiness. A guest stops on its own when guest-init exits, most often
+// because a supervised workload crash-looped, and the workload's output is
+// what the deploy needs to show: an essential companion whose command failed
+// stopped the guest just after the main workload became ready, and the
+// deploy said only that a vsock dial was refused (Hunt 34 H34-35). The
+// explainer's startup-crash problem carries that output to the caller; cause
+// stays in the chain for the operator log. Only a clean Firecracker exit is
+// the guest's own doing (guest-init's exit panics the kernel, which reboots,
+// and Firecracker exits 0); a signal or error exit stays a platform failure.
+func (m *Manager) guestExitError(lease Lease, exitCode int, cause error) error {
+	explainer, ok := m.vmm.(guestStopExplainer)
+	if !ok || exitCode != 0 {
+		return cause
+	}
+	explained := explainer.ExplainGuestStop(lease)
+	if explained == nil {
+		return cause
+	}
+	return fmt.Errorf("%w: %w", cause, explained)
 }
 
 func hasWorkloadName(names []string, want string) bool {
