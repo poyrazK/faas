@@ -46,6 +46,36 @@ func (q *Queries) Consume(ctx context.Context, db DBTX, arg ConsumeParams) (int6
 	return requests, err
 }
 
+const consumeExisting = `-- name: ConsumeExisting :one
+UPDATE data_api_shared_budgets SET
+ requests=CASE WHEN window_end <= $1 THEN 1 ELSE requests+1 END,
+ window_start=$1,window_end=$2
+WHERE app_id=$3 AND budget_key=$4
+ AND (window_end <= $1 OR requests < $5)
+RETURNING requests
+`
+
+type ConsumeExistingParams struct {
+	WindowStart  pgtype.Timestamptz
+	WindowEnd    pgtype.Timestamptz
+	AppID        string
+	BudgetKey    string
+	RequestLimit int64
+}
+
+func (q *Queries) ConsumeExisting(ctx context.Context, db DBTX, arg ConsumeExistingParams) (int64, error) {
+	row := db.QueryRow(ctx, consumeExisting,
+		arg.WindowStart,
+		arg.WindowEnd,
+		arg.AppID,
+		arg.BudgetKey,
+		arg.RequestLimit,
+	)
+	var requests int64
+	err := row.Scan(&requests)
+	return requests, err
+}
+
 const databaseTime = `-- name: DatabaseTime :one
 SELECT clock_timestamp()::timestamptz AS now
 `
@@ -57,8 +87,24 @@ func (q *Queries) DatabaseTime(ctx context.Context, db DBTX) (pgtype.Timestamptz
 	return now, err
 }
 
+const findKey = `-- name: FindKey :one
+SELECT budget_key FROM data_api_shared_budgets WHERE app_id=$1 AND budget_key=$2 FOR UPDATE
+`
+
+type FindKeyParams struct {
+	AppID     string
+	BudgetKey string
+}
+
+func (q *Queries) FindKey(ctx context.Context, db DBTX, arg FindKeyParams) (string, error) {
+	row := db.QueryRow(ctx, findKey, arg.AppID, arg.BudgetKey)
+	var budget_key string
+	err := row.Scan(&budget_key)
+	return budget_key, err
+}
+
 const lockApp = `-- name: LockApp :one
-SELECT id FROM apps WHERE id = $1 AND account_id = $2 AND deleted_at IS NULL FOR UPDATE
+SELECT id FROM apps WHERE id = $1 AND account_id = $2 AND deleted_at IS NULL FOR SHARE
 `
 
 type LockAppParams struct {
@@ -73,10 +119,19 @@ func (q *Queries) LockApp(ctx context.Context, db DBTX, arg LockAppParams) (stri
 	return id, err
 }
 
+const lockCapacity = `-- name: LockCapacity :exec
+SELECT pg_advisory_xact_lock(hashtextextended('gregale:data-budget:' || ($1::text::uuid)::text, 0))
+`
+
+func (q *Queries) LockCapacity(ctx context.Context, db DBTX, appID string) error {
+	_, err := db.Exec(ctx, lockCapacity, appID)
+	return err
+}
+
 const prune = `-- name: Prune :exec
 DELETE FROM data_api_shared_budgets AS expired WHERE (expired.app_id,expired.budget_key) IN (
- SELECT b.app_id,b.budget_key FROM data_api_shared_budgets AS b WHERE b.app_id = $1 AND b.window_end <= $2 LIMIT $3
-)
+ SELECT b.app_id,b.budget_key FROM data_api_shared_budgets AS b WHERE b.app_id = $1 AND b.window_end <= $2 LIMIT $3 FOR UPDATE SKIP LOCKED
+) AND expired.window_end <= $2
 `
 
 type PruneParams struct {

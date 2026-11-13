@@ -25,7 +25,7 @@ await client.connect()
 try {
   await client.query(` + "`" + `
     CREATE SCHEMA IF NOT EXISTS api;
-    CREATE TABLE IF NOT EXISTS api.journey_notes (id text PRIMARY KEY, body text NOT NULL);
+    CREATE TABLE IF NOT EXISTS api.journey_notes (id text PRIMARY KEY, body text NOT NULL, amount numeric NOT NULL DEFAULT 1.234567890123456789);
     ALTER TABLE api.journey_notes ENABLE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS anyone_reads ON api.journey_notes;
     CREATE POLICY anyone_reads ON api.journey_notes FOR SELECT
@@ -71,6 +71,7 @@ func TestDataAPI(t *testing.T) {
 	s.check("health_reports_ready", j.health)
 	s.check("anonymous_read_of_public_relation", j.anonymousRead)
 	s.check("other_relations_need_a_token", j.tokenRequired)
+	s.check("exact_numeric_types", j.exactTypes)
 	s.check("app_delete_refused_while_bound", j.appDeleteRefused)
 	s.step("data_api_delete", j.deleteAPI)
 }
@@ -152,6 +153,23 @@ func (j *dataAPIJourney) anonymousRead(t *testing.T) {
 	if !strings.Contains(string(r.body), `"id":"run"`) {
 		t.Fatalf("the public relation does not return the migrated row: %s", r)
 	}
+}
+
+// Exact numeric generation keeps the serving schema fingerprint while using
+// the SDK's number/string distinction for application numeric columns.
+func (j *dataAPIJourney) exactTypes(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "database.exact.ts")
+	j.tg.ok(t, 5*time.Minute, "data-api", "types", j.app, "--numeric-mode", "exact", "--output", output)
+	source, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"import type { ExactNumber }", `"amount": ExactNumber`, "// Schema fingerprint:"} {
+		if !strings.Contains(string(source), want) {
+			t.Errorf("generated exact types lack %q", want)
+		}
+	}
+	j.tg.ok(t, 5*time.Minute, "data-api", "types", j.app, "--numeric-mode", "exact", "--output", output, "--check")
 }
 
 func (j *dataAPIJourney) tokenRequired(t *testing.T) {

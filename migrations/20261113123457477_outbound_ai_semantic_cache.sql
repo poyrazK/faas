@@ -1,4 +1,4 @@
--- filename: 20261112195114474_outbound_ai_semantic_cache.sql
+-- filename: 20261113123457477_outbound_ai_semantic_cache.sql
 -- ADR 20261112194947: an AI integration can answer calls whose last user
 -- turn means the same as a cached call's. Its settings are one nullable
 -- jsonb object that needs an AI provider. The embedding calls settle under

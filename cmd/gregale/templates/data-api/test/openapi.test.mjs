@@ -80,3 +80,32 @@ test('zero-argument void RPCs omit required and response bodies; profiles stay i
   assert.equal(document.paths['/rpc/ping'].post.parameters[0].required, false)
   assert.equal(document.paths['/rpc/ping'].post.responses[200].schema, undefined)
 })
+
+test('DAPI012 cross-profile RPC row references resolve without exposing cross-profile paths', () => {
+  const snapshot = { schemas: ['api','other'], tables: [{ schema:'other',name:'items',view:false,relationships:[],columns:[{name:'id',type:'number',nullable:false}] }], enums:{}, functions:[{schema:'api',name:'items',args:[],returns:'Database["other"]["Tables"]["items"][\'Row\'][]'}] }
+  const swagger = enrichOpenAPI({paths:{'/rpc/items':{post:{responses:{200:{description:'OK'}}}}}},snapshot,'api')
+  assert.ok(swagger.definitions['other.items.Row'])
+  assert.equal(swagger.paths['/items'],undefined)
+  const doc=openAPI31(swagger)
+  assert.equal(doc.paths['/rpc/items'].post.responses[200].content['application/json'].schema.items.$ref,'#/components/schemas/other.items.Row')
+  assert.ok(doc.components.schemas['other.items.Row'])
+})
+
+test('DAPI013 schema dictionary keys and literal examples remain data', () => {
+ const properties={'$ref':{type:'string'},'x-nullable':{type:'number'},'example':{type:'string'}}
+ const literal={'$ref':'#/definitions/literal','x-nullable':true,properties:{'$ref':'unchanged'}}
+ const result=openAPI31({definitions:{Row:{type:'object',properties,example:literal,default:literal,enum:[literal]}}})
+ assert.deepEqual(result.components.schemas.Row.properties,properties)
+ assert.deepEqual(result.components.schemas.Row.example,literal)
+ assert.deepEqual(result.components.schemas.Row.default,literal)
+ assert.deepEqual(result.components.schemas.Row.enum,[literal])
+})
+
+test('DAPI006 exact numeric types keep the contract fingerprint and string literals',()=>{
+ const snapshot={schemas:['api'],tables:[{schema:'api',name:'items',view:false,relationships:[],columns:[{name:'number',type:'number',nullable:false},{name:'kind',type:'"number"',nullable:false}]}],functions:[],enums:{}}
+ const standard=generate(snapshot),exact=generate(snapshot,undefined,{numericMode:'exact'})
+ assert.match(exact,/import type \{ ExactNumber \} from '@gregale\/data'/)
+ assert.match(exact,/"number": ExactNumber/)
+ assert.match(exact,/"kind": "number"/)
+ assert.equal(/Schema fingerprint: (.+)/.exec(exact)[1],/Schema fingerprint: (.+)/.exec(standard)[1])
+})

@@ -85,6 +85,43 @@ an `invocation_wait_timeout` Problem to stderr. Ctrl-C exits with `130`.
 Stopping the CLI wait leaves the invocation running; inspect it later with
 `gregale invocations get <id>`.
 
+## HTTP diagnostics
+
+Put `--debug-http` before the command to diagnose CLI API requests. It works
+with human or JSON command output:
+
+```sh
+gregale --debug-http --json release get RELEASE_ID 2>http-debug.jsonl
+```
+
+Stdout keeps its existing format. Stderr receives JSON lines with
+`type: "http_debug"` and `schema_version: 1`: a `request_start`, then
+`response_headers` or `request_error`. `request_seq` pairs records within the
+invocation, including concurrent requests. Each line includes a UTC `at`
+timestamp, HTTP `method`, and a constant `route` label such as
+`/v1/deployments/{deployment}`. Unknown routes use a coarse resource label
+or `/[redacted]`; custom API base paths can therefore be fully redacted.
+
+A response includes `status_code` and `headers_ms`, the elapsed milliseconds
+until response headers arrive. This excludes reading the response body and
+the lifetime of a log stream. A single `X-Faas-Request-Id` response header is
+included as `request_id` only when it is 32 hex characters or a canonical
+UUID. Missing, repeated, or unrecognized IDs are omitted. Transport failures
+include a fixed `error_kind` (`deadline`, `cancelled`, `timeout`, `dns`, `tls`,
+`connection`, `transport`, or `missing_response`) instead of raw error text.
+
+The diagnostic records omit hosts, raw URLs, path arguments, queries, request
+and response bodies, and all other headers, including credentials and cookies.
+Existing command warnings and errors can still appear on stderr alongside
+them; select records by `type` when processing a capture. Debugging does not
+add requests, retries, or response-body reads. An unavailable stderr disables
+diagnostic writes without failing API requests.
+
+The flag affects only this invocation, has no saved setting or environment
+variable, and accepts `--debug-http=true` and `--debug-http=false`. When repeated,
+the last prefix value wins. Arguments after a command's `--` remain application
+arguments. Regenerate shell completion to include the new flag.
+
 ## Project and app defaults
 
 Finishing a successful `gregale start [path]` remembers the confirmed app in the

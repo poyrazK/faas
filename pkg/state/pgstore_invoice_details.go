@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/referrals"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -137,6 +138,9 @@ func (s *PgStore) upsertInvoiceWithLifecycle(ctx context.Context, params sqlc.Up
 		return fmt.Errorf("begin invoice upsert: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err = referrals.LockBillingAccount(ctx, tx, pgUUIDString(params.AccountID)); err != nil {
+		return err
+	}
 	q := sqlc.New()
 	row, err := q.UpsertInvoiceSnapshot(ctx, tx, params)
 	if err != nil {
@@ -157,6 +161,10 @@ func (s *PgStore) upsertInvoiceWithLifecycle(ctx context.Context, params sqlc.Up
 	if err := q.SetInvoiceDetailLifecycle(ctx, tx, sqlc.SetInvoiceDetailLifecycleParams{ID: row.ID, DetailLifecycle: encoded}); err != nil {
 		return fmt.Errorf("persist invoice lifecycle: %w", err)
 	}
+	if err := referrals.RecordPayment(ctx, tx, inv.ID); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit invoice upsert: %w", err)
 	}
