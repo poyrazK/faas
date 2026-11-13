@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 const exec = promisify(execFile);
 const sdk = fileURLToPath(new URL('..', import.meta.url));
 
-test('packed SDK exposes isolated public/preview clients and the legacy migration API', { timeout: 60_000 }, async t => {
+test('packed SDK exposes isolated clients, request options, diagnostics and the legacy migration API', { timeout: 60_000 }, async t => {
   const root = await mkdtemp(join(tmpdir(), 'gregale-client-isolation-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   // npm's JSON output lists thousands of generated files and can exceed the
@@ -39,6 +39,18 @@ test('packed SDK exposes isolated public/preview clients and the legacy migratio
     assert.equal(globalThis.fetch, original);
     assert.equal('flags' in a, false);
     assert.equal(typeof createPreviewClient('https://preview.test').flags, 'object');
+    const diagnostics = [];
+    const observed = createClient('https://options.test', { onResponse: info => diagnostics.push(info), fetch: async () =>
+      Response.json({ id: 'observed' }, { headers: { 'X-Request-ID': '11111111-1111-4111-8111-111111111111' } }) });
+    const own = [];
+    assert.equal((await observed.apps.getApp({ slug: 'observed' }, { timeoutMs: 1000, retry: false, onResponse: info => own.push(info) })).id, 'observed');
+    await observed.account.getAccount(undefined, { timeoutMs: 0 });
+    assert.equal(diagnostics.length, 2);
+    assert.equal(own[0], diagnostics[0]);
+    assert.ok(Object.isFrozen(own[0]));
+    assert.equal(own[0].requestId, '11111111-1111-4111-8111-111111111111');
+    const expired = createClient('https://deadline.test', { fetch: async () => new Promise(() => {}) });
+    await assert.rejects(expired.apps.getApp({ slug: 'deadline' }, { timeoutMs: 10 }), { name: 'TimeoutError' });
     const config = { ...OpenAPI };
     const legacy = new FaaSClient('https://legacy.test', { token: 'legacy', fetch: transport });
     try {
@@ -74,13 +86,21 @@ test('packed SDK exposes isolated public/preview clients and the legacy migratio
   `);
   await exec(process.execPath, ['app.mjs'], { cwd: app });
   await writeFile(join(app, 'app.ts'), `
-    import { createClient, type GregaleClient, type AppResponse, type CancelablePromise, FaaSClient, AppsService } from '@gregale/sdk-node';
-    import { createClient as createPreviewClient, type GregaleClient as PreviewClient, type ExecutionResponse, type ExecutionEvent, type ExecutionHelpers } from '@gregale/sdk-node/preview';
+    import { createClient, type GregaleClient, type AppResponse, type CancelablePromise, type RequestOptions, type ResponseInfo, type ResponseObserver, FaaSClient, AppsService } from '@gregale/sdk-node';
+    import { createClient as createPreviewClient, type GregaleClient as PreviewClient, type ExecutionResponse, type ExecutionEvent, type ExecutionHelpers, type RequestOptions as PreviewOptions } from '@gregale/sdk-node/preview';
     const client: GregaleClient = createClient('https://api.test');
     const request: CancelablePromise<AppResponse> = client.apps.getApp({ slug: 'typed' });
     request.cancel();
+    const observer: ResponseObserver = (info: ResponseInfo) => { const id: string | null = info.requestId; void id; };
+    const options: RequestOptions = { signal: new AbortController().signal, timeoutMs: 1000, retry: false, onResponse: observer };
+    const scoped: CancelablePromise<AppResponse> = client.apps.getApp({ slug: 'typed' }, options);
+    scoped.cancel();
+    void client.account.getAccount(undefined, options);
+    void client.apps.listApps(undefined, options);
     const preview: PreviewClient = createPreviewClient('https://api.test');
     void preview.flags;
+    const previewOptions: PreviewOptions = options;
+    void preview.runs.getExecution({ id: 'run' }, previewOptions);
     const helpers: ExecutionHelpers = preview;
     const execution: Promise<ExecutionResponse> = helpers.runExecution({ runtime: 'node22', source: 'console.log(1)' });
     const events: AsyncGenerator<ExecutionEvent, void, void> = helpers.watchExecution('run', { after: 1 });
@@ -93,8 +113,21 @@ test('packed SDK exposes isolated public/preview clients and the legacy migratio
     void client.flags;
     // @ts-expect-error generated method arguments remain checked
     client.apps.getApp({});
+    // @ts-expect-error request options cannot replace required API parameters
+    client.apps.getApp(options);
+    // @ts-expect-error request options remain outside API parameters
+    client.apps.getApp({ slug: 'typed', timeoutMs: 1000 });
+    // @ts-expect-error timeout is numeric
+    client.apps.getApp({ slug: 'typed' }, { timeoutMs: '1000' });
+    function immutable(info: ResponseInfo) {
+      // @ts-expect-error response metadata is immutable
+      info.status = 500;
+    }
+    void immutable;
     const legacy = new FaaSClient('https://api.test');
     void AppsService.getApp({ slug: 'legacy' });
+    // @ts-expect-error static legacy methods keep their original signature
+    void AppsService.getApp({ slug: 'legacy' }, options);
     legacy.uninstall();
   `);
   await writeFile(join(app, 'tsconfig.json'), JSON.stringify({

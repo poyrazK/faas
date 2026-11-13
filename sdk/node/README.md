@@ -301,6 +301,66 @@ pins an instance default for resuming one operation, and
 `setIdempotencyKey(undefined)` clears it. Explicit request keys take precedence.
 Use a distinct key for every independent mutation, especially concurrent ones.
 
+### Per-request options and response diagnostics
+
+Bound generated methods from both factories accept an optional second
+`RequestOptions` argument. Existing calls and `CancelablePromise` return types
+remain valid. Keep API parameters in the first argument:
+
+```ts
+import { createClient, type ResponseInfo } from '@gregale/sdk-node';
+
+const responses: ResponseInfo[] = [];
+const client = createClient('https://api.example.com', {
+  token: process.env.GREGALE_TOKEN,
+  onResponse: info => { responses.push(info); },
+});
+const app = await client.apps.getApp({ slug: 'hello' }, {
+  signal: AbortSignal.timeout(5000),
+  timeoutMs: 3000,
+  retry: false,
+  onResponse: info => { console.log(info.requestId, info.status); },
+});
+// Methods without API parameters use undefined in the first slot.
+const account = await client.account.getAccount(undefined, { timeoutMs: 1000 });
+```
+
+`signal` stops this call with the caller's abort reason. `timeoutMs` overrides
+the client timeout for this call; ordinary requests default to 30 seconds.
+The total budget covers asynchronous header resolution, fetch, all retry
+attempts and backoff, and response body consumption. A deadline rejects with
+`TimeoutError`. Accept integers from 0 through 2147483647; zero disables the
+deadline. `.cancel()` retains its existing `CancelError` contract. Options and
+retry policies are copied at invocation, so concurrent calls keep separate
+budgets and policies. `retry: false` disables HTTP retries for one call;
+`retry: { maxAttempts: 3, backoffMs: 100 }` overrides the client policy.
+
+Cancellation stops local work. It does not prove a mutation was rolled back
+on the server. Retain the operation's idempotency key and reconcile uncertain
+outcomes before retrying a write.
+
+Client and per-call `onResponse` observers both receive the same frozen
+`ResponseInfo` for each HTTP response, including intermediate retry responses:
+
+| Field | Meaning |
+| --- | --- |
+| `requestId` | UUIDv4 from `X-Request-ID`, or `null` when missing or invalid |
+| `status` | HTTP status, before body decoding |
+| `attempt` | One-based attempt number within this HTTP call |
+| `durationMs` | Monotonic time for this attempt until response headers; excludes body reads and backoff |
+
+Metadata contains no URL, credentials, body, or arbitrary headers. A response
+event does not indicate that body decoding or the operation completed.
+Failures without a response emit no event, and late custom-fetch responses
+after a scoped call was cancelled are discarded. Observers are not awaited;
+their exceptions and rejected promises do not affect the request.
+
+The second argument applies to isolated generated namespaces such as
+`client.apps` and `client.runs`. Legacy static services keep their existing
+signatures. Bound `runExecution` and `watchExecution` keep their own options;
+the client-wide observer also covers their submission, SSE connection, and
+receipt responses.
+
 ## Supported surface
 
 ### Resumable managed realtime preview

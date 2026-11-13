@@ -10,6 +10,7 @@
 // Static service exports and FaaSClient retain their legacy shared state.
 
 export { createClient, type GregaleClient } from './isolated-client.js';
+export type { RequestOptions, ResponseInfo, ResponseObserver } from './request-options.js';
 
 // Generated runtime core, shared with the preview entry.
 export {
