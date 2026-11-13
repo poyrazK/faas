@@ -490,7 +490,10 @@ func writeJSONProblem(p api.Problem) error {
 }
 
 func writeJSONProblemTo(w io.Writer, p api.Problem) error {
-	b, err := json.Marshal(p)
+	b, err := json.Marshal(struct {
+		api.Problem
+		RequestID string `json:"request_id,omitempty"`
+	}{Problem: p, RequestID: safeProblemRequestID(p)})
 	if err != nil {
 		return err
 	}
@@ -502,9 +505,10 @@ func writeJSONProblemTo(w io.Writer, p api.Problem) error {
 func writeJSONProblemWithExit(w io.Writer, p api.Problem, code int) error {
 	b, err := json.Marshal(struct {
 		api.Problem
-		Category string `json:"category"`
-		ExitCode int    `json:"exit_code"`
-	}{p, exitCategory(code), code})
+		Category  string `json:"category"`
+		ExitCode  int    `json:"exit_code"`
+		RequestID string `json:"request_id,omitempty"`
+	}{Problem: p, Category: exitCategory(code), ExitCode: code, RequestID: safeProblemRequestID(p)})
 	if err != nil {
 		return err
 	}
