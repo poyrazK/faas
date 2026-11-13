@@ -55,6 +55,14 @@ stays open.
 
 ## Public gRPC
 
+The Gregale gateways preserve gRPC trailers. The hosting front also needs to
+support them: Cloudflare's public Tunnel hostnames do not support gRPC.
+On Gregale's current Tunnel app front, successful calls can deliver messages
+without the final `grpc-status`, causing standard clients to fail. Enabling
+the zone gRPC toggle alone does not establish support. Ask the operator for a
+verified direct-origin route before relying on public gRPC through this front.
+gRPC-Web requests are not translated.
+
 When Gregale itself refuses a gRPC call, before it reaches your app, the
 client receives a gRPC status, not an HTTP error page. Examples are a missing
 bearer token, a rate limit, a timed-out wake, or maintenance. `grpc-message`
@@ -77,7 +85,8 @@ carries the reason and the stable problem code, for example
 | anything else | `UNKNOWN` |
 
 Your app's own gRPC responses, including their `grpc-status` trailers, pass
-through unchanged. gRPC-Web requests are not translated.
+through the Gregale gateways unchanged; the front limitation above still
+applies.
 
 ## Long-lived streams
 

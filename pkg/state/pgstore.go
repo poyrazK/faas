@@ -7806,7 +7806,33 @@ func (s *PgStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment
 	return s.createDeployment(ctx, d, &activity, nil)
 }
 
+// createDeployment reruns the whole create when its traffic policy analysis
+// ran out of time, as app delete does: the analysis runs before COMMIT, so a
+// refused attempt saved nothing. Concurrent deploys of a project's services
+// tripped the 2 s analysis budget and a raw API caller got 422
+// traffic_policy_too_complex with Retry-After 2 (2026-11-12 agent feedback);
+// only the Go client resent it. Each attempt gets its own copy of activity,
+// which the create stamps with the new deployment.
 func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput, cloneInputs ...*projectEnvironmentCloneDeploymentInput) (Deployment, int64, error) {
+	var created Deployment
+	var outboxID int64
+	err := retryTrafficAnalysisTimeout(ctx, func() error {
+		var attemptActivity *OrgActivity
+		if activity != nil {
+			copied := *activity
+			attemptActivity = &copied
+		}
+		var err error
+		created, outboxID, err = s.createDeploymentOnce(ctx, d, attemptActivity, promotionInput, cloneInputs...)
+		if err == nil && activity != nil {
+			*activity = *attemptActivity
+		}
+		return err
+	})
+	return created, outboxID, err
+}
+
+func (s *PgStore) createDeploymentOnce(ctx context.Context, d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput, cloneInputs ...*projectEnvironmentCloneDeploymentInput) (Deployment, int64, error) {
 	if d.submissionAttemptID != "" && !api.ValidDeploymentAttemptID(d.submissionAttemptID) {
 		return Deployment{}, 0, ErrInvalidArgument
 	}

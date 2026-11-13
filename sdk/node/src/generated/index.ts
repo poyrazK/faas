@@ -606,6 +606,7 @@ export type { DataPipeline } from './models/DataPipeline.js';
 export type { DataPipelineCapacity } from './models/DataPipelineCapacity.js';
 export type { DataPipelineHealth } from './models/DataPipelineHealth.js';
 export type { DataPipelineList } from './models/DataPipelineList.js';
+export type { DataPipelineWALRetention } from './models/DataPipelineWALRetention.js';
 export type { DataRepairHealth } from './models/DataRepairHealth.js';
 export type { DataRepairHealthItem } from './models/DataRepairHealthItem.js';
 export type { DataRepairPhaseHealth } from './models/DataRepairPhaseHealth.js';

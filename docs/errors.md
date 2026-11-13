@@ -11,10 +11,18 @@ On app and API requests, Gregale sends its own timeouts and failed
 connections to your app as 503 rather than 502 or 504. The response carries
 its `code` and the `X-Faas-Error-Code` header, so the problem body and request
 id reach you through Cloudflare, which replaces 502 and 504 bodies with its
-own page. A 502
-or 504 that your app returns itself is passed on unchanged, and Cloudflare
+own page. A 502 or 504 that your app returns itself keeps its status, and Cloudflare
 then shows its own error page in place of your body. Key automation on `code`
 or `X-Faas-Error-Code`, not on the status.
+
+On the Free Cloudflare front, a customer-originated 502/504 JSON body can
+therefore arrive as plain `error code: 502` or `error code: 504`.
+Customer-originated 500 and 503 bodies pass through. If your client needs a
+structured body for temporary unavailability, your app can deliberately use
+503 with its own stable error code. Gregale does not change customer status
+codes. Preserving arbitrary origin 502/504 bodies requires a separately
+supported front; Cloudflare documents origin error page pass-through as an
+Enterprise feature.
 
 | Code family | Meaning | Next step |
 |---|---|---|
