@@ -2743,8 +2743,12 @@ connection is lost. Source uploads retain their separate temporary-input
 lifecycle.
 
 Tool output schemas require stable plan, receipt and identity fields while
-allowing additive native evidence. Errors and plan/status receipts include
-`schema_version: 1` and a structured `recovery` object. Agents should follow
+allowing additive native evidence. They describe successful results only: an
+error is answered with `isError` and structured content that follows one
+error contract for every tool, served as the resource
+`gregale://contracts/errors` (code, message, `recovery`). Errors and
+plan/status receipts include `schema_version: 1` and a structured `recovery`
+object. Agents should follow
 `recovery.action` rather than infer a retry from problem prose:
 
 | Action | Agent behavior |
