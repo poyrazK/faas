@@ -5892,6 +5892,9 @@ func (s *server) handler() http.Handler {
 			return s.durable.Hidden(r) || s.liveGate().Hidden(r) || s.realtimePreviewProbe(r) || s.capabilityPathHidden(r) || s.agentPathHidden(r) || s.upgrades().HidesUpgrade(r)
 		})),
 	)))))
+	// ADR-20261111114059 amendment 2026-11-13: a budget preview reaches
+	// only routes that price before writing.
+	inner = agentPreviewGuard(mux, inner)
 	orgProjectInner = inner
 	return middleware.RequestID(httpsec.Static(httpsec.Nonce(
 		func(*http.Request) bool { return true },
