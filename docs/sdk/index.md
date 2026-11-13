@@ -7,7 +7,7 @@ for the current install paths and what is still blocking release.
 | Language | Install name            | Import as        | Source                    | Generator                          |
 |----------|-------------------------|------------------|---------------------------|------------------------------------|
 | Go       | `github.com/gregale-dev/gregale-go` | `faas`  | `sdk/go/internal/`        | hand-written (extracted from `pkg/api/` in PR 2) |
-| Node     | `@gregale/sdk-node`     | `@gregale/sdk-node` | `sdk/node/src/generated/` | `openapi-typescript-codegen@0.72.1` |
+| Node     | `@gregale/sdk-node`     | `@gregale/sdk-node` | `sdk/node/src/generated/` | `openapi-typescript-codegen@0.31.0` |
 | Python   | `gregale-sdk`           | `faas_sdk`       | `sdk/python/faas_sdk/`    | `openapi-python-client==0.29.0`     |
 
 The Python install name and import name differ on purpose (`pip install
@@ -51,6 +51,11 @@ path filter (e.g. a `.github/workflows/ci.yml` Node-version bump that changes
 generator output).
 
 ## Cross-language smoke fixture
+
+The public-tree installation gate additionally installs the actual Node
+tarball/Python wheel into clean consumers and runs each SDK README's marked
+quickstart. Go is exercised from a separate module against its exported tree.
+See [SDK consumer installation checks](../../sdk/install-tests/README.md).
 
 `sdk/fakeapid/` is a Go stdlib-only binary that mimics apid's wire shape for
 the 5 routes the SDKs exercise. All three SDKs spawn it as a subprocess from

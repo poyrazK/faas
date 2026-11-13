@@ -28,13 +28,9 @@ webhook requests. See
 [`docs/webhook-receiver-verification.md`](../../docs/webhook-receiver-verification.md)
 for usage and delivery-ID deduplication guidance.
 
-> **Heads-up: publish state.** The manifest name is now the conventional
-> scoped form `@gregale/sdk-node`. It was previously `gregale` + `/skd-node`
-> — a typo that npm rejects outright, since an unscoped name may not contain
-> a slash. `private` is cleared and the `repository` field is set. `publishConfig.access` stays `restricted` until the licensing
-> question in [`sdk/README-publishing.md`](../README-publishing.md) is
-> settled — the current LICENSE is proprietary and non-redistributable.
-> **Nothing is on the public npm registry yet.**
+> **Publication:** this client SDK is Apache-2.0 licensed and configured for
+> public npm access. It is not published to npm yet. Use the installation
+> steps below; [SDK publishing](../README-publishing.md) tracks release setup.
 >
 > **Heads-up: pre-1.0.** Version `0.1.0` is the pre-1.0 signal. The
 > public API may shift between `0.x` releases. Pin to an exact version
@@ -50,19 +46,15 @@ for usage and delivery-ID deduplication guidance.
 
 ## Install
 
-Once the package is published:
-
-```sh
-npm install @gregale/sdk-node
-```
-
-**Today it is not published yet**, so install from a locally built tarball.
+Install from a pinned checkout of the public SDK repository.
 npm cannot install a package from a subdirectory of a git repo, and `dist/`
 is a build artifact that is not committed.
 
 ```sh
 git clone https://github.com/gregale-dev/gregale-js.git
-cd gregale-js/packages/sdk-node
+cd gregale-js
+git checkout <commit>
+cd packages/sdk-node
 npm ci && npm run build
 npm pack --pack-destination /tmp     # -> /tmp/gregale-sdk-node-0.1.0.tgz
 
@@ -70,9 +62,35 @@ cd /path/to/your/project
 npm install /tmp/gregale-sdk-node-0.1.0.tgz
 ```
 
+Replace `<commit>` with the full SHA of the SDK revision you reviewed. Commit
+the tarball inside your project and the updated lockfile for reproducible
+builds; see [Install the SDKs](../../docs/sdks.md#node). Maintainers can also
+obtain a verified tarball from the `sdk-mirror` workflow's
+`sdk-install-gregale-js` artifact, with its checksum in `sdk-install.json`.
+
+### First request
+
+Use your existing credential through `FAAS_TOKEN`, never a literal in source:
+
+<!-- sdk-install-quickstart:start -->
+```js
+import { AccountService, FaaSClient } from '@gregale/sdk-node';
+
+const client = new FaaSClient(process.env.FAAS_API ?? 'https://api.gregale.dev', {
+  token: process.env.FAAS_TOKEN,
+});
+try {
+  const account = await AccountService.getAccount();
+  console.log(account.plan);
+} finally {
+  client.uninstall();
+}
+```
+<!-- sdk-install-quickstart:end -->
+
 ## PostgreSQL pools across checkpoint, restore and thaw
 
-The `@gregale/sdk-node/postgres/runtime` subpath exports `createPostgresPool`,
+The `@gregale/sdk-node/preview/postgres/runtime` subpath exports `createPostgresPool`,
 `postgresPoolConfig`, and `PostgresPoolError`. Install `pg` separately. This
 runtime has no control-plane client or driver dependency, and does not install
 process handlers. The CLI's `rest-api-postgres` starter bundles the same compiled
@@ -271,10 +289,11 @@ it installs or removes its fetch wrapper. Keep at most one legacy singleton.
 
 For the complete generated surface, import `createClient` from
 `@gregale/sdk-node/preview`; the default factory retains the GA/beta boundary.
-Standalone helpers and the legacy preview `FaaSClient` convenience methods are
-not bound by this factory. Helpers that read shared `OpenAPI` still require the
-legacy singleton; use the corresponding generated namespace method for isolated
-requests. Helpers with explicit authentication options keep their own contract.
+The preview factory also binds `client.runExecution(...)` and
+`client.watchExecution(...)` to the client. Standalone execution exports and
+other helpers that read shared `OpenAPI` retain the legacy singleton contract;
+use bound client methods for isolated requests. Helpers with explicit
+authentication options keep their own contract.
 
 Mutations receive a fresh key per logical call, reused across retries. Prefer
 the method's `idempotencyKey` option when available. `setIdempotencyKey(key)`
@@ -1007,6 +1026,16 @@ as it is emitted and reconnects with the latest event cursor if the SSE
 connection drops:
 
 ```ts
+import { createClient } from '@gregale/sdk-node/preview';
+
+const client = createClient('https://api.example.com', {
+  token: process.env.GREGALE_API_KEY,
+});
+const execution = await client.runs.createExecution({
+  requestBody: { runtime: 'node22', source: "console.log('hello')" },
+  idempotencyKey: 'my-logical-execution',
+});
+
 for await (const event of client.watchExecution(execution.id)) {
   if (event.type === 'stdout' || event.type === 'stderr') {
     process.stdout.write(event.data.chunk ?? '');
@@ -1015,8 +1044,9 @@ for await (const event of client.watchExecution(execution.id)) {
 }
 ```
 
-`RunsService.streamExecutionEvents()` remains available when a raw SSE body
-is needed. `watchExecution` is the recommended agent-runtime path.
+`client.runs.streamExecutionEvents()` remains available for the generated
+buffered SSE response. `client.watchExecution` incrementally consumes the live
+body and is the recommended agent-runtime path.
 
 For the common submit-and-wait flow, `runExecution` composes create, resumable
 watching, and the terminal receipt:
@@ -1025,12 +1055,49 @@ watching, and the terminal receipt:
 const receipt = await client.runExecution(
   { runtime: 'node22', source: "console.log('hello')" },
   {
+    idempotencyKey: 'another-logical-execution',
+    signal: AbortSignal.timeout(60_000),
     onEvent: (event) => {
       if (event.type === 'stdout') process.stdout.write(event.data.chunk ?? '');
     },
   },
 );
 ```
+
+Both methods are available on the isolated preview client. Tokens, endpoint
+path prefixes, transport, logging, retries, and idempotency settings stay bound
+to that client. Each invocation captures one configuration snapshot: changing
+the client token or endpoint affects future workflows, while an active workflow
+keeps its original configuration through reconnects and the final receipt GET.
+`watchExecution` captures when called, before its iterator is first consumed.
+Detached helper methods keep their client binding.
+
+Reconnecting only reads events; it never repeats execution submission. Overlapping
+frames with an already seen integer event ID are skipped. Cursorless events
+retain their delivery semantics and can repeat. Event callbacks run in order;
+callback errors stop observation and release the stream. An initial connection
+failure, authorization error, or malformed event is surfaced to the caller.
+After connecting, transient failures reconnect until completion or cancellation.
+
+Pass an `AbortSignal` to bound the whole workflow, including submission,
+reconnect delays, body reads, and the final receipt request. A client's
+`timeoutMs` applies to each HTTP request; ordinary requests default to 30 seconds,
+and SSE has no default deadline. Aborting one workflow stops its local I/O;
+it does not request server-side execution cancellation. Use
+`client.runs.cancelExecution({ id })` to request that separately.
+
+The returned terminal receipt includes result data and exported artifacts;
+use `decodeExecutionArtifact` to verify and decode an artifact. For recovery
+after a process restart, retain the receipt ID from `client.runs.createExecution`
+and the last successfully processed event ID, then resume with
+`client.watchExecution(id, { after, signal })`. Cursor state in a running iterator
+is held in memory. To rotate credentials during observation, start a new watcher
+from the retained cursor after updating the client.
+
+Existing `FaaSClient` convenience methods and standalone `runExecution` /
+`watchExecution` exports remain available and use shared process configuration.
+Migrate by replacing `new FaaSClient(...)` with the preview `createClient(...)`
+and calling these methods on the returned client.
 
 The source/files bundle is available only in the disposable guest's ephemeral
 scratch filesystem; no customer storage disk is attached.
