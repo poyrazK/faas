@@ -1635,8 +1635,14 @@ type WakeResponse struct {
 	// The contained environment branch profile was installed before guest
 	// execution (ADR-20261031193635).
 	EnvironmentBranchContained bool `protobuf:"varint,20,opt,name=environment_branch_contained,json=environmentBranchContained,proto3" json:"environment_branch_contained,omitempty"`
-	unknownFields              protoimpl.UnknownFields
-	sizeCache                  protoimpl.SizeCache
+	// The base scan gate admitted this boot only inside the grace that keeps
+	// apps already serving on a base waking after a scan finds a fixable
+	// CRITICAL vulnerability in it (api.BaseScanCriticalBootGrace). schedd
+	// refuses a new deployment's prime that reports it. Older vmmd never sets
+	// it; it refused such boots outright.
+	BaseScanGrace bool `protobuf:"varint,21,opt,name=base_scan_grace,json=baseScanGrace,proto3" json:"base_scan_grace,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *WakeResponse) Reset() {
@@ -1805,6 +1811,13 @@ func (x *WakeResponse) GetSupportsImageHealthcheckMonitoring() bool {
 func (x *WakeResponse) GetEnvironmentBranchContained() bool {
 	if x != nil {
 		return x.EnvironmentBranchContained
+	}
+	return false
+}
+
+func (x *WakeResponse) GetBaseScanGrace() bool {
+	if x != nil {
+		return x.BaseScanGrace
 	}
 	return false
 }
@@ -21852,7 +21865,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"capture_id\x18\t \x01(\tR\tcaptureId\x12\x1d\n" +
 	"\n" +
 	"sealed_key\x18\n" +
-	" \x01(\fR\tsealedKeyJ\x04\b\x02\x10\x03\"\xbf\a\n" +
+	" \x01(\fR\tsealedKeyJ\x04\b\x02\x10\x03\"\xe7\a\n" +
 	"\fWakeResponse\x12(\n" +
 	"\x10rehearsal_run_id\x18\x13 \x01(\tR\x0erehearsalRunId\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
@@ -21876,7 +21889,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x1aimage_healthcheck_verified\x18\x10 \x01(\bR\x18imageHealthcheckVerified\x12<\n" +
 	"\x1asupports_image_healthcheck\x18\x11 \x01(\bR\x18supportsImageHealthcheck\x12Q\n" +
 	"%supports_image_healthcheck_monitoring\x18\x12 \x01(\bR\"supportsImageHealthcheckMonitoring\x12@\n" +
-	"\x1cenvironment_branch_contained\x18\x14 \x01(\bR\x1aenvironmentBranchContained\"\xc8\x02\n" +
+	"\x1cenvironment_branch_contained\x18\x14 \x01(\bR\x1aenvironmentBranchContained\x12&\n" +
+	"\x0fbase_scan_grace\x18\x15 \x01(\bR\rbaseScanGrace\"\xc8\x02\n" +
 	"\x19CreateFromSnapshotRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12.\n" +
 	"\x03app\x18\x02 \x01(\v2\x1c.onebox.faas.vmmd.v1.AppSpecR\x03app\x12<\n" +

@@ -857,6 +857,18 @@ const (
 	// blocking findings still refuse at once.
 	SharedBaseScanFailureGrace = 24 * time.Hour
 
+	// BaseScanCriticalBootGrace is how long after a scan of an unchanged
+	// shared runtime base first finds a fixable CRITICAL vulnerability vmmd
+	// keeps booting it for apps already serving on it. A new Grype database
+	// marking a CRITICAL in, say, the node22 base refused every cold boot and
+	// restore on it, so every app on that runtime stopped waking until a
+	// patched base shipped (Hunt 12 H12-1; deploy-path review P5). New
+	// deployments on the base are still refused at once (schedd's prime
+	// refuses a boot vmmd admitted under this grace), and vmmd alerts while
+	// it lasts. Scanner failures and missing or stale scan records still
+	// refuse at once.
+	BaseScanCriticalBootGrace = 72 * time.Hour
+
 	// Safety bounds for a complete filesystem projection handed to Grype.
 	// These are separate from the tenant's rootfs/disk entitlements.
 	ApplicationStandardRuntimeScanMaxBytes           int64 = 32 << 30
