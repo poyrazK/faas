@@ -267,17 +267,17 @@ type Paths struct {
 	Kernel string // /srv/fc/base/vmlinux-6.1.x
 }
 
-// AdvisoryEvent is one fanotify event the guest-init
-// stateless_advisory_linux.go observed and shipped over vsock DGRAM.
+// AdvisoryEvent is one write guest-init's stateless advisory observed and
+// shipped over a guest-initiated vsock stream (DecodeStatelessAdvisoryFrame).
 // Wire-shaped at guest/init/stateless_advisory_linux.go::advisoryEvent
 // and forwarded to apid via pkg/vmmdgrpc/advisory_client.go. ADR-047
 // records the chain end-to-end; spec §17 G13 names the closed path
 // set this event belongs to.
 type AdvisoryEvent struct {
-	Path   string   // path observed (resolved from fanotify fd)
-	Masks  []string // canonical verbs: "create" | "modify" | "move" | "access" | "delete" | "other"
-	PID    int      // host-side process id at event time (best effort)
-	TsUnix int64    // ms since unix epoch
+	Path   string   // path written
+	Masks  []string // canonical verbs: "create" | "modify" | "move" | "other"
+	PID    int      // writer pid; 0 since the guest watches with inotify (ADR-047 amendment 2026-11-12)
+	TsUnix int64    // ms since unix epoch (guest clock)
 }
 
 // AdvisoryForwarder is the seam the Manager uses to ship a guest-init
@@ -645,8 +645,14 @@ type Instance struct {
 	// WakeRequest. It remains empty for either gRPC readiness or legacy
 	// TCP readiness. Stamped on Instance for readers that resolve it
 	// without a second request lookup (PR-C mirror).
-	HealthcheckPath          string
-	HealthcheckGRPC          bool
+	HealthcheckPath string
+	HealthcheckGRPC bool
+	// HealthcheckGRPCService is the health.v1 service gRPC readiness checked;
+	// plan-default liveness checks the same service.
+	HealthcheckGRPCService string
+	// RoutedPortRawTCP is WakeRequest.RoutedPortRawTCP: a raw TCP server
+	// gets no plan-default HTTP liveness probe.
+	RoutedPortRawTCP         bool
 	ImageHealthcheckRequired bool
 	// StartupDeadlineS is the per-app readiness budget from the lifecycle
 	// contract. 0 preserves the vmmd default for legacy callers.
@@ -1208,6 +1214,13 @@ type Manager struct {
 	// envelopes before any is opened (ADR 20261028161502, amendment 1).
 	// nil checks nothing.
 	runtimeSignatures *sealsig.RuntimeChecker
+	// runtimeOpener, when set, opens app-secret entries in place of
+	// hostIdentities: the control plane's secretd (ADR-20261110210000 §3).
+	// nil opens them on this node.
+	runtimeOpener RuntimeSecretOpener
+	// captureRecipient, when set, is what crash-capture keys are sealed to
+	// in place of the first host identity's recipient (slice 3e).
+	captureRecipient *age.X25519Recipient
 	// conntrackCap is the effective per-instance conntrack cap. Probed once
 	// at construction from api.ConntrackCapProbe(): DefaultConntrackCap when
 	// the kernel supports ct expressions in netns (CONFIG_NF_CONNTRACK_NET_NS),
@@ -1713,6 +1726,23 @@ func (m *Manager) SetHostIdentities(ids []*age.X25519Identity) {
 // production wires it before serving traffic.
 func (m *Manager) RequireSecretBinding(required bool) {
 	m.requireSecretBinding = required
+}
+
+// RuntimeSecretOpener opens an app's selected app-secret entries somewhere
+// other than this node (ADR-20261110210000 §3: the control plane's secretd).
+// It returns one value per entry, keyed by entry.Key, and refuses any entry
+// whose envelope is not bound to the app's account or does not hold exactly
+// its selected source key.
+type RuntimeSecretOpener interface {
+	OpenAppSecrets(ctx context.Context, appID string, entries []SealedEnvEntry) (map[string]string, error)
+}
+
+// SetRuntimeSecretOpener routes every app-secret open (wake env, sidecar app
+// secrets, live secret reload) through o instead of this node's runtime
+// identities. Writer signatures are still checked here first. nil restores
+// local opening. NOT safe to call concurrently with Wake.
+func (m *Manager) SetRuntimeSecretOpener(o RuntimeSecretOpener) {
+	m.runtimeOpener = o
 }
 
 // WithRuntimeSecretSignatures makes every path that opens runtime secrets
@@ -2337,12 +2367,13 @@ type LivenessProbeConfig struct {
 	ConsecutiveFailures      int
 	CooldownSeconds          int
 	IdleResetOnDestroy       bool
-	// NotFoundIsAlive accepts a 404 from the plan-default probe path. It is
-	// set for an instance whose readiness contract is its TCP listener (a
-	// direct OCI image with no health path) and no liveness override: such
-	// an image never promised /healthz, and a 404 proves it serves HTTP, as
-	// deploy verification already accepts (H10-23).
-	NotFoundIsAlive bool
+	// UnpromisedPath marks an HTTP probe of the plan-default path on an app
+	// whose startup contract never proved that path: its readiness was a
+	// declared path such as /actuator/health, or its TCP listener (a direct
+	// OCI image with no health path, H10-23). Any answer below 500 (404,
+	// 401, 400, ...) then proves the server is alive; a timeout, a refused
+	// connection or a 5xx still fails (ADR-079 amendment 1).
+	UnpromisedPath bool
 }
 
 // LivenessRegistry owns the per-instance liveness-probe poll
@@ -2563,11 +2594,64 @@ func instanceHasNoHTTPContract(inst *Instance) bool {
 	return false
 }
 
+// livenessReadiness is the startup probe an instance passed: an HTTP path,
+// gRPC health, or (neither) its TCP listener, which rawTCP marks as a
+// declared raw TCP listener rather than an HTTP image.
+type livenessReadiness struct {
+	path        string
+	grpc        bool
+	grpcService string
+	rawTCP      bool
+	plan        api.Plan
+}
+
+// planDefaultLivenessAction picks what the plan-default liveness probe checks
+// when the deployment declares no liveness path or gRPC action (ADR-079
+// amendment 1). Liveness asks whether the server still answers, never whether
+// its dependencies are healthy, so a database outage cannot restart or park
+// an app:
+//   - gRPC readiness: the same health.v1 Check readiness proved. A gRPC
+//     server cannot answer an HTTP/1.1 GET, so the HTTP default killed every
+//     gRPC app ~10 s after boot (pulsewatch-grpc, liveness_conn_err). gRPC
+//     liveness is a Pro/Scale capability (api.Plan.GRPCLivenessAllowed), so
+//     on other plans the app gets no default probe; process exit still
+//     reports through ProcessExited, as for a worker.
+//   - TCP readiness on a declared raw TCP listener (a database, a game
+//     server): no default probe. Such a server answers an HTTP GET in its
+//     own protocol, or waits silently for a frame, so HTTP cannot judge it;
+//     process exit still reports through ProcessExited.
+//   - HTTP readiness on the plan-default path: strict, startup proved it.
+//   - any other readiness (a declared path such as /actuator/health, or the
+//     TCP listener of an HTTP image): the plan-default path is one the app
+//     never promised. Spring answered /healthz with 404 and every retail-*
+//     app was destroyed ~10 s after each boot, so every request paid a 12 s
+//     cold boot.
+func planDefaultLivenessAction(cfg LivenessProbeConfig, readiness livenessReadiness) LivenessProbeConfig {
+	if cfg.GRPC {
+		return cfg
+	}
+	if readiness.rawTCP && readiness.path == "" && !readiness.grpc {
+		cfg.PeriodSeconds = 0
+		return cfg
+	}
+	if readiness.grpc {
+		if !readiness.plan.GRPCLivenessAllowed() {
+			cfg.PeriodSeconds = 0
+			return cfg
+		}
+		cfg.Path, cfg.GRPC, cfg.GRPCService = "", true, readiness.grpcService
+		return cfg
+	}
+	cfg.UnpromisedPath = readiness.path != cfg.Path
+	return cfg
+}
+
 func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot int, override json.RawMessage) {
 	if m.livenessRegistry == nil {
 		return
 	}
 	cfg := m.livenessDefaultCfg
+	overrideAction := false
 	// Per-deployment override (api.DeploymentLivenessProbe) merges
 	// over the plan defaults. Same fail-soft shape as
 	// healthcheckPathFromDep (engine.go:3360): a malformed override
@@ -2585,10 +2669,12 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 				cfg.Path = ""
 				cfg.GRPC = true
 				cfg.GRPCService = ov.GRPC.Service
+				overrideAction = true
 			} else if ov.Path != "" {
 				cfg.Path = ov.Path
 				cfg.GRPC = false
 				cfg.GRPCService = ""
+				overrideAction = true
 			}
 			if ov.IntervalS > 0 {
 				cfg.PeriodSeconds = ov.IntervalS
@@ -2616,19 +2702,17 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 		}
 	}
 	noHTTPContract := false
-	tcpReadiness := false
+	var readiness *livenessReadiness
 	m.mu.Lock()
 	if inst := m.live[instance]; inst != nil {
 		cfg.ImageHealthcheckRequired = inst.ImageHealthcheckRequired
 		noHTTPContract = instanceHasNoHTTPContract(inst)
-		tcpReadiness = inst.HealthcheckPath == ""
+		readiness = &livenessReadiness{path: inst.HealthcheckPath, grpc: inst.HealthcheckGRPC, grpcService: inst.HealthcheckGRPCService,
+			rawTCP: inst.RoutedPortRawTCP, plan: inst.Plan}
 	}
 	m.mu.Unlock()
-	// On prod the default /healthz probe got 404 from nginx-unprivileged,
-	// parked its stable release as liveness_exhausted mid-canary and served
-	// 503s; a hang still fails the probe by timeout or refused connection.
-	if tcpReadiness && len(override) == 0 && !cfg.GRPC {
-		cfg.NotFoundIsAlive = true
+	if !overrideAction && readiness != nil {
+		cfg = planDefaultLivenessAction(cfg, *readiness)
 	}
 	// A declared image command is its liveness contract. Do not invent the
 	// plan-default /healthz endpoint for that image; explicit HTTP/gRPC
@@ -2649,7 +2733,8 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 	m.log.Debug("liveness: starting probe loop",
 		"instance", instance, "slot", slot,
 		"period_s", cfg.PeriodSeconds,
-		"consecutive", cfg.ConsecutiveFailures)
+		"consecutive", cfg.ConsecutiveFailures,
+		"path", cfg.Path, "grpc", cfg.GRPC, "unpromised_path", cfg.UnpromisedPath)
 	// The actual goroutine spawn + vsock dial logic lives in
 	// cmd/vmmd/liveness_recv.go (cmd-level binding). We hand the
 	// cmd helper a closure that knows how to launch the loop and
@@ -3328,8 +3413,8 @@ func (m *Manager) InstanceSidecarOwner(instance, sidecar string) (deploymentID, 
 }
 
 // ForwardStatelessAdvisory is the public Manager seam that turns
-// one guest-init fanotify batch into one apid audit row. The vsock
-// DGRAM receiver in cmd/vmmd calls this with the parsed batch.
+// one guest-init advisory batch into one apid audit row. vmmd's port-1025
+// stream receiver (cmd/vmmd) calls this with the decoded batch.
 //
 // ADR-035 best-effort: returns nil on a nil client (default-local)
 // and on a forward failure — the advisory is observation, not
@@ -3592,7 +3677,7 @@ func jsonMarshalEnvelope(e secretbox.Envelope) ([]byte, error) {
 func (m *Manager) prepareWakeFiles(ctx context.Context, req WakeRequest) (secretsJSON, apiJSON []byte, err error) {
 	var merged secretbox.Envelope
 	if len(req.SealedEnvEntries) > 0 {
-		merged, err = m.openSealedEnvEntries(ctx, req.SealedEnvEntries, req.AccountID)
+		merged, err = m.openSealedEnvEntries(ctx, req.AppID, req.SealedEnvEntries, req.AccountID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -3630,9 +3715,16 @@ func (m *Manager) prepareWakeFiles(ctx context.Context, req WakeRequest) (secret
 // openSealedEnvEntries opens a workload's selected ciphertext for accountID,
 // the account the workload runs for. An envelope bound to another account
 // (ADR-20261023173624) is refused before any of its values are used.
-func (m *Manager) openSealedEnvEntries(ctx context.Context, entries []SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
+func (m *Manager) openSealedEnvEntries(ctx context.Context, appID string, entries []SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
 	if len(entries) == 0 {
 		return nil, nil
+	}
+	if m.runtimeOpener != nil {
+		values, err := m.openRemote(ctx, appID, entries)
+		if err != nil {
+			return nil, fmt.Errorf("open sealed env: %w", err)
+		}
+		return secretbox.Envelope(values), nil
 	}
 	if len(m.hostIdentities) == 0 {
 		return nil, ErrNoHostKey
@@ -3666,10 +3758,18 @@ func (m *Manager) openSealedEnvEntries(ctx context.Context, entries []SealedEnvE
 // requires each envelope to contain exactly its selected source key. Plaintext
 // remains in caller memory only; callers must not log or persist it outside
 // the guest's runtime projection. accountID is the account the workload runs
-// for; an envelope bound to another account is refused.
-func (m *Manager) UnsealRuntimeSecrets(ctx context.Context, entries []SealedEnvEntry, accountID string) (map[string]string, error) {
+// for; an envelope bound to another account is refused. appID names the app
+// the entries belong to, which a remote opener authorizes the node for.
+func (m *Manager) UnsealRuntimeSecrets(ctx context.Context, appID string, entries []SealedEnvEntry, accountID string) (map[string]string, error) {
 	if len(entries) == 0 {
 		return map[string]string{}, nil
+	}
+	if m.runtimeOpener != nil {
+		secrets, err := m.openRemote(ctx, appID, entries)
+		if err != nil {
+			return nil, fmt.Errorf("open runtime secrets: %w", err)
+		}
+		return secrets, nil
 	}
 	if len(m.hostIdentities) == 0 {
 		return nil, ErrNoHostKey
@@ -3693,6 +3793,33 @@ func (m *Manager) UnsealRuntimeSecrets(ctx context.Context, entries []SealedEnvE
 		secrets[entry.Key] = value
 	}
 	return secrets, nil
+}
+
+// openRemote checks the writer signatures here, then has the remote opener
+// open the entries. Every entry must come back exactly once, under its key:
+// a partial answer is refused rather than run with a missing secret.
+func (m *Manager) openRemote(ctx context.Context, appID string, entries []SealedEnvEntry) (map[string]string, error) {
+	if appID == "" {
+		return nil, errors.New("remote secret open needs the app id")
+	}
+	if err := m.checkRuntimeSignatures(ctx, entries); err != nil {
+		return nil, err
+	}
+	values, err := m.runtimeOpener.OpenAppSecrets(ctx, appID, entries)
+	if err != nil {
+		return nil, err
+	}
+	if got := len(values); got != len(entries) {
+		clear(values)
+		return nil, fmt.Errorf("remote opener returned %d values for %d entries", got, len(entries))
+	}
+	for _, entry := range entries {
+		if _, ok := values[entry.Key]; !ok {
+			clear(values)
+			return nil, fmt.Errorf("remote opener returned no value for %s", logsanitize.Field(entry.Key))
+		}
+	}
+	return values, nil
 }
 
 // openBoundEntry opens one entry and enforces its account binding. With
@@ -3726,6 +3853,38 @@ func selectedSealedValue(entry SealedEnvEntry, inner secretbox.Envelope) (string
 // by apid and keeps plaintext only in the wake request until the concrete VMM
 // writes it to that sidecar's workload-specific env file in the instance's
 // writable main upper. It never modifies the shared sidecar image.
+// SidecarEnvOpener opens one sidecar's direct env by reference
+// (ADR-20261110210000 slice 3d): the remote opener reads the sealed values
+// from the deployment itself. A RuntimeSecretOpener that also implements it
+// opens sidecar env too.
+type SidecarEnvOpener interface {
+	OpenSidecarEnv(ctx context.Context, appID, deploymentID, sidecarName string) (map[string]string, error)
+}
+
+// openSidecarEnvRemote asks the remote opener for a sidecar's direct env and
+// requires exactly the keys schedd delivered: a deployment that changed
+// between them fails the wake instead of running with other values.
+func (m *Manager) openSidecarEnvRemote(ctx context.Context, remote SidecarEnvOpener, req *WakeRequest, sidecar string, entries []SealedEnvEntry) (map[string]string, error) {
+	if req.AppID == "" || req.DeploymentID == "" || sidecar == "" {
+		return nil, errors.New("open sidecar env: remote open needs the app, deployment and sidecar")
+	}
+	values, err := remote.OpenSidecarEnv(ctx, req.AppID, req.DeploymentID, sidecar)
+	if err != nil {
+		return nil, fmt.Errorf("open sidecar env: %w", err)
+	}
+	if got := len(values); got != len(entries) {
+		clear(values)
+		return nil, fmt.Errorf("open sidecar env: remote opener returned %d values for %d entries", got, len(entries))
+	}
+	for _, entry := range entries {
+		if _, ok := values[entry.Key]; !ok {
+			clear(values)
+			return nil, fmt.Errorf("open sidecar env: remote opener returned no value for %s", logsanitize.Field(entry.Key))
+		}
+	}
+	return values, nil
+}
+
 func (m *Manager) prepareSidecarEnvFiles(ctx context.Context, req *WakeRequest) error {
 	for i := range req.Sidecars {
 		entries := req.Sidecars[i].SealedEnv
@@ -3744,10 +3903,23 @@ func (m *Manager) prepareSidecarEnvFiles(ctx context.Context, req *WakeRequest) 
 		if len(entries) == 0 && len(secretEntries) == 0 {
 			continue
 		}
-		if len(m.hostIdentities) == 0 {
+		// With a runtime opener that opens sidecar env by reference, both the
+		// direct env and the app secrets come from it; otherwise this node
+		// opens them with its runtime identity.
+		remote, byReference := m.runtimeOpener.(SidecarEnvOpener)
+		byReference = byReference && m.runtimeOpener != nil
+		if len(m.hostIdentities) == 0 && ((len(entries) > 0 && !byReference) || m.runtimeOpener == nil) {
 			return ErrNoHostKey
 		}
 		merged := make(map[string]string)
+		if len(entries) > 0 && byReference {
+			values, err := m.openSidecarEnvRemote(ctx, remote, req, req.Sidecars[i].Name, entries)
+			if err != nil {
+				return err
+			}
+			merged = values
+			entries = nil
+		}
 		for _, entry := range entries {
 			namespace, plaintext, err := secretbox.OpenBytesMulti(m.hostIdentities, entry.Ciphertext)
 			if err != nil {
@@ -3761,7 +3933,7 @@ func (m *Manager) prepareSidecarEnvFiles(ctx context.Context, req *WakeRequest) 
 			}
 			merged[entry.Key] = string(plaintext)
 		}
-		secrets, err := m.UnsealRuntimeSecrets(ctx, secretEntries, req.AccountID)
+		secrets, err := m.UnsealRuntimeSecrets(ctx, req.AppID, secretEntries, req.AccountID)
 		if err != nil {
 			return fmt.Errorf("open sidecar app secrets: %w", err)
 		}
@@ -3957,6 +4129,10 @@ type WakeRequest struct {
 	HealthcheckGRPCService string
 	// ImageHealthcheckRequired requires a fresh guest command check before readiness (ADR-683).
 	ImageHealthcheckRequired bool
+	// RoutedPortRawTCP marks TCP readiness on a port the app declares as a
+	// public raw TCP listener (ADR-20261027090000). It gets no plan-default
+	// HTTP liveness probe (ADR-079 amendment 1).
+	RoutedPortRawTCP bool
 	// StartupDeadlineS is the per-app readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int
@@ -4241,6 +4417,11 @@ type SealedEnvEntry struct {
 	// SourceKey binds an alias to the single source in its sealed envelope.
 	// Empty retains the legacy envelope merge contract.
 	SourceKey string
+	// Scope is the app_secrets scope of the row this value comes from
+	// (ADR-20261110210000 slice 3d-4). Set, a remote opener opens the app's
+	// own row (app, Scope, SourceKey) by reference and ignores Ciphertext.
+	// Empty for values that are not the app's app_secrets rows.
+	Scope string
 }
 
 // APIEnvEntry is one (key, value) plaintext pair as stored in app_envs
@@ -5578,6 +5759,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		PrivateNetworkExcluded: req.privateNetworkExcluded,
 		WakeID:                 wakeID, NodeID: fields.NodeID,
 		Plan: req.Plan, RequestConcurrency: req.RequestConcurrency, Port: req.Port, HealthcheckPath: req.HealthcheckPath, HealthcheckGRPC: req.HealthcheckGRPC,
+		HealthcheckGRPCService:   req.HealthcheckGRPCService,
+		RoutedPortRawTCP:         req.RoutedPortRawTCP,
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:           append(json.RawMessage(nil), req.ReadinessProbe...),
@@ -5693,7 +5876,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		needsPolicyApply := lease.CPUMillicores != policy.cpuMillicores || hasWorkloadName(inst.WorkloadNames, WorkloadNameMain)
 		if hasPolicy && !req.ExecutionOnly && needsPolicyApply {
 			if err := m.applyAppCPULimit(ctx, inst, policy.cpuMillicores); err != nil {
-				return nil, fmt.Errorf("wake %s: apply current app CPU policy: %w", req.Instance, err)
+				return nil, m.wakeStepError(lease, "apply current app CPU policy", err)
 			}
 			lease.CPUMillicores = policy.cpuMillicores
 			inst.Lease.CPUMillicores = policy.cpuMillicores
@@ -5718,7 +5901,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			delete(m.waking, req.Instance)
 			m.dropFunctionStartingLocked(req.Instance, inst.Lease.processGeneration)
 			m.mu.Unlock()
-			err = fmt.Errorf("wake %s: firecracker exited before lifecycle registration (exit code %d)", req.Instance, exitCode)
+			err = m.guestExitError(lease, exitCode, fmt.Errorf("wake %s: firecracker exited before lifecycle registration (exit code %d)", req.Instance, exitCode))
 			return nil, err
 		}
 		delete(m.waking, req.Instance)
@@ -5822,7 +6005,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	// hand the caller a fresh instance that is not the capture.
 	sealed := req.Snapshot != nil && len(req.Snapshot.SealedKey) > 0
 	if sealed {
-		if err := m.openSealedSnapshot(req.Snapshot); err != nil {
+		if err := m.openSealedSnapshot(ctx, req.AppID, req.Snapshot); err != nil {
 			return WakeRestore, fmt.Errorf("sealed crash capture: %w", err)
 		}
 	}
@@ -7443,6 +7626,63 @@ func (m *Manager) applyAppCPULimit(ctx context.Context, inst *Instance, cpuMilli
 		return fmt.Errorf("VMM does not support live guest workload CPU policy")
 	}
 	return guestUpdater.UpdateAppWorkloadCPULimit(ctx, inst.Lease, cpuMillicores)
+}
+
+// wakeStepExitGrace bounds how long a failed post-boot wake step waits for
+// the process watcher to report a Firecracker exit. A VM that died fails the
+// step's vsock dial before the watcher has reaped it.
+var (
+	wakeStepExitGrace = time.Second
+	wakeStepExitPoll  = 20 * time.Millisecond
+)
+
+// wakeStepError reports a failed post-boot wake step. When Firecracker has
+// exited, the exit is the cause and the step's error (typically a refused
+// vsock dial) only a symptom, so the exit leads the message (Hunt 34 H34-35:
+// a guest that stopped during boot read as an app CPU policy fault).
+func (m *Manager) wakeStepError(lease Lease, step string, err error) error {
+	instance := lease.Instance
+	deadline := time.Now().Add(wakeStepExitGrace)
+	for {
+		m.mu.Lock()
+		exitCode, exited := m.pendingProcessExits[instance]
+		m.mu.Unlock()
+		if exited {
+			return m.guestExitError(lease, exitCode, fmt.Errorf("wake %s: firecracker exited during boot (exit code %d); %s then failed: %w", instance, exitCode, step, err))
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("wake %s: %s: %w", instance, step, err)
+		}
+		time.Sleep(wakeStepExitPoll)
+	}
+}
+
+// guestStopExplainer names why a guest stopped during its wake from what its
+// workloads printed (JailerVMM.ExplainGuestStop).
+type guestStopExplainer interface {
+	ExplainGuestStop(Lease) error
+}
+
+// guestExitError reports a Firecracker exit found after the guest passed
+// readiness. A guest stops on its own when guest-init exits, most often
+// because a supervised workload crash-looped, and the workload's output is
+// what the deploy needs to show: an essential companion whose command failed
+// stopped the guest just after the main workload became ready, and the
+// deploy said only that a vsock dial was refused (Hunt 34 H34-35). The
+// explainer's startup-crash problem carries that output to the caller; cause
+// stays in the chain for the operator log. Only a clean Firecracker exit is
+// the guest's own doing (guest-init's exit panics the kernel, which reboots,
+// and Firecracker exits 0); a signal or error exit stays a platform failure.
+func (m *Manager) guestExitError(lease Lease, exitCode int, cause error) error {
+	explainer, ok := m.vmm.(guestStopExplainer)
+	if !ok || exitCode != 0 {
+		return cause
+	}
+	explained := explainer.ExplainGuestStop(lease)
+	if explained == nil {
+		return cause
+	}
+	return fmt.Errorf("%w: %w", cause, explained)
 }
 
 func hasWorkloadName(names []string, want string) bool {

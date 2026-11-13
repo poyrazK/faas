@@ -42,6 +42,32 @@ Copy any draft before reloading. Pages use `Cache-Control: no-store`. The custom
 preview flag also gates the portal routes; staff access uses the independent live
 roster checks.
 
+### Customer account panel
+
+A staff ticket page shows a **Customer account** panel beside the conversation
+(ADR-20261112170000): the account id, organization, plan, status and app count,
+current restrictions (suspension, abuse holds, unverified email, overage cap,
+platform release pause), failed deployments from the last 7 days with their error,
+custom domain problems, enabled previews, and the API errors the customer was
+refused in the last 24 hours, counted by problem code. For an organization case
+the panel describes the member who opened it. The panel never shows an email and
+loads only after the roster check for the ticket; if it cannot be loaded the
+conversation still works.
+
+When the customer opened the ticket, apid saved a snapshot of their account
+health (ADR-20261112210000). The panel shows it under **At ticket creation**: plan,
+status, restrictions, failed deployments, and the refused request matching the
+request id the customer attached, if one was recorded for their account. The live
+view follows under **Now**, with restrictions lifted or added since the ticket was
+opened. Customers see their own view of the same checks at
+`/dashboard/account/health` and `GET /v1/account/health`, and "Contact support about
+this" links there prefill the ticket form.
+
+Operators get the same diagnosis with `gregalectl accounts 360 --account-id <id>`,
+and can find the account behind an email, app slug, app or custom-domain URL,
+account/app/deployment id, request id or trace id with
+`gregalectl accounts find <identifier>`.
+
 ### Notifications and unread updates
 
 Support pages show an Updates feed, a scoped unread total and per-conversation
@@ -156,6 +182,22 @@ grant customer access. Freeform handoff reasons are audit metadata and must not
 contain secrets or conversation content. Configuration changes are revision checked
 and audited. All effective writes require UUID idempotency keys; creating a bounded,
 expiring preview does not create a permanent receipt.
+
+## Customers who may be stuck
+
+apid flags customers who look stuck before they write in
+(ADR-20261113123000): repeated failed deployments of one app, a burst of one
+refused API problem code, or a custom domain that is not serving. Staff see
+them at `/dashboard/admin/support/attention` (linked from the staff inbox as
+"Customers who may be stuck"), in the "May be stuck" section of the ticket
+account panel, and operators through `GET /v1/admin/obs/attention` or
+`gregalectl accounts attention [--kind K] [--state S] [--account-id ID]`.
+
+Signals resolve on their own when the condition clears. Dismiss one only
+with a reason when it needs no follow-up; dismissal needs a fresh step-up.
+Customers are not notified. Decide case by case whether to reach out, and
+treat many signals of one kind at once as a platform problem
+(`FaasCustomerAttentionSpike`) rather than contacting each customer.
 
 ## Policies, calendars and reporting
 

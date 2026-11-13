@@ -86,7 +86,9 @@ func orgProjectHTTP(t *testing.T, store state.Store, creator state.Account, do f
 		{"GET", "/v1/orgs/" + org.Slug + "/projects", nil, viewerHeaders, 200},
 		{"POST", base + "/environments", api.CreateProjectEnvironmentRequest{Slug: "staging"}, developerHeaders, 201},
 		{"POST", base + "/environments", api.CreateProjectEnvironmentRequest{Slug: "forbidden"}, viewerHeaders, 403},
-		{"POST", base + "/environments", api.CreateProjectEnvironmentRequest{Slug: "refused-clone", FromEnvironment: "production"}, developerHeaders, 409},
+		// Copies stay in the project's owner (ADR-20261112230000); production is
+		// not protected against developers, so a developer may copy it.
+		{"POST", base + "/environments", api.CreateProjectEnvironmentRequest{Slug: "copied", FromEnvironment: "production"}, developerHeaders, 201},
 		{"POST", base + "/environments", api.CreateProjectEnvironmentRequest{Slug: "refused-full", FromEnvironment: "production", Full: true}, developerHeaders, 409},
 		{"POST", base + "/environments", api.CreateProjectEnvironmentRequest{Slug: "refused-protection", Protected: &protected}, developerHeaders, 403},
 		{"PATCH", base + "/environments/production", map[string]bool{"protected": false}, developerHeaders, 403},

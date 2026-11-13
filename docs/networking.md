@@ -55,6 +55,14 @@ stays open.
 
 ## Public gRPC
 
+The Gregale gateways preserve gRPC trailers. The hosting front also needs to
+support them: Cloudflare's public Tunnel hostnames do not support gRPC.
+On Gregale's current Tunnel app front, successful calls can deliver messages
+without the final `grpc-status`, causing standard clients to fail. Enabling
+the zone gRPC toggle alone does not establish support. Ask the operator for a
+verified direct-origin route before relying on public gRPC through this front.
+gRPC-Web requests are not translated.
+
 When Gregale itself refuses a gRPC call, before it reaches your app, the
 client receives a gRPC status, not an HTTP error page. Examples are a missing
 bearer token, a rate limit, a timed-out wake, or maintenance. `grpc-message`
@@ -77,7 +85,8 @@ carries the reason and the stable problem code, for example
 | anything else | `UNKNOWN` |
 
 Your app's own gRPC responses, including their `grpc-status` trailers, pass
-through unchanged. gRPC-Web requests are not translated.
+through the Gregale gateways unchanged; the front limitation above still
+applies.
 
 ## Long-lived streams
 
@@ -1416,6 +1425,19 @@ them at the service address, but they never get a public
 `--port-<name>` hostname or a public raw TCP listener. Only TCP entries are
 supported; UDP and port ranges are skipped with a warning. Through the app
 API, set `"internal": true` on an entry in `ports`.
+
+An app deployed without Compose declares its ports with the CLI. Each entry is
+`[NAME=]tcp|udp:PORT`, with `:internal` for a listener that stays private; an
+entry without a name is named `tcp-<port>` or `udp-<port>`. The list replaces
+the app's declared ports, and `--ports none` clears them:
+
+```bash
+gregale app my-api --ports tcp:7000,udp:5353,cache=tcp:6379:internal
+```
+
+A raw TCP listener (`gregale app listener create`) and a UDP listener
+(`gregale app listener create my-api --protocol udp`) need a declared port with the same name and
+guest port.
 
 Each declared dependency also receives `GREGALE_SERVICE_<NAME>_HOST`, the bare
 host for non-HTTP clients:

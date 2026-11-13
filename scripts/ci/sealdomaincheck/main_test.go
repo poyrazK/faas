@@ -63,6 +63,16 @@ func TestOwnIdentity(t *testing.T) {
 			t.Errorf("sealDomainContractTemplate(%s) = %q, want %q", rel, got, want)
 		}
 	}
+	for rel, want := range map[string]string{
+		"deploy/ansible/roles/secretd_service/templates/50-faas-secretd.conf.j2":                     "faas-secretd",
+		"deploy/ansible/roles/gatewayd_internal_service/templates/50-faas-gatewayd-internal.conf.j2": "faas-gatewayd-internal",
+		"deploy/ansible/roles/secretd_service/templates/50-faas-vmmd.conf.j2":                        "",
+		"deploy/ansible/roles/other/templates/50-faas-secretd.conf.j2":                               "",
+	} {
+		if got := serviceRoleDropIn(rel); got != want {
+			t.Errorf("serviceRoleDropIn(%s) = %q, want %q", rel, got, want)
+		}
+	}
 }
 
 func TestCountLoaderCalls(t *testing.T) {

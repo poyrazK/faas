@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -74,6 +75,15 @@ func standingMillicents(floor, ramMB int, plan api.Plan) int64 {
 // chargeAgentBudget charges an agent key for raising standing cost from
 // before to after. answered reports that a 428 or an error was written.
 func (s *server) chargeAgentBudget(w http.ResponseWriter, r *http.Request, plan api.Plan, before, after int64) (commit func(), answered bool) {
+	if authmw.Previewing(r) {
+		// A preview is answered even for a change that adds nothing; a
+		// handler that went on would write.
+		if s.authMw == nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Preview not available", "this server cannot price changes"))
+			return func() {}, true
+		}
+		return s.authMw.ChargeAgentBudget(w, r, plan, max(after-before, 0))
+	}
 	if s.authMw == nil || after <= before {
 		return func() {}, false
 	}
@@ -124,4 +134,11 @@ func (s *server) chargePrewarm(w http.ResponseWriter, r *http.Request, acct stat
 	extra := req.Count - appFloor(app)
 	seconds := int64(req.ExpiresAt.Sub(req.WakeAt).Seconds())
 	return s.chargeAgentBudget(w, r, acct.Plan, 0, api.AgentPrewarmMillicents(extra, appRAM(app.RAMMB, acct.Plan), seconds))
+}
+
+// noCharge is a priced handler's path that commits nothing new (a replay, a
+// change of nothing priced, a person's credential): a preview is answered
+// at no cost there too, since the handler would otherwise go on to write.
+func (s *server) noCharge(w http.ResponseWriter, r *http.Request, plan api.Plan) (func(), bool) {
+	return s.chargeAgentBudget(w, r, plan, 0, 0)
 }

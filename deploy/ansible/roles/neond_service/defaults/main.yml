@@ -8,3 +8,15 @@ faas_neond_enabled: false
 faas_neond_broker: false
 # Neon project/branch/endpoint/snapshot/role deletes neond forwards per hour.
 faas_neond_destructive_per_hour: 300
+# Of those, how many may act on the projects of one account's databases.
+faas_neond_destructive_per_subject_per_hour: 60
+# Project keys (ADR-20261112160000 decision 3): the Neon organization ID the
+# admin key's service user administers (an org Admin's personal key). Set,
+# neond mints a key scoped to each project it creates and calls that
+# project's routes with it. Empty keeps every call on the admin key.
+faas_neond_org_id: ""
+# neond's key sweep re-mints a project key once it is this old (Go duration,
+# at least 1h). Empty keeps neond's default, 90 days (2160h). To rotate every
+# key now, set a short age, converge, and set it back once
+# neond_project_keys_total{op="rotate"} has caught up.
+faas_neond_project_key_max_age: ""

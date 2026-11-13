@@ -553,6 +553,10 @@ type AppSpec struct {
 	// Empty HealthcheckGRPCService checks overall server health.
 	HealthcheckGRPC        bool
 	HealthcheckGRPCService string
+	// RoutedPortRawTCP marks TCP readiness on a declared raw TCP listener;
+	// vmmd then runs no plan-default HTTP liveness probe (ADR-079
+	// amendment 1).
+	RoutedPortRawTCP bool
 	// ImageHealthcheckRequired requires a fresh guest command check before readiness (ADR-683).
 	ImageHealthcheckRequired bool
 	// ReadinessProbeJSON carries the optional continuous primary-app
@@ -885,7 +889,7 @@ func sealedSecretsToProto(entries []fcvm.SealedEnvEntry) []*vmmdpb.SealedSecret 
 	}
 	out := make([]*vmmdpb.SealedSecret, 0, len(entries))
 	for _, entry := range entries {
-		out = append(out, &vmmdpb.SealedSecret{Key: entry.Key, Ciphertext: entry.Ciphertext, SourceKey: entry.SourceKey})
+		out = append(out, &vmmdpb.SealedSecret{Key: entry.Key, Ciphertext: entry.Ciphertext, SourceKey: entry.SourceKey, SecretScope: entry.Scope})
 	}
 	return out
 }
@@ -1919,9 +1923,10 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 	sealed := make([]*vmmdpb.SealedSecret, 0, len(a.SealedEnv))
 	for _, e := range a.SealedEnv {
 		sealed = append(sealed, &vmmdpb.SealedSecret{
-			Key:        e.Key,
-			Ciphertext: e.Ciphertext,
-			SourceKey:  e.SourceKey,
+			Key:         e.Key,
+			Ciphertext:  e.Ciphertext,
+			SourceKey:   e.SourceKey,
+			SecretScope: e.Scope,
 		})
 	}
 	// Issue #395 / ADR-045: plaintext api_env mirror.
@@ -1951,9 +1956,10 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		sealedSidecarSecrets := make([]*vmmdpb.SealedSecret, 0, len(sc.SealedSecrets))
 		for _, entry := range sc.SealedSecrets {
 			sealedSidecarSecrets = append(sealedSidecarSecrets, &vmmdpb.SealedSecret{
-				Key:        entry.Key,
-				Ciphertext: entry.Ciphertext,
-				SourceKey:  entry.SourceKey,
+				Key:         entry.Key,
+				Ciphertext:  entry.Ciphertext,
+				SourceKey:   entry.SourceKey,
+				SecretScope: entry.Scope,
 			})
 		}
 		dependsOn := make([]*vmmdpb.WorkloadDependency, 0, len(sc.DependsOn))
@@ -2030,6 +2036,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		HealthcheckPath:          a.HealthcheckPath,
 		HealthcheckGrpc:          a.HealthcheckGRPC,
 		HealthcheckGrpcService:   a.HealthcheckGRPCService,
+		RoutedPortRawTcp:         a.RoutedPortRawTCP,
 		ImageHealthcheckRequired: a.ImageHealthcheckRequired,
 		ReadinessProbeJson:       a.ReadinessProbeJSON,
 		LivenessProbeJson:        a.LivenessProbeJSON,

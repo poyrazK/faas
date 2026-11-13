@@ -23,7 +23,7 @@
   </style>
 </head>
 <body>
-<header><nav aria-label="Main"><strong>Gregale</strong><a href="/dashboard/">Overview</a><a href="/dashboard/account">Account</a>{{with .Data}}<a href="{{.Base}}">{{if .StaffMode}}Staff inbox{{else}}Support{{end}}</a>{{end}}</nav></header>
+<header><nav aria-label="Main"><strong>Gregale</strong><a href="/dashboard/">Overview</a><a href="/dashboard/account">Account</a>{{with .Data}}<a href="{{.Base}}">{{if .StaffMode}}Staff inbox{{else}}Support{{end}}</a>{{if .StaffMode}}<a href="/dashboard/admin/support/attention">Customers who may be stuck</a>{{end}}{{end}}</nav></header>
 <main>
 {{template "email-verification-banner" .}}
 {{with .Data}}{{$d := .}}
@@ -76,6 +76,7 @@
     <section class="panel"><h2>Details</h2><dl><dt>Ticket</dt><dd><code>{{.Ticket.ID}}</code></dd><dt>Last updated</dt><dd>{{.Date .Ticket.UpdatedAt}}</dd>
     {{with .Ticket.Context.AppID}}<dt>App</dt><dd><code>{{.}}</code></dd>{{end}}{{with .Ticket.Context.DeploymentID}}<dt>Deployment</dt><dd><code>{{.}}</code></dd>{{end}}{{with .Ticket.Context.RequestID}}<dt>Request</dt><dd><code>{{.}}</code></dd>{{end}}
     {{with .StaffTicket}}<dt>Priority</dt><dd>{{.Priority}}</dd><dt>Team</dt><dd>{{$d.TeamName .TeamID}}</dd><dt>Assigned to</dt><dd>{{$d.StaffName .AssigneeID}}</dd><dt>Response target</dt><dd>{{$d.ResponseTarget .Episode}}</dd><dt>Resolution target</dt><dd>{{$d.ResolutionTarget .Episode}}</dd>{{end}}</dl></section>
+    {{if .StaffMode}}{{template "support-customer" .}}{{end}}
     {{if and (ne .Ticket.Status "resolved") (or (not .StaffMode) .CanManage)}}<section class="panel"><h2>Conversation status</h2><div class="actions">
       <form method="post" action="{{.URL}}">{{template "support-form-fields" (.Fields "close")}}<button type="submit">Mark resolved</button></form>
       {{if .StaffMode}}{{if .StaffTicket.Episode.WaitSince}}<form method="post" action="{{.URL}}">{{template "support-form-fields" (.Fields "resume")}}<button type="submit">Resume support clock</button></form>{{else}}<form method="post" action="{{.URL}}">{{template "support-form-fields" (.Fields "pause")}}<button type="submit">Wait for customer</button></form>{{end}}{{end}}
@@ -144,8 +145,8 @@
   <label>Priority <select aria-label="Priority" name="priority"><option value="low" {{if eq (.Value "create" "priority" "normal") "low"}}selected{{end}}>Low</option><option value="normal" {{if eq (.Value "create" "priority" "normal") "normal"}}selected{{end}}>Normal</option><option value="high" {{if eq (.Value "create" "priority" "normal") "high"}}selected{{end}}>High</option><option value="urgent" {{if eq (.Value "create" "priority" "normal") "urgent"}}selected{{end}}>Urgent</option></select></label></div>
   <label>How can we help? <textarea name="body" required maxlength="{{.BodyMax}}">{{.Value "create" "body" ""}}</textarea></label>
   <p class="meta">Describe what happened and what you expected. Keep passwords, API keys, and other credentials out of your message.</p>
-  <details {{if eq .Failed "create"}}open{{end}}><summary>Optional troubleshooting context</summary><p class="meta">Identifiers only. Logs and credentials are never collected automatically.</p>
-    <label>App ID <input name="app_id" value="{{.Value "create" "app_id" ""}}"></label><label>Deployment ID <input name="deployment_id" value="{{.Value "create" "deployment_id" ""}}"></label><label>Request ID <input name="request_id" value="{{.Value "create" "request_id" ""}}"></label>
+  <details {{if or (eq .Failed "create") (.Filters.Get "app_id") (.Filters.Get "request_id")}}open{{end}}><summary>Optional troubleshooting context</summary><p class="meta">Identifiers only. Logs and credentials are never collected automatically. Gregale also saves a summary of your account's health with the conversation.</p>
+    <label>App ID <input name="app_id" value="{{.Value "create" "app_id" (.Filters.Get "app_id")}}"></label><label>Deployment ID <input name="deployment_id" value="{{.Value "create" "deployment_id" (.Filters.Get "deployment_id")}}"></label><label>Request ID <input name="request_id" value="{{.Value "create" "request_id" (.Filters.Get "request_id")}}"></label>
   </details><button type="submit">Send to Gregale support</button>
 </form></section>
 {{end}}
@@ -160,3 +161,29 @@
 <label>Required skills <input name="required_skills" value="{{.Value "triage" "required_skills" .Skills}}" aria-describedby="skills-hint"></label><p class="meta" id="skills-hint">Separate skill names with spaces.</p>
 <label>Reason for change <input name="reason" required maxlength="{{.ReasonMax}}" value="{{.Value "triage" "reason" ""}}"></label><button type="submit">Save assignment</button></form></details>{{end}}
 {{end}}
+
+{{define "support-customer"}}{{$d := .}}{{with .Customer}}
+<section class="panel" aria-label="Customer account"><h2>Customer account</h2>
+{{if .Unavailable}}<p class="muted">Account context could not be loaded. The conversation is unaffected.</p>{{else}}
+<dl><dt>Account</dt><dd><code>{{.AccountID}}</code></dd>{{with .OrgSlug}}<dt>Organization</dt><dd>{{.}}</dd>{{end}}<dt>Plan</dt><dd>{{.Plan}}</dd><dt>Status</dt><dd>{{.Status}}</dd><dt>Apps</dt><dd>{{.Apps}}</dd></dl>
+{{with .Snapshot}}<details open><summary><strong>At ticket creation</strong> <small class="muted">{{$d.Date .CapturedAt}}</small></summary>
+<p>Plan {{.Plan}}, status {{.Status}}.</p>
+{{with .RequestID}}<p>Attached request <code>{{.}}</code>:</p>{{end}}{{with .Request}}<p><code>{{.Route}}</code> refused with <code>{{.Code}}</code>{{with .AppSlug}} for <code>{{.}}</code>{{end}} <small class="muted">{{$d.Date .OccurredAt}}</small></p>{{else}}{{if .RequestID}}<p class="muted">No refused request with this id was recorded for the account in the last 14 days.</p>{{end}}{{end}}
+{{with .Health}}<p>{{range .Restrictions}}<strong>{{.Kind}}</strong> · {{else}}No restrictions · {{end}}{{len .FailedDeployments}} failed deployments · {{len .DomainIssues}} domain problems · {{.RefusedRequests.Total}} refused requests in 24 h</p>
+{{range .FailedDeployments}}<p>{{with .AppSlug}}<code>{{.}}</code> {{end}}{{with .ErrorCode}}<code>{{.}}</code> {{end}}{{.Error}}</p>{{end}}{{end}}
+</details>{{end}}
+{{with .Lifted}}<p class="meta">Lifted since the ticket was opened: {{range $i, $k := .}}{{if $i}}, {{end}}<strong>{{$k}}</strong>{{end}}</p>{{end}}
+{{with .Added}}<p class="meta">New since the ticket was opened: {{range $i, $k := .}}{{if $i}}, {{end}}<strong>{{$k}}</strong>{{end}}</p>{{end}}
+{{if .Snapshot}}<h3>Now</h3>{{end}}
+{{with .Diagnosis}}
+<h3>Restrictions</h3>{{range .Restrictions}}<p><strong>{{.Kind}}</strong>{{with .Reason}}: {{.}}{{end}}{{with .Since}} <small class="muted">since {{$d.Date .}}</small>{{end}}</p>{{else}}<p class="muted">None.</p>{{end}}
+<h3>Failed deployments, last 7 days</h3>{{range .FailedDeployments}}<p>{{with .AppSlug}}<code>{{.}}</code> {{end}}{{with .ErrorCode}}<code>{{.}}</code> {{end}}{{.Error}} <small class="muted">{{$d.Date .CreatedAt}}</small></p>{{else}}<p class="muted">None.</p>{{end}}
+<h3>Custom domains</h3>{{range .DomainIssues}}<p><code>{{.Domain}}</code>: {{.Problem}}{{with .CertLastError}} ({{.}}){{end}}</p>{{else}}<p class="muted">No problems ({{.HealthyDomains}} healthy).</p>{{end}}
+<h3>Refused API requests, last 24 hours</h3>{{if .CustomerErrors.Total}}<p>{{.CustomerErrors.Total}} refused.</p><ul>{{range .CustomerErrors.ByCode}}<li><code>{{.Code}}</code> × {{.Count}}, last {{$d.Date .LastAt}}</li>{{end}}</ul>{{else}}<p class="muted">None recorded.</p>{{end}}
+{{with .EnabledFlags}}<h3>Previews</h3><p>{{range $i, $flag := .}}{{if $i}}, {{end}}<code>{{$flag}}</code>{{end}}</p>{{end}}
+{{with .AttentionSignals}}<h3>May be stuck</h3>{{range .}}<p><strong>{{.Kind}}</strong> · <code>{{.Subject}}</code>{{with .Detail}}: {{.}}{{end}} <small class="muted">since {{$d.Date .FirstSeenAt}}{{if eq .State "dismissed"}}, dismissed{{end}}</small></p>{{end}}{{end}}
+{{with .Unavailable}}<p class="muted">Not loaded: {{range $i, $section := .}}{{if $i}}, {{end}}{{$section}}{{end}}</p>{{end}}
+{{end}}
+<p class="meta">Full view: <code>gregalectl accounts 360 --account-id {{.AccountID}}</code></p>
+{{end}}</section>
+{{end}}{{end}}

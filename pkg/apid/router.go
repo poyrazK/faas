@@ -136,7 +136,7 @@ func IsPlatformHost(rawHost, appsDomain string) bool {
 	if host == "localhost" || net.ParseIP(host) != nil {
 		return true
 	}
-	return host == domain || host == "api."+domain || host == "operations."+domain
+	return host == domain || host == "api."+domain || host == "operations."+domain || host == "sales."+domain
 }
 
 // HostWithoutPort lower-cases a Host header value and strips its port, IPv6

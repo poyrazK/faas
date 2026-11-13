@@ -55,7 +55,7 @@ import (
 // mfa_pending session legitimately needs are in the middleware's MFA
 // allowlist; bearer principals are unaffected.
 func (s *server) auth(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next)))))
+	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next))))))
 	return s.authMw.RequireSession(pkgNext)
 }
 
@@ -66,14 +66,14 @@ func (s *server) auth(next accountHandler) http.HandlerFunc {
 // the wrapping because the spec §11 "10/min/IP" rule is a
 // middleware-level concern, not a per-daemon configuration detail.
 func (s *server) authLimited(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next)))))))
+	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next))))))))
 	return s.authMw.RequireLimited(pkgNext)
 }
 
 // Project publishing checks the human's verification before resolving the
 // project, so a missing resource cannot bypass the verification response.
 func (s *server) authVerifiedLimited(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.requireVerifiedEmail(s.authorizeAppResource(next))))))))
+	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.requireVerifiedEmail(s.authorizeAppResource(next)))))))))
 	return s.authMw.RequireLimited(pkgNext)
 }
 
@@ -226,8 +226,8 @@ func (s *server) browserRequestFromTrustedOrigin(r *http.Request) bool {
 	return err == nil && origin.Host != "" && (s.isTrustedAdminOrigin(origin, r) || s.isWebDashboardOrigin(origin))
 }
 
-// isWebDashboardOrigin reports whether origin is the apex domain. The web
-// dashboard is served there and proxies /v1, /login and /signup to the API
+// isWebDashboardOrigin reports whether origin is the apex or dedicated sales
+// domain. Their independently deployed frontends proxy requests to the API
 // host, so its requests reach apid with Host api.<domain> and Origin
 // https://<domain>. production-us 2026-10-06: every dashboard change
 // (creating an app, ...) was refused as cross-origin. The apex is a
@@ -237,7 +237,7 @@ func (s *server) browserRequestFromTrustedOrigin(r *http.Request) bool {
 func (s *server) isWebDashboardOrigin(origin *url.URL) bool {
 	base := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s.platformHost()), "."))
 	return base != "" && base != domainUnset && strings.EqualFold(origin.Scheme, "https") &&
-		strings.ToLower(origin.Hostname()) == base && origin.Port() == ""
+		(strings.ToLower(origin.Hostname()) == base || strings.ToLower(origin.Hostname()) == "sales."+base) && origin.Port() == ""
 }
 
 // requireMFA delegates to pkg/auth.Middleware.RequireMFA. Behaviour

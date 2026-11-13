@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/abusescan"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -36,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/platformflags"
+	"github.com/onebox-faas/faas/pkg/registryproxy"
 	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -104,7 +106,12 @@ type Handler struct {
 	// layerDigests remembers the digest of each layer this process just
 	// published, so the deploy scan does not hash the same bytes again.
 	layerDigests *publishedLayerDigests
-	log          *slog.Logger
+	// layerReuse is the app layer reuse index (ADR-20261112170911); nil
+	// turns reuse off.
+	layerReuse       *layerReuseIndex
+	layerReuseMetric *prometheus.CounterVec
+	guestInitDigests fileDigests
+	log              *slog.Logger
 	// profilingOnDemand stamps dormant guest collectors into manifests for
 	// plans that include profiling (ADR-1155, FAAS_PROFILING_ON_DEMAND).
 	profilingOnDemand bool
@@ -349,6 +356,10 @@ type Handler struct {
 	// place of the secretbox identities: the build seal-domain identity
 	// first, then the fleet and host identities (ADR 20261022111812).
 	registryIdentities []*age.X25519Identity
+	// registryProxy, when set, pulls private images through the control
+	// plane's secretd (ADR-20261110210000 slice 3j-2): this node never
+	// opens an app's registry password.
+	registryProxy *registryproxy.Proxy
 	// baseConvergence (ADR-567) tracks the bases this daemon staged so the
 	// convergence loop can keep each local copy byte-identical to the
 	// shared publication.
@@ -807,14 +818,19 @@ func (h *Handler) WithOpsMetrics(ops *wire.OpsMetrics) *Handler {
 	if h.postCaptureMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
 		h.ops.Registry().Unregister(h.postCaptureMetrics)
 	}
+	if h.layerReuseMetric != nil && h.ops != nil && h.ops.Registry() != nil {
+		h.ops.Registry().Unregister(h.layerReuseMetric)
+	}
 	h.ops = ops
 	h.handoffMetrics = nil
 	h.preparationMetrics = nil
 	h.postCaptureMetrics = nil
+	h.layerReuseMetric = nil
 	if ops != nil && ops.Registry() != nil {
 		h.handoffMetrics = newBuildImageHandoffMetrics(ops.Registry())
 		h.preparationMetrics = newImagePreparationProgressMetrics(ops.Registry())
 		h.postCaptureMetrics = newPostCaptureMetrics(ops.Registry())
+		h.layerReuseMetric = newLayerReuseMetric(ops.Registry())
 	}
 	return h
 }
@@ -950,6 +966,13 @@ func (h *Handler) WithSecretboxIdentity(ident *age.X25519Identity) *Handler {
 // passwords. Crash captures keep the secretbox identities.
 func (h *Handler) WithRegistryIdentities(identities []*age.X25519Identity) *Handler {
 	h.registryIdentities = identities
+	return h
+}
+
+// WithRegistryProxy pulls apps' private images through secretd instead of
+// opening their registry passwords here (ADR-20261110210000 slice 3j-2).
+func (h *Handler) WithRegistryProxy(p *registryproxy.Proxy) *Handler {
+	h.registryProxy = p
 	return h
 }
 
@@ -2406,6 +2429,9 @@ func (h *Handler) handleAppTaskChanged(ctx context.Context, payload db.AppTaskCh
 // parsed ref ensures a customer can never accidentally widen the
 // credential to a different registry by manipulating a request body.
 func (h *Handler) resolveRegistryAuth(ctx context.Context, app state.App, host string) (*oci.BasicAuth, error) {
+	if h.registryProxy != nil {
+		return h.proxiedRegistryAuth(ctx, app, host)
+	}
 	identities := h.registryCredentialIdentities()
 	if len(identities) == 0 {
 		return nil, nil

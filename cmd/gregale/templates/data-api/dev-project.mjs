@@ -1,6 +1,6 @@
-import { open, stat, realpath } from 'node:fs/promises'
+import { open, stat, lstat, readdir, realpath } from 'node:fs/promises'
 import { constants } from 'node:fs'
-import { resolve, relative, isAbsolute, sep } from 'node:path'
+import { resolve, relative, isAbsolute, sep, dirname, basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { requestStore } from './dev-requests.mjs'
 import { collectionScenarios, replayRequest } from './request-replay.mjs'
@@ -9,6 +9,30 @@ const object = value => value && typeof value === 'object' && !Array.isArray(val
 const fields = (value, allowed) => object(value) && Object.keys(value).every(key => allowed.includes(key))
 const identifier = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/
 const reserved = new Set(['sub', 'iss', 'aud', 'exp', 'iat', 'nbf', 'jti', 'role', 'gregale_read_only', '__proto__', 'constructor', 'prototype'])
+
+export async function protectMigrationOutput(migrations, output) {
+  const within = (root, path) => { const part = relative(root, path); return part === '' || part !== '..' && !part.startsWith('..' + sep) && !isAbsolute(part) }
+  const canonical = async path => {
+    try { return await realpath(path) }
+    catch (error) { if (error.code !== 'ENOENT') throw error; return join(await canonical(dirname(path)), basename(path)) }
+  }
+  const root = await realpath(migrations), destination = await canonical(resolve(output))
+  if (within(resolve(migrations), resolve(output)) || within(root, destination)) throw new Error('Types output must not replace a migration.')
+  const info = await lstat(output).catch(error => { if (error.code !== 'ENOENT') throw error; return null })
+  if (!info) return
+  if (!info.isFile()) throw new Error('Types output must be a regular file.')
+  const visit = async directory => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) await visit(path)
+      else {
+        const source = await stat(path)
+        if (source.dev === info.dev && source.ino === info.ino) throw new Error('Types output must not alias a migration.')
+      }
+    }
+  }
+  await visit(root)
+}
 
 export async function readLocalFile(path, limit = 65536) {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
@@ -61,19 +85,30 @@ export async function loadDevProject(options) {
     verification = { collection: await projectPath(base, config.verify.collection), scenarios: config.verify.scenarios }
   }
   const output = options.output_set || !config.output ? options.output : resolve(base, config.output)
+  await protectMigrationOutput(migrations, output)
   if (config.output !== undefined && (typeof config.output !== 'string' || !config.output || isAbsolute(config.output) || (relative(base, resolve(base, config.output)) === '..' || relative(base, resolve(base, config.output)).startsWith('..' + sep)))) throw new Error('Use a project-relative types output.')
   const seed = config.seed === undefined ? null : await projectPath(base, config.seed)
   const seedSQL = seed ? await readLocalFile(seed, 1048576) : null
   const check = config.check ?? { directory: 'client', commands: [['npm', 'run', 'typecheck'], ['npm', 'test']] }
   if (!fields(check, ['directory', 'commands']) || typeof check.directory !== 'string' || !check.directory || !Array.isArray(check.commands) || !check.commands.length || check.commands.length > 10 || check.commands.some(command => !Array.isArray(command) || !command.length || command.length > 100 || command.some(arg => typeof arg !== 'string' || !arg || arg.includes('\0')))) throw new Error('Use explicit argument arrays for client checks.')
   const checkDirectory = options.check ? await projectPath(base, check.directory, true) : resolve(base, check.directory)
-  const protectedPaths = [configPath, verification.collection, seed, options.baseline || resolve(base, '.gregale/data-api-contract.json'), options.replay, options.fixture, options.data_check].filter(Boolean)
+  const protectedPaths = [configPath, verification.collection, seed, options.baseline || resolve(base, '.gregale/data-api-contract.json'), options.replay, options.fixture, options.data_check, options.behavior_baseline, options.behavior_output, options.behavior_replays].filter(Boolean)
   let outputInfo
   try { outputInfo = await stat(output) } catch (error) { if (error.code !== 'ENOENT') throw error }
   for (const path of protectedPaths) {
     let info
     try { info = await stat(path) } catch (error) { if (error.code !== 'ENOENT') throw error }
     if (resolve(output) === resolve(path) || (outputInfo && info && outputInfo.dev === info.dev && outputInfo.ino === info.ino)) throw new Error('Types output must not replace configuration, seeds, requests or the baseline.')
+  }
+  if (options.behavior_output) {
+    await protectMigrationOutput(migrations, options.behavior_output)
+    const destination = resolve(options.behavior_output), within = relative(migrations, destination)
+    if (within === '' || (within !== '..' && !within.startsWith('..' + sep) && !isAbsolute(within))) throw new Error('Behavior output must not replace a migration.')
+    const destinationInfo = await stat(destination).catch(error => { if (error.code !== 'ENOENT') throw error; return null })
+    for (const path of [...protectedPaths.filter(path => path !== options.behavior_output), output]) {
+      const info = await stat(path).catch(error => { if (error.code !== 'ENOENT') throw error; return null })
+      if (destination === resolve(path) || (destinationInfo && info && destinationInfo.dev === info.dev && destinationInfo.ino === info.ino)) throw new Error('Behavior output must differ from project inputs and types.')
+    }
   }
   // Anonymous reads use the hosted allowlist format; runtimeConfig validates entries.
   if (config.public_read !== undefined && (!Array.isArray(config.public_read) || !config.public_read.length || config.public_read.some(name => typeof name !== 'string'))) throw new Error('Use public_read as a list of schema.relation names.')

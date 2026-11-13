@@ -40,6 +40,11 @@ func (s *server) customerSupportHandler(endpoint string, staff bool) accountHand
 			}
 			a.KeyOrgID = key.OrgID
 		}
+		if endpoint == "create" && !staff {
+			// ADR-20261112210000: snapshot account health with the new ticket.
+			s.serveSupportCreate(w, r, func(w http.ResponseWriter) { s.customerSupport.Serve(w, r, a, endpoint, staff) })
+			return
+		}
 		s.customerSupport.Serve(w, r, a, endpoint, staff)
 	}
 }

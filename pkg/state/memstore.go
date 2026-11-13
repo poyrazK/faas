@@ -150,10 +150,19 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	// ownerReleaseRequests are app_owner_release_requests by app id
+	// (ADR-20261110210000 §4); allocated on first use under mu.
+	ownerReleaseRequests map[string]AppOwnerReleaseRequest
+	// basicAuthVerifiers are app_basic_auth_verifiers by hex sealed digest
+	// (ADR-20261110210000 slice 3h); allocated on first use under mu.
+	basicAuthVerifiers          map[string]string
 	privateNetworkScopes        map[string]*semaphore.Weighted
 	privateNetworkTransportIDs  map[string]privateNetworkTransportIdentity
 	privateNetworkServiceOwners map[string]privateNetworkServiceOwner
 	trafficAppsSuffix           string
+	// abuseStrikes is each resource owner's abuse recycle times inside the
+	// escalation window (RecordAccountAbuseStrike, ADR-20261113133500).
+	abuseStrikes map[string][]time.Time
 	// planChangedAt is when each account's or org's plan last changed
 	// (PlanChangedAt, ADR-20261103121407).
 	planChangedAt map[string]time.Time
@@ -829,6 +838,7 @@ type MemStore struct {
 	// query is a single goroutine today.
 	appWebhooks                 map[string]AppWebhook
 	appWebhookDeliveries        map[string]AppWebhookDelivery
+	invocationSends             map[string]InvocationSend
 	appWebhookDeliverySources   map[string]string
 	entityOutboxAcceptances     map[string]string
 	appWebhookDeliveryAttempts  map[string][]AppWebhookDeliveryAttempt
@@ -2195,6 +2205,9 @@ func (m *MemStore) CreateAccount(_ context.Context, email string, plan api.Plan)
 // callers so the partial-unique invariant the SQL partial index
 // enforces is preserved in MemStore.
 func (m *MemStore) CreateAccountWithPersonalOrg(ctx context.Context, params CreateAccountWithPersonalOrgParams) (CreateAccountWithPersonalOrgResult, error) {
+	if params.Referral != nil {
+		return CreateAccountWithPersonalOrgResult{}, errors.New("referrals require PostgreSQL")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -4284,6 +4297,16 @@ func (m *MemStore) ProjectEnvironmentByID(_ context.Context, id string) (Project
 		// MemStore's newID uses 32 hex characters; platform host decoding
 		// returns the canonical, hyphenated form of the same UUID bytes.
 		environment, ok = m.projectEnvironments[strings.ReplaceAll(id, "-", "")]
+	}
+	if !ok {
+		// A branch's slot names the environment of the branch holding it.
+		slot := canonicalUUID(id)
+		for _, branch := range m.projectEnvironmentBranches {
+			if branch.SlotID != "" && branch.SlotID == slot {
+				environment, ok = m.projectEnvironments[branch.EnvironmentID]
+				break
+			}
+		}
 	}
 	if !ok {
 		return ProjectEnvironment{}, ErrNotFound
@@ -15310,7 +15333,12 @@ func (m *MemStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoc
 	if err := m.checkInvocationAdmissionLocked(inv, nil); err != nil {
 		return Invocation{}, err
 	}
-	return m.enqueueInvocationLocked(inv)
+	out, err := m.enqueueInvocationLocked(inv)
+	if err == nil {
+		inv.ID = out.ID
+		m.recordInvocationSendLocked(inv)
+	}
+	return out, err
 }
 
 func (m *MemStore) enqueueInvocationLocked(inv Invocation) (Invocation, error) {
@@ -15775,6 +15803,9 @@ func (m *MemStore) decrementAccountAsyncInflightLocked(accountID string) {
 // Caller holds m.mu so the callback row and terminal invocation become
 // visible together to MemStore readers.
 func (m *MemStore) enqueueInvocationDestinationLocked(inv Invocation) error {
+	if err := m.enqueueInvocationCompletionLocked(inv); err != nil {
+		return err
+	}
 	delivery, ok, err := invocationDestinationDelivery(inv)
 	if err != nil || !ok {
 		return err

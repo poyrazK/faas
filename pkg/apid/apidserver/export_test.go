@@ -15,6 +15,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/apid/attention"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 	"io"
 	"log/slog"
@@ -2278,6 +2279,16 @@ func CapabilitiesWithReleasePhase(enabled bool) *httptest.ResponseRecorder {
 
 // CapabilitiesWithWorkloadVerifier answers GET /v1/capabilities for a Scale
 // account with the cluster workload-identity verifier set or nil.
+// CapabilitiesWithInstallationGates runs GET /v1/capabilities for a Scale
+// account with the given installation gates.
+func CapabilitiesWithInstallationGates(crashSnapshots, forks, profiling bool) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	s := &server{crashSnapshotsEnabled: crashSnapshots, appForksEnabled: forks}
+	s.profileCaptures.Enabled = profiling
+	s.getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanScale})
+	return recorder
+}
+
 func CapabilitiesWithWorkloadVerifier(verifier *workloadidentity.Verifier) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
 	(&server{workloadVerifier: verifier}).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanScale})
@@ -2371,6 +2382,12 @@ func (s *server) ConfigureCustomerSupportForTest(ctx context.Context, pool *pgxp
 	return s.configureCustomerSupport(ctx, pool, func(string) string { return "" })
 }
 
+// ConfigureAttentionForTest wires the attention evaluator without starting
+// its loop; tests insert signals directly.
+func (s *server) ConfigureAttentionForTest(pool *pgxpool.Pool) {
+	s.attention = attention.New(pool, slog.Default(), nil)
+}
+
 func (s *server) DispatchCustomerSupportNotificationForTest(ctx context.Context) error {
 	return s.customerSupport.DispatchNotification(ctx)
 }
@@ -2443,6 +2460,12 @@ func NewUsageSummaryEgressProvider(mode billing.MeterDeliveryMode) billing.Provi
 // PlanWorkloadPublicAuthMode exposes the plan's public URL auth (H32-30).
 var PlanWorkloadPublicAuthMode = planWorkloadPublicAuthMode
 
+var AppLogDrainAnalyticsResponseForTest = appLogDrainAnalyticsResponse
+
+func RequestAnalyticsResponseForTest(ctx context.Context, store state.Store, app state.App, acct state.Account, from, until time.Time) (api.RequestAnalyticsResponse, error) {
+	return (&server{store: store}).requestAnalyticsResponse(ctx, app, acct, requestAnalyticsWindow{From: from, Until: until, AsOf: until, Since: until.Sub(from), RequestedSince: "1h"}, "route")
+}
+
 var KeyApprovalCategories = keyApprovalCategories
 
 // ProjectEnvironmentPlanURLs applies the two-service project fixture, adds a
@@ -2483,3 +2506,14 @@ func ProjectEnvironmentPlanURLs(t *testing.T) (string, map[string]string, api.Pl
 
 // ProjectEnvironmentWorkloadURL exposes the environment URL builder.
 var ProjectEnvironmentWorkloadURL = projectEnvironmentWorkloadURL
+
+// PlatformOwnedDomain reports the apps/platform namespace check for a server
+// with the given domains.
+func PlatformOwnedDomain(apps, platform, domain string) bool {
+	return (&server{domain: apps, platformDomain: platform}).platformOwnedDomain(domain)
+}
+
+var FinancialBudgetProblem = financialBudgetProblem
+
+// AppOOMRecommendation is the operational-summary OOM recommendation (2026-11-13).
+var AppOOMRecommendation = appOOMRecommendation

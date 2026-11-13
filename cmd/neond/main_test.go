@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/neond"
 )
 
 func TestConfigFromEnv(t *testing.T) {
@@ -25,6 +27,12 @@ func TestConfigFromEnv(t *testing.T) {
 		{name: "no key file", edit: map[string]string{"FAAS_NEOND_ADMIN_KEY_FILE": ""}, want: "ADMIN_KEY_FILE is required"},
 		{name: "no callers", edit: map[string]string{"FAAS_NEOND_CALLERS": " , "}, want: "CALLERS is required"},
 		{name: "bad limit", edit: map[string]string{"FAAS_NEOND_DESTRUCTIVE_PER_HOUR": "0"}, want: "positive integer"},
+		{name: "bad subject limit", edit: map[string]string{"FAAS_NEOND_DESTRUCTIVE_PER_SUBJECT_PER_HOUR": "x"}, want: "FAAS_NEOND_DESTRUCTIVE_PER_SUBJECT_PER_HOUR"},
+		{name: "project keys", edit: map[string]string{"FAAS_NEOND_ORG_ID": "org-quiet-1", "FAAS_SEAL_DOMAIN_NEON_IDENTITY_PATH": "/run/credentials/faas-neond.service/faas_seal_domain_neon"}},
+		{name: "key max age", edit: map[string]string{"FAAS_NEOND_PROJECT_KEY_MAX_AGE": "720h"}},
+		{name: "short key max age", edit: map[string]string{"FAAS_NEOND_PROJECT_KEY_MAX_AGE": "5m"}, want: "at least 1h"},
+		{name: "org without identity", edit: map[string]string{"FAAS_NEOND_ORG_ID": "org-quiet-1"}, want: "both FAAS_NEOND_ORG_ID"},
+		{name: "identity without org", edit: map[string]string{"FAAS_SEAL_DOMAIN_NEON_IDENTITY_PATH": "/x"}, want: "both FAAS_NEOND_ORG_ID"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env := map[string]string{}
@@ -41,7 +49,7 @@ func TestConfigFromEnv(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || len(cfg.callers) != 2 || cfg.callers[1] != "faas-ops" || cfg.destructivePerHour != defaultDestructivePerHour {
+			if err != nil || len(cfg.callers) != 2 || cfg.callers[1] != "faas-ops" || cfg.limits != (neond.Limits{PerHour: defaultDestructivePerHour, PerSubjectPerHour: defaultDestructivePerSubjectPerHour}) {
 				t.Fatalf("cfg = %+v, %v", cfg, err)
 			}
 		})

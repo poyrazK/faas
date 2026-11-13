@@ -440,6 +440,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		HealthcheckGRPC:          app.GetHealthcheckGrpc(),
 		HealthcheckGRPCService:   app.GetHealthcheckGrpcService(),
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
+		RoutedPortRawTCP:         app.GetRoutedPortRawTcp(),
 		ReadinessProbe:           json.RawMessage(app.GetReadinessProbeJson()),
 		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
 		QuietPauseAfter:          quietPauseAfterFromWire(app.GetQuietPauseAfterMs()),
@@ -627,6 +628,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		HealthcheckGRPC:          app.GetHealthcheckGrpc(),
 		HealthcheckGRPCService:   app.GetHealthcheckGrpcService(),
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
+		RoutedPortRawTCP:         app.GetRoutedPortRawTcp(),
 		ReadinessProbe:           json.RawMessage(app.GetReadinessProbeJson()),
 		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
 		QuietPauseAfter:          quietPauseAfterFromWire(app.GetQuietPauseAfterMs()),
@@ -749,6 +751,7 @@ func sealedFromProto(pbs []*vmmdpb.SealedSecret) []fcvm.SealedEnvEntry {
 			Key:        p.GetKey(),
 			Ciphertext: p.GetCiphertext(),
 			SourceKey:  p.GetSourceKey(),
+			Scope:      p.GetSecretScope(),
 		})
 	}
 	return out

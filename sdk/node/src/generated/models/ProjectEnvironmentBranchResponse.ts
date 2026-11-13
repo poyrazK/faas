@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ProjectEnvironmentBranchDatabase } from './ProjectEnvironmentBranchDatabase.js';
 import type { ProjectEnvironmentBranchWorkload } from './ProjectEnvironmentBranchWorkload.js';
 /**
  * How an environment branches from its parent.
@@ -37,5 +38,13 @@ export type ProjectEnvironmentBranchResponse = {
    */
   data_error?: string;
   workloads?: Array<ProjectEnvironmentBranchWorkload>;
+  /**
+   * When the branch was created. Reported by the branch's own view.
+   */
+  created_at?: string;
+  /**
+   * The managed PostgreSQL copies the branch owns. Reported by the branch's own view.
+   */
+  databases?: Array<ProjectEnvironmentBranchDatabase>;
 };
 

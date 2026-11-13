@@ -93,6 +93,19 @@ faas_seal_domain_runtime_signatures_required: false
 # stays on the node: the join check and other units still load it.
 faas_seal_domain_runtime_contracted: false
 
+# ADR-20261110210000 slice 3e, per compute node, after
+# faas_vmmd_secretd_open has run on it: true takes the runtime identity off
+# the node. The role removes runtime.age (and its .previous twin), stages
+# the public runtime.age.pub instead, skips the domain probe (the node can
+# no longer open it), and tells vmmd it is retired: vmmd then refuses to
+# start while a runtime identity is left on disk, and seals crash-capture
+# keys to the recipient so only secretd opens them. Needs
+# faas_seal_domain_runtime_contracted (the fleet identity also opens runtime
+# secrets), faas_vmmd_secretd_open and faas_seal_domain_runtime_recipient_src.
+# vmmd keeps the identity it loaded until it restarts: drain and restart it
+# (docs/runbooks/secretd.md).
+faas_seal_domain_runtime_retired_on_compute: false
+
 # Operator-local files from `gregalectl seal-domain init --domain source`.
 # Control-plane hosts stage both: githubd reads the identity, apid seals to
 # the recipient.
@@ -191,6 +204,13 @@ faas_seal_domain_edge_contracted: false
 faas_seal_domain_edge_tls_identity_src: ""
 faas_seal_domain_edge_tls_previous_identity_src: ""
 faas_seal_domain_edge_tls_recipient_src: ""
+
+# Operator-local files from `gregalectl seal-domain init --domain neon`
+# (ADR-20261112160000 §3). Control-plane hosts stage the identity: neond
+# seals and opens the per-project Neon API keys with it. No recipient (neond
+# is the only writer) and no fleet copy (the domain is new).
+faas_seal_domain_neon_identity_src: ""
+faas_seal_domain_neon_previous_identity_src: ""
 
 # Operator-local files from `gregalectl seal-domain init --domain alerting`.
 # Control-plane hosts stage both: meterd opens alert rule webhook secrets,

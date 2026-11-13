@@ -32,3 +32,5 @@ For API deployments, `overrides.readiness_probe` optionally configures a recurri
   }
 }
 ```
+
+Without a `liveness_probe`, Gregale checks only that a running app still answers, not that its dependencies are healthy, so a database outage does not restart it. An app whose health path is `/healthz` must keep answering it with 2xx. An app with another health path, or none, gets `GET /healthz`, and any answer below 500 counts as alive: a 404, a 401 from an auth layer, or a redirect to HTTPS or a sign-in page. A gRPC app gets a gRPC health check on Pro and Scale and no default check on other plans, and a service on a raw TCP port gets no default check. A timeout, a refused connection or a 5xx three times in a row restarts the instance. Set `liveness_probe` to check a specific path instead.

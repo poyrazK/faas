@@ -1,5 +1,7 @@
 package apidserver
 
+import "strings"
+
 // WithPlatformDomain sets the domain whose apex, api. and operations. hosts
 // serve the site, dashboard and API (ADR-20261026100000). Empty keeps the
 // apps domain in that role, the layout before the split.
@@ -26,4 +28,19 @@ func platformDomainFromConfig(cfg *Config, getenv func(string) string) string {
 		return ""
 	}
 	return domains.Platform
+}
+
+// platformOwnedDomain reports whether domain is the apps or platform domain,
+// or a name or wildcard under either. Those were accepted as pending custom
+// domain claims: no customer can verify them, but another account held a
+// pending claim on the platform apex (Hunt 34 H34-51).
+func (s *server) platformOwnedDomain(domain string) bool {
+	name := strings.TrimPrefix(strings.TrimSuffix(strings.ToLower(strings.TrimSpace(domain)), "."), "*.")
+	for _, owned := range []string{s.domain, s.platformDomain} {
+		owned = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(owned)), ".")
+		if owned != "" && (name == owned || strings.HasSuffix(name, "."+owned)) {
+			return true
+		}
+	}
+	return false
 }

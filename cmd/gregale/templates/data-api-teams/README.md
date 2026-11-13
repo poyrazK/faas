@@ -346,7 +346,9 @@ After registration is confirmed, **Load import history** and **Resume / inspect*
 restore persisted progress even after a browser reload. Only the original actor
 can continue a job. Owners see the team's history; admins see their own; members
 cannot import or inspect manifests. Losing write permission stops further batches.
-There are no automatic retries or background workers.
+The foreground import does not retry automatically. Migration
+`0013_background_data_jobs.sql` adds an optional background queue: register the
+reviewed import, then choose **Continue registered import in background**.
 
 History records the user, source label, timestamps, total, processed, inserted and
 skipped counts. Manifests remain in PostgreSQL for recovery; they contain customer
@@ -371,6 +373,30 @@ protected history and duplicate-safe progress. PostgreSQL and Chromium acceptanc
 also cover concurrent batches, committed-response loss, account switches and
 reload-to-resume behavior. This starter is the first supported import shape;
 other application schemas need their own reviewed parser and database RPCs.
+
+## Background imports and snapshot exports
+
+The browser's background panel queues registered imports and full-team snapshot
+exports, shows durable progress, cancels remaining work and downloads snapshot
+CSVs or failed-batch error reports. Exports save a consistent PostgreSQL statement
+snapshot (10,000 rows / 10 MiB); later edits do not change its saved bytes.
+Imports retain their existing 20-row atomic batches and idempotent offsets.
+Completed batches remain after cancellation. Each batch checks current membership.
+
+Build `workers/Dockerfile.data-jobs` through your normal Gregale build workflow
+with this project as context, and schedule `node /app/data-jobs.mjs` as a regular
+Gregale Job. Supply `DATA_API_URL` and a private backend `DATA_API_SERVER_KEY` in
+the Job environment; never include that key in browser assets. A worker key
+restricted to RPCs needs `claim_team_order_job`, `advance_team_order_job` and
+`fail_team_order_job`. Configure parallelism 1, timeout 120 seconds and a schedule
+such as once a minute. Existing Job admission and billing apply.
+
+The worker uses database leases and acts for the recorded user. Expired leases
+resume saved progress. Network/5xx errors preserve uncertainty; definite rejected
+batches record a safe code and row range. Results and reports stay under customer
+RLS in `team_order_jobs`, with 16 active jobs per actor and team. Keep an owner
+retention policy for completed history. The browser saves uncertain enqueue IDs
+in a local store scoped to API, team and user, and explicitly resolves the same ID.
 
 ## Reviewed order workflows
 

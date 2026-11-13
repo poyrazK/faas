@@ -1,6 +1,6 @@
 import {emptyHistory,retainBulkHistory,validateBulkHistory,historyLimits} from './bulk-history.mjs'
 import {bulkPlan,bulkTarget,runBulkWrite,retryBulkEntries,bulkLimits,bulkReport,reconciliationEntries,reconciliationTarget,reconcileBulk,preflightTarget,preflightModel,runBulkPreflight,matchingQuery,collectMatchingRows} from './bulk-write.mjs'
-import {csvExportPlan,exportTarget,runCsvExport,parseExactJSON,exportLimits} from './csv-export.mjs'
+import {csvExportPlan,exportTarget,runCsvExport,parseExactJSON,decodeJsonCell,exportLimits} from './csv-export.mjs'
 import {parseImportCsv,previewCsvImport,runCsvImport,retryableImportRows,importSummary,csvLimits} from './csv-import.mjs'
 import {mutationScaffold,lifecycleScaffold} from './guided-mutations.mjs'
 import {accessScaffold,validateGuidedAccess} from './guided-access.mjs'
@@ -80,7 +80,7 @@ element('send').addEventListener('click', async () => {
     if (expectedFingerprint && !/^[a-f0-9]{64}$/.test(expectedFingerprint)) throw new Error('Use a 64-character lowercase schema fingerprint.')
     if (expectedFingerprint) target.pathname = `/__gregale/contract/${expectedFingerprint}${target.pathname}`
     const method = element('method').value
-    const body = ['POST', 'PATCH'].includes(method) ? JSON.stringify(JSON.parse(element('body').value)) : undefined
+    const body = ['POST', 'PATCH'].includes(method) ? JSON.stringify(decodeJsonCell(element('body').value)) : undefined
     const response = await fetch(target, { method, body, signal: AbortSignal.timeout(30000), headers: { Authorization: `Bearer ${session.identities[element('identity').value].token}`, 'Content-Type': 'application/json', Prefer: 'return=representation' } })
     show('result-status', `${response.status} ${response.statusText} · request ${response.headers.get('x-request-id') ?? '—'}`)
     const text = await response.text()
@@ -754,7 +754,7 @@ element('load-saved').addEventListener('click', savedAction(async () => {
 element('save-request').addEventListener('click', savedAction(async () => {
   if (!collection) throw new Error('Reload the collection first.')
   const method = element('method').value
-  const request = { ...(element('expected-fingerprint').value.trim() ? { expectedSchemaFingerprint: element('expected-fingerprint').value.trim() } : {}), name: element('request-name').value.trim(), method, path: element('path').value, identity: element('identity').value, ...(element('capture').value.trim() ? { capture: JSON.parse(element('capture').value) } : {}), ...(['POST', 'PATCH'].includes(method) ? { body: JSON.parse(element('body').value) } : {}), expect: { status: Number(element('expected-status').value), ...(element('expected-json').value.trim() ? { json: JSON.parse(element('expected-json').value) } : {}) } }
+  const request = { ...(element('expected-fingerprint').value.trim() ? { expectedSchemaFingerprint: element('expected-fingerprint').value.trim() } : {}), name: element('request-name').value.trim(), method, path: element('path').value, identity: element('identity').value, ...(element('capture').value.trim() ? { capture: JSON.parse(element('capture').value) } : {}), ...(['POST', 'PATCH'].includes(method) ? { body: decodeJsonCell(element('body').value) } : {}), expect: { status: Number(element('expected-status').value), ...(element('expected-json').value.trim() ? { json: decodeJsonCell(element('expected-json').value) } : {}) } }
   const requests = [...currentScenario().requests]; const index = requests.findIndex(item => item.name === request.name)
   if (index < 0) requests.push(request); else requests[index] = request
   await collectionRequest('PUT', updatedCollection(requests)); element('saved').value = request.name

@@ -178,6 +178,11 @@ type operationFixture struct {
 }
 
 func (f *operationFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get(api.AgentPreviewHeader) == api.AgentPreviewBudget {
+		// A budget preview writes nothing (ADR-20261111114059).
+		_ = json.NewEncoder(w).Encode(api.AgentBudgetPreview{Preview: true, Charged: true})
+		return
+	}
 	if f.serveScaling(w, r) {
 		return
 	}

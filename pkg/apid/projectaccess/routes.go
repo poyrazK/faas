@@ -6,8 +6,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/authz"
 )
 
-// Routes are individually reviewed. Unlisted GitOps, data-service, full clone
-// and browser-approval operations remain outside shared project administration.
+// Routes are individually reviewed. A route left out of this table is refused
+// to every member of a company project, owners included.
 var routeActions = map[string]authz.OrgAction{
 	"GET /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback-attempts/{attempt_id}": authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/promotion-attempts/{attempt_id}":                       authz.OrgActionReadProject,
@@ -95,6 +95,43 @@ var routeActions = map[string]authz.OrgAction{
 	// A branch is deleted with the configure action (environmentDeleteAction).
 	"GET /v1/projects/{slug}/environments/{environment}/branches":  authz.OrgActionReadProject,
 	"POST /v1/projects/{slug}/environments/{environment}/branches": authz.OrgActionConfigureProject,
+	// The branch's own view and lifecycle (reviewed 2026-11-12): extending
+	// and resetting configure the project; a reset of a protected parent's
+	// branch also needs the approve action (BranchParent).
+	"GET /v1/projects/{slug}/environments/{environment}/branch":         authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/branch/extend": authz.OrgActionConfigureProject,
+	"POST /v1/projects/{slug}/environments/{environment}/branch/reset":  authz.OrgActionConfigureProject,
+	// GitOps, full clones and browser approvals (company projects reviewed
+	// 2026-11-12, ADR-20261112230000). Reads and previews need the read
+	// action. Binding, changing or detaching the Git source that drives an
+	// environment, and adopting it, link a repository the way PATCH
+	// /v1/projects/{slug} does, so they need the security action. Approving a
+	// revision deploys it; overrides change the environment's configuration. In
+	// a protected environment other than production both also need the approve
+	// action (ProtectedEnvironmentChange). A full clone configures the project
+	// like a branch, and cloning a protected source needs the approve action.
+	"GET /v1/projects/{slug}/environments/{environment}/gitops":                    authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/gitops/releases":           authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/gitops/adoption-preview":   authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/preview": authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/plan":              authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/promotion-plan":    authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/rollback-plan":     authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/source":            authz.OrgActionManageProjectSecurity,
+	"PATCH /v1/projects/{slug}/environments/{environment}/gitops/source":           authz.OrgActionManageProjectSecurity,
+	"DELETE /v1/projects/{slug}/environments/{environment}/gitops/source":          authz.OrgActionManageProjectSecurity,
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/source/rebind":     authz.OrgActionManageProjectSecurity,
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/adopt":             authz.OrgActionManageProjectSecurity,
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/approve": authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/overrides":         authz.OrgActionConfigureProject,
+	"DELETE /v1/projects/{slug}/environments/{environment}/gitops/overrides":       authz.OrgActionConfigureProject,
+	"POST /v1/projects/{slug}/environment-clones":                                  authz.OrgActionConfigureProject,
+	"GET /v1/projects/{slug}/environment-clones/{clone}":                           authz.OrgActionReadProject,
+	// An agent asks for a human review of a protected promotion it may start;
+	// the member who approves it in the browser needs the approve action,
+	// checked on the review page and again at the exchange.
+	"POST /v1/projects/{slug}/environments/{environment}/approval-requests":          authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/approval-requests/exchange": authz.OrgActionDeployProject,
 }
 
 const environmentDeletePattern = "DELETE /v1/projects/{slug}/environments/{environment}"

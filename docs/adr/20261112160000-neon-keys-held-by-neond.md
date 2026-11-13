@@ -161,6 +161,71 @@ neond, for each request:
 - **Slice 2, project keys:** `neon_project_keys` (expand migration), the
   service user's key as neond's admin credential, mint on create, revoke on
   delete, the backfill sweep, rotation.
+  - Built as slice 2a (mint, use, revoke; off until `faas_neond_org_id` is
+    set). As built:
+    - `neon_project_keys` is keyed by Neon's key ID, with one live key per
+      project (partial unique index) and revoked rows kept as the record of
+      what was issued. `faas_runtime` has no access; `faas_neond` may
+      select, insert and update. Queries live in `pkg/neond/neondpg`.
+    - Keys are sealed with `secretbox.SealBytes` (namespace
+      `neon-project-key`) to a new seal domain, `neon` (ADR
+      20261022111812), whose only reader is neond on the control plane. The
+      seal_domains role stages `/etc/faas/secrets/domains/neon.age`, hands
+      it to neond through `LoadCredential`
+      (`FAAS_SEAL_DOMAIN_NEON_IDENTITY_PATH`) and proves the domain probe;
+      neond loads it with `sealdomain.LoadReaderIdentities`, so a rotation's
+      previous identity keeps old keys readable.
+    - Minting runs after a successful `POST /projects`, detached from apid's
+      deadline, before the reply. A key minted but not stored is revoked at
+      once. A failed mint leaves the project on the admin key.
+    - A project route goes out with the project key. With no key, a key
+      that will not open, or a 401/403 from Neon (the key is forgotten and
+      the call retried once), it goes out with the admin key, counted as
+      `tier="admin_fallback"`.
+    - A successful (or 404) `DELETE /projects/{id}` revokes the project's
+      live keys and marks them revoked; `neond_project_keys_total{op,outcome}`
+      counts mints and revocations.
+  - Built as slice 2b (the key sweep). As built:
+    - Every 10 minutes neond lists the organization's projects with the
+      admin key (`GET /projects?org_id=…`, all pages). A listing with
+      unavailable projects or more than 25 pages stops the pass, so a
+      partial view never revokes a key.
+    - It mints a key for each project without one, revokes the keys of
+      projects Neon no longer lists, and rotates keys older than
+      `FAAS_NEOND_PROJECT_KEY_MAX_AGE` (default 90 days): at most 50 key
+      calls a pass, 250 ms apart (Neon admits 10 key creations a second).
+      The backfill covers every project of the organization, not only those
+      a database row names, because the rows do not record the backend.
+    - Rotation mints the new key, revokes the old one at Neon, then retires
+      the old row and inserts the new one in one statement
+      (`ReplaceProjectKey`). A failure before the swap revokes the new key;
+      a failed swap leaves the old row naming a revoked key, whose calls
+      fall back to the admin key until the next pass rotates it again.
+    - Deviation: rotation is the sweep's, by age, not a
+      `gregalectl neond rotate-project-keys` command. neond alone holds the
+      admin key, the seal identity and the table, so an operator command
+      would need its own path into neond. To rotate every key now, lower
+      `faas_neond_project_key_max_age` and converge.
+    - `neond_projects_without_key` is the backfill still to do;
+      `neond_project_keys_total{op}` gains `backfill`, `rotate` and
+      `orphan_revoke`.
+  - Built as slice 2c. As built:
+    - The subject is the account: `ManagedPostgresAccountsInProject` lists
+      the accounts whose databases, in any state, name the project (the
+      project ID or `<project>/<branch>`). Each destructive call counts
+      against every such account, at most
+      `FAAS_NEOND_DESTRUCTIVE_PER_SUBJECT_PER_HOUR` (default 60) an hour,
+      and against the fleet limit. A call either limit refuses counts
+      against neither. A project no database names (a failed create, a
+      copy target) counts only against the fleet limit.
+    - `update project` (quota writes: compute, storage and egress caps) and
+      `delete role` are refused on a project no database names.
+    - Deviation: there is no password-reset route. Credentials are set
+      over SQL, so the Neon API allow-list has no reset call to restrict.
+    - Provider qualification provisions without a database row, so its
+      quota writes would be refused through neond. It runs as an operator
+      with its own key, and neond admits only apid's OS user, so it never
+      goes through neond.
 - **Slice 3, apid without the key:** apid refuses to start with both the
   broker and a Neon key configured; deploy drops the key from apid's
   credentials; alerts on refusals, rate limits and neond being down; a

@@ -182,6 +182,7 @@ ROOT_WRAPPER_MODULES = (
     "lifecycle_runtime.py",
     "workflows.py",
     "functions.py",
+    "functions_runtime.py",
     "_binding_client_runtime.py",
     "_async_binding_client_runtime.py",
 )

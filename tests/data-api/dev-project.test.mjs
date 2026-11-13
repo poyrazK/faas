@@ -78,3 +78,15 @@ test('anonymous settings use the hosted allowlist formats', { skip: !runtime }, 
     await assert.rejects(projectModule.loadDevProject(f), /public_rpc/)
   }
 })
+
+test('DAPI023 types output cannot replace or alias migrations', {skip:!runtime},async t=>{
+ const {symlink}=await import('node:fs/promises')
+ const f=await fixture(t),sql=join(f.directory,'sql','0001_initial.sql')
+ await writeFile(sql,'SELECT 1;')
+ for(const path of [sql,join(f.directory,'sql','future.types.ts')]) await assert.rejects(projectModule.loadDevProject({...f,output:path,output_set:true}),/migration/)
+ const hardlink=join(f.directory,'hardlink.ts');await link(sql,hardlink)
+ await assert.rejects(projectModule.loadDevProject({...f,output:hardlink,output_set:true}),/alias a migration/)
+ await symlink(join(f.directory,'sql'),join(f.directory,'migration-alias'))
+ await assert.rejects(projectModule.loadDevProject({...f,output:join(f.directory,'migration-alias','future.ts'),output_set:true}),/migration/)
+ assert.equal(await (await import('node:fs/promises')).readFile(sql,'utf8'),'SELECT 1;')
+})

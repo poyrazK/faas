@@ -38,6 +38,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
@@ -759,11 +760,29 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("vmmd: load build seal domain: %w", err)
 	}
-	hostIdentities, registryIdentities, err := unsealIdentities(runtimeIdentities, buildIdentities, legacyIdentities, cfg.RuntimeSealDomainContracted)
+	hostIdentities, registryIdentities, err := unsealIdentities(runtimeIdentities, buildIdentities, legacyIdentities,
+		cfg.RuntimeSealDomainContracted, cfg.RuntimeSealDomainRetired)
 	if err != nil {
 		return err
 	}
-	sealdomain.RegisterLoadedDomains(ops.Registry(), map[sealdomain.Domain]bool{sealdomain.Runtime: len(runtimeIdentities) > 0, sealdomain.Build: len(buildIdentities) > 0})
+	// ADR-20261110210000 slice 3e: a retired node holds no runtime
+	// identity and seals capture keys to the runtime recipient.
+	var captureRecipient *age.X25519Recipient
+	loadedDomains := map[sealdomain.Domain]bool{sealdomain.Build: len(buildIdentities) > 0}
+	if cfg.RuntimeSealDomainRetired {
+		captureRecipient, err = runtimeRetiredRecipient(filepath.Dir(keyPath), cfg.RuntimeSealDomainContracted,
+			os.Getenv("FAAS_RUNTIME_SECRET_OPENER"))
+		if err != nil {
+			return err
+		}
+		log.Info("vmmd: runtime identity retired; runtime secrets open on the control plane only")
+	} else {
+		// A retired node reports no runtime domain at all, so
+		// FaasSealDomainIdentityMissing does not read it as a node that
+		// lost its identity.
+		loadedDomains[sealdomain.Runtime] = len(runtimeIdentities) > 0
+	}
+	sealdomain.RegisterLoadedDomains(ops.Registry(), loadedDomains)
 	sealdomain.RegisterLegacyIdentities(ops.Registry(), len(legacyIdentities))
 	log.Info("vmmd: unseal identities loaded", "runtime_domain", len(runtimeIdentities) > 0, "identities", len(hostIdentities),
 		"contracted", cfg.RuntimeSealDomainContracted, "legacy_identities", len(legacyIdentities))
@@ -1373,11 +1392,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			jailer.VsockUDSSocketPath(instance), func() (bool, uint64) { return mgr.QuietGate(instance) })
 	})
 	mgr.SetHostIdentities(hostIdentities)
+	mgr.SetCaptureRecipient(captureRecipient)
 	mgr.SetRegistryIdentities(registryIdentities)
 	mgr.RequireSecretBinding(cfg.RequireSecretBinding)
 	sealdomain.RegisterBindingRequired(ops.Registry(), cfg.RequireSecretBinding)
 	if cfg.RequireSecretBinding {
 		log.Info("vmmd: runtime secrets must be bound to their account (ADR-20261023173624)")
+	}
+	opener, closeOpener, err := runtimeSecretOpenerFromEnv(ctx, os.Getenv, cfg.RequireSecretBinding, log)
+	if err != nil {
+		return err
+	}
+	defer closeOpener()
+	if opener != nil {
+		mgr.SetRuntimeSecretOpener(opener)
 	}
 	var signatureStore any
 	if store != nil {
@@ -1637,7 +1665,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	// Wave 0 PR-C / ADR-047: vmmd becomes a gRPC client for the
 	// first time. The AdvisoryClient dials /run/faas/apid.sock to
-	// forward guest-init fanotify batches. Empty FAAS_APID_ADVISORY_SOCK
+	// forward guest-init stateless advisory batches. Empty FAAS_APID_ADVISORY_SOCK
 	// disables (matches apid's explicit-empty pattern); nil client
 	// short-circuits Manager.ForwardStatelessAdvisory to a no-op.
 	//
@@ -1646,9 +1674,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Forward outcome. The accessor is nil-receiver safe, so a
 	// nil ops is also a clean no-op (kept for symmetry / unit
 	// tests that don't wire metrics).
+	//
+	// ADR-047 amendment 2026-11-12: a database-backed vmmd writes the audit
+	// row through its own store instead. apid runs on the control plane, so
+	// a compute node has no apid.sock and the gRPC hop never delivered.
 	advisoryTarget := envOr("FAAS_APID_ADVISORY_SOCK", "unix:///run/faas/apid.sock")
 	var advisoryCli *vmmdgrpc.AdvisoryClient
-	if advisoryTarget != "" {
+	switch {
+	case store != nil:
+		advisoryAuditor := &statelessAdvisoryAuditor{audit: audit.New(store, log, ops, "vmmd"), apps: store}
+		if pool != nil {
+			advisoryAuditor.notify = func(ctx context.Context, payload string) error {
+				return db.Notify(ctx, pool, db.NotifyStatelessAdvisory, payload)
+			}
+		}
+		mgr.SetAdvisoryClient(advisoryAuditor)
+		log.Info("vmmd: stateless advisory writes audit rows through the store")
+	case advisoryTarget != "":
 		advisoryCli = vmmdgrpc.NewAdvisoryClient(advisoryTarget, log, ops)
 		mgr.SetAdvisoryClient(advisoryCli)
 		log.Info("vmmd: stateless advisory client wired", "target", advisoryTarget)
@@ -1882,6 +1924,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		defer crashRecv.Close()
 	}
+	// ADR-047 (amended 2026-11-12): guest-init ships stateless advisory
+	// batches over a guest-initiated stream; the listener names the app.
+	if err := StartStatelessAdvisoryReceiver(log, mgr, jailer); err != nil {
+		log.Warn("vmmd: stateless advisory receiver unavailable", "err", err, "goos", runtime.GOOS)
+	}
 	log.Info("vmmd ready", "fc_version", fcVersion, "max_slots", fcvm.MaxSlots,
 		"uid_lo", fcvm.JailUIDBase, "uid_hi", fcvm.JailUIDMax,
 		"host_key_path", keyPath, "recipient_path", pubPath,
@@ -2055,6 +2102,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// configured base generation, so a node that cannot is marked degraded.
 	impl.WithBaseGenerationReadiness(vmmdgrpc.NewCachedBaseGenerationReadiness(
 		baseGenerationReadinessCheck(storageBackend, baseGenerations)))
+	// ADR-20261110210000 slice 3i: sealed edge-rule request headers open
+	// here, for this node's instances, through the control plane's secretd.
+	edgeHeaderSecrets, closeEdgeHeaderSecrets, err := edgeHeaderSecretOpenerFromEnv(ctx, os.Getenv, mgr.InstanceAppID, log)
+	if err != nil {
+		return err
+	}
+	defer closeEdgeHeaderSecrets()
+	if edgeHeaderSecrets != nil {
+		impl.WithEdgeHeaderSecrets(edgeHeaderSecrets)
+	}
 	if err := vmmdgrpc.FenceStaleStreamBridges(ctx); err != nil {
 		return fmt.Errorf("vmmd: fence previous HTTP forwarding owner: %w", err)
 	}

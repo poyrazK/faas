@@ -10,6 +10,13 @@ export type { AccountDeployRateLimit } from './models/AccountDeployRateLimit.js'
 export type { AccountEgressAllowlistExtraResponse } from './models/AccountEgressAllowlistExtraResponse.js';
 export type { AccountEmailChangeRequest } from './models/AccountEmailChangeRequest.js';
 export type { AccountExportResponse } from './models/AccountExportResponse.js';
+export type { AccountHealth } from './models/AccountHealth.js';
+export type { AccountHealthCode } from './models/AccountHealthCode.js';
+export type { AccountHealthDeployment } from './models/AccountHealthDeployment.js';
+export type { AccountHealthDomain } from './models/AccountHealthDomain.js';
+export type { AccountHealthRequest } from './models/AccountHealthRequest.js';
+export type { AccountHealthRequests } from './models/AccountHealthRequests.js';
+export type { AccountHealthRestriction } from './models/AccountHealthRestriction.js';
 export type { AccountLimits } from './models/AccountLimits.js';
 export type { AccountOverageCapResponse } from './models/AccountOverageCapResponse.js';
 export type { AccountProfileUpdate } from './models/AccountProfileUpdate.js';
@@ -400,6 +407,7 @@ export type { ExecutionWorkflowStatusCounts } from './models/ExecutionWorkflowSt
 export type { ExecutionWorkflowUsage } from './models/ExecutionWorkflowUsage.js';
 export type { FailureRule } from './models/FailureRule.js';
 export type { FailureRules } from './models/FailureRules.js';
+export type { FeatureHint } from './models/FeatureHint.js';
 export type { FieldError } from './models/FieldError.js';
 export type { FinancialAllocation } from './models/FinancialAllocation.js';
 export type { FinancialAppCostAllocation } from './models/FinancialAppCostAllocation.js';

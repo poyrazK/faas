@@ -531,6 +531,12 @@ The edge protection summary (`gregale edge rule summary`, or the Edge
 protection panel) shows how many requests each AI crawler made, whatever
 your rules did with them.
 
+The summary counts requests that reach Gregale. A hosting front that blocks
+crawlers before Gregale can prevent a per-app allow policy from taking effect;
+those requests do not appear in the summary. A Cloudflare 403 without a
+Gregale trace ID should be checked against the front's bot settings by the
+operator.
+
 AI crawler conditions are released account by account: until your
 account is included, creating a rule that tests them returns `422` with
 code `edge_feature_unavailable`, and existing ones never match. The

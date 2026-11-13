@@ -74,11 +74,22 @@ func (rs Resizes) Post(w http.ResponseWriter, r *http.Request, acct state.Accoun
 		return
 	}
 	commit := func() {}
-	if !replay && rs.Charge != nil {
+	preview := r.Header.Get(api.AgentPreviewHeader) != ""
+	if rs.Charge != nil && (!replay || preview) {
+		class := request.ServiceClass
+		if replay {
+			// A replay commits nothing new; its preview says so.
+			class = ""
+		}
 		var answered bool
-		if commit, answered = rs.Charge(w, r, acct, database, request.ServiceClass); answered {
+		if commit, answered = rs.Charge(w, r, acct, database, class); answered {
 			return
 		}
+	}
+	if preview {
+		// Only a priced path answers a budget preview; never resize.
+		rs.Problem(w, managedpostgres.ErrInvalid)
+		return
 	}
 	operation, err := rs.Service.Resize(r.Context(), ResizeRequest(acct.ID, database, request))
 	if err != nil {

@@ -121,6 +121,9 @@ func (m *management) operationBase(ctx context.Context, a operationArgs, kind st
 		return nil, err
 	}
 	p := &releasePlan{Action: "operation_" + kind, App: a.App, AppID: app.ID, AccountID: account.ID, APIBase: m.opts.APIBase, Profile: m.opts.Profile, Scope: normalizedScope(a.Environment), Project: a.Project, ProjectID: env.ProjectID, EnvironmentID: env.ID, Reason: a.Reason, ExpiresAt: time.Now().Add(releasePlanTTL), Operation: &operationPlan{Kind: kind, Request: data, AppHash: hex.EncodeToString(hash[:])}}
+	// Agent keys and hosted sign-ins (mcp-login keys) pay from an agent
+	// budget (ADR-20261111114059); a person's own key never does.
+	p.budgeted = slices.Contains(account.KeyScopes, api.ScopeAgent) || m.remote()
 	if a.Environment != "" {
 		_, p.WorkloadRevision, err = m.client.GetAppInEnvironmentRevision(ctx, a.App, a.Environment)
 	}
@@ -179,6 +182,7 @@ func (m *management) planScale(ctx context.Context, a scalePlanArgs) (any, error
 	}
 	p.Operation.ExpectedRevision = before.Revision
 	p.Operation.ScalingBefore = &before
+	p.AgentBudget = m.previewScaling(ctx, p, a, before.Revision)
 	p.TrafficEffect = "Change selected app resource settings. Warm instances and increased resource sizes can increase usage charges; native quotas and residency rules remain enforced."
 	p.Operation.Changes = p.Operation.Request
 	return m.savePlan(p)
@@ -456,4 +460,21 @@ func resourceFingerprint(v any) string {
 	b, _ := json.Marshal(v)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// previewScaling asks apid what the scaling change would cost this agent,
+// without making it. A preview that fails leaves the plan without a price:
+// apply is priced and gated all the same.
+func (m *management) previewScaling(ctx context.Context, p *releasePlan, a scalePlanArgs, revision int64) *api.AgentBudgetPreview {
+	if !p.budgeted {
+		return nil
+	}
+	revision = max(revision, 0)
+	req := api.ApplyAppScalingRequest{ExpectedAppID: p.AppID, ExpectedEnvironmentID: p.EnvironmentID, RequestID: uuid.NewString(), ExpectedRevision: &revision,
+		RAMMB: a.RAMMB, CPUMillicores: a.CPUMillicores, MaxConcurrency: a.MaxConcurrency, MinInstances: a.MinInstances}
+	out, err := m.client.PreviewAppScaling(ctx, p.App, p.Scope, req)
+	if err != nil || !out.Charged {
+		return nil
+	}
+	return &out
 }

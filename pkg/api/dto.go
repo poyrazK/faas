@@ -5329,8 +5329,9 @@ type PasswordLoginResponse struct {
 // equivalence ("wrong password" vs "no account" vs "weak password") is
 // kept intact under the same JSON keys.
 type PasswordSignupRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	ReferralCode string `json:"referral_code,omitempty"`
+	Email        string `json:"email"`
+	Password     string `json:"password"`
 }
 
 // ProgrammaticAuthResponse is the body for the JSON-only
@@ -5371,7 +5372,8 @@ type ProgrammaticAPIKey struct {
 // body regardless of whether the email is bound, so the surface
 // cannot be used to enumerate accounts.
 type MagicLinkSignupRequest struct {
-	Email string `json:"email"`
+	ReferralCode string `json:"referral_code,omitempty"`
+	Email        string `json:"email"`
 }
 
 // PasswordResetRequest is the body of POST /login/forgot. The email
@@ -7966,28 +7968,42 @@ type QuotaBlock struct {
 // account (Unaffected = noop or skipped) plus the scan's proposed
 // creates (WillDeploy.Action == "create"). Removed is a flat slug
 // list — removal has no per-row editable metadata worth surfacing.
+// FeatureHint is one Gregale behavior or feature that applies to the scanned
+// source: what the plan will do, how to change it, and the exact commands
+// (ADR-20261112223000 §1). IDs are stable.
+type FeatureHint struct {
+	ID        string   `json:"id"`
+	Workloads []string `json:"workloads,omitempty"`
+	Applied   string   `json:"applied"`
+	Change    string   `json:"change,omitempty"`
+	Commands  []string `json:"commands,omitempty"`
+}
+
 type PlanResponse struct {
-	SafeRelease           *ProjectSafeRelease    `json:"safe_release,omitempty"`
-	ProjectSlug           string                 `json:"project_slug"`
-	RepoFullName          string                 `json:"repo_full_name,omitempty"`
-	Environment           string                 `json:"environment,omitempty"`
-	EnvironmentProtected  bool                   `json:"environment_protected,omitempty"`
-	EnvironmentConfigHash string                 `json:"environment_config_hash,omitempty"`
-	ScanSource            string                 `json:"scan_source"`
-	Tier                  string                 `json:"tier"`
-	Workloads             []PlanWorkload         `json:"workloads"`
-	Managed               []PlanManaged          `json:"managed"`
-	Crons                 []PlanCron             `json:"crons"`
-	AsyncRoutes           []PlanAsyncRoute       `json:"async_routes,omitempty"`
-	Warnings              []string               `json:"warnings,omitempty"`
-	DetectionWarnings     []PlanDetectionWarning `json:"detection_warnings,omitempty"`
-	ObservedApps          int                    `json:"observed_apps"`
-	ObservedCrons         int                    `json:"observed_crons"`
-	LimitApps             int                    `json:"limit_apps"`
-	LimitCrons            int                    `json:"limit_crons"`
-	CanApply              bool                   `json:"can_apply"`
-	CronsNotAllowed       bool                   `json:"crons_not_allowed,omitempty"`
-	PlanToken             string                 `json:"plan_token"`
+	SafeRelease           *ProjectSafeRelease `json:"safe_release,omitempty"`
+	ProjectSlug           string              `json:"project_slug"`
+	RepoFullName          string              `json:"repo_full_name,omitempty"`
+	Environment           string              `json:"environment,omitempty"`
+	EnvironmentProtected  bool                `json:"environment_protected,omitempty"`
+	EnvironmentConfigHash string              `json:"environment_config_hash,omitempty"`
+	ScanSource            string              `json:"scan_source"`
+	Tier                  string              `json:"tier"`
+	Workloads             []PlanWorkload      `json:"workloads"`
+	Managed               []PlanManaged       `json:"managed"`
+	Crons                 []PlanCron          `json:"crons"`
+	AsyncRoutes           []PlanAsyncRoute    `json:"async_routes,omitempty"`
+	Warnings              []string            `json:"warnings,omitempty"`
+	// FeatureHints says which Gregale behaviors and features apply to the
+	// scanned source and the commands that change them (ADR-20261112223000).
+	FeatureHints      []FeatureHint          `json:"feature_hints,omitempty"`
+	DetectionWarnings []PlanDetectionWarning `json:"detection_warnings,omitempty"`
+	ObservedApps      int                    `json:"observed_apps"`
+	ObservedCrons     int                    `json:"observed_crons"`
+	LimitApps         int                    `json:"limit_apps"`
+	LimitCrons        int                    `json:"limit_crons"`
+	CanApply          bool                   `json:"can_apply"`
+	CronsNotAllowed   bool                   `json:"crons_not_allowed,omitempty"`
+	PlanToken         string                 `json:"plan_token"`
 	// ADR-124 can_apply rescue signal. PreExclude is the gate
 	// evaluated on the full scan (pre-`--only`/pre-`--exclude`).
 	// Rescued is true when --exclude flipped a blocked gate to
@@ -8209,9 +8225,10 @@ type AppStaticEgressIPResponse struct {
 // /v1/apps/{slug}/static-egress-ip. IP is the canonical
 // customer-supplied IPv4 (dotted-quad string). The handler
 // validates the family=4 + non-RFC1918 + non-link-local +
-// non-multicast before the column write. Set=false means
-// "clear" — the same wire body covers the DELETE /keep-IP
-// promotion path without a third endpoint.
+// non-multicast before the column write. Set=false with no IP
+// means "clear" — the same wire body covers the DELETE /keep-IP
+// promotion path without a third endpoint. Set=false with an IP
+// is refused as ambiguous.
 type SetAppStaticEgressIPRequest struct {
 	IP  string `json:"ip"`
 	Set bool   `json:"set"`
@@ -12660,6 +12677,8 @@ type RequestAnalyticsGroup struct {
 // envelope for one app. Since/Until are the effective half-open window; a
 // longer requested since value is represented by WindowClamped=true.
 type RequestAnalyticsResponse struct {
+	// Omitted names optional enrichments unavailable within their query budget.
+	Omitted               []string                                 `json:"omitted,omitempty"`
 	Slug                  string                                   `json:"slug"`
 	Since                 string                                   `json:"since"`
 	From                  string                                   `json:"from"`

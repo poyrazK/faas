@@ -173,6 +173,19 @@ jobs:
       # compute hosts. Keep the shared storage.env credential read-only.
       APID_STORAGE_LIFECYCLE_ENV: ${{ secrets.COMPUTE_IMAGED_STORAGE_ENV }}
       RELEASE_TAG: ${{ inputs.release_tag }}
+      # ADR-20261110210000 §2: escrow reads the fleet and seal-domain private
+      # identities from the control plane's key escrow (scripts/ci/key_escrow.sh)
+      # instead of the FLEET_AGE_KEY / SEAL_DOMAIN_*_AGE_KEY secrets.
+      SEAL_DOMAIN_KEY_SOURCE: ${{ vars.SEAL_DOMAIN_KEY_SOURCE }}
+      # ADR-20261110210000 §3: true stages the runtime identity on the control
+      # plane too, for secretd (scripts/ci/seal_domain_vars.sh).
+      SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE: ${{ vars.SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE }}
+      # ADR-20261110210000 slice 3f: true stages the edge identity on the
+      # control plane too, for secretd's log drain headers.
+      SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE: ${{ vars.SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE }}
+      # ADR-20261110210000 slice 3j: true stages the build identity on the
+      # control plane too, for secretd's private-registry pulls.
+      SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE: ${{ vars.SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE }}
       # The canary app the activation observer gates on. Unset, it defaults
       # to an always-deployed app in scripts/ci/observe_remote_rollout.sh.
       ROLLOUT_APP_PROBE_URL: ${{ vars.ROLLOUT_APP_PROBE_URL }}
@@ -600,6 +613,9 @@ jobs:
             deploy/ansible/roles/signd_service/files/faas-signd.service \
             "${BUNDLE_ROOT}/optional-systemd/faas-signd.service"
           install -m 0644 \
+            deploy/ansible/roles/secretd_service/files/faas-secretd.service \
+            "${BUNDLE_ROOT}/optional-systemd/faas-secretd.service"
+          install -m 0644 \
             deploy/ansible/roles/neond_service/files/faas-neond.service \
             "${BUNDLE_ROOT}/optional-systemd/faas-neond.service"
           install -m 0644 \
@@ -754,15 +770,45 @@ jobs:
           COMPUTE_VERIFY_KEY: ${{ secrets.COMPUTE_VERIFY_KEY }}
         run: |
           set -euo pipefail
-          [[ -n "${FLEET_AGE_KEY:-}" && -n "${FLEET_AGE_RECIPIENT:-}" && -n "${COMPUTE_VERIFY_KEY:-}" ]] || {
-            echo "::error::production secrets FLEET_AGE_KEY, FLEET_AGE_RECIPIENT and COMPUTE_VERIFY_KEY are required" >&2
-            exit 1
-          }
           stage="$RUNNER_TEMP/fleet-age"
+          rm -rf -- "$stage"
           install -d -m 0700 "$stage"
-          # Age identities are byte-exact single-line values. A trailing
-          # newline makes the strict fleet-seal parser reject the key.
-          printf '%s' "$FLEET_AGE_KEY" > "$stage/fleet.age"
+          trap 'rm -rf -- "$stage"' EXIT
+          case "${SEAL_DOMAIN_KEY_SOURCE:-secrets}" in
+            secrets)
+              [[ -n "${FLEET_AGE_KEY:-}" && -n "${FLEET_AGE_RECIPIENT:-}" && -n "${COMPUTE_VERIFY_KEY:-}" ]] || {
+                echo "::error::production secrets FLEET_AGE_KEY, FLEET_AGE_RECIPIENT and COMPUTE_VERIFY_KEY are required" >&2
+                exit 1
+              }
+              # Age identities are byte-exact single-line values. A trailing
+              # newline makes the strict fleet-seal parser reject the key.
+              printf '%s' "$FLEET_AGE_KEY" > "$stage/fleet.age"
+              ;;
+            escrow)
+              # ADR-20261110210000 §2: the fleet identity comes from the
+              # control plane's own key escrow; GitHub holds no copy.
+              [[ -z "${FLEET_AGE_KEY:-}" ]] || {
+                echo "::error::SEAL_DOMAIN_KEY_SOURCE=escrow, but FLEET_AGE_KEY is still a GitHub secret; delete it and rotate it (docs/runbooks/seal-domain-key-escrow.md)" >&2
+                exit 1
+              }
+              [[ -n "${FLEET_AGE_RECIPIENT:-}" && -n "${COMPUTE_VERIFY_KEY:-}" ]] || {
+                echo "::error::production secrets FLEET_AGE_RECIPIENT and COMPUTE_VERIFY_KEY are required" >&2
+                exit 1
+              }
+              [[ -f scripts/ci/key_escrow.sh ]] || {
+                echo "::error::${RELEASE_TAG} predates the key escrow (ADR-20261110210000)" >&2
+                exit 1
+              }
+              KEY_ESCROW_HOST="$CP_HOST" KEY_ESCROW_SSH_KEY="$HOME/.ssh/deploy_key" KEY_ESCROW_KNOWN_HOSTS="$HOME/.ssh/known_hosts" \
+                scripts/ci/key_escrow.sh fetch "$stage/escrow" fleet
+              install -m 0600 "$stage/escrow/fleet.age" "$stage/fleet.age"
+              rm -rf -- "$stage/escrow"
+              ;;
+            *)
+              echo "::error::environment variable SEAL_DOMAIN_KEY_SOURCE is '${SEAL_DOMAIN_KEY_SOURCE}'; want secrets or escrow" >&2
+              exit 1
+              ;;
+          esac
           printf '%s' "$FLEET_AGE_RECIPIENT" > "$stage/fleet.age.pub"
           # Exactly one trailing newline, however the secret was pasted.
           printf '%s\n' "$(printf '%s' "$COMPUTE_VERIFY_KEY")" > "$stage/sign-pub.pem"
@@ -879,6 +925,8 @@ jobs:
           SEAL_DOMAIN_EDGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_RECIPIENT }}
           SEAL_DOMAIN_EDGE_TLS_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_KEY }}
           SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT }}
+          SEAL_DOMAIN_NEON_AGE_KEY: ${{ secrets.SEAL_DOMAIN_NEON_AGE_KEY }}
+          SEAL_DOMAIN_NEON_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_NEON_AGE_RECIPIENT }}
           SEAL_DOMAIN_ALERTING_AGE_KEY: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_KEY }}
           SEAL_DOMAIN_ALERTING_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_RECIPIENT }}
           SEAL_DOMAIN_STORAGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_STORAGE_AGE_KEY }}
@@ -917,7 +965,26 @@ jobs:
           printf '%s' "$CP_ANSIBLE_VARS_B64" | base64 --decode > "$work/vars.yml"
           # ADR 20261022111812: the seal_domains role stages the domain keys
           # held as SEAL_DOMAIN_* secrets; the write modes stay in the vars.
-          scripts/ci/seal_domain_vars.sh control-plane "$work/seal-domains" "$work/vars.yml"
+          # ADR-20261110210000 §2: with SEAL_DOMAIN_KEY_SOURCE=escrow the
+          # identities come from the control plane's key escrow, not secrets.
+          escrow_dir=""
+          if [[ "${SEAL_DOMAIN_KEY_SOURCE:-secrets}" == escrow ]]; then
+            [[ -f scripts/ci/key_escrow.sh ]] || {
+              echo "::error::${RELEASE_TAG:-this release} predates the key escrow (ADR-20261110210000)" >&2
+              exit 1
+            }
+            escrow_dir="$work/escrow"
+            mapfile -t escrow_names < <(scripts/ci/seal_domain_vars.sh --identities control-plane)
+            if [[ ${#escrow_names[@]} -gt 0 ]]; then
+              KEY_ESCROW_HOST="$CP_HOST" KEY_ESCROW_SSH_KEY="$HOME/.ssh/deploy_key" KEY_ESCROW_KNOWN_HOSTS="$HOME/.ssh/known_hosts" \
+                scripts/ci/key_escrow.sh fetch "$escrow_dir" "${escrow_names[@]}"
+            else
+              install -d -m 0700 "$escrow_dir"
+            fi
+          fi
+          SEAL_DOMAIN_ESCROW_DIR="$escrow_dir" \
+            scripts/ci/seal_domain_vars.sh control-plane "$work/seal-domains" "$work/vars.yml"
+          [[ -z "$escrow_dir" ]] || rm -rf -- "$escrow_dir"
           # ADR-20261102081618: edgednsd's DNS token, from the EDGEDNSD_CF_TOKEN
           # secret. A release cut before the script stages none.
           if [[ -f scripts/ci/edgednsd_vars.sh ]]; then
@@ -1503,6 +1570,56 @@ jobs:
           exit 1
           REMOTE
 
+      # secretd_service converges before the release activates, so it can
+      # only start secretd once the binary is current. This step starts (or
+      # restarts) it from the release just activated and waits for its
+      # listener (ADR-20261110210000 §3). Without the role's drop-in secretd
+      # is off.
+      - name: Restart configured secret opener
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            root@${{ env.CP_HOST }} "bash -s -- '${RELEASE_ID}'" <<'REMOTE'
+          set -euo pipefail
+          release_id="$1"
+          dropin=/etc/systemd/system/faas-secretd.service.d/50-faas-secretd.conf
+          source_unit="/opt/faas/releases/${release_id}/optional-systemd/faas-secretd.service"
+          installed_unit=/etc/systemd/system/faas-secretd.service
+
+          if [[ ! -s "$dropin" ]]; then
+            echo "faas-secretd is not configured; compute nodes keep opening runtime secrets themselves"
+            exit 0
+          fi
+          test -f "$source_unit"
+          test -x "/opt/faas/releases/${release_id}/bin/secretd"
+          if [[ -L "$installed_unit" || ( -e "$installed_unit" && ! -f "$installed_unit" ) ]]; then
+            echo "faas-secretd unit path is not a regular file" >&2
+            exit 1
+          fi
+          staged_unit="${installed_unit}.new-${release_id}"
+          trap 'rm -f -- "$staged_unit"' EXIT
+          install -o root -g root -m 0644 "$source_unit" "$staged_unit"
+          mv -Tf "$staged_unit" "$installed_unit"
+          trap - EXIT
+
+          listen="$(sed -n 's/^Environment=FAAS_SECRETD_LISTEN=tcp:\/\///p' "$dropin" | tail -1)"
+          port="${listen##*:}"
+          [[ "$port" =~ ^[0-9]+$ ]]
+          systemctl daemon-reload
+          systemctl reset-failed faas-secretd.service || true
+          systemctl enable faas-secretd.service
+          systemctl restart faas-secretd.service
+          for attempt in $(seq 1 30); do
+            if systemctl is-active --quiet faas-secretd.service &&
+               ss -Hltn "sport = :${port}" | grep -q .; then
+              exit 0
+            fi
+            sleep 2
+          done
+          journalctl -u faas-secretd.service -n 100 --no-pager >&2
+          exit 1
+          REMOTE
+
       # neond_service converges before the release activates, so it can only
       # start neond once the binary is current. This step restarts it from
       # the release just activated and waits for its socket
@@ -1706,6 +1823,17 @@ jobs:
       # The canary app the activation observer gates on. Unset, it defaults
       # to an always-deployed app in scripts/ci/observe_remote_rollout.sh.
       ROLLOUT_APP_PROBE_URL: ${{ vars.ROLLOUT_APP_PROBE_URL }}
+      # ADR-20261110210000 §2, as in the deploy job.
+      SEAL_DOMAIN_KEY_SOURCE: ${{ vars.SEAL_DOMAIN_KEY_SOURCE }}
+      # ADR-20261110210000 §3: true stages the runtime identity on the control
+      # plane too, for secretd (scripts/ci/seal_domain_vars.sh).
+      SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE: ${{ vars.SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE }}
+      # ADR-20261110210000 slice 3f: true stages the edge identity on the
+      # control plane too, for secretd's log drain headers.
+      SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE: ${{ vars.SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE }}
+      # ADR-20261110210000 slice 3j: true stages the build identity on the
+      # control plane too, for secretd's private-registry pulls.
+      SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE: ${{ vars.SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE }}
     steps:
       - name: Install pinned cosign verifier
         env:
@@ -1862,6 +1990,8 @@ jobs:
           SEAL_DOMAIN_EDGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_RECIPIENT }}
           SEAL_DOMAIN_EDGE_TLS_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_KEY }}
           SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT }}
+          SEAL_DOMAIN_NEON_AGE_KEY: ${{ secrets.SEAL_DOMAIN_NEON_AGE_KEY }}
+          SEAL_DOMAIN_NEON_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_NEON_AGE_RECIPIENT }}
           SEAL_DOMAIN_ALERTING_AGE_KEY: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_KEY }}
           SEAL_DOMAIN_ALERTING_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_RECIPIENT }}
           SEAL_DOMAIN_STORAGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_STORAGE_AGE_KEY }}
@@ -1902,7 +2032,26 @@ jobs:
           printf '%s' "$CP_ANSIBLE_VARS_B64" | base64 --decode > "$work/vars.yml"
           # ADR 20261022111812: the seal_domains role stages the domain keys
           # held as SEAL_DOMAIN_* secrets; the write modes stay in the vars.
-          scripts/ci/seal_domain_vars.sh control-plane "$work/seal-domains" "$work/vars.yml"
+          # ADR-20261110210000 §2: with SEAL_DOMAIN_KEY_SOURCE=escrow the
+          # identities come from the control plane's key escrow, not secrets.
+          escrow_dir=""
+          if [[ "${SEAL_DOMAIN_KEY_SOURCE:-secrets}" == escrow ]]; then
+            [[ -f scripts/ci/key_escrow.sh ]] || {
+              echo "::error::${RELEASE_TAG:-this release} predates the key escrow (ADR-20261110210000)" >&2
+              exit 1
+            }
+            escrow_dir="$work/escrow"
+            mapfile -t escrow_names < <(scripts/ci/seal_domain_vars.sh --identities control-plane)
+            if [[ ${#escrow_names[@]} -gt 0 ]]; then
+              KEY_ESCROW_HOST="$CP_HOST" KEY_ESCROW_SSH_KEY="$HOME/.ssh/deploy_key" KEY_ESCROW_KNOWN_HOSTS="$HOME/.ssh/known_hosts" \
+                scripts/ci/key_escrow.sh fetch "$escrow_dir" "${escrow_names[@]}"
+            else
+              install -d -m 0700 "$escrow_dir"
+            fi
+          fi
+          SEAL_DOMAIN_ESCROW_DIR="$escrow_dir" \
+            scripts/ci/seal_domain_vars.sh control-plane "$work/seal-domains" "$work/vars.yml"
+          [[ -z "$escrow_dir" ]] || rm -rf -- "$escrow_dir"
           # ADR-20261102081618: edgednsd's DNS token, from the EDGEDNSD_CF_TOKEN
           # secret. A release cut before the script stages none.
           if [[ -f scripts/ci/edgednsd_vars.sh ]]; then

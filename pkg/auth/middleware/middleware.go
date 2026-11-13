@@ -639,6 +639,18 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				// ADR-20261107220000: an agent's write requests are
 				// recorded once the handler answers; the approval gate
 				// notes the approval a request went through on.
+				// ADR-20261111114059 amendment 2026-11-13: a budget preview
+				// writes nothing, so it opens no approval and records no
+				// activity or undo; it only notes the approval the real
+				// request would wait for.
+				if Previewing(r) && ProjectLimitable(key) {
+					if m.notePreviewApproval(w, r, key) {
+						return
+					}
+					*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: &key, Membership: nil}))
+					next(w, r, acct)
+					return
+				}
 				var activity *agentActivityNote
 				if ProjectLimitable(key) && (agentWrite(r.Method) || agentapproval.RecordedRead(r.Pattern)) {
 					*r = *r.WithContext(withAgentActivityNote(r.Context(), &activity))
@@ -1375,7 +1387,7 @@ func isBillingRecoveryRoute(method, path string) bool {
 		return true
 	}
 	switch method + " " + path {
-	case "GET /v1/account", "GET /v1/account/export", "GET /v1/usage",
+	case "GET /v1/account", "GET /v1/account/export", "GET /v1/account/health", "GET /v1/usage",
 		"GET /v1/billing/portal", "GET /v1/billing/status", "GET /v1/billing/focus", "POST /v1/billing/retry",
 		"GET /v1/billing/costs", "GET /v1/billing/forecast", "GET /v1/billing/budgets", "POST /v1/billing/budgets/preview",
 		"PATCH /v1/account/plan",

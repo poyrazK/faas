@@ -316,6 +316,7 @@ func cmdApp(args []string) int {
 	onlyDeclaredRoutes := fs.Bool("only-declared-routes", false, "reject paths not declared by the OpenAPI document (or explicit route list) before wake")
 	noOnlyDeclaredRoutes := fs.Bool("no-only-declared-routes", false, "disable the declared-route pre-wake gate")
 	headWakes := fs.Bool("head-wakes", false, "wake a parked app for HEAD / instead of using the cached edge answer")
+	portsFlag := fs.String("ports", "", "TCP/UDP listeners: comma-separated [NAME=]tcp|udp:PORT[:internal], or none to clear")
 	crawlerPolicy := fs.String("crawler-policy", "", "known monitor/crawler policy: wake|cached|block")
 	preAuthMode := fs.String("pre-auth", "", "pre-auth source limit mode: off|observe|enforce")
 	preAuthRPS := fs.Int("pre-auth-rps", 0, "pre-auth requests per second per source")
@@ -642,6 +643,13 @@ func cmdApp(args []string) int {
 	if explicit["head-wakes"] {
 		v := *headWakes
 		req.HeadWakes = &v
+	}
+	if explicit["ports"] {
+		ports, err := parseAppPortsFlag(*portsFlag)
+		if err != nil {
+			return printErr("Invalid --ports", err)
+		}
+		req.Ports = &ports
 	}
 	if explicit["crawler-policy"] {
 		v := *crawlerPolicy
@@ -1008,6 +1016,11 @@ func cmdApp(args []string) int {
 	}
 	if hint := functionConcurrencyDeployHint(req, updated); hint != "" {
 		fmt.Fprintln(os.Stderr, hint)
+	}
+	if explicit["min"] && *min > 0 && updated.Status == "evicted_cold" {
+		// As `app scale` does (Hunt 14 H14-94): a parked app's floor holds
+		// only after its next wake (Hunt 34 H34-11).
+		PrintOK(osStdout, "%s", parkedMinInstancesNote(slug, *min))
 	}
 	if explicit["min"] && *min > 0 {
 		// Silent on Whoami failure: the customer just updated an app
@@ -2267,6 +2280,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// CreateApp, upload, deployment, or other write is allowed after the
 	// authenticated client is acquired.
 	dryRun := fs.Bool("dry-run", false, "run deploy preflight without uploading or changing remote state")
+	explainFiles := fs.Bool("explain-files", false, "with --dry-run, inspect local payload files and exclusion rules without login or remote calls")
 	// --plan is the local, no-auth preview for the simple stateless app path.
 	// Unlike --dry-run/--diff it does not compare remote state or call apid; it
 	// only resolves framework, listener, resource, and state defaults.
@@ -2344,6 +2358,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// from a customer-supplied value before authentication or source I/O.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if *explainFiles {
+		return cmdDeploySourceFiles(ctx, deploySourceFilesOptions{path: *sourcePath, source: *sourceMode, worktree: *worktree,
+			function: *function, app: *app, project: *projectDeploy || *projectSlug != "", runtime: *runtime,
+			secretScan: *secretScan, secretsFile: *secretsFile, dryRun: *dryRun, json: jsonOutput || *diffJSON}, explicit)
+	}
 	if explicit["rollout"] {
 		if err := applyRolloutFlag(*rolloutChoice, explicit, safeDeploy, canaryPreset); err != nil {
 			return printErr("Invalid rollout policy", err)
@@ -4859,10 +4878,16 @@ func cmdPark(args []string) int {
 		}))
 	}
 	PrintOK(osStdout, "Parked (cold)")
-	if app, getErr := client.GetApp(context.Background(), args[0]); getErr == nil && (inspectExecutionMode(app) == api.ExecutionModeWorker || app.WorkloadClass == "worker") {
+	app, getErr := client.GetApp(context.Background(), args[0])
+	if getErr == nil && (inspectExecutionMode(app) == api.ExecutionModeWorker || app.WorkloadClass == "worker") {
 		// A parked worker pool does not autoscale on its backlog (H8-23):
 		// say how it comes back (Hunt 32 H32-32).
 		PrintWarn(osStderr, "%s is a worker pool: it stays parked, whatever its queue backlog, until `gregale app wake %s`", args[0], args[0])
+	}
+	if getErr == nil && app.MinInstances > 0 {
+		// The floor holds only for an active app (H5-54): parking a floored
+		// app parks it until the next wake, with no word (Hunt 34 H34-11).
+		PrintWarn(osStderr, "%s keeps no warm instances while parked: its floor of %d is neither held nor billed until its next request or `gregale app wake %s`", args[0], app.MinInstances, args[0])
 	}
 	return 0
 }
@@ -6960,7 +6985,7 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 	// patterns. The summary is what makes `gregale logs <slug>
 	// --explain` actionable — the customer no longer has to read the
 	// whole stream to know which error fired.
-	explain := fs.Bool("explain", false, "on stream end, print a 3-line summary (failure, error count, top patterns)")
+	explain := fs.Bool("explain", false, "summarize failures and error patterns; --json requires an unfiltered --deployment snapshot")
 	app := fs.String("app", "", appSlugFlagUsage)
 	projectSlug := fs.String("project", "", "read every service of this project together, each line prefixed with its service")
 	projectServices := fs.String("service", "", "with --project, only these services (comma-separated)")
@@ -7131,8 +7156,10 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 		return cmdLogsInteractive(slug)
 	}
 	if *explain && jsonOutput {
-		PrintUsage(osStderr, "--explain cannot be combined with --json (explanation is human-readable); drop --explain: with --json, `logs --deployment ID` returns a failed deployment's log records and failure reason", "logs")
-		return 2
+		if err := validateJSONLogExplanation(fs, *deployment, *follow); err != nil {
+			PrintUsage(osStderr, err.Error(), "logs")
+			return 2
+		}
 	}
 	if fs.NArg() > 1 {
 		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all] (slug defaults to linked project context)", "logs")
@@ -7270,6 +7297,9 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 		logsClient, clientErr := authedClient()
 		if clientErr != nil {
 			return printErr("Not logged in", clientErr)
+		}
+		if *explain && jsonOutput {
+			return runDeploymentLogExplanation(context.Background(), logsClient, slug, deploymentRef)
 		}
 		resolved, resolveErr := resolveDeploymentRef(context.Background(), logsClient, slug, deploymentRef)
 		if resolveErr != nil {
@@ -7409,9 +7439,8 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 	// common path doesn't pay for the map). The collector runs the
 	// stream through, captures error-level lines + pattern counts,
 	// and emits a 3-line summary on stream end. The summary lives
-	// here (not in a separate file) because it shares the SSE loop
-	// and pulling it out would force the collector across the
-	// channel boundary — over-engineered for the surface size.
+	// in a shared model so bounded deployment snapshots and the
+	// existing stream summary use the same severity and pattern rules.
 	var collector *explainCollector
 	if explain {
 		collector = newExplainCollector(slug, deployment)
@@ -7583,288 +7612,6 @@ func consumeLogStream(ctx context.Context, events <-chan api.Event, errs <-chan 
 			}
 		}
 	}
-}
-
-// explainCollector aggregates log lines for the --explain summary.
-// One instance per cmdLogs invocation. Allocation: per-line (a
-// map[string]int for pattern counts + per-level counters). The
-// memory footprint is bounded by the stream length (typical wake
-// log is <1k lines); on longer streams the pattern-count map
-// stays bounded because the buckets are normalised to a 64-byte
-// prefix (see observe()).
-type explainCollector struct {
-	slug       string
-	deployment string
-	errorCount int
-	warnCount  int
-	infoCount  int
-	patterns   map[string]int
-	lastError  string
-}
-
-// explainLogRecord is the production app-log SSE data envelope. Line is a
-// pointer so a JSON object without a line field can still fall through to the
-// legacy text parser instead of being treated as an empty log line.
-type explainLogRecord struct {
-	Line     *string         `json:"line"`
-	Stream   string          `json:"stream"`
-	Level    json.RawMessage `json:"level"`
-	Severity json.RawMessage `json:"severity"`
-}
-
-// newExplainCollector constructs the per-invocation collector.
-// The patterns map is allocated lazily on first observe() — most
-// log lines are info/warn, and we only count errors.
-func newExplainCollector(slug, deployment string) *explainCollector {
-	return &explainCollector{
-		slug:       slug,
-		deployment: deployment,
-		patterns:   map[string]int{},
-	}
-}
-
-// observe ingests one SSE data line. Production streams carry a JSON
-// envelope with a raw guest line plus optional structured severity; older
-// streams use the legacy `{ts} {level} {message}` shape. The latter remains
-// byte-compatible while the former gets a conservative stdout/stderr
-// fallback when no level was classified server-side.
-func (c *explainCollector) observe(line string) {
-	trimmed := strings.TrimSpace(line)
-	if strings.HasPrefix(trimmed, "{") {
-		var record explainLogRecord
-		if err := json.Unmarshal([]byte(trimmed), &record); err == nil && record.Line != nil {
-			msg := *record.Line
-			level := explainStructuredLevel(record.Level, record.Severity)
-			if level == "" {
-				if nestedLevel, nestedMessage := explainNestedStructuredLine(msg); nestedLevel != "" {
-					level, msg = nestedLevel, nestedMessage
-				}
-			}
-			if level == "" {
-				level = explainFallbackLevel(record.Stream, msg)
-			}
-			c.observeLevel(level, msg)
-			return
-		}
-	}
-	// Split into at most 3 parts: ts, level, message.
-	parts := strings.SplitN(line, " ", 3)
-	if len(parts) < 3 {
-		return
-	}
-	c.observeLevel(parts[1], parts[2])
-}
-
-// observeLevel updates the summary counters for an already-canonical level.
-// Keeping this bookkeeping in one place prevents structured and legacy rows
-// from drifting apart.
-func (c *explainCollector) observeLevel(level, msg string) {
-	switch level {
-	case "error":
-		c.errorCount++
-		c.lastError = msg
-		// Pattern bucket: first 64 bytes of the message. Enough
-		// to coalesce the same error fired 100x into one bucket,
-		// small enough to keep the map bounded. UTF-8 safe: a
-		// naive byte-slice on a multi-byte rune (e.g. an emoji
-		// or CJK character) would split the rune and produce an
-		// invalid prefix that flush() can't render. Back off to
-		// the last rune boundary when the 64th byte lands in the
-		// middle of a sequence.
-		prefix := msg
-		if len(prefix) > 64 {
-			prefix = prefix[:64]
-			for len(prefix) > 0 {
-				if r, size := utf8.DecodeLastRuneInString(prefix); r == utf8.RuneError && size == 1 {
-					prefix = prefix[:len(prefix)-1]
-				} else {
-					break
-				}
-			}
-		}
-		c.patterns[prefix]++
-	case "warn":
-		c.warnCount++
-	case "info":
-		c.infoCount++
-	}
-}
-
-// explainStructuredLevel maps the string and numeric severity encodings used
-// by common guest loggers (Pino/Zap/Cloud Logging) to the CLI's three-level
-// vocabulary. If both fields are present, the most severe recognized value
-// wins.
-func explainStructuredLevel(fields ...json.RawMessage) string {
-	best := ""
-	for _, raw := range fields {
-		value := strings.TrimSpace(string(raw))
-		if value == "" || value == "null" {
-			continue
-		}
-		level := ""
-		if strings.HasPrefix(value, "\"") {
-			var text string
-			if json.Unmarshal([]byte(value), &text) == nil {
-				level = explainNormalizeLevel(text)
-			}
-		} else if number, err := strconv.Atoi(value); err == nil {
-			level = explainNormalizeNumericLevel(number)
-		}
-		if explainLevelRank(level) > explainLevelRank(best) {
-			best = level
-		}
-	}
-	return best
-}
-
-func explainNormalizeLevel(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "trace", "debug", "info", "notice":
-		return "info"
-	case "warn", "warning":
-		return "warn"
-	case "error", "err", "fatal", "critical", "alert", "emergency":
-		return "error"
-	default:
-		return ""
-	}
-}
-
-func explainNormalizeNumericLevel(value int) string {
-	switch {
-	case value >= 10 && value <= 30:
-		return "info"
-	case value == 40:
-		return "warn"
-	case value >= 50:
-		return "error"
-	default:
-		return ""
-	}
-}
-
-func explainLevelRank(level string) int {
-	switch level {
-	case "error":
-		return 2
-	case "warn":
-		return 1
-	case "info":
-		return 0
-	default:
-		return -1
-	}
-}
-
-// explainNestedStructuredLine handles a guest line that is itself a JSON log
-// object when the server did not attach its additive outer level field.
-func explainNestedStructuredLine(line string) (string, string) {
-	if !strings.HasPrefix(strings.TrimSpace(line), "{") {
-		return "", line
-	}
-	var record struct {
-		Level    json.RawMessage `json:"level"`
-		Severity json.RawMessage `json:"severity"`
-		Msg      string          `json:"msg"`
-		Message  string          `json:"message"`
-		Error    string          `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(line), &record); err != nil {
-		return "", line
-	}
-	level := explainStructuredLevel(record.Level, record.Severity)
-	if level == "" {
-		return "", line
-	}
-	for _, message := range []string{record.Msg, record.Message, record.Error} {
-		if message != "" {
-			return level, message
-		}
-	}
-	return level, line
-}
-
-// explainFallbackLevel gives raw guest output a useful, deterministic level
-// when no structured field was emitted. Explicit error/warning words win;
-// stderr is otherwise a warning and stdout (or an unknown stream) is info.
-func explainFallbackLevel(stream, msg string) string {
-	lower := strings.ToLower(msg)
-	for _, keyword := range []string{"fatal", "panic", "error", "failed", "failure"} {
-		if strings.Contains(lower, keyword) {
-			return "error"
-		}
-	}
-	for _, keyword := range []string{"warn", "warning"} {
-		if strings.Contains(lower, keyword) {
-			return "warn"
-		}
-	}
-	if strings.EqualFold(strings.TrimSpace(stream), "stderr") {
-		return "warn"
-	}
-	return "info"
-}
-
-// flush emits the 3-line summary on stream end. Output shape:
-//
-//	── explain: <slug> (deployment <id>) ──
-//	error:  <lastError or "none">
-//	levels: error=N warn=N info=N
-//	top:    pattern1 (Nx) | pattern2 (Nx) | pattern3 (Nx)
-//
-// The summary is printed on os.Stdout (not os.Stderr) so a
-// `gregale logs <slug> --explain > out.txt` captures both the
-// stream AND the summary. Error path (when there's no failure)
-// prints "(none)" so the script-friendly shape is preserved.
-func (c *explainCollector) flush(w io.Writer) {
-	_, _ = fmt.Fprintf(w, "\n── explain: %s", c.slug)
-	if c.deployment != "" {
-		_, _ = fmt.Fprintf(w, " (deployment %s)", c.deployment)
-	}
-	_, _ = fmt.Fprintln(w, " ──")
-	if c.lastError == "" {
-		_, _ = fmt.Fprintln(w, "error:  (none)")
-	} else {
-		_, _ = fmt.Fprintf(w, "error:  %s\n", c.lastError)
-	}
-	_, _ = fmt.Fprintf(w, "levels: error=%d warn=%d info=%d\n", c.errorCount, c.warnCount, c.infoCount)
-	top := topPatterns(c.patterns, 3)
-	if len(top) == 0 {
-		_, _ = fmt.Fprintln(w, "top:    (no error patterns)")
-	} else {
-		_, _ = fmt.Fprintf(w, "top:    %s\n", strings.Join(top, " | "))
-	}
-}
-
-// topPatterns returns the top-N error patterns by count, formatted
-// as "pattern (Nx)". Stable sort: ties resolve to alphabetical
-// order so the output is deterministic. Empty input → empty slice.
-func topPatterns(patterns map[string]int, n int) []string {
-	if len(patterns) == 0 {
-		return nil
-	}
-	type kv struct {
-		k string
-		v int
-	}
-	pairs := make([]kv, 0, len(patterns))
-	for k, v := range patterns {
-		pairs = append(pairs, kv{k, v})
-	}
-	sort.Slice(pairs, func(i, j int) bool {
-		if pairs[i].v != pairs[j].v {
-			return pairs[i].v > pairs[j].v
-		}
-		return pairs[i].k < pairs[j].k
-	})
-	if len(pairs) > n {
-		pairs = pairs[:n]
-	}
-	out := make([]string, len(pairs))
-	for i, p := range pairs {
-		out[i] = fmt.Sprintf("%s (N%d)", p.k, p.v)
-	}
-	return out
 }
 
 // streamDeployLogs opens GET /v1/deployments/{id}/logs?follow=1 and

@@ -127,6 +127,10 @@ func (w *AlertWorker) observe(ctx context.Context, tx pgx.Tx, a sqlc.DataPipelin
 	if candidate == "recovered" {
 		debounce = api.DataPipelineAlertRecoveryDebounce
 	}
+	if candidate == "retention_pressure" && retentionUrgent(p.DataPipeline) {
+		// A short source WAL runway cannot wait through the ordinary debounce.
+		debounce = 0
+	}
 	if candidate != "" && a.CandidateSince.Valid && now.Sub(a.CandidateSince.Time) >= debounce {
 		pending, err := w.Store.q.PipelineAlertPendingCount(ctx, tx, p.ID)
 		if err != nil {

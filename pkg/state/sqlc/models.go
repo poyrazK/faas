@@ -101,6 +101,14 @@ type Account struct {
 	EgressOverageDisabledAt pgtype.Timestamptz
 }
 
+type AccountAbuseStrike struct {
+	ID        int64
+	AccountID pgtype.UUID
+	Reason    string
+	AppID     pgtype.UUID
+	StruckAt  pgtype.Timestamptz
+}
+
 type AccountAsyncQuotum struct {
 	AccountID       pgtype.UUID
 	MaxInflight     int32
@@ -1130,6 +1138,12 @@ type AppApplicationStandard struct {
 	ObservationRevision       int64
 }
 
+type AppBasicAuthVerifier struct {
+	SealedSha256 []byte
+	Verifier     string
+	CreatedAt    pgtype.Timestamptz
+}
+
 type AppBindingPromotionRevision struct {
 	AppID           pgtype.UUID
 	Epoch           pgtype.UUID
@@ -1617,6 +1631,30 @@ type AppOpenapiDoc struct {
 	OpenapiVersion string
 	CapturedAt     pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+}
+
+type AppOwnerAuthority struct {
+	Singleton bool
+	Mode      string
+	UpdatedAt pgtype.Timestamptz
+}
+
+type AppOwnerReleaseRequest struct {
+	AppID       pgtype.UUID
+	FromNodeID  pgtype.UUID
+	Reason      string
+	RequestedAt pgtype.Timestamptz
+}
+
+type AppOwnerWrite struct {
+	ID         int64
+	AppID      pgtype.UUID
+	FromNodeID pgtype.UUID
+	ToNodeID   pgtype.UUID
+	LoginRole  string
+	Authorized bool
+	Mode       string
+	WrittenAt  pgtype.Timestamptz
 }
 
 type AppParkTransition struct {
@@ -3179,6 +3217,12 @@ type ComputeNode struct {
 	CpuPressureUntil        pgtype.Timestamptz
 }
 
+type ComputeNodeDbLogin struct {
+	Login     string
+	NodeName  string
+	CreatedAt pgtype.Timestamptz
+}
+
 type ComputeNodeHeartbeat struct {
 	ID              int64
 	NodeID          pgtype.UUID
@@ -3413,6 +3457,33 @@ type CustomDomainTlsHost struct {
 	Host           interface{}
 	WildcardDomain interface{}
 	AdmittedAt     pgtype.Timestamptz
+}
+
+type CustomerApiError struct {
+	ID         int64
+	AccountID  pgtype.UUID
+	OccurredAt pgtype.Timestamptz
+	Route      string
+	Code       string
+	AppSlug    string
+	RequestID  string
+	TraceID    string
+}
+
+type CustomerAttentionSignal struct {
+	ID            int64
+	AccountID     pgtype.UUID
+	Kind          string
+	Subject       string
+	Detail        string
+	State         string
+	Observed      int64
+	FirstSeenAt   pgtype.Timestamptz
+	LastSeenAt    pgtype.Timestamptz
+	ResolvedAt    pgtype.Timestamptz
+	DismissedAt   pgtype.Timestamptz
+	DismissedBy   pgtype.UUID
+	DismissReason string
 }
 
 type CustomerOperation struct {
@@ -3828,6 +3899,14 @@ type DataApiRuntimeConnectionObservation struct {
 	ExpiresAt            pgtype.Timestamptz
 }
 
+type DataApiSharedBudget struct {
+	AppID       pgtype.UUID
+	BudgetKey   string
+	WindowStart pgtype.Timestamptz
+	WindowEnd   pgtype.Timestamptz
+	Requests    int64
+}
+
 // ADR-20261019102108 Data API usage per app and UTC hour, from runtime deltas; owner telemetry, not billing.
 type DataApiUsageHourly struct {
 	AppID             pgtype.UUID
@@ -3894,6 +3973,7 @@ type DataPipeline struct {
 	SchemaChange         []byte
 	VerificationProgress []byte
 	ReaderChange         []byte
+	WalRetention         []byte
 }
 
 type DataPipelineAlert struct {
@@ -3947,6 +4027,7 @@ type DataPipelineSchemaRefresh struct {
 	Attempt    int32
 	WakeID     pgtype.UUID
 	CreatedAt  pgtype.Timestamptz
+	ReadGate   bool
 }
 
 type DataPipelineSetup struct {
@@ -7508,6 +7589,13 @@ type InvocationQueueLeaseReceipt struct {
 	LeaseExpiresAt   pgtype.Timestamptz
 }
 
+type InvocationSend struct {
+	InvocationID    pgtype.UUID
+	SenderAppID     pgtype.UUID
+	OnCompleteAppID pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+}
+
 type InvocationWorkCancellation struct {
 	ID             pgtype.UUID
 	AppID          pgtype.UUID
@@ -10078,6 +10166,14 @@ type NativeIssueTicketReceipt struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type NeonProjectKey struct {
+	KeyID     int64
+	ProjectID string
+	SealedKey []byte
+	CreatedAt pgtype.Timestamptz
+	RevokedAt pgtype.Timestamptz
+}
+
 type NodeJoinJob struct {
 	ID             pgtype.UUID
 	NodeName       string
@@ -11626,6 +11722,7 @@ type OutboundIntegration struct {
 	AiOnlineEvalModel              pgtype.Text
 	AiOnlineEvalRubric             pgtype.Text
 	AiQualityAlerts                bool
+	AiSemanticCache                []byte
 }
 
 type OutboundIntegrationApp struct {
@@ -12764,6 +12861,7 @@ type ProjectEnvironmentBranch struct {
 	DataLeaseUntil      pgtype.Timestamptz
 	CreatedAt           pgtype.Timestamptz
 	PrivateNetworks     string
+	SlotID              pgtype.UUID
 }
 
 // ADR-20261031193635 overlay buckets owned by an environment branch; purged and deleted after the branch is gone.
@@ -14225,6 +14323,35 @@ type RecentBuildClaim struct {
 	OrgID     pgtype.UUID
 }
 
+type ReferralAttribution struct {
+	AccountID           pgtype.UUID
+	Code                string
+	Currency            string
+	CustomerRewardCents int64
+	ReferredRewardCents int64
+	CommissionBps       int32
+	HoldDays            int32
+	ConversionDays      int32
+	FirstPaidInvoiceID  pgtype.UUID
+	FirstPaidAt         pgtype.Timestamptz
+	Stage               string
+	Note                string
+	FollowUp            pgtype.Date
+	UpdatedBy           pgtype.UUID
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	AttributionSource   string
+}
+
+type ReferralLink struct {
+	Code      string
+	OwnerID   pgtype.UUID
+	Kind      string
+	Active    bool
+	CreatedAt pgtype.Timestamptz
+	ShareCode pgtype.Text
+}
+
 type ReleaseApprovalEvent struct {
 	ID            pgtype.UUID
 	AccountID     pgtype.UUID
@@ -14353,6 +14480,30 @@ type RequestAnalyticsAppGap struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type RequestAnalyticsCoverageGap struct {
+	NodeName          string
+	SourceKind        string
+	AppID             pgtype.UUID
+	GapFrom           pgtype.Timestamptz
+	GapUntil          pgtype.Timestamptz
+	HistoryIncomplete bool
+}
+
+type RequestAnalyticsCoverageInterval struct {
+	NodeName     string
+	SourceKind   string
+	CoveredSince pgtype.Timestamptz
+	CoveredUntil pgtype.Timestamptz
+}
+
+type RequestAnalyticsCoverageWatermark struct {
+	NodeName         string
+	SourceKind       string
+	RegisteredAt     pgtype.Timestamptz
+	PreviousSourceAt pgtype.Timestamptz
+	SourceAt         pgtype.Timestamptz
+}
+
 // Hourly request analytics rollups; added to only by apid, swept only by meterd (ADR-20261103113952 amendment 2).
 type RequestAnalyticsHour struct {
 	AppID           pgtype.UUID
@@ -14400,6 +14551,11 @@ type RequestAnalyticsNodeCoverage struct {
 	UnattributedDroppedTotal int64
 }
 
+type RequestAnalyticsRollupAudit struct {
+	AppID        pgtype.UUID
+	AuditedSince pgtype.Timestamptz
+}
+
 // Gateway analytics rollup batches apid applied; written only by apid, swept only by meterd (ADR-20261103113952 amendment 5).
 type RequestAnalyticsRollupBatch struct {
 	BatchID   pgtype.UUID
@@ -14418,6 +14574,13 @@ type RequestAnalyticsRollupCoverage struct {
 type RequestAnalyticsRollupGap struct {
 	AppID       pgtype.UUID
 	BucketStart pgtype.Timestamptz
+}
+
+type RequestAnalyticsRollupWindow struct {
+	ID          pgtype.UUID
+	AppID       pgtype.UUID
+	BucketStart pgtype.Timestamptz
+	State       string
 }
 
 type RequestAuditEvent struct {
@@ -15235,6 +15398,140 @@ type SafeReleaseWorkerLease struct {
 	ExpiresAt pgtype.Timestamptz
 }
 
+type SalesActivity struct {
+	ID            pgtype.UUID
+	LeadID        pgtype.UUID
+	ActorID       pgtype.UUID
+	Kind          string
+	Summary       string
+	Outcome       string
+	NextStep      string
+	OccurredAt    pgtype.Timestamptz
+	RecordedAt    pgtype.Timestamptz
+	FollowUpTitle string
+	FollowUpOn    pgtype.Date
+	TaskID        pgtype.UUID
+}
+
+type SalesInquiry struct {
+	ID             pgtype.UUID
+	Name           string
+	Email          string
+	Company        string
+	Intent         string
+	Message        string
+	LatestMessage  string
+	RequestedCode  string
+	Status         string
+	Reason         string
+	LeadID         pgtype.UUID
+	TaskID         pgtype.UUID
+	RepeatCount    int64
+	Version        int64
+	CreatedAt      pgtype.Timestamptz
+	LastReceivedAt pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type SalesIntakeReceipt struct {
+	Nonce     pgtype.UUID
+	ExpiresAt pgtype.Timestamptz
+}
+
+type SalesIntakeRouting struct {
+	ID          int16
+	LastOwnerID pgtype.UUID
+}
+
+type SalesLead struct {
+	ID        pgtype.UUID
+	OwnerID   pgtype.UUID
+	Name      string
+	Email     string
+	Company   string
+	Stage     string
+	Note      string
+	Version   int64
+	CreatedBy pgtype.UUID
+	UpdatedBy pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+type SalesMessageTemplate struct {
+	ID        pgtype.UUID
+	Title     string
+	Category  string
+	Stage     string
+	Status    string
+	Subject   string
+	Body      string
+	Version   int64
+	UpdatedBy pgtype.UUID
+	UpdatedAt pgtype.Timestamptz
+}
+
+type SalesOutcome struct {
+	ID          pgtype.UUID
+	LeadID      pgtype.UUID
+	LeadVersion int64
+	Stage       string
+	Reason      string
+	Note        string
+	ActorID     pgtype.UUID
+	OwnerID     pgtype.UUID
+	RecordedAt  pgtype.Timestamptz
+}
+
+type SalesQualification struct {
+	LeadID         pgtype.UUID
+	UseCase        string
+	Workload       string
+	DecisionMaker  string
+	BuyingTimeline string
+	DecisionOn     pgtype.Date
+	Priority       string
+	ProductFit     string
+	Blocker        string
+	Version        int64
+	UpdatedBy      pgtype.UUID
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type SalesReferralOverview struct {
+	AccountID           pgtype.UUID
+	OwnerID             pgtype.UUID
+	Kind                string
+	Email               interface{}
+	Plan                string
+	AccountStatus       string
+	CreatedAt           pgtype.Timestamptz
+	Stage               string
+	Note                string
+	FollowUp            pgtype.Date
+	Currency            string
+	Apps                int64
+	Paid                interface{}
+	PaidCents           int64
+	EligibleAt          int32
+	RewardStatus        string
+	RewardCents         interface{}
+	ReferredRewardCents int64
+}
+
+type SalesTask struct {
+	ID          pgtype.UUID
+	LeadID      pgtype.UUID
+	Title       string
+	DueOn       pgtype.Date
+	CompletedAt pgtype.Timestamptz
+	Version     int64
+	CreatedBy   pgtype.UUID
+	UpdatedBy   pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 // ADR-20261027090013 §11 exposed sandbox ports; apid inserts and deletes rows; gatewayd-internal caches them to route preview hosts.
 type SandboxPort struct {
 	SandboxID  pgtype.UUID
@@ -15598,6 +15895,24 @@ type SealDomainProbe struct {
 	Recipient  string
 	SealedBlob []byte
 	UpdatedAt  pgtype.Timestamptz
+}
+
+type SecretGrant struct {
+	AppID           pgtype.UUID
+	NodeID          pgtype.UUID
+	GrantedByNodeID pgtype.UUID
+	GrantedAt       pgtype.Timestamptz
+	ExpiresAt       pgtype.Timestamptz
+}
+
+type SecretOpenAudit struct {
+	ID       int64
+	NodeID   pgtype.UUID
+	AppID    pgtype.UUID
+	Via      string
+	Entries  int32
+	OpenedAt pgtype.Timestamptz
+	JobID    pgtype.UUID
 }
 
 type ServiceCallerKey struct {
@@ -16074,6 +16389,12 @@ type SupportTicket struct {
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
 	ResolvedAt pgtype.Timestamptz
+}
+
+type SupportTicketSnapshot struct {
+	TicketID   pgtype.UUID
+	CapturedAt pgtype.Timestamptz
+	Snapshot   []byte
 }
 
 type SyntheticCheck struct {

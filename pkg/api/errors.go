@@ -1974,6 +1974,10 @@ const (
 	// CodeSecretEntryUnavailable covers an expired, used, unknown or
 	// mismatched secret entry request (ADR-20261026174727).
 	CodeSecretEntryUnavailable = "secret_entry_unavailable"
+	// CodeGitLabCompanyProjectUnavailable refuses a GitLab GitOps source for
+	// a company project, which never uses a member's own GitLab connection
+	// (ADR-20261112230000).
+	CodeGitLabCompanyProjectUnavailable = "gitlab_company_project_unavailable"
 
 	// CodeAppConcurReached is the typed "already at max_concurrency"
 	// result from Engine.AdmitInstance (issue #168). Distinct from
@@ -7064,6 +7068,12 @@ func ErrPlanFeatureGated(feature string, p Plan) *Problem {
 		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
 			"Plan doesn't include the AI gateway",
 			fmt.Sprintf("the %s plan doesn't include the AI gateway; upgrade to Hobby or higher to call AI providers through managed integrations.", p)).
+			WithDocs(docsBase + "/cli#ai")
+	}
+	if feature == "ai_semantic_cache" {
+		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+			"Plan doesn't include the AI semantic cache",
+			fmt.Sprintf("the %s plan doesn't include the AI gateway's semantic cache; upgrade to Pro or Scale to answer calls that mean the same as a cached one.", p)).
 			WithDocs(docsBase + "/cli#ai")
 	}
 	if feature == "route_controls" {
