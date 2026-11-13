@@ -185,9 +185,30 @@ neond, for each request:
     - A successful (or 404) `DELETE /projects/{id}` revokes the project's
       live keys and marks them revoked; `neond_project_keys_total{op,outcome}`
       counts mints and revocations.
-  - Slice 2b: the backfill sweep (mint for projects without a key, at most
-    a few per second; revoke keys whose project is gone or whose revocation
-    failed) and `gregalectl neond rotate-project-keys`.
+  - Built as slice 2b (the key sweep). As built:
+    - Every 10 minutes neond lists the organization's projects with the
+      admin key (`GET /projects?org_id=…`, all pages). A listing with
+      unavailable projects or more than 25 pages stops the pass, so a
+      partial view never revokes a key.
+    - It mints a key for each project without one, revokes the keys of
+      projects Neon no longer lists, and rotates keys older than
+      `FAAS_NEOND_PROJECT_KEY_MAX_AGE` (default 90 days): at most 50 key
+      calls a pass, 250 ms apart (Neon admits 10 key creations a second).
+      The backfill covers every project of the organization, not only those
+      a database row names, because the rows do not record the backend.
+    - Rotation mints the new key, revokes the old one at Neon, then retires
+      the old row and inserts the new one in one statement
+      (`ReplaceProjectKey`). A failure before the swap revokes the new key;
+      a failed swap leaves the old row naming a revoked key, whose calls
+      fall back to the admin key until the next pass rotates it again.
+    - Deviation: rotation is the sweep's, by age, not a
+      `gregalectl neond rotate-project-keys` command. neond alone holds the
+      admin key, the seal identity and the table, so an operator command
+      would need its own path into neond. To rotate every key now, lower
+      `faas_neond_project_key_max_age` and converge.
+    - `neond_projects_without_key` is the backfill still to do;
+      `neond_project_keys_total{op}` gains `backfill`, `rotate` and
+      `orphan_revoke`.
   - Slice 2c: the per-subject destructive limit and the "only on projects a
     database row names" rule for password resets, role deletes and quota
     writes.

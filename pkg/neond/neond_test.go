@@ -205,7 +205,13 @@ func TestServerRefusesWithoutCallingNeon(t *testing.T) {
 		t.Fatalf("past the limit = %v", err)
 	}
 	families, err := reg.Gather()
-	if err != nil || len(families) != 1 || len(families[0].GetMetric()) < 4 {
-		t.Fatalf("metrics = %v, %v; want denied, refused, forwarded and rate_limited", families, err)
+	requests := 0
+	for _, family := range families {
+		if family.GetName() == "neond_requests_total" {
+			requests = len(family.GetMetric())
+		}
+	}
+	if err != nil || requests < 4 {
+		t.Fatalf("neond_requests_total has %d series, %v; want denied, refused, forwarded and rate_limited", requests, err)
 	}
 }
