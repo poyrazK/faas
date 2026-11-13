@@ -20,6 +20,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class MfaService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Start MFA enrollment.
    * Returns the TOTP secret, QR PNG, otpauth URL, and 10
@@ -32,7 +33,7 @@ export class MfaService {
    * @throws ApiError
    */
   public static mfaEnroll(): CancelablePromise<MFAEnrollResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/mfa/enroll',
       errors: {
@@ -62,7 +63,7 @@ export class MfaService {
   }: {
     requestBody: MFAConfirmRequest,
   }): CancelablePromise<MFAConfirmResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/mfa/confirm',
       body: requestBody,
@@ -89,7 +90,7 @@ export class MfaService {
   }: {
     requestBody: MFAVerifyRequest,
   }): CancelablePromise<MFAVerifyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/mfa/verify',
       body: requestBody,
@@ -115,7 +116,7 @@ export class MfaService {
   }: {
     requestBody: MFARecoverRequest,
   }): CancelablePromise<MFARecoverResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/mfa/recover',
       body: requestBody,
@@ -143,7 +144,7 @@ export class MfaService {
       csrf_token: string;
     },
   }): CancelablePromise<RecoveryCodesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/mfa/recovery-codes',
       body: requestBody,
@@ -178,7 +179,7 @@ export class MfaService {
   }: {
     requestBody: MFADisableRequest,
   }): CancelablePromise<MFADisableResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/mfa/disable',
       body: requestBody,
@@ -203,7 +204,7 @@ export class MfaService {
   }: {
     requestBody: MFADisableEmailRequest,
   }): CancelablePromise<MFADisableEmailResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/mfa/disable-email',
       body: requestBody,
@@ -226,7 +227,7 @@ export class MfaService {
   }: {
     requestBody: MFADisableEmailConfirmRequest,
   }): CancelablePromise<MFADisableEmailConfirmResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/mfa/disable-email/confirm',
       body: requestBody,

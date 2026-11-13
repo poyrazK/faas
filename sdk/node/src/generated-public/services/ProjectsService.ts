@@ -29,6 +29,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class ProjectsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Deploy an account-owned reviewed project source without another upload.
    * Applies the exact archive retained by a project scan, not the current
@@ -47,7 +48,7 @@ export class ProjectsService {
   }: {
     requestBody: ApplyCachedProjectPlanRequest,
   }): CancelablePromise<ApplyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects/apply-plan',
       body: requestBody,
@@ -105,7 +106,7 @@ export class ProjectsService {
      */
     projectReleaseMode?: 'atomic' | 'atomic-verify' | 'atomic-config-verify' | 'atomic-migrate-verify' | 'atomic-config-migrate-verify' | 'atomic-verify-workers' | 'atomic-config-verify-workers' | 'atomic-migrate-verify-workers' | 'atomic-config-migrate-verify-workers',
   }): CancelablePromise<PlanResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects/scan',
       headers: {
@@ -147,7 +148,7 @@ export class ProjectsService {
   }: {
     requestBody: ProjectSourceRefScanRequest,
   }): CancelablePromise<PlanResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects/scan/source-ref',
       body: requestBody,
@@ -185,7 +186,7 @@ export class ProjectsService {
      */
     attemptId: string,
   }): CancelablePromise<ProjectSubmissionReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/project-submissions/{attempt_id}',
       path: {
@@ -229,7 +230,7 @@ export class ProjectsService {
     action: 'abort' | 'recover' | 'contract' | 'resolve-contract',
     requestBody: (ProjectReleaseControlRequest | ProjectMigrationRecoveryRequest),
   }): CancelablePromise<ProjectSubmissionReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/project-submissions/{attempt_id}/{action}',
       path: {
@@ -303,7 +304,7 @@ export class ProjectsService {
      */
     planToken?: string,
   }): CancelablePromise<ApplyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects/safe-deploy',
       headers: {
@@ -342,7 +343,7 @@ export class ProjectsService {
    * @throws ApiError
    */
   public static listProjects(): CancelablePromise<Array<ProjectSummaryResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/projects',
       errors: {
@@ -399,7 +400,7 @@ export class ProjectsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ApplyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects',
       headers: {
@@ -443,7 +444,7 @@ export class ProjectsService {
     slug: string,
     requestBody: ProjectReleaseSecretStageRequest,
   }): CancelablePromise<ProjectReleaseSecretStageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects/{slug}/release-secrets',
       path: {
@@ -493,7 +494,7 @@ export class ProjectsService {
     slug: string,
     requestBody: ProjectDeploymentCheckRequest,
   }): CancelablePromise<ProjectDeploymentReadiness> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects/{slug}/deployment-readiness',
       path: {
@@ -526,7 +527,7 @@ export class ProjectsService {
      */
     slug: string,
   }): CancelablePromise<ProjectResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/projects/{slug}',
       path: {
@@ -558,7 +559,7 @@ export class ProjectsService {
     slug: string,
     requestBody: UpdateProjectRequest,
   }): CancelablePromise<ProjectResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/projects/{slug}',
       path: {
@@ -603,7 +604,7 @@ export class ProjectsService {
      */
     detachServices?: boolean,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/projects/{slug}',
       path: {
@@ -642,7 +643,7 @@ export class ProjectsService {
      */
     environment: string,
   }): CancelablePromise<ProjectEnvironmentConfigResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/projects/{slug}/environments/{environment}/config',
       path: {
@@ -681,7 +682,7 @@ export class ProjectsService {
     environment: string,
     requestBody: UpdateProjectEnvironmentConfigRequest,
   }): CancelablePromise<ProjectEnvironmentConfigResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/projects/{slug}/environments/{environment}/config',
       path: {
@@ -723,7 +724,7 @@ export class ProjectsService {
      */
     environment: string,
   }): CancelablePromise<ProjectEnvironmentSharedSecretsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/projects/{slug}/environments/{environment}/secrets',
       path: {
@@ -770,7 +771,7 @@ export class ProjectsService {
     key: string,
     requestBody: SetProjectEnvironmentSharedSecretRequest,
   }): CancelablePromise<ProjectEnvironmentSharedSecretResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/projects/{slug}/environments/{environment}/secrets/{key}',
       path: {
@@ -819,7 +820,7 @@ export class ProjectsService {
      */
     key: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/projects/{slug}/environments/{environment}/secrets/{key}',
       path: {
@@ -865,7 +866,7 @@ export class ProjectsService {
     key: string,
     requestBody: SetProjectEnvironmentSharedSecretRequest,
   }): CancelablePromise<ProjectEnvironmentSharedSecretResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects/{slug}/environments/{environment}/secrets/{key}/rotate',
       path: {
@@ -912,7 +913,7 @@ export class ProjectsService {
      */
     from: string,
   }): CancelablePromise<ProjectEnvironmentConfigDiffResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/projects/{slug}/environments/{environment}/config/diff',
       path: {
@@ -947,7 +948,7 @@ export class ProjectsService {
      */
     slug: string,
   }): CancelablePromise<ProjectDeletePreviewResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/projects/{slug}/delete-preview',
       path: {
@@ -995,7 +996,7 @@ export class ProjectsService {
   }): CancelablePromise<{
     ok?: boolean;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/projects/{slug}/exclusions/{slug2}',
       path: {
@@ -1025,7 +1026,7 @@ export class ProjectsService {
      */
     organization: string,
   }): CancelablePromise<Array<ProjectSummaryResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/projects',
       path: {
@@ -1072,7 +1073,7 @@ export class ProjectsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ApplyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/projects',
       path: {
@@ -1120,7 +1121,7 @@ export class ProjectsService {
      */
     slug: string,
   }): CancelablePromise<ProjectResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/projects/{slug}',
       path: {
@@ -1160,7 +1161,7 @@ export class ProjectsService {
     slug: string,
     requestBody: UpdateProjectRequest,
   }): CancelablePromise<ProjectResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/orgs/{organization}/projects/{slug}',
       path: {
@@ -1202,7 +1203,7 @@ export class ProjectsService {
      */
     slug: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{organization}/projects/{slug}',
       path: {
@@ -1240,7 +1241,7 @@ export class ProjectsService {
      */
     slug: string,
   }): CancelablePromise<ProjectDeletePreviewResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/projects/{slug}/delete-preview',
       path: {
@@ -1286,7 +1287,7 @@ export class ProjectsService {
   }): CancelablePromise<{
     ok?: boolean;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{organization}/projects/{slug}/exclusions/{slug2}',
       path: {
@@ -1455,7 +1456,7 @@ export class ProjectsService {
     organization: string,
     formData: ProjectScanRequest,
   }): CancelablePromise<PlanResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/projects/scan',
       path: {
@@ -1500,7 +1501,7 @@ export class ProjectsService {
     slug: string,
     formData: ProjectScanRequest,
   }): CancelablePromise<PlanResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/projects/{slug}/scan',
       path: {
@@ -1558,7 +1559,7 @@ export class ProjectsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ApplyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/projects/{slug}/deploy',
       path: {

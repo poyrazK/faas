@@ -11,6 +11,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class InvocationsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Sync-invoke an app; long-poll for the result.
    * Enqueues an invocation row and waits for the drain to drive it
@@ -42,7 +43,7 @@ export class InvocationsService {
      */
     xGregaleRelease?: string,
   }): CancelablePromise<InvokeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/invoke',
       path: {
@@ -104,7 +105,7 @@ export class InvocationsService {
      */
     xGregaleRelease?: string,
   }): CancelablePromise<AsyncInvokeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/invoke/async',
       path: {
@@ -150,7 +151,7 @@ export class InvocationsService {
      */
     limit?: number,
   }): CancelablePromise<ListInvocationsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/invocations',
       query: {
@@ -180,7 +181,7 @@ export class InvocationsService {
      */
     id: string,
   }): CancelablePromise<Invocation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/invocations/{id}',
       path: {
@@ -231,7 +232,7 @@ export class InvocationsService {
      */
     id: string,
   }): CancelablePromise<AsyncInvokeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/invocations/{id}/replay',
       path: {
@@ -281,7 +282,7 @@ export class InvocationsService {
      */
     id: string,
   }): CancelablePromise<AsyncInvokeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/invocations/{id}/replay-keyed',
       path: {

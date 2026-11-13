@@ -67,3 +67,19 @@ deploy installs the same SDK. Import it as `@gregale/sdk-node`:
 ```js
 import { defineWorkflow, serveWorkflows } from '@gregale/sdk-node/workflows';
 ```
+
+For control-plane API calls, use an independent client per account or agent:
+
+```ts
+import { createClient } from '@gregale/sdk-node';
+
+const client = createClient('https://api.example.com', {
+  token: process.env.GREGALE_API_KEY,
+});
+const app = await client.apps.getApp({ slug: 'hello' });
+```
+
+The client owns its configuration and transport without changing global fetch.
+Existing `FaaSClient` and static services remain available for migration. See
+the [Node migration guide](../sdk/node/README.md#independent-clients-and-migration)
+for concurrent clients, token rotation, preview APIs, and helper limitations.
