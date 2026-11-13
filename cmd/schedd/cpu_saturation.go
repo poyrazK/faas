@@ -30,3 +30,20 @@ func (c cpuSaturationCaptures) CPUSaturated(ctx context.Context, row instancesta
 		"used_millicores", usedMillicores, "quota_millicores", quotaMillicores, "sustained", sustained)
 	return nil
 }
+
+// cpuAbuseSignals hands instances the stats poller saw pinned at their CPU
+// quota for api.CPUAbuseSustainedAfter to the engine's ADR-20261112120603
+// policy. Quotas come from the admission ledger, like captures.
+type cpuAbuseSignals struct {
+	engine *sched.Engine
+	mode   sched.CPUAbuseMode
+}
+
+func (c cpuAbuseSignals) CPUQuotaMillicores(instanceID string, now time.Time) (int, bool) {
+	return c.engine.Ledger().SustainedCPUMillicores(instanceID, now)
+}
+
+func (c cpuAbuseSignals) CPUSustained(ctx context.Context, row instancestats.InstanceStat, usedMillicores, quotaMillicores int, sustained time.Duration) error {
+	_, err := c.engine.HandleSustainedCPU(ctx, row.InstanceID, row.AppID, c.mode, usedMillicores, quotaMillicores, sustained)
+	return err
+}

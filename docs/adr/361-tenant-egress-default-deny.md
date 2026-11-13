@@ -41,3 +41,7 @@
 ## Amendment (2026-10-26)
 
 - [ADR-20261026150000](20261026150000-managed-database-binding-egress.md): a managed PostgreSQL binding opens its database's port to that database's own resolved addresses on every plan, through a per-netns `egress_db` set accepted before the port policy. `apps.egress_ports` and its plan gate are unchanged.
+
+## Amendment (2026-11-12)
+
+- [ADR-20261112120603](20261112120603-sustained-cpu-abuse.md): a Free instance recycled for sustained CPU use (90% of its quota for 15 minutes, enforce mode) counts toward the decision 6 escalation like a fan-out or flood recycle, and a hold it tips records reason `cpu_sustained`.

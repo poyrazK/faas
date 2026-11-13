@@ -134,8 +134,11 @@ type Poller struct {
 	// CPUSaturationHandler queues automatic CPU captures of instances held
 	// at their CPU quota (ADR-1155). Nil keeps the poller observation-only.
 	CPUSaturationHandler CPUSaturationHandler
-	cpuSaturationMu      sync.Mutex
-	cpuSaturation        map[string]*cpuSaturationEpisode
+	cpuSaturation        cpuEpisodes
+	// CPUAbuseHandler acts on instances pinned at their CPU quota for
+	// api.CPUAbuseSustainedAfter (ADR-20261112120603). Nil disables it.
+	CPUAbuseHandler CPUAbuseHandler
+	cpuAbuse        cpuEpisodes
 	// PauseLedger records the quiet pauses each node reports for billing
 	// (ADR-20261023171905). Nil leaves the ledger untouched.
 	PauseLedger *PauseLedger
@@ -437,6 +440,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		p.enforceDiskPressure(ctx, rows)
 		p.enforceEgressAbuse(ctx, rows)
 		p.watchCPUSaturation(ctx, rows)
+		p.watchCPUAbuse(ctx, rows)
 		if p.Metrics != nil {
 			p.Metrics.ReplaceInstanceStats(rolled, p.now().Sub(started))
 		}
@@ -466,6 +470,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 	p.enforceDiskPressure(ctx, rows)
 	p.enforceEgressAbuse(ctx, rows)
 	p.watchCPUSaturation(ctx, rows)
+	p.watchCPUAbuse(ctx, rows)
 	// Metrics rollup: max CPU / sum RSS / sum inflight per
 	// (app, node). The wire side collapses NaN for absent
 	// values; instancestats passes NaN through so the rollup
