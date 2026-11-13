@@ -361,6 +361,72 @@ signatures. Bound `runExecution` and `watchExecution` keep their own options;
 the client-wide observer also covers their submission, SSE connection, and
 receipt responses.
 
+### Lazy deployment and build pagination
+
+Both isolated factories expose typed async iterators on `client.deployments`:
+
+| List | Item iterator | Page iterator |
+| --- | --- | --- |
+| App deployments | `iterateAppDeployments({ slug, ... })` | `iterateAppDeploymentPages({ slug, ... })` |
+| Account deployments | `iterateDeployments(params?)` | `iterateDeploymentPages(params?)` |
+| Builds | `iterateBuilds(params?)` | `iterateBuildPages(params?)` |
+
+```ts
+const deployments = client.deployments.iterateAppDeployments(
+  { slug: 'api', limit: 50 },
+  { signal: AbortSignal.timeout(60_000), timeoutMs: 30_000, maxPages: 10, maxItems: 200 },
+);
+// No request has been sent yet.
+for await (const deployment of deployments) {
+  console.log(deployment.id);
+  if (deployment.status === 'live') break;
+}
+
+for await (const page of client.deployments.iterateBuildPages(
+  { app: 'api', status: 'failed', limit: 50 },
+  { maxPages: 5 },
+)) {
+  await saveBuildPage(page.items);
+  // Persist only after consuming the entire page, together with its filters.
+  await saveCursor(page.next_before);
+}
+```
+
+Each iterator captures its endpoint, token, filters, and options when created.
+It fetches only when `next()` needs another page, without prefetching. Item
+iterators exhaust a page before fetching another; page iterators preserve the
+generated `DeploymentListResponse` or `BuildListResponse` envelope. Existing
+`listAppDeployments`, `listDeployments`, and `getBuilds` still return a single
+`CancelablePromise` page, and legacy static services retain their surface.
+
+`PaginationOptions` accepts `signal`, `retry`, and `onResponse` as above.
+Here `timeoutMs` is one total traversal budget starting at the first `next()`,
+including requests, retry waits, body reads, and time spent processing items.
+It defaults to the client timeout or 30 seconds; zero disables it. An expired
+budget rejects with `TimeoutError`; caller abort retains its reason. Between
+requests, no timer or caller event listener is kept active: buffered iteration
+checks cancellation and expiry on the next `next()`. Breaking a loop or calling
+`return()` closes the iterator; closing also aborts an outstanding page request.
+
+`maxPages` and `maxItems` are optional nonnegative safe integers. Zero fetches
+nothing. Page limits include empty pages; HTTP retry attempts do not count as
+extra pages. Item limits reduce the requested page size to the remaining
+budget, so a page is never sliced while retaining a cursor past omitted rows.
+The API `limit` remains the page size (1–200, default 50).
+
+Cursors are opaque: pass a saved `next_before` as `before`, with the same
+filters. Empty pages with a cursor advance; an absent, null, or empty cursor
+ends traversal. `PaginationError` reports `repeated_cursor` for a cycle and
+`invalid_page` for an invalid envelope or an oversized server page. It excludes
+cursor values and response bodies. HTTP errors propagate without resetting the
+cursor or restarting the walk. Response observers run for each HTTP attempt;
+their attempt count restarts on each page.
+
+Lists are live retained reads, not a snapshot of the account. Limits can stop a
+walk before the server's end. Resume from a saved cursor only after its entire
+page has been processed; stopping partway through an item page does not create
+a resumable item checkpoint.
+
 ## Supported surface
 
 ### Resumable managed realtime preview
