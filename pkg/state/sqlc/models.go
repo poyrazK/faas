@@ -3448,6 +3448,8 @@ type CustomerAttentionSignal struct {
 	DismissedAt   pgtype.Timestamptz
 	DismissedBy   pgtype.UUID
 	DismissReason string
+	Outcome       pgtype.Text
+	TicketID      pgtype.UUID
 }
 
 type CustomerOperation struct {
