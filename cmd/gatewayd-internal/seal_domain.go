@@ -43,3 +43,42 @@ func edgeReaders(edge, legacy []*age.X25519Identity) []*age.X25519Identity {
 	}
 	return out
 }
+
+// envSealDomainEdgeRetired marks a compute node whose edge identity is
+// retired (ADR-20261110210000, retire compute identities): the control
+// plane's secretd opens every edge value for it.
+const envSealDomainEdgeRetired = "FAAS_SEAL_DOMAIN_EDGE_RETIRED"
+
+// edgeRetiredFromEnv reads FAAS_SEAL_DOMAIN_EDGE_RETIRED. A retired gateway
+// holds no identity that opens an edge value, so each kind of edge value
+// must reach it another way: basic auth through argon2id verifiers alone,
+// log drain headers through secretd, and sealed edge-rule request headers
+// injected by the instance's vmmd. It must not load the edge identity, nor
+// the fleet and host identities (the edge contract step unsets
+// FAAS_HOST_KEY_PATH). Anything left refuses the start rather than run with
+// a key the node should no longer hold.
+func edgeRetiredFromEnv(getenv func(string) string) (bool, error) {
+	switch v := getenv(envSealDomainEdgeRetired); v {
+	case "", "false":
+		return false, nil
+	case "true":
+	default:
+		return false, fmt.Errorf("gatewayd-internal: %s=%q: want true or false", envSealDomainEdgeRetired, v)
+	}
+	for _, need := range []struct{ env, want, why string }{
+		{"FAAS_GATEWAY_BASIC_AUTH", "verifier-only", "basic auth would open sealed credentials"},
+		{"FAAS_GATEWAY_LOG_DRAIN_OPENER", "secretd", "log drain headers would open here"},
+		{"FAAS_GATEWAY_EDGE_HEADER_SECRETS", "inject", "sealed edge-rule request headers would open here"},
+	} {
+		if got := getenv(need.env); got != need.want {
+			return false, fmt.Errorf("gatewayd-internal: %s needs %s=%s (got %q): otherwise %s", envSealDomainEdgeRetired, need.env, need.want, got, need.why)
+		}
+	}
+	if getenv(envSealDomainEdgeIdentity) != "" {
+		return false, fmt.Errorf("gatewayd-internal: %s but %s is set: remove the edge identity (seal_domains role, faas_seal_domain_edge_retired_on_compute) before starting", envSealDomainEdgeRetired, envSealDomainEdgeIdentity)
+	}
+	if getenv("FAAS_HOST_KEY_PATH") != "" {
+		return false, fmt.Errorf("gatewayd-internal: %s needs the edge contract step (faas_seal_domain_edge_contracted): FAAS_HOST_KEY_PATH is set, and the fleet identity also opens edge values", envSealDomainEdgeRetired)
+	}
+	return true, nil
+}

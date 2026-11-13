@@ -1,3 +1,12 @@
+{% if faas_seal_domain_delivery_retired_on_compute | bool %}
+# Managed by the seal_domains role (ADR-20261110210000, retire compute
+# identities): this node holds no delivery identity. schedd asks secretd for
+# trigger credentials, leaves webhooks, execution dispatch and the commit
+# relay to the control plane, and refuses to start while a delivery or fleet
+# identity is still loaded.
+[Service]
+Environment=FAAS_SEAL_DOMAIN_DELIVERY_RETIRED=true
+{% else %}
 # Managed by the seal_domains role (ADR 20261022111812): schedd opens app
 # webhook signing secrets, commit-source connections and execution payloads
 # with the delivery seal-domain identity. The fleet identity stays in the
@@ -8,3 +17,4 @@ LoadCredential=faas_seal_domain_delivery:/etc/faas/secrets/domains/delivery.age
 LoadCredential=faas_seal_domain_delivery_previous:/etc/faas/secrets/domains/delivery.age.previous
 {% endif %}
 Environment=FAAS_SEAL_DOMAIN_DELIVERY_IDENTITY_PATH=%d/faas_seal_domain_delivery
+{% endif %}
