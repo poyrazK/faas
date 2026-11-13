@@ -99,3 +99,9 @@ alias whose revision a rollback superseded answering 409 (row 24); a job
 that exits at once keeping its output, its command given after `--`; the
 standalone default RAM; and `metrics --services` explaining a hidden
 service map. A check fails on a release cut before its fix.
+
+`TestJSONInputLocationsIsolatedAPI` adds GA row 156 coverage for shared JSON
+input diagnostics: inline/file/stdin sources, human and JSON errors, CRLF
+locations, omitted payload values and zero API calls on malformed input.
+`TestJSONInputValidPayloadIsolatedAPI` verifies that the built CLI still sends
+valid input with large numbers and Unicode text intact.

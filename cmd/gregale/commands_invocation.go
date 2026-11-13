@@ -174,14 +174,17 @@ func resolveJSONFlag(flag, s string) ([]byte, error) {
 		return nil, nil
 	}
 	var b []byte
+	source := "inline"
 	switch {
 	case s[0] == '@':
+		source = s[1:]
 		read, err := os.ReadFile(s[1:])
 		if err != nil {
 			return nil, fmt.Errorf("read payload file %q: %w", s[1:], err)
 		}
 		b = read
 	case s == "-":
+		source = "stdin"
 		read, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return nil, fmt.Errorf("read stdin: %w", err)
@@ -194,7 +197,7 @@ func resolveJSONFlag(flag, s string) ([]byte, error) {
 	// payload surfaced as "marshal request: json: error calling MarshalJSON
 	// for type json.RawMessage: invalid character ...".
 	if len(bytes.TrimSpace(b)) > 0 && !json.Valid(b) {
-		return nil, fmt.Errorf("%s must be valid JSON (inline, @file, or - for stdin)", flag)
+		return nil, jsonFlagSyntaxError(flag, source, b)
 	}
 	return b, nil
 }
