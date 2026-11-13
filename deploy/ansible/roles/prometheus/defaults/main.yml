@@ -191,6 +191,13 @@ prom_targets:
     port: 9113
     box_roles: [control-plane, single-box]
     enabled: "{{ faas_edgednsd_managed | default(false) | bool }}"
+  # The Neon key holder (ADR-20261112160000); neond_service sets its
+  # metrics address (faas_neond_metrics_addr).
+  - job: neond
+    host: 127.0.0.1
+    port: 9114
+    box_roles: [control-plane, single-box]
+    enabled: "{{ faas_neond_enabled | default(false) | bool }}"
   - job: prometheus
     host: 127.0.0.1
     port: 9095
