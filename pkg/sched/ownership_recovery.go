@@ -92,7 +92,7 @@ func (e *Engine) RebalanceOrphanedApps(ctx context.Context, deadNodeID string) e
 		}
 		usedMB += neededMB // conservative soft reservation for the rest of this batch
 		e.ownershipRecoveryOutcome("migrated")
-		e.ownershipRecoveryTransferred(ctx, app)
+		e.ownershipRecoveryTransferred(ctx, app, e.ownerNodeID)
 	}
 	if deadNodeID == "" && len(apps) < limit {
 		e.rebalanceCursor = ""
@@ -121,10 +121,10 @@ func (e *Engine) ownershipRecoveryOutcome(outcome string) {
 	}
 }
 
-func (e *Engine) ownershipRecoveryTransferred(ctx context.Context, app state.OrphanedAppCandidate) {
+func (e *Engine) ownershipRecoveryTransferred(ctx context.Context, app state.OrphanedAppCandidate, toNodeID string) {
 	if e.notif != nil {
 		payload := string(safetext.JSONObject(appPlacementChange{
-			Kind: "rebalanced", AppID: app.ID, FromNode: app.NodeID, ToNode: e.ownerNodeID,
+			Kind: "rebalanced", AppID: app.ID, FromNode: app.NodeID, ToNode: toNodeID,
 		}))
 		notifyCtx, cancel := ownershipRecoveryStoreContext(ctx)
 		err := e.notif.Notify(notifyCtx, db.NotifyAppChanged, payload)
@@ -143,5 +143,5 @@ func (e *Engine) ownershipRecoveryTransferred(ctx context.Context, app state.Orp
 		submit(ctx, app.ID)
 	}
 	e.log.Info("sched: ownership recovery: transferred app", "app_id", app.ID,
-		"from_node", app.NodeID, "to_node", e.ownerNodeID)
+		"from_node", app.NodeID, "to_node", toNodeID)
 }

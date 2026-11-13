@@ -143,6 +143,10 @@ func scanCredentials(root string) ([]string, error) {
 			// some of them: what it loads is that unit's, never more.
 			unit = u
 			key = "unit:" + unit
+		} else if u := serviceRoleDropIn(filepath.ToSlash(rel)); u != "" {
+			// A daemon's own role drop-in belongs to the daemon's unit.
+			unit = u
+			key = "unit:" + unit
 		}
 		readerDomain := sealDomainReaderTemplate(filepath.ToSlash(rel))
 		for _, m := range credentialRe.FindAllStringSubmatch(string(body), -1) {
@@ -195,6 +199,21 @@ func sealDomainReaderTemplate(rel string) sealdomain.Domain {
 		return ""
 	}
 	return d
+}
+
+var serviceRoleDropInRe = regexp.MustCompile(`^deploy/ansible/roles/([a-z_]+)_service/templates/\d+-faas-([a-z-]+)\.conf\.j2$`)
+
+// serviceRoleDropIn returns the unit a daemon's own role drop-in is
+// installed into ("faas-secretd" for
+// roles/secretd_service/templates/50-faas-secretd.conf.j2), or "" when rel is
+// not one: the role must be <daemon>_service and the file must name the same
+// daemon, so another role's template never counts as the daemon's.
+func serviceRoleDropIn(rel string) string {
+	m := serviceRoleDropInRe.FindStringSubmatch(rel)
+	if m == nil || strings.ReplaceAll(m[1], "_", "-") != m[2] {
+		return ""
+	}
+	return "faas-" + m[2]
 }
 
 var contractTemplateRe = regexp.MustCompile(`^deploy/ansible/roles/seal_domains/templates/\d+-faas-seal-domain-([a-z-]+)-contract\.conf\.j2$`)
