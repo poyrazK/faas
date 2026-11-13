@@ -275,6 +275,21 @@ rate. That covers creating such a database, turning scale-to-zero off,
 resizing it to a larger class, and restoring a copy of it. A database that
 scales to zero adds nothing; its compute, storage and egress follow use.
 
+## See your agents at a glance
+
+`gregale mcp connection status` shows each connected agent on one line: its
+pending approval requests, the always-on cost it committed this month
+against its budget, how many of its changes of the last 7 days undo can
+reverse, and its last change. Give an id for one agent in detail, with the
+review link of each pending request:
+
+```sh
+gregale mcp connection status
+gregale mcp connection status <id>
+```
+
+A `?` means that part could not be read; `--json` names which.
+
 ## See what an agent changed
 
 Gregale keeps each agent's write requests (`POST`, `PUT`, `PATCH` and
