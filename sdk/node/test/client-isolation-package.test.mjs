@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 const exec = promisify(execFile);
 const sdk = fileURLToPath(new URL('..', import.meta.url));
 
-test('packed SDK exposes isolated clients, request options, diagnostics and the legacy migration API', { timeout: 60_000 }, async t => {
+test('packed SDK exposes isolated clients, request options, pagination and the legacy migration API', { timeout: 60_000 }, async t => {
   const root = await mkdtemp(join(tmpdir(), 'gregale-client-isolation-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   // npm's JSON output lists thousands of generated files and can exceed the
@@ -24,7 +24,7 @@ test('packed SDK exposes isolated clients, request options, diagnostics and the 
   await exec('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', '--omit=dev', join(root, filename)], { cwd: app });
   await writeFile(join(app, 'app.mjs'), `
     import assert from 'node:assert/strict';
-    import { createClient, FaaSClient, AppsService, OpenAPI } from '@gregale/sdk-node';
+    import { createClient, FaaSClient, AppsService, DeploymentsService, OpenAPI, PaginationError } from '@gregale/sdk-node';
     import { createClient as createPreviewClient } from '@gregale/sdk-node/preview';
     const original = globalThis.fetch;
     const seen = [];
@@ -51,6 +51,21 @@ test('packed SDK exposes isolated clients, request options, diagnostics and the 
     assert.equal(own[0].requestId, '11111111-1111-4111-8111-111111111111');
     const expired = createClient('https://deadline.test', { fetch: async () => new Promise(() => {}) });
     await assert.rejects(expired.apps.getApp({ slug: 'deadline' }, { timeoutMs: 10 }), { name: 'TimeoutError' });
+    let pages = 0;
+    const paged = createClient('https://pagination.test', { fetch: async url => {
+      pages++;
+      const params = new URL(String(url)).searchParams;
+      const start = Number(params.get('before') ?? 0), size = Number(params.get('limit'));
+      return Response.json({ items: Array.from({ length: size }, (_, i) => ({ id: String(start + i) })), next_before: String(start + size) });
+    } });
+    const iterator = paged.deployments.iterateBuilds({ limit: 2 }, { maxItems: 3 });
+    assert.equal(pages, 0);
+    const rows = [];
+    for await (const row of iterator) rows.push(row.id);
+    assert.deepEqual(rows, ['0', '1', '2']); assert.equal(pages, 2);
+    assert.equal(typeof DeploymentsService.iterateBuilds, 'undefined');
+    const invalid = createPreviewClient('https://cycle.test', { fetch: async () => Response.json({ items: [], next_before: 'repeat' }) });
+    await assert.rejects(invalid.deployments.iterateBuildPages({ before: 'repeat' }).next(), error => error instanceof PaginationError && error.code === 'repeated_cursor');
     const config = { ...OpenAPI };
     const legacy = new FaaSClient('https://legacy.test', { token: 'legacy', fetch: transport });
     try {
@@ -86,7 +101,7 @@ test('packed SDK exposes isolated clients, request options, diagnostics and the 
   `);
   await exec(process.execPath, ['app.mjs'], { cwd: app });
   await writeFile(join(app, 'app.ts'), `
-    import { createClient, type GregaleClient, type AppResponse, type CancelablePromise, type RequestOptions, type ResponseInfo, type ResponseObserver, FaaSClient, AppsService } from '@gregale/sdk-node';
+    import { createClient, type GregaleClient, type AppResponse, type CancelablePromise, type RequestOptions, type ResponseInfo, type ResponseObserver, type PaginationOptions, type DeploymentPagination, type DeploymentResponse, type DeploymentListResponse, type BuildResponse, type BuildListResponse, PaginationError, FaaSClient, AppsService, DeploymentsService } from '@gregale/sdk-node';
     import { createClient as createPreviewClient, type GregaleClient as PreviewClient, type ExecutionResponse, type ExecutionEvent, type ExecutionHelpers, type RequestOptions as PreviewOptions } from '@gregale/sdk-node/preview';
     const client: GregaleClient = createClient('https://api.test');
     const request: CancelablePromise<AppResponse> = client.apps.getApp({ slug: 'typed' });
@@ -101,6 +116,25 @@ test('packed SDK exposes isolated clients, request options, diagnostics and the 
     void preview.flags;
     const previewOptions: PreviewOptions = options;
     void preview.runs.getExecution({ id: 'run' }, previewOptions);
+    const pagination: DeploymentPagination = client.deployments;
+    const pageOptions: PaginationOptions = { ...options, maxItems: 5, maxPages: 2 };
+    const deployments: AsyncGenerator<DeploymentResponse> = pagination.iterateAppDeployments({ slug: 'app' }, pageOptions);
+    const deploymentPages: AsyncGenerator<DeploymentListResponse> = pagination.iterateAppDeploymentPages({ slug: 'app' });
+    const account: AsyncGenerator<DeploymentResponse> = pagination.iterateDeployments();
+    const accountPages: AsyncGenerator<DeploymentListResponse> = pagination.iterateDeploymentPages({}, pageOptions);
+    const builds: AsyncGenerator<BuildResponse> = pagination.iterateBuilds({ status: 'running' }, pageOptions);
+    const buildPages: AsyncGenerator<BuildListResponse> = preview.deployments.iterateBuildPages();
+    const originalList: CancelablePromise<DeploymentListResponse> = client.deployments.listAppDeployments({ slug: 'app' });
+    const invalidPage: Error = new PaginationError('invalid_page');
+    void deployments; void deploymentPages; void account; void accountPages; void builds; void buildPages; void originalList; void invalidPage;
+    // @ts-expect-error app pagination still requires an app slug
+    pagination.iterateAppDeployments({});
+    // @ts-expect-error generated build filters remain checked
+    pagination.iterateBuilds({ status: 'unknown' });
+    // @ts-expect-error limits are numeric
+    pagination.iterateDeployments({}, { maxPages: '2' });
+    // @ts-expect-error legacy static services retain their original surface
+    DeploymentsService.iterateBuilds();
     const helpers: ExecutionHelpers = preview;
     const execution: Promise<ExecutionResponse> = helpers.runExecution({ runtime: 'node22', source: 'console.log(1)' });
     const events: AsyncGenerator<ExecutionEvent, void, void> = helpers.watchExecution('run', { after: 1 });
