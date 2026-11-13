@@ -95,3 +95,26 @@ cancelled and reaps PostgREST before exiting.
 
 The final full run used the final source without further implementation changes.
 Its disposable PostgreSQL container and API fixtures were cleaned up on exit.
+
+## Integration qualification — 2026-11-13 UTC
+
+Main was integrated while retaining source-storage and replication-continuity
+qualification, CLI create recovery, and the setup retry cooldown. The integration
+was checked with Go 1.26.11 and the same disposable native PostgreSQL fixtures:
+
+- The complete native acceptance script passed all seven package groups with the
+  race detector: worker 960.302 s, pipeline API 160.003 s, source API 18.445 s,
+  dashboard 10.190 s, managed Postgres 78.126 s, Neon 2.305 s, and CLI 6.283 s.
+- Focused domain regressions passed in 154.019 s and CLI regressions in 5.857 s.
+- Queued cancellation during source-storage/continuity requalification passed
+  separately with the race detector in 32.355 s.
+- Data API runtime unit tests passed: 242 passed, 3 skipped, no failures.
+- Management clients were regenerated; the Node SDK build passed. The unreleased
+  reader-revocation/queued-verification migration was renamed with a generated
+  timestamp, and schema/sqlc output was refreshed after integrating main.
+
+The broader local Data API integration script encountered two Docker-volume
+inventory assertions while native fixtures were running concurrently and a
+missing local Chromium binary. It did not pass as a complete suite; hosted CI
+provides the final integration result. These results supplement the original
+qualification above rather than replacing its historical evidence.

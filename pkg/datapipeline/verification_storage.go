@@ -40,9 +40,15 @@ func verificationSourceStorage(ctx context.Context, source capacityQuery, relati
 // Raw physical receipts are independent of query plans. Proof fingerprints also
 // bind the query key order and stream epoch, so DDL between planner hydration
 // and physical observation cannot reinterpret a persisted range cursor.
-func verificationQueryStorage(actual []string, epoch string, relations []relation) []string {
+func verificationQueryStorage(actual []string, epoch string, relations []relation) ([]string, error) {
+	if len(actual) != len(relations) {
+		return nil, ErrConflict
+	}
 	proof := make([]string, len(actual))
 	for i, storage := range actual {
+		if i >= len(relations) {
+			return nil, ErrConflict
+		}
 		var keys []string
 		for _, key := range primaryColumns(relations[i]) {
 			keys = append(keys, key.Name)
@@ -54,7 +60,7 @@ func verificationQueryStorage(actual []string, epoch string, relations []relatio
 		sum := sha256.Sum256(encoded)
 		proof[i] = hex.EncodeToString(sum[:])
 	}
-	return proof
+	return proof, nil
 }
 
 func verificationStorage(ctx context.Context, p Pipeline, source capacityQuery, target receiptSQL, relations []relation) ([]string, []string, error) {
@@ -70,7 +76,8 @@ func verificationStorage(ctx context.Context, p Pipeline, source capacityQuery, 
 	if w != nil {
 		epoch = w.Epoch
 	}
-	return actual, verificationQueryStorage(actual, epoch, relations), nil
+	proof, err := verificationQueryStorage(actual, epoch, relations)
+	return actual, proof, err
 }
 func physicalVerificationID(intent string, storage []string) string {
 	// Invalidate ranges proved with a different row encoding, while retaining

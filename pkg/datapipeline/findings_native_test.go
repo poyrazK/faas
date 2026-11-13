@@ -95,10 +95,10 @@ func TestNativeReadHooksRefreshAnAPIThatStartedBeforeInstallation(t *testing.T) 
 		t.Fatal(err)
 	}
 	refreshes := 0
-	f.engine.RefreshReadGate = func(context.Context, Pipeline, string) error {
+	f.engine.RefreshReadGate = func(ctx context.Context, _ Pipeline, _ string) error {
 		refreshes++
 		api.close()
-		api = startNativeDataAPI(t, t.Context(), f.target.Config().ConnString(), role)
+		api = startNativeDataAPI(t, context.WithoutCancel(ctx), f.target.Config().ConnString(), role)
 		return nil
 	}
 	f.control(t, "pause")

@@ -263,8 +263,14 @@ func TestVerificationUsesSourcePrimaryKeyOrder(t *testing.T) {
 	if !slices.Equal(after, hydrated) {
 		t.Fatal("planner metadata changed raw physical storage identity")
 	}
-	staleProof := verificationQueryStorage(after, "", []relation{r})
-	hydratedProof := verificationQueryStorage(hydrated, "", updated)
+	staleProof, err := verificationQueryStorage(after, "", []relation{r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hydratedProof, err := verificationQueryStorage(hydrated, "", updated)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if slices.Equal(staleProof, hydratedProof) || physicalVerificationID("same-intent", staleProof) == physicalVerificationID("same-intent", hydratedProof) {
 		t.Fatal("changed query order could reuse a proof created during DDL")
 	}
