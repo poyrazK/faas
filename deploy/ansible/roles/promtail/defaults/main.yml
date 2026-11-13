@@ -62,6 +62,7 @@ promtail_journal_units:
   - faas-cloudflared-s3.service
   # Host helpers and timers.
   - faas-serving-probe.service
+  - faas-notification-receiver-metrics.service
   - faas-cgroup-metrics.service
   - faas-kernel-lockdown.service
   - faas-canary-artifact-sweep.service

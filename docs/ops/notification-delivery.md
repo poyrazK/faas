@@ -147,6 +147,8 @@ It retains operator attestations and keeps unverified groups unknown.
 
 Converge the Alertmanager role with its service feature flag, receiver metrics
 role and inventory, along with Prometheus rules and Grafana provisioning.
+Converge Alloy (or the Promtail rollback shipper) so the collector's service
+journal is included in centralized logs.
 Confirm `faas-notification-receiver-metrics.timer` runs and
 `faas_notification_receiver:collector_fresh == 1`. Compare
 `faas_notification_receiver:expected` with
