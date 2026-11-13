@@ -8,11 +8,13 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.obs_notification_health_state import ObsNotificationHealthState, check_obs_notification_health_state
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.obs_notification_api_status import ObsNotificationAPIStatus
     from ..models.obs_notification_health_signals import ObsNotificationHealthSignals
     from ..models.obs_notification_integration import ObsNotificationIntegration
+    from ..models.obs_notification_receiver_health import ObsNotificationReceiverHealth
 
 
 T = TypeVar("T", bound="ObsNotificationHealth")
@@ -34,6 +36,16 @@ class ObsNotificationHealth:
     integrations: list[ObsNotificationIntegration]
     """Observed integration types ordered by name; missing counters remain unknown."""
     limitations: list[str]
+    receiver_health: ObsNotificationReceiverHealth | Unset = UNSET
+    """Independent receiver assessment, bounded to 32 receiver/integration groups.
+    Deployment intent is independent of actual collector output. Healthy
+    requires fresh collection and inventory, complete counter increases and
+    an observed successful transport clock for every expected group. Partial
+    preserves unavailable evidence, insufficient counter samples and unknown
+    success history. Degraded identifies failed requests, missing expected
+    transport telemetry or a freshly observed group outside deployment intent.
+    This section does not change the top-level aggregate assessment.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,6 +66,10 @@ class ObsNotificationHealth:
 
         limitations = self.limitations
 
+        receiver_health: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.receiver_health, Unset):
+            receiver_health = self.receiver_health.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -67,6 +83,8 @@ class ObsNotificationHealth:
                 "limitations": limitations,
             }
         )
+        if receiver_health is not UNSET:
+            field_dict["receiver_health"] = receiver_health
 
         return field_dict
 
@@ -75,6 +93,7 @@ class ObsNotificationHealth:
         from ..models.obs_notification_api_status import ObsNotificationAPIStatus
         from ..models.obs_notification_health_signals import ObsNotificationHealthSignals
         from ..models.obs_notification_integration import ObsNotificationIntegration
+        from ..models.obs_notification_receiver_health import ObsNotificationReceiverHealth
 
         d = dict(src_dict)
         generated_at = datetime.datetime.fromisoformat(d.pop("generated_at"))
@@ -98,6 +117,13 @@ class ObsNotificationHealth:
 
         limitations = cast(list[str], d.pop("limitations"))
 
+        _receiver_health = d.pop("receiver_health", UNSET)
+        receiver_health: ObsNotificationReceiverHealth | Unset
+        if isinstance(_receiver_health, Unset):
+            receiver_health = UNSET
+        else:
+            receiver_health = ObsNotificationReceiverHealth.from_dict(_receiver_health)
+
         obs_notification_health = cls(
             generated_at=generated_at,
             state=state,
@@ -106,6 +132,7 @@ class ObsNotificationHealth:
             signals=signals,
             integrations=integrations,
             limitations=limitations,
+            receiver_health=receiver_health,
         )
 
         obs_notification_health.additional_properties = d

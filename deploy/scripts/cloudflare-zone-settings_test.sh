@@ -34,7 +34,7 @@ if state.get('failure') == 'api': print('{"success":false,"result":{}}'); sys.ex
 key={'':'zone','/bot_management':'bots','/settings/grpc':'grpc'}[path]
 if method != 'GET':
  assert (method,path) in [('PUT','/bot_management'),('PATCH','/settings/grpc')]
- assert set(data) == ({'fight_mode','enable_js','ai_bots_protection'} if key=='bots' else {'value'})
+ assert set(data) == ({'fight_mode','enable_js','ai_bots_protection','ai_search','ai_training','ai_user','bot_preference_sync_enabled'} if key=='bots' else {'value'})
  if state.get('failure') != 'readback': state[key].update(data)
  (root/'state').write_text(json.dumps(state))
 print(json.dumps({'success':True,'result':state[key]}))
@@ -42,7 +42,7 @@ print(json.dumps({'success':True,'result':state[key]}))
     curl.chmod(0o755)
     def state():
         return {'zone': {'id':zone, 'name':'gregale.dev', 'status':'active', 'paused':False, 'plan':{'legacy_id':'free'}},
-                'bots': {'fight_mode':True, 'enable_js':True, 'ai_bots_protection':'block', 'ai_search':'disabled', 'crawler_protection':'disabled'},
+                'bots': {'fight_mode':True, 'enable_js':True, 'ai_bots_protection':'block', 'ai_search':'only_on_ad_pages', 'ai_training':'disallow', 'ai_user':'block', 'bot_preference_sync_enabled':True, 'crawler_protection':'disabled'},
                 'grpc': {'id':'grpc', 'value':'off', 'editable':True}}
     def run(action='plan', apply='0', initial=None, extra=None):
         initial = initial or state()
@@ -82,11 +82,20 @@ print(json.dumps({'success':True,'result':state[key]}))
     assert rc==0 and len(writes(calls))==1, out
     assert after['bots']['fight_mode'] is False and after['bots']['enable_js'] is False
     assert after['bots']['ai_bots_protection']=='disabled' and after['bots']['ai_search']=='disabled'
+    assert after['bots']['ai_training']=='disabled' and after['bots']['ai_user']=='disabled'
+    assert after['bots']['bot_preference_sync_enabled'] is False
     assert after['bots']['crawler_protection']=='disabled' and after['grpc']['value']=='off'
     rc,out,calls,_=run('bots','1',after)
     assert rc==0 and not writes(calls), out
+    # Legacy switches can match while the new Training+Sync policy still
+    # blocks crawlers. Do not incorrectly declare this configuration done.
+    initial=state(); initial['bots'].update(fight_mode=False,enable_js=False,ai_bots_protection='disabled')
+    rc,out,calls,after=run('bots','1',initial)
+    assert rc==0 and len(writes(calls))==1 and after['bots']['ai_training']=='disabled', out
     initial=state(); initial['bots'].pop('enable_js')
     assert run('bots','1',initial)[0]==0
+    initial=state(); initial['bots'].pop('ai_bots_protection')
+    assert run('plan',initial=initial)[0]==0
     rc,out,calls,after=run('grpc','1')
     assert rc==0 and writes(calls)==[['PATCH','/settings/grpc',{'value':'on'}]], out
     assert after['bots']==state()['bots']

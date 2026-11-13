@@ -163,7 +163,8 @@ func (s *server) applyManifestWorkloads(
 		return nil, false, problem
 	}
 	dependencies := manifest.MainWorkloadDependencies()
-	if len(manifest.Companions) == 0 && len(manifest.Extensions) == 0 && len(dependencies) == 0 {
+	readiness := manifestReadinessProbe(manifest)
+	if len(manifest.Companions) == 0 && len(manifest.Extensions) == 0 && len(dependencies) == 0 && readiness == nil {
 		return nil, false, nil
 	}
 	if problem := req.NormalizeCompanions(); problem != nil {
@@ -183,6 +184,19 @@ func (s *server) applyManifestWorkloads(
 			req.Overrides = &api.CreateDeploymentOverrides{}
 		}
 		req.Overrides.MainDependsOn = dependencies
+	}
+	// gregale.yaml hosting.readiness_probe; a request override wins for that
+	// one deployment.
+	if readiness != nil && (req.Overrides == nil || req.Overrides.ReadinessProbe == nil) {
+		if req.Overrides == nil {
+			req.Overrides = &api.CreateDeploymentOverrides{}
+		}
+		probe := *readiness
+		if readiness.GRPC != nil {
+			grpc := *readiness.GRPC
+			probe.GRPC = &grpc
+		}
+		req.Overrides.ReadinessProbe = &probe
 	}
 	overrides, problem := validateOverrides(req, limits, acct.Plan)
 	if problem != nil {
@@ -1398,4 +1412,12 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 		_ = s.notif.Notify(ctx, db.NotifyCronChanged, `{"kind":"deleted","app_id":"`+staged.appID+`"}`)
 	}
 	return errors.Join(errs...)
+}
+
+// manifestReadinessProbe is gregale.yaml's hosting.readiness_probe, or nil.
+func manifestReadinessProbe(manifest *gregalemanifest.Manifest) *api.DeploymentReadinessProbe {
+	if manifest == nil || manifest.Hosting == nil {
+		return nil
+	}
+	return manifest.Hosting.ReadinessProbe
 }

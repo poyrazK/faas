@@ -12,6 +12,35 @@ type ObsNotificationHealth struct {
 	Signals         map[string]ObsNotificationSignal `json:"signals"`
 	Integrations    []ObsNotificationIntegration     `json:"integrations"`
 	Limitations     []string                         `json:"limitations"`
+	// Optional for compatibility with servers released before receiver evidence.
+	// State above retains its aggregate assessment; this section is independent.
+	ReceiverHealth *ObsNotificationReceiverHealth `json:"receiver_health,omitempty"`
+}
+
+// ObsNotificationReceiverHealth observes deployment intent and completed
+// transport requests. It never establishes per-alert or human receipt.
+type ObsNotificationReceiverHealth struct {
+	State       string                    `json:"state"`
+	Reason      string                    `json:"reason,omitempty"`
+	Collector   ObsNotificationSignal     `json:"collector"`
+	Inventory   ObsNotificationSignal     `json:"inventory"`
+	Groups      []ObsNotificationReceiver `json:"groups"`
+	Limitations []string                  `json:"limitations"`
+}
+
+// ObsNotificationReceiver names a reviewed receiver/integration group, never
+// an address. Expected is nil when deployment intent cannot be established.
+type ObsNotificationReceiver struct {
+	Receiver    string                `json:"receiver"`
+	Integration string                `json:"integration"`
+	Expected    *bool                 `json:"expected"`
+	State       string                `json:"state"`
+	Reason      string                `json:"reason,omitempty"`
+	Requests    ObsNotificationSignal `json:"requests"`
+	Failures    ObsNotificationSignal `json:"failures"`
+	// Value is the Unix-second clock when the collector confirmed success.
+	// ObservedAt is the freshness of that gauge, not the delivery time.
+	LastSuccessObservation ObsNotificationSignal `json:"last_success_observation"`
 }
 
 // ObsNotificationSignal separates fresh zero values from missing evidence.
