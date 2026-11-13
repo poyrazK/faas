@@ -8522,6 +8522,14 @@ const (
 	// a momentarily full fleet failed a finished build, and the customer had
 	// to rebuild to retry.
 	SnapshotPrimeCapacityMaxWait = 5 * time.Minute
+	// SupersededInstanceDrainGrace is how long a superseded release's running
+	// request instance keeps serving the requests it already has after a new
+	// release goes live, before it is parked anyway. It waits only while the
+	// guest reports requests in flight and the app has a free instance slot,
+	// so it never holds an app at its concurrency cap and an idle instance
+	// parks at once. Without it every deploy cut in-flight long requests,
+	// streams and uploads on the old release (deploy-path review P16).
+	SupersededInstanceDrainGrace = 30 * time.Second
 	// AppTaskCapacityMaxWait is how long after node budgets first refused it
 	// a release command keeps waiting for a compute node with room for its
 	// environment (ADR-20261029103512 amendment 3). Inside the window schedd
