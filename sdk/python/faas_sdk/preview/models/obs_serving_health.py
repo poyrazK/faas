@@ -31,6 +31,7 @@ class ObsServingHealth:
     state: ObsServingHealthState
     max_age_seconds: Literal[120]
     inventory: ObsServingProbeInventory
+    """Configuration and freshness of independent serving-probe intent."""
     counts: None | ObsServingProbeCounts
     """Null when inventory is unknown or unconfigured; an explicitly empty configured fleet has zero counts."""
     probes: list[ObsServingProbe]

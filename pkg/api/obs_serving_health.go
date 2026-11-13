@@ -16,6 +16,7 @@ type ObsServingHealth struct {
 	Limitations   []string                 `json:"limitations"`
 }
 
+// ObsServingProbeInventory describes the configuration and freshness of independent serving-probe intent.
 type ObsServingProbeInventory struct {
 	State         string     `json:"state"`
 	Reason        string     `json:"reason,omitempty"`

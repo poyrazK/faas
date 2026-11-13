@@ -18,6 +18,8 @@ T = TypeVar("T", bound="ObsServingProbeInventory")
 
 @_attrs_define
 class ObsServingProbeInventory:
+    """Configuration and freshness of independent serving-probe intent."""
+
     state: ObsServingProbeInventoryState
     configured: bool | None
     expected_pairs: int | None

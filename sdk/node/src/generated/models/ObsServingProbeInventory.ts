@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Configuration and freshness of independent serving-probe intent.
+ */
 export type ObsServingProbeInventory = {
   state: 'healthy' | 'stale' | 'unavailable';
   reason?: string;

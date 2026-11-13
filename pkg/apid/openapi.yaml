@@ -91661,6 +91661,7 @@ components:
           items: { type: string }
     ObsServingProbeInventory:
       type: object
+      description: Configuration and freshness of independent serving-probe intent.
       required: [state, configured, expected_pairs, observed_at]
       properties:
         state: { type: string, enum: [healthy, stale, unavailable] }
