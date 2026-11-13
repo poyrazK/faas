@@ -345,7 +345,8 @@ func waitDataPipeline(ctx context.Context, client pipelineReader, p api.DataPipe
 		}
 		qualificationRunning := (p.Reason == "source_storage_verification" || p.Reason == "replication_continuity_verification") && p.Verification == "pending"
 		progressing := p.Reason == "database_unavailable" || p.Reason == "schema_api_refresh_pending" || qualificationRunning
-		if p.ObservationFresh && (p.State == "resync_required" || (p.State == "blocked" && !progressing)) && expected != "deleted" && expected != "paused" {
+		currentResync := p.State == "resync_required" && p.Revision > 0 && p.ObservedRevision == p.Revision
+		if (currentResync || (p.ObservationFresh && p.State == "blocked" && !progressing)) && expected != "deleted" && expected != "paused" {
 			return p, fmt.Errorf("pipeline %s: %s", p.State, p.Reason)
 		}
 		select {

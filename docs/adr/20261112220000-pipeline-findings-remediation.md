@@ -62,8 +62,10 @@ starting work, and retain existing cancellation eligibility during grace.
 Retain primary-key positions as transient planner metadata, outside approval and
 schema hashes. Hydrate them when verification consumes durable table/repair plans.
 Use the source's key order for new mirror indexes, scans, range bounds and
-tracking. Include both primary-index and actual query ordering in the physical
-storage fingerprint to fence DDL between metadata reads, and
+tracking. Include primary-index ordering in raw storage receipts, and actual query
+ordering plus the replication-continuity epoch in proof fingerprints, to fence
+DDL between metadata reads without changing raw receipts when planner metadata
+is hydrated. Then
 version the proof encoding, so older proofs restart safely without forcing a
 schema resync. Preserve canonical collations, row encoding, budgets and locks.
 

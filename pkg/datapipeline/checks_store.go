@@ -112,6 +112,12 @@ func (s *PostgresStore) RequestCheck(ctx context.Context, account, id string, re
 			return ConnectionCheck{}, decodeErr
 		}
 		if !slices.Equal(check.RequestedTables, selection.RequestedTables) || check.Search != selection.Search {
+			// A saved setup retry can narrow an earlier discovery request. Keep
+			// its failed-check cooldown even when that selection changes.
+			age := time.Since(old.CreatedAt.Time)
+			if ownerErr == nil && old.State == "blocked" && age >= 0 && age < api.DataPipelineCheckRetryInterval {
+				return check, nil
+			}
 			return s.enqueueCheck(ctx, tx, account, id, revision, database, selection)
 		}
 		// Coalesce active and very recent requests. Retrying a lost HTTP response

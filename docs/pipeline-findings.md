@@ -191,7 +191,7 @@ continue polling old observations under the existing timeout. Cover stale blocke
 and resync-required states, a newly observed failure, cancellation, and successful
 recovery. Do not weaken genuine terminal deletion handling.
 
-**Implementation (2026-11-13).** CLI wait only treats a failure as terminal when its observation is fresh for the requested revision. Covered by `TestPipelineWaitPollsPastOldFailure`.
+**Implementation (2026-11-13).** CLI wait requires current-revision terminal evidence: transient blocked observations must be fresh, while a durable resync requirement from the same revision remains terminal after its observation ages. Covered by `TestPipelineWaitPollsPastOldFailure`.
 
 ## PIPE-006 — Valid digit-led names cannot provision a CLI mirror
 

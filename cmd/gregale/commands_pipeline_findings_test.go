@@ -67,6 +67,8 @@ func TestPipelineGeneratedMirrorNamesAcceptDigitLedSlugs(t *testing.T) {
 	generated := ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/data/pipelines":
+			main.WriteJSONTest(w, api.DataPipelineList{Items: []api.DataPipeline{}})
 		case "GET /v1/data/connections":
 			main.WriteJSONTest(w, api.DataConnectionList{Items: []api.DataConnection{{ID: source, Revision: 1}}})
 		case "POST /v1/data/connections/" + source + "/check":
@@ -87,7 +89,7 @@ func TestPipelineGeneratedMirrorNamesAcceptDigitLedSlugs(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
-	if code := main.CmdPipeline([]string{"create", "123-orders", "--connection", source, "--region", "test-region", "--tables", "orders", "--read-subjects", "alice"}); code != 0 || !managedpostgres.ValidName(generated) || generated != "p-123-orders-mirror" {
+	if code := main.CmdPipeline([]string{"create", "123-orders", "--connection", source, "--region", "test-region", "--tables", "orders", "--read-subjects", "alice"}); code != 0 || !managedpostgres.ValidName(generated) || generated != "p-123-orders-mirror-db" {
 		t.Fatal("valid pipeline cannot provision", code, generated)
 	}
 }
@@ -100,6 +102,8 @@ func TestPipelineLongSourceNamesAreDistinctAndRetryStable(t *testing.T) {
 	var names, keys []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/data/pipelines":
+			main.WriteJSONTest(w, api.DataPipelineList{Items: []api.DataPipeline{}})
 		case "POST /v1/data/connections":
 			var request api.CreateDataConnectionRequest
 			_ = json.NewDecoder(r.Body).Decode(&request)
