@@ -11658,6 +11658,7 @@ type OutboundIntegration struct {
 	AiOnlineEvalModel              pgtype.Text
 	AiOnlineEvalRubric             pgtype.Text
 	AiQualityAlerts                bool
+	AiSemanticCache                []byte
 }
 
 type OutboundIntegrationApp struct {
