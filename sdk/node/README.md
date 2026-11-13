@@ -289,10 +289,11 @@ it installs or removes its fetch wrapper. Keep at most one legacy singleton.
 
 For the complete generated surface, import `createClient` from
 `@gregale/sdk-node/preview`; the default factory retains the GA/beta boundary.
-Standalone helpers and the legacy preview `FaaSClient` convenience methods are
-not bound by this factory. Helpers that read shared `OpenAPI` still require the
-legacy singleton; use the corresponding generated namespace method for isolated
-requests. Helpers with explicit authentication options keep their own contract.
+The preview factory also binds `client.runExecution(...)` and
+`client.watchExecution(...)` to the client. Standalone execution exports and
+other helpers that read shared `OpenAPI` retain the legacy singleton contract;
+use bound client methods for isolated requests. Helpers with explicit
+authentication options keep their own contract.
 
 Mutations receive a fresh key per logical call, reused across retries. Prefer
 the method's `idempotencyKey` option when available. `setIdempotencyKey(key)`
@@ -1025,6 +1026,16 @@ as it is emitted and reconnects with the latest event cursor if the SSE
 connection drops:
 
 ```ts
+import { createClient } from '@gregale/sdk-node/preview';
+
+const client = createClient('https://api.example.com', {
+  token: process.env.GREGALE_API_KEY,
+});
+const execution = await client.runs.createExecution({
+  requestBody: { runtime: 'node22', source: "console.log('hello')" },
+  idempotencyKey: 'my-logical-execution',
+});
+
 for await (const event of client.watchExecution(execution.id)) {
   if (event.type === 'stdout' || event.type === 'stderr') {
     process.stdout.write(event.data.chunk ?? '');
@@ -1033,8 +1044,9 @@ for await (const event of client.watchExecution(execution.id)) {
 }
 ```
 
-`RunsService.streamExecutionEvents()` remains available when a raw SSE body
-is needed. `watchExecution` is the recommended agent-runtime path.
+`client.runs.streamExecutionEvents()` remains available for the generated
+buffered SSE response. `client.watchExecution` incrementally consumes the live
+body and is the recommended agent-runtime path.
 
 For the common submit-and-wait flow, `runExecution` composes create, resumable
 watching, and the terminal receipt:
@@ -1043,12 +1055,49 @@ watching, and the terminal receipt:
 const receipt = await client.runExecution(
   { runtime: 'node22', source: "console.log('hello')" },
   {
+    idempotencyKey: 'another-logical-execution',
+    signal: AbortSignal.timeout(60_000),
     onEvent: (event) => {
       if (event.type === 'stdout') process.stdout.write(event.data.chunk ?? '');
     },
   },
 );
 ```
+
+Both methods are available on the isolated preview client. Tokens, endpoint
+path prefixes, transport, logging, retries, and idempotency settings stay bound
+to that client. Each invocation captures one configuration snapshot: changing
+the client token or endpoint affects future workflows, while an active workflow
+keeps its original configuration through reconnects and the final receipt GET.
+`watchExecution` captures when called, before its iterator is first consumed.
+Detached helper methods keep their client binding.
+
+Reconnecting only reads events; it never repeats execution submission. Overlapping
+frames with an already seen integer event ID are skipped. Cursorless events
+retain their delivery semantics and can repeat. Event callbacks run in order;
+callback errors stop observation and release the stream. An initial connection
+failure, authorization error, or malformed event is surfaced to the caller.
+After connecting, transient failures reconnect until completion or cancellation.
+
+Pass an `AbortSignal` to bound the whole workflow, including submission,
+reconnect delays, body reads, and the final receipt request. A client's
+`timeoutMs` applies to each HTTP request; ordinary requests default to 30 seconds,
+and SSE has no default deadline. Aborting one workflow stops its local I/O;
+it does not request server-side execution cancellation. Use
+`client.runs.cancelExecution({ id })` to request that separately.
+
+The returned terminal receipt includes result data and exported artifacts;
+use `decodeExecutionArtifact` to verify and decode an artifact. For recovery
+after a process restart, retain the receipt ID from `client.runs.createExecution`
+and the last successfully processed event ID, then resume with
+`client.watchExecution(id, { after, signal })`. Cursor state in a running iterator
+is held in memory. To rotate credentials during observation, start a new watcher
+from the retained cursor after updating the client.
+
+Existing `FaaSClient` convenience methods and standalone `runExecution` /
+`watchExecution` exports remain available and use shared process configuration.
+Migrate by replacing `new FaaSClient(...)` with the preview `createClient(...)`
+and calling these methods on the returned client.
 
 The source/files bundle is available only in the disposable guest's ephemeral
 scratch filesystem; no customer storage disk is attached.

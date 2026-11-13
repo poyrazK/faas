@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261113180307: Bind execution workflows to independent Node clients](20261113180307-node-sdk-bound-execution-workflows.md) — accepted; preview helpers retain one client snapshot across submission, resumed event streams, and terminal receipt reads, with per-caller cancellation and legacy compatibility.
 - [ADR-20261113173610: Independent Node SDK clients](20261113173610-node-sdk-client-isolation.md) — accepted; per-client generated service namespaces and transports, immutable request configuration, and migration from shared FaaSClient/static services.
 
 - [ADR-20261113133500: Abuse strikes are stored, not counted in memory](20261113133500-persisted-abuse-strikes.md) — accepted; abuse recycles are rows in `account_abuse_strikes`, so the account abuse hold counts across schedds and restarts
