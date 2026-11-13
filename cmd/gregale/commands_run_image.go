@@ -582,6 +582,10 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 
 func liveIncompleteReason(live jobTaskLogFollow, err error) string {
 	switch {
+	case live.AttemptChanges > 0:
+		return "the task attempt changed while reconnecting; some earlier output may be unavailable"
+	case live.UnverifiedResume:
+		return "the resumed stream did not identify its attempt; output may be incomplete"
 	case live.Gaps > 0:
 		return "some lines were dropped before they could be sent"
 	case live.Reason == api.JobTaskLogsEndStoredOutput:
