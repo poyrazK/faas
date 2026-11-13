@@ -267,17 +267,17 @@ type Paths struct {
 	Kernel string // /srv/fc/base/vmlinux-6.1.x
 }
 
-// AdvisoryEvent is one fanotify event the guest-init
-// stateless_advisory_linux.go observed and shipped over vsock DGRAM.
+// AdvisoryEvent is one write guest-init's stateless advisory observed and
+// shipped over a guest-initiated vsock stream (DecodeStatelessAdvisoryFrame).
 // Wire-shaped at guest/init/stateless_advisory_linux.go::advisoryEvent
 // and forwarded to apid via pkg/vmmdgrpc/advisory_client.go. ADR-047
 // records the chain end-to-end; spec §17 G13 names the closed path
 // set this event belongs to.
 type AdvisoryEvent struct {
-	Path   string   // path observed (resolved from fanotify fd)
-	Masks  []string // canonical verbs: "create" | "modify" | "move" | "access" | "delete" | "other"
-	PID    int      // host-side process id at event time (best effort)
-	TsUnix int64    // ms since unix epoch
+	Path   string   // path written
+	Masks  []string // canonical verbs: "create" | "modify" | "move" | "other"
+	PID    int      // writer pid; 0 since the guest watches with inotify (ADR-047 amendment 2026-11-12)
+	TsUnix int64    // ms since unix epoch (guest clock)
 }
 
 // AdvisoryForwarder is the seam the Manager uses to ship a guest-init
@@ -3389,8 +3389,8 @@ func (m *Manager) InstanceSidecarOwner(instance, sidecar string) (deploymentID, 
 }
 
 // ForwardStatelessAdvisory is the public Manager seam that turns
-// one guest-init fanotify batch into one apid audit row. The vsock
-// DGRAM receiver in cmd/vmmd calls this with the parsed batch.
+// one guest-init advisory batch into one apid audit row. vmmd's port-1025
+// stream receiver (cmd/vmmd) calls this with the decoded batch.
 //
 // ADR-035 best-effort: returns nil on a nil client (default-local)
 // and on a forward failure — the advisory is observation, not
