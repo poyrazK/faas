@@ -184,7 +184,7 @@ func (p *Plan) Apply() error {
 	if err != nil {
 		return err
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	for _, name := range p.reserved {
 		if err := safePath(p.Directory, name); err != nil {
 			return err
