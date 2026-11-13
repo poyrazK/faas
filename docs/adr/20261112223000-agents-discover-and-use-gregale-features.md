@@ -112,6 +112,14 @@ with a reason, and checks the command exists in `cli_meta.go`. The status
 commands (`release list`, `project get`, `status`) show a parked serving
 release as parked with its reason, not as `live`.
 
+The fixes live in `pkg/whycopy`, whose tripwire already requires a row per
+code. First fix: `app_startup_timeout` for a raw TCP server built from source
+(Redis, PostgreSQL, a broker). Whether its readiness ends in `guest_startup`
+(Redis closes an HTTP probe without answering) or in `handler_healthcheck`
+with an answer that is not HTTP, the fix names the image deploy, which is
+ready once the port accepts connections, and the internal `--ports`
+declaration.
+
 ### 3. Nothing a customer configures is API-only
 
 A CI gate compares the request fields of the customer deploy and app-update
