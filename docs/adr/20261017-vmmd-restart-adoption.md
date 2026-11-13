@@ -1271,3 +1271,75 @@ The jail reaper uses the same ownership gate as the layer-clone sweep: the
 Manager, the resource journal, then durable state. An adopted guest whose row
 is no longer live is the live-VM reaper's, which tears it down through the
 Manager.
+
+### Adopted guests' jails could not be torn down (2026-11-12)
+
+On fsn-2, vmmd restarted onto rc.338 at 06:56 and adopted the live guests. One
+of them, a `compactor` instance created at 02:00, was thawed at 08:45 and
+withdrawn by the node drain at 08:46. vmmd's teardown then failed every two
+minutes with "check jail …: jail mount namespace context changed", so the row
+stayed `draining`. The drain never reached an empty maintenance hold, and
+cd-platform aborted the fsn-2 rollout at 04:45 and 08:24 without reaching
+fsn-3, which kept the previous release. A second adopted guest failed the
+same way.
+
+The cause: a jail asset records the mount namespace vmmd was in when it made
+the jail, and teardown (`checkJailAsset`) requires the current one to match.
+Under systemd `ProtectSystem=strict` every vmmd start has its own mount
+namespace (see "Mounts"), so the predecessor's namespace never matches, and
+every adopted guest became impossible to tear down after its first vmmd
+restart. The metal restart test runs both vmmds in their own mount
+namespaces too, but it stayed green: once the killed vmmd's namespace died,
+the kernel reused its inode number for the successor's, so the comparison
+passed by luck. On fsn-2 the old namespace stayed alive (the jail records
+4026532373; vmmd now runs in 4026532313).
+
+The fix: adoption re-anchors each jail to the successor's mount namespace
+(`anchorAdoptedJail`), as it already re-anchors the netns. It does so only in
+the same kernel boot and only while the jail directory still has its recorded
+device and inode; otherwise adoption is refused. The jail lives on the host
+tmpfs that every mount namespace sees, so that identity is what the recorded
+namespace stood for. The journal keeps the creator's record, and each later
+restart re-anchors again. ADR-475's "no remaining host-visible mount" check
+before jail removal is unchanged.
+
+Validation: `TestMetalAdoptionRestartKeepsTheGuest` now holds the old
+vmmd's mount namespace open across the restart and requires the successor's
+to differ; on gregale-internal-test-1 (KVM, Firecracker 1.17.0) it failed
+before this fix with the production error and passes with it, leakcheck
+clean. `TestAnchorAdoptedJailAcceptsTheSuccessorMountNamespace` checks the
+boot and identity guards.
+
+### A guest whose cache source was evicted was refused and kept running (2026-11-12)
+
+On fsn-2, the rc.339 vmmd that started at 06:56 refused one guest with
+`adopt_failed`: "bind source /var/lib/faas/cache/86/88ec…: open …: no such
+file or directory". The guest (an `e2e-probe` instance, running since 02:07 the
+day before) was bound from a base drive file that the cache evicted while the
+guest ran. A refused guest stays in ADR-472 quarantine, so its Firecracker
+kept running with nothing able to reach or tear it down. It held its memory,
+and the rollout's clean-adoption check failed on it until it was stopped by
+PID at 07:01.
+
+Adoption already handled a source path the cache had re-staged (the path names
+another file): it takes the recorded inode from the guest's own view, where it
+is still bound, under the same (path, inode) key, and teardown tolerates the
+failed mode restore through that read-only handle. An evicted source is the
+same case with the path gone, so adoption now takes that route for "no such
+file" too. The guest-side open still requires the recorded device and inode,
+so nothing outside the proof is adopted.
+
+Still open: a guest refused for any other reason keeps running unowned in the
+same way. Each such reason needs its own fix or a verified kill at refusal.
+
+Validation: `TestMetalAdoptionRestartKeepsAGuestWhoseSourceWasEvicted` boots
+the guest from a private copy of the base drive, crashes the vmmd and deletes
+the copy before the successor starts. On gregale-internal-test-1 (KVM,
+Firecracker 1.7.0) it failed before this fix with the production refusal
+(`adopt_failed`, "open …/base.ext4: no such file or directory"; the successor
+could not destroy the guest either). With the fix it passes beside
+`TestMetalAdoptionRestartKeepsTheGuest`: adopted with the same PID, destroyed
+through the ordinary teardown, record retired, leakcheck clean.
+`TestAdoptGuestBindsTakesAnEvictedSourceFromTheGuest` and
+`TestAdoptGuestBindsRefusesAnEvictedSourceTheGuestNoLongerBinds` cover the
+unit cases.

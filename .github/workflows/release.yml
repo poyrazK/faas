@@ -54,8 +54,14 @@ jobs:
     runs-on: ubuntu-22.04
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
+      publish_clients: ${{ steps.profile.outputs.publish_clients }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - id: profile
+        name: Validate the release publication profile
+        run: python3 scripts/ci/daemon_recovery_profile.py >> "$GITHUB_OUTPUT"
       - id: resolve
         name: Resolve current v0 commit
         run: |
@@ -432,8 +438,8 @@ jobs:
   # (CLI audit 2026-10-31). A prerelease moves CLI-LATEST either way.
   advance-cli-channel:
     name: Advance the curl installer channel
-    needs: [build, publish-npm]
-    if: ${{ !cancelled() && needs.build.result == 'success' && (contains(github.ref_name, '-') || needs.publish-npm.result == 'success') }}
+    needs: [build, publish-npm, resolve-action-pin]
+    if: ${{ needs.resolve-action-pin.outputs.publish_clients == 'true' && !cancelled() && needs.build.result == 'success' && (contains(github.ref_name, '-') || needs.publish-npm.result == 'success') }}
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     concurrency:
@@ -453,7 +459,8 @@ jobs:
   # different bytes for the same tag.
   publish-npm:
     name: Publish the npm channel
-    needs: [build]
+    needs: [build, resolve-action-pin]
+    if: needs.resolve-action-pin.outputs.publish_clients == 'true'
     runs-on: ubuntu-22.04
     # Two public-availability waits of up to 20 minutes each
     # (scripts/publish-npm-packages.mjs) plus staging and uploads.
@@ -519,7 +526,8 @@ jobs:
   # skipped, so a CLI release that does not bump the SDK publishes nothing.
   publish-data-sdk:
     name: Publish @gregale/data
-    if: vars.PUBLISH_DATA_SDK == 'true'
+    needs: [resolve-action-pin]
+    if: needs.resolve-action-pin.outputs.publish_clients == 'true' && vars.PUBLISH_DATA_SDK == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     concurrency:
