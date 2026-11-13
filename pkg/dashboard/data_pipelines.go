@@ -3,6 +3,7 @@ package dashboard
 import "github.com/onebox-faas/faas/pkg/api"
 
 type DataPipelinesData struct {
+	Evolutions                                 []DataPipelineEvolution
 	SetupPlan                                  *api.DataPipelineSetupPlan
 	FreshnessMin, FreshnessMax, IndexBudgetMax int64
 	NeonSteps                                  []string
@@ -28,6 +29,11 @@ type DataPipelinesData struct {
 	Verifications                              []DataPipelineVerificationItem
 	Databases                                  []ManagedPostgresDatabaseItem
 	Message                                    string
+}
+
+type DataPipelineEvolution struct {
+	Pipeline                                     api.DataPipeline
+	CanPreview, CanApprove, CanDiscard, CanRetry bool
 }
 
 type DataPipelineAlerts struct {

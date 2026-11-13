@@ -26,13 +26,14 @@ import (
 type TargetSQL func(context.Context, string, string, func(*pgx.Conn, string) error) error
 
 type Engine struct {
-	IndexStorageLimit func(context.Context, Pipeline) (int64, error)
-	RefreshSchema     func(context.Context, Pipeline, SchemaChange) ([]SchemaRefresh, bool, error)
-	RefreshReadGate   func(context.Context, Pipeline, string) error
-	Policy            commit.NetworkPolicy
-	Target            TargetSQL
-	Capacity          *CapacityObserver
-	Admit             func(context.Context, Pipeline) error
+	RefreshRelationships func(context.Context, Pipeline, SchemaChange) ([]SchemaRefresh, bool, error)
+	IndexStorageLimit    func(context.Context, Pipeline) (int64, error)
+	RefreshSchema        func(context.Context, Pipeline, SchemaChange) ([]SchemaRefresh, bool, error)
+	RefreshReadGate      func(context.Context, Pipeline, string) error
+	Policy               commit.NetworkPolicy
+	Target               TargetSQL
+	Capacity             *CapacityObserver
+	Admit                func(context.Context, Pipeline) error
 	// Test-only seam: production always uses Commit's verified/pinned dialer.
 	openSource func(context.Context, string) (*pgxpool.Pool, error)
 	pinSource  func(context.Context, string) (string, error)
@@ -155,7 +156,13 @@ func (e *Engine) Reconcile(ctx context.Context, p Pipeline, raw string, current 
 				return capacityBlock(err)
 			}
 		}
-		return e.reconcile(ctx, p, raw, source, target, owner, &ob, current)
+		if err = e.reconcile(ctx, p, raw, source, target, owner, &ob, current); err != nil {
+			return err
+		}
+		if ob.State == "live" {
+			return e.finishEvolution(ctx, p, target, owner, &ob, current)
+		}
+		return nil
 	})
 	return observeReconcileError(p, ob, err)
 }
@@ -369,6 +376,9 @@ func (e *Engine) reconcile(ctx context.Context, p Pipeline, raw string, source *
 		return err
 	}
 	if activeSchema {
+		if err = advanceProjectedPublication(ctx, p, source, current); err != nil {
+			return err
+		}
 		intent, _ := verificationID(p, relations)
 		if verificationCancelled(p, intent) {
 			// Cancellation is bound to the approved logical run, not its
@@ -1037,6 +1047,20 @@ func (e *Engine) cleanupGeneration(ctx context.Context, p Pipeline, raw string, 
 
 	// A resync explicitly replaces only tables carrying this generation's
 	// ownership marker. Deleting a pipeline retains its destination data.
+	cleanup, err := target.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = cleanup.Rollback(ctx) }()
+	if err = dropRelationships(ctx, p, cleanup, []string{}); err != nil {
+		return err
+	}
+	if err = current(ctx); err != nil {
+		return err
+	}
+	if err = cleanup.Commit(ctx); err != nil {
+		return err
+	}
 	if p.DesiredState != "deleted" {
 		tx, err := target.Begin(ctx)
 		if err != nil {

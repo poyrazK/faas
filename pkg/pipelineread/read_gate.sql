@@ -13,18 +13,35 @@ BEGIN
  IF binding IS NULL OR binding='none' THEN binding:=session_user; END IF;
  IF coalesce(headers->>'accept-profile','public')<>'public' THEN RETURN; END IF;
  FOR relation IN
-  SELECT c.oid,c.relname
+  SELECT c.oid,c.relname,nullif(a.tenant_access->>'valid_until','')::timestamptz AS auth_valid_until
   FROM gregale_pipeline.mirrors m
   JOIN gregale_pipeline.reader_access a USING(pipeline_id,generation)
   JOIN pg_class c ON c.relname=ANY(m.tables)
   JOIN pg_namespace n ON n.oid=c.relnamespace AND n.nspname='public'
-  WHERE claims->>'sub'=ANY(a.subjects)
-   AND current_setting('request.path',true)='/'||c.relname
+  WHERE (claims->>'sub'=ANY(a.subjects) OR (coalesce(claims->>'sub','')<>''
+   AND nullif(a.tenant_access->>'valid_until','')::timestamptz<=clock_timestamp()))
+   AND c.relname IN (
+    WITH RECURSIVE requested(name) AS (
+     SELECT selected.name FROM unnest(m.tables) selected(name)
+      WHERE current_setting('request.path',true)='/'||selected.name
+     UNION
+     SELECT rel->>'source_table' FROM jsonb_array_elements(m.relationships) rel
+      WHERE current_setting('request.path',true)='/rpc/'||(rel->>'name')
+    ), dependencies(name) AS (
+     SELECT name FROM requested
+     UNION
+     SELECT rel->>'target_table' FROM dependencies d,jsonb_array_elements(m.relationships) rel
+      WHERE rel->>'source_table'=d.name
+    ) SELECT name FROM dependencies)
    AND has_table_privilege(binding,c.oid,'SELECT')
    AND obj_description(c.oid,'pg_class') LIKE 'gregale.pipeline.v1:%:'||m.pipeline_id::text||':'||m.generation::text
+  ORDER BY c.relname COLLATE "C"
  LOOP
   IF current_setting('transaction_isolation')<>'read committed' THEN
    RAISE SQLSTATE 'PT503' USING MESSAGE='pipeline_read_isolation_unsupported';
+  END IF;
+  IF relation.auth_valid_until<=clock_timestamp() THEN
+   RAISE SQLSTATE 'PT503' USING MESSAGE='pipeline_auth_membership_unconfirmed';
   END IF;
   -- Keep the policy and the subsequent SELECT in the same admission window.
   -- This works for empty tables and PostgREST's read-only GET transactions.

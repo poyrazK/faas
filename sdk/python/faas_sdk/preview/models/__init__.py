@@ -1145,9 +1145,17 @@ from .data_endpoint_capacity import DataEndpointCapacity
 from .data_endpoint_capacity_limiting_resource import DataEndpointCapacityLimitingResource
 from .data_endpoint_capacity_state import DataEndpointCapacityState
 from .data_pipeline import DataPipeline
+from .data_pipeline_auth_organizations import DataPipelineAuthOrganizations
 from .data_pipeline_capacity import DataPipelineCapacity
 from .data_pipeline_capacity_state import DataPipelineCapacityState
 from .data_pipeline_desired_state import DataPipelineDesiredState
+from .data_pipeline_evolution import DataPipelineEvolution
+from .data_pipeline_evolution_kind import DataPipelineEvolutionKind
+from .data_pipeline_evolution_request import DataPipelineEvolutionRequest
+from .data_pipeline_evolution_request_action import DataPipelineEvolutionRequestAction
+from .data_pipeline_evolution_request_columns import DataPipelineEvolutionRequestColumns
+from .data_pipeline_evolution_request_kind import DataPipelineEvolutionRequestKind
+from .data_pipeline_evolution_state import DataPipelineEvolutionState
 from .data_pipeline_freshness import DataPipelineFreshness
 from .data_pipeline_freshness_request import DataPipelineFreshnessRequest
 from .data_pipeline_health import DataPipelineHealth
@@ -1159,6 +1167,11 @@ from .data_pipeline_index_order import DataPipelineIndexOrder
 from .data_pipeline_index_request import DataPipelineIndexRequest
 from .data_pipeline_index_request_action import DataPipelineIndexRequestAction
 from .data_pipeline_list import DataPipelineList
+from .data_pipeline_organization_tenant import DataPipelineOrganizationTenant
+from .data_pipeline_relationship import DataPipelineRelationship
+from .data_pipeline_schema_approval_request import DataPipelineSchemaApprovalRequest
+from .data_pipeline_schema_column_change import DataPipelineSchemaColumnChange
+from .data_pipeline_schema_review import DataPipelineSchemaReview
 from .data_pipeline_serving import DataPipelineServing
 from .data_pipeline_serving_columns import DataPipelineServingColumns
 from .data_pipeline_serving_version import DataPipelineServingVersion
@@ -7624,9 +7637,17 @@ __all__ = (
     "DataEndpointCapacityLimitingResource",
     "DataEndpointCapacityState",
     "DataPipeline",
+    "DataPipelineAuthOrganizations",
     "DataPipelineCapacity",
     "DataPipelineCapacityState",
     "DataPipelineDesiredState",
+    "DataPipelineEvolution",
+    "DataPipelineEvolutionKind",
+    "DataPipelineEvolutionRequest",
+    "DataPipelineEvolutionRequestAction",
+    "DataPipelineEvolutionRequestColumns",
+    "DataPipelineEvolutionRequestKind",
+    "DataPipelineEvolutionState",
     "DataPipelineFreshness",
     "DataPipelineFreshnessRequest",
     "DataPipelineHealth",
@@ -7638,6 +7659,11 @@ __all__ = (
     "DataPipelineIndexRequest",
     "DataPipelineIndexRequestAction",
     "DataPipelineList",
+    "DataPipelineOrganizationTenant",
+    "DataPipelineRelationship",
+    "DataPipelineSchemaApprovalRequest",
+    "DataPipelineSchemaColumnChange",
+    "DataPipelineSchemaReview",
     "DataPipelineServing",
     "DataPipelineServingColumns",
     "DataPipelineServingVersion",

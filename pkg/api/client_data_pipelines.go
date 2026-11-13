@@ -60,3 +60,15 @@ func (c *Client) ChangeDataPipelineTenantReaders(ctx context.Context, id string,
 	err := c.do(ctx, http.MethodPost, "/v1/data/pipelines/"+url.PathEscape(id)+"/tenant-readers", r, &out)
 	return out, err
 }
+
+func (c *Client) EvolveDataPipeline(ctx context.Context, id string, r DataPipelineEvolutionRequest) (DataPipeline, error) {
+	var out DataPipeline
+	err := c.do(ctx, http.MethodPost, "/v1/data/pipelines/"+url.PathEscape(id)+"/evolution", r, &out)
+	return out, err
+}
+
+func (c *Client) ApproveDataPipelineSchema(ctx context.Context, id string, r DataPipelineSchemaApprovalRequest) (DataPipeline, error) {
+	var out DataPipeline
+	err := c.do(ctx, http.MethodPost, "/v1/data/pipelines/"+url.PathEscape(id)+"/schema-approval", r, &out)
+	return out, err
+}

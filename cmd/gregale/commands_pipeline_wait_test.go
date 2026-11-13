@@ -89,6 +89,7 @@ func TestPipelineWaitRequiresCurrentBlockedEvidence(t *testing.T) {
 		{"authentication failure during verification", "blocked", "source_authentication_failed", "pending", true, true, 2},
 		{"current resync observation", "resync_required", "source_schema_changed", "", true, true, 2},
 		{"schema API refresh in progress", "blocked", "schema_api_refresh_pending", "passed", true, false, 2},
+		{"relationship API refresh in progress", "blocked", "relationship_api_refresh_pending", "passed", true, false, 2},
 		{"schema API refresh failed", "blocked", "schema_api_refresh_failed", "passed", true, true, 2},
 		{"transient database outage", "blocked", "database_unavailable", "", true, false, 2},
 		{"source rewrite verification running", "blocked", "source_storage_verification", "pending", true, false, 2},

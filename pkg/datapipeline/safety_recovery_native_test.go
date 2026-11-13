@@ -46,7 +46,7 @@ func nativeReadAs(t *testing.T, f *nativeRecoveryFixture, role, subject string) 
 	if _, err = tx.Exec(t.Context(), "SET LOCAL ROLE "+ident(role)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = tx.Exec(t.Context(), `SELECT set_config('request.jwt.claims',jsonb_build_object('sub',$1::text)::text,true)`, subject); err != nil {
+	if _, err = tx.Exec(t.Context(), `SELECT set_config('request.jwt.claims',jsonb_build_object('sub',$1::text,'iss',$2::text)::text,true)`, subject, appliedReaderIssuer(f.pipeline)); err != nil {
 		t.Fatal(err)
 	}
 	var count int

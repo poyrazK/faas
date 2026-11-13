@@ -1,9 +1,10 @@
 from typing import Literal
 
-DataPipelineServingVersion = Literal[1]
+DataPipelineServingVersion = Literal[1, 2]
 
 DATA_PIPELINE_SERVING_VERSION_VALUES: set[DataPipelineServingVersion] = {
     1,
+    2,
 }
 
 

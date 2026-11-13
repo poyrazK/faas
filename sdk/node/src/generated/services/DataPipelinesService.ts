@@ -9,9 +9,11 @@ import type { DataConnection } from '../models/DataConnection.js';
 import type { DataConnectionCheck } from '../models/DataConnectionCheck.js';
 import type { DataConnectionList } from '../models/DataConnectionList.js';
 import type { DataPipeline } from '../models/DataPipeline.js';
+import type { DataPipelineEvolutionRequest } from '../models/DataPipelineEvolutionRequest.js';
 import type { DataPipelineFreshnessRequest } from '../models/DataPipelineFreshnessRequest.js';
 import type { DataPipelineIndexRequest } from '../models/DataPipelineIndexRequest.js';
 import type { DataPipelineList } from '../models/DataPipelineList.js';
+import type { DataPipelineSchemaApprovalRequest } from '../models/DataPipelineSchemaApprovalRequest.js';
 import type { DataPipelineSetup } from '../models/DataPipelineSetup.js';
 import type { DataPipelineSetupControlRequest } from '../models/DataPipelineSetupControlRequest.js';
 import type { DataPipelineSetupList } from '../models/DataPipelineSetupList.js';
@@ -243,6 +245,60 @@ export class DataPipelinesService {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/data/pipelines/{id}/control',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Preview or approve pipeline serving evolution
+   * Save an additive projection, Auth organization mapping, or declared relationship preview. Approval supplies only its saved ID and revision. Projection changes subsequently require the exact source schema or table approval before copying and exposure.
+   * @returns Problem Evolution validation, ownership, admission or revision conflict.
+   * @returns DataPipeline Serving evolution preview saved, discarded or approved for reconciliation.
+   * @throws ApiError
+   */
+  public static evolveDataPipeline({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Pipeline whose serving evolution is reviewed.
+     */
+    id: string,
+    requestBody: DataPipelineEvolutionRequest,
+  }): CancelablePromise<Problem | DataPipeline> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/data/pipelines/{id}/evolution',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Approve the exact pipeline source schema
+   * Approve the saved schema_review.id after inspecting its exact column and table changes. Retry reuses the previously approved change and preserves bounded backfill and verification receipts.
+   * @returns Problem Source-schema approval validation, ownership, freshness or revision conflict.
+   * @returns DataPipeline Exact source-definition approval saved for verified pipeline evolution.
+   * @throws ApiError
+   */
+  public static approveDataPipelineSchema({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Pipeline whose worker-generated source schema review is approved.
+     */
+    id: string,
+    requestBody: DataPipelineSchemaApprovalRequest,
+  }): CancelablePromise<Problem | DataPipeline> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/data/pipelines/{id}/schema-approval',
       path: {
         'id': id,
       },

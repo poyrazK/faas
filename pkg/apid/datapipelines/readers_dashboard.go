@@ -17,6 +17,9 @@ func readersView(p datapipeline.Pipeline) dashboard.DataPipelineReaders {
 		v.Tenant = true
 		v.TenantColumn = p.Serving.TenantAccess.Column
 		v.Memberships = p.Serving.TenantAccess.Memberships
+		if p.Serving.AuthOrganizations != nil {
+			v.CanRequest = false
+		}
 	}
 	c := p.ReaderChange
 	if c == nil {
