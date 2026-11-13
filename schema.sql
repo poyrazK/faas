@@ -29965,6 +29965,35 @@ CREATE AGGREGATE public.request_analytics_hist_sum(bigint[]) (
 
 
 --
+-- Name: account_abuse_strikes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_abuse_strikes (
+    id bigint NOT NULL,
+    account_id uuid NOT NULL,
+    reason text NOT NULL,
+    app_id uuid,
+    struck_at timestamp with time zone NOT NULL,
+    CONSTRAINT account_abuse_strikes_reason_check CHECK ((reason = ANY (ARRAY['egress_fanout'::text, 'egress_flood'::text, 'cpu_sustained'::text]))),
+    CONSTRAINT account_abuse_strikes_struck_at_check CHECK (isfinite(struck_at))
+);
+
+
+--
+-- Name: account_abuse_strikes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.account_abuse_strikes ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.account_abuse_strikes_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: account_async_quota; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -61225,6 +61254,14 @@ ALTER TABLE ONLY public.status_incidents ALTER COLUMN id SET DEFAULT nextval('pu
 
 
 --
+-- Name: account_abuse_strikes account_abuse_strikes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_abuse_strikes
+    ADD CONSTRAINT account_abuse_strikes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: account_async_quota account_async_quota_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -74974,6 +75011,20 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 ALTER TABLE ONLY public.workflow_webhook_receipts
     ADD CONSTRAINT workflow_webhook_receipts_receipt_id_key UNIQUE (receipt_id);
+
+
+--
+-- Name: account_abuse_strikes_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX account_abuse_strikes_account_idx ON public.account_abuse_strikes USING btree (account_id, struck_at);
+
+
+--
+-- Name: account_abuse_strikes_struck_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX account_abuse_strikes_struck_at_idx ON public.account_abuse_strikes USING btree (struck_at);
 
 
 --

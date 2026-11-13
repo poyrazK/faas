@@ -628,6 +628,16 @@ sql:
         emit_methods_with_db_argument: true
         omit_unused_structs: true
   - engine: postgresql
+    queries: pkg/state/abusestrikes/queries.sql
+    schema: pkg/state/abusestrikes/schema.sql
+    gen:
+      go:
+        package: sqlc
+        out: pkg/state/abusestrikes/sqlc
+        sql_package: pgx/v5
+        emit_methods_with_db_argument: true
+        omit_unused_structs: true
+  - engine: postgresql
     queries: pkg/state/appquota/queries.sql
     schema: pkg/state/appquota/schema.sql
     gen:
