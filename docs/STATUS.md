@@ -7,7 +7,22 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
-## Data API investigation fixes — 2026-11-12 (branch, not released)
+## Data API follow-up audit — 2026-11-13 (open)
+
+Seven new findings, DAPI031–DAPI037, are retained in the
+[open follow-up ledger](data-api/investigation-findings.md#open-follow-up-findings--2026-11-13)
+with source locations, impact, remediation directions and runnable
+reproductions. They cover change-event numeric corruption, optional maintenance
+versus managed credential checks, resumable-storage rotation, hook-name
+validation, exact-number journal interoperability, malformed client base URLs
+and detached asynchronous progress errors. The journal item is a compatibility
+gap; the other observations have concrete failure reproductions.
+
+This pass changes documentation and evidence only. The native PostgreSQL,
+actual relay and SDK reproductions succeeded; 36 existing focused control tests
+passed without skips. All seven findings remain open for a later fix pass.
+
+## Data API investigation fixes — 2026-11-12 (merged, not released)
 
 All 30 retained findings have implementations and regression coverage in
 [the resolution ledger](data-api/investigation-findings.md#resolutions).

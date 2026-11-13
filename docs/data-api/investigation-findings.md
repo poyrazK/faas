@@ -1,11 +1,15 @@
 # Data API investigation backlog
 
-Investigated checkout: `2616a7170a80a08bb3b143535ec31b9939aaa5bb`
-(2026-11-12). The original observations below are retained as historical
-evidence. All 30 findings now have implementations and regression coverage on
-`codex/data-api-investigation-fixes`, based on main `06fa38e06`. Stable IDs are
-unchanged. Original line locations refer to the investigated checkout; the
-resolution table describes current behavior.
+Original investigated checkout: `2616a7170a80a08bb3b143535ec31b9939aaa5bb`
+(2026-11-12). DAPI001–DAPI030 were fixed with regression coverage and merged
+in [PR #7183](https://github.com/poyrazK/faas/pull/7183), commit `c53ee4d7f`.
+The original observations remain as historical evidence.
+
+The 2026-11-13 follow-up audited main
+`9f8cccc19aee8495ba1e9c72a8c5663e3e8f42b8` and adds seven **open** findings,
+DAPI031–DAPI037. This pass changes documentation and reproductions only;
+implementation is deferred. Original line references refer to the original
+checkout; follow-up references refer to `9f8cccc19`. Stable IDs are unchanged.
 
 The third review also compared these Data API source paths with upstream main
 `10034cea1` (2026-11-12); the reviewed implementation paths were unchanged.
@@ -50,6 +54,21 @@ performance bottleneck is not a confirmed production defect.
 | DAPI028 | P1 | Reproduced on PostgreSQL 16 | Renaming a primary-key column makes change hooks emit a null key | Fixed |
 | DAPI029 | P2 | Reproduced on PostgreSQL 16 | Migration transaction statements can commit schema without ledger entries | Fixed |
 | DAPI030 | P2 | Reproduced in an isolated child process | A named-pipe migration file blocks file loading indefinitely | Fixed |
+| DAPI031 | P1 | Real PostgreSQL + loopback relay reproduced | Change-event publication rounds large primary keys and precise JSON numbers | Open |
+| DAPI032 | P1 | Real PostgreSQL catalogs + runtime/provider predicates reproduced | Storage-maintenance registration grants violate managed Data API credential safety rules | Open |
+| DAPI033 | P2 | Real PostgreSQL rotation reproduced | Resumable-storage grants pass rotation preflight but fail candidate preparation | Open |
+| DAPI034 | P2 | Real PostgreSQL capture + Go API validation reproduced | Hooks accept table names whose generated event types are permanently rejected | Open |
+| DAPI035 | P2 | Reproduced interoperability gap | Durable mutation journals cannot persist exact-mode numeric values | Open |
+| DAPI036 | P2 | Reproduced through the JavaScript client | Bare URL query/fragment delimiters discard the intended REST path | Open |
+| DAPI037 | P2 | Reproduced in a Node child process | Async upload-progress rejection escapes the upload promise and can terminate the process | Open |
+
+Current priorities: DAPI031 protects event identity and payload correctness.
+Resolve DAPI032 before relying on maintenance with managed credentials; address
+DAPI033 when composing resumable uploads with rotation. DAPI034 needs early
+configuration validation or a supported event-name mapping. DAPI035 is a
+compatibility gap, rather than a claim of silent journal corruption.
+
+### Original prioritization (historical)
 
 Recommended first fixes: DAPI015, DAPI008, DAPI001, DAPI002, and DAPI007. DAPI003
 should follow with recovery-aware queue scheduling. Treat DAPI005 as a benchmark-led
@@ -62,9 +81,217 @@ assertion for the intended behavior.
 Prioritize DAPI027/DAPI028 with the change-hook correctness work; neither is a
 general event-retention or global-commit-order complaint.
 
+## Open follow-up findings — 2026-11-13
+
+These findings were reproduced on `9f8cccc19` after the original fixes merged.
+No production implementation, hosted deployment, or customer database was
+changed. Suggested remedies below are for a later fix pass.
+
+### DAPI031 Change-event publication rounds keys and payload numbers
+
+**Priority:** P1. **Evidence:** native PostgreSQL capture and the actual relay.
+
+Capture preserves bigint/numeric values in JSONB using `to_jsonb(NEW)`
+(`cmd/gregale/templates/data-api/change-hooks.sql:194`). The relay then uses
+ordinary `JSON.parse` on the PostgREST reply
+(`changes.mjs:189`), builds an event, and serializes it again
+(`changes.mjs:77` and `changes.mjs:330`).
+
+A row with ID `9007199254740993` and amount `0.123456789012345678901` retains
+both literals in the PostgreSQL event. The relay publishes key
+`9007199254740992` and a rounded amount. The loopback reproduction runs
+`createChangeRelay().cycle()` and captures the actual publication body.
+Consumers can act on the wrong row or an altered value. SDK exact mode cannot
+recover numbers already changed by the publisher.
+
+Remediation direction: preserve numeric tokens across claim, event shaping,
+byte accounting and publication. Keep envelope/sequence validation distinct
+from arbitrary row JSON. Add bigint primary-key, numeric and nested-JSON
+round-trip coverage without converting real JSON strings into numbers.
+
+### DAPI032 Maintenance registration conflicts with managed credential rules
+
+**Priority:** P1. **Evidence:** runtime installation and the provider's exact
+catalog-verification predicate, executed against disposable PostgreSQL.
+
+`storage-cleanup.sql:35` creates
+`api.gregale_storage_register_key(text,text)` as `SECURITY DEFINER`. The
+documented setup grants its execution to the serving login; without that grant,
+`storage.mjs:170` refuses maintenance-enabled storage.
+
+However, `pkg/managedpostgres/neon/data_api_credentials.go:59` rejects a managed
+Data API login that can execute any security-definer function in `api` or
+`public`. The reproduction starts with a safe login, verifies storage refuses
+the missing grant, adds the documented grant, then observes both:
+`checkStorageTable(...) === true` and the managed provider's `unsafe === true`.
+That predicate returns `managedpostgres.ErrConflict`. Rotation preflight has
+the same baseline restriction (`refresh-rotation.mjs:394`).
+
+This is a supported-feature composition failure, not evidence that the guard
+can be bypassed. Runtime enablement and managed credential verification cannot
+both succeed under the present permission contract. Actual hosted provisioning
+or rotation was not attempted.
+It affects the optional maintenance implementation added for DAPI004 in
+PR #7183; baseline storage without maintenance does not require this grant.
+
+Remediation direction: define a narrowly pinned internal-helper contract and
+align its schema, grants, provider validation and rotation handling. Retain
+the general security-definer restriction and private-table isolation.
+
+### DAPI033 Resumable-storage credentials cannot complete prepared rotation
+
+**Priority:** P2. **Evidence:** actual enrollment, preflight and preparation
+functions on PostgreSQL, with a successful control.
+
+`storage-sessions.sql:121` revokes public execution of six gateway-only,
+security-invoker storage functions. A working serving login needs explicit
+execution grants. These functions are intentionally not `@gregale:rpc`.
+
+`refresh-rotation.mjs:178` records only annotated user RPCs for grant copying.
+`prepare_refresh_member` grants those routines and the known barrier helpers,
+then compares all effective function privileges (`refresh-rotation.mjs:94`).
+It does not copy the six internal storage grants.
+
+With resumable-storage grants installed, the source login's real preflight
+returns `ready: true`. Preparing a fresh candidate then raises SQLSTATE `55000`,
+`data_api_refresh_preparation_conflict`. Granting only the six missing invoker
+functions to the candidate inside the disposable fixture makes the same
+preparation succeed. Ordinary change-hook functions are not this case: their
+SQL explicitly grants public execution.
+This fixture removes optional maintenance first and verifies that the source
+login can start an upload session, isolating the failure from DAPI032.
+
+Remediation direction: include the supported internal storage functions in a
+verified rotation grant contract, and make preflight detect unsupported grants
+before reporting readiness. Test real source-to-candidate preparation with
+resumable storage, not only annotated user RPCs. Keep this separate from the
+security-definer conflict in DAPI032.
+
+### DAPI034 Hooks accept relation names that cannot become valid event types
+
+**Priority:** P2. **Evidence:** native hook installation/capture and the actual
+Go event validator.
+
+`gregale_hooks.enable` accepts a regclass such as `api."orders archive"` and
+successfully captures its INSERT (`change-hooks.sql:54`). The relay forms type
+`api.orders archive.inserted`. The actual
+`api.DataAPIChangeEvent.Validate` rejects it:
+`type must be printable ASCII without spaces`
+(`pkg/api/data_api_change_events.go:54`). Non-ASCII identifiers have the same
+contract mismatch.
+
+The publication handler converts validation errors into non-retryable rejected
+results (`pkg/apid/dataapievents/handler.go:92`); relay settlement marks them
+failed. Installation therefore succeeds for a table whose events cannot be
+published. The reproduction invokes the real Go validator against a captured
+event; it does not publish to a hosted service.
+
+Remediation direction: reject unsupported relation names during hook setup, or
+introduce an unambiguous compatible mapping and subscription contract. Test
+space/non-ASCII identifiers and a normal ASCII control.
+
+### DAPI035 Durable journals reject exact-mode numbers
+
+**Priority:** P2. **Evidence:** reproduced compatibility gap, before dispatch.
+
+`sdk/data/src/mutation-journal.ts:41` serializes only plain JSON primitives and
+containers. Its prototype check rejects the SDK's immutable `ExactNumber`
+instances. A journal operation with `new ExactNumber('9007199254740993')`
+fails `prepare` with `invalid_operation` and creates no record; a string-valued
+control succeeds.
+
+Exact-mode REST/RPC/live data therefore cannot be placed directly into the
+durable journal while preserving numeric JSON types. No silent storage
+corruption or network dispatch was observed. A custom plain-JSON envelope
+with explicit rehydration is possible, but simply changing the value to a
+string changes the intended JSON payload.
+
+Remediation direction: define an opt-in exact-number journal codec that
+preserves numeric-versus-string identity and original payload binding across
+prepare/load/dispatch, or explicitly document the unsupported combination.
+Keep canonicalization, bounded serialization, CAS and context checks intact.
+
+### DAPI036 Bare URL delimiters bypass validation and lose request paths
+
+**Priority:** P2. **Evidence:** actual JavaScript PostgREST client with a
+capturing fetch; no remote requests.
+
+`sdk/data/src/client-fetch.ts:47` rejects nonempty `url.search`/`url.hash`.
+The URL parser returns empty properties for a trailing bare `?` or `#` while
+retaining the delimiter in `url.toString()`. The code accepts the URL and
+appends API paths after the delimiter.
+
+A normal base requests `/rest/v1/notes?select=id`. The same base ending in
+`/?` produces `/?%2Frest%2Fv1%2Fnotes=&select=id`; ending in `/#` produces
+`/?select=id#/rest/v1/notes`. Both have pathname `/`, so the intended REST
+route is lost. The host remains unchanged; this reproduction does not show a
+cross-origin credential disclosure. Storage shares the same base validator.
+
+Remediation direction: reject even empty query/fragment delimiters, and build
+request paths through URL components. Cover bare and nonempty delimiters,
+mount paths, encoded literal characters and the supported `/rest/v1` suffix.
+
+### DAPI037 Async upload-progress failures escape the upload promise
+
+**Priority:** P2. **Evidence:** actual SDK upload and an isolated Node process.
+
+`storage-uploads.ts:101` calls `onProgress` without awaiting or consuming its
+return value. TypeScript's void callback type also accepts async functions.
+An async progress callback that rejects creates an unhandled rejection rather
+than a rejection observed through `uploadResumable`.
+
+The reproduction first completes an identical upload with a synchronous
+observer. A child process using a rejecting async observer exits with status 1
+under Node's strict unhandled-rejection mode. The callback runs after a part
+has been acknowledged, so process failure can interrupt recovery bookkeeping
+while remote writes have already occurred. A catch around the upload promise
+does not handle the detached observer rejection.
+
+Remediation direction: specify whether progress callbacks are awaited or
+isolated observers, then handle returned promises consistently. Keep
+`onSessionId`/`onSession` persistence barriers separate, and do not imply that
+an observer failure proves rollback or permits a fresh upload ID.
+
+### Follow-up reproduction and validation
+
+The saved reproductions assert the observed defects and should fail once the
+corresponding fixes are implemented. They are separate from acceptance gates:
+
+- [SDK/relay reproductions](investigation-followup-sdk-repros.mjs):
+  DAPI031, DAPI035, DAPI036 and DAPI037.
+- [PostgreSQL/provider reproductions](investigation-followup-postgres-repros.mjs):
+  DAPI032, DAPI033, native DAPI031, and DAPI034 with the real Go validator.
+
+Prepare an unchanged runtime copy outside the embedded template tree:
+
+```sh
+audit_runtime="$(mktemp -d /tmp/gregale-followup.XXXXXX)"
+cp -R cmd/gregale/templates/data-api/. "$audit_runtime/"
+npm ci --prefix "$audit_runtime" --ignore-scripts
+npm ci --prefix sdk/data --ignore-scripts
+npm run build --prefix sdk/data
+DATA_API_RUNTIME_DIR="$audit_runtime" \
+  node docs/data-api/investigation-followup-sdk-repros.mjs
+# Supply an administrative URL for a disposable PostgreSQL instance.
+DATA_API_RUNTIME_DIR="$audit_runtime" DATA_API_TEST_DATABASE_URL="$AUDIT_DATABASE_URL" \
+  node docs/data-api/investigation-followup-postgres-repros.mjs
+```
+
+Validated with Node 24.19.0, Go 1.26.11 and disposable PostgreSQL 16.
+The reproduction scripts require Node 22+.
+`DATA_API_GO_BIN` can select the Go executable for the native validator.
+The PostgreSQL script creates and removes its own databases and roles. The
+auditor used a separate local container, then removed it.
+
+All seven findings reproduced. Positive controls also passed: 13 SDK
+storage/journal tests, 21 runtime relay tests, and two existing native
+refresh-rotation tests, with zero skips. No hosted application, shared
+database or production implementation was changed.
+
 ## Resolutions
 
-Implemented 2026-11-12. Setup and compatibility details are in
+DAPI001–DAPI030 were implemented 2026-11-12 and merged in PR #7183.
+The open follow-up findings above have not been fixed. Setup and compatibility details are in
 [workflows](workflows.md) and [ADR-20261112210000](../adr/20261112210000-data-api-investigation-hardening.md).
 
 | ID | Current behavior | Regression coverage |
