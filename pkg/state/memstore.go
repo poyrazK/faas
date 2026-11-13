@@ -2795,6 +2795,13 @@ func (m *MemStore) SuspendAccountForFreeQuota(_ context.Context, id string) (boo
 	return true, nil
 }
 
+// QuotaSuspended mirrors PgStore.QuotaSuspended.
+func (m *MemStore) QuotaSuspended(_ context.Context, id string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.freeQuotaSuspended[id], nil
+}
+
 // RestoreFreeQuotaSuspension mirrors PgStore.RestoreFreeQuotaSuspension.
 func (m *MemStore) RestoreFreeQuotaSuspension(_ context.Context, id string) (bool, error) {
 	m.mu.Lock()

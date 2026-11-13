@@ -143,7 +143,12 @@ organization's cap, not at the cap of the member who created them.
 Each plan includes a monthly allowance of application egress: Free 10 GiB,
 Hobby 100 GiB, Pro 500 GiB, Scale 2,000 GiB. By default every plan stops at
 it: once the month's egress reaches the allowance, the account's apps are
-parked (`quota_exceeded_egress`) until the month ends or the plan grows.
+parked (`quota_exceeded_egress`) until the month ends, the plan grows or, on a
+paid plan, egress overage is turned on. New deploys wait until then too. Your
+managed PostgreSQL databases and buckets keep running: databases have their
+own egress allowance. Gregale emails the account once a day from 80% of the
+allowance, and again when the apps are parked. The Free plan's compute
+allowance works the same way.
 
 A paid account can instead elect to pay for egress above the allowance:
 

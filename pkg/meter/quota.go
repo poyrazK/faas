@@ -131,6 +131,9 @@ func (p QuotaParams) Enforce(ctx context.Context, account state.Account, usedGB 
 		AccountID: account.ID, Plan: account.Plan,
 		Action: res.Action, UsedGB: res.UsedGB, QuotaGB: res.QuotaGB, EgressStop: egressStop,
 	}
+	if res.Action == "" {
+		p.warnApproachingStop(ctx, account, usedGB, at)
+	}
 	switch res.Action {
 	case "stop":
 		// Free hard stop, or the egress ceiling. Flip the account, fan out,
@@ -151,6 +154,13 @@ func (p QuotaParams) Enforce(ctx context.Context, account state.Account, usedGB 
 		}
 		if transitioned {
 			notifyAccountAppLifecycle(ctx, store, notif, account.ID, "account_suspended", log)
+			kind := mail.QuotaKindCompute
+			if egressStop {
+				kind = mail.QuotaKindEgress
+			}
+			subject, text, html := mail.QuotaStoppedBody(account.Email, string(account.Plan), kind, at)
+			sendQuotaMail(ctx, mailer, log, account, subject, text, html,
+				fmt.Sprintf("%s:quota_stopped:%s:%s", account.ID, kind, at.UTC().Format("2006-01")))
 		}
 		ins, err := store.ListInstancesForAccount(ctx, account.ID)
 		if err != nil {
@@ -165,10 +175,13 @@ func (p QuotaParams) Enforce(ctx context.Context, account state.Account, usedGB 
 				continue
 			}
 		}
+		// The channel keeps its name for the dashboard and SSE consumers that
+		// already listen on it; kind tells this monthly quota stop apart from
+		// a payment problem (dunning_suspension.go uses the same channel).
 		fields := map[string]any{
 			"account_id": account.ID, "used_gb": usedGB,
 			"quota_gb": res.QuotaGB, "at": at.UTC().Format(time.RFC3339Nano),
-			"reason": reason,
+			"reason": reason, "kind": "quota_stop",
 		}
 		if egressStop {
 			fields["egress_bytes"], fields["egress_ceiling_bytes"] = p.EgressBytes, p.EgressCeilingBytes
@@ -308,4 +321,61 @@ func monthQuotaGB(ctx context.Context, store state.Store, account state.Account,
 		return 0, fmt.Errorf("meter: quota plan history for %s: %w", account.ID, err)
 	}
 	return int(state.MonthComputeIncludedMBSeconds(account.Plan, snapshots, at) / api.SecondsPerGBHour), nil
+}
+
+// quotaApproachingPercent is the share of a stopping allowance (the Free
+// compute allowance, or an app egress allowance the plan does not bill past)
+// at which the subject is warned, once per UTC day, before its apps stop.
+const quotaApproachingPercent = 80
+
+// warnApproachingStop mails a subject whose month is at or past 80% of an
+// allowance that will park its apps: until now the stop itself was the first
+// thing a Free customer, or a paid one without egress overage, heard of it.
+// It shares the daily quota-warning stamp, so one mail goes out a day.
+func (p QuotaParams) warnApproachingStop(ctx context.Context, account state.Account, usedGB float64, at time.Time) {
+	if p.Mailer == nil || p.Store == nil || account.Email == "" {
+		return
+	}
+	kind, percent := mail.QuotaKind(""), 0
+	if account.Plan == api.PlanFree {
+		if q := account.Plan.PlanIncludedGBHours(); q > 0 {
+			if pct := int(usedGB * 100 / float64(q)); pct >= quotaApproachingPercent {
+				kind, percent = mail.QuotaKindCompute, pct
+			}
+		}
+	}
+	if p.EgressCeilingBytes > 0 {
+		if pct := int(float64(p.EgressBytes) * 100 / float64(p.EgressCeilingBytes)); pct >= quotaApproachingPercent && pct > percent {
+			kind, percent = mail.QuotaKindEgress, pct
+		}
+	}
+	if kind == "" {
+		return
+	}
+	today := at.UTC().Truncate(24 * time.Hour)
+	already, err := p.Store.LoadAndStampLastQuotaWarning(ctx, account.ID, today)
+	if err != nil {
+		if p.Log != nil {
+			p.Log.Warn("meter: dedupe quota approaching mail", "account", account.ID, "err", err)
+		}
+		return
+	}
+	if already {
+		return
+	}
+	subject, text, html := mail.QuotaApproachingBody(account.Email, string(account.Plan), kind, min(percent, 99), today)
+	sendQuotaMail(ctx, p.Mailer, p.Log, account, subject, text, html,
+		fmt.Sprintf("%s:quota_approaching:%s:%s", account.ID, kind, today.Format("2006-01-02")))
+}
+
+// sendQuotaMail sends one quota mail; a failure is logged, never fatal to the
+// quota tick.
+func sendQuotaMail(ctx context.Context, mailer DunningSender, log *slog.Logger, account state.Account, subject, text, html, messageID string) {
+	if mailer == nil || account.Email == "" {
+		return
+	}
+	msg := mail.Message{To: []string{account.Email}, Subject: subject, TextBody: text, HTMLBody: html, MessageID: messageID}
+	if err := mailer.Send(ctx, msg); err != nil && log != nil {
+		log.Warn("meter: quota mail", "account", account.ID, "err", err)
+	}
 }
