@@ -108,14 +108,14 @@ func (f *jobTaskLogFollow) applyLogLine(line api.LogEvent, stdout, stderr io.Wri
 		if identified && f.replay.lastInstance != "" && f.replay.lastInstance != line.InstanceID {
 			f.AttemptChanges++
 		}
-		// A replay can report that old, already printed lines expired. It
-		// lost new output only if its first retained line is beyond our cursor.
-		if f.replay.gapPending && (!identified || previous == 0 || line.Seq > previous && line.Seq-previous > 1) {
-			f.Gaps++
-		}
 		f.replay.opening = false
-		f.replay.gapPending = false
 	}
+	// The gateway can reopen its upstream ring during a replay too. A gap
+	// lost new output only if the next retained line is beyond our cursor.
+	if f.replay.gapPending && (!identified || previous == 0 || line.Seq > previous && line.Seq-previous > 1) {
+		f.Gaps++
+	}
+	f.replay.gapPending = false
 	if identified && line.Seq <= previous {
 		return false
 	}

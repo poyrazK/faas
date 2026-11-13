@@ -36,6 +36,7 @@ func TestJobLogReconnectIsolatedAPI(t *testing.T) {
 	}{
 		{"recovered", first + jobReconnectFrame("vm-a", 4, "stdout", "four") + end, "one\nthree\nfour\n", ""},
 		{"expired printed prefix", "event: gap\ndata: {\"reason\":\"seq_below_retained\"}\n\n" + jobReconnectFrame("vm-a", 3, "stdout", "three") + jobReconnectFrame("vm-a", 4, "stdout", "four") + end, "one\nthree\nfour\n", ""},
+		{"gateway reconnect during replay", jobReconnectFrame("vm-a", 2, "stderr", "two") + "event: gap\ndata: {\"reason\":\"seq_below_retained\"}\n\n" + jobReconnectFrame("vm-a", 3, "stdout", "three") + jobReconnectFrame("vm-a", 4, "stdout", "four") + end, "one\nthree\nfour\n", ""},
 		{"attempt changed", jobReconnectFrame("vm-b", 1, "stdout", "new attempt") + end, "one\nthree\nnew attempt\n", "attempt changed while reconnecting"},
 		{"empty resumed attempt", end, "one\nthree\n", "did not identify its attempt"},
 	} {

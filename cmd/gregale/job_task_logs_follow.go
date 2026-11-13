@@ -89,7 +89,7 @@ func (f *jobTaskLogFollow) apply(ev api.Event, stdout, stderr io.Writer) bool {
 		return f.applyLogLine(line, stdout, stderr)
 	case "gap":
 		var gap api.LogGapEvent
-		if f.replay.opening && json.Unmarshal([]byte(ev.Data), &gap) == nil && gap.Reason == "seq_below_retained" {
+		if json.Unmarshal([]byte(ev.Data), &gap) == nil && gap.Reason == "seq_below_retained" {
 			f.replay.gapPending = true
 		} else {
 			f.Gaps++
