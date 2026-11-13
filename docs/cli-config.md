@@ -85,6 +85,23 @@ an `invocation_wait_timeout` Problem to stderr. Ctrl-C exits with `130`.
 Stopping the CLI wait leaves the invocation running; inspect it later with
 `gregale invocations get <id>`.
 
+To submit and wait in one command:
+
+```sh
+gregale invoke api --async --wait --timeout 2m --payload @request.json
+```
+
+`--wait` requires `--async`; `--timeout` and `--interval` require `--wait`.
+The default timeout is `0` (wait until completion or Ctrl-C), and the default
+polling interval is `1s`. The timeout starts after acceptance and only limits
+local polling. The command submits once, then reads that accepted invocation.
+Completed exits `0`; failed, cancelled or dead-lettered exits `1`. JSON mode
+prints one final invocation record to stdout. On timeout it prints the latest
+known status when available, and an error to stderr. A timeout (`124`), Ctrl-C
+(`130`) or polling error preserves the accepted ID and a resume command in the
+diagnostic. Use that `invocation wait` command to resume; submitting again
+creates new work.
+
 ## HTTP diagnostics
 
 Put `--debug-http` before the command to diagnose CLI API requests. It works

@@ -800,11 +800,14 @@ With a switch ID in place of --operation, it shows a rollback that restores the 
 
 Call an app or function once to smoke-test it
 
-`gregale invoke [<slug>] [--async] [--payload <J|@file|->] [--method <METHOD>] [--path <PATH>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>]`
+`gregale invoke [<slug>] [--async] [--wait] [--timeout <DURATION>] [--interval <DURATION>] [--payload <J|@file|->] [--method <METHOD>] [--path <PATH>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--async` | return immediately with status_url |  |
+| `--async` | enqueue once and return status_url unless --wait |  |
+| `--wait` | wait for the accepted invocation result; requires --async |  |
+| `--timeout <DURATION>` | local wait duration (default 0: until Ctrl-C); requires --wait |  |
+| `--interval <DURATION>` | time between status checks (default 1s); requires --wait |  |
 | `--payload <J|@file|->` | JSON payload (inline \| @file \| -) |  |
 | `--method <METHOD>` | HTTP method (default POST, or the function handler&#39;s) |  |
 | `--path <PATH>` | URL path (default /, or the function handler&#39;s) |  |
@@ -813,6 +816,12 @@ Call an app or function once to smoke-test it
 | `--work-policy <NAME>` | named app work policy for async invocation |  |
 | `--work-key <JSON>` | JSON scalar application key for async invocation |  |
 | `--work-fairness-key <JSON>` | JSON scalar fairness group for async invocation |  |
+
+Examples:
+
+```sh
+gregale invoke api --async --wait --timeout 2m --payload @request.json
+```
 
 
 ## add

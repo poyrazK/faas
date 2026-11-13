@@ -58,6 +58,12 @@ covered. Update this table when a journey or a GA row changes.
 45 of the 47 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
 
+`invoke --async --wait` is covered by `TestInvokeAsyncWaitLiveAPI` (one
+health request through the durable queue, compared with its stored record) and
+`TestInvokeAsyncWaitIsolatedAPI` / `TestInvokeAsyncWaitInterrupt` (terminal
+results, timeout and Ctrl-C recovery, exactly one submission and no remote
+cancellation). The live check requires a plan that permits async invocation.
+
 ## GA candidates
 
 Rows not yet GA whose journeys exist ahead of a promotion, so the
