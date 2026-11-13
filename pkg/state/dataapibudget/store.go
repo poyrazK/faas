@@ -53,10 +53,29 @@ func (s *Store) Take(ctx context.Context, account, app, key string, limit, secon
 		if result.RetryAfter < 1 {
 			result.RetryAfter = 1
 		}
+		windowStart := pgtype.Timestamptz{Time: start, Valid: true}
+		windowEnd := pgtype.Timestamptz{Time: end, Valid: true}
+		// Existing keys lock only their own counter. Capacity serialization and
+		// pruning are needed when registering a new key, not on every request.
+		_, err = q.FindKey(ctx, tx, sqlc.FindKeyParams{AppID: app, BudgetKey: key})
+		if err == nil {
+			_, err = q.ConsumeExisting(ctx, tx, sqlc.ConsumeExistingParams{AppID: app, BudgetKey: key, WindowStart: windowStart, WindowEnd: windowEnd, RequestLimit: int64(limit)})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			result.Allowed = err == nil
+			return err
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if err = q.LockCapacity(ctx, tx, app); err != nil {
+			return err
+		}
 		if err = q.Prune(ctx, tx, sqlc.PruneParams{AppID: app, Now: at, BatchSize: api.DataAPIUsagePruneBatchLimit}); err != nil {
 			return err
 		}
-		_, err = q.Consume(ctx, tx, sqlc.ConsumeParams{AppID: app, BudgetKey: key, WindowStart: pgtype.Timestamptz{Time: start, Valid: true}, WindowEnd: pgtype.Timestamptz{Time: end, Valid: true}, MaxKeys: api.DataAPISharedBudgetMaxKeys, RequestLimit: int64(limit)})
+		_, err = q.Consume(ctx, tx, sqlc.ConsumeParams{AppID: app, BudgetKey: key, WindowStart: windowStart, WindowEnd: windowEnd, MaxKeys: api.DataAPISharedBudgetMaxKeys, RequestLimit: int64(limit)})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}

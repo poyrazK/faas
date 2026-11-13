@@ -308,12 +308,12 @@ func TestDataAPIHooksBacklogBound(t *testing.T) {
 		// Amendment 3: the drop note, retries under new identifiers and discard_waiting.
 		"gregale:drop-tracking", "CREATE TABLE IF NOT EXISTS catalog.gregale_change_drops", "CREATE OR REPLACE FUNCTION gregale_hooks.retry_failed()",
 		"CREATE OR REPLACE FUNCTION gregale_hooks.discard_waiting()", "ADD COLUMN IF NOT EXISTS schema_version",
-		"CREATE TABLE IF NOT EXISTS gregale_hooks.schema_versions", "CREATE OR REPLACE FUNCTION gregale_hooks.set_schema_version", "-- gregale:upgrade-end"} {
+		"CREATE TABLE IF NOT EXISTS gregale_hooks.schema_versions", "CREATE OR REPLACE FUNCTION gregale_hooks.set_schema_version", "CREATE OR REPLACE FUNCTION gregale_hooks.enable(", "k.ordinality<=i.indnkeyatts", "-- gregale:upgrade-end"} {
 		if !strings.Contains(upgrade, want) {
 			t.Fatalf("upgrade lacks %q:\n%s", want, upgrade)
 		}
 	}
-	for _, unwanted := range []string{"CREATE TABLE {{", "CREATE TABLE catalog.gregale_change_events", "CREATE SCHEMA", "gregale_change_claim", "gregale_hooks.enable(", "{{"} {
+	for _, unwanted := range []string{"CREATE TABLE {{", "CREATE TABLE catalog.gregale_change_events", "CREATE SCHEMA", "gregale_change_claim", "{{"} {
 		if strings.Contains(upgrade, unwanted) {
 			t.Fatalf("upgrade contains %q", unwanted)
 		}

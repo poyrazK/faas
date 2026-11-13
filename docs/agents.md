@@ -328,8 +328,7 @@ Some changes cannot be undone, and the plan says so and why: a secret the
 agent set or removed (Gregale keeps no copy of a replaced secret, so set it
 again), a few settings that cannot be set back to empty, an app's first
 deploy (there is nothing to return to), and kinds of change Gregale cannot
-undo yet, such as a canary step (abort the rollout with
-`gregale rollouts recover <app> --action abort` instead) and a deleted bucket. A canary in progress, or an agent's rollback still starting, is left
+undo yet, such as an individual canary step or a deleted bucket. A canary in progress, or an agent's rollback still starting, is left
 until it settles; undo again then. If someone changed a resource again after the agent did, undo leaves
 it, and the agent's older changes to it, as they are; pass `--force` to undo
 them anyway. Each change is undone once, and changes are kept 7 days.
