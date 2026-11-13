@@ -18692,6 +18692,8 @@ const (
 	DataPipelineSetupHistoryMax            = 100
 	DataPipelineObservationMaxAge          = 90 * time.Second
 	DataPipelineRetentionWarningBytes      = DataPipelineRetainedWALMaxBytes * 4 / 5
+	DataPipelineRetentionWarningWindow     = 5 * time.Minute
+	DataPipelineRetentionUrgentWindow      = 2 * time.Minute
 	DataPipelineLiveLagMaxBytes            = int64(16 << 20)
 	DataPipelineTablesMax                  = 16
 	DataPipelineRetainedTablesMax          = 32
@@ -18722,6 +18724,7 @@ const (
 	DataPipelineVerificationKeyBytesMax    = 1 << 20
 	DataPipelineRetainedWALMaxBytes        = int64(1 << 30)
 	DataPipelineDiscoveryTablesMax         = 128
+	DataPipelineIdentifierMaxBytes         = 63
 	DataPipelineCheckMaxBytes              = 4 << 20
 	DataPipelineCheckEnvelopeBytes         = 4096
 	DataPipelineCheckMaxAge                = 90 * time.Second

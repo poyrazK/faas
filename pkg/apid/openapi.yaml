@@ -138689,6 +138689,17 @@ components:
       required:
       - expected_revision
       properties:
+        tables:
+          type: array
+          maxItems: 16
+          uniqueItems: true
+          description: Exact public table names to inspect, bypassing the default discovery page. Mutually exclusive with search.
+          items: { type: string, pattern: "^[a-z][a-z0-9_]{0,62}$" }
+        search:
+          type: string
+          maxLength: 63
+          pattern: "^[a-z0-9_]*$"
+          description: Discover names containing this literal text before applying the metadata limit. Mutually exclusive with tables.
         expected_revision:
           type: integer
           format: int64
@@ -138711,6 +138722,14 @@ components:
       - tables
       - created_at
       properties:
+        requested_tables:
+          type: array
+          maxItems: 16
+          items: { type: string }
+          description: Exact discovery selection retained across queueing and worker completion.
+        search:
+          type: string
+          description: Literal discovery name filter.
         capacity:
           $ref: '#/components/schemas/DataPipelineCapacity'
         id:
@@ -139002,6 +139021,8 @@ components:
       - verification
       - created_at
       properties:
+        wal_retention:
+          $ref: '#/components/schemas/DataPipelineWALRetention'
         applied_through_at:
           type: string
           format: date-time
@@ -139045,7 +139066,7 @@ components:
             type: string
             minLength: 1
             maxLength: 256
-          minItems: 1
+          minItems: 0
           maxItems: 32
           uniqueItems: true
         desired_state:
@@ -139101,6 +139122,15 @@ components:
         created_at:
           type: string
           format: date-time
+    DataPipelineWALRetention:
+      description: Fresh source-specific WAL headroom. The remaining-time estimate uses sampled cluster WAL generation and does not guarantee when a slot will be invalidated.
+      type: object
+      additionalProperties: false
+      required: [limit_bytes, remaining_bytes]
+      properties:
+        limit_bytes: { type: integer, format: int64, minimum: 1 }
+        remaining_bytes: { type: integer, format: int64, minimum: 0 }
+        estimated_seconds_remaining: { type: integer, format: int64, minimum: 0 }
     DataPipelineHealth:
       description: Read-time freshness assessment and safe recovery guidance. Unconfirmed checkpoints can occur on idle sources.
       type: object
