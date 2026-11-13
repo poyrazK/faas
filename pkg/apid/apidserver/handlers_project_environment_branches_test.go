@@ -87,10 +87,12 @@ func TestEnvironmentBranchPublishesParentBuilds(t *testing.T) {
 	if workload.Workload != app.Slug || workload.SourceDeployment != parent.ID || workload.Status != string(state.DeploySnapshotting) {
 		t.Fatalf("workload = %+v", workload)
 	}
-	// The response names where the branch's workload answers.
-	if env, err := store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, "pr-7"); err != nil || workload.URL == "" ||
-		workload.URL != projectEnvironmentWorkloadURL(env.ID, app.ID) {
-		t.Fatalf("workload url = %q (environment %+v, %v); want the branch environment's workload URL", workload.URL, env, err)
+	// The response names where the branch's workload answers: its stable
+	// slot URL, and the URL of this incarnation of the branch.
+	if env, err := store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, "pr-7"); err != nil ||
+		workload.URL != projectEnvironmentWorkloadURL(state.EnvironmentBranchSlotID(project.ID, "pr-7"), app.ID) ||
+		workload.EnvironmentURL != projectEnvironmentWorkloadURL(env.ID, app.ID) {
+		t.Fatalf("workload urls = %q, %q (environment %+v, %v); want the branch's slot and environment URLs", workload.URL, workload.EnvironmentURL, env, err)
 	}
 	branched, err := store.DeploymentByID(ctx, workload.DeploymentID)
 	if err != nil || branched.Scope != "pr-7" || branched.RootfsKey != "layers/shop.ext4" {

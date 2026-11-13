@@ -45,7 +45,11 @@ func (s *Service) PutPolicy(w http.ResponseWriter, r *http.Request, acct state.A
 	}
 	var req api.PutOutboundAIPolicyRequest
 	if err := httpkit.DecodeJSONSized(r, &req, 4<<10); err != nil || !req.Valid() {
-		problem(w, http.StatusBadRequest, api.CodeValidation, PolicyInvalidDetail)
+		problem(w, http.StatusBadRequest, api.CodeValidation, policyInvalidDetail(req))
+		return
+	}
+	if prob := semanticCacheGate(acct, req.SemanticCache); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	store, ok := s.aiStore(w)
@@ -59,7 +63,7 @@ func (s *Service) PutPolicy(w http.ResponseWriter, r *http.Request, acct state.A
 		UserDailyCostLimit: req.UserDailyCostLimitMillicents, RequestLogContent: req.RequestLogContent,
 		LogExport: req.LogExport, AllowUnmetered: req.AllowUnmetered, AutoPromptCache: req.AutoPromptCache,
 		TraceMaxCalls: req.TraceMaxCalls, TraceMaxCost: req.TraceMaxCostMillicents, TraceMaxRepeatedToolCalls: req.TraceMaxRepeatedToolCalls,
-		QualityAlerts: req.QualityAlerts,
+		QualityAlerts: req.QualityAlerts, SemanticCache: req.SemanticCache,
 	}
 	if evaluation := req.OnlineEvaluation; evaluation != nil {
 		percent := evaluation.SamplePercent
@@ -67,7 +71,28 @@ func (s *Service) PutPolicy(w http.ResponseWriter, r *http.Request, acct state.A
 		policy.OnlineEvalModel, policy.OnlineEvalRubric = evaluation.JudgeModel, evaluation.Rubric
 	}
 	err := store.SetOutboundAIPolicy(r.Context(), acct.ID, integrationID, policy)
-	s.writeResult(w, err, "customer outbound integration not found", PolicyInvalidDetail)
+	s.writeResult(w, err, "customer outbound integration not found", policyInvalidDetail(req))
+}
+
+// policyInvalidDetail explains a refused policy: the semantic cache's
+// needs when it is turned on, otherwise the policy's.
+func policyInvalidDetail(req api.PutOutboundAIPolicyRequest) string {
+	if req.SemanticCache != nil && req.SemanticCache.Enabled {
+		return api.OutboundAISemanticCacheInvalidDetail
+	}
+	return PolicyInvalidDetail
+}
+
+// semanticCacheGate refuses an enabled semantic cache on a plan without it
+// (ADR 20261112194947).
+func semanticCacheGate(acct state.Account, semantic *api.OutboundAISemanticCache) *api.Problem {
+	if semantic == nil || !semantic.Enabled {
+		return nil
+	}
+	if limits, ok := api.LimitsFor(acct.Plan); ok && limits.OutboundAISemanticCacheAllowed {
+		return nil
+	}
+	return api.ErrPlanFeatureGated("ai_semantic_cache", acct.Plan)
 }
 
 // GetUsage reports one UTC day of AI usage by caller and model.

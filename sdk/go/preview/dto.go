@@ -1,6 +1,6 @@
 package preview
 
-import "github.com/poyrazK/faas/sdk/go/internal/api"
+import "github.com/gregale-dev/gregale-go/internal/api"
 
 // Request and response types of preview capabilities, and their helpers
 // (ADR-20261023115741). faas re-exports the generally available and beta

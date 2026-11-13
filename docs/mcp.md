@@ -279,7 +279,16 @@ tool, which waits up to 50 seconds per call. When you approve, the tool
 answers `retry_original` and the agent repeats its call once with the same
 inputs. When you deny it or it expires, the agent gets `stop`, with your
 reason, and stops. `gregale_agent_activity` lists the agent's own write
-requests of the last 7 days (`operate` toolset).
+requests of the last 7 days, and `gregale_agent_budget` its monthly budget
+and what it committed this month (`core` toolset). An agent's
+`gregale_plan_scale` plan carries `agent_budget`: the cost the change adds,
+the budget left, and whether a person would be asked first.
+
+An agent can undo its own changes: `gregale_plan_undo` lists them with what
+undoing each will do, and `gregale_apply_undo` applies that plan. Applying
+always asks you first, whatever approval categories the agent chose; it waits
+like any other approval and then undoes exactly the plan you approved
+(`core` toolset; apply only on servers that allow writes).
 
 When the bridge applies a plan, it sends the plan's reviewable `reason` as
 the `Gregale-Agent-Reason` header, so the review page, notifications and the
@@ -327,7 +336,7 @@ turn. `--tools` lists only the selected toolsets, comma-separated
 
 | Toolset | Tools |
 |---|---|
-| `core` (default) | Context, apps, app deployments, logs, metrics, health, error groups, local deploy and env changes, secret requests, promote and rollback, saved-plan review and retained action recovery |
+| `core` (default) | Context, apps, app deployments, logs, metrics, health, error groups, local deploy and env changes, secret requests, promote and rollback, saved-plan review and retained action recovery, approval waits, the agent's own activity and undo |
 | `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets, preflight, account deployment history |
 | `diagnose` | Request, analytics, profile, wake, trace, regression and incident diagnostics |
 | `provision` | Custom domains, buckets, managed PostgreSQL and crons: provisioning, inventory and reviewed domain/cron changes |
@@ -403,6 +412,9 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_get_action_outcome` | Read supported native receipts for a retained action attempt, including after plan expiry; missing evidence stays unresolved. |
 | `gregale_wait_for_approval` | Wait up to 50 seconds for a person to decide an agent approval request; answers `retry_original`, `await_approval` or `stop`. |
 | `gregale_agent_activity` | The calling agent key's write requests of the last 7 days, with status and the approval each used. |
+| `gregale_agent_budget` | The calling agent key's monthly budget for always-on cost and what it committed this month. |
+| `gregale_plan_undo` | Plan undoing the calling agent's own changes: each change, newest first, with what undoing it will do. |
+| `gregale_apply_undo` | Undo the agent's own changes from a plan, after a person approves. |
 | `gregale_get_route_budgets` | Effective advisory budgets, inheritance source and policy revisions for the selected environment. |
 | `gregale_plan_route_budgets` | Review an environment override or return to app-budget inheritance without saving intent. |
 | `gregale_apply_route_budgets` | Opt-in write: apply the reviewed budget plan with native revision guards and durable replay. |

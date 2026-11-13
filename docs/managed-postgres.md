@@ -1159,6 +1159,10 @@ hour of the UTC month start. Metrics:
   is `held`, `released` or `shadowed`
 - `apid_managed_postgres_cap_last_sweep_timestamp_seconds`
 - `apid_managed_postgres_cap_enforcement_mode{mode}`
+- `apid_managed_postgres_egress_quota_decisions_total{outcome}`: the Neon
+  `data_transfer_bytes` quota the sweep sets at each database's egress hold
+  as a backstop (ADR-20261110160000 slice 4); `outcome` is `applied`,
+  `shadowed`, `unchanged` or `failed`
 
 ### Qualifying compute caps
 
@@ -1319,7 +1323,10 @@ only on databases the sweep suspends, so only while both modes above are `on`:
   The suspension email then names the deletion date, and a database is
   deleted only once the date its queued email named has come. A suspension
   mailed earlier without a date, or never mailed, starts again when `on`
-  first sees it, so its owner gets a full 30 days' notice. apid refuses `on`
+  first sees it, so its owner gets a full 30 days' notice. A week before the
+  date (`api.ManagedPostgresPlanExcessDeleteReminder`) the sweep queues one
+  reminder naming the same date (ADR-20261110184700 amendment 2026-11-12).
+  apid refuses `on`
   unless `FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_PLAN_EXCESS_OUTBOX_ENABLED=1`
   and the producer outbox are on. Turn it on only once every apid runs the
   release that added it: an older apid cannot read that email's payload.

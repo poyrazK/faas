@@ -651,27 +651,63 @@ func TestStartConnectGitHub_RejectsInvalidBrowserProof(t *testing.T) {
 		{name: "missing cookie", body: true},
 		{name: "mismatched proof", body: true, cookie: true, mismatch: true},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, &oauthCodeCallbackFake{})
-			token, cookie := browserConnectCSRF(t, srv, sessionCookie)
-			body := url.Values{}
-			if tc.body {
-				if tc.mismatch {
-					token += "invalid"
+		for _, intent := range []string{"", "install"} {
+			t.Run(tc.name+"/"+intent, func(t *testing.T) {
+				srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, &oauthCodeCallbackFake{})
+				token, cookie := browserConnectCSRF(t, srv, sessionCookie)
+				body := url.Values{"intent": {intent}}
+				if tc.body {
+					if tc.mismatch {
+						token += "invalid"
+					}
+					body.Set("csrf_token", token)
 				}
-				body.Set("csrf_token", token)
-			}
-			req := httptest.NewRequest(http.MethodPost, "/dashboard/install/connect", strings.NewReader(body.Encode()))
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			req.AddCookie(sessionCookie)
-			if tc.cookie {
-				req.AddCookie(cookie)
-			}
-			rec := httptest.NewRecorder()
-			srv.ServeHTTP(rec, req)
-			if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/dashboard/settings?section=integrations&github=connect-forbidden" {
-				t.Fatalf("invalid proof: status = %d, location = %q", rec.Code, rec.Header().Get("Location"))
-			}
-		})
+				req := httptest.NewRequest(http.MethodPost, "/dashboard/install/connect", strings.NewReader(body.Encode()))
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				req.AddCookie(sessionCookie)
+				if tc.cookie {
+					req.AddCookie(cookie)
+				}
+				rec := httptest.NewRecorder()
+				srv.ServeHTTP(rec, req)
+				if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/dashboard/settings?section=integrations&github=connect-forbidden" {
+					t.Fatalf("invalid proof: status = %d, location = %q", rec.Code, rec.Header().Get("Location"))
+				}
+			})
+		}
+	}
+}
+
+func TestStartConnectGitHub_InstallRecoveryPreservesStateAndReturn(t *testing.T) {
+	t.Setenv("FAAS_GITHUB_APP_CLIENT_ID", "client-123")
+	t.Setenv("FAAS_GITHUB_APP_INSTALL_URL", "https://github.com/apps/test-app/installations/new")
+	gh := &oauthCodeCallbackFake{installID: "9999"}
+	srv, _, accountID, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+	proof, proofCookie := browserConnectCSRF(t, srv, sessionCookie)
+	body := url.Values{"csrf_token": {proof}, "intent": {"install"}, "return_to": {"/dashboard/apps/new?source=git"}}
+	request := httptest.NewRequest(http.MethodPost, "/dashboard/install/connect", strings.NewReader(body.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.AddCookie(sessionCookie)
+	request.AddCookie(proofCookie)
+	response := httptest.NewRecorder()
+	srv.ServeHTTP(response, request)
+	location, err := url.Parse(response.Header().Get("Location"))
+	if err != nil || response.Code != http.StatusFound || location.Host != "github.com" || location.Path != "/apps/test-app/installations/new" {
+		t.Fatalf("install recovery = %d, %q: %v", response.Code, response.Header().Get("Location"), err)
+	}
+	stateToken := location.Query().Get("state")
+	stateCookie := findCookie(response.Result().Cookies(), apidserver.OauthCodeStateCookie)
+	if stateToken == "" || stateCookie == nil || stateCookie.Value != stateToken || !stateCookie.HttpOnly {
+		t.Fatal("install recovery requires a fresh matching HttpOnly state cookie")
+	}
+	callback := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=code&state="+url.QueryEscape(stateToken), nil)
+	callback.AddCookie(sessionCookie)
+	callback.AddCookie(stateCookie)
+	callback.AddCookie(findCookie(response.Result().Cookies(), apidserver.GithubConnectReturnCookie))
+	result := httptest.NewRecorder()
+	srv.ServeHTTP(result, callback)
+	redirect, err := url.Parse(result.Header().Get("Location"))
+	if err != nil || result.Code != http.StatusFound || redirect.Path != "/dashboard/apps/new" || redirect.Query().Get("source") != "git" || redirect.Query().Get("github") != "connected" || gh.gotAccountID != accountID || gh.gotCalls != 1 {
+		t.Fatalf("recovery callback = %d, %q: %v", result.Code, result.Header().Get("Location"), err)
 	}
 }

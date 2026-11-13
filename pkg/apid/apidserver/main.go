@@ -1652,6 +1652,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid: producer mail outbox: %w", err)
 	}
 
+	if err := srv.configureCustomerSupport(ctx, deps.pool, deps.getenv); err != nil {
+		return fmt.Errorf("apid: customer support: %w", err)
+	}
+	srv.configureCustomerErrors(ctx, deps.pool, slog.Default())
+	srv.configureAttention(ctx, deps.pool, slog.Default())
 	srv.rehearsalNetworkEnabled = deps.getenv("FAAS_REHEARSAL_NETWORK_CONTAINMENT") == "1"
 	srv.environmentBranchContainmentEnabled = deps.getenv(api.EnvironmentBranchContainmentEnv) == "1"
 	srv.environmentBranchContainedObjectsEnabled = deps.getenv(api.EnvironmentBranchContainedObjectsEnv) == "1"
@@ -1691,6 +1696,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	srv.operation.StartOperationNotifications(ctx)
+	if err := srv.configureSales(deps.getenv); err != nil {
+		return err
+	}
 	srv.configureProductControl(*cfg, deps.getenv)
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
 		return err

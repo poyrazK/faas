@@ -1,79 +1,99 @@
 //go:build linux
 
-// Stateless-runtime advisory (spec §17 G13, ADR-047). Closes the
-// runtime half of the Wave 0 stateless-only contract — PR-A gates
-// persistence at deploy-accept (422 stateless_only_violation); PR-C
-// observes persistence at runtime and ships an audit row.
+// Stateless-runtime advisory (spec §17 G13, ADR-047 as amended 2026-11-12).
+// Closes the runtime half of the Wave 0 stateless-only contract: PR-A gates
+// persistence at deploy-accept (422 stateless_only_violation); this observes
+// writes at runtime so the customer sees an audit row before the data is
+// lost on the next park.
 //
-// Wire path: kernel fanotify → in-process debounce → AF_VSOCK DGRAM
-// (port=1025, msg_type=2, host CID=2) → vmmd → /run/faas/apid.sock
-// gRPC → apid pkg/audit.Auditor.Emit("stateless.advisory", ...).
+// Wire path: inotify on the watched directories → per-path de-dup → one
+// guest-initiated AF_VSOCK STREAM per batch (host CID 2, port 1025,
+// msg_type 2) → Firecracker's <vsock.sock>_1025 → vmmd → stateless.advisory
+// audit row.
 //
-// Advisory only, never blocking. A dropped advisory is silent
-// (ADR-035: audit rows are observation, not source of truth). EROFS
-// / read-only remount is explicitly out of scope for Wave 0.
+// The ADR-047 original used fanotify mount marks and vsock DGRAM. Neither
+// worked: FAN_CREATE/FAN_MOVE need an FID-reporting group and mount marks
+// refuse them (fanotify_mark answered EINVAL for every path in every guest),
+// and Firecracker's vsock carries only streams. inotify watches only the
+// directories that matter, so writes elsewhere cost nothing.
+//
+// Advisory only, never blocking. A dropped advisory is silent (ADR-035:
+// audit rows are observation, not source of truth).
 
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
-	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
-	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
 
-// Wire constants. Distinct from the resume listener (port 1024,
-// msg_type 1) so the host parser can route by prefix.
+// Wire constants. pkg/fcvm VsockStatelessAdvisoryHostPort and
+// StatelessAdvisoryMsgType mirror them on the host.
 const (
-	// VsockStatelessAdvisoryPort differs from VsockResumePort=1024 so
-	// the resume listener and the advisory listener can run side-by-
-	// side. vmmd's wire receiver (pkg/fcvm/vmm.go::SendStatelessAdvisory)
-	// listens for this port.
-	VsockStatelessAdvisoryPort uint32 = 1025
-
-	// VsockStatelessAdvisoryMsgType is the wire-format message-type
-	// prefix (uint32 big-endian, first 4 bytes of the datagram). Differs
-	// from VsockResumeMsgType=1 so a prefix collision is impossible.
+	VsockStatelessAdvisoryPort    uint32 = 1025
 	VsockStatelessAdvisoryMsgType uint32 = 2
 )
 
 // Sizing + tuning.
 const (
-	// advisoryBatchCap caps a single DGRAM payload at 64 events. A noisy
-	// app (writes /data on every request) is debounced to ~1/s in the
-	// guest before this cap ever fires.
+	// advisoryBatchCap caps one frame at 64 events.
 	advisoryBatchCap = 64
 
-	// advisoryMaxBody is the largest JSON body we'll serialise per DGRAM
-	// (8 KiB). At ~120 bytes/event, 64 events fit comfortably.
+	// advisoryMaxBody is the largest JSON body per frame (8 KiB); the host
+	// refuses anything larger.
 	advisoryMaxBody = 8 * 1024
 
-	// advisoryDeDupWindow collapses repeat events on the same path into
-	// a single advisory row within this window. ADR-035 — observation,
-	// not source of truth — so a one-second de-dup is enough to keep
-	// the events table quiet without hiding distinct state shapes.
+	// advisoryDeDupWindow is how long the shipper collects after the first
+	// pending write, so a burst becomes one frame.
 	advisoryDeDupWindow = 1 * time.Second
 
-	// advisoryFanotifyEventBuf is the read buffer for the fanotify fd.
-	// 4 KiB is plenty — each event is ~24 bytes plus the path tail.
-	advisoryFanotifyEventBuf = 4 * 1024
+	// advisoryReportedPathCap bounds the distinct paths one guest reports in
+	// its lifetime. Each path is reported once: the audit row says the data
+	// will not survive, and repeating it on every write would only flood
+	// the audit table.
+	advisoryReportedPathCap = 256
+
+	// advisoryWatchCap bounds inotify watches (one per directory).
+	advisoryWatchCap = 1024
+
+	// advisoryReadBuf holds many inotify events (16 bytes plus a name each).
+	advisoryReadBuf = 64 * 1024
+
+	// advisorySendTimeout bounds one frame's connect and write.
+	advisorySendTimeout = time.Second
+
+	// advisoryMaxPath is the longest path the host accepts.
+	advisoryMaxPath = 1024
 )
 
-// statelessRuntimePaths is the closed set of guest-side paths the
-// fanotify mark observes. Mirrors cmd/apid/deploy_inputs.go's
-// statefulTopLevelDirs (/data, /db) and extends to well-known daemon
-// data directories so a customer who runs `apt install postgresql`
-// without a VOLUME directive still trips the audit row.
-//
-// Wave 1 follow-up: dynamic discovery via a small admin path-list if
-// customer telemetry shows the closed set is missing real workloads.
+// inotify masks. Tree directories report writes; parent directories only
+// notice a watched root appearing (or being recreated) so it can be armed.
+const (
+	advisoryTreeMask   = unix.IN_CREATE | unix.IN_MODIFY | unix.IN_MOVED_TO | unix.IN_ONLYDIR
+	advisoryParentMask = unix.IN_CREATE | unix.IN_MOVED_TO | unix.IN_ONLYDIR
+	// advisoryQuietTreeMask drops IN_MODIFY once a directory has reported:
+	// a database file rewritten on every request would otherwise wake
+	// guest-init on every write after its one report.
+	advisoryQuietTreeMask = unix.IN_CREATE | unix.IN_MOVED_TO | unix.IN_ONLYDIR
+)
+
+// statelessRuntimePaths is the closed set of absolute state-shaped
+// directories. Mirrors the deploy-accept check's top-level data/ and db/
+// and extends to well-known daemon data directories so a customer who runs
+// `apt install postgresql` without a VOLUME directive still trips the audit
+// row. advisoryWatchRoots adds the app's own data/ and db/.
 var statelessRuntimePaths = []string{
 	"/data",
 	"/db",
@@ -87,42 +107,55 @@ var statelessRuntimePaths = []string{
 	"/var/lib/clickhouse",
 }
 
-// advisoryEvent is one observed write. Wire-formatted as a single
-// entry in the events array of the DGRAM payload (see advisoryBatch).
+// advisoryWatchRoots is the closed set plus data/ and db/ under the app's
+// working directory: the source-root directories the deploy-accept scan
+// inspects, and the ones a buildpack app (running as an unprivileged user
+// that cannot create /data) can actually write (Hunt 34 H34-3).
+func advisoryWatchRoots(workingDir string) []string {
+	if workingDir == "" || !filepath.IsAbs(workingDir) {
+		workingDir = "/"
+	}
+	workingDir = filepath.Clean(workingDir)
+	seen := make(map[string]bool)
+	var out []string
+	add := func(p string) {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	for _, p := range statelessRuntimePaths {
+		add(p)
+	}
+	add(filepath.Join(workingDir, "data"))
+	add(filepath.Join(workingDir, "db"))
+	return out
+}
+
+// advisoryEvent is one observed write; one entry in the frame's events.
 type advisoryEvent struct {
 	Path   string   `json:"path"`
-	Masks  []string `json:"mask"` // canonical verb names
-	PID    int      `json:"pid"`
+	Masks  []string `json:"mask"` // canonical verbs: create, modify, move, other
 	TsUnix int64    `json:"ts_unix_ms"`
 }
 
-// advisoryBatch is the JSON body of one DGRAM datagram. The app_id
-// comes from /etc/faas/app.json (guest-init already opened it in
-// boot() to read the manifest; we re-read to keep this file standalone).
+// advisoryBatch is the JSON body of one frame. The host takes the app from
+// the vsock listener, never from the frame.
 type advisoryBatch struct {
-	AppID  string          `json:"app_id"`
 	Events []advisoryEvent `json:"events"`
 }
 
-// maskNames returns the canonical verb names for a fanotify event
-// mask. Mirrors the kernel's FAN_CREATE/FAN_MODIFY/FAN_MOVE/FAN_DELETE
-// flag set; anything we don't recognise is bucketed into "other".
-func maskNames(mask uint64) []string {
+// inotifyMaskNames maps an inotify event mask to the canonical verbs.
+func inotifyMaskNames(mask uint32) []string {
 	var out []string
-	if mask&unix.FAN_CREATE != 0 {
+	if mask&unix.IN_CREATE != 0 {
 		out = append(out, "create")
 	}
-	if mask&unix.FAN_MODIFY != 0 {
+	if mask&unix.IN_MODIFY != 0 {
 		out = append(out, "modify")
 	}
-	if mask&unix.FAN_MOVE != 0 {
+	if mask&unix.IN_MOVED_TO != 0 {
 		out = append(out, "move")
-	}
-	if mask&unix.FAN_ACCESS != 0 {
-		out = append(out, "access")
-	}
-	if mask&unix.FAN_DELETE != 0 {
-		out = append(out, "delete")
 	}
 	if len(out) == 0 {
 		out = []string{"other"}
@@ -130,427 +163,377 @@ func maskNames(mask uint64) []string {
 	return out
 }
 
-// runStatelessAdvisory starts the fanotify mark + vsock DGRAM shipper.
-// Returns are tolerated (warn-log only) so a guest built without
-// CONFIG_FANOTIFY=y, or on a kernel where AF_VSOCK is missing, still
-// boots — the platform contract is "no signal" not "won't boot".
+// runStatelessAdvisory arms the watches and starts the reader and the
+// shipper. An error is warn-logged by the caller: a guest without inotify
+// or vsock still boots — the contract is "no signal", not "won't boot".
 //
-// Lifecycle: caller (boot()) invokes this once, after pivotInto and
-// after listenResumeHook, before the supervisor starts the app.
-func runStatelessAdvisory(log *slog.Logger) error {
+// Lifecycle: boot() calls this once, after reading the app manifest and
+// before the supervisor starts the app, so the app's first write is seen.
+func runStatelessAdvisory(log *slog.Logger, workingDir string) error {
 	if log == nil {
 		log = slog.Default()
 	}
-
-	// 1. fanotify_init. FAN_CLASS_NOTIF means we observe events, never
-	// consume them (the alternative — FAN_CLASS_CONTENT or FAN_CLASS_PRE
-	// CONTENT — would require a response from us and is out of scope).
-	fd, err := unix.FanotifyInit(
-		unix.FAN_CLOEXEC|unix.FAN_NONBLOCK,
-		unix.O_RDONLY|unix.O_LARGEFILE|unix.O_CLOEXEC,
-	)
+	fd, err := unix.InotifyInit1(unix.IN_CLOEXEC)
 	if err != nil {
-		return fmt.Errorf("fanotify_init: %w", err)
+		return fmt.Errorf("inotify_init1: %w", err)
 	}
-
-	// 2. FAN_MARK_MOUNT on each closed-set path. Errors are warn-logged
-	// not fatal — a guest without /var/lib/cockroach still gets a mark
-	// on /data and /db.
-	markMask := uint64(unix.FAN_CREATE | unix.FAN_MODIFY | unix.FAN_MOVE | unix.FAN_EVENT_ON_CHILD)
-	for _, p := range statelessRuntimePaths {
-		if err := unix.FanotifyMark(
-			fd,
-			unix.FAN_MARK_ADD|unix.FAN_MARK_MOUNT,
-			markMask,
-			unix.AT_FDCWD,
-			p,
-		); err != nil {
-			log.Warn("stateless advisory fanotify_mark failed (non-fatal)", "path", p, "err", err)
-		}
+	w := newAdvisoryWatcher(fd, log)
+	roots := advisoryWatchRoots(workingDir)
+	for _, root := range roots {
+		w.watchRoot(root)
 	}
-
-	// 3. AF_VSOCK DGRAM. Port-bind, not connect — DGRAM is fire-and-
-	// forget; vmmd listens on the host CID (VMADDR_CID_HOST) at this
-	// port.
-	sock, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
-	if err != nil {
-		_ = unix.Close(fd)
-		return fmt.Errorf("vsock socket: %w", err)
-	}
-	if err := unix.Bind(sock, &unix.SockaddrVM{
-		CID:  unix.VMADDR_CID_ANY,
-		Port: VsockStatelessAdvisoryPort,
-	}); err != nil {
-		_ = unix.Close(sock)
-		_ = unix.Close(fd)
-		return fmt.Errorf("vsock bind: %w", err)
-	}
-
-	// 4. Read the app_id once at boot — the manifest is guest-static
-	// (built by imaged before the microVM starts) and won't change.
-	appID, err := readAppIDFromManifest()
-	if err != nil {
-		// Tolerate a missing manifest — we can still ship advisories
-		// with app_id="" and the host will look up by app_id from the
-		// vsock port context (future: vmmd stamps instance+app on the
-		// datagram envelope; today we fall back to the manifest).
-		log.Warn("stateless advisory: app.json missing or unreadable", "err", err)
-	}
-
-	// 5. Two goroutines: readFanotify drains the fd, advisoryShipper
-	// batches + ships over vsock. A sync.Mutex protects the pending
-	// batch; a sync.Cond wakes the shipper when something arrives or
-	// the debounce window elapses.
-	pipe := newAdvisoryPipe(log)
-
-	go func() {
-		defer func() { _ = unix.Close(fd) }()
-		readFanotify(fd, pipe, log)
-	}()
-	go func() {
-		defer func() { _ = unix.Close(sock) }()
-		advisoryShipper(sock, appID, pipe, log)
-	}()
-
-	log.Info("stateless advisory started", "paths", len(statelessRuntimePaths), "vsock_port", VsockStatelessAdvisoryPort)
+	log.Info("stateless advisory started", "roots", len(roots), "watches", len(w.dirs), "vsock_port", VsockStatelessAdvisoryPort)
+	pipe := newAdvisoryPipe()
+	go w.run(pipe)
+	go advisoryShipper(pipe, sendAdvisoryFrame, log)
 	return nil
 }
 
-// readAppIDFromManifest reads /etc/faas/app.json and pulls the
-// app_id field. The manifest shape is defined in pkg/api (api.AppManifest).
-// We tolerate any parse error so a missing app.json doesn't kill the
-// advisory goroutine.
-func readAppIDFromManifest() (string, error) {
-	//nolint:forbidigo // Vetted-id path: /etc/faas/app.json is injected
-	// by imaged at guest-init injection time (see pkg/imaged/inject.go)
-	// and is the only path the guest reads at runtime. No customer
-	// input ever reaches this line; the openCustomerFile guard is for
-	// code paths that handle customer-controlled paths.
-	f, err := os.Open("/etc/faas/app.json")
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = f.Close() }()
-	var m struct {
-		AppID string `json:"app_id"`
-	}
-	if err := json.NewDecoder(f).Decode(&m); err != nil {
-		return "", err
-	}
-	if m.AppID == "" {
-		return "", errors.New("app.json: app_id empty")
-	}
-	return m.AppID, nil
+// advisoryWatchDir is what one inotify watch descriptor stands for.
+type advisoryWatchDir struct {
+	path string
+	// tree marks a directory inside a watched root: writes in it report.
+	tree bool
+	// quiet is set once the directory has reported and IN_MODIFY is off.
+	quiet bool
+	// roots maps a child name to the watched root it would become.
+	roots map[string]string
 }
 
-// fanotifyEventMetadata matches the kernel's fanotify_event_metadata
-// struct (linux/fanotify.h). We don't decode the optional
-// fanotify_event_info records (FID, file name, etc.) — for Wave 0 the
-// path attached to the event is sufficient to bucket the write.
-type fanotifyEventMetadata struct {
-	Vers        uint16
-	Reserved    uint16
-	MetadataLen uint32
-	Events      uint16
-	Flags       uint8
-	Padding     uint8 // alignment on amd64
-	Fd          int32
+// advisoryWatcher owns the inotify fd. Only the reader goroutine touches it
+// after runStatelessAdvisory returns.
+type advisoryWatcher struct {
+	fd       int
+	log      *slog.Logger
+	dirs     map[int32]*advisoryWatchDir
+	capped   bool
+	overflow bool
 }
 
-// readFanotify drains the fanotify fd, parses each event, and feeds
-// advisoryPipe.add(). Non-blocking I/O — the kernel only sets events
-// we marked for. We close any fd the kernel hands us (events with
-// FAN_FD_AVAILABLE); for advisory-only we don't actually need the
-// fd, but the kernel requires we close it or it leaks.
-func readFanotify(fd int, pipe *advisoryPipe, log *slog.Logger) {
-	buf := make([]byte, advisoryFanotifyEventBuf)
-	for {
-		n, err := unix.Read(fd, buf)
-		if err != nil {
-			if errors.Is(err, unix.EAGAIN) {
-				// FAN_NONBLOCK + nothing queued — sleep a hair so we
-				// don't burn CPU on a tight loop. The kernel will wake
-				// us on the next event anyway, but select/poll would be
-				// the "right" shape — for Wave 0 this is fine.
-				time.Sleep(50 * time.Millisecond)
-				continue
-			}
-			log.Warn("stateless advisory fanotify read failed; exiting", "err", err)
-			return
+func newAdvisoryWatcher(fd int, log *slog.Logger) *advisoryWatcher {
+	return &advisoryWatcher{fd: fd, log: log, dirs: make(map[int32]*advisoryWatchDir)}
+}
+
+// watch adds mask to path's watch and returns its record, or nil when the
+// path is not a directory, is gone, or the watch cap is reached.
+func (w *advisoryWatcher) watch(path string, mask uint32) *advisoryWatchDir {
+	if len(w.dirs) >= advisoryWatchCap {
+		if !w.capped {
+			w.capped = true
+			w.log.Warn("stateless advisory: watch cap reached; deeper directories are not watched", "cap", advisoryWatchCap)
 		}
-		if n < int(unsafe.Sizeof(fanotifyEventMetadata{})) {
+		return nil
+	}
+	wd, err := unix.InotifyAddWatch(w.fd, path, mask|unix.IN_MASK_ADD)
+	if err != nil {
+		return nil
+	}
+	dir := w.dirs[int32(wd)]
+	if dir == nil {
+		dir = &advisoryWatchDir{path: path}
+		w.dirs[int32(wd)] = dir
+	}
+	return dir
+}
+
+// watchRoot watches root's parent, so a root created (or recreated) later is
+// armed when it appears, and every directory already under root.
+func (w *advisoryWatcher) watchRoot(root string) {
+	if parent := w.watch(filepath.Dir(root), advisoryParentMask); parent != nil {
+		if parent.roots == nil {
+			parent.roots = make(map[string]string)
+		}
+		parent.roots[filepath.Base(root)] = root
+	}
+	w.watchTree(root)
+}
+
+// watchTree watches root and the directories below it. Symlinks below the
+// root are not followed; a symlinked root itself is (inotify follows it).
+func (w *advisoryWatcher) watchTree(root string) {
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if p == root {
+				return err
+			}
+			return nil
+		}
+		if p != root && !d.IsDir() {
+			return nil
+		}
+		dir := w.watch(p, advisoryTreeMask)
+		switch {
+		case dir != nil:
+			dir.tree = true
+			return nil
+		case w.capped:
+			return fs.SkipAll
+		case p != root:
+			return fs.SkipDir
+		default:
+			return nil
+		}
+	})
+}
+
+// run reads events until the fd fails. The read blocks; guest-init has no
+// other use for this goroutine.
+func (w *advisoryWatcher) run(pipe *advisoryPipe) {
+	buf := make([]byte, advisoryReadBuf)
+	for {
+		n, err := unix.Read(w.fd, buf)
+		if errors.Is(err, unix.EINTR) {
 			continue
 		}
-		// Parse one or more events out of the buffer.
-		off := 0
-		for off+int(unsafe.Sizeof(fanotifyEventMetadata{})) <= n {
-			//nolint:gosec // fanotify wire format: the kernel writes
-			// a packed fanotify_event_metadata header at buf[off]. The
-			// bounds check above (off + sizeof(header) <= n) prevents
-			// out-of-bounds reads; the cast is unavoidable to decode
-			// the syscall payload.
-			meta := (*fanotifyEventMetadata)(unsafe.Pointer(&buf[off]))
-			ev := advisoryEvent{
-				Masks:  maskNames(uint64(meta.Events)),
-				PID:    pidFromFD(int(meta.Fd), log),
-				TsUnix: time.Now().UnixMilli(),
-			}
-			// Resolve the path from the fd (kernel attaches the marked
-			// path's dentry). FAN_FD_AVAILABLE may not be set in
-			// advisory-only mode; if readlink fails, use the marked
-			// path's basename as a coarse fallback.
-			if path, perr := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", meta.Fd)); perr == nil {
-				ev.Path = path
-			} else {
-				ev.Path = markedPathFallback(int(meta.Fd))
-			}
-			_ = unix.Close(int(meta.Fd)) // kernel requires we close
-			pipe.add(ev)
-			off += int(meta.MetadataLen)
+		if err != nil {
+			w.log.Warn("stateless advisory: inotify read failed; stopping", "err", err)
+			return
 		}
+		w.handle(buf[:n], time.Now(), pipe.add)
 	}
 }
 
-// pidFromFD pulls the pid out of /proc/self/fdinfo/<fd> for an
-// event whose FAN_FD_AVAILABLE bit was set. Most advisory-only events
-// don't have it, so a readlink failure is non-fatal and we report 0.
-func pidFromFD(fd int, log *slog.Logger) int {
-	data, err := os.ReadFile(fmt.Sprintf("/proc/self/fdinfo/%d", fd))
-	if err != nil {
-		return 0
-	}
-	for _, line := range splitLines(data) {
-		if hasPrefix(line, "pid:") {
-			var pid int
-			_, _ = fmt.Sscanf(line, "pid:%d", &pid)
-			return pid
+// handle decodes a read's worth of inotify_event records.
+func (w *advisoryWatcher) handle(buf []byte, now time.Time, emit func(advisoryEvent)) {
+	for off := 0; off+unix.SizeofInotifyEvent <= len(buf); {
+		wd := int32(binary.NativeEndian.Uint32(buf[off:]))
+		mask := binary.NativeEndian.Uint32(buf[off+4:])
+		nameLen := int(binary.NativeEndian.Uint32(buf[off+12:]))
+		end := off + unix.SizeofInotifyEvent + nameLen
+		if end > len(buf) {
+			return
 		}
-	}
-	return 0
-}
-
-// markedPathFallback returns the marked path that produced the most
-// recent event. Used only when /proc/self/fd/<n> resolves to nothing
-// (FAN_FD_AVAILABLE not set in advisory mode). The fallback is coarse
-// — the audit row shows the marked dir, not the file — which is
-// enough for the audit-table signal.
-func markedPathFallback(fd int) string {
-	// /proc/self/fd/<n> may be a deleted anon_inode:[fanotify]; fall
-	// back to the first marked path which is /data. Better than
-	// silently dropping the event.
-	_ = fd
-	if len(statelessRuntimePaths) > 0 {
-		return statelessRuntimePaths[0]
-	}
-	return "/data"
-}
-
-// splitLines + hasPrefix are tiny stdlib-ish helpers to avoid an
-// extra import in a binary that ships inside the microVM rootfs.
-func splitLines(b []byte) []string {
-	var out []string
-	start := 0
-	for i, c := range b {
-		if c == '\n' {
-			out = append(out, string(b[start:i]))
-			start = i + 1
+		name := buf[off+unix.SizeofInotifyEvent : end]
+		if i := bytes.IndexByte(name, 0); i >= 0 {
+			name = name[:i]
 		}
+		off = end
+		w.handleOne(wd, mask, string(name), now, emit)
 	}
-	if start < len(b) {
-		out = append(out, string(b[start:]))
-	}
-	return out
 }
 
-func hasPrefix(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+func (w *advisoryWatcher) handleOne(wd int32, mask uint32, name string, now time.Time, emit func(advisoryEvent)) {
+	if mask&unix.IN_Q_OVERFLOW != 0 {
+		if !w.overflow {
+			w.overflow = true
+			w.log.Warn("stateless advisory: inotify queue overflowed; some writes were not observed")
+		}
+		return
+	}
+	if mask&unix.IN_IGNORED != 0 {
+		// The directory is gone; its parent watch re-arms a root that
+		// comes back.
+		delete(w.dirs, wd)
+		w.capped = false
+		return
+	}
+	dir := w.dirs[wd]
+	if dir == nil || name == "" {
+		return
+	}
+	path := filepath.Join(dir.path, name)
+	if mask&unix.IN_ISDIR != 0 {
+		if mask&(unix.IN_CREATE|unix.IN_MOVED_TO) == 0 {
+			return
+		}
+		if root, ok := dir.roots[name]; ok {
+			w.watchTree(root)
+		}
+		if dir.tree {
+			w.watchTree(path)
+		}
+		return
+	}
+	if !dir.tree {
+		return
+	}
+	emit(advisoryEvent{Path: path, Masks: inotifyMaskNames(mask), TsUnix: now.UnixMilli()})
+	if !dir.quiet {
+		dir.quiet = true
+		w.quiet(wd, dir)
+	}
 }
 
-// advisoryPipe owns the pending batch + the de-dup window. Producers
-// (readFanotify) call add(); consumers (advisoryShipper) call drain().
+// quiet replaces the directory's mask with one without IN_MODIFY. A
+// directory that is also a root's parent keeps its parent bits, which the
+// quiet mask includes.
+func (w *advisoryWatcher) quiet(wd int32, dir *advisoryWatchDir) {
+	got, err := unix.InotifyAddWatch(w.fd, dir.path, advisoryQuietTreeMask)
+	if err == nil && int32(got) != wd {
+		// The path now names another directory; leave it alone.
+		_, _ = unix.InotifyRmWatch(w.fd, uint32(got))
+	}
+}
+
+// advisoryPipe collects pending writes for the shipper and remembers which
+// paths were already reported. The reader calls add; the shipper drains.
 type advisoryPipe struct {
-	mu     sync.Mutex
-	cond   *sync.Cond
-	closed bool
-	// pending keyed by (path, mask-set-hash). A repeat within the
-	// debounce window overwrites the existing entry — we keep the
-	// freshest pid/ts.
-	pending map[string]*advisoryEvent
-	// lastSeen tracks when each path was last added — used by the
-	// shipper to decide when to flush (window elapsed since last add
-	// on this path OR cap reached).
-	lastSeen map[string]time.Time
-	log      *slog.Logger
+	mu       sync.Mutex
+	cond     *sync.Cond
+	closed   bool
+	pending  map[string]*advisoryEvent
+	reported map[string]struct{}
 }
 
-func newAdvisoryPipe(log *slog.Logger) *advisoryPipe {
+func newAdvisoryPipe() *advisoryPipe {
 	p := &advisoryPipe{
 		pending:  make(map[string]*advisoryEvent),
-		lastSeen: make(map[string]time.Time),
-		log:      log,
+		reported: make(map[string]struct{}),
 	}
 	p.cond = sync.NewCond(&p.mu)
 	return p
 }
 
+// add records one write. A path already reported, or one past the lifetime
+// cap, is dropped; repeat writes to a pending path merge their verbs.
 func (p *advisoryPipe) add(ev advisoryEvent) {
-	key := ev.Path + "|" + joinMasks(ev.Masks)
-	p.mu.Lock()
-	if p.closed {
-		p.mu.Unlock()
+	// The host refuses a frame with an overlong or non-UTF-8 path, which
+	// would lose the whole batch with it.
+	if len(ev.Path) > advisoryMaxPath {
 		return
 	}
-	p.pending[key] = &ev
-	p.lastSeen[key] = time.Now()
-	shouldFlush := len(p.pending) >= advisoryBatchCap
-	p.mu.Unlock()
-	if shouldFlush {
-		p.cond.Broadcast()
-	}
-}
-
-// drain returns the pending batch and resets state. Returns nil if
-// nothing is pending and the window has not elapsed since lastFlush.
-//
-// We hold the lock across the slice copy so a concurrent add can't
-// half-overwrite our view; advisoryBatchCap keeps the copy bounded.
-func (p *advisoryPipe) drain(window time.Duration) []advisoryEvent {
+	ev.Path = strings.ToValidUTF8(ev.Path, "\uFFFD")
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if len(p.pending) == 0 {
-		return nil
+	if p.closed {
+		return
 	}
-	now := time.Now()
-	// Only flush if the newest pending entry is at least window old.
-	// This is the debounce — a burst within the window collapses into
-	// one row.
-	var newest time.Time
-	for _, t := range p.lastSeen {
-		if t.After(newest) {
-			newest = t
-		}
+	if _, done := p.reported[ev.Path]; done {
+		return
 	}
-	if now.Sub(newest) < window && len(p.pending) < advisoryBatchCap {
-		return nil
+	if cur := p.pending[ev.Path]; cur != nil {
+		cur.Masks = mergeAdvisoryVerbs(cur.Masks, ev.Masks)
+		return
 	}
+	if len(p.pending)+len(p.reported) >= advisoryReportedPathCap {
+		return
+	}
+	p.pending[ev.Path] = &ev
+	p.cond.Broadcast()
+}
+
+// drain returns every pending write, sorted by path, and marks the paths
+// reported.
+func (p *advisoryPipe) drain() []advisoryEvent {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	out := make([]advisoryEvent, 0, len(p.pending))
-	for _, ev := range p.pending {
+	for path, ev := range p.pending {
 		out = append(out, *ev)
-	}
-	// Bound the output — drop the tail if the map exceeded the cap
-	// before the window elapsed (rare; only on a fanotify storm).
-	if len(out) > advisoryBatchCap {
-		out = out[:advisoryBatchCap]
+		p.reported[path] = struct{}{}
 	}
 	p.pending = make(map[string]*advisoryEvent)
-	p.lastSeen = make(map[string]time.Time)
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
 }
 
-// joinMasks is a stable string for the mask-set so the dedupe key is
-// path|maskSet. "create|modify" != "create" so a path that gets both
-// create and modify stays distinct from one that gets only create.
-func joinMasks(masks []string) string {
-	out := ""
-	for _, m := range masks {
-		out += m + ","
+// waitPending blocks until something is pending; false once closed.
+func (p *advisoryPipe) waitPending() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for len(p.pending) == 0 && !p.closed {
+		p.cond.Wait()
 	}
-	return out
+	return !p.closed
 }
 
-// advisoryShipper serialises drain() output as JSON, prepends the
-// msg_type prefix, and sends one DGRAM per batch to host CID.
-//
-// Host-side parser lives at pkg/fcvm/vmm.go::SendStatelessAdvisory
-// and reads: [uint32 BE msg_type][uint32 BE body_len][body bytes].
-func advisoryShipper(sock int, appID string, pipe *advisoryPipe, log *slog.Logger) {
-	ticker := time.NewTicker(advisoryDeDupWindow)
-	defer ticker.Stop()
-	for {
-		// Wait for either: a signal (cap reached) or the ticker.
-		pipe.mu.Lock()
-		for len(pipe.pending) == 0 && !pipe.closed {
-			pipe.cond.Wait()
-		}
-		if pipe.closed {
-			pipe.mu.Unlock()
-			return
-		}
-		pipe.mu.Unlock()
+func (p *advisoryPipe) close() {
+	p.mu.Lock()
+	p.closed = true
+	p.mu.Unlock()
+	p.cond.Broadcast()
+}
 
-		// We have at least one pending entry. Sleep at most
-		// advisoryDeDupWindow before draining so a burst collapses.
-		select {
-		case <-ticker.C:
-		default:
-			time.Sleep(advisoryDeDupWindow)
+func mergeAdvisoryVerbs(have, more []string) []string {
+	for _, m := range more {
+		found := false
+		for _, h := range have {
+			if h == m {
+				found = true
+				break
+			}
 		}
-
-		batch := pipe.drain(advisoryDeDupWindow)
-		if len(batch) == 0 {
-			continue
-		}
-		body, sent, err := marshalAdvisoryBatchWithinLimit(appID, batch, advisoryMaxBody)
-		if err != nil {
-			log.Warn("stateless advisory marshal failed", "err", err)
-			continue
-		}
-		if len(body) == 0 {
-			log.Warn("stateless advisory event exceeds the frame limit; dropping batch",
-				"events", len(batch), "limit", advisoryMaxBody)
-			continue
-		}
-		if sent < len(batch) {
-			log.Warn("stateless advisory batch too large; dropped trailing events",
-				"sent", sent, "dropped", len(batch)-sent, "limit", advisoryMaxBody)
-		}
-
-		// Frame: msg_type (4 BE) + body_len (4 BE) + body.
-		var framed [8]byte
-		binary.BigEndian.PutUint32(framed[0:4], VsockStatelessAdvisoryMsgType)
-		binary.BigEndian.PutUint32(framed[4:8], uint32(len(body)))
-		payload := append(framed[:], body...)
-
-		dst := &unix.SockaddrVM{
-			CID:  unix.VMADDR_CID_HOST,
-			Port: VsockStatelessAdvisoryPort,
-		}
-		// SendmsgN is the cross-arch form (SendtoN is amd64-only on
-		// golang.org/x/sys). DGRAM semantics are identical: kernel
-		// takes the buffer atomically, no scatter/gather needed.
-		if _, err := unix.SendmsgN(sock, payload, nil, dst, 0); err != nil {
-			// Drop on EAGAIN (DGRAM queue full — host can't keep up)
-			// or any other error. ADR-035 — silent on drop.
-			log.Warn("stateless advisory vsock send failed", "err", err, "events", len(batch))
+		if !found {
+			have = append(have, m)
 		}
 	}
+	return have
+}
+
+// advisoryShipper waits for a write, collects for advisoryDeDupWindow, then
+// ships everything pending in frames of at most advisoryBatchCap events.
+func advisoryShipper(pipe *advisoryPipe, send func([]byte) error, log *slog.Logger) {
+	for pipe.waitPending() {
+		time.Sleep(advisoryDeDupWindow)
+		events := pipe.drain()
+		for len(events) > 0 {
+			batch := events[:min(len(events), advisoryBatchCap)]
+			body, sent, err := marshalAdvisoryBatchWithinLimit(batch, advisoryMaxBody)
+			switch {
+			case err != nil:
+				log.Warn("stateless advisory marshal failed; dropping batch", "err", err, "events", len(batch))
+				sent = len(batch)
+			case sent == 0:
+				log.Warn("stateless advisory event exceeds the frame limit; dropping", "limit", advisoryMaxBody)
+				sent = 1
+			default:
+				if err := send(encodeAdvisoryFrame(body)); err != nil {
+					// No host receiver (an older vmmd) or a full queue.
+					// ADR-035: dropped, silently to the app.
+					log.Warn("stateless advisory send failed", "err", err, "events", sent)
+				}
+			}
+			events = events[sent:]
+		}
+	}
+}
+
+// encodeAdvisoryFrame is msg_type (uint32 BE), body length (uint32 BE), body.
+func encodeAdvisoryFrame(body []byte) []byte {
+	frame := make([]byte, 8+len(body))
+	binary.BigEndian.PutUint32(frame[0:4], VsockStatelessAdvisoryMsgType)
+	binary.BigEndian.PutUint32(frame[4:8], uint32(len(body)))
+	copy(frame[8:], body)
+	return frame
+}
+
+// sendAdvisoryFrame opens one guest-initiated stream per frame, as the other
+// guest→host channels do; Firecracker forwards it to <vsock.sock>_1025.
+func sendAdvisoryFrame(frame []byte) error {
+	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("stateless advisory socket: %w", err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+	tv := unix.NsecToTimeval(advisorySendTimeout.Nanoseconds())
+	if err := unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_SNDTIMEO, &tv); err != nil {
+		return fmt.Errorf("stateless advisory send timeout: %w", err)
+	}
+	if err := unix.Connect(fd, &unix.SockaddrVM{CID: unix.VMADDR_CID_HOST, Port: VsockStatelessAdvisoryPort}); err != nil {
+		return fmt.Errorf("stateless advisory connect: %w", err)
+	}
+	if err := writeAllFD(fd, frame); err != nil {
+		return fmt.Errorf("stateless advisory write: %w", err)
+	}
+	return nil
 }
 
 // marshalAdvisoryBatchWithinLimit encodes the largest prefix of events whose
 // JSON document fits inside limit bytes, returning the document and the
-// number of events it carries.
-//
-// The previous form marshalled the whole batch and then byte-sliced the
-// result down to the limit. That yields a truncated JSON document: the host
-// receiver cannot unmarshal it, so the "dropping tail" the log claimed was in
-// fact dropping the entire batch, silently, every time an app was noisy
-// enough to exceed 8 KiB in one de-dup window. Dropping whole events instead
-// keeps the document parseable and makes the loss honest in the log line.
-//
-// A zero-length result means even a single event exceeds the limit; the
-// caller drops the batch rather than emitting an unparseable frame.
-func marshalAdvisoryBatchWithinLimit(appID string, events []advisoryEvent, limit int) ([]byte, int, error) {
+// number of events it carries. Byte-slicing a larger document would leave
+// unparseable JSON that the host drops whole. A zero-length result means even
+// the first event exceeds the limit.
+func marshalAdvisoryBatchWithinLimit(events []advisoryEvent, limit int) ([]byte, int, error) {
 	if len(events) == 0 {
 		return nil, 0, nil
 	}
-	// Binary search the largest prefix that fits. Encoded size is monotonic
-	// in the prefix length, so the predicate is well-behaved.
+	// Encoded size is monotonic in the prefix length, so binary search.
 	var best []byte
 	bestN := 0
 	lo, hi := 1, len(events)
 	for lo <= hi {
 		mid := (lo + hi) / 2
-		body, err := json.Marshal(advisoryBatch{AppID: appID, Events: events[:mid]})
+		body, err := json.Marshal(advisoryBatch{Events: events[:mid]})
 		if err != nil {
 			return nil, 0, err
 		}

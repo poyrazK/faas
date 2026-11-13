@@ -2787,6 +2787,11 @@ var PrintAddPostgresMigrationHint = printAddPostgresMigrationHint
 
 var DebugWatchNextWait = debugWatchNextWait
 
+var (
+	ProfileCapturesVerb     = profileCapturesVerb
+	RenderDebugCompareTable = renderDebugCompareTable
+)
+
 // ADR-20261107180000 `gregale config explain`.
 var (
 	ExplainConfigKey         = explainConfigKey
@@ -2851,5 +2856,17 @@ var WorkerNoInstancesLine = workerNoInstancesLine
 // PrintPublicURLs exposes the plan's public URL list (H32-30).
 var PrintPublicURLs = printPublicURLs
 
+var RenderRequestAnalytics = renderRequestAnalytics
+
 var InvocationSourceLabel = invocationSourceLabel
 var RenderDeploymentHostingReceiptFor = renderDeploymentHostingReceiptFor
+
+var ParseAppPortsFlag = parseAppPortsFlag
+
+var RenderThrottleSuggestions = renderThrottleSuggestions
+
+// Runtime OOM doctor check (2026-11-13).
+var DoctorRuntimeOOMFromSummary = doctorRuntimeOOMFromSummary
+var DoctorRuntimeOOMForApp = doctorRuntimeOOMForApp
+var ReplaceDoctorCheck = replaceDoctorCheck
+var DoctorCheckRuntimeOOM = doctorCheckRuntimeOOM

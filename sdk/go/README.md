@@ -7,7 +7,7 @@
 This is the public import path for the Gregale platform:
 
 ```go
-import faas "github.com/poyrazK/faas/sdk/go"
+import faas "github.com/gregale-dev/gregale-go"
 ```
 
 The package exposes:
@@ -26,11 +26,11 @@ The package exposes:
 ## Install
 
 ```sh
-go get github.com/poyrazK/faas/sdk/go
+go get github.com/gregale-dev/gregale-go
 ```
 
 The SDK targets `go 1.23` (the floor of the daemon's own toolchain
-at the moment of extraction). The daemon's `go.mod` is `go 1.26.10`,
+at the moment of extraction). The daemon's `go.mod` is `go 1.26.11`,
 but the SDK stays on 1.23 so a customer pinned to an older Go
 toolchain can still consume it.
 
@@ -38,7 +38,7 @@ The SDK also verifies inbound Gregale webhook deliveries. See
 [`docs/webhook-receiver-verification.md`](../../docs/webhook-receiver-verification.md)
 for raw-body handling and delivery-ID deduplication guidance.
 
-`github.com/poyrazK/faas/sdk/go/auth` verifies application Auth access tokens
+`github.com/gregale-dev/gregale-go/auth` verifies application Auth access tokens
 and checks permissions in your backend: `auth.New`, `Verify`, `Require`
 middleware and `Authorize`. See
 [Application Auth](../../docs/application-auth.md#in-your-backend).
@@ -56,7 +56,7 @@ disposable runs, issues, commit, data repair and more) are on
 `preview.Client`, which embeds a `faas.Client`:
 
 ```go
-import "github.com/poyrazK/faas/sdk/go/preview"
+import "github.com/gregale-dev/gregale-go/preview"
 
 client, err := preview.NewClient("https://api.gregale.dev", token)
 // or, for an existing *faas.Client: client := preview.Wrap(c)
@@ -82,7 +82,7 @@ import (
     "log"
     "os"
 
-    faas "github.com/poyrazK/faas/sdk/go"
+    faas "github.com/gregale-dev/gregale-go"
 )
 
 func main() {
@@ -109,7 +109,7 @@ request, HTTP client and `database/sql` spans to the Gregale debugger when
 the app sets `tracing.enabled`, using only the standard library:
 
 ```go
-import "github.com/poyrazK/faas/sdk/go/preview/tracing"
+import "github.com/gregale-dev/gregale-go/preview/tracing"
 
 shutdown := tracing.Start() // does nothing unless tracing is enabled
 defer shutdown(context.Background())
@@ -130,7 +130,7 @@ the app sets `profiling.enabled`, sends continuous CPU and heap profiles,
 using only the standard library:
 
 ```go
-import "github.com/poyrazK/faas/sdk/go/preview/profiling"
+import "github.com/gregale-dev/gregale-go/preview/profiling"
 
 profiling.Start(appContext) // does nothing outside a profiled deployment
 log.Fatal(http.ListenAndServe(":"+os.Getenv("PORT"), profiling.ServeMux(mux)))
@@ -146,7 +146,7 @@ and store it as `GREGALE_ISSUE_TOKEN`. The reporter queues bounded exception
 evidence and sends it independently of trace sampling:
 
 ```go
-// Also import context, os, time, and faas "github.com/poyrazK/faas/sdk/go".
+// Also import context, os, time, and faas "github.com/gregale-dev/gregale-go".
 issues, err := preview.NewIssueReporter(preview.IssueReporterOptions{
     BaseURL: os.Getenv("GREGALE_API_URL"),
     App:     "exports",

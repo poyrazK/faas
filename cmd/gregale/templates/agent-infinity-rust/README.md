@@ -34,15 +34,22 @@ and tool errors go back through the inbox (`GregaleSender` in
 `src/platform.rs`).
 
 Gregale's own tools come from its RAP toolset at
-`$GREGALE_API_URL/v1/agent-tools`, loaded once per process. The first is
-`gregale_sleep`: the thread wakes later with the call's result, and while it
-sleeps, Gregale holds the wake-up and the function parks. Gregale checks the
-callback URL each call carries, so these tools need no key. Without the
-toolset, the agent runs with `lookup` alone.
+`$GREGALE_API_URL/v1/agent-tools`, loaded once per process:
+
+- `gregale_sleep`: the thread wakes later with the call's result, and while
+  it sleeps, Gregale holds the wake-up and the function parks.
+- `gregale_run`: starts one of your account's agents in its own microVM, and
+  the thread wakes with the run's state, outcome and result when it ends.
+
+Gregale checks the callback URL each call carries, and each call also carries
+the app's workload token (`GregaleHttp` in `src/platform.rs`), which
+`gregale_run` needs to start a run in your account. So these tools need no
+API key. Without the toolset, the agent runs with `lookup` alone.
 
 The model is scripted (`src/model.rs`), so the starter runs with no provider
 key: a user message calls `lookup`, and the tool's result is the answer.
-`sleep 30` calls `gregale_sleep` for 30 seconds instead. To use a real model,
+`sleep 30` calls `gregale_sleep` for 30 seconds instead, and `run triage look
+at PR 7` starts the agent `triage` with that prompt. To use a real model,
 swap it for any Infinity provider, for example `infinity-provider-rig`.
 
 ## Deploy
@@ -74,7 +81,9 @@ curl -X POST <callback_url> -H "content-type: application/json" \
 
 Publish `{"text":"sleep 30"}` on a new thread, and about 30 seconds later the
 thread answers `gregale_sleep answered: Slept for 30 seconds.` with no post
-from you.
+from you. Publish `{"text":"run triage look at PR 7"}` and the thread answers
+when the run ends, with `gregale_run answered:` and the run's JSON; an agent
+the account does not have answers at once with `Agent not found`.
 
 ## Settings
 

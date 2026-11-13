@@ -10,6 +10,7 @@ from ..models.plan_response_scan_source import PlanResponseScanSource, check_pla
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.feature_hint import FeatureHint
     from ..models.plan_affected_app import PlanAffectedApp
     from ..models.plan_async_route import PlanAsyncRoute
     from ..models.plan_cron import PlanCron
@@ -53,6 +54,8 @@ class PlanResponse:
     """Structured diff for manifest-owned async routes; omitted when the manifest does not declare async_routes or
     no route actions need to be shown."""
     warnings: list[str] | Unset = UNSET
+    feature_hints: list[FeatureHint] | Unset = UNSET
+    """Gregale behaviors and features that apply to the scanned source, with the commands that change them."""
     detection_warnings: list[PlanDetectionWarning] | Unset = UNSET
     """Structured skipped/merged detector decisions available to explain-mode clients."""
     crons_not_allowed: bool | Unset = UNSET
@@ -123,6 +126,13 @@ class PlanResponse:
         warnings: list[str] | Unset = UNSET
         if not isinstance(self.warnings, Unset):
             warnings = self.warnings
+
+        feature_hints: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.feature_hints, Unset):
+            feature_hints = []
+            for feature_hints_item_data in self.feature_hints:
+                feature_hints_item = feature_hints_item_data.to_dict()
+                feature_hints.append(feature_hints_item)
 
         detection_warnings: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.detection_warnings, Unset):
@@ -206,6 +216,8 @@ class PlanResponse:
             field_dict["async_routes"] = async_routes
         if warnings is not UNSET:
             field_dict["warnings"] = warnings
+        if feature_hints is not UNSET:
+            field_dict["feature_hints"] = feature_hints
         if detection_warnings is not UNSET:
             field_dict["detection_warnings"] = detection_warnings
         if crons_not_allowed is not UNSET:
@@ -233,6 +245,7 @@ class PlanResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.feature_hint import FeatureHint
         from ..models.plan_affected_app import PlanAffectedApp
         from ..models.plan_async_route import PlanAsyncRoute
         from ..models.plan_cron import PlanCron
@@ -307,6 +320,15 @@ class PlanResponse:
 
         warnings = cast(list[str], d.pop("warnings", UNSET))
 
+        _feature_hints = d.pop("feature_hints", UNSET)
+        feature_hints: list[FeatureHint] | Unset = UNSET
+        if _feature_hints is not UNSET:
+            feature_hints = []
+            for feature_hints_item_data in _feature_hints:
+                feature_hints_item = FeatureHint.from_dict(feature_hints_item_data)
+
+                feature_hints.append(feature_hints_item)
+
         _detection_warnings = d.pop("detection_warnings", UNSET)
         detection_warnings: list[PlanDetectionWarning] | Unset = UNSET
         if _detection_warnings is not UNSET:
@@ -377,6 +399,7 @@ class PlanResponse:
             environment_config_hash=environment_config_hash,
             async_routes=async_routes,
             warnings=warnings,
+            feature_hints=feature_hints,
             detection_warnings=detection_warnings,
             crons_not_allowed=crons_not_allowed,
             can_apply_pre_exclude=can_apply_pre_exclude,

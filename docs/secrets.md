@@ -234,9 +234,8 @@ native task cancellation preserves `CancelledError`. See the
 [FastAPI example](../examples/postgres-pool-rotation-python/README.md).
 
 For CLI scaffolding with pinned dependencies, migration isolation and bounded
-restore recovery, use `gregale init --template rest-api-postgres-python`. Its
-[starter guide](../cmd/gregale/templates/rest-api-postgres-python/README.md)
-describes schema-backed readiness and failure recovery before traffic resumes.
+restore recovery, use `gregale init --template rest-api-postgres-python`. The README it
+generates describes schema-backed readiness and failure recovery before traffic resumes.
 
 On initial startup the Node starters wait up to 30 seconds for a valid, nonempty
 revision, polling with a 100-ms-to-two-second backoff. Only a valid secret map
@@ -324,7 +323,7 @@ history; live receipts are invalidated on restart.
 
 A credential every service of a project needs, such as a shared database
 password or a payment API key, can be set once per project environment instead
-of once per app (ADR-1139):
+of once per app:
 
 ```bash
 printf 'DATABASE_PASSWORD=%s\n' "$DATABASE_PASSWORD" | \

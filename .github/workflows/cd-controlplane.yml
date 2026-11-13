@@ -600,6 +600,9 @@ jobs:
             deploy/ansible/roles/signd_service/files/faas-signd.service \
             "${BUNDLE_ROOT}/optional-systemd/faas-signd.service"
           install -m 0644 \
+            deploy/ansible/roles/neond_service/files/faas-neond.service \
+            "${BUNDLE_ROOT}/optional-systemd/faas-neond.service"
+          install -m 0644 \
             deploy/ansible/roles/control_plane_service/files/faas-mcp-bridge.service \
             "${BUNDLE_ROOT}/optional-systemd/faas-mcp-bridge.service"
           # Files required before deployctl can activate outboundd. Keep the
@@ -876,6 +879,8 @@ jobs:
           SEAL_DOMAIN_EDGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_RECIPIENT }}
           SEAL_DOMAIN_EDGE_TLS_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_KEY }}
           SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT }}
+          SEAL_DOMAIN_NEON_AGE_KEY: ${{ secrets.SEAL_DOMAIN_NEON_AGE_KEY }}
+          SEAL_DOMAIN_NEON_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_NEON_AGE_RECIPIENT }}
           SEAL_DOMAIN_ALERTING_AGE_KEY: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_KEY }}
           SEAL_DOMAIN_ALERTING_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_RECIPIENT }}
           SEAL_DOMAIN_STORAGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_STORAGE_AGE_KEY }}
@@ -1500,6 +1505,53 @@ jobs:
           exit 1
           REMOTE
 
+      # neond_service converges before the release activates, so it can only
+      # start neond once the binary is current. This step restarts it from
+      # the release just activated and waits for its socket
+      # (ADR-20261112160000). Without the role's drop-in neond is off and apid
+      # calls Neon itself.
+      - name: Restart configured Neon key holder
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            root@${{ env.CP_HOST }} "bash -s -- '${RELEASE_ID}'" <<'REMOTE'
+          set -euo pipefail
+          release_id="$1"
+          dropin=/etc/systemd/system/faas-neond.service.d/50-faas-neond.conf
+          source_unit="/opt/faas/releases/${release_id}/optional-systemd/faas-neond.service"
+          installed_unit=/etc/systemd/system/faas-neond.service
+          socket=/run/faas/neond.sock
+
+          if [[ ! -s "$dropin" ]]; then
+            echo "faas-neond is not configured; apid calls Neon directly"
+            exit 0
+          fi
+          test -f "$source_unit"
+          test -x "/opt/faas/releases/${release_id}/bin/neond"
+          if [[ -L "$installed_unit" || ( -e "$installed_unit" && ! -f "$installed_unit" ) ]]; then
+            echo "faas-neond unit path is not a regular file" >&2
+            exit 1
+          fi
+          staged_unit="${installed_unit}.new-${release_id}"
+          trap 'rm -f -- "$staged_unit"' EXIT
+          install -o root -g root -m 0644 "$source_unit" "$staged_unit"
+          mv -Tf "$staged_unit" "$installed_unit"
+          trap - EXIT
+
+          systemctl daemon-reload
+          systemctl reset-failed faas-neond.service || true
+          systemctl enable faas-neond.service
+          systemctl restart faas-neond.service
+          for attempt in $(seq 1 30); do
+            if systemctl is-active --quiet faas-neond.service && [[ -S "$socket" ]]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          journalctl -u faas-neond.service -n 100 --no-pager >&2
+          exit 1
+          REMOTE
+
       - name: Converge Prometheus config and rules
         run: |
           set -euo pipefail
@@ -1812,6 +1864,8 @@ jobs:
           SEAL_DOMAIN_EDGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_RECIPIENT }}
           SEAL_DOMAIN_EDGE_TLS_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_KEY }}
           SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT }}
+          SEAL_DOMAIN_NEON_AGE_KEY: ${{ secrets.SEAL_DOMAIN_NEON_AGE_KEY }}
+          SEAL_DOMAIN_NEON_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_NEON_AGE_RECIPIENT }}
           SEAL_DOMAIN_ALERTING_AGE_KEY: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_KEY }}
           SEAL_DOMAIN_ALERTING_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_RECIPIENT }}
           SEAL_DOMAIN_STORAGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_STORAGE_AGE_KEY }}

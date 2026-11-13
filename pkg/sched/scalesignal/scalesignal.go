@@ -133,14 +133,14 @@ func (o Observation) desiredFor(concurrency int) int {
 	}
 	switch class {
 	case ClassBacklog:
-		return int(math.Ceil(o.Measured / o.Target))
+		return replicaCount(o.Measured / o.Target)
 	case ClassSaturation:
 		return concurrency + 1
 	default: // ClassPerInstanceRate
 		if concurrency <= 0 {
 			return 1
 		}
-		return int(math.Ceil(o.Measured * float64(concurrency) / o.Target))
+		return replicaCount(o.Measured * float64(concurrency) / o.Target)
 	}
 }
 
@@ -188,4 +188,17 @@ func Arbitrate(concurrency int, obs []Observation) Result {
 		}
 	}
 	return out
+}
+
+// Saturate before conversion: converting an oversized float to int can wrap
+// negative and turn a very hot signal into the one-instance progress fallback.
+func replicaCount(value float64) int {
+	ceiling := int(^uint(0) >> 1)
+	if value >= float64(ceiling) {
+		return ceiling
+	}
+	if math.IsNaN(value) || value < 0 {
+		return 0
+	}
+	return int(math.Ceil(value))
 }

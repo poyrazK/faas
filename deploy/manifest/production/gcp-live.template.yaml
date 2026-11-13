@@ -230,6 +230,10 @@ hot_path:
   frozen_tier: true
   frozen_fast_path: true
   owner_cache: true
+  # 2026-11-12 throughput test: 8 drain slots per schedd (shared by every
+  # tenant) held async invoke, event and webhook delivery near 17/s. Watch
+  # schedd_db_pool_canceled_acquires_total after rollout.
+  invocation_dispatch_concurrency: 32
 
 # Customer log archive (pkg/logarchive). Keyless: every node's attached
 # service account holds roles/storage.objectUser on the bucket, whose

@@ -86,7 +86,9 @@ func inspectSourceTable(ctx context.Context, source sourceMetadata, name string)
 	 EXISTS(SELECT 1 FROM pg_index i,unnest(i.indkey) WITH ORDINALITY AS k(attnum,position)
  WHERE i.indrelid=a.attrelid AND i.indisprimary AND i.indisvalid AND i.indimmediate
  AND k.position<=i.indnkeyatts AND a.attnum=k.attnum),
- t.typname,nt.nspname,a.attgenerated::text,a.attnum,a.atthasdef,a.atthasmissing,a.attidentity<>''
+ t.typname,nt.nspname,a.attgenerated::text,a.attnum,a.atthasdef,a.atthasmissing,a.attidentity<>'',
+ coalesce((SELECT k.position::integer FROM pg_index i,unnest(i.indkey) WITH ORDINALITY AS k(attnum,position)
+ WHERE i.indrelid=a.attrelid AND i.indisprimary AND i.indisvalid AND i.indimmediate AND k.position<=i.indnkeyatts AND a.attnum=k.attnum),0)
  FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace
  JOIN pg_type t ON t.oid=a.atttypid JOIN pg_namespace nt ON nt.oid=t.typnamespace
  WHERE n.nspname='public' AND c.relname=$1 AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum LIMIT $2`, name, api.DataPipelineColumnsMax+1)
@@ -98,7 +100,7 @@ func inspectSourceTable(ctx context.Context, source sourceMetadata, name string)
 	for rows.Next() {
 		var col column
 		var typ, namespace, generated string
-		if err = rows.Scan(&col.Name, &col.Modifier, &col.NotNull, &col.Key, &typ, &namespace, &generated, &col.Ordinal, &col.Default, &col.Missing, &col.Identity); err != nil {
+		if err = rows.Scan(&col.Name, &col.Modifier, &col.NotNull, &col.Key, &typ, &namespace, &generated, &col.Ordinal, &col.Default, &col.Missing, &col.Identity, &col.KeyPosition); err != nil {
 			return r, table, err
 		}
 		col.Type = typ

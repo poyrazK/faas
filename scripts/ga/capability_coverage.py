@@ -30,6 +30,8 @@ INVENTORY = os.path.join(ROOT, "docs", "ga-capability-inventory.md")
 # Target: inventory row key (unique substring of the Capability cell), or
 # "INFRA" / "TOOLING" / "TEST" for identifiers that are not customer capabilities.
 RULES = [
+    (r"(^|/|-)support([/-]|$)", "Native customer support"),
+    (r"(^|/|-)customer-attention([/-]|$)", "Native customer support"),
     # --- test fixtures and generated noise
     (r"^/(a|b|boom|echo|counter|dial|h1|users|untrusted|not-net-http|etc/faas/uuid\.txt|contract|probe-contract|identity|signal|requests|last-capture|price|seal|token|grpc|api|internal/?|ingest|control|control/ack|push\.v1\.pusherservice/push|openapi\.json|\{\$\}|/?|\+route\+|`\+route\+`)$", "TEST"),
     (r"test|fixture|fake|example|scenario-restart|rehearsal-native|qualif|conformance|smoke|e2e|bench|eval$|dryrun|leakcheck", "TOOLING"),
@@ -142,6 +144,8 @@ RULES = [
     (r"^artifact-signatures$", "INFRA"),
     # ADR-20261109170000: signd's listener and imaged's signd target.
     (r"^signd-", "INFRA"),
+    # ADR-20261112160000: neond's key file, socket and delete limit.
+    (r"^neond-", "INFRA"),
     # Compile-on-first-use regexps for package-level patterns
     # (ADR-20261101215228 measurement); no capability of its own.
     (r"^lazyregexp$", "INFRA"),
@@ -167,7 +171,7 @@ RULES = [
     (r"^browser$|whycopy", "`gregale` CLI"),
     (r"edgevalidate", "Edge rules (incl"),
     (r"^focus$", "Plans, usage, invoices"),
-    (r"gitfetch|reposcan", "Repo decomposition"),
+    (r"gitfetch|reposcan|featurehints", "Repo decomposition"),
     (r"hostport", "TCP listeners"),
     (r"^markers$", "Framework profiles"),
     (r"simpleapp", "Apps: create"),
@@ -359,6 +363,10 @@ RULES = [
 # Checked before everything else, for every source: names a broad rule or the
 # infra list would misfile.
 PRIORITY_RULES = [
+    # Sales qualification and message templates are real staff surfaces, not test/tooling names.
+    (r"^/v1/referrals(?:/|$)|^/dashboard/referrals$|^referrals?$|^referral-", "Referral codes and conversion estimates"),
+    (r"^/v1/sales/inquiries(?:/|$)|^sales-(?:inquiries|intake)(?:-|$)", "Website sales inquiries"),
+    (r"^/v1/sales(?:/|$)|^/dashboard/sales$|^sales(?:-|$)", "Sales workspace and lead management"),
     (r"^docs-and-trust$", "Docs site and trust pages"),
     (r"^ai-(content-policy|request-replay)$", "AI gateway"),
     (r"^security-headers$", "Edge rules (incl"),
@@ -406,6 +414,8 @@ INFRA_RULES = [
     r"^edgednsd?(-.*)?$",
     # ADR-20261109170000: the control plane's artifact signer.
     r"^signd$",
+    # ADR-20261112160000: the control plane's holder of the Neon API keys.
+    r"^neond$",
     # ADR-20261103163954: what stands in front of a compute edge's TLS listener.
     r"^edge-public-front$",
     # ADR-20261103163954 §4: the compute edge's per-client-address limits.

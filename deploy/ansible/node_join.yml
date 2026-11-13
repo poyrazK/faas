@@ -1084,6 +1084,32 @@
           Environment=FAAS_INSTANCE_BRIDGE_UNIT=1
           {% endif %}
 
+    # Idle ladder (ADR-20261107122928), rendered the same way and before the
+    # adoption check. Off sets nothing: vmmd's default (off) decides.
+    - name: Validate the idle ladder switches
+      ansible.builtin.assert:
+        that:
+          - (vmmd_idle_ladder | default('off')) in ['off', 'observe', 'on']
+          - not (vmmd_idle_ladder_apps | default(false) | bool) or (vmmd_idle_ladder | default('off')) == 'on'
+        fail_msg: >-
+          vmmd_idle_ladder must be off, observe or on, and vmmd_idle_ladder_apps
+          needs vmmd_idle_ladder = on (group_vars/compute_nodes/vmmd_idle_ladder.yml).
+
+    - name: Install the idle ladder switches
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-vmmd.service.d/zz-faas-idle-ladder.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          {% if (vmmd_idle_ladder | default('off')) != 'off' %}
+          Environment=FAAS_IDLE_LADDER={{ vmmd_idle_ladder }}
+          {% endif %}
+          {% if vmmd_idle_ladder_apps | default(false) | bool %}
+          Environment=FAAS_IDLE_LADDER_APPS=1
+          {% endif %}
+
     # A fresh host has no /opt/faas/current yet, but release-bound base
     # preparation needs vmmd. Register the row as unavailable before the
     # temporary candidate vmmd starts so self-registration cannot make the

@@ -4345,7 +4345,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			AdmitRuntime:              financialBudgetServiceAdmission(pgStore),
 			APIMonetization:           deps.apiMonetization,
 			APIMonetizationFor:        handler.APIMonetizationEnabledFor,
-			AdmitManagedAsync:         gateway.NewRehearsalAsyncAdmitter(pgStore),
+			AdmitManagedAsync:         gateway.ChainServiceProxyAsyncAdmitters(gateway.NewRehearsalAsyncAdmitter(pgStore), gateway.NewFunctionSendAdmitter(pgStore)),
 			Provider:                  serviceEndpointProvider,
 			Resolve:                   newServiceProxyResolver(pgStore),
 			Authorize:                 newBudgetedServiceProxyAuthorizer(pgStore),
@@ -4441,6 +4441,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// delayed tasks at api.svc.gregale become run evidence. Every other
 			// caller and request reaches the service proxy unchanged.
 			guestServiceProxy = gateway.WithRehearsalPlatformAPI(guestServiceProxy, func(ctx context.Context, remote string) (string, error) {
+				appID, _, err := serviceProxyConfig.ResolveCallerIdentity(ctx, remote)
+				return appID, err
+			}, pgStore)
+			// ADR-20261112160000: a function reads the invocations it sent at
+			// api.svc.gregale/v1/invocations/{id}, authorized by its own VM.
+			guestServiceProxy = gateway.WithFunctionInvocationAPI(guestServiceProxy, func(ctx context.Context, remote string) (string, error) {
 				appID, _, err := serviceProxyConfig.ResolveCallerIdentity(ctx, remote)
 				return appID, err
 			}, pgStore)

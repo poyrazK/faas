@@ -112,7 +112,7 @@ func runDataAPIHostedReplay(ctx context.Context, config *dataAPIHostedReplayConf
 		return err
 	}
 	defer func() { _ = os.RemoveAll(runtime) }()
-	for _, name := range []string{"hosted-replay.mjs", "request-replay.mjs", "dev-requests.mjs"} {
+	for _, name := range []string{"hosted-replay.mjs", "request-replay.mjs", "dev-requests.mjs", "csv-export.mjs"} {
 		source, err := templates.FS.ReadFile("data-api/" + name)
 		if err != nil {
 			return err

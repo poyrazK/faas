@@ -1122,11 +1122,32 @@ func cmdProjectsInfo(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	project, err := client.GetProject(context.Background(), args[0])
+	ctx := context.Background()
+	project, err := client.GetProject(ctx, args[0])
 	if err != nil {
 		return printErr("Could not read project", err)
 	}
-	return renderProject(project)
+	if jsonOutput {
+		return renderProject(project)
+	}
+	return renderProjectParked(project, parkedProjectApps(ctx, client, project.Workloads))
+}
+
+// parkedProjectApps loads the parked workloads' apps so project info can say
+// why each is parked. The project response carries only the app status, and
+// printed the parked app's release as plain "live" (2026-11-12 agent
+// feedback). Best effort: an app that fails to load renders as "parked".
+func parkedProjectApps(ctx context.Context, client *Client, workloads []api.ProjectWorkloadResponse) map[string]api.AppResponse {
+	out := make(map[string]api.AppResponse)
+	for _, workload := range workloads {
+		if workload.Status != appStatusParked {
+			continue
+		}
+		if app, err := client.GetApp(ctx, workload.Slug); err == nil {
+			out[workload.Slug] = app
+		}
+	}
+	return out
 }
 
 func cmdProjectsUpdate(args []string) int {
@@ -1234,19 +1255,45 @@ func projectServiceCalls(workloads []api.ProjectWorkloadResponse) []string {
 }
 
 func renderProject(project api.ProjectResponse) int {
+	return renderProjectParked(project, nil)
+}
+
+// renderProjectParked renders a project; parked maps a parked workload's slug
+// to its app, for the parked reason.
+func renderProjectParked(project api.ProjectResponse, parked map[string]api.AppResponse) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(project))
 	}
 	_, _ = fmt.Fprintf(osStdout, "%s\n  repository: %s\n  production branch: %s\n  scan source: %s\n  workloads: %d\n  exclusions: %s\n  last deploy: %s\n  last build: %s\n",
 		project.Slug, orDash(project.RepoFullName), orDash(project.ProductionBranch), orDash(project.ScanSource),
 		len(project.Workloads), orDash(strings.Join(project.Exclusions, ", ")), orDash(project.LastReconciliationStatus), orDash(project.LastBuildStatus))
-	printProjectServices(osStdout, project.Workloads)
+	printProjectServices(osStdout, project.Workloads, parked)
+	for _, workload := range project.Workloads {
+		if app, ok := parked[workload.Slug]; ok {
+			writeParkedNotice(osStdout, app)
+		}
+	}
 	return 0
 }
 
 // printProjectServices lists each service with its app, its latest
 // deployment and the services it declares it calls (ADR-20261026193018).
-func printProjectServices(w io.Writer, workloads []api.ProjectWorkloadResponse) {
+// projectWorkloadDeploymentStatus is the DEPLOYMENT cell: the latest
+// release's status, plus the parked state when the app is parked, so a
+// liveness-parked service no longer reads as plain "live".
+func projectWorkloadDeploymentStatus(workload api.ProjectWorkloadResponse, parked map[string]api.AppResponse) string {
+	status := orDash(workload.DeploymentStatus)
+	if workload.Status != appStatusParked {
+		return status
+	}
+	label := "parked"
+	if app, ok := parked[workload.Slug]; ok {
+		label = appParkedLabel(app)
+	}
+	return status + " (" + label + ")"
+}
+
+func printProjectServices(w io.Writer, workloads []api.ProjectWorkloadResponse, parked map[string]api.AppResponse) {
 	if len(workloads) == 0 {
 		return
 	}
@@ -1255,7 +1302,7 @@ func printProjectServices(w io.Writer, workloads []api.ProjectWorkloadResponse) 
 	_, _ = fmt.Fprintln(tw, "    NAME\tAPP\tDEPLOYMENT\tCALLS")
 	for _, workload := range workloads {
 		_, _ = fmt.Fprintf(tw, "    %s\t%s\t%s\t%s\n", orDash(workload.WorkloadName), workload.Slug,
-			orDash(workload.DeploymentStatus), orDash(strings.Join(workload.DependsOn, ", ")))
+			projectWorkloadDeploymentStatus(workload, parked), orDash(strings.Join(workload.DependsOn, ", ")))
 	}
 	_ = tw.Flush()
 }

@@ -106,7 +106,7 @@ func cmdDevLocal(args []string) int {
 	if *port < 0 || *port > 65535 {
 		return printErr("Invalid port", errors.New("--port must be between 0 and 65535"))
 	}
-	projectDir, envPath, _, err := devLocalInputs(*sourcePath, *envFile, flagSetWasSet(fs)["env-file"])
+	projectDir, envPath, fileEnv, err := devLocalInputs(*sourcePath, *envFile, flagSetWasSet(fs)["env-file"])
 	if err != nil {
 		return printErr("Could not start locally", err)
 	}
@@ -114,12 +114,15 @@ func cmdDevLocal(args []string) int {
 	if err != nil {
 		return printErr("Could not start locally", err)
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := devLocalPreflight(ctx, projectDir, fns, app, devLocalEnv(os.Environ(), nil, fileEnv)); err != nil {
+		return printErr("Local preflight failed", err)
+	}
 	cacheDir, err := localCacheDir(projectDir)
 	if err != nil {
 		return printErr("Could not start local functions", err)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	remote := &devLocalRemote{Env: map[string]string{}}
 	switch {
 	case *offline:
@@ -150,7 +153,17 @@ func cmdDevLocal(args []string) int {
 		}
 		return 0
 	}
+	// Listen first: a function's environment carries the URL its siblings are
+	// called at, so the port must be known before any function is prepared.
+	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(*port))
+	if err != nil {
+		return printErr("Could not listen", fmt.Errorf("port %d: %w; pass --port", *port, err))
+	}
+	defer func() { _ = ln.Close() }()
+	listenPort := ln.Addr().(*net.TCPAddr).Port
+	refreshLocalFunctionTypes(projectDir, osStdout)
 	for _, fn := range fns {
+		fn.devPort = listenPort
 		if err := fn.prepare(ctx, cacheDir, baseEnv); err != nil {
 			return printErr("Could not start function "+fn.Name, err)
 		}
@@ -160,11 +173,7 @@ func cmdDevLocal(args []string) int {
 		return printErr("Could not start local functions", err)
 	}
 	srv.envConfig = envConfig
-	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(*port))
-	if err != nil {
-		return printErr("Could not listen", fmt.Errorf("port %d: %w; pass --port", *port, err))
-	}
-	srv.port = ln.Addr().(*net.TCPAddr).Port
+	srv.port = listenPort
 	statePath := filepath.Join(cacheDir, "state.json")
 	if err := writeDevLocalState(statePath, devLocalState{Port: srv.port, Token: srv.token, PID: os.Getpid()}); err != nil {
 		return printErr("Could not start local functions", err)
@@ -309,6 +318,8 @@ type devLocalServer struct {
 	port       int
 	out        io.Writer
 	mu         sync.Mutex // serializes reload output and Go rebuilds
+	// invocations holds local sends for wait() and status().
+	invocations devLocalInvocations
 }
 
 func newDevLocalServer(fns []*localFunction, projectDir string) (*devLocalServer, error) {
@@ -363,6 +374,9 @@ func (s *devLocalServer) prewarm(ctx context.Context, fn *localFunction) {
 func (s *devLocalServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == devLocalTriggerPath {
 		s.serveTrigger(w, r)
+		return
+	}
+	if s.serveFunctionCall(w, r) {
 		return
 	}
 	fn := s.route(r.Host, r.URL.Path)

@@ -135,7 +135,7 @@ func cmdAppStaticEgressIPSet(slug string, args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.SetAppStaticEgressIP(context.Background(), slug, api.SetAppStaticEgressIPRequest{IP: ipStr})
+	resp, err := client.SetAppStaticEgressIP(context.Background(), slug, api.SetAppStaticEgressIPRequest{IP: ipStr, Set: true})
 	if err != nil {
 		return printErr("Set failed", err)
 	}

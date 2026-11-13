@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/referrals"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -564,11 +565,14 @@ type Account struct {
 	AbuseHoldReason string
 }
 
-// Account abuse-hold reasons (ADR-361); the accounts_abuse_hold_valid
+// Account abuse-hold reasons (ADR-361); the accounts_abuse_hold_v2_valid
 // CHECK accepts exactly these.
 const (
 	AccountAbuseHoldEgressFanout = "egress_fanout"
 	AccountAbuseHoldEgressFlood  = "egress_flood"
+	// AccountAbuseHoldCPUSustained: the tipping recycle was a Free
+	// instance pinned at its CPU quota (ADR-20261112120603).
+	AccountAbuseHoldCPUSustained = "cpu_sustained"
 	AccountAbuseHoldOperator     = "operator"
 )
 
@@ -616,6 +620,18 @@ type AccountAbuseHoldStore interface {
 	// ReleaseAccountAbuseHold clears the hold. released reports whether one
 	// was set.
 	ReleaseAccountAbuseHold(ctx context.Context, accountID string) (released bool, err error)
+}
+
+// AccountAbuseStrikeStore records abuse recycles against a resource owner
+// (account or organization) for the account abuse hold escalation
+// (ADR-20261113133500). The count is shared by every schedd and survives
+// restarts. Both PgStore and MemStore implement it.
+type AccountAbuseStrikeStore interface {
+	// RecordAccountAbuseStrike records a strike at at and returns the number
+	// of the owner's strikes after at-window, this one included. reason is
+	// an automatic hold reason (egress_fanout, egress_flood, cpu_sustained);
+	// appID may be empty.
+	RecordAccountAbuseStrike(ctx context.Context, accountID, reason, appID string, at time.Time, window time.Duration) (int, error)
 }
 
 // EmailVerified reports whether the account has proved control of its email.
@@ -3469,6 +3485,11 @@ type Cron struct {
 	RetryMax              int // additional attempts after the first failed/timed-out execution
 	RetryBackoffSeconds   int // base delay; later retries double it, capped at 24 hours
 	Enabled               bool
+	// ClonePaused marks a cron a full environment clone copied disabled
+	// although the source ran it; resuming the environment's automation
+	// enables it. Any explicit enable or disable clears it
+	// (ADR-20261104120000 amendment 2026-11-12).
+	ClonePaused bool
 	// SuspendedReason is set by the scheduler when customer intent remains
 	// enabled but the app has no live deployment (a later successful deploy
 	// clears it without re-enabling a cron the customer disabled
@@ -3802,6 +3823,10 @@ const (
 	// health guard holds or aborted (ADR-20261028110044).
 	AlertMetricRouteMonitorIncidents AlertMetric = "route_monitor_incidents"
 	AlertMetricRouteHealthHolds      AlertMetric = "route_health_holds"
+	// AlertMetricAIBudgetAlerts counts the AI budget threshold crossings of
+	// the app's bound integrations within the window (ADR 20261027132936
+	// amendment 2).
+	AlertMetricAIBudgetAlerts AlertMetric = "ai_budget_alerts"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -4915,6 +4940,11 @@ type Invocation struct {
 	// them as X-Faas-Edge-Jwt-*. Customer headers never fill them.
 	EdgeJWTIssuer  string `json:"-"`
 	EdgeJWTSubject string `json:"-"`
+	// SentByAppID and OnCompleteAppID record a send() (ADR-20261112160000):
+	// the calling app, and the app that receives the completion. They are
+	// written to invocation_sends with the row and not read back on it.
+	SentByAppID     string `json:"-"`
+	OnCompleteAppID string `json:"-"`
 	// WorkPolicyName and WorkKeyDigest identify an app-scoped scheduling lane.
 	// The raw application key is never persisted in this ledger.
 	WorkPolicyName     string     `json:"work_policy_name,omitempty"`
@@ -7324,6 +7354,12 @@ type CliAuthDeviceCodeStore interface {
 	// ConsumeCliAuthDeviceCode has ConsumeCliAuthCode's contract, keyed by
 	// the device code's hash.
 	ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error)
+	// ClaimCliAuthCodeForDevice is ClaimCliAuthCode that also replaces the
+	// row's device hash in the same statement. The one-click loopback login
+	// (ADR-20261111170000) hands the new device code to the approving
+	// browser's own machine, so the CLI that minted the code (possibly a
+	// phisher's) can no longer exchange it.
+	ClaimCliAuthCodeForDevice(ctx context.Context, tokenHash []byte, accountID string, deviceHash []byte) error
 }
 
 // AccountPassword is one row of the account_passwords table
@@ -8304,8 +8340,10 @@ func PersonalOrgSlug(accountID string) string {
 // is derived deterministically from the account id (PersonalOrgSlug),
 // name defaults to "Personal", status defaults to OrgStatusActive.
 type CreateAccountWithPersonalOrgParams struct {
-	Email string
-	Plan  api.Plan
+	// Referral is accepted only by the shared self-service signup path.
+	Referral *referrals.Attribution
+	Email    string
+	Plan     api.Plan
 	// RequireEmailVerification leaves email_verified_at NULL. The zero value
 	// preserves the historical trusted-creation behavior used by OAuth,
 	// operator, migration, and test call sites.

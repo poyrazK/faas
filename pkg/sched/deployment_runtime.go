@@ -141,6 +141,13 @@ func healthcheckPathForApp(dep state.Deployment, app state.App) string {
 
 const defaultHealthcheckPath = "/healthz"
 
+// routedPortRawTCPForApp marks a startup probe that is TCP accept on the
+// app's declared public raw TCP listener. vmmd then runs no plan-default HTTP
+// liveness probe, which such a server cannot answer (ADR-079 amendment 1).
+func routedPortRawTCPForApp(dep state.Deployment, app state.App, path string, grpc bool) bool {
+	return path == "" && !grpc && routesRawTCPListener(dep, app)
+}
+
 // routesRawTCPListener reports that the deployment's routed port is declared
 // on the app as a public TCP listener.
 func routesRawTCPListener(dep state.Deployment, app state.App) bool {

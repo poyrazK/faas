@@ -43,6 +43,8 @@ type ReportHandler struct {
 	Verifier  *workloadidentity.Verifier
 	Workloads dataapiworkload.Store
 	Now       func() time.Time
+	// AccessChanged propagates reported access to existing live endpoints.
+	AccessChanged func(context.Context, string)
 }
 
 func (h ReportHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -77,6 +79,9 @@ func (h ReportHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		unavailable(w)
 		return
+	}
+	if access != nil && h.AccessChanged != nil {
+		h.AccessChanged(r.Context(), app.ID)
 	}
 	writeJSON(w, api.DataAPIUsageReportResponse{MonthToDate: monthToDate(mtd)})
 }

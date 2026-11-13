@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { OutboundAIContentPolicy } from './OutboundAIContentPolicy.js';
 import type { OutboundAIOnlineEvaluation } from './OutboundAIOnlineEvaluation.js';
+import type { OutboundAISemanticCache } from './OutboundAISemanticCache.js';
 import type { OutboundRequestPolicy } from './OutboundRequestPolicy.js';
 /**
  * Account-owned managed integration metadata; never contains a provider key or gateway token.
@@ -73,6 +74,7 @@ export type OutboundIntegrationOffer = {
    * Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none.
    */
   ai_auto_prompt_cache?: boolean;
+  ai_semantic_cache?: OutboundAISemanticCache;
   /**
    * Calls each AI trace may make, settled and in flight. Absent when unlimited.
    */

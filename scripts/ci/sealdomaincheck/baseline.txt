@@ -151,6 +151,10 @@ plain runtime_upgrade_external_fence_authorities.public_key
 plain runtime_upgrade_external_fence_receipts.envelope
 plain runtime_upgrade_native_public_startups.envelope
 plain runtime_upgrade_native_public_startups.review
+# SHA-256 request digest only; no reversible secret or encryption key (ADR-20261111130000).
+plain support_receipts.request_hash
+# ADR-20261112134100: SHA-256 destination binding for stable mail retries, not a credential.
+plain support_notifications.destination_hash
 plain trigger_records.work_fairness_digest
 plain trigger_records.work_key_digest
 plain stored_workflow_live_verifications.request_fingerprint

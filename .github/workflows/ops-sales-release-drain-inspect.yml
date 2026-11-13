@@ -1,0 +1,56 @@
+name: ops-sales-release-drain-inspect
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-us-platform-rollout
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    name: Read fsn-2 compactor drain evidence
+    if: github.repository == 'poyrazK/faas' && github.ref == 'refs/heads/main'
+    environment: production-us
+    runs-on: [self-hosted, linux, faas-fleet-us]
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: drain-inspect-src
+          persist-credentials: false
+          sparse-checkout: scripts/ops/inspect_sales_release_drain.py
+          sparse-checkout-cone-mode: false
+
+      - name: Inspect the existing vmmd and its bounded instance journal
+        env:
+          COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$COMPUTE_SSH_KEY"
+          umask 077
+          scratch="$(mktemp -d "$RUNNER_TEMP/sales-drain-inspect.XXXXXXXX")"
+          trap 'rm -rf -- "$scratch"' EXIT
+          printf '%s\n' "$COMPUTE_SSH_KEY" > "$scratch/key"
+          ssh-keyscan -T 10 -t ed25519 fsn-2.gregale.dev > "$scratch/known-hosts" 2>/dev/null
+          fingerprint="$(ssh-keygen -lf "$scratch/known-hosts" -E sha256 | awk '{print $2}' | sort -u)"
+          test "$fingerprint" = 'SHA256:0p1vgiWlG75HcPGAGJFTCTf2GudZsX2h3VJFrnrkc6k'
+          ssh -i "$scratch/key" -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$scratch/known-hosts" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
+            root@fsn-2.gregale.dev python3 - \
+            < drain-inspect-src/scripts/ops/inspect_sales_release_drain.py > sales-release-drain-evidence.json
+          cat sales-release-drain-evidence.json
+
+      - name: Save read-only drain evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sales-release-drain-evidence-${{ github.run_id }}
+          path: sales-release-drain-evidence.json
+          if-no-files-found: ignore
+          retention-days: 7

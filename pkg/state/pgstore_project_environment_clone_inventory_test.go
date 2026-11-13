@@ -50,8 +50,16 @@ func TestPgCloneAdmissionInventoryNamesOnlyTablesTheSourceUses(t *testing.T) {
 		return app
 	}
 	app := liveApp("inventory")
+	// Outbound app webhooks have no clone strategy yet; crons are copied
+	// paused (ADR-20261104120000 amendment 2026-11-12).
+	createWebhook := func(appID string) (any, error) {
+		return pool.Exec(ctx, `INSERT INTO app_webhooks(app_id, account_id, target_url, secret_sealed) VALUES($1, $2, 'https://hooks.example.test/deploys', '\x00')`, appID, account.ID)
+	}
 	// Another project's strategy-less rows are not this source's.
-	if _, err := s.CreateCron(ctx, liveApp("neighbour").ID, "*/5 * * * *", "/tick", true); err != nil {
+	if _, err := createWebhook(liveApp("neighbour").ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateCron(ctx, app.ID, "0 4 * * *", "/nightly", true); err != nil {
 		t.Fatal(err)
 	}
 	var qualified []string
@@ -81,10 +89,10 @@ func TestPgCloneAdmissionInventoryNamesOnlyTablesTheSourceUses(t *testing.T) {
 		return inventory.Blockers
 	}
 
-	if _, err := s.CreateCron(ctx, app.ID, "*/5 * * * *", "/tick", true); err != nil {
+	if _, err := createWebhook(app.ID); err != nil {
 		t.Fatal(err)
 	}
-	want := []state.ProjectEnvironmentCloneCoverageBlocker{{Table: "crons", Code: state.CloneBlockerStrategyUnavailable}}
+	want := []state.ProjectEnvironmentCloneCoverageBlocker{{Table: "app_webhooks", Code: state.CloneBlockerStrategyUnavailable}}
 	if got := blockers("cron-stage"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("blockers = %+v, want %+v", got, want)
 	}
@@ -101,14 +109,14 @@ func TestPgCloneAdmissionInventoryNamesOnlyTablesTheSourceUses(t *testing.T) {
 	}
 	// A bucket is named when its backend is not qualified for clones or it
 	// has no versioning (ADR-20261103160000).
-	want = []state.ProjectEnvironmentCloneCoverageBlocker{{Table: "crons", Code: state.CloneBlockerStrategyUnavailable},
+	want = []state.ProjectEnvironmentCloneCoverageBlocker{{Table: "app_webhooks", Code: state.CloneBlockerStrategyUnavailable},
 		{Table: "object_buckets", Resource: "assets", Code: state.CloneBlockerObjectStorageProviderUnqualified},
 		{Table: "object_buckets", Resource: "assets", Code: state.CloneBlockerObjectVersioningRequired}}
 	if got := blockers("data-stage"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("blockers = %+v, want %+v", got, want)
 	}
 	qualified = []string{"fixture"}
-	want = []state.ProjectEnvironmentCloneCoverageBlocker{{Table: "crons", Code: state.CloneBlockerStrategyUnavailable},
+	want = []state.ProjectEnvironmentCloneCoverageBlocker{{Table: "app_webhooks", Code: state.CloneBlockerStrategyUnavailable},
 		{Table: "object_buckets", Resource: "assets", Code: state.CloneBlockerObjectVersioningRequired}}
 	if got := blockers("qualified-stage"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("qualified backend blockers = %+v, want %+v", got, want)
@@ -124,11 +132,11 @@ func TestPgCloneAdmissionInventoryNamesOnlyTablesTheSourceUses(t *testing.T) {
 		VALUES ($1, 'Enabled', 'Enabled', 'ready', true, now() - interval '1 minute', $2)`, bucket.ID, inventory); err != nil {
 		t.Fatal(err)
 	}
-	want = []state.ProjectEnvironmentCloneCoverageBlocker{{Table: "crons", Code: state.CloneBlockerStrategyUnavailable}}
+	want = []state.ProjectEnvironmentCloneCoverageBlocker{{Table: "app_webhooks", Code: state.CloneBlockerStrategyUnavailable}}
 	if got := blockers("versioned-stage"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("a versioned bucket on a qualified backend blocks: %+v, want %+v", got, want)
 	}
-	if _, err := pool.Exec(ctx, `DELETE FROM crons WHERE app_id = $1`, app.ID); err != nil {
+	if _, err := pool.Exec(ctx, `DELETE FROM app_webhooks WHERE app_id = $1`, app.ID); err != nil {
 		t.Fatal(err)
 	}
 	var sized []string
@@ -141,7 +149,7 @@ func TestPgCloneAdmissionInventoryNamesOnlyTablesTheSourceUses(t *testing.T) {
 		t.Fatalf("storage limits must refuse the copy: %v, sized %v", err, sized)
 	}
 	checkCapacity = nil
-	if _, err := s.CreateCron(ctx, app.ID, "*/5 * * * *", "/tick", true); err != nil {
+	if _, err := createWebhook(app.ID); err != nil {
 		t.Fatal(err)
 	}
 	qualified = nil
@@ -167,7 +175,7 @@ func TestPgCloneAdmissionInventoryNamesOnlyTablesTheSourceUses(t *testing.T) {
 	if err := s.FinishObjectBucket(ctx, bucket.ID, "drop", "deleted"); err != nil {
 		t.Fatal(err)
 	}
-	want = []state.ProjectEnvironmentCloneCoverageBlocker{{Table: "crons", Code: state.CloneBlockerStrategyUnavailable}}
+	want = []state.ProjectEnvironmentCloneCoverageBlocker{{Table: "app_webhooks", Code: state.CloneBlockerStrategyUnavailable}}
 	if got := blockers("deleted-stage"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("deleted and other-environment buckets must not block: blockers = %+v, want %+v", got, want)
 	}
