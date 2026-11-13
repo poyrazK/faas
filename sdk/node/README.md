@@ -28,13 +28,9 @@ webhook requests. See
 [`docs/webhook-receiver-verification.md`](../../docs/webhook-receiver-verification.md)
 for usage and delivery-ID deduplication guidance.
 
-> **Heads-up: publish state.** The manifest name is now the conventional
-> scoped form `@gregale/sdk-node`. It was previously `gregale` + `/skd-node`
-> — a typo that npm rejects outright, since an unscoped name may not contain
-> a slash. `private` is cleared and the `repository` field is set. `publishConfig.access` stays `restricted` until the licensing
-> question in [`sdk/README-publishing.md`](../README-publishing.md) is
-> settled — the current LICENSE is proprietary and non-redistributable.
-> **Nothing is on the public npm registry yet.**
+> **Publication:** this client SDK is Apache-2.0 licensed and configured for
+> public npm access. It is not published to npm yet. Use the installation
+> steps below; [SDK publishing](../README-publishing.md) tracks release setup.
 >
 > **Heads-up: pre-1.0.** Version `0.1.0` is the pre-1.0 signal. The
 > public API may shift between `0.x` releases. Pin to an exact version
@@ -50,19 +46,15 @@ for usage and delivery-ID deduplication guidance.
 
 ## Install
 
-Once the package is published:
-
-```sh
-npm install @gregale/sdk-node
-```
-
-**Today it is not published yet**, so install from a locally built tarball.
+Install from a pinned checkout of the public SDK repository.
 npm cannot install a package from a subdirectory of a git repo, and `dist/`
 is a build artifact that is not committed.
 
 ```sh
 git clone https://github.com/gregale-dev/gregale-js.git
-cd gregale-js/packages/sdk-node
+cd gregale-js
+git checkout <commit>
+cd packages/sdk-node
 npm ci && npm run build
 npm pack --pack-destination /tmp     # -> /tmp/gregale-sdk-node-0.1.0.tgz
 
@@ -70,9 +62,35 @@ cd /path/to/your/project
 npm install /tmp/gregale-sdk-node-0.1.0.tgz
 ```
 
+Replace `<commit>` with the full SHA of the SDK revision you reviewed. Commit
+the tarball inside your project and the updated lockfile for reproducible
+builds; see [Install the SDKs](../../docs/sdks.md#node). Maintainers can also
+obtain a verified tarball from the `sdk-mirror` workflow's
+`sdk-install-gregale-js` artifact, with its checksum in `sdk-install.json`.
+
+### First request
+
+Use your existing credential through `FAAS_TOKEN`, never a literal in source:
+
+<!-- sdk-install-quickstart:start -->
+```js
+import { AccountService, FaaSClient } from '@gregale/sdk-node';
+
+const client = new FaaSClient(process.env.FAAS_API ?? 'https://api.gregale.dev', {
+  token: process.env.FAAS_TOKEN,
+});
+try {
+  const account = await AccountService.getAccount();
+  console.log(account.plan);
+} finally {
+  client.uninstall();
+}
+```
+<!-- sdk-install-quickstart:end -->
+
 ## PostgreSQL pools across checkpoint, restore and thaw
 
-The `@gregale/sdk-node/postgres/runtime` subpath exports `createPostgresPool`,
+The `@gregale/sdk-node/preview/postgres/runtime` subpath exports `createPostgresPool`,
 `postgresPoolConfig`, and `PostgresPoolError`. Install `pg` separately. This
 runtime has no control-plane client or driver dependency, and does not install
 process handlers. The CLI's `rest-api-postgres` starter bundles the same compiled
