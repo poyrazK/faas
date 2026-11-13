@@ -75,6 +75,7 @@ func (m *MemStore) BeginWorkflowCodeInvocation(ctx context.Context, runID string
 }
 
 func (m *MemStore) FinishWorkflowCodeInvocation(ctx context.Context, runID string, finish WorkflowCodeInvocation) error {
+	finish.runID = runID
 	if err := validateWorkflowCodeInvocation(finish); err != nil {
 		return err
 	}
@@ -101,6 +102,8 @@ func (m *MemStore) FinishWorkflowCodeInvocation(ctx context.Context, runID strin
 			return fmt.Errorf("%w: code operation %q already exists", ErrConflict, op.StepName)
 		case !op.New && (!exists || workflowCodeTerminalStatus(existing.Status)):
 			return fmt.Errorf("%w: code operation %q is not pending", ErrConflict, op.StepName)
+		case op.Call != nil && m.apps[op.Call.AppID].ID == "":
+			return fmt.Errorf("%w: workflow call %q targets an unknown app", ErrNotFound, op.StepName)
 		}
 		pending[op.StepName] = true
 	}
@@ -123,6 +126,11 @@ func (m *MemStore) FinishWorkflowCodeInvocation(ctx context.Context, runID strin
 			step.FinishedAt = &now
 		}
 		steps[op.StepName] = step
+		if op.Call != nil {
+			if err := m.enqueueWorkflowCallLocked(*op.Call); err != nil {
+				return err
+			}
+		}
 		if op.Attempt > 0 {
 			status := workflowCodeAttemptStatus(op)
 			if op.RetryAt != nil {

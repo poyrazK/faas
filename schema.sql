@@ -43624,7 +43624,10 @@ CREATE TABLE public.invocation_sends (
     sender_app_id uuid NOT NULL,
     on_complete_app_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT invocation_sends_created_at_check CHECK (isfinite(created_at))
+    workflow_run_id uuid,
+    workflow_op text,
+    CONSTRAINT invocation_sends_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT invocation_sends_workflow_call_check CHECK ((((workflow_run_id IS NULL) = (workflow_op IS NULL)) AND ((workflow_op IS NULL) OR ((length(workflow_op) >= 1) AND (length(workflow_op) <= 160)))))
 );
 
 

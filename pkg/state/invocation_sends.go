@@ -27,6 +27,10 @@ const InvocationCompletionHeader = "X-Gregale-Invocation-Completion"
 type InvocationSend struct {
 	SenderAppID     string
 	OnCompleteAppID string
+	// WorkflowRunID and WorkflowOp are set for a workflow call
+	// (ADR-20261113120824 §2).
+	WorkflowRunID string
+	WorkflowOp    string
 }
 
 // InvocationSendReader is implemented by the stores that record sends. It is
@@ -49,7 +53,8 @@ func (s *PgStore) InvocationSend(ctx context.Context, invocationID string) (Invo
 	if err != nil {
 		return InvocationSend{}, fmt.Errorf("state: invocation send: %w", err)
 	}
-	return InvocationSend{SenderAppID: row.SenderAppID, OnCompleteAppID: row.OnCompleteAppID}, nil
+	return InvocationSend{SenderAppID: row.SenderAppID, OnCompleteAppID: row.OnCompleteAppID,
+		WorkflowRunID: row.WorkflowRunID, WorkflowOp: row.WorkflowOp}, nil
 }
 
 // InvocationSend mirrors PgStore.InvocationSend.
@@ -77,6 +82,7 @@ func insertInvocationSendDB(ctx context.Context, db sqlc.DBTX, inv Invocation) e
 		{inv.ID, &params.InvocationID},
 		{inv.SentByAppID, &params.SenderAppID},
 		{inv.OnCompleteAppID, &params.OnCompleteAppID},
+		{inv.WorkflowCallRunID, &params.WorkflowRunID},
 	} {
 		if input.value == "" {
 			continue
@@ -86,6 +92,9 @@ func insertInvocationSendDB(ctx context.Context, db sqlc.DBTX, inv Invocation) e
 			return fmt.Errorf("%w: invocation send ids must be UUIDs", ErrInvalidArgument)
 		}
 		*input.target = pgtype.UUID{Bytes: id, Valid: true}
+	}
+	if inv.WorkflowCallOp != "" {
+		params.WorkflowOp = pgtype.Text{String: inv.WorkflowCallOp, Valid: true}
 	}
 	if err := sqlc.New().InsertInvocationSend(ctx, db, params); err != nil {
 		return mapErr(err)
@@ -153,6 +162,9 @@ func enqueueInvocationCompletionTx(ctx context.Context, tx pgx.Tx, inv Invocatio
 	if err != nil {
 		return fmt.Errorf("state: invocation completion send: %w", err)
 	}
+	if row.WorkflowRunID != "" {
+		return settleWorkflowCallTx(ctx, tx, inv, row.WorkflowRunID, row.WorkflowOp)
+	}
 	completion, ok, err := invocationCompletion(inv, InvocationSend{SenderAppID: row.SenderAppID, OnCompleteAppID: row.OnCompleteAppID})
 	if err != nil || !ok {
 		return err
@@ -166,6 +178,10 @@ func enqueueInvocationCompletionTx(ctx context.Context, tx pgx.Tx, inv Invocatio
 // enqueueInvocationCompletionLocked mirrors enqueueInvocationCompletionTx;
 // the caller holds m.mu.
 func (m *MemStore) enqueueInvocationCompletionLocked(inv Invocation) error {
+	if send := m.invocationSends[inv.ID]; send.WorkflowRunID != "" {
+		m.settleWorkflowCallLocked(inv, send)
+		return nil
+	}
 	completion, ok, err := invocationCompletion(inv, m.invocationSends[inv.ID])
 	if err != nil || !ok {
 		return err
@@ -185,7 +201,8 @@ func (m *MemStore) recordInvocationSendLocked(inv Invocation) {
 	if m.invocationSends == nil {
 		m.invocationSends = make(map[string]InvocationSend)
 	}
-	m.invocationSends[inv.ID] = InvocationSend{SenderAppID: inv.SentByAppID, OnCompleteAppID: inv.OnCompleteAppID}
+	m.invocationSends[inv.ID] = InvocationSend{SenderAppID: inv.SentByAppID, OnCompleteAppID: inv.OnCompleteAppID,
+		WorkflowRunID: inv.WorkflowCallRunID, WorkflowOp: inv.WorkflowCallOp}
 }
 
 // enqueueSentInvocation writes a sent invocation and its send record in one

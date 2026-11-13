@@ -7530,6 +7530,8 @@ type InvocationSend struct {
 	SenderAppID     pgtype.UUID
 	OnCompleteAppID pgtype.UUID
 	CreatedAt       pgtype.Timestamptz
+	WorkflowRunID   pgtype.UUID
+	WorkflowOp      pgtype.Text
 }
 
 type InvocationWorkCancellation struct {

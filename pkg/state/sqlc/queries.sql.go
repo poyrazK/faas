@@ -28783,19 +28783,27 @@ func (q *Queries) GetInstanceTailCount(ctx context.Context, db DBTX, id pgtype.U
 }
 
 const getInvocationSend = `-- name: GetInvocationSend :one
-SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id
+SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id,
+ coalesce(workflow_run_id::text, '')::text AS workflow_run_id, coalesce(workflow_op, '')::text AS workflow_op
 FROM invocation_sends WHERE invocation_id = $1::uuid
 `
 
 type GetInvocationSendRow struct {
 	SenderAppID     string
 	OnCompleteAppID string
+	WorkflowRunID   string
+	WorkflowOp      string
 }
 
 func (q *Queries) GetInvocationSend(ctx context.Context, db DBTX, invocationID pgtype.UUID) (GetInvocationSendRow, error) {
 	row := db.QueryRow(ctx, getInvocationSend, invocationID)
 	var i GetInvocationSendRow
-	err := row.Scan(&i.SenderAppID, &i.OnCompleteAppID)
+	err := row.Scan(
+		&i.SenderAppID,
+		&i.OnCompleteAppID,
+		&i.WorkflowRunID,
+		&i.WorkflowOp,
+	)
 	return i, err
 }
 
@@ -35696,20 +35704,30 @@ func (q *Queries) InsertInstanceApplicationStandardPromotion(ctx context.Context
 }
 
 const insertInvocationSend = `-- name: InsertInvocationSend :exec
-INSERT INTO invocation_sends (invocation_id, sender_app_id, on_complete_app_id)
-VALUES ($1::uuid, $2::uuid, $3::uuid)
+INSERT INTO invocation_sends (invocation_id, sender_app_id, on_complete_app_id, workflow_run_id, workflow_op)
+VALUES ($1::uuid, $2::uuid, $3::uuid,
+ $4::uuid, $5::text)
 `
 
 type InsertInvocationSendParams struct {
 	InvocationID    pgtype.UUID
 	SenderAppID     pgtype.UUID
 	OnCompleteAppID pgtype.UUID
+	WorkflowRunID   pgtype.UUID
+	WorkflowOp      pgtype.Text
 }
 
 // ADR-20261112160000: the app that sent this invocation with send(), and the
-// app its completion goes to, written with the invocation row.
+// app its completion goes to, written with the invocation row. A workflow
+// call (ADR-20261113120824) names its run and operation instead.
 func (q *Queries) InsertInvocationSend(ctx context.Context, db DBTX, arg InsertInvocationSendParams) error {
-	_, err := db.Exec(ctx, insertInvocationSend, arg.InvocationID, arg.SenderAppID, arg.OnCompleteAppID)
+	_, err := db.Exec(ctx, insertInvocationSend,
+		arg.InvocationID,
+		arg.SenderAppID,
+		arg.OnCompleteAppID,
+		arg.WorkflowRunID,
+		arg.WorkflowOp,
+	)
 	return err
 }
 
@@ -65551,6 +65569,19 @@ type LockWorkflowRunConcurrencyParams struct {
 func (q *Queries) LockWorkflowRunConcurrency(ctx context.Context, db DBTX, arg LockWorkflowRunConcurrencyParams) error {
 	_, err := db.Exec(ctx, lockWorkflowRunConcurrency, arg.AppID, arg.WorkflowName)
 	return err
+}
+
+const lockWorkflowRunForCallSettle = `-- name: LockWorkflowRunForCallSettle :one
+SELECT status FROM workflow_runs WHERE id = $1::uuid FOR UPDATE
+`
+
+// ADR-20261113120824 §2: a call settles under the run lock, taken before the
+// operation row, the order the engine takes them in.
+func (q *Queries) LockWorkflowRunForCallSettle(ctx context.Context, db DBTX, runID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, lockWorkflowRunForCallSettle, runID)
+	var status string
+	err := row.Scan(&status)
+	return status, err
 }
 
 const lockWorkflowRunForManualRetry = `-- name: LockWorkflowRunForManualRetry :one
@@ -109114,6 +109145,39 @@ func (q *Queries) SettleEventSubscriptionIntent(ctx context.Context, db DBTX, ar
 	return err
 }
 
+const settleWorkflowCallOp = `-- name: SettleWorkflowCallOp :execrows
+UPDATE workflow_steps
+SET status = $1::text, output = $2::jsonb, error = $3::text,
+    finished_at = now()
+WHERE run_id = $4::uuid AND step_name = $5::text
+  AND status IN ('pending', 'awaiting_event')
+  AND input -> 'gregale_code_op' ->> 'invocation_id' = $6::text
+`
+
+type SettleWorkflowCallOpParams struct {
+	Status       string
+	Output       []byte
+	Error        pgtype.Text
+	RunID        pgtype.UUID
+	StepName     string
+	InvocationID string
+}
+
+func (q *Queries) SettleWorkflowCallOp(ctx context.Context, db DBTX, arg SettleWorkflowCallOpParams) (int64, error) {
+	result, err := db.Exec(ctx, settleWorkflowCallOp,
+		arg.Status,
+		arg.Output,
+		arg.Error,
+		arg.RunID,
+		arg.StepName,
+		arg.InvocationID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const shareRuntimeUpgradeExternalFenceAuthority = `-- name: ShareRuntimeUpgradeExternalFenceAuthority :one
 SELECT id, public_key, created_at, revoked_at FROM runtime_upgrade_external_fence_authorities WHERE id=$1 FOR SHARE
 `
@@ -114691,6 +114755,16 @@ WHERE id=$1::uuid AND (status='awaiting_event'
 // coordinator custody. Legacy running runs retain their existing wake policy.
 func (q *Queries) WakeNativeWorkflowForReceivedEvent(ctx context.Context, db DBTX, runID pgtype.UUID) error {
 	_, err := db.Exec(ctx, wakeNativeWorkflowForReceivedEvent, runID)
+	return err
+}
+
+const wakeWorkflowRunForCall = `-- name: WakeWorkflowRunForCall :exec
+UPDATE workflow_runs SET status = 'pending', scheduled_for = now(), updated_at = now()
+WHERE id = $1::uuid AND status = 'awaiting_event'
+`
+
+func (q *Queries) WakeWorkflowRunForCall(ctx context.Context, db DBTX, runID pgtype.UUID) error {
+	_, err := db.Exec(ctx, wakeWorkflowRunForCall, runID)
 	return err
 }
 
