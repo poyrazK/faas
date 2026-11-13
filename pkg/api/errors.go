@@ -1924,6 +1924,10 @@ const (
 	// Public candidate verification stayed unavailable within the durable
 	// recovery window. This does not establish an application health verdict.
 	CodeDeploymentVerificationUnavailable = "deployment_verification_unavailable"
+	// CodePromotionRolledBack means an environment promotion was rolled back
+	// and this release, the first in its environment, had no earlier release
+	// to restore, so it was retired. The release itself did not fail.
+	CodePromotionRolledBack = "promotion_rolled_back"
 	// CodeReleaseCommandFailed means the deployment's pre-boot release task
 	// failed, timed out, or was cancelled. The previous deployment remains
 	// live; task output is available through the app-task inspection surface.
