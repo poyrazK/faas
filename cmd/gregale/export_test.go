@@ -1536,6 +1536,8 @@ var ParkedLogsSelection = parkedLogsSelection
 var ParkedWindowInstances = parkedWindowInstances
 var RetainedLineLevelMatches = retainedLineLevelMatches
 var ParseAIPriceSpec = parseAIPriceSpec
+
+var FormatPriceTiers = formatPriceTiers
 var ParseAIRouteTargets = parseAIRouteTargets
 var ParseStoredWorkflowLiveBaseline = parseStoredWorkflowLiveBaseline
 var ParseStoredWorkflowLiveGate = parseStoredWorkflowLiveGate

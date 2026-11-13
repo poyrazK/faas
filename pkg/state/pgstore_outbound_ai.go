@@ -265,7 +265,9 @@ func (s *PgStore) GetOutboundAIPrices(ctx context.Context, accountID, integratio
 		       input_image_millicents_per_mtok, output_image_millicents_per_mtok, millicents_per_image,
 		       millicents_per_audio_minute, millicents_per_million_characters, millicents_per_video_second,
 		       millicents_per_web_search, millicents_per_file_search, millicents_per_code_session_gb,
-		       input_audio_millicents_per_mtok, cached_input_audio_millicents_per_mtok, output_audio_millicents_per_mtok
+		       input_audio_millicents_per_mtok, cached_input_audio_millicents_per_mtok, output_audio_millicents_per_mtok,
+		       cache_write_1h_millicents_per_mtok, long_context_above_input_tokens, long_context_input_percent,
+		       long_context_output_percent
 		  FROM outbound_ai_price_entries WHERE price_list_id = $1
 		 ORDER BY model_prefix`, listID)
 	if err != nil {
@@ -274,14 +276,17 @@ func (s *PgStore) GetOutboundAIPrices(ctx context.Context, accountID, integratio
 	defer rows.Close()
 	for rows.Next() {
 		var entry api.OutboundAIPriceEntry
+		var above, inputPercent, outputPercent *int64
 		if err := rows.Scan(&entry.ModelPrefix, &entry.InputMillicentsPerMTok, &entry.CachedInputMillicentsPerMTok,
 			&entry.CacheWriteMillicentsPerMTok, &entry.OutputMillicentsPerMTok, &entry.InputImageMillicentsPerMTok,
 			&entry.OutputImageMillicentsPerMTok, &entry.MillicentsPerImage, &entry.MillicentsPerAudioMinute,
 			&entry.MillicentsPerMillionCharacters, &entry.MillicentsPerVideoSecond, &entry.MillicentsPerWebSearch,
 			&entry.MillicentsPerFileSearch, &entry.MillicentsPerCodeSessionGB, &entry.InputAudioMillicentsPerMTok,
-			&entry.CachedInputAudioMillicentsPerMTok, &entry.OutputAudioMillicentsPerMTok); err != nil {
+			&entry.CachedInputAudioMillicentsPerMTok, &entry.OutputAudioMillicentsPerMTok, &entry.CacheWrite1hMillicentsPerMTok,
+			&above, &inputPercent, &outputPercent); err != nil {
 			return OutboundAIPriceList{}, mapErr(err)
 		}
+		entry.LongContext = api.OutboundAILongContextFromColumns(above, inputPercent, outputPercent)
 		list.Entries = append(list.Entries, entry)
 	}
 	return list, mapErr(rows.Err())
@@ -313,6 +318,7 @@ func (s *PgStore) SetOutboundAIPrices(ctx context.Context, accountID, integratio
 		return mapErr(err)
 	}
 	for _, entry := range entries {
+		above, inputPercent, outputPercent := entry.LongContext.Columns()
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO outbound_ai_price_entries
 			    (price_list_id, model_prefix, input_millicents_per_mtok, cached_input_millicents_per_mtok,
@@ -320,13 +326,17 @@ func (s *PgStore) SetOutboundAIPrices(ctx context.Context, accountID, integratio
 			     output_image_millicents_per_mtok, millicents_per_image, millicents_per_audio_minute,
 			     millicents_per_million_characters, millicents_per_video_second, millicents_per_web_search,
 			     millicents_per_file_search, millicents_per_code_session_gb, input_audio_millicents_per_mtok,
-			     cached_input_audio_millicents_per_mtok, output_audio_millicents_per_mtok)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`, listID, entry.ModelPrefix, entry.InputMillicentsPerMTok,
+			     cached_input_audio_millicents_per_mtok, output_audio_millicents_per_mtok,
+			     cache_write_1h_millicents_per_mtok, long_context_above_input_tokens, long_context_input_percent,
+			     long_context_output_percent)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+			listID, entry.ModelPrefix, entry.InputMillicentsPerMTok,
 			entry.CachedInputMillicentsPerMTok, entry.CacheWriteMillicentsPerMTok, entry.OutputMillicentsPerMTok,
 			entry.InputImageMillicentsPerMTok, entry.OutputImageMillicentsPerMTok, entry.MillicentsPerImage,
 			entry.MillicentsPerAudioMinute, entry.MillicentsPerMillionCharacters, entry.MillicentsPerVideoSecond,
 			entry.MillicentsPerWebSearch, entry.MillicentsPerFileSearch, entry.MillicentsPerCodeSessionGB,
-			entry.InputAudioMillicentsPerMTok, entry.CachedInputAudioMillicentsPerMTok, entry.OutputAudioMillicentsPerMTok); err != nil {
+			entry.InputAudioMillicentsPerMTok, entry.CachedInputAudioMillicentsPerMTok, entry.OutputAudioMillicentsPerMTok,
+			entry.CacheWrite1hMillicentsPerMTok, above, inputPercent, outputPercent); err != nil {
 			return mapErr(err)
 		}
 	}
