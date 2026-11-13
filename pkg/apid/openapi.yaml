@@ -87446,7 +87446,7 @@ components:
       type: object
       description: >-
         Answer a call from the response cache when its last user turn means the same as a cached call's and everything
-        else matches exactly (ADR 20261112194947). Pro and Scale plans; needs ai_provider and a response cache TTL. The
+        else matches exactly. Pro and Scale plans; needs ai_provider and a response cache TTL. The
         embedding integration, one of the account's enabled OpenAI or Gemini integrations, embeds each candidate call on
         its own key, metered under the caller semantic_cache. A hit carries X-Gregale-AI-Cache semantic and
         X-Gregale-AI-Similarity.
