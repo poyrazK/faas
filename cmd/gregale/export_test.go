@@ -2870,3 +2870,7 @@ var DoctorRuntimeOOMFromSummary = doctorRuntimeOOMFromSummary
 var DoctorRuntimeOOMForApp = doctorRuntimeOOMForApp
 var ReplaceDoctorCheck = replaceDoctorCheck
 var DoctorCheckRuntimeOOM = doctorCheckRuntimeOOM
+
+// Readiness probe flag (2026-11-13).
+var ResolveDeployReadiness = resolveDeployReadiness
+var DeployProbeOverrides = deployProbeOverrides

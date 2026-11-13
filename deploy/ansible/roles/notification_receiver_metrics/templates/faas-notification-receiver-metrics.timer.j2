@@ -1,0 +1,11 @@
+[Unit]
+Description=Observe receiver delivery health every {{ faas_notification_receiver_metrics_interval }}
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec={{ faas_notification_receiver_metrics_interval }}
+AccuracySec=1s
+Unit=faas-notification-receiver-metrics.service
+
+[Install]
+WantedBy=timers.target

@@ -156,6 +156,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		releaseNotify            []string
 		healthcheck              *api.DeploymentHealthcheck
 		livenessProbe            *api.DeploymentLivenessProbe
+		readinessProbe           *api.DeploymentReadinessProbe
 		overrideEnv              map[string]string
 		overrideEnvSeen          bool
 		noTriggers               bool
@@ -355,6 +356,12 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				api.WriteProblem(w, api.ErrValidation("liveness_probe must be a valid liveness probe object"))
 				return
 			}
+		case "readiness_probe":
+			b, readErr := io.ReadAll(io.LimitReader(part, (64<<10)+1))
+			if readErr != nil || len(b) > 64<<10 || json.Unmarshal(b, &readinessProbe) != nil || readinessProbe == nil {
+				api.WriteProblem(w, api.ErrValidation("readiness_probe must be a valid readiness probe object"))
+				return
+			}
 		case "override_env":
 			if overrideEnvSeen {
 				api.WriteProblem(w, api.ErrValidation("override_env may be specified only once"))
@@ -424,6 +431,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, MCPTaskMigrationOverride: mcpTaskMigrationOverride, OverrideFreeze: overrideFreeze, ReleaseAt: releaseAt, ReleaseNotify: releaseNotify, Sidecars: sidecars, Workflows: workflows}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(healthcheck)
 	rolloutReq.Overrides = sourceLivenessOverrides(rolloutReq.Overrides, livenessProbe, limits)
+	rolloutReq.Overrides = sourceReadinessOverrides(rolloutReq.Overrides, readinessProbe)
 	if len(overrideEnv) > 0 {
 		if rolloutReq.Overrides == nil {
 			rolloutReq.Overrides = &api.CreateDeploymentOverrides{}
@@ -619,6 +627,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			RollbackOn5xx:             rollout.RollbackOn5xx,
 			DisableStartupCPUBoost:    rollout.DisableStartupCPUBoost,
 			OverrideHealthcheck:       append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
+			OverrideReadinessProbe:    append(json.RawMessage(nil), rollout.OverrideReadinessProbe...),
 			OverrideLivenessProbe:     append(json.RawMessage(nil), rollout.OverrideLivenessProbe...),
 			OverrideEnv:               append(json.RawMessage(nil), rollout.OverrideEnv...),
 			OverrideMainDependsOn:     append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
