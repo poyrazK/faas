@@ -6,6 +6,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class InternalService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Internal — the scheduler posts a batch envelope to the gateway.
    * Internal-only route. Schedd invokes this once per closed
@@ -55,7 +56,7 @@ export class InternalService {
       code?: string;
     }>;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/invocations:dispatch_batch',
       body: requestBody,

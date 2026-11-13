@@ -66,7 +66,7 @@ func newCLIAPIClient(baseURL, token string, deployTimeout time.Duration) *Client
 	} else {
 		client = api.NewClientWithDeployTimeout(baseURL, token, deployTimeout)
 	}
-	return guardAPIClient(bindProfileCompletionCache(withApprovalWait(client.WrapTransport(wrapCLITransport).WithProjectOrganization(projectOrganization))))
+	return guardAPIClient(bindProfileCompletionCache(withApprovalWait(client.WrapTransport(wrapCLITransport).WithProjectOrganization(projectOrganization).WithReadRetries(httpReadRetries))))
 }
 
 // withApprovalWait applies --wait-for-approval: the client prints the review

@@ -2215,6 +2215,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	healthcheckPath := fs.String("healthcheck-path", "", "startup readiness HTTP path (for example /readyz)")
 	healthcheckGRPC := fs.Bool("healthcheck-grpc", false, "use standard gRPC health for startup readiness")
 	healthcheckGRPCService := fs.String("healthcheck-grpc-service", "", "service name for --healthcheck-grpc; empty checks the overall server")
+	readinessPath := fs.String("readiness-path", "", "steady-state readiness HTTP path: an instance that fails it leaves routing until it passes, without a restart (for example /ready)")
 	// Issue #556 PR-A: per-deployment traffic-split weight. Sentinel
 	// value -1 = "unset" — `fs.Int` doesn't have a
 	// pointer type, so the explicit `fs.Visit` check below
@@ -2652,6 +2653,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if healthcheck != nil && (*diff || *dryRun || *simplePlan || projectRequested || *githubSnippet || *createOnly) {
 		return printErr("Invalid flags", errors.New("startup healthcheck flags require a single-app deployment; they cannot be combined with preview, --github, --project, or --create-only"))
+	}
+	readiness, readinessErr := resolveDeployReadiness(*readinessPath, explicit)
+	if readinessErr != nil {
+		return printErr("Invalid --readiness-path", readinessErr)
+	}
+	if readiness != nil && (*diff || *dryRun || *simplePlan || projectRequested || *githubSnippet || *createOnly || *repo != "") {
+		return printErr("Invalid flags", errors.New("--readiness-path needs a single-app source or --image deployment; for --repo, --project or --github set hosting.readiness_probe in gregale.yaml"))
 	}
 	if explicit["app-protocol"] && !api.IsValidAppProtocol(*appProtocol) {
 		problem := api.NewProblem(http.StatusBadRequest, api.CodeAppProtocolInvalid,
@@ -3859,7 +3867,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 		TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
 		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
-		MCPTaskMigrationOverride: *mcpTaskMigrationOverride, Healthcheck: healthcheck, NoTriggers: *noTriggers,
+		MCPTaskMigrationOverride: *mcpTaskMigrationOverride, Healthcheck: healthcheck, ReadinessProbe: readiness, NoTriggers: *noTriggers,
 		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude, OverrideFreeze: *overrideFreeze,
 		ReleaseAt: releaseAt, ReleaseNotify: releaseNotify,
 	}
@@ -4356,6 +4364,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
 			OverrideEnv:              execution.overrideEnv,
 			LivenessProbe:            execution.livenessProbe,
+			ReadinessProbe:           readiness,
 			OverrideFreeze:           *overrideFreeze,
 			ReleaseAt:                releaseAt,
 			ReleaseNotify:            releaseNotify,
@@ -4517,7 +4526,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		OverrideFreeze:           *overrideFreeze,
 		ReleaseAt:                releaseAt,
 		ReleaseNotify:            releaseNotify,
-		Overrides:                deployHealthcheckOverrides(healthcheck),
+		Overrides:                deployProbeOverrides(healthcheck, readiness),
 		Workflows:                workflowDefs,
 		Companions:               sidecarDefs,
 		TrafficPercent:           optTrafficPercent(*trafficPercent),

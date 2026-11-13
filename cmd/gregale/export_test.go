@@ -859,6 +859,8 @@ var DataAPIDrainEvery = dataAPIDrainEvery
 var CheckDataAPIReportSettings = checkDataAPIReportSettings
 var CmdDataAPIMigration = cmdDataAPIMigration
 var CmdDataAPIOnboard = cmdDataAPIOnboard
+var CmdDataAPIIntegrate = cmdDataAPIIntegrate
+var DataAPIIntegrationSteps = dataAPIIntegrationSteps
 var CmdDataAPIRefresh = cmdDataAPIRefresh
 var CmdDataAPITransaction = cmdDataAPITransaction
 var CmdDataAPIVerify = cmdDataAPIVerify
@@ -2864,3 +2866,13 @@ var RenderDeploymentHostingReceiptFor = renderDeploymentHostingReceiptFor
 var ParseAppPortsFlag = parseAppPortsFlag
 
 var RenderThrottleSuggestions = renderThrottleSuggestions
+
+// Runtime OOM doctor check (2026-11-13).
+var DoctorRuntimeOOMFromSummary = doctorRuntimeOOMFromSummary
+var DoctorRuntimeOOMForApp = doctorRuntimeOOMForApp
+var ReplaceDoctorCheck = replaceDoctorCheck
+var DoctorCheckRuntimeOOM = doctorCheckRuntimeOOM
+
+// Readiness probe flag (2026-11-13).
+var ResolveDeployReadiness = resolveDeployReadiness
+var DeployProbeOverrides = deployProbeOverrides

@@ -192,6 +192,7 @@ var defaultTargets = []target{
 	{dir: "deploy/ansible/roles/agentd_service/files", skip: only("agentd")},
 	{dir: "deploy/ansible/roles/edgednsd_service/files", skip: only("edgednsd")},
 	{dir: "deploy/ansible/roles/signd_service/files", skip: only("signd")},
+	{dir: "deploy/ansible/roles/secretd_service/files", skip: only("secretd")},
 	{dir: "deploy/ansible/roles/neond_service/files", skip: only("neond")},
 }
 
@@ -218,6 +219,7 @@ func ansibleRoleSkips() map[string]bool {
 		"agentd":               true,
 		"edgednsd":             true,
 		"signd":                true,
+		"secretd":              true,
 		"neond":                true,
 	}
 }
@@ -254,6 +256,7 @@ func legacySkips() map[string]bool {
 		"agentd":               true,
 		"edgednsd":             true,
 		"signd":                true,
+		"secretd":              true,
 		"neond":                true,
 	}
 }

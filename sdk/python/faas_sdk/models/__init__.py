@@ -854,6 +854,7 @@ from .failure_rules import FailureRules
 from .failure_rules_uncertain_outcome import FailureRulesUncertainOutcome
 from .failure_rules_unmatched_failure import FailureRulesUnmatchedFailure
 from .failure_rules_version import FailureRulesVersion
+from .feature_hint import FeatureHint
 from .field_error import FieldError
 from .financial_allocation import FinancialAllocation
 from .financial_app_cost_allocation import FinancialAppCostAllocation
@@ -2208,6 +2209,7 @@ from .runtime_release_response_runtime import RuntimeReleaseResponseRuntime
 from .runtime_upgrade_preview_response import RuntimeUpgradePreviewResponse
 from .runtime_upgrade_preview_response_changes_item import RuntimeUpgradePreviewResponseChangesItem
 from .runtime_upgrade_preview_response_disposition import RuntimeUpgradePreviewResponseDisposition
+from .safe_apply_org_project_project_release_mode import SafeApplyOrgProjectProjectReleaseMode
 from .safe_apply_project_project_add_services import SafeApplyProjectProjectAddServices
 from .safe_apply_project_project_progressive import SafeApplyProjectProjectProgressive
 from .safe_apply_project_project_release_mode import SafeApplyProjectProjectReleaseMode
@@ -3555,6 +3557,7 @@ __all__ = (
     "FailureRulesUncertainOutcome",
     "FailureRulesUnmatchedFailure",
     "FailureRulesVersion",
+    "FeatureHint",
     "FieldError",
     "FinancialAllocation",
     "FinancialAppCostAllocation",
@@ -4775,6 +4778,7 @@ __all__ = (
     "RuntimeUpgradePreviewResponse",
     "RuntimeUpgradePreviewResponseChangesItem",
     "RuntimeUpgradePreviewResponseDisposition",
+    "SafeApplyOrgProjectProjectReleaseMode",
     "SafeApplyProjectProjectAddServices",
     "SafeApplyProjectProjectProgressive",
     "SafeApplyProjectProjectReleaseMode",

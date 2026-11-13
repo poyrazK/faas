@@ -1594,6 +1594,9 @@ type OpsMetrics struct {
 	// accountAbuseHolds counts ADR-361 account abuse holds placed, by
 	// reason.
 	accountAbuseHolds *prometheus.CounterVec
+	// cpuAbuseSignals counts ADR-20261112120603 sustained CPU abuse signals,
+	// by plan and action.
+	cpuAbuseSignals *prometheus.CounterVec
 	// dnsBlocked counts ADR-373 guest DNS lookups refused by the blocklist.
 	dnsBlocked *prometheus.CounterVec
 	// abuseScanFindings counts ADR-368 build-time abuse scan findings by
@@ -2883,9 +2886,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// without churn on the API surface.
 	pressureReassignmentsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_pressure_reassignments_total",
-		Help: "Cross-node capacity-pressure rebalance decisions (Tier A9 / ADR-087), labelled by outcome ∈ {migrated, conflict, no_headroom, no_eligibility, no_peer, overflow_target_unavailable}. `migrated` is the §12 dashboard panel (sum over 5m for the rate); `no_headroom` is the tripwire for sustained full-cluster pressure (call the operator); `overflow_target_unavailable` is the Tier A10 / ADR-088 tripwire when the customer's preferred spill target is full or inactive. Single-registry: registered on every daemon (mirrors rebalanceDecisions / liveMigrationDecisions); only schedd increments via PressureReassignments.",
+		Help: "Cross-node capacity-pressure rebalance decisions (Tier A9 / ADR-087), labelled by outcome ∈ {migrated, conflict, no_headroom, no_eligibility, no_peer, overflow_target_unavailable, release_requested}. `release_requested` counts a node asking the control plane to move an app under control-plane owner authority (ADR-20261110210000). `migrated` is the §12 dashboard panel (sum over 5m for the rate); `no_headroom` is the tripwire for sustained full-cluster pressure (call the operator); `overflow_target_unavailable` is the Tier A10 / ADR-088 tripwire when the customer's preferred spill target is full or inactive. Single-registry: registered on every daemon (mirrors rebalanceDecisions / liveMigrationDecisions); only schedd increments via PressureReassignments.",
 	}, []string{"outcome"})
-	for _, outcome := range []string{"migrated", "conflict", "no_headroom", "no_eligibility", "no_peer", "overflow_target_unavailable"} {
+	for _, outcome := range []string{"migrated", "conflict", "no_headroom", "no_eligibility", "no_peer", "overflow_target_unavailable", "release_requested"} {
 		pressureReassignmentsTotal.WithLabelValues(outcome)
 	}
 	// ADR-088 / Tier A10: per-app overflow_node preference
@@ -3862,6 +3865,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_account_abuse_holds_total",
 		Help: "ADR-361 account abuse holds placed, by reason (egress_fanout / egress_flood: the account's instances were recycled for egress abuse EgressFanoutHoldRecycles times within the hold window, the last one for that signal). A held account runs nothing until an operator releases it.",
 	}, []string{"reason"})
+	cpuAbuseSignals := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_cpu_abuse_signals_total",
+		Help: "Instances schedd saw pinned at 90% or more of their CPU quota for 15 minutes (ADR-20261112120603), by plan (free, hobby, pro, scale) and action: recycled (Free, enforce mode: the instance was destroyed and the recycle counts toward the account abuse hold), shadow (Free, shadow mode: nothing was done), flagged (paid plans: audit and alert only). Every signal is audited as instance.cpu_abuse.",
+	}, []string{"plan", "action"})
 	// Issue #300: per-tenant RPS gauge. Sampled 5s by the daemon's
 	// topNSampler goroutine (cmd/apid/topn.go). Bounded at
 	// topAccountSetCap (1000) + "other" via topAccountSet — see
@@ -4106,7 +4113,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		sidecarHealthTransitionsTotal,
 		scaleUpDecisions, scaleUpWinningSignal, scheduledFloorActive, scaleDownDecisions, scaleUpAdmitRPS, sseClients,
 		appOwnershipChecks,
-		egressDeny, egressDenied, egressNewDestinations, egressAbuseRecycles, accountAbuseHolds, dnsBlocked, abuseScanFindings, egressFlowLogRows,
+		egressDeny, egressDenied, egressNewDestinations, egressAbuseRecycles, accountAbuseHolds, cpuAbuseSignals, dnsBlocked, abuseScanFindings, egressFlowLogRows,
 		failedLoginTotal, failedLoginDropped,
 		failedLoginAuditWriteFailures,
 		auditEventsDeletedTotal,
@@ -5472,6 +5479,12 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	egressAbuseRecycles.WithLabelValues("", "flood")
 	accountAbuseHolds.WithLabelValues("egress_fanout")
 	accountAbuseHolds.WithLabelValues("egress_flood")
+	accountAbuseHolds.WithLabelValues("cpu_sustained")
+	for _, plan := range []string{"free", "hobby", "pro", "scale"} {
+		for _, action := range []string{"recycled", "shadow", "flagged"} {
+			cpuAbuseSignals.WithLabelValues(plan, action)
+		}
+	}
 	dnsBlocked.WithLabelValues("miner")
 	for _, category := range []string{"miner", "scanner", "flood", "proxy"} {
 		for _, action := range []string{"block", "flag"} {
@@ -5812,6 +5825,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		egressNewDestinations:                egressNewDestinations,
 		egressAbuseRecycles:                  egressAbuseRecycles,
 		accountAbuseHolds:                    accountAbuseHolds,
+		cpuAbuseSignals:                      cpuAbuseSignals,
 		dnsBlocked:                           dnsBlocked,
 		abuseScanFindings:                    abuseScanFindings,
 		egressFlowLogRows:                    egressFlowLogRows,
@@ -8158,6 +8172,14 @@ func (m *OpsMetrics) AccountAbuseHold(reason string) prometheus.Counter {
 		return nil
 	}
 	return m.accountAbuseHolds.WithLabelValues(reason)
+}
+
+// CPUAbuseSignal returns the ADR-20261112120603 sustained CPU abuse counter.
+func (m *OpsMetrics) CPUAbuseSignal(plan, action string) prometheus.Counter {
+	if m == nil || m.cpuAbuseSignals == nil {
+		return nil
+	}
+	return m.cpuAbuseSignals.WithLabelValues(plan, action)
 }
 
 // EgressDeniedSeries returns the aggregate C1 series for diagnostics.

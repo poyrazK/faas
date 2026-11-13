@@ -98,6 +98,11 @@ func renderZshHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "        i=$((i+1)); continue")
 	_, _ = fmt.Fprintln(w, "      fi")
 	_, _ = fmt.Fprintln(w, "      if [[ \"$word\" == --http-timeout=* ]]; then continue; fi")
+	_, _ = fmt.Fprintln(w, "      if [ \"$word\" = --http-retries ]; then")
+	_, _ = fmt.Fprintln(w, "        if [ $((i+1)) -ge $CURRENT ]; then return 0; fi")
+	_, _ = fmt.Fprintln(w, "        i=$((i+1)); continue")
+	_, _ = fmt.Fprintln(w, "      fi")
+	_, _ = fmt.Fprintln(w, "      if [[ \"$word\" == --http-retries=* ]]; then continue; fi")
 	_, _ = fmt.Fprintln(w, "      if [ \"$word\" = --profile ]; then")
 	_, _ = fmt.Fprintln(w, "        if [ $((i+1)) -ge $CURRENT ]; then local -a profile_names; profile_names=( ${(f)\"$(gregale completion profile-names 2>/dev/null)\"} ); compadd -- \"${profile_names[@]}\"; return 0; fi")
 
@@ -113,6 +118,7 @@ func renderZshHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  words=(\"${normalized_words[@]}\")")
 	_, _ = fmt.Fprintln(w, "  CURRENT=$normalized_current")
 	_, _ = fmt.Fprintln(w, "  if (( CURRENT == 2 )) && [[ \"$current_word\" == --http-timeout=* ]]; then return 0; fi")
+	_, _ = fmt.Fprintln(w, "  if (( CURRENT == 2 )) && [[ \"$current_word\" == --http-retries=* ]]; then return 0; fi")
 	_, _ = fmt.Fprintln(w, "  if (( CURRENT == 2 )) && [[ \"$current_word\" == --profile=* ]]; then")
 	_, _ = fmt.Fprintln(w, "    local -a profile_names; profile_names=( ${(f)\"$(gregale completion profile-names 2>/dev/null)\"} )")
 	_, _ = fmt.Fprintln(w, "    compset -P '--profile='; compadd -- \"${profile_names[@]}\"; return 0")
@@ -127,6 +133,7 @@ func renderZshHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    \"--wait-for-approval:Wait for a person to approve an agent request\"")
 	_, _ = fmt.Fprintln(w, "    \"--debug-http:Write HTTP metadata diagnostics to stderr\"")
 	_, _ = fmt.Fprintln(w, "    \"--http-timeout:API request timeout (positive duration, such as 90s)\"")
+	_, _ = fmt.Fprintln(w, "    \"--http-retries:Additional read attempts (0 to 5)\"")
 	for _, c := range completionCliCommands() {
 		_, _ = fmt.Fprintf(w, "    \"%s:%s\"\n", c.Name, escapeZshDQ(c.Short))
 	}

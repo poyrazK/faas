@@ -728,6 +728,16 @@ var cliCommands = []cliCommand{
 				Short: "Find the account behind an email, app slug, hostname, URL, id, request id or trace id",
 			},
 			{
+				Name:  "attention",
+				Short: "List customers who are probably stuck (failed deploys, refused bursts, stuck domains)",
+				Flags: []cliFlag{
+					{Name: "kind", Short: "signal kind", ClosedSet: []string{"deploy_failing", "app_oom", "boot_failing", "jobs_failing", "domain_stuck", "refused_burst", "limit_pressure", "payment_failing"}},
+					{Name: "state", Short: "signal state", ClosedSet: []string{"active", "open", "dismissed", "resolved"}},
+					{Name: "account-id", Short: "only this account (uuid)"},
+					{Name: "limit", Short: "maximum signals (1..200)"},
+				},
+			},
+			{
 				Name:  "show",
 				Short: "Show one account's apps, orgs, API keys, and sessions",
 				Flags: []cliFlag{
@@ -1363,6 +1373,12 @@ var cliCommands = []cliCommand{
 			},
 			{
 				Name: subObsNotificationHealth, Short: "Inspect alert notification pipeline evidence", Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name: subObsServingHealth, Short: "Inspect expected fleet serving-probe coverage", Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name: subObsVerifyDeployment, Short: "Wait for post-deployment monitoring evidence and save a report", Flags: []cliFlag{{Name: "release", Short: "requested full release SHA (40 lowercase hex characters)"}, {Name: "after", Short: "RFC3339 rollout evidence boundary"}, {Name: "wait-timeout", Short: "wait budget (default derives from probe policy; maximum 1h)"}, {Name: "poll-interval", Short: "poll interval (default 10s; maximum 1m)"}, {Name: "report", Short: "private JSON report path, updated atomically"}, {Name: "admin-token", Short: "admin bearer (default: operator session, then $FAAS_ADMIN_TOKEN)"}, {Name: "token-stdin", Short: "read the admin bearer from one stdin line"}, {Name: "json", Short: "emit the final report as JSON"}},
 			},
 			{
 				Name: subObsRuleHealth, Short: "Inspect current alert-rule evaluation diagnostics", Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},

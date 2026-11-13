@@ -238,8 +238,17 @@ gregale mcp connection budget <id> --unlimited
 gregale mcp connection budget <id> --default
 ```
 
-An agent reads its own with `gregale mcp connection budget --self`, so it can
-plan within it. An organization can cap every agent acting in it; the lower
+An agent reads its own with `gregale mcp connection budget --self` (MCP:
+`gregale_agent_budget`), so it can plan within it. Before making a change it
+can ask what the change would cost: `gregale_plan_scale` and
+`gregale app <slug> scale --plan` show the added cost, the budget left and
+whether a person would be asked first. Sending a request with the header
+`Gregale-Agent-Preview: budget` does the same for any client; Gregale prices
+it as the real request and changes nothing. Previews work on every change
+the budget prices: app settings, scaling, prewarm, creating an app, a
+deployment's `min_instances`, managed Postgres create, compute policy,
+resize and restore, and creating, cloning or branching a project
+environment. Other routes refuse the header. An organization can cap every agent acting in it; the lower
 of the agent's budget and the ceiling applies:
 
 ```sh
@@ -265,6 +274,21 @@ burstable, 1 for production) running all month at the Postgres overage
 rate. That covers creating such a database, turning scale-to-zero off,
 resizing it to a larger class, and restoring a copy of it. A database that
 scales to zero adds nothing; its compute, storage and egress follow use.
+
+## See your agents at a glance
+
+`gregale mcp connection status` shows each connected agent on one line: its
+pending approval requests, the always-on cost it committed this month
+against its budget, how many of its changes of the last 7 days undo can
+reverse, and its last change. Give an id for one agent in detail, with the
+review link of each pending request:
+
+```sh
+gregale mcp connection status
+gregale mcp connection status <id>
+```
+
+A `?` means that part could not be read; `--json` names which.
 
 ## See what an agent changed
 

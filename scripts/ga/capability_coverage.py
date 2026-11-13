@@ -31,6 +31,7 @@ INVENTORY = os.path.join(ROOT, "docs", "ga-capability-inventory.md")
 # "INFRA" / "TOOLING" / "TEST" for identifiers that are not customer capabilities.
 RULES = [
     (r"(^|/|-)support([/-]|$)", "Native customer support"),
+    (r"(^|/|-)customer-attention([/-]|$)", "Native customer support"),
     # --- test fixtures and generated noise
     (r"^/(a|b|boom|echo|counter|dial|h1|users|untrusted|not-net-http|etc/faas/uuid\.txt|contract|probe-contract|identity|signal|requests|last-capture|price|seal|token|grpc|api|internal/?|ingest|control|control/ack|push\.v1\.pusherservice/push|openapi\.json|\{\$\}|/?|\+route\+|`\+route\+`)$", "TEST"),
     (r"test|fixture|fake|example|scenario-restart|rehearsal-native|qualif|conformance|smoke|e2e|bench|eval$|dryrun|leakcheck", "TOOLING"),
@@ -143,6 +144,13 @@ RULES = [
     (r"^artifact-signatures$", "INFRA"),
     # ADR-20261109170000: signd's listener and imaged's signd target.
     (r"^signd-", "INFRA"),
+    # ADR-20261110210000 §4: which logins may set an app's owner node, its
+    # record, and schedd's FAAS_APP_OWNER_AUTHORITY switch.
+    (r"^app-owner-(authority|writes|release-requests)$", "INFRA"),
+    # ADR-20261110210000 §3: secretd, its peer grants and open audit.
+    (r"^(secretd|secretpg|secret-grants|secret-open-audit)$", "INFRA"),
+    # ADR-20261110210000 §3: secretd's listener, budget and identity settings.
+    (r"^secretd-", "INFRA"),
     # ADR-20261112160000: neond's key file, socket and delete limit.
     (r"^neond-", "INFRA"),
     # Compile-on-first-use regexps for package-level patterns
@@ -170,7 +178,7 @@ RULES = [
     (r"^browser$|whycopy", "`gregale` CLI"),
     (r"edgevalidate", "Edge rules (incl"),
     (r"^focus$", "Plans, usage, invoices"),
-    (r"gitfetch|reposcan", "Repo decomposition"),
+    (r"gitfetch|reposcan|featurehints", "Repo decomposition"),
     (r"hostport", "TCP listeners"),
     (r"^markers$", "Framework profiles"),
     (r"simpleapp", "Apps: create"),
@@ -282,7 +290,9 @@ RULES = [
     (r"cors", "CORS presets"),
     (r"edge-protection|pre-auth|challenge|waf|bot", "Edge protection"),
     (r"edge-rule|edgerule|geo|asn|jwt|rewrite|redirect", "Edge rules (incl"),
-    (r"require-authn|public-auth|appaccess|app-access|authn|ip-allowlist", "App access control"),
+    # ADR-20261110210000 slice 3h: verify-only basic auth (app-basic-auth-verifiers,
+    # basicverifier, the gateway's basic-auth-verifiers).
+    (r"require-authn|public-auth|appaccess|app-access|authn|ip-allowlist|basic-auth-verifiers|basicverifier", "App access control"),
     (r"retry", "Gateway request retry"),
     (r"circuit", "Circuit breaking"),
     (r"static-egress|reserved-ip|egress-ip", "Static egress IP"),

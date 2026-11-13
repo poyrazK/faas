@@ -33,4 +33,15 @@ For API deployments, `overrides.readiness_probe` optionally configures a recurri
 }
 ```
 
+A source deploy can declare the same probe in `gregale.yaml`, with the same keys, and the CLI sets its path with `gregale deploy --readiness-path /readyz`. A request override (the API field, the multipart `readiness_probe` field or the flag) wins for that one deployment. For `--repo`, `--project` and GitHub deploys, use `gregale.yaml`:
+
+```yaml
+hosting:
+  readiness_probe:
+    path: /readyz
+    period_s: 5
+```
+
+A liveness probe is deliberately not declarable in `gregale.yaml`: a strict one is the usual cause of restart loops. Set it per deployment with the API when you need one.
+
 Without a `liveness_probe`, Gregale checks only that a running app still answers, not that its dependencies are healthy, so a database outage does not restart it. An app whose health path is `/healthz` must keep answering it with 2xx. An app with another health path, or none, gets `GET /healthz`, and any answer below 500 counts as alive: a 404, a 401 from an auth layer, or a redirect to HTTPS or a sign-in page. A gRPC app gets a gRPC health check on Pro and Scale and no default check on other plans, and a service on a raw TCP port gets no default check. A timeout, a refused connection or a 5xx three times in a row restarts the instance. Set `liveness_probe` to check a specific path instead.

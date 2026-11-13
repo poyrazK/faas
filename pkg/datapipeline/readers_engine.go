@@ -44,8 +44,11 @@ func readerAuthority(ctx context.Context, p Pipeline, tx receiptSQL, exclusive b
 // source. Access revocation does not require source connectivity or copy slots.
 func applyReaders(ctx context.Context, p Pipeline, target *pgx.Conn, current func(context.Context) error) (*ReaderChange, error) {
 	c := p.ReaderChange
-	if c == nil || c.State != "approved" || p.DesiredState == "deleted" {
+	if c == nil || c.State != "approved" {
 		return nil, nil
+	}
+	if p.DesiredState == "deleted" && !readerSubset(c.Before, c.After) {
+		return nil, ErrConflict
 	}
 	if c.Generation != p.Generation || c.ID != readerChangeID(p, *c) || !validReaders(c.After) {
 		return nil, ErrConflict

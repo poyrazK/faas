@@ -185,16 +185,67 @@ neond, for each request:
     - A successful (or 404) `DELETE /projects/{id}` revokes the project's
       live keys and marks them revoked; `neond_project_keys_total{op,outcome}`
       counts mints and revocations.
-  - Slice 2b: the backfill sweep (mint for projects without a key, at most
-    a few per second; revoke keys whose project is gone or whose revocation
-    failed) and `gregalectl neond rotate-project-keys`.
-  - Slice 2c: the per-subject destructive limit and the "only on projects a
-    database row names" rule for password resets, role deletes and quota
-    writes.
+  - Built as slice 2b (the key sweep). As built:
+    - Every 10 minutes neond lists the organization's projects with the
+      admin key (`GET /projects?org_id=…`, all pages). A listing with
+      unavailable projects or more than 25 pages stops the pass, so a
+      partial view never revokes a key.
+    - It mints a key for each project without one, revokes the keys of
+      projects Neon no longer lists, and rotates keys older than
+      `FAAS_NEOND_PROJECT_KEY_MAX_AGE` (default 90 days): at most 50 key
+      calls a pass, 250 ms apart (Neon admits 10 key creations a second).
+      The backfill covers every project of the organization, not only those
+      a database row names, because the rows do not record the backend.
+    - Rotation mints the new key, revokes the old one at Neon, then retires
+      the old row and inserts the new one in one statement
+      (`ReplaceProjectKey`). A failure before the swap revokes the new key;
+      a failed swap leaves the old row naming a revoked key, whose calls
+      fall back to the admin key until the next pass rotates it again.
+    - Deviation: rotation is the sweep's, by age, not a
+      `gregalectl neond rotate-project-keys` command. neond alone holds the
+      admin key, the seal identity and the table, so an operator command
+      would need its own path into neond. To rotate every key now, lower
+      `faas_neond_project_key_max_age` and converge.
+    - `neond_projects_without_key` is the backfill still to do;
+      `neond_project_keys_total{op}` gains `backfill`, `rotate` and
+      `orphan_revoke`.
+  - Built as slice 2c. As built:
+    - The subject is the account: `ManagedPostgresAccountsInProject` lists
+      the accounts whose databases, in any state, name the project (the
+      project ID or `<project>/<branch>`). Each destructive call counts
+      against every such account, at most
+      `FAAS_NEOND_DESTRUCTIVE_PER_SUBJECT_PER_HOUR` (default 60) an hour,
+      and against the fleet limit. A call either limit refuses counts
+      against neither. A project no database names (a failed create, a
+      copy target) counts only against the fleet limit.
+    - `update project` (quota writes: compute, storage and egress caps) and
+      `delete role` are refused on a project no database names.
+    - Deviation: there is no password-reset route. Credentials are set
+      over SQL, so the Neon API allow-list has no reset call to restrict.
+    - Provider qualification provisions without a database row, so its
+      quota writes would be refused through neond. It runs as an operator
+      with its own key, and neond admits only apid's OS user, so it never
+      goes through neond.
 - **Slice 3, apid without the key:** apid refuses to start with both the
   broker and a Neon key configured; deploy drops the key from apid's
   credentials; alerts on refusals, rate limits and neond being down; a
   runbook. Before this slice ships, the owner creates the Neon service user.
+  - Built as slice 3. As built:
+    - The Neon backend refuses to load when `FAAS_MANAGED_POSTGRES_NEON_BROKER`
+      is set and the variable its `secret_env` names still holds a key; the
+      error names the variable, never the key.
+    - The key lives in `/etc/faas/sealed.env`, which operators write, so
+      deploy cannot drop it itself. Instead `neond_service` refuses to turn
+      the broker on while `sealed.env` still sets
+      `faas_neond_apid_key_env` (default `FAAS_NEON_API_KEY`), and the
+      runbook (`docs/runbooks/FaasNeond.md`) removes it before converging.
+      A converge that fails this check leaves apid running on its key.
+    - neond's metrics are served on `127.0.0.1:9114` and scraped as job
+      `neond`. Alerts: `FaasNeondDown` and `FaasNeondRateLimited` page;
+      `FaasNeondRefusing`, `FaasNeondProjectKeysFailing` and
+      `FaasNeondBackfillStalled` warn.
+    - Turning the broker on stays the owner's step, after creating the Neon
+      service user and moving its key to neond.
 
 ## Consequences
 

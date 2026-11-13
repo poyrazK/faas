@@ -206,6 +206,40 @@ func ChargesBudget(pattern string) bool {
 	return budgetRoutes[Normalize(pattern)]
 }
 
+// previewRoutes accept the budget preview header (ADR-20261111114059,
+// amendment 2026-11-13): their handlers price every request they accept
+// before any write, so answering at the price writes nothing
+// (TestAgentBudgetPreviewWritesNothing). A route joins only with that
+// test.
+var previewRoutes = map[string]bool{
+	"PATCH /v1/apps/{}":                             true,
+	"POST /v1/apps/{}/scaling":                      true,
+	"POST /v1/apps/{}/prewarm":                      true,
+	"POST /v1/apps":                                 true,
+	"PATCH /v1/deployments/{}":                      true,
+	"POST /v1/postgres/databases":                   true,
+	"POST /v1/postgres/databases/{}/compute-policy": true,
+	"POST /v1/postgres/databases/{}/resize":         true,
+	"POST /v1/postgres/databases/{}/restore":        true,
+	"POST /v1/projects/{}/environments":             true,
+	"POST /v1/projects/{}/environment-clones":       true,
+	"POST /v1/projects/{}/environments/{}/branches": true,
+}
+
+// Previewable reports whether a route accepts the budget preview header.
+func Previewable(pattern string) bool {
+	return previewRoutes[Normalize(pattern)]
+}
+
+// PreviewRoutes lists the previewable route patterns, for tests.
+func PreviewRoutes() []string {
+	out := make([]string, 0, len(previewRoutes))
+	for p := range previewRoutes {
+		out = append(out, p)
+	}
+	return out
+}
+
 // gatedReads are reads that hand an agent something a person should agree
 // to: the developer debugger tunnel evaluates code in, and reads the
 // environment of, a running app (ADR-20261111150000). A debugger opens one

@@ -3,6 +3,7 @@ package neon
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -35,7 +36,24 @@ func refusedRequestError(method, path string, status int, payload []byte) error 
 			reason += ": " + message
 		}
 	}
-	return &managedpostgres.OperatorReason{Err: statusError(status), Reason: reason, Quiet: true}
+	class := statusError(status)
+	if alreadyDeletedRefusal(method, status, body.Message) {
+		class = managedpostgres.ErrNotFound
+	}
+	return &managedpostgres.OperatorReason{Err: class, Reason: reason, Quiet: true}
+}
+
+// alreadyDeletedRefusal reports Neon refusing a DELETE because the resource
+// is already gone: "422 branch is already deleted". Every DELETE caller
+// treats ErrNotFound as gone. A branch copy's first DELETE starts an
+// asynchronous operation and reports the deletion unfinished; the retry then
+// met this refusal, mapped to ErrInvalid, and the copy stayed "deleting" for
+// days with its source held behind it (Hunt 34 H34-7: h33-db-br1, -br2, -rst).
+func alreadyDeletedRefusal(method string, status int, message string) bool {
+	if method != http.MethodDelete || status < 400 || status >= 500 || status == http.StatusTooManyRequests {
+		return false
+	}
+	return strings.Contains(strings.ToLower(message), "already deleted")
 }
 
 // providerToken keeps a short identifier made only of safe characters.

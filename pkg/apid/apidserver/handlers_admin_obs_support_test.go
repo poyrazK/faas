@@ -10,8 +10,11 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/attention"
 	"github.com/onebox-faas/faas/pkg/apid/customererrors"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // supportVisibilityFixture is an operator env plus one customer account
@@ -146,7 +149,7 @@ func TestObsTenant360DiagnosisExplainsBrokenAccount(t *testing.T) {
 	if len(d.DomainIssues) != 1 || d.DomainIssues[0].Domain != "www.shop.example" || d.DomainIssues[0].Problem != "domain not verified" {
 		t.Fatalf("domain issues = %+v", d.DomainIssues)
 	}
-	if d.CustomerErrors.WindowHours != 24 || d.CustomerErrors.ByCode == nil || d.CustomerErrors.Recent == nil || d.EnabledFlags == nil {
+	if d.CustomerErrors.WindowHours != 24 || d.CustomerErrors.ByCode == nil || d.CustomerErrors.Recent == nil || d.EnabledFlags == nil || d.AttentionSignals == nil {
 		t.Fatalf("empty sections must be lists, not null: %+v", d)
 	}
 }
@@ -219,5 +222,51 @@ func TestRecordCustomerErrorsCapturesCustomerProblemsOnly(t *testing.T) {
 	}
 	if len(captured) != 0 {
 		t.Fatalf("success or operator responses were recorded: %+v", captured)
+	}
+}
+
+func TestObsListAttentionValidatesFilters(t *testing.T) {
+	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/attention?kind=deploy_failing&state=resolved&account_id="+e.acct.ID+"&limit=5", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `"items":[]`) || !strings.Contains(body, `"limit":5`) {
+		t.Fatalf("without an evaluator the list must be empty, not null: %s", body)
+	}
+	for _, q := range []string{"kind=everything", "state=closed", "limit=0", "limit=201", "limit=x", "account_id=not-a-uuid"} {
+		if rec := e.doOperator(t, "GET", "/v1/admin/obs/attention?"+q, nil, nil); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status=%d, want 400", q, rec.Code)
+		}
+	}
+}
+
+func TestCustomerSignalMetricsCountWithoutSink(t *testing.T) {
+	e := newObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	m := newSupportSignalMetrics(prometheus.NewRegistry(), "apid")
+	e.s.supportSignals.Store(m)
+	e.s.customerErrorSink = nil
+
+	rec := e.do(t, "GET", "/v1/apps/missing-app", nil, nil)
+	code := rec.Header().Get(api.ErrorCodeHeader)
+	if rec.Code < 400 || code == "" {
+		t.Fatalf("missing app status=%d code=%q", rec.Code, code)
+	}
+	if got := testutil.ToFloat64(m.apiErrors.WithLabelValues(code)); got != 1 {
+		t.Fatalf("%s counter=%v, want 1", code, got)
+	}
+	if rec := e.doOperator(t, "GET", "/v1/admin/obs/attention?kind=bad", nil, nil); rec.Code != http.StatusBadRequest {
+		t.Fatalf("operator bad kind status=%d", rec.Code)
+	}
+	if got := testutil.CollectAndCount(m.apiErrors); got != 1 {
+		t.Fatalf("operator problems were counted: %d series", got)
+	}
+
+	e.s.observeAttention(attention.Result{OpenByKind: map[string]int64{api.AttentionKindDomainStuck: 4}})
+	if got := testutil.ToFloat64(m.open.WithLabelValues(api.AttentionKindDomainStuck)); got != 4 {
+		t.Fatalf("domain_stuck gauge=%v", got)
+	}
+	if got := testutil.ToFloat64(m.open.WithLabelValues(api.AttentionKindDeployFailing)); got != 0 {
+		t.Fatalf("deploy_failing gauge=%v, want reset to 0", got)
 	}
 }

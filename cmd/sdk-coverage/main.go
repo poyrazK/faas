@@ -384,6 +384,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/tenants":                    true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/360":           true, // operator-only tenant 360 projection
 	"GET /v1/admin/obs/lookup":                     true, // operator-only identifier lookup (ADR-20261112170000)
+	"GET /v1/admin/obs/attention":                  true, // operator-only customer attention signals (ADR-20261113123000)
 	"GET /v1/admin/obs/tenants/{id}":               true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/activity":      true, // operator-only tenant activity drill-down
 	"GET /v1/admin/obs/apps/{id}":                  true, // operator-only app workload drill-down
@@ -406,6 +407,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/incidents/platform_alert/response-times":      true, // private retained-episode response analytics
 	"GET /v1/admin/obs/wakes/{wake_id}":                              true, // private one-wake event timeline (gregalectl obs wake)
 	"GET /v1/admin/obs/notification-health":                          true, // private notification pipeline health
+	"GET /v1/admin/obs/serving-health":                               true, // private serving-probe coverage evidence
 	"GET /v1/admin/obs/collection-history":                           true, // private prospective collection evidence
 	"GET /v1/admin/obs/rule-health":                                  true, // private current alert-rule diagnostics
 	"GET /v1/admin/obs/rule-coverage":                                true, // private explicitly selected rule coverage
@@ -639,55 +641,60 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/orgs/{organization}/projects/{slug}/exclusions/{slug2}": "DeleteOrgProjectDeploymentScopeExclusion",
 
 	// Reviewed organization billing, project and PostgreSQL routes (ADRs 1348–1350).
-	"GET /v1/orgs/{slug}/billing/status":                                                                               "GetOrgBillingStatus",
-	"GET /v1/orgs/{slug}/usage":                                                                                        "GetOrgUsage",
-	"GET /v1/orgs/{slug}/invoices":                                                                                     "ListOrgInvoices",
-	"GET /v1/orgs/{slug}/billing/portal":                                                                               "GetOrgBillingPortal",
-	"PATCH /v1/orgs/{slug}/plan":                                                                                       "ChangeOrgPlan",
-	"GET /v1/orgs/{slug}/overage-cap":                                                                                  "GetOrgOverageCap", // ADR-20261030093512
-	"POST /v1/orgs/{slug}/overage-cap":                                                                                 "SetOrgOverageCap",
-	"GET /v1/orgs/{slug}/egress-overage":                                                                               "GetOrgEgressOverage", // ADR-20261104204500
-	"PUT /v1/orgs/{slug}/egress-overage":                                                                               "SetOrgEgressOverage",
-	"PUT /v1/orgs/{slug}/billing/email":                                                                                "SetOrgBillingEmail",   // ADR-20261103131742
-	"GET /v1/orgs/{slug}/billing/costs":                                                                                "GetOrgFinancialCosts", // ADR-20261031211500
-	"POST /v1/orgs/{slug}/billing/budgets/preview":                                                                     "PreviewOrgFinancialBudget",
-	"GET /v1/orgs/{slug}/billing/budgets":                                                                              "ListOrgFinancialBudgets",
-	"POST /v1/orgs/{slug}/billing/budgets":                                                                             "CreateOrgFinancialBudget",
-	"GET /v1/orgs/{slug}/billing/budgets/{id}":                                                                         "GetOrgFinancialBudget",
-	"PUT /v1/orgs/{slug}/billing/budgets/{id}":                                                                         "UpdateOrgFinancialBudget",
-	"DELETE /v1/orgs/{slug}/billing/budgets/{id}":                                                                      "DeleteOrgFinancialBudget",
-	"GET /v1/orgs/{slug}/billing/budgets/{id}/revisions":                                                               "ListOrgFinancialBudgetRevisions",
-	"GET /v1/orgs/{organization}/github/installations":                                                                 "ListOrgGitHubInstallations",
-	"GET /v1/orgs/{organization}/projects":                                                                             "ListOrgProjects",
-	"GET /v1/orgs/{organization}/projects/{slug}":                                                                      "GetOrgProject",
-	"PATCH /v1/orgs/{organization}/projects/{slug}":                                                                    "UpdateOrgProject",
-	"DELETE /v1/orgs/{organization}/projects/{slug}":                                                                   "DeleteOrgProject",
-	"GET /v1/orgs/{organization}/projects/{slug}/environments":                                                         "ListOrgProjectEnvironments",
-	"POST /v1/orgs/{organization}/projects/{slug}/environments":                                                        "CreateOrgProjectEnvironment",
-	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}":                                           "GetOrgProjectEnvironment",
-	"PATCH /v1/orgs/{organization}/projects/{slug}/environments/{environment}":                                         "UpdateOrgProjectEnvironment",
-	"DELETE /v1/orgs/{organization}/projects/{slug}/environments/{environment}":                                        "DeleteOrgProjectEnvironment",
-	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/releases":                                  "GetOrgProjectEnvironmentReleases",
-	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/release-sets":                              "ListOrgProjectReleaseSets",
-	"POST /v1/orgs/{organization}/projects/{slug}/environments/{environment}/release-sets":                             "PublishOrgProjectReleaseSet",
-	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/release-sets/active":                       "GetActiveOrgProjectReleaseSet",
-	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/release-sets/{release}":                    "GetOrgProjectReleaseSet",
-	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/state":                                     "GetOrgProjectEnvironmentState",
-	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/diff":                                      "GetOrgProjectEnvironmentDiff",
-	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/config":                                    "GetOrgProjectEnvironmentConfig",
-	"PUT /v1/orgs/{organization}/projects/{slug}/environments/{environment}/config":                                    "UpdateOrgProjectEnvironmentConfig",
-	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/config/diff":                               "GetOrgProjectEnvironmentConfigDiff",
-	"GET /v1/projects/{slug}/environments/{environment}/secrets":                                                       "ListProjectEnvironmentSecrets",
-	"PUT /v1/projects/{slug}/environments/{environment}/secrets/{key}":                                                 "SetProjectEnvironmentSecret",
-	"POST /v1/projects/{slug}/environments/{environment}/secrets/{key}/rotate":                                         "RotateProjectEnvironmentSecret",
-	"DELETE /v1/projects/{slug}/environments/{environment}/secrets/{key}":                                              "DeleteProjectEnvironmentSecret",
-	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotion-preview":                         "GetOrgProjectEnvironmentPromotionPreview",
-	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/approvals/{approval}":                      "GetOrgProjectEnvironmentApprovalStatus",
-	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}":                    "GetOrgProjectEnvironmentPromotionStatus",
-	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions":                                "ListOrgProjectEnvironmentPromotions",
-	"GET /v1/orgs/{organization}/projects/{slug}/delete-preview":                                                       "PreviewDeleteOrgProject",
-	"PUT /v1/orgs/{organization}/projects/{slug}/environments/{environment}/workloads/{workload}/routes":               "UpdateOrgProjectEnvironmentRoutes",
-	"POST /v1/orgs/{organization}/projects/scan":                                                                       "ScanOrgProject",
+	"GET /v1/orgs/{slug}/billing/status":                                                                 "GetOrgBillingStatus",
+	"GET /v1/orgs/{slug}/usage":                                                                          "GetOrgUsage",
+	"GET /v1/orgs/{slug}/invoices":                                                                       "ListOrgInvoices",
+	"GET /v1/orgs/{slug}/billing/portal":                                                                 "GetOrgBillingPortal",
+	"PATCH /v1/orgs/{slug}/plan":                                                                         "ChangeOrgPlan",
+	"GET /v1/orgs/{slug}/overage-cap":                                                                    "GetOrgOverageCap", // ADR-20261030093512
+	"POST /v1/orgs/{slug}/overage-cap":                                                                   "SetOrgOverageCap",
+	"GET /v1/orgs/{slug}/egress-overage":                                                                 "GetOrgEgressOverage", // ADR-20261104204500
+	"PUT /v1/orgs/{slug}/egress-overage":                                                                 "SetOrgEgressOverage",
+	"PUT /v1/orgs/{slug}/billing/email":                                                                  "SetOrgBillingEmail",   // ADR-20261103131742
+	"GET /v1/orgs/{slug}/billing/costs":                                                                  "GetOrgFinancialCosts", // ADR-20261031211500
+	"POST /v1/orgs/{slug}/billing/budgets/preview":                                                       "PreviewOrgFinancialBudget",
+	"GET /v1/orgs/{slug}/billing/budgets":                                                                "ListOrgFinancialBudgets",
+	"POST /v1/orgs/{slug}/billing/budgets":                                                               "CreateOrgFinancialBudget",
+	"GET /v1/orgs/{slug}/billing/budgets/{id}":                                                           "GetOrgFinancialBudget",
+	"PUT /v1/orgs/{slug}/billing/budgets/{id}":                                                           "UpdateOrgFinancialBudget",
+	"DELETE /v1/orgs/{slug}/billing/budgets/{id}":                                                        "DeleteOrgFinancialBudget",
+	"GET /v1/orgs/{slug}/billing/budgets/{id}/revisions":                                                 "ListOrgFinancialBudgetRevisions",
+	"GET /v1/orgs/{organization}/github/installations":                                                   "ListOrgGitHubInstallations",
+	"GET /v1/orgs/{organization}/projects":                                                               "ListOrgProjects",
+	"GET /v1/orgs/{organization}/projects/{slug}":                                                        "GetOrgProject",
+	"PATCH /v1/orgs/{organization}/projects/{slug}":                                                      "UpdateOrgProject",
+	"DELETE /v1/orgs/{organization}/projects/{slug}":                                                     "DeleteOrgProject",
+	"GET /v1/orgs/{organization}/projects/{slug}/environments":                                           "ListOrgProjectEnvironments",
+	"POST /v1/orgs/{organization}/projects/{slug}/environments":                                          "CreateOrgProjectEnvironment",
+	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}":                             "GetOrgProjectEnvironment",
+	"PATCH /v1/orgs/{organization}/projects/{slug}/environments/{environment}":                           "UpdateOrgProjectEnvironment",
+	"DELETE /v1/orgs/{organization}/projects/{slug}/environments/{environment}":                          "DeleteOrgProjectEnvironment",
+	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/releases":                    "GetOrgProjectEnvironmentReleases",
+	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/release-sets":                "ListOrgProjectReleaseSets",
+	"POST /v1/orgs/{organization}/projects/{slug}/environments/{environment}/release-sets":               "PublishOrgProjectReleaseSet",
+	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/release-sets/active":         "GetActiveOrgProjectReleaseSet",
+	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/release-sets/{release}":      "GetOrgProjectReleaseSet",
+	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/state":                       "GetOrgProjectEnvironmentState",
+	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/diff":                        "GetOrgProjectEnvironmentDiff",
+	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/config":                      "GetOrgProjectEnvironmentConfig",
+	"PUT /v1/orgs/{organization}/projects/{slug}/environments/{environment}/config":                      "UpdateOrgProjectEnvironmentConfig",
+	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/config/diff":                 "GetOrgProjectEnvironmentConfigDiff",
+	"GET /v1/projects/{slug}/environments/{environment}/secrets":                                         "ListProjectEnvironmentSecrets",
+	"PUT /v1/projects/{slug}/environments/{environment}/secrets/{key}":                                   "SetProjectEnvironmentSecret",
+	"POST /v1/projects/{slug}/environments/{environment}/secrets/{key}/rotate":                           "RotateProjectEnvironmentSecret",
+	"DELETE /v1/projects/{slug}/environments/{environment}/secrets/{key}":                                "DeleteProjectEnvironmentSecret",
+	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotion-preview":           "GetOrgProjectEnvironmentPromotionPreview",
+	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/approvals/{approval}":        "GetOrgProjectEnvironmentApprovalStatus",
+	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}":      "GetOrgProjectEnvironmentPromotionStatus",
+	"GET /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions":                  "ListOrgProjectEnvironmentPromotions",
+	"GET /v1/orgs/{organization}/projects/{slug}/delete-preview":                                         "PreviewDeleteOrgProject",
+	"PUT /v1/orgs/{organization}/projects/{slug}/environments/{environment}/workloads/{workload}/routes": "UpdateOrgProjectEnvironmentRoutes",
+	"POST /v1/orgs/{organization}/projects/scan":                                                         "ScanOrgProject",
+	// Client.WithProjectOrganization sends these personal methods to the
+	// company forms.
+	"POST /v1/orgs/{organization}/projects/scan/source-ref":                                                            "ScanProjectSourceRef",
+	"POST /v1/orgs/{organization}/projects/apply-plan":                                                                 "ApplyCachedProjectPlan",
+	"POST /v1/orgs/{organization}/projects/safe-deploy":                                                                "ApplyProjectPlan",
 	"POST /v1/orgs/{organization}/projects/{slug}/environments/{environment}/qualifications":                           "CreateOrgProjectEnvironmentQualification",
 	"POST /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promote":                                  "PromoteOrgProjectEnvironment",
 	"POST /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback":          "RollbackOrgProjectEnvironmentPromotion",

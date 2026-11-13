@@ -144,6 +144,8 @@ func (r doctorReport) HasProfileWarnings() bool {
 var actionableProfileWarnings = map[string]bool{
 	"package_json_invalid":  true,
 	"missing_start_command": true,
+	// A raw TCP server built from source fails readiness every time.
+	"non_http_service": true,
 }
 
 // ActionableProfileWarnings lists the profile warnings doctor reports.
@@ -261,6 +263,7 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	if hasDeployableSource(abs) {
 		appEnv := loadDoctorAppEnv(context.Background(), *appFlag, abs)
 		report = runDoctorChecksForApp(abs, detectShape(abs), &appEnv)
+		replaceDoctorCheck(&report, doctorRuntimeOOMForApp(context.Background(), appEnv.App))
 	} else {
 		report = noSourceDoctorReport(abs)
 	}

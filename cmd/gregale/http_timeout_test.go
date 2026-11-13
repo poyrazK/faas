@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,40 @@ import (
 
 	main "github.com/onebox-faas/faas/cmd/gregale"
 )
+
+func TestHTTPTimeoutAndReadRetriesShareInvocation(t *testing.T) {
+	main.SetupConnectionProfiles(t)
+	t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
+	var failNext atomic.Bool
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if failNext.Swap(false) {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	for _, prefix := range [][]string{
+		{"--http-timeout", "2s", "--http-retries", "1"},
+		{"--http-retries", "1", "--http-timeout", "2s"},
+	} {
+		failNext.Store(true)
+		before := requests.Load()
+		args := append(append([]string{}, prefix...), "--json", "billing", "usage", "summary")
+		if code, stdout, stderr := runHTTPDebugCLI(t, args...); code != 0 || requests.Load() != before+2 || !json.Valid([]byte(stdout)) || stderr != "" {
+			t.Fatalf("combined options failed: exit=%d requests=%d stdout=%q stderr=%q", code, requests.Load()-before, stdout, stderr)
+		}
+	}
+	failNext.Store(true)
+	before := requests.Load()
+	if code, stdout, stderr := runHTTPDebugCLI(t, "--json", "billing", "usage", "summary"); code != 3 || requests.Load() != before+1 || stdout != "" {
+		t.Fatalf("retry selection leaked: exit=%d requests=%d stdout=%q stderr=%q", code, requests.Load()-before, stdout, stderr)
+	}
+}
 
 func TestHTTPTimeoutInvocationAndValidation(t *testing.T) {
 	main.SetupConnectionProfiles(t)

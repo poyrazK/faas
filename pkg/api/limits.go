@@ -100,6 +100,60 @@ const (
 // DeploymentAttemptIDBytes is the encoded size of a random 128-bit submission identity.
 const DeploymentAttemptIDBytes = 32
 
+// Customer attention signals (ADR-20261113123000): when a customer is
+// probably stuck. Thresholds are platform-wide, not per plan.
+const (
+	// AttentionDeployFailures failed deployments of one app within
+	// AttentionDeployWindow, with no successful deployment since the first,
+	// open a deploy_failing signal.
+	AttentionDeployFailures = 3
+	AttentionDeployWindow   = 24 * time.Hour
+	// AttentionRefusedBurst refusals of one problem code within
+	// AttentionRefusedWindow open a refused_burst signal.
+	AttentionRefusedBurst  = 20
+	AttentionRefusedWindow = time.Hour
+	// A custom domain whose certificate issuance failed more than
+	// AttentionDomainFailedAfter ago, or that is still unverified
+	// AttentionDomainUnverifiedAfter after verification started, opens a
+	// domain_stuck signal. Drifted DNS opens one at once: the verifier has
+	// already confirmed the drift.
+	AttentionDomainFailedAfter     = time.Hour
+	AttentionDomainUnverifiedAfter = 24 * time.Hour
+	// AttentionEvaluateInterval is how often apid evaluates the rules;
+	// AttentionResolvedRetention bounds how long resolved signals are kept.
+	AttentionEvaluateInterval  = 5 * time.Minute
+	AttentionResolvedRetention = 30 * 24 * time.Hour
+	AttentionListMax           = 200
+	AttentionDismissReasonMax  = 200
+)
+
+// Customer attention signals, round 2 (ADR-20261113180000).
+const (
+	// AttentionOOMKills runtime OOM kills of one app within
+	// AttentionOOMWindow open an app_oom signal.
+	AttentionOOMKills  = 3
+	AttentionOOMWindow = 24 * time.Hour
+	// AttentionBootFailures failed boots of one app within
+	// AttentionBootWindow open a boot_failing signal.
+	AttentionBootFailures = 5
+	AttentionBootWindow   = time.Hour
+	// The last AttentionJobFailures finished scheduled runs of one job, all
+	// failed or dead-lettered within AttentionJobWindow, open a jobs_failing
+	// signal.
+	AttentionJobFailures = 3
+	AttentionJobWindow   = 7 * 24 * time.Hour
+	// A payment failure within AttentionPaymentWindow with no recovery
+	// since opens a payment_failing signal.
+	AttentionPaymentWindow = 14 * 24 * time.Hour
+	// Plan-limit refusals on AttentionLimitDays distinct days within
+	// AttentionLimitWindow open a limit_pressure signal.
+	AttentionLimitDays   = 3
+	AttentionLimitWindow = 7 * 24 * time.Hour
+	// AttentionSummaryWindow is the period the staff page summarises
+	// signal outcomes over.
+	AttentionSummaryWindow = 30 * 24 * time.Hour
+)
+
 // Management MCP history is connection-local metadata, not an account audit log.
 const (
 	ManagementMCPActionHistoryMax       = 256
@@ -209,6 +263,15 @@ const (
 const (
 	QueueReceiveWaitersPerAccount = 32
 	QueueReceiveWaitersPerAPID    = 4096
+)
+
+// Pull-lease long-polls (wait_seconds > 0) one account and one apid hold at
+// a time; past them a lease does not wait but answers at once (ADR-20261112200000).
+// Each waiter reruns a binding-locking lease transaction on every wake and
+// recheck, so the caps bound idle database work, not just goroutines.
+const (
+	QueueLeaseWaitersPerAccount = 64
+	QueueLeaseWaitersPerAPID    = 4096
 )
 
 // Failed password sign-ins one email address may collect from any client
@@ -1328,6 +1391,16 @@ const (
 	ProfileCPUSaturationGrace              = 5 * time.Second
 	ProfileCaptureCPUSaturationMinInterval = 15 * time.Minute
 	ProfileCaptureCPUSaturationDuration    = 10 * time.Second
+	// Sustained CPU abuse (ADR-20261112120603). schedd's stats poller counts
+	// an instance pinned while its host CPU use is at least
+	// CPUAbuseSaturationPercent of its sustained cgroup quota; a dip shorter
+	// than CPUAbuseGrace does not end the episode. An episode lasting
+	// CPUAbuseSustainedAfter is a CPU abuse signal: a Free instance is
+	// recycled (enforce mode) and the recycle counts toward the ADR-361
+	// account abuse hold; a paid instance is only flagged.
+	CPUAbuseSaturationPercent = 90
+	CPUAbuseSustainedAfter    = 15 * time.Minute
+	CPUAbuseGrace             = 30 * time.Second
 	// ProfileCaptureMaxKinds bounds the kinds one capture collects: every kind.
 	ProfileCaptureMaxKinds = 5
 	// Go contention sampling while a capture asks for block or mutex
@@ -2589,6 +2662,24 @@ const (
 	OutboundAIToolUsesPerCallMax                 = 1_000
 	MaxOutboundAIPriceMillicentsPerToolUse int64 = 10_000_000
 	OutboundAIPriceEntriesMax                    = 64
+	// Semantic response cache (ADR 20261112194947): the similarity a hit
+	// needs, in basis points of cosine similarity (bounds and default); the
+	// entries one integration keeps per outboundd process and how many
+	// integrations one process indexes; the largest text embedded and the
+	// most user turns a candidate call may have; and the embedding call's
+	// deadline. Vectors longer than the dimension bound are refused.
+	OutboundAISemanticCacheThresholdMinBP      = 8_500
+	OutboundAISemanticCacheThresholdMaxBP      = 9_900
+	OutboundAISemanticCacheThresholdDefaultBP  = 9_500
+	OutboundAISemanticCacheEntriesMax          = 2_000
+	OutboundAISemanticCacheIntegrationsMax     = 256
+	OutboundAISemanticCacheMaxInputBytes       = 8 << 10
+	OutboundAISemanticCacheMaxTurns            = 3
+	OutboundAISemanticCacheEmbedTimeoutSeconds = 1
+	OutboundAISemanticCacheMaxDimensions       = 3_072
+	// OutboundAISemanticCacheIndexBytesMax bounds one outboundd process's
+	// semantic index across every integration.
+	OutboundAISemanticCacheIndexBytesMax = 64 << 20
 	// AI fallback routes (ADR-990).
 	OutboundAIRouteTargetsMax     = 5
 	MaxOutboundAIRoutesPerAccount = 25
@@ -4599,6 +4690,9 @@ type Limits struct {
 	// rate, so many integrations cannot multiply one account's load on the
 	// gateway's shared state (ADR 20261027132936 amendment 2).
 	OutboundAIAccountRatePerSecondMax int
+	// OutboundAISemanticCacheAllowed lets an AI integration answer calls
+	// whose wording means the same as a cached one (ADR 20261112194947).
+	OutboundAISemanticCacheAllowed bool
 	// DeploysPerHour is the account-wide number of deployment admissions in a
 	// fixed one-hour window. It applies across every app and source path.
 	DeploysPerHour int
@@ -7138,7 +7232,7 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               5,
 		EnvironmentBranches:       5,
 		OutboundRequestsPerDayMax: 10_000_000,
-		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600, OutboundAIAccountRatePerSecondMax: 200,
+		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600, OutboundAIAccountRatePerSecondMax: 200, OutboundAISemanticCacheAllowed: true,
 		DeveloperLeaseMaxHours: 168, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        250,
@@ -7551,7 +7645,7 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               20,
 		EnvironmentBranches:       20,
 		OutboundRequestsPerDayMax: MaxOutboundRequestsPerDay,
-		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000, OutboundAIAccountRatePerSecondMax: 1000,
+		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000, OutboundAIAccountRatePerSecondMax: 1000, OutboundAISemanticCacheAllowed: true,
 		DeveloperLeaseMaxHours: 336, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        1000,
@@ -13920,6 +14014,23 @@ const (
 	ObsAlertmanagerResponseMaxBytes = 1 << 20
 	ObsAlertmanagerAlertsMax        = 4096
 	ObsNotificationIntegrationsMax  = 32
+	ObsNotificationQueueBusyRatio   = 0.8
+
+	// Serving coverage follows independent deployment intent, bounded to the
+	// same 1000 node/URL pairs as the deployed serving-probe inventory.
+	ObsServingProbeBudget       = 3 * time.Second
+	ObsServingProbePairsMax     = 1000
+	ObsServingProbeNodeMaxBytes = 128
+	ObsServingProbeURLMaxBytes  = 2048
+
+	// Post-deployment verification is a bounded read-only wait, not a rollout
+	// controller. Automatic timing follows probe age policy plus evaluation lag.
+	ObsPostDeployWaitDefault   = 20 * time.Minute
+	ObsPostDeployWaitMax       = time.Hour
+	ObsPostDeployPollDefault   = 10 * time.Second
+	ObsPostDeployPollMax       = time.Minute
+	ObsPostDeployHTTPTimeout   = 10 * time.Second
+	ObsPostDeployTokenMaxBytes = 4096
 
 	// Rule diagnostics assess the full bounded Prometheus rule snapshot and
 	// expose only a bounded, unhealthy-first metadata preview.
@@ -18625,6 +18736,8 @@ const (
 	DataPipelineSetupHistoryMax            = 100
 	DataPipelineObservationMaxAge          = 90 * time.Second
 	DataPipelineRetentionWarningBytes      = DataPipelineRetainedWALMaxBytes * 4 / 5
+	DataPipelineRetentionWarningWindow     = 5 * time.Minute
+	DataPipelineRetentionUrgentWindow      = 2 * time.Minute
 	DataPipelineLiveLagMaxBytes            = int64(16 << 20)
 	DataPipelineTablesMax                  = 16
 	DataPipelineRetainedTablesMax          = 32
@@ -18655,6 +18768,7 @@ const (
 	DataPipelineVerificationKeyBytesMax    = 1 << 20
 	DataPipelineRetainedWALMaxBytes        = int64(1 << 30)
 	DataPipelineDiscoveryTablesMax         = 128
+	DataPipelineIdentifierMaxBytes         = 63
 	DataPipelineCheckMaxBytes              = 4 << 20
 	DataPipelineCheckEnvelopeBytes         = 4096
 	DataPipelineCheckMaxAge                = 90 * time.Second

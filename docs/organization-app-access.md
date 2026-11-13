@@ -205,8 +205,23 @@ members list the company's installations at
 `GET /v1/orgs/{organization}/github/installations`. A member leaving does not
 disconnect it.
 
-Other GitHub/GitOps administration, async-route manifest bindings, resource/environment
-cloning, browser approval exchange and other unreviewed integrations remain
+Company projects also reach GitOps, environment copies, full clones and the
+browser review of a protected promotion
+([ADR-20261112230000](adr/20261112230000-company-project-gitops-clones-browser-approvals.md)).
+Every member reads GitOps status and plans. Binding, changing, rebinding or
+detaching an environment's Git source, and adopting it, need owner or admin, as
+linking the repository does; the source is the project's GitHub repository,
+and GitLab sources are refused (`gitlab_company_project_unavailable`) because a
+GitLab connection belongs to one member. Developers approve revisions and set
+GitOps overrides; in a protected environment other than production both need
+owner or admin. Developers copy an environment (`from_environment`) or start a
+full clone; copying a protected environment other than production needs owner
+or admin, as branching it does. An agent's request for a browser review of a
+protected promotion is approved by an owner or admin in the browser and
+exchanged only by the member whose credential asked for it; the approval
+records the approving member, so release approval policies judge them.
+
+Async-route manifest bindings and other unreviewed integrations remain
 outside the reviewed project surface. Shared uploads reject async-route bindings
 before resolving personal services. Managed PostgreSQL bindings use the company
 ownership rules below. Other data services and GitHub/GitOps references still
@@ -219,8 +234,15 @@ clients include the organization routes. Personal clients retain their URLs.
 `Client.WithProjectOrganization("acme")` sends every project call of an existing
 client to the company's routes. In the CLI, put `--org` before the command:
 `gregale --org acme deploy --project`, `gregale --org acme projects list`. The
-reviewed-plan (`apply-plan`), safe-release and source-ref scan entry points have
-no company form; with `--org` the CLI refuses them before sending a request.
+reviewed-plan (`apply-plan`), safe-release (`safe-deploy`) and connected-repository
+(`scan/source-ref`) entry points have company forms under
+`/v1/orgs/{organization}/projects/` and need the deploy role
+([ADR-20261113090000](adr/20261113090000-company-project-safe-deploys.md)).
+A company scan or deploy that names a repository resolves it through the
+organization's own GitHub installation only; an organization that does not yet
+own its resources answers 409 until billing adoption, and a member's personal
+installation answers 404. A plan reviewed for a personal project, or for
+another organization, is refused when applied as a company deploy.
 See [ADR-202610171905](adr/202610171905-organization-project-ownership.md) for migration and
 acceptance requirements.
 

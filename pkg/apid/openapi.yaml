@@ -27837,6 +27837,9 @@ paths:
                 healthcheck:
                   type: string
                   description: "JSON startup readiness probe: exactly one HTTP path or standard gRPC health selector."
+                readiness_probe:
+                  type: string
+                  description: "JSON steady-state readiness probe with the CreateDeploymentOverrides.readiness_probe shape. Overrides gregale.yaml hosting.readiness_probe for this deployment."
                 override_env:
                   type: string
                   maxLength: 1048576
@@ -27845,7 +27848,7 @@ paths:
                   type: string
                   maxLength: 256
                   pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
-                  description: "Optional repository-relative build directory. Empty or omitted uses the app's configured root; '.' explicitly selects the archive root."
+                  description: "Optional repository-relative build directory. Empty or omitted uses the app's configured root; when the archive does not contain that directory and its own root holds a Dockerfile, package.json, requirements.txt, pyproject.toml, go.mod or gregale.yaml, the archive root is used. '.' explicitly selects the archive root."
                 scope:
                   type: string
                   pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
@@ -59097,6 +59100,40 @@ paths:
         '403': { description: Rule coverage read denied by operator scope or MFA or allowlist policy. }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/admin/obs/serving-health:
+    get:
+      tags: [admin]
+      operationId: getObsServingHealth
+      summary: Inspect fleet serving-probe coverage against deployment intent.
+      description: |
+        Requires operator read scope, MFA and the operator allowlist. Accepts no
+        query parameters and performs no writes or direct HTTP probe. Four strict
+        Prometheus queries share one pinned evaluation time and three-second
+        budget. Independent inventory identifies expected node/URL pairs; missing,
+        stale, inconsistent or unconfigured inventory never becomes healthy empty
+        coverage. An explicitly configured empty fleet is not_applicable.
+        Fresh deployed coverage-rule evaluations distinguish healthy, missing,
+        stale, invalid telemetry, disabled content validation, latency budget
+        mismatch and failing probes. Missing or old evaluations remain unknown.
+        Recorded policy must match current intent and evaluation timestamps must
+        agree. A healthy evaluation cannot hold green beyond its run age budget.
+        Known faults take precedence over unknown peer evaluations.
+        Returns at most 1000 expected pairs ordered by stable node name and URL
+        fingerprint. URL IDs are lowercase SHA-256 of exact configured URL bytes.
+        Raw URLs, response bodies, scrape addresses, source labels and provider
+        errors are excluded. Recording-rule semantics are trusted; this read does
+        not qualify notification delivery or independent watchdog receipt.
+      responses:
+        '200':
+          description: Bounded expected serving-probe coverage with explicit unknown evidence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsServingHealth' }
+        '400': { description: Serving health accepts no query parameters. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Serving health read denied by operator scope or MFA or allowlist policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/admin/obs/input-health:
     get:
       tags: [admin]
@@ -59216,6 +59253,10 @@ paths:
         comments are never read or returned. A disabled or invalidly configured
         local Alertmanager reader is explicit. Source failures produce a partial
         HTTP 200 observation with null unavailable values.
+        Optional receiver_health is a separate assessment of deployment intent,
+        collector freshness and completed transport requests for reviewed receiver
+        roles. The top-level state and existing signals retain their aggregate
+        meaning. Cold baselines never invent successful historical delivery.
       responses:
         '200':
           description: Independent notification signals and integration counters with evidence quality.
@@ -68667,6 +68708,108 @@ paths:
 
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/scan/source-ref:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    post:
+      tags: [projects]
+      operationId: scanOrgProjectSourceRef
+      summary: "Preview a company project from a connected repository ref."
+      description: "Fetches the repository at the given ref through the organization's own GitHub installation and runs the same read-only scanner as the company source upload. A member's personal installation is never used; the organization must own its resources and have GitHub connected. Requires the deploy role."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectSourceRefScanRequest'
+      responses:
+        '200':
+          description: "Company repository scan, workload partitions and deployment plan."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ValidationFailed' }
+        '413': { $ref: '#/components/responses/SourceTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/orgs/{organization}/projects/apply-plan:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    post:
+      tags: [projects]
+      operationId: applyCachedOrgProjectPlan
+      summary: "Deploy a company project's reviewed source without another upload."
+      description: "Applies the exact archive retained by a company project scan in the same organization. A plan reviewed for a personal project or another organization is refused. The normal scanner and apply admission gates run again; the reviewed source expires after one hour. Requires the deploy role."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApplyCachedProjectPlanRequest' }
+      responses:
+        '200':
+          description: "Company project applied with per-workload deployment receipts."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplyResponse' }
+        '403':
+          description: "The member lacks the deploy role or secret write permission."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "The company plan is stale, blocked, or requires environment approval."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '410':
+          description: "The reviewed company source expired or belongs elsewhere; scan again."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/orgs/{organization}/projects/safe-deploy:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    post:
+      tags: [projects]
+      operationId: safeApplyOrgProject
+      summary: "Build an existing company HTTP project and atomically publish its ready release."
+      description: "The company form of the safe project deploy: candidates receive zero traffic and publish only after every candidate completes readiness. Takes the same release headers, attempt ID and plan token as the personal form. Requires the deploy role."
+      parameters:
+        - name: Project-Release-Mode
+          in: header
+          description: "Safe release mode for the company project; defaults to atomic."
+          schema: { type: string, enum: [atomic, atomic-verify, atomic-config-verify, atomic-migrate-verify, atomic-config-migrate-verify, atomic-verify-workers, atomic-config-verify-workers, atomic-migrate-verify-workers, atomic-config-migrate-verify-workers] }
+        - name: Deployment-Attempt-ID
+          in: header
+          required: true
+          description: "Durable identity for this company safe project submission."
+          schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+        - name: plan_token
+          in: query
+          description: "Company scan token bound to the safe release baseline."
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/ProjectApplyRequest' }
+      responses:
+        '200':
+          description: "Accepted company candidate deployments and durable safe release state."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplyResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/orgs/{organization}/projects/scan:
     parameters:
       - $ref: '#/components/parameters/OrgProjectOrganization'
@@ -86240,6 +86383,8 @@ components:
         ai_auto_prompt_cache:
           type: boolean
           description: Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none.
+        ai_semantic_cache:
+          $ref: '#/components/schemas/OutboundAISemanticCache'
         ai_trace_max_calls:
           type: integer
           format: int64
@@ -86362,6 +86507,8 @@ components:
             none: after a system prompt or tool list seen again within five minutes, and after the last message of a
             conversation that carries earlier turns or names X-Gregale-AI-Session. Prompts under about 1,024 tokens are not
             marked; the response names the added breakpoints in X-Gregale-AI-Prompt-Cache. Requires ai_provider.
+        semantic_cache:
+          $ref: '#/components/schemas/OutboundAISemanticCache'
         trace_max_calls:
           type: integer
           format: int64
@@ -87438,6 +87585,27 @@ components:
         judge_integration_id: { type: string, format: uuid }
         judge_model: { type: string, minLength: 1, maxLength: 200 }
         rubric: { type: string, maxLength: 1000, description: What a good answer does for this app, given to the judge. }
+    OutboundAISemanticCache:
+      type: object
+      description: >-
+        Answer a call from the response cache when its last user turn means the same as a cached call's and everything
+        else matches exactly. Pro and Scale plans; needs ai_provider and a response cache TTL. The
+        embedding integration, one of the account's enabled OpenAI or Gemini integrations, embeds each candidate call on
+        its own key, metered under the caller semantic_cache. A hit carries X-Gregale-AI-Cache semantic and
+        X-Gregale-AI-Similarity.
+      required: [enabled, embedding_integration_id, embedding_model]
+      properties:
+        enabled: { type: boolean }
+        threshold_basis_points:
+          type: integer
+          minimum: 8500
+          maximum: 9900
+          description: Cosine similarity a hit needs, in basis points. Absent or 0 means 9500.
+        embedding_integration_id: { type: string, format: uuid }
+        embedding_model: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$' }
+        share_across_users:
+          type: boolean
+          description: Let calls of different end users (X-Gregale-AI-User) share answers. Off, each end user has their own.
     PutOutboundAIFeedbackRequest:
       type: object
       description: A rating of one logged call. A later rating replaces the earlier one.
@@ -90538,7 +90706,7 @@ components:
       type: object
       required: [reason, held_at]
       properties:
-        reason: { type: string, enum: [egress_fanout, egress_flood, operator] }
+        reason: { type: string, enum: [cpu_sustained, egress_fanout, egress_flood, operator] }
         held_at: { type: string, format: date-time }
 
     AccountAbuseHoldAction:
@@ -91575,6 +91743,67 @@ components:
         total_alerts: { type: integer, minimum: 1, maximum: 4096 }
         uncertain_alerts: { $ref: '#/components/schemas/ObsRecordingAlertReferences' }
 
+    ObsServingHealth:
+      type: object
+      description: Coverage of expected serving probes from independent deployment intent and current coverage-rule evaluations. No direct probes are executed.
+      required: [generated_at, scope, state, max_age_seconds, inventory, counts, probes, limitations]
+      properties:
+        generated_at: { type: string, format: date-time }
+        scope: { type: string, const: expected_serving_probe_coverage }
+        state: { type: string, enum: [healthy, degraded, partial, not_applicable] }
+        reason: { type: string }
+        max_age_seconds: { type: integer, const: 120 }
+        inventory: { $ref: '#/components/schemas/ObsServingProbeInventory' }
+        counts:
+          description: Null when inventory is unknown or unconfigured; an explicitly empty configured fleet has zero counts.
+          anyOf: [{ $ref: '#/components/schemas/ObsServingProbeCounts' }, { type: 'null' }]
+        probes:
+          type: array
+          maxItems: 1000
+          items: { $ref: '#/components/schemas/ObsServingProbe' }
+        limitations:
+          type: array
+          items: { type: string }
+    ObsServingProbeInventory:
+      type: object
+      description: Configuration and freshness of independent serving-probe intent.
+      required: [state, configured, expected_pairs, observed_at]
+      properties:
+        state: { type: string, enum: [healthy, stale, unavailable] }
+        reason: { type: string }
+        configured: { type: [boolean, 'null'] }
+        expected_pairs: { type: [integer, 'null'], minimum: 0, maximum: 1000 }
+        observed_at: { type: [string, 'null'], format: date-time }
+    ObsServingProbeCounts:
+      type: object
+      description: Counts cover every expected pair. Reporting is known true only for evaluated pairs with a result; unknown evaluations never count as healthy or reporting.
+      required: [expected, reporting, healthy, missing, stale, invalid, content_disabled, budget_mismatch, failing, unknown]
+      properties:
+        expected: { type: integer, minimum: 0, maximum: 1000 }
+        reporting: { type: integer, minimum: 0, maximum: 1000 }
+        healthy: { type: integer, minimum: 0, maximum: 1000 }
+        missing: { type: integer, minimum: 0, maximum: 1000 }
+        stale: { type: integer, minimum: 0, maximum: 1000 }
+        invalid: { type: integer, minimum: 0, maximum: 1000 }
+        content_disabled: { type: integer, minimum: 0, maximum: 1000 }
+        budget_mismatch: { type: integer, minimum: 0, maximum: 1000 }
+        failing: { type: integer, minimum: 0, maximum: 1000 }
+        unknown: { type: integer, minimum: 0, maximum: 1000 }
+    ObsServingProbe:
+      type: object
+      description: One expected node/URL pair. Raw URL bytes remain private; url_id fingerprints exact URL bytes, including query parameters. Evaluation time describes the recording, and last_run_at is the probe loop clock.
+      required: [node, url_id, state, reporting, evaluated_at, last_run_at, expected_first_byte_seconds, max_result_age_seconds]
+      properties:
+        node: { type: string, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]*$' }
+        url_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        state: { type: string, enum: [healthy, missing, stale, invalid_telemetry, content_disabled, budget_mismatch, failing, unknown] }
+        reason: { type: string }
+        reporting: { type: [boolean, 'null'] }
+        evaluated_at: { type: [string, 'null'], format: date-time }
+        last_run_at: { type: [string, 'null'], format: date-time }
+        expected_first_byte_seconds: { type: number, exclusiveMinimum: 0 }
+        max_result_age_seconds: { type: number, exclusiveMinimum: 0 }
+
     ObsNotificationHealth:
       type: object
       description: Current pipeline evidence without per-episode delivery or human receipt claims.
@@ -91593,9 +91822,65 @@ components:
           maxItems: 32
           description: Observed integration types ordered by name; missing counters remain unknown.
           items: { $ref: '#/components/schemas/ObsNotificationIntegration' }
+        receiver_health:
+          $ref: '#/components/schemas/ObsNotificationReceiverHealth'
         limitations:
           type: array
           items: { type: string }
+    ObsNotificationReceiverHealth:
+      type: object
+      description: |
+        Independent receiver assessment, bounded to 32 receiver/integration groups.
+        Deployment intent is independent of actual collector output. Healthy
+        requires fresh collection and inventory, complete counter increases and
+        an observed successful transport clock for every expected group. Partial
+        preserves unavailable evidence, insufficient counter samples and unknown
+        success history. Degraded identifies failed requests, missing expected
+        transport telemetry or a freshly observed group outside deployment intent.
+        This section does not change the top-level aggregate assessment.
+      required: [state, collector, inventory, groups, limitations]
+      properties:
+        state: { type: string, enum: [healthy, partial, degraded] }
+        reason: { type: string }
+        collector:
+          allOf: [{ $ref: '#/components/schemas/ObsNotificationSignal' }]
+          description: Fresh read quality for the collector flag and its own run clock. A known zero means collection failed; unavailable or stale evidence has a null value.
+        inventory:
+          allOf: [{ $ref: '#/components/schemas/ObsNotificationSignal' }]
+          description: Expected group count from fresh deployment intent. Missing or inconsistent intent remains null, never zero configured receivers.
+        groups:
+          type: array
+          maxItems: 32
+          description: Reviewed receiver/integration groups ordered by receiver then integration. Addresses, arbitrary names, scrape identities and provider errors are excluded.
+          items: { $ref: '#/components/schemas/ObsNotificationReceiver' }
+        limitations:
+          type: array
+          items: { type: string }
+    ObsNotificationReceiver:
+      type: object
+      description: |
+        Completed transport request observations for one reviewed receiver role
+        and integration type. Multiple destinations within the group aggregate.
+        Signal healthy describes usable evidence, not human acknowledgement.
+        Expected is null when independent deployment intent cannot be established.
+      required: [receiver, integration, expected, state, requests, failures, last_success_observation]
+      properties:
+        receiver: { type: string, enum: [faas-heartbeat, faas-page, faas-warn] }
+        integration:
+          type: string
+          enum: [email, pushover, slack, webhook, pagerduty, opsgenie, victorops, wechat, telegram, discord, webex, sns, msteams, msteamsv2, rocketchat, jira]
+        expected: { type: [boolean, 'null'] }
+        state: { type: string, enum: [healthy, partial, degraded] }
+        reason: { type: string }
+        requests:
+          allOf: [{ $ref: '#/components/schemas/ObsNotificationSignal' }]
+          description: Completed transport request increase over ten minutes, including failed requests and retry attempts. Insufficient samples are null.
+        failures:
+          allOf: [{ $ref: '#/components/schemas/ObsNotificationSignal' }]
+          description: Failed completed request increase over ten minutes, including retries. Fresh zero is distinct from missing evidence.
+        last_success_observation:
+          allOf: [{ $ref: '#/components/schemas/ObsNotificationSignal' }]
+          description: Value is Unix seconds when two collector observations confirmed a new successful completed request count. Observed_at is the freshness of that gauge, not the delivery time. A cold baseline is no_samples with a null value, never an epoch-zero receipt. Older confirmed history may remain valid with a freshly read gauge. It does not establish per-episode delivery or human or external-watchdog receipt.
     ObsNotificationAPIStatus:
       type: object
       description: Reachability and bounded validity of the local alert-status API; does not establish notification receiver readiness.
@@ -113179,6 +113464,16 @@ components:
         observed: { type: integer, format: int64 }
         docs_url: { type: string }
 
+    FeatureHint:
+      description: "One Gregale behavior or feature that applies to the scanned source: what the plan will do, how to change it, and the exact CLI commands. IDs are stable."
+      type: object
+      required: [id, applied]
+      properties:
+        id: { type: string, description: "Stable hint ID, such as health-default-path or public-needs-api-key" }
+        workloads: { type: array, items: { type: string }, description: "Workloads the hint is about" }
+        applied: { type: string, description: "What Gregale will do with this source" }
+        change: { type: string, description: "How to change it" }
+        commands: { type: array, items: { type: string }, description: "Exact gregale commands; <placeholders> need a value" }
     PlanResponse:
       description: "Dry-run scan response."
       type: object
@@ -113222,6 +113517,10 @@ components:
         warnings:
           type: array
           items: { type: string }
+        feature_hints:
+          type: array
+          description: "Gregale behaviors and features that apply to the scanned source, with the commands that change them."
+          items: { $ref: '#/components/schemas/FeatureHint' }
         detection_warnings:
           type: array
           description: "Structured skipped/merged detector decisions available to explain-mode clients."
@@ -116563,6 +116862,7 @@ components:
         status: { type: string, enum: [pending, approved, denied, consumed, expired], description: "`consumed` once the approved request was made." }
         review_url: { type: string, format: uri, description: The review page, while the request is pending. }
         agent: { type: string, description: "The connection's client name or key label." }
+        connection_id: { type: string, description: "The id of the agent connection that asked, as GET /v1/agent-connections lists it." }
         created_at: { type: string, format: date-time, description: When the agent first made the request. }
         expires_at: { type: string, format: date-time, description: After this time the request can no longer be approved or used. }
         decided_at: { type: string, format: date-time, description: When a person approved or denied it. }
@@ -138650,6 +138950,17 @@ components:
       required:
       - expected_revision
       properties:
+        tables:
+          type: array
+          maxItems: 16
+          uniqueItems: true
+          description: Exact public table names to inspect, bypassing the default discovery page. Mutually exclusive with search.
+          items: { type: string, pattern: "^[a-z][a-z0-9_]{0,62}$" }
+        search:
+          type: string
+          maxLength: 63
+          pattern: "^[a-z0-9_]*$"
+          description: Discover names containing this literal text before applying the metadata limit. Mutually exclusive with tables.
         expected_revision:
           type: integer
           format: int64
@@ -138672,6 +138983,14 @@ components:
       - tables
       - created_at
       properties:
+        requested_tables:
+          type: array
+          maxItems: 16
+          items: { type: string }
+          description: Exact discovery selection retained across queueing and worker completion.
+        search:
+          type: string
+          description: Literal discovery name filter.
         capacity:
           $ref: '#/components/schemas/DataPipelineCapacity'
         id:
@@ -138963,6 +139282,8 @@ components:
       - verification
       - created_at
       properties:
+        wal_retention:
+          $ref: '#/components/schemas/DataPipelineWALRetention'
         applied_through_at:
           type: string
           format: date-time
@@ -139006,7 +139327,7 @@ components:
             type: string
             minLength: 1
             maxLength: 256
-          minItems: 1
+          minItems: 0
           maxItems: 32
           uniqueItems: true
         desired_state:
@@ -139062,6 +139383,15 @@ components:
         created_at:
           type: string
           format: date-time
+    DataPipelineWALRetention:
+      description: Fresh source-specific WAL headroom. The remaining-time estimate uses sampled cluster WAL generation and does not guarantee when a slot will be invalidated.
+      type: object
+      additionalProperties: false
+      required: [limit_bytes, remaining_bytes]
+      properties:
+        limit_bytes: { type: integer, format: int64, minimum: 1 }
+        remaining_bytes: { type: integer, format: int64, minimum: 0 }
+        estimated_seconds_remaining: { type: integer, format: int64, minimum: 0 }
     DataPipelineHealth:
       description: Read-time freshness assessment and safe recovery guidance. Unconfirmed checkpoints can occur on idle sources.
       type: object

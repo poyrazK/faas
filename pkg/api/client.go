@@ -151,6 +151,7 @@ type Client struct {
 	approvalWait   bool
 	approvalNotify func(AgentApprovalPendingInfo)
 	approvalPoll   time.Duration
+	readRetries    int // opt-in, restricted JSON reads only (WithReadRetries)
 }
 
 // WithoutConfigGuard returns a client whose env and secret writes open no
@@ -382,12 +383,21 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 		idempotencyKey = ""
 	}
 	waitedForApproval := false
+	readEligible := c.readRetries > 0 && retryableReadRoute(method, path)
+	readRetry, readDelay := 0, time.Duration(0)
 	for attempt := 1; ; attempt++ {
-		req, err := c.newJSONRequest(ctx, method, path, payload, body != nil, idempotencyKey, headers)
+		if readEligible && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		requestCtx := ctx
+		if readEligible {
+			requestCtx = context.WithValue(ctx, readRetryAttemptKey{}, ReadRetryAttempt{Attempt: readRetry + 1, MaxAttempts: c.readRetries + 1, Delay: readDelay})
+		}
+		req, err := c.newJSONRequest(requestCtx, method, path, payload, body != nil, idempotencyKey, headers)
 		if err != nil {
 			return err
 		}
-		err = c.doReq(cli, req, out)
+		response, err := c.doReqWithResponseMeta(cli, req, out)
 		if pending, ok := pendingApproval(err); ok && c.approvalWait && !waitedForApproval {
 			// The approval gate answers before the idempotency layer, so
 			// the retry may carry the same Idempotency-Key.
@@ -398,8 +408,15 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 			continue
 		}
 		pause, retry := trafficPolicyRetryPause(err, attempt)
+		if readEligible {
+			pause, retry = c.readRetryPause(ctx, response, err, readRetry+1)
+		}
 		if !retry {
 			return err
+		}
+		if readEligible {
+			readRetry++
+			readDelay = pause
 		}
 		timer := time.NewTimer(pause)
 		select {
@@ -472,7 +489,14 @@ func (c *Client) rollbackHTTP() *http.Client {
 // recipe; methods that need a custom header set it on req before
 // calling doReq.
 func (c *Client) doReq(cli *http.Client, req *http.Request, out any) error {
-	return c.doReqWithSuccess(cli, req, out, func(resp *http.Response) bool {
+	_, err := c.doReqWithResponseMeta(cli, req, out)
+	return err
+}
+
+// The response body is closed before return. Retry decisions use its actual
+// status and headers rather than trusting a problem body's claimed status.
+func (c *Client) doReqWithResponseMeta(cli *http.Client, req *http.Request, out any) (readRetryResponse, error) {
+	return c.doReqWithSuccessAndResponseMeta(cli, req, out, func(resp *http.Response) bool {
 		return resp.StatusCode >= 200 && resp.StatusCode < 300
 	})
 }
@@ -483,6 +507,11 @@ func (c *Client) doReq(cli *http.Client, req *http.Request, out any) error {
 // errors. Keeping the predicate local prevents that dashboard
 // convention from changing response handling for every other method.
 func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, success func(*http.Response) bool) error {
+	_, err := c.doReqWithSuccessAndResponseMeta(cli, req, out, success)
+	return err
+}
+
+func (c *Client) doReqWithSuccessAndResponseMeta(cli *http.Client, req *http.Request, out any, success func(*http.Response) bool) (readRetryResponse, error) {
 	// ADR-093 / PR-E: outbound SDK call becomes a child of the
 	// inbound budget when one is attached. The CLI / SDK never
 	// receives a Budget from the user today — but apid's
@@ -506,11 +535,15 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 	}
 	preventDeploymentReplay(req)
 	if err := recordDeploymentSubmissionBoundary(req); err != nil {
-		return err
+		return readRetryResponse{}, err
 	}
 	resp, err := cli.Do(req)
+	result := readRetryResponse{}
+	if resp != nil {
+		result = readRetryResponse{status: resp.StatusCode, headers: resp.Header}
+	}
 	if err != nil {
-		return fmt.Errorf("could not reach the API: %w", err)
+		return result, fmt.Errorf("could not reach the API: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -523,10 +556,10 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 	}
 	data, err := readBoundedResponse(resp, limit)
 	if err != nil {
-		return err
+		return result, err
 	}
 	if !success(resp) {
-		return apiErrorFromResponse(resp, data)
+		return result, apiErrorFromResponse(resp, data)
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		// Tier A8 / ADR-083: auto-refresh the completion cache on every
@@ -539,11 +572,11 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 		}
 		if out != nil && len(data) > 0 {
 			if err := json.Unmarshal(data, out); err != nil {
-				return fmt.Errorf("decode response: %w", err)
+				return result, fmt.Errorf("decode response: %w", err)
 			}
 		}
 	}
-	return nil
+	return result, nil
 }
 
 // doBytes executes an HTTP request and returns the raw response body

@@ -760,11 +760,29 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("vmmd: load build seal domain: %w", err)
 	}
-	hostIdentities, registryIdentities, err := unsealIdentities(runtimeIdentities, buildIdentities, legacyIdentities, cfg.RuntimeSealDomainContracted)
+	hostIdentities, registryIdentities, err := unsealIdentities(runtimeIdentities, buildIdentities, legacyIdentities,
+		cfg.RuntimeSealDomainContracted, cfg.RuntimeSealDomainRetired)
 	if err != nil {
 		return err
 	}
-	sealdomain.RegisterLoadedDomains(ops.Registry(), map[sealdomain.Domain]bool{sealdomain.Runtime: len(runtimeIdentities) > 0, sealdomain.Build: len(buildIdentities) > 0})
+	// ADR-20261110210000 slice 3e: a retired node holds no runtime
+	// identity and seals capture keys to the runtime recipient.
+	var captureRecipient *age.X25519Recipient
+	loadedDomains := map[sealdomain.Domain]bool{sealdomain.Build: len(buildIdentities) > 0}
+	if cfg.RuntimeSealDomainRetired {
+		captureRecipient, err = runtimeRetiredRecipient(filepath.Dir(keyPath), cfg.RuntimeSealDomainContracted,
+			os.Getenv("FAAS_RUNTIME_SECRET_OPENER"))
+		if err != nil {
+			return err
+		}
+		log.Info("vmmd: runtime identity retired; runtime secrets open on the control plane only")
+	} else {
+		// A retired node reports no runtime domain at all, so
+		// FaasSealDomainIdentityMissing does not read it as a node that
+		// lost its identity.
+		loadedDomains[sealdomain.Runtime] = len(runtimeIdentities) > 0
+	}
+	sealdomain.RegisterLoadedDomains(ops.Registry(), loadedDomains)
 	sealdomain.RegisterLegacyIdentities(ops.Registry(), len(legacyIdentities))
 	log.Info("vmmd: unseal identities loaded", "runtime_domain", len(runtimeIdentities) > 0, "identities", len(hostIdentities),
 		"contracted", cfg.RuntimeSealDomainContracted, "legacy_identities", len(legacyIdentities))
@@ -1374,11 +1392,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			jailer.VsockUDSSocketPath(instance), func() (bool, uint64) { return mgr.QuietGate(instance) })
 	})
 	mgr.SetHostIdentities(hostIdentities)
+	mgr.SetCaptureRecipient(captureRecipient)
 	mgr.SetRegistryIdentities(registryIdentities)
 	mgr.RequireSecretBinding(cfg.RequireSecretBinding)
 	sealdomain.RegisterBindingRequired(ops.Registry(), cfg.RequireSecretBinding)
 	if cfg.RequireSecretBinding {
 		log.Info("vmmd: runtime secrets must be bound to their account (ADR-20261023173624)")
+	}
+	opener, closeOpener, err := runtimeSecretOpenerFromEnv(ctx, os.Getenv, cfg.RequireSecretBinding, log)
+	if err != nil {
+		return err
+	}
+	defer closeOpener()
+	if opener != nil {
+		mgr.SetRuntimeSecretOpener(opener)
 	}
 	var signatureStore any
 	if store != nil {
@@ -2067,6 +2094,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// configured base generation, so a node that cannot is marked degraded.
 	impl.WithBaseGenerationReadiness(vmmdgrpc.NewCachedBaseGenerationReadiness(
 		baseGenerationReadinessCheck(storageBackend, baseGenerations)))
+	// ADR-20261110210000 slice 3i: sealed edge-rule request headers open
+	// here, for this node's instances, through the control plane's secretd.
+	edgeHeaderSecrets, closeEdgeHeaderSecrets, err := edgeHeaderSecretOpenerFromEnv(ctx, os.Getenv, mgr.InstanceAppID, log)
+	if err != nil {
+		return err
+	}
+	defer closeEdgeHeaderSecrets()
+	if edgeHeaderSecrets != nil {
+		impl.WithEdgeHeaderSecrets(edgeHeaderSecrets)
+	}
 	if err := vmmdgrpc.FenceStaleStreamBridges(ctx); err != nil {
 		return fmt.Errorf("vmmd: fence previous HTTP forwarding owner: %w", err)
 	}

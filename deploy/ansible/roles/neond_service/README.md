@@ -4,8 +4,9 @@ Installs `neond`, the control plane's Neon key holder (ADR-20261112160000).
 
 `neond` holds the Neon API key and forwards apid's Neon API calls. It forwards
 only the routes Gregale's Neon backend uses (`pkg/neond/routes.go`), refuses
-to delete the Neon project or branch of a live managed database, and caps
-destructive calls per hour. apid connects on `/run/faas/neond.sock`; neond
+to delete the Neon project or branch of a live managed database, writes
+quotas and deletes roles only on projects a managed database names, and caps
+destructive calls per hour, fleet-wide and per account. apid connects on `/run/faas/neond.sock`; neond
 admits only the `faas-apid` OS user.
 
 Off by default. To turn it on (control plane or single box):
@@ -19,10 +20,15 @@ Off by default. To turn it on (control plane or single box):
    - starts neond and waits for its socket.
 
    CD restarts neond from each new release.
-3. Check `neond_requests_total` and the journal, then set
-   `faas_neond_broker: true` and converge. apid gets a drop-in setting
+3. Check `neond_requests_total` (Prometheus job `neond`, scraped from
+   `faas_neond_metrics_addr`) and the journal.
+4. Remove `FAAS_NEON_API_KEY` (`faas_neond_apid_key_env`) from
+   `/etc/faas/sealed.env`, set `faas_neond_broker: true` and converge. apid
+   gets a drop-in setting
    `FAAS_MANAGED_POSTGRES_NEON_BROKER=unix:///run/faas/neond.sock` and
-   restarts; from then on every Neon call goes through neond.
+   restarts; from then on every Neon call goes through neond and apid holds
+   no Neon key. The role refuses the broker while `sealed.env` still sets the
+   key, and apid refuses to start with both.
 
 ## Project keys
 
@@ -37,6 +43,13 @@ dedicated service user). A project without a key, or whose key Neon
 refuses, falls back to the admin key (`neond_requests_total{tier="admin_fallback"}`).
 Deleting a project revokes its keys (`neond_project_keys_total`).
 
+A key sweep runs every 10 minutes. It mints keys for projects without one
+(projects created before project keys, or whose mint failed), revokes the
+keys of projects Neon no longer lists, and rotates keys older than
+`faas_neond_project_key_max_age` (default 90 days), at most 50 key calls a
+pass. `neond_projects_without_key` is the backfill still to do. A pass that
+cannot list every project does nothing.
+
 Keys are sealed to the `neon` seal domain (ADR 20261022111812), which only
 neond reads. Before setting `faas_neond_org_id`, create the domain with
 `gregalectl seal-domain init --domain neon`, set
@@ -46,13 +59,14 @@ hands it to neond and proves the domain probe. This role refuses project
 keys without it. Losing the identity leaves projects on the admin key until
 their keys are re-minted.
 
-To roll back, set `faas_neond_broker: false` (apid calls Neon with its own key
-again), then `faas_neond_enabled: false`.
+To roll back, put the key back in `sealed.env`, set `faas_neond_broker: false`
+and converge (apid calls Neon with its own key again), then
+`faas_neond_enabled: false`. The runbook is `docs/runbooks/FaasNeond.md`.
 
 neond logs in to Postgres as `faas_neond`, through peer authentication as
 `faas-neond`. That role is not a `faas_runtime` member: it can read
 `managed_postgres_databases` and nothing else.
 
-Slice 3 removes the key from apid's own configuration; until then apid still
-holds it, so the broker narrows what an apid bug can do but not what a leaked
-apid environment can.
+With the broker on, apid holds no Neon key, so a leaked apid environment
+reveals none. Alerts (`FaasNeond*`) cover neond being down, refusals, rate
+limits and project-key failures.

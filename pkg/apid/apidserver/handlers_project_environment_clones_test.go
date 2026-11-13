@@ -207,10 +207,10 @@ func TestFullProjectEnvironmentCloneHidesInternalHostingBlockers(t *testing.T) {
 	}
 }
 
-// Shared organization project access never admits a full clone, even with
-// both switches on: a member must not copy the owner's values, secrets or
-// databases into a stage they control (the /environments rule).
-func TestFullProjectEnvironmentCloneRefusesSharedOrganizationAccess(t *testing.T) {
+// A company-project member whose role may not configure the project never
+// admits a full clone, even with both switches on (ADR-20261112230000; the
+// role matrix is TestOrgProjectGitOpsAndClones).
+func TestFullProjectEnvironmentCloneRefusesViewerInSharedOrganization(t *testing.T) {
 	srv, store, actor, _, _ := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	for _, key := range []string{runtimeconfig.KeyFullEnvironmentClones, "full_environment_clone_admission_enabled"} {
@@ -222,7 +222,7 @@ func TestFullProjectEnvironmentCloneRefusesSharedOrganizationAccess(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AddOrgMember(ctx, org.ID, actor.ID, state.OrgRoleOwner, nil); err != nil {
+	if err := store.AddOrgMember(ctx, org.ID, actor.ID, state.OrgRoleViewer, nil); err != nil {
 		t.Fatal(err)
 	}
 	project, err := store.CreateProject(ctx, state.Project{AccountID: org.ID, OrgID: org.ID, Slug: "company-shop"})
@@ -236,8 +236,8 @@ func TestFullProjectEnvironmentCloneRefusesSharedOrganizationAccess(t *testing.T
 	req.Header.Set("Idempotency-Key", "org-clone")
 	req = req.WithContext(authmw.WithPrincipal(ctx, actor, nil, nil))
 	projectaccess.Wrap(store, nil, srv.CreateFullProjectEnvironmentClone)(rec, req, actor)
-	if rec.Code != http.StatusForbidden && rec.Code != http.StatusConflict {
-		t.Fatalf("shared organization clone = %d %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("viewer's shared organization clone = %d %s; want 403", rec.Code, rec.Body.String())
 	}
 	if _, err := store.ProjectEnvironmentCloneOperationByIdempotencyKey(ctx, org.ID, project.ID, "org-clone"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("shared organization access admitted a clone: %v", err)

@@ -32,9 +32,11 @@ COPY --chmod=0755 images/agent-base/finish-install.sh /tmp/finish-install.sh
 # npm stays, unlike in the runner bases: agents install and test projects.
 # Both install scripts that run here (opencode-ai, claude-code) only link
 # their locked platform binary into place; finish-install.sh checks that.
+# zlib floor: CVE-2026-4738 (CRITICAL, fixed in Alpine zlib 1.4-r0; issue
+# #6727), the same floor runner-node22.Dockerfile sets on this base.
 RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt \
     apk upgrade --no-cache && \
-    apk add --no-cache bash git python3 ripgrep libstdc++ libgcc && \
+    apk add --no-cache bash git python3 ripgrep libstdc++ libgcc 'zlib>=1.4-r0' && \
     chmod 0755 /opt/gregale /opt/gregale/agents /usr/share/faas && \
     cd /opt/gregale/agents && \
     NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt npm ci --omit=dev --no-audit --no-fund && \
