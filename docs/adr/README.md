@@ -4,6 +4,7 @@
 # Architecture Decision Records
 
 - [ADR-20261113160000: Record what an account looked like when it signed up](20261113160000-account-signup-facts.md) — accepted; each account keeps its sign-up method, address and user agent (90 days), country, network owner and email domain in `account_signup_facts`
+- [ADR-20261113204237: Lazy typed Node SDK pagination](20261113204237-node-sdk-lazy-pagination.md) — accepted; lazy deployment/build page and item iterators with total deadlines, cancellation, exact work limits, cursor checks, and isolated client snapshots.
 - [ADR-20261113202200: Node SDK request options and response diagnostics](20261113202200-node-sdk-request-options-and-diagnostics.md) — accepted; per-call cancellation, total deadlines and retry overrides on isolated methods, with frozen response metadata and legacy compatibility.
 - [ADR-20261113180307: Bind execution workflows to independent Node clients](20261113180307-node-sdk-bound-execution-workflows.md) — accepted; preview helpers retain one client snapshot across submission, resumed event streams, and terminal receipt reads, with per-caller cancellation and legacy compatibility.
 - [ADR-20261113173610: Independent Node SDK clients](20261113173610-node-sdk-client-isolation.md) — accepted; per-client generated service namespaces and transports, immutable request configuration, and migration from shared FaaSClient/static services.

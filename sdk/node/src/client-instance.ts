@@ -4,6 +4,7 @@ import type { IdempotencyKey } from './idempotency.js';
 import type { CancelablePromise } from './generated/core/CancelablePromise.js';
 import type { RequestOptions } from './request-options.js';
 import { scopedRequest } from './request-scope.js';
+import { bindDeploymentPagination, type DeploymentPagination } from './deployment-pagination.js';
 
 type WithOptions<T> = T extends (...args: infer Args) => CancelablePromise<infer Result>
   ? (...args: Args extends [] ? [params?: undefined, options?: RequestOptions] : [...Args, options?: RequestOptions]) => CancelablePromise<Result>
@@ -40,7 +41,8 @@ export function bindService<T extends object>(service: T, getConfig: () => Clien
 }
 
 export type BoundClient<Services> = {
-  readonly [K in keyof Services as K extends `${infer Name}Service` ? Uncapitalize<Name> : never]: Methods<Services[K]>;
+  readonly [K in keyof Services as K extends `${infer Name}Service` ? Uncapitalize<Name> : never]: Methods<Services[K]> &
+    (K extends 'DeploymentsService' ? DeploymentPagination : object);
 } & {
   /** Applies to future requests; in-flight requests keep their original token. */
   setToken(token: string | undefined): void;
@@ -97,7 +99,14 @@ export function bindClient<Services extends Record<string, object>, Helpers exte
     if (!name.endsWith('Service')) throw new Error(`Unexpected SDK service: ${name}`);
     const namespace = name[0]!.toLowerCase() + name.slice(1, -'Service'.length);
     if (namespace in client) throw new Error(`Duplicate SDK namespace: ${namespace}`);
-    client[namespace] = bindService(service, () => config);
+    const methods = bindService(service, () => config);
+    if (name === 'DeploymentsService') {
+      const pagination = bindDeploymentPagination(service as Parameters<typeof bindDeploymentPagination>[0], () => config);
+      for (const key of Object.keys(pagination)) {
+        if (key in methods) throw new Error(`Duplicate SDK helper: ${namespace}.${key}`);
+      }
+      client[namespace] = Object.freeze({ ...methods, ...pagination });
+    } else client[namespace] = methods;
   }
   for (const [name, helper] of Object.entries(helpers?.(() => config) ?? {})) {
     if (name in client) throw new Error(`Duplicate SDK helper: ${name}`);

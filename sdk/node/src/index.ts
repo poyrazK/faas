@@ -11,6 +11,7 @@
 
 export { createClient, type GregaleClient } from './isolated-client.js';
 export type { RequestOptions, ResponseInfo, ResponseObserver } from './request-options.js';
+export { PaginationError, type PaginationOptions, type DeploymentPagination } from './deployment-pagination.js';
 
 // Generated runtime core, shared with the preview entry.
 export {

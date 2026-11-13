@@ -18,6 +18,7 @@
 
 export { createClient, type GregaleClient } from './isolated-client-preview.js';
 export type { RequestOptions, ResponseInfo, ResponseObserver } from './request-options.js';
+export { PaginationError, type PaginationOptions, type DeploymentPagination } from './deployment-pagination.js';
 
 // Generated surface.
 export {
