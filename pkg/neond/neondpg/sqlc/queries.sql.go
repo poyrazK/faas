@@ -7,6 +7,8 @@ package sqlc
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const insertProjectKey = `-- name: InsertProjectKey :exec
@@ -72,6 +74,40 @@ func (q *Queries) LiveProjectKeyIDs(ctx context.Context, db DBTX, projectID stri
 	return items, nil
 }
 
+const liveProjectKeys = `-- name: LiveProjectKeys :many
+SELECT key_id, project_id, created_at
+FROM neon_project_keys
+WHERE revoked_at IS NULL
+ORDER BY project_id
+`
+
+type LiveProjectKeysRow struct {
+	KeyID     int64
+	ProjectID string
+	CreatedAt pgtype.Timestamptz
+}
+
+// Every unrevoked key, for the backfill, rotation and orphan sweep.
+func (q *Queries) LiveProjectKeys(ctx context.Context, db DBTX) ([]LiveProjectKeysRow, error) {
+	rows, err := db.Query(ctx, liveProjectKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LiveProjectKeysRow{}
+	for rows.Next() {
+		var i LiveProjectKeysRow
+		if err := rows.Scan(&i.KeyID, &i.ProjectID, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markProjectKeyRevoked = `-- name: MarkProjectKeyRevoked :execrows
 UPDATE neon_project_keys
 SET revoked_at = now()
@@ -80,6 +116,40 @@ WHERE key_id = $1 AND revoked_at IS NULL
 
 func (q *Queries) MarkProjectKeyRevoked(ctx context.Context, db DBTX, keyID int64) (int64, error) {
 	result, err := db.Exec(ctx, markProjectKeyRevoked, keyID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const replaceProjectKey = `-- name: ReplaceProjectKey :execrows
+WITH retired AS (
+    UPDATE neon_project_keys AS k
+    SET revoked_at = now()
+    WHERE k.key_id = $3::bigint AND k.project_id = $4::text AND k.revoked_at IS NULL
+    RETURNING k.project_id AS retired_project
+)
+INSERT INTO neon_project_keys (key_id, project_id, sealed_key)
+SELECT $1::bigint, retired.retired_project, $2::bytea FROM retired
+`
+
+type ReplaceProjectKeyParams struct {
+	NewKeyID  int64
+	SealedKey []byte
+	OldKeyID  int64
+	ProjectID string
+}
+
+// Rotation: retire the old key and record its replacement in one statement,
+// so the project never has two live keys or none. No row: the old key was
+// not the project's live key.
+func (q *Queries) ReplaceProjectKey(ctx context.Context, db DBTX, arg ReplaceProjectKeyParams) (int64, error) {
+	result, err := db.Exec(ctx, replaceProjectKey,
+		arg.NewKeyID,
+		arg.SealedKey,
+		arg.OldKeyID,
+		arg.ProjectID,
+	)
 	if err != nil {
 		return 0, err
 	}

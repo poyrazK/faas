@@ -37,6 +37,13 @@ dedicated service user). A project without a key, or whose key Neon
 refuses, falls back to the admin key (`neond_requests_total{tier="admin_fallback"}`).
 Deleting a project revokes its keys (`neond_project_keys_total`).
 
+A key sweep runs every 10 minutes. It mints keys for projects without one
+(projects created before project keys, or whose mint failed), revokes the
+keys of projects Neon no longer lists, and rotates keys older than
+`faas_neond_project_key_max_age` (default 90 days), at most 50 key calls a
+pass. `neond_projects_without_key` is the backfill still to do. A pass that
+cannot list every project does nothing.
+
 Keys are sealed to the `neon` seal domain (ADR 20261022111812), which only
 neond reads. Before setting `faas_neond_org_id`, create the domain with
 `gregalectl seal-domain init --domain neon`, set

@@ -31,14 +31,15 @@ const (
 // admin key.
 type Server struct {
 	neondpb.UnimplementedNeondServer
-	base     *url.URL
-	client   *http.Client
-	adminKey string
-	policy   *Policy
-	keys     *projectKeys
-	log      *slog.Logger
-	requests *prometheus.CounterVec
-	keyOps   *prometheus.CounterVec
+	base       *url.URL
+	client     *http.Client
+	adminKey   string
+	policy     *Policy
+	keys       *projectKeys
+	log        *slog.Logger
+	requests   *prometheus.CounterVec
+	keyOps     *prometheus.CounterVec
+	withoutKey prometheus.Gauge
 }
 
 // NewServer builds the server. base is Neon's API base
@@ -54,11 +55,15 @@ func NewServer(base *url.URL, client *http.Client, adminKey string, live LiveRes
 		}, []string{"route", "tier", "decision"}),
 		keyOps: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "neond_project_keys_total",
-			Help: "Project keys neond minted or revoked, by outcome (ADR-20261112160000 decision 3).",
-		}, []string{"op", "outcome"})}
+			Help: "Project key operations by outcome (ADR-20261112160000 decision 3): mint and revoke follow project creates and deletes; backfill, rotate and orphan_revoke are the key sweep's.",
+		}, []string{"op", "outcome"}),
+		withoutKey: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "neond_projects_without_key",
+			Help: "Neon projects of the organization without a project key after the last key sweep; their calls use the admin key (ADR-20261112160000 decision 3).",
+		})}
 	s.policy = NewPolicy(live, s.readBranchDefault, destructivePerHour, nil)
 	if reg != nil {
-		for _, c := range []prometheus.Collector{s.requests, s.keyOps} {
+		for _, c := range []prometheus.Collector{s.requests, s.keyOps, s.withoutKey} {
 			if err := reg.Register(c); err != nil {
 				return nil, err
 			}

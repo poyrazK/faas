@@ -160,6 +160,9 @@ type MemStore struct {
 	privateNetworkTransportIDs  map[string]privateNetworkTransportIdentity
 	privateNetworkServiceOwners map[string]privateNetworkServiceOwner
 	trafficAppsSuffix           string
+	// abuseStrikes is each resource owner's abuse recycle times inside the
+	// escalation window (RecordAccountAbuseStrike, ADR-20261113133500).
+	abuseStrikes map[string][]time.Time
 	// planChangedAt is when each account's or org's plan last changed
 	// (PlanChangedAt, ADR-20261103121407).
 	planChangedAt map[string]time.Time

@@ -622,6 +622,18 @@ type AccountAbuseHoldStore interface {
 	ReleaseAccountAbuseHold(ctx context.Context, accountID string) (released bool, err error)
 }
 
+// AccountAbuseStrikeStore records abuse recycles against a resource owner
+// (account or organization) for the account abuse hold escalation
+// (ADR-20261113133500). The count is shared by every schedd and survives
+// restarts. Both PgStore and MemStore implement it.
+type AccountAbuseStrikeStore interface {
+	// RecordAccountAbuseStrike records a strike at at and returns the number
+	// of the owner's strikes after at-window, this one included. reason is
+	// an automatic hold reason (egress_fanout, egress_flood, cpu_sustained);
+	// appID may be empty.
+	RecordAccountAbuseStrike(ctx context.Context, accountID, reason, appID string, at time.Time, window time.Duration) (int, error)
+}
+
 // EmailVerified reports whether the account has proved control of its email.
 func (a Account) EmailVerified() bool { return a.EmailVerifiedAt != nil }
 
