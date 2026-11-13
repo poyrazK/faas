@@ -10,6 +10,17 @@
     "kind": "account_identity"
   },
   {
+    "table": "account_abuse_strikes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "id",
+      "reason",
+      "struck_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "account_billing_connections",
     "columns": [
       "account_id",
