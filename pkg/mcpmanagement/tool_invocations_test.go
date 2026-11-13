@@ -23,7 +23,11 @@ func invocationCall(t *testing.T, ctx context.Context, cs *mcp.ClientSession, na
 	t.Helper()
 	out := callTool(t, ctx, cs, name, args, wantError)
 	raw, _ := json.Marshal(out)
-	validateWorkflowSchema(t, toolOutputSchema(name), raw)
+	schema := toolOutputSchema(name)
+	if wantError {
+		schema = map[string]any{"$defs": map[string]any{"recovery": recoverySchema()}, "anyOf": []any{toolErrorSchema()}}
+	}
+	validateWorkflowSchema(t, schema, raw)
 	var result map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &result)
 	return result

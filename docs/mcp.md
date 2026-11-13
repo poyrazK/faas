@@ -959,7 +959,7 @@ work.
 
 An owner can give an existing personal agent connection access to one exact
 published tool without granting deployment permission. Find the connection's
-native key ID with `gregale mcp connections list`, then use the owner profile:
+native key ID with `gregale mcp connection list`, then use the owner profile:
 
 ```bash
 gregale mcp server tool-grant create \
