@@ -7070,6 +7070,12 @@ func ErrPlanFeatureGated(feature string, p Plan) *Problem {
 			fmt.Sprintf("the %s plan doesn't include the AI gateway; upgrade to Hobby or higher to call AI providers through managed integrations.", p)).
 			WithDocs(docsBase + "/cli#ai")
 	}
+	if feature == "ai_semantic_cache" {
+		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+			"Plan doesn't include the AI semantic cache",
+			fmt.Sprintf("the %s plan doesn't include the AI gateway's semantic cache; upgrade to Pro or Scale to answer calls that mean the same as a cached one.", p)).
+			WithDocs(docsBase + "/cli#ai")
+	}
 	if feature == "route_controls" {
 		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
 			"Plan doesn't include route controls",

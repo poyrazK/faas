@@ -66,5 +66,11 @@ func unsetSection(output string) string {
 	if start < 0 {
 		return ""
 	}
-	return output[start:]
+	// The section ends at the next blank line; later sections (feature
+	// hints) may name other workloads.
+	section := output[start:]
+	if end := strings.Index(section, "\n\n"); end >= 0 {
+		section = section[:end]
+	}
+	return section
 }

@@ -380,14 +380,22 @@ func Codes() []string {
 	return out
 }
 
+// rawTCPServerFix is the way out for a server that speaks its own TCP
+// protocol: a directly deployed image is ready once its port accepts
+// connections, with no HTTP probe (ADR-20261112223000 §2).
+const rawTCPServerFix = "• a raw TCP server (Redis, PostgreSQL, a message broker) never answers HTTP: deploy its published image with `gregale deploy --image <image>@sha256:<digest> --name <slug>`, which is ready once the port accepts connections, then keep it private with `gregale app <slug> --visibility internal --ports <name>=tcp:<port>:internal`"
+
 // startupFailureGuidance uses only known phase markers emitted by fcvm/schedd.
 // Raw error text can contain guest output; never interpolate it into guidance.
 func startupFailureGuidance(detail string) (why, fix string) {
 	for _, field := range strings.Fields(detail) {
 		switch strings.TrimRight(field, ":;,") {
 		case "startup_phase=guest_startup":
-			return "The guest did not answer the readiness probe before the startup deadline. This does not establish that an HTTP health endpoint returned an unhealthy response.", fmt.Sprintf("• check `gregale logs <slug>` for process launch, image user, permissions and initialization failures\n• verify the expected listener and bind address\n• listen first and defer expensive initialization: the app must answer within %d s, and `startup_deadline_s` cannot be raised above that", api.ColdBootReadyWindowS)
+			return "The guest did not answer the readiness probe before the startup deadline. This does not establish that an HTTP health endpoint returned an unhealthy response.", fmt.Sprintf("• check `gregale logs <slug>` for process launch, image user, permissions and initialization failures\n• verify the expected listener and bind address\n• listen first and defer expensive initialization: the app must answer within %d s, and `startup_deadline_s` cannot be raised above that\n%s", api.ColdBootReadyWindowS, rawTCPServerFix)
 		case "startup_phase=handler_healthcheck":
+			if strings.Contains(detail, "answered without HTTP") {
+				return "The app accepted the readiness probe on its serving port and answered with something other than HTTP, as a raw TCP server (Redis, PostgreSQL, a message broker) does. A source build must answer HTTP on that port.", rawTCPServerFix
+			}
 			return "The application answered readiness probes but did not report ready before the startup deadline. HTTP readiness requires a 2xx response; gRPC readiness requires SERVING.", fmt.Sprintf("• verify the configured readiness path or gRPC service and allow unauthenticated probes\n• check startup logs and required dependencies\n• report ready sooner: the app must be ready within %d s, and `startup_deadline_s` cannot be raised above that", api.ColdBootReadyWindowS)
 		case "startup_phase=image_healthcheck":
 			return "The image's command healthcheck did not produce a fresh successful result for this boot or restore. A listening port alone cannot pass this check.", fmt.Sprintf("• run the declared HEALTHCHECK inside the image with its configured user, working directory and environment\n• verify the check executable and required dependencies exist\n• review command timeouts, retries and startup grace: the check must pass within %d s, and `startup_deadline_s` cannot be raised above that", api.ColdBootReadyWindowS)
