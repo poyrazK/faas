@@ -28,7 +28,13 @@ func (s *server) renderDashboardPipelinesWithPlan(w http.ResponseWriter, r *http
 		return
 	}
 	data.SetupPlan = plan
-	data.CSRFToken = s.issueDashboardConfigCSRF(w, s.log, dashboardPipelinesAction, dashboardPipelinesCookie, account.ID, "")
+	if plan != nil {
+		// This POST was already CSRF-verified. Reuse its token so the preview tab
+		// does not invalidate the original tab's still-pending setup form.
+		data.CSRFToken = r.FormValue("csrf_token")
+	} else {
+		data.CSRFToken = s.issueDashboardConfigCSRF(w, s.log, dashboardPipelinesAction, dashboardPipelinesCookie, account.ID, "")
+	}
 	if data.Enabled && data.DataAPIEnabled {
 		s.pipelineAuthChoices(r, account.ID, &data)
 	}
