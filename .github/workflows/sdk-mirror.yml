@@ -76,7 +76,9 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version-file: sdk/go/go.mod
+          # Install checks also build the platform's API fixture, whose Go
+          # requirement is newer than the public Go SDK's minimum version.
+          go-version-file: go.mod
           cache: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
