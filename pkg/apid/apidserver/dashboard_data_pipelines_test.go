@@ -147,16 +147,16 @@ func TestDashboardPipelinesRequiresNamedCSRFAndScopesMetadata(t *testing.T) {
 		t.Fatalf("setup without CSRF: %d", out.Code)
 	}
 	form.Set("preview_setup", "yes")
-	preview := post(true)
-	if preview.Code != http.StatusOK || !strings.Contains(preview.Body.String(), "Resource preview: browser-orders") {
-		t.Fatalf("setup preview: %d %s", preview.Code, preview.Body.String())
+	setupPlanResponse := post(true)
+	if setupPlanResponse.Code != http.StatusOK || !strings.Contains(setupPlanResponse.Body.String(), "Resource preview: browser-orders") {
+		t.Fatalf("setup preview: %d %s", setupPlanResponse.Code, setupPlanResponse.Body.String())
 	}
-	for _, issued := range preview.Result().Cookies() {
+	for _, issued := range setupPlanResponse.Result().Cookies() {
 		if issued.Name == csrf.Name {
 			t.Fatal("preview tab replaced the original setup form's CSRF cookie")
 		}
 	}
-	if !strings.Contains(preview.Body.String(), `name="csrf_token" value="`+csrf.Value+`"`) {
+	if !strings.Contains(setupPlanResponse.Body.String(), `name="csrf_token" value="`+csrf.Value+`"`) {
 		t.Fatal("preview did not retain the verified form token")
 	}
 	savedBefore, err := pipelines.Store.(datapipeline.SetupStore).Setups(ctx, account.ID)
