@@ -468,6 +468,53 @@ functions, and the callee checks its `input` schema as it does when
 deployed. It also refreshes generated type files that are out of date.
 `calls:` apps are not served locally.
 
+## Durable workflow functions
+
+Set `workflow: true` and a function becomes a durable
+[code-first workflow](code-workflows.md): its handler takes the run's input
+and a `wf` object, and every `wf.step`, `wf.sleep` and `wf.waitForEvent` is
+recorded, so the run survives crashes, deploys and parks of any length
+without keeping a VM alive.
+
+```yaml
+functions:
+  - name: order-followup
+    root: functions/order-followup
+    runtime: node24
+    workflow: true            # or {timeout: 60s, retry: {max_attempts: 5}, trigger: {...}}
+```
+
+```js
+// functions/order-followup/handler.js
+export const config = { workflow: true };   // the same, declared in code
+
+export default async function handler(order, wf) {
+  const charge = await wf.step('charge', ({ idempotencyKey }) =>
+    payments.charge(order.id, { idempotencyKey }));
+  await wf.sleep('delivery_delay', '3d');
+  const approval = await wf.waitForEvent('refund_approval', { event: 'approved', timeout: '7d' });
+  return { charge: charge.id, approved: approval !== null };
+}
+```
+
+In Python, write `async def handler(input, wf)` with the same operations
+(`wf.wait_for_event`). A Go workflow function serves
+`faas.ServeWorkflows(...)` from its `main`, as in
+[Code-first workflows](code-workflows.md#go).
+
+- The workflow is named after the function and runs on the function's app.
+  Start a run with
+  `gregale workflow run order-followup --app <project>-order-followup --input '{...}'`;
+  `trigger` in the mapping starts runs on a schedule or an event as well.
+- `timeout` bounds each call of the handler, `retry` is the default step
+  retry policy and `max_concurrent_runs` caps parallel runs, as for any code
+  workflow. The rules for workflow code (determinism, operation names) and
+  the limits are the same.
+- A Node or Python workflow function needs the SDK in its dependencies
+  (`@gregale/sdk-node` in `package.json`, `gregale-sdk` in
+  `requirements.txt` or `pyproject.toml`); `gregale deploy` refuses it
+  otherwise. Workflows are available on Hobby and higher plans.
+
 ## Snapshot hooks
 
 A parked function wakes from a snapshot of its workers, so anything they set

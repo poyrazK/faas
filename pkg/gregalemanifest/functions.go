@@ -71,6 +71,10 @@ type FunctionSpec struct {
 	// Calls names other apps of the account, by slug, the function may call
 	// through its typed client besides its siblings.
 	Calls []string `yaml:"calls,omitempty"`
+	// Workflow makes the function a code-first workflow on its own app
+	// (ADR-20261113120824): `workflow: true`, or a mapping with timeout,
+	// retry, trigger and max_concurrent_runs.
+	Workflow *FunctionWorkflow `yaml:"workflow,omitempty"`
 	// ProjectFunctions names every function of the project, set by
 	// FunctionAppManifest so a repository push can bind the siblings.
 	ProjectFunctions []string `yaml:"-"`
@@ -197,6 +201,9 @@ func (m *Manifest) validateFunctions(plan api.Plan) error {
 		}
 		if err := validateFunctionDeliveries(field, fn); err != nil {
 			return err
+		}
+		if err := validateFunctionWorkflow(fn, plan); err != nil {
+			return fmt.Errorf("%s: %w", field, err)
 		}
 		for j, route := range fn.Routes {
 			if other, dup := routes[route]; dup {

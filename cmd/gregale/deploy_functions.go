@@ -74,6 +74,9 @@ type functionSetDeploy struct {
 	// deployOne runs the single-function deploy; tests replace it.
 	deployOne func(args []string) int
 	getenv    func(string) string
+	// workflows receives each workflow function's code workflow after
+	// planning, for its member deploy (ADR-20261113120824 §1).
+	workflows *functionSetWorkflows
 }
 
 type plannedFunction struct {
@@ -138,6 +141,9 @@ func (d functionSetDeploy) plan() ([]plannedFunction, error) {
 	}
 	planned := make([]plannedFunction, 0, len(resolved))
 	for _, p := range resolved {
+		if err := gregalemanifest.CheckWorkflowFunctionSDK(d.projectDir, p); err != nil {
+			return nil, err
+		}
 		absRoot := filepath.Join(d.projectDir, filepath.FromSlash(p.Root))
 		root, err := filepath.Rel(d.cwd, absRoot)
 		if err != nil {
@@ -189,6 +195,9 @@ func stripDeployFlags(args []string, names ...string) []string {
 func (d functionSetDeploy) run(ctx context.Context, client functionSetClient) int {
 	planned, err := d.plan()
 	if err != nil {
+		return printErr("Invalid functions manifest", err)
+	}
+	if err := d.recordWorkflows(planned); err != nil {
 		return printErr("Invalid functions manifest", err)
 	}
 	if client != nil {
@@ -940,7 +949,8 @@ func deployFunctionSet(ctx context.Context, d functionSetDeploy) int {
 		return printErr("Not logged in", err)
 	}
 	if d.deployOne == nil {
-		member := withFunctionSetMember(ctx)
+		d.workflows = &functionSetWorkflows{}
+		member := withFunctionSetWorkflows(withFunctionSetMember(ctx), d.workflows)
 		d.deployOne = func(args []string) int { return cmdDeployTarballToExisting(member, args, false) }
 	}
 	if d.out == nil {
@@ -974,4 +984,23 @@ func jsonEqual(a, b json.RawMessage) bool {
 		return false
 	}
 	return reflect.DeepEqual(x, y)
+}
+
+// recordWorkflows hands each workflow function's code workflow to its member
+// deploy (ADR-20261113120824 §1).
+func (d functionSetDeploy) recordWorkflows(planned []plannedFunction) error {
+	if d.workflows == nil {
+		return nil
+	}
+	d.workflows.bySlug = make(map[string][]api.WorkflowSpec, len(planned))
+	for _, fn := range planned {
+		spec, ok, err := fn.spec.WorkflowSpec()
+		if err != nil {
+			return err
+		}
+		if ok {
+			d.workflows.bySlug[fn.slug] = []api.WorkflowSpec{spec}
+		}
+	}
+	return nil
 }
