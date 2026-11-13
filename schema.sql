@@ -18891,6 +18891,12 @@ BEGIN
   AND environment_gitops_queue_recovery_authorized(OLD.id) THEN
   RETURN NEW;
  END IF;
+ IF OLD.retired_at IS NOT NULL AND NEW.retired_at IS NULL
+  AND (to_jsonb(NEW)-'retired_at'-'updated_at')=(to_jsonb(OLD)-'retired_at'-'updated_at')
+  AND OLD.environment_id IS NULL
+  AND current_setting('gregale.queue_binding_revive', true)=OLD.id::text THEN
+  RETURN NEW;
+ END IF;
  IF OLD.retired_at IS NOT NULL AND
   (NEW.retired_at IS DISTINCT FROM OLD.retired_at OR NEW.id IS DISTINCT FROM OLD.id
    OR NEW.account_id IS DISTINCT FROM OLD.account_id OR NEW.app_id IS DISTINCT FROM OLD.app_id
@@ -20603,7 +20609,7 @@ CREATE TABLE public.accounts (
     display_name text DEFAULT ''::text NOT NULL,
     egress_overage_enabled_at timestamp with time zone,
     egress_overage_disabled_at timestamp with time zone,
-    CONSTRAINT accounts_abuse_hold_valid CHECK ((((abuse_hold_at IS NULL) = (abuse_hold_reason IS NULL)) AND ((abuse_hold_reason IS NULL) OR (abuse_hold_reason = ANY (ARRAY['egress_fanout'::text, 'egress_flood'::text, 'operator'::text]))))),
+    CONSTRAINT accounts_abuse_hold_v2_valid CHECK ((((abuse_hold_at IS NULL) = (abuse_hold_reason IS NULL)) AND ((abuse_hold_reason IS NULL) OR (abuse_hold_reason = ANY (ARRAY['egress_fanout'::text, 'egress_flood'::text, 'cpu_sustained'::text, 'operator'::text]))))),
     CONSTRAINT accounts_billing_address_length_chk CHECK (((billing_address IS NULL) OR ((char_length(billing_address) >= 1) AND (char_length(billing_address) <= 1000)))),
     CONSTRAINT accounts_billing_mail_revision_check CHECK ((billing_mail_revision > 0)),
     CONSTRAINT accounts_business_name_length_chk CHECK (((business_name IS NULL) OR ((char_length(business_name) >= 1) AND (char_length(business_name) <= 256)))),

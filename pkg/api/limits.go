@@ -238,6 +238,15 @@ const (
 	QueueReceiveWaitersPerAPID    = 4096
 )
 
+// Pull-lease long-polls (wait_seconds > 0) one account and one apid hold at
+// a time; past them a lease does not wait but answers at once (ADR-20261112200000).
+// Each waiter reruns a binding-locking lease transaction on every wake and
+// recheck, so the caps bound idle database work, not just goroutines.
+const (
+	QueueLeaseWaitersPerAccount = 64
+	QueueLeaseWaitersPerAPID    = 4096
+)
+
 // Failed password sign-ins one email address may collect from any client
 // address within LoginFailureEmailWindow. The per-IP auth limit does not stop
 // a botnet guessing one account's password; past this budget every password
@@ -1355,6 +1364,16 @@ const (
 	ProfileCPUSaturationGrace              = 5 * time.Second
 	ProfileCaptureCPUSaturationMinInterval = 15 * time.Minute
 	ProfileCaptureCPUSaturationDuration    = 10 * time.Second
+	// Sustained CPU abuse (ADR-20261112120603). schedd's stats poller counts
+	// an instance pinned while its host CPU use is at least
+	// CPUAbuseSaturationPercent of its sustained cgroup quota; a dip shorter
+	// than CPUAbuseGrace does not end the episode. An episode lasting
+	// CPUAbuseSustainedAfter is a CPU abuse signal: a Free instance is
+	// recycled (enforce mode) and the recycle counts toward the ADR-361
+	// account abuse hold; a paid instance is only flagged.
+	CPUAbuseSaturationPercent = 90
+	CPUAbuseSustainedAfter    = 15 * time.Minute
+	CPUAbuseGrace             = 30 * time.Second
 	// ProfileCaptureMaxKinds bounds the kinds one capture collects: every kind.
 	ProfileCaptureMaxKinds = 5
 	// Go contention sampling while a capture asks for block or mutex

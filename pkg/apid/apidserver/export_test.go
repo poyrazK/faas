@@ -2514,3 +2514,6 @@ func PlatformOwnedDomain(apps, platform, domain string) bool {
 }
 
 var FinancialBudgetProblem = financialBudgetProblem
+
+// AppOOMRecommendation is the operational-summary OOM recommendation (2026-11-13).
+var AppOOMRecommendation = appOOMRecommendation
