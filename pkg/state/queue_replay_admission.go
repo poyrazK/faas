@@ -23,13 +23,27 @@ const QueueLeaseAttemptsExhaustedCode = "queue_lease_attempts_exhausted"
 
 const queueLeaseExhaustedError = "queue lease attempt budget exhausted after lease expiry"
 
-// IsQueueCapError reports whether err is a queue cap refusing a message: its
-// app at the plan's queue depth or its account at the plan's queue backlog
-// bytes. A replay of many dead letters skips a message it refuses.
+// IsQueueCapError reports whether err is a cap refusing a replayed dead
+// letter: a queue message's app at the plan's queue depth or its account at
+// the plan's queue backlog bytes, or a webhook delivery's account at its
+// outbox caps. A replay of many dead letters skips a message it refuses.
 func IsQueueCapError(err error) bool {
 	var depth *InvocationDepthError
 	var backlog *InvocationBacklogBytesError
-	return errors.As(err, &depth) || errors.As(err, &backlog)
+	var outbox *AppWebhookOutboxFullError
+	return errors.As(err, &depth) || errors.As(err, &backlog) || errors.As(err, &outbox)
+}
+
+// webhookReplayAdmission is the outbox admission a replayed webhook delivery
+// meets: its account plan's undelivered caps, as an explicit delivery does
+// (event-driven hunt #16).
+func webhookReplayAdmission(accountID string, plan api.Plan) (AppWebhookDelivery, bool) {
+	limits, ok := api.LimitsFor(plan)
+	if !ok {
+		return AppWebhookDelivery{}, false
+	}
+	return AppWebhookDelivery{AccountID: accountID, AdmissionMaxPending: limits.WebhookOutboxMaxPending,
+		AdmissionMaxBacklogBytes: limits.WebhookOutboxMaxBacklogBytes}, true
 }
 
 // KeyedReplayExpired reports whether inv is keyed work whose pending deadline
@@ -75,6 +89,39 @@ func checkQueueReplayAdmissionTx(ctx context.Context, tx pgx.Tx, id pgtype.UUID)
 		return fmt.Errorf("state: queue replay admission count: %w", err)
 	}
 	return nil
+}
+
+// checkWebhookReplayAdmissionTx refuses to replay a dead webhook delivery
+// while its account's undelivered deliveries are at its plan's outbox caps,
+// with the error an explicit delivery gets. It takes the outbox lock an
+// explicit delivery takes. Any other row passes.
+func checkWebhookReplayAdmissionTx(ctx context.Context, tx pgx.Tx, id string) error {
+	row, err := sqlc.New().ReadWebhookReplayAdmission(ctx, tx, mustPgUUID(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("state: webhook replay admission: %w", err)
+	}
+	admission, ok := webhookReplayAdmission(uuidString(row.AccountID), api.Plan(row.Plan))
+	if !ok {
+		return nil
+	}
+	return checkAppWebhookOutboxAdmissionTx(ctx, tx, admission)
+}
+
+// checkWebhookReplayAdmissionLocked mirrors checkWebhookReplayAdmissionTx.
+func (m *MemStore) checkWebhookReplayAdmissionLocked(d AppWebhookDelivery) error {
+	plan, ok := m.invocationOwnerPlanLocked(d.AccountID)
+	if !ok {
+		return nil
+	}
+	admission, ok := webhookReplayAdmission(d.AccountID, plan)
+	if !ok {
+		return nil
+	}
+	pending, held := m.appWebhookOutboxHeldLocked(d.AccountID)
+	return appWebhookOutboxAdmission(admission, pending, held)
 }
 
 // checkQueueReplayAdmissionLocked mirrors checkQueueReplayAdmissionTx.

@@ -95633,6 +95633,29 @@ func (q *Queries) ReadValidRouteLifecycleApprovals(ctx context.Context, db DBTX,
 	return items, nil
 }
 
+const readWebhookReplayAdmission = `-- name: ReadWebhookReplayAdmission :one
+SELECT d.account_id, coalesce(a.plan, o.plan, '')::text AS plan
+FROM app_webhook_deliveries d
+LEFT JOIN accounts a ON a.id = d.account_id
+LEFT JOIN orgs o ON o.id = d.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+WHERE d.id = $1::uuid AND d.status = 'dead'
+`
+
+type ReadWebhookReplayAdmissionRow struct {
+	AccountID pgtype.UUID
+	Plan      string
+}
+
+// A dead webhook delivery replayed from the dead letter re-enters its
+// account's outbox under the caps an explicit delivery meets (event-driven
+// hunt #16). The plan resolves as ReadQueueReplayAdmission's does.
+func (q *Queries) ReadWebhookReplayAdmission(ctx context.Context, db DBTX, id pgtype.UUID) (ReadWebhookReplayAdmissionRow, error) {
+	row := db.QueryRow(ctx, readWebhookReplayAdmission, id)
+	var i ReadWebhookReplayAdmissionRow
+	err := row.Scan(&i.AccountID, &i.Plan)
+	return i, err
+}
+
 const readWildcardCustomDomain = `-- name: ReadWildcardCustomDomain :one
 SELECT jsonb_build_object('Domain',domain,'AppID',app_id,'ChallengeToken',challenge_token,
     'VerifiedAt',verified_at,'CertStatus',cert_status,'CertExpiresAt',cert_expires_at,

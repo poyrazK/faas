@@ -374,8 +374,12 @@ func checkAppWebhookOutboxAdmissionTx(ctx context.Context, tx pgx.Tx, in AppWebh
 	var pending, held int64
 	if err := tx.QueryRow(ctx, `
 		select count(*), coalesce(sum(pg_column_size(d.payload)), 0)::bigint
-		  from (select payload from app_webhook_deliveries
-		         where account_id = $1 and status in ('pending', 'in_flight')
+		  from (select w.payload from app_webhook_deliveries w
+		         where w.account_id = $1 and w.status in ('pending', 'in_flight')
+		           -- A deleted app's deliveries wait unsent until its purge;
+		           -- they must not hold the account's outbox full meanwhile.
+		           and (w.app_id is null or exists (select 1 from apps a
+		                 where a.id = w.app_id and a.status <> 'deleted'))
 		         limit case when $2::bigint < 0 then null else $2::bigint end) d
 	`, in.AccountID, scan).Scan(&pending, &held); err != nil {
 		return fmt.Errorf("state: count app webhook outbox: %w", err)
