@@ -902,10 +902,10 @@ type Engine struct {
 	// refused for fleet capacity may park (ADR-643).
 	pressurePark pressureParkView
 
-	// egressAbuseRecycles is each account's recent ADR-361 egress abuse
-	// recycle times (fan-out or flood), for the escalation to the account
-	// abuse hold. It is per schedd and in memory: a restart forgets it,
-	// which costs at most one more recycle before the hold.
+	// egressAbuseRecycles is each account's recent abuse recycle times, used
+	// for the account abuse hold escalation only when the store cannot
+	// record strikes (test fakes). Production stores keep the strikes in
+	// account_abuse_strikes (ADR-20261113133500).
 	egressAbuseMu       sync.Mutex
 	egressAbuseRecycles map[string][]time.Time
 

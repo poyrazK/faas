@@ -101,6 +101,14 @@ type Account struct {
 	EgressOverageDisabledAt pgtype.Timestamptz
 }
 
+type AccountAbuseStrike struct {
+	ID        int64
+	AccountID pgtype.UUID
+	Reason    string
+	AppID     pgtype.UUID
+	StruckAt  pgtype.Timestamptz
+}
+
 type AccountAsyncQuotum struct {
 	AccountID       pgtype.UUID
 	MaxInflight     int32
