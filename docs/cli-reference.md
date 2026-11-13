@@ -10,6 +10,8 @@ Earlier names: commands keep working under the names they had before the command
 
 Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. With an agent key, put `--wait-for-approval` before the command to wait for a person to decide a request that needs approval, then retry it once, and `--agent-reason TEXT` (or `GREGALE_AGENT_REASON`) to tell that person what the request is for. Company projects: `gregale --org <slug> <command>` sends project commands to that organization's projects; command-local `--org` options keep their meaning. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. Put `--debug-http` before the command for metadata-only HTTP diagnostics on stderr. See [CLI configuration](cli-config.md) for connection profiles, environment precedence and HTTP diagnostics.
 
+Read retries: put `--http-retries 3` before the command for up to three additional attempts on selected app, deployment and billing JSON reads. The default is zero; see [CLI configuration](cli-config.md#read-request-retries) for eligible requests, backoff and cancellation.
+
 | Command | What it does |
 |---|---|
 | [`start`](#start) | Get your first app live with a few guided prompts |
@@ -3013,7 +3015,7 @@ Run apps and functions, inspect calls and wait for results
 
 Call an app or function once to smoke-test it
 
-`gregale invocation run [--async] [--wait] [--timeout <DURATION>] [--interval <DURATION>] [--payload <J|@file|->] [--method <METHOD>] [--path <PATH>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>] [<slug>]`
+`gregale invocation run [--async] [--wait] [--timeout <DURATION>] [--interval <DURATION>] [--idempotency-key <KEY>] [--payload <J|@file|->] [--method <METHOD>] [--path <PATH>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3021,6 +3023,7 @@ Call an app or function once to smoke-test it
 | `--wait` | wait for the invocation result; implies --async |  |
 | `--timeout <DURATION>` | local wait duration (default 0: until Ctrl-C); requires --wait |  |
 | `--interval <DURATION>` | time between status checks (default 1s); requires --wait |  |
+| `--idempotency-key <KEY>` | stable key for retrying the same submission within server retention; requires --async or --wait |  |
 | `--payload <J|@file|->` | JSON payload (inline \| @file \| -) |  |
 | `--method <METHOD>` | HTTP method (default POST, or the function handler&#39;s) |  |
 | `--path <PATH>` | URL path (default /, or the function handler&#39;s) |  |
@@ -3035,6 +3038,8 @@ Examples:
 ```sh
 gregale invocation run api --wait --timeout 2m --payload @request.json
 ```
+
+Reuse an idempotency key only with the same async request within the server&#39;s 24-hour replay window. Use a new key for new work.
 
 ### invocation watch
 

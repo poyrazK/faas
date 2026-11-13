@@ -17,6 +17,9 @@ Reject an explicitly contradictory `--async=false --wait` before any submission.
 Explicit `--timeout` and `--interval` require `--wait`. Resolve the submission
 mode and validate these combinations before payload reads or network access.
 The run-and-wait and standalone wait commands share duration validation.
+An explicit invocation retry key uses the resolved async mode, so it also works
+with `--wait` alone. Bind that key only to submission, preserving the wait's
+signal context and leaving polling requests without the submission key.
 Timeout is nonnegative (default zero, meaning indefinite) and polling interval
 is positive (default one second). The timeout begins after acceptance and bounds
 only local waiting; server execution and retry policy are unchanged.

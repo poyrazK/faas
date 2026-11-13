@@ -19,6 +19,7 @@ func TestInvocationWaitModeSelection(t *testing.T) {
 		poll, work                  bool
 	}{
 		{"implicit async", "/invoke/async", "state", []string{"invocation", "run", "api", "--wait"}, true, false},
+		{"wait with retry key", "/invoke/async", "state", []string{"invocation", "run", "api", "--wait", "--idempotency-key", "invoice-4821"}, true, false},
 		{"explicit async", "/invoke/async", "state", []string{"invocation", "run", "api", "--async", "--wait"}, true, false},
 		{"earlier name", "/invoke/async", "state", []string{"invoke", "api", "--wait"}, true, false},
 		{"flags first", "/invoke/async", "state", []string{"invocation", "run", "--wait", "--timeout=0", "--interval=1ms", "api"}, true, false},
@@ -33,6 +34,9 @@ func TestInvocationWaitModeSelection(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodPost {
 					posts.Add(1)
+					if tc.name == "wait with retry key" && r.Header.Get("Idempotency-Key") != "invoice-4821" {
+						t.Errorf("implicit async lost explicit retry key")
+					}
 					if r.URL.Path != "/v1/apps/api"+tc.endpoint {
 						t.Errorf("submission path=%s", r.URL.Path)
 					}
@@ -51,6 +55,9 @@ func TestInvocationWaitModeSelection(t *testing.T) {
 					return
 				}
 				gets.Add(1)
+				if r.Header.Get("Idempotency-Key") == "invoice-4821" {
+					t.Error("submission retry key leaked into polling")
+				}
 				if r.Method != http.MethodGet || r.URL.Path != "/v1/invocations/inv-mode" {
 					t.Errorf("unexpected polling request: %s %s", r.Method, r.URL.Path)
 				}

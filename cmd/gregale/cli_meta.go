@@ -4832,6 +4832,7 @@ var cliCommands = []cliCommand{
 			{Name: "wait", Short: "wait for the invocation result; implies --async"},
 			{Name: "timeout", Short: "local wait duration (default 0: until Ctrl-C); requires --wait", Value: "DURATION"},
 			{Name: "interval", Short: "time between status checks (default 1s); requires --wait", Value: "DURATION"},
+			{Name: "idempotency-key", Short: "stable key for retrying the same submission within server retention; requires --async or --wait", Value: "KEY"},
 			{Name: "payload", Short: "JSON payload (inline | @file | -)", Value: "J|@file|-"},
 			{Name: "method", Short: "HTTP method (default POST, or the function handler's)", Value: "METHOD"},
 			{Name: "path", Short: "URL path (default /, or the function handler's)", Value: "PATH"},
@@ -4842,6 +4843,7 @@ var cliCommands = []cliCommand{
 			{Name: "work-fairness-key", Short: "JSON scalar fairness group for async invocation", Value: "JSON"},
 		},
 		Positionals: []string{"[<slug>]"},
+		HelpNotes:   []string{"Reuse an idempotency key only with the same async request within the server's 24-hour replay window. Use a new key for new work."},
 	},
 	{
 		Name:    "run",
@@ -5841,6 +5843,13 @@ var cliCommands = []cliCommand{
 					{Name: "scenario", Value: "NAME", Short: "one named replay scenario (requires --replay)"},
 				}, Examples: []string{"gregale --json data-api migration preview --baseline schema.json --replay data-api.requests.json"}},
 			}},
+			{Name: "integrate", Short: "Add typed data and local authorization tests to a TypeScript app", Notes: []string{"Integrates an existing npm app with local setup, generated types and two-user authorization checks."}, Flags: []cliFlag{
+				{Name: "directory", Value: "DIR", Short: "existing project directory (default .)"},
+				{Name: "client-directory", Value: "DIR", Short: "npm client directory relative to the project (default .)"},
+				{Name: "bundle", Value: "MANIFEST", Short: "approved local data-api-bundle.json"},
+				{Name: "sdk-version", Value: "VERSION", Short: "exact public @gregale/data version, instead of a bundle"},
+				{Name: "dry-run", Short: "preview files and installation without writing or starting services"},
+			}, Examples: []string{"gregale data-api integrate --bundle /path/to/data-api-bundle.json --dry-run", "gregale data-api integrate --bundle /path/to/data-api-bundle.json"}},
 			{Name: "onboard", Short: "Create and verify a local typed application with two-user isolation", Flags: []cliFlag{
 				{Name: "template", Value: "NAME", Short: "data-api-starter or data-api-teams", ClosedSet: []string{"data-api-starter", "data-api-teams"}},
 				{Name: "path", Value: "DIR", Short: "new starter project directory", Req: true},

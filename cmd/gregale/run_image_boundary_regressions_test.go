@@ -29,6 +29,8 @@ func TestRunRegressionImageCommandBoundaryAcrossPublicSpellings(t *testing.T) {
 		{"sandbox", "run", "--detach", "--image", "alpine"},
 		{"--non-interactive", "--json", "run", "--detach", "--image", "alpine"},
 		{"run", "--detach", "--image=alpine", "--"},
+		{"--http-retries", "3", "--json", "run", "--detach", "--image", "alpine"},
+		{"--http-retries=3", "sandbox", "run", "--detach", "alpine"},
 	} {
 		t.Run(prefix[0]+"_"+prefix[len(prefix)-1], func(t *testing.T) {
 			requests := make(chan api.CreateImageRunRequest, 1)

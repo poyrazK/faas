@@ -26,9 +26,11 @@ import (
 // default catalog must be able to see and reverse its own changes
 // (ADR-20261112080601). Raised to 76 KB on 2026-11-13 for
 // gregale_agent_budget (about 1.3 KB): an agent checks what it may still
-// commit before it plans (ADR-20261111114059, amendment 2026-11-13). The
-// fully consented hosted catalog is about 74.5 KB.
-const coreCatalogBudget = 76 << 10
+// commit before it plans (ADR-20261111114059, amendment 2026-11-13).
+// Lowered to 52 KB on 2026-11-13: output schemas describe successes only,
+// and the error contract is served once (ADR-20261103193000, amendment
+// 2026-11-13). The fully consented hosted catalog is about 47.6 KB.
+const coreCatalogBudget = 52 << 10
 
 func TestReadOnlyCoreCatalogMatchesStdioContract(t *testing.T) {
 	backend := httptest.NewServer(http.NotFoundHandler())
