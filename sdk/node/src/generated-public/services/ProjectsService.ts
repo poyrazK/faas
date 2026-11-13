@@ -1319,7 +1319,7 @@ export class ProjectsService {
     organization: string,
     requestBody: ProjectSourceRefScanRequest,
   }): CancelablePromise<PlanResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/projects/scan/source-ref',
       path: {
@@ -1362,7 +1362,7 @@ export class ProjectsService {
     organization: string,
     requestBody: ApplyCachedProjectPlanRequest,
   }): CancelablePromise<ApplyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/projects/apply-plan',
       path: {
@@ -1408,7 +1408,7 @@ export class ProjectsService {
      */
     planToken?: string,
   }): CancelablePromise<ApplyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/projects/safe-deploy',
       path: {
