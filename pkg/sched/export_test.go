@@ -1411,3 +1411,9 @@ func NodeBudgetRefusal(detail string, blockers ...api.WorkerAdmissionBlocker) er
 func (r *Loop) FinishFailedPrime(ctx context.Context, appID, deploymentID string, err error) {
 	r.finishFailedPrime(ctx, appID, deploymentID, 1, err)
 }
+
+// PollStoredTriggerReplays polls a stored-replay source over records with
+// trigger t, as dispatchOneTrigger does after the record-rate reservation.
+func PollStoredTriggerReplays(records []sqlc.TriggerRecord, t sqlc.Trigger) PollResult {
+	return (&storedTriggerReplaySource{records: records, kind: t.Kind}).Poll(context.Background(), t)
+}

@@ -180,6 +180,49 @@ type natsMsg interface {
 	Ack() error
 	NakWithDelay(time.Duration) error
 	TermWithReason(string) error
+	// InProgress resets the server's ack-wait timer while a batch is
+	// still being delivered (keepLeases).
+	InProgress() error
+}
+
+// natsAckWait is the consumer's ack wait, set explicitly so keepLeases knows
+// how often to signal progress. It is the JetStream default.
+const natsAckWait = 30 * time.Second
+
+// natsProgressInterval is how often keepLeases signals progress.
+var natsProgressInterval = natsAckWait / 3
+
+// keepLeases tells the server a polled batch is still in progress every third
+// of the ack wait until the returned stop runs, so a handler that runs longer
+// than the ack wait is not redelivered mid-dispatch (ADR-20261101093512
+// amendment 2026-11-13; Redis streams renew their claims the same way).
+func (n *natsPoller) keepLeases(ctx context.Context, ids []string) func() {
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(natsProgressInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				n.mu.Lock()
+				msgs := make([]natsMsg, 0, len(ids))
+				for _, id := range ids {
+					if msg, ok := n.inFlight[id]; ok {
+						msgs = append(msgs, msg)
+					}
+				}
+				n.mu.Unlock()
+				for _, msg := range msgs {
+					_ = msg.InProgress()
+				}
+			}
+		}
+	}()
+	return func() { cancel(); <-done }
 }
 
 // natsConfig is the per-kind config blob decoded from
@@ -277,6 +320,7 @@ func natsConsumerConfig(cfg natsConfig) jetstream.ConsumerConfig {
 		Durable:       cfg.Durable,
 		FilterSubject: cfg.Subject,
 		AckPolicy:     jetstream.AckExplicitPolicy,
+		AckWait:       natsAckWait,
 		DeliverPolicy: jetstream.DeliverAllPolicy,
 		MaxDeliver:    -1,
 	}

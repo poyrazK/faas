@@ -173,6 +173,7 @@ func (m *reliabilityNATSMessage) NakWithDelay(delay time.Duration) error {
 	return nil
 }
 func (m *reliabilityNATSMessage) TermWithReason(string) error { return nil }
+func (m *reliabilityNATSMessage) InProgress() error           { return nil }
 
 func TestBrokerReliabilityNATSWrapperUsesScheduledDelay(t *testing.T) {
 	message := &reliabilityNATSMessage{}

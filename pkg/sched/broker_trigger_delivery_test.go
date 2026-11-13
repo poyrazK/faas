@@ -475,6 +475,7 @@ type natsStub struct {
 
 func (s *natsStub) Ack() error                  { return nil }
 func (s *natsStub) TermWithReason(string) error { return nil }
+func (s *natsStub) InProgress() error           { return nil }
 func (s *natsStub) NakWithDelay(d time.Duration) error {
 	s.delays = append(s.delays, d)
 	return nil

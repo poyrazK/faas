@@ -638,3 +638,68 @@ func TestKafka_NackBrokerErrorNeverCommits(t *testing.T) {
 		})
 	}
 }
+
+// sequenceReader hands out msgs in order, then reports idle.
+type sequenceReader struct {
+	poisonStrategyReader
+	msgs []kafka.Message
+}
+
+func (r *sequenceReader) FetchMessage(ctx context.Context) (kafka.Message, error) {
+	if len(r.msgs) == 0 {
+		return kafka.Message{}, context.DeadlineExceeded
+	}
+	m := r.msgs[0]
+	r.msgs = r.msgs[1:]
+	return m, nil
+}
+
+// TestKafka_CoolingRetryDoesNotStallOtherRecords: a record cooling in retry
+// holds back its partition's commits, but records settled behind it carry no
+// payload and no longer use up the fetch budget, so the trigger keeps reading
+// (ADR-20261101093512 amendment 2026-11-13). The settled backlog still has a
+// bound.
+func TestKafka_CoolingRetryDoesNotStallOtherRecords(t *testing.T) {
+	t.Parallel()
+	var msgs []kafka.Message
+	for i := range 6 {
+		msgs = append(msgs, kafka.Message{Topic: "orders", Partition: i % 2, Offset: int64(i / 2)})
+	}
+	rdr := &sequenceReader{msgs: msgs}
+	k := &kafkaPoller{reader: rdr, batchMax: 2, inFlight: map[string]kafka.Message{}}
+	trig := sqlc.Trigger{Kind: "kafka"}
+
+	first := k.Poll(context.Background(), trig)
+	if first.Error != nil || len(first.Records) != 2 {
+		t.Fatalf("first poll = %d records, err %v", len(first.Records), first.Error)
+	}
+	// Partition 0's head cools for an hour; partition 1's record settles.
+	head, other := first.Records[0].ItemIdentifier, first.Records[1].ItemIdentifier
+	if err := k.NackUntil(context.Background(), trig, []string{head}, []time.Time{time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := k.Ack(context.Background(), trig, []string{other}); err != nil {
+		t.Fatal(err)
+	}
+	// Records behind the cooling head keep flowing and settling.
+	for range 2 {
+		res := k.Poll(context.Background(), trig)
+		if res.Error != nil || len(res.Records) == 0 {
+			t.Fatalf("poll stalled behind a cooling retry: %d records, err %v", len(res.Records), res.Error)
+		}
+		ids := make([]string, 0, len(res.Records))
+		for _, r := range res.Records {
+			ids = append(ids, r.ItemIdentifier)
+		}
+		if err := k.Ack(context.Background(), trig, ids); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The settled backlog behind an open head is bounded.
+	k.settled = map[int][]kafka.Message{0: make([]kafka.Message, 2*kafkaSettledBacklogBatches)}
+	rdr.msgs = []kafka.Message{{Topic: "orders", Partition: 1, Offset: 99}}
+	if res := k.Poll(context.Background(), trig); len(res.Records) != 0 {
+		t.Fatalf("poll fetched %d records past the settled backlog bound", len(res.Records))
+	}
+}
