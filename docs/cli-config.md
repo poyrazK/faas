@@ -281,6 +281,15 @@ Decide success from the exit code, not from whether stdout is empty: an empty
 JSON Lines list exits 0 with no output, and a failure writes its Problem to
 stderr. To read a JSON Lines list as one array, use `jq -s .`.
 
+JSON input flags such as `invoke --payload`, `send --data` and trigger
+`--config` report a location when their input is malformed. For example,
+`request.json:12:9: --payload must be valid JSON` identifies the selected file;
+`stdin` and `inline` identify those input forms. Lines and columns start at 1,
+columns count Unicode characters, and a tab counts as one character. LF and
+CRLF files are supported. Truncated JSON points at the end of the input.
+The same location appears in JSON error details. Diagnostics omit payload
+contents, and valid input keeps its original bytes and numeric precision.
+
 Shared command errors use these exit codes. JSON error objects on stderr
 include `category` and `exit_code` alongside the server's unchanged `code`:
 
